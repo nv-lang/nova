@@ -1,0 +1,61 @@
+# База 2026-08-12 (реестр 221.1 №TBD-plan-dup): дословные повторы между
+# разделами в ЗАКРЫТЫХ планах прошлых волн. Пофайлово, а не общим счётчиком:
+# общий счётчик прячет подмену — ушёл один повтор, пришёл другой, итог тот же.
+#
+# Журналы закрытых волн мы задним числом не переписываем; ценность стража в
+# том, чтобы НОВЫЙ повтор не появился. Отсюда — только вниз.
+#
+# формат: <путь> <сколько повторов допускается сегодня>
+docs/plans/01-roadmap-v0.1.md 1
+docs/plans/09-clang-migration.md 1
+docs/plans/100.1-impl-playbook.md 2
+docs/plans/103.3-mutex-family.md 1
+docs/plans/103.4-coordination-primitives.md 2
+docs/plans/107-prelude-attribute-syntax.md 3
+docs/plans/108.4-protocol-method-receiver-mut.md 1
+docs/plans/110-scoped-resources-radical-simplification.md 1
+docs/plans/114.4.2-const-fn.md 2
+docs/plans/118-typed-pointers-and-unsafe.md 4
+docs/plans/11-method-values-and-overload.md 1
+docs/plans/120-named-tuples-and-allocation-contract.md 1
+docs/plans/123.1-core-cse.md 1
+docs/plans/124.8-tuple-value-refine.md 1
+docs/plans/12-builtins-driven-codegen.md 1
+docs/plans/137-protocol-rename-drop-able-suffix.md 1
+docs/plans/138.2-vec-in-prelude-novarray-retirement.md 1
+docs/plans/139.2-str-methods-full-nova-migration.md 1
+docs/plans/13-runtime-stdlib-and-autogen.md 1
+docs/plans/147-pointer-mut-flip-scan-model.md 2
+docs/plans/156-test-runner-slow-lane.md 1
+docs/plans/169.1-test-suite-profiling-and-speedup.md 2
+docs/plans/172.12-typed-ir-mono.md 2
+docs/plans/172.1-p67-execution-plan.md 2
+docs/plans/173.0-concurrency-runtime-substrate.md 1
+docs/plans/173-error-system-unify-harden.md 1
+docs/plans/178-std-http.md 1
+docs/plans/180-serde-derive.md 1
+docs/plans/196.3-wave2-d-driven.md 1
+docs/plans/200-std-improvements.md 1
+docs/plans/208-unified-formatter.md 1
+docs/plans/21-channel-revision-implementation.md 2
+docs/plans/222.20-effects-inventory.md 1
+docs/plans/22-sleep-libuv-integration.md 4
+docs/plans/250-vela-state-consolidation.md 2
+docs/plans/253.4-disarm-registry.md 1
+docs/plans/33-contracts-implementation.md 1
+docs/plans/44.1-channel-hardening.md 1
+docs/plans/50-default-keyword-only.md 1
+docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md 2
+docs/plans/62.F.bis-edition-shadow-and-runtime-effects.md 1
+docs/plans/65-chanreader-close-after.md 1
+docs/plans/83.10.2-armed-cancel-timer-hang.md 5
+docs/plans/83.10.5-iso-cancel-startup-race-fix.md 7
+docs/plans/83.11-centralized-io-driver.md 4
+docs/plans/83.13-precise-gc-roadmap.md 1
+docs/plans/91.11-sb-cleanup-rename-steal.md 2
+docs/plans/91.12-net-effect-and-hardening.md 1
+docs/plans/91.7-array-methods-and-default-new.md 1
+docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md 5
+docs/plans/94-str-methods-on-nova.md 1
+docs/plans/97-protocol-effect-syntax-symmetry.md 1
+docs/plans/backlog-followups.md 1

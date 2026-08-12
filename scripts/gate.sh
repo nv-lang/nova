@@ -252,6 +252,11 @@ step "публичные страницы парны и на своих язык
 bash "$ROOT/scripts/guards/check-doc-language-pairs.sh" "$ROOT" \
     || fail "страницы без пары или сторона не на своём языке"
 
+# №TBD-plan-dup: один и тот же абзац в двух разделах плана — план,
+# который начнёт врать по частям.
+step "дословные повторы между разделами планов"
+python "$ROOT/scripts/guards/check-plan-duplication.py" "$ROOT" \n    || fail "дословный повтор между разделами плана вырос"
+
 # №TBD-secrets: секрет вреден самим фактом попадания в историю.
 step "секреты в дереве (ключи, токены, пароль внутри URL)"
 bash "$ROOT/scripts/guards/check-staged-secrets.sh" --tree "$ROOT" \n    || fail "секрет в дереве"
