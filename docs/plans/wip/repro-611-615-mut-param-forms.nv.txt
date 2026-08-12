@@ -1,0 +1,31 @@
+// Проба: три формы записи mut-параметра-слайса.
+
+module scratch_mp.probe_mp
+
+// 1. Постфиксная (io-канон 2026-07-17).
+fn fill_postfix(buf mut []u8) -> int {
+    buf[0] = 7
+    return 1
+}
+
+// 2. Префиксная (канон D445: модификатор перед тем, что описывает).
+fn fill_prefix(mut buf []u8) -> int {
+    buf[0] = 8
+    return 2
+}
+
+// 3. R2-split: биндинг не переприсваивается, содержимое пишется.
+fn fill_split(ro buf mut []u8) -> int {
+    buf[0] = 9
+    return 3
+}
+
+fn main() {
+    mut a = []u8.of(0, 0)
+    print(fill_postfix(a))
+    print(a[0])
+    print(fill_prefix(a))
+    print(a[0])
+    print(fill_split(a))
+    print(a[0])
+}
