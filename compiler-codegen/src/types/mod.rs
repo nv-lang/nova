@@ -15495,7 +15495,49 @@ impl<'a> TypeCheckCtx<'a> {
                             return;
                         }
                         match scoped.as_slice() {
-                        [single] => *single,
+                        [single] => {
+                            // №TBD [бриф p617-name-scope, класс "имя решает раньше
+                            // объявления", носитель №618]: this pre-existing
+                            // fast path returned `single` UNCONDITIONALLY —
+                            // arity/type applicability was never checked for the
+                            // ONE-candidate case. Empirically (this window,
+                            // sabotage probe): a wrong-arity call was not just a
+                            // loud CC-FAIL — `nova check` reported a false `ok`
+                            // AND the full pipeline's codegen SILENTLY accepted
+                            // a malformed C call (`foo(5)` against a
+                            // `foo(x, y)` C prototype, missing arg — undefined
+                            // behavior, not even a compiler diagnostic under
+                            // this toolchain) — worse than the registry's
+                            // original "raw CC-FAIL" hypothesis (found while
+                            // drafting the #536 fixture, registry #618; repro:
+                            // spec_tests/conformance/standalone/
+                            // p618_single_candidate_arity_probe.nv).
+                            // UNLIKE the `many` arm below — where `None` from
+                            // `overload_applicability` on ONE candidate is
+                            // uninformative (some OTHER sibling overload might
+                            // still match, so it is deliberately NOT reported,
+                            // §0 "gap, not wrong") — a SINGLE candidate has no
+                            // such ambiguity: `single` is the only fn this call
+                            // could possibly resolve to, so anything short of
+                            // `Some(true)` (arity binds via `bind_call_args` AND
+                            // every bound arg is type-assignable) means the call
+                            // is DEFINITELY wrong, not merely undetermined.
+                            if !matches!(
+                                self.overload_applicability(single, args, gs, scope),
+                                Some(true)
+                            ) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` \
+                                         matches the given argument types",
+                                        prefix, name,
+                                    ),
+                                    base.span,
+                                ));
+                                return;
+                            }
+                            *single
+                        }
                         // Plan 172.1.1 (U.3.2): multi-overload module/free-fn — record the UNIQUE
                         // type-compatible overload (mirror the Type.method site above → Call-channel,
                         // §0/§1); 0 or ≥2 compatible → codegen-resolved (gap, not wrong).

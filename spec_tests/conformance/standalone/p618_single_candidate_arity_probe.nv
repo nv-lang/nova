@@ -1,0 +1,41 @@
+// EXPECT_COMPILE_ERROR no overload of `p618mod.p618f`
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier №618).
+//
+// FACT (named by window p576 in its "what's not done", registry #618):
+// `f1_check_call`'s `ExprKind::Member { obj: Ident(prefix) }` arm
+// (`compiler-codegen/src/types/mod.rs`) resolves a module-qualified free-fn
+// call `prefix.f(x)` against `prefix`'s own module's candidates (#536's
+// scoping fix). When that scoping narrows the pool down to EXACTLY ONE
+// candidate, a pre-existing fast path (`[single] => *single`) returned it
+// UNCONDITIONALLY -- arity/type applicability was never checked for the
+// single-candidate case, so a wrong-arity call leaked straight past the
+// checker with ZERO diagnostic. Empirically WORSE than the registry's own
+// "raw CC-FAIL" hypothesis: `nova check` reported a false `ok`, AND the
+// full pipeline's codegen SILENTLY accepted the malformed call
+// (`nova_fn_...p618f(((nova_int)5LL))` against a `nova_str
+// nova_fn_...p618f(nova_int x, nova_int y)` C prototype -- one arg short,
+// not even a C-compiler diagnostic under this toolchain) instead of a
+// clean Nova diagnostic. Pre-existing gap ("gap, not wrong" -- window p576
+// did not create it, named it while drafting the #536 fixture).
+//
+// `p618_target` declares `p618f(x int, y int)` (arity 2) -- the ONLY
+// `p618f` anywhere in this CU, so #536's own-module scoping narrows to
+// `[single]`. The call below passes ONE argument.
+//
+// Fix: the `[single]` arm now runs `overload_applicability` (the same
+// arity+type oracle the sibling `many` arm already used) and reports
+// `[E_NO_MATCHING_OVERLOAD]` on anything short of `Some(true)` -- a single
+// candidate has no ambiguity to preserve (unlike `many`, where `None` on
+// ONE sibling defers because some OTHER sibling might still match).
+
+module standalone.p618_single_candidate_arity_probe
+
+import p618_target as p618mod
+
+fn main() {
+    // nova:expect no overload of `p618mod.p618f` -- #618: the single-candidate fast path must check arity too; before the fix this leaked a raw C-compile failure instead of a clean diagnostic
+    ro r = p618mod.p618f(5)
+    print(r)
+}

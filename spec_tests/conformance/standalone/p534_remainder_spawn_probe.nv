@@ -1,0 +1,58 @@
+// EXPECT_STDOUT ROUTES_LEN 3
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier: remainder of №534).
+//
+// FACT (registry #534, window p261-f2-packages, repro
+// `nova-polaris/src/rt/handle_connection_smoke.nv`): a local `fn routes()
+// -> Router`, called INSIDE a `spawn` body, gave `CC-FAIL: use of
+// undeclared identifier 'routes'` -- spawn's capture analysis added a
+// `routes` field to the fiber context (this is a CALL, not a captured
+// variable) with a WRONG type, `[]RouteInfo`, taken by BARE NAME from an
+// unrelated PARAMETER in a completely different module (`polaris.openapi`).
+//
+// PRE-CHECK per this window's brief: verify on a MINIMAL two-file CU
+// before doing anything else -- a parameter `routes []T` in one module, a
+// local `fn routes()` called inside `spawn` in another, same CU.
+//
+// OUTCOME: ALREADY CLOSED -- but NOT by #536 (this window's brief's
+// working hypothesis). #536 (commit c9b8354f5, today) fixes the
+// MODULE-QUALIFIED call shape (`prefix.func(...)`) and postdates the real
+// fix. The actual close is commit `5f03cc932` ("fix(534): free-fn
+// bare-name resolution must not let another file dilute the caller's own
+// declaration", 2026-08-10, TWO DAYS BEFORE #536) -- already on `main`,
+// already exercised by the existing 5-file fixture
+// `spec_tests/conformance/standalone/p534_routes_bare_name/` (which this
+// window re-ran and confirmed still PASSes with correct values). That fix
+// scopes `f1_check_call`'s Ident-callee `fn_decls` lookup by the caller's
+// OWN module (`file_modules`/`is_own`, mirrors #536's LATER module-
+// qualified-call fix one call-shape earlier) -- `resolved_callees` now
+// correctly records the LOCAL `routes()` as the call target, so
+// `emit_c.rs`'s `collect_resolved_call_target_names_expr` recognizes the
+// bare `routes` inside `spawn` as a resolved call (skip), never falling
+// through to the flat `var_types` capture-guess this carrier's bug
+// exploited.
+//
+// This fixture is a SECOND, deliberately minimal (2-file, not 5-file)
+// confirmation of the same class, matching the brief's own suggested
+// shape (`routes []T` param vs. local `fn routes()` called in `spawn`).
+// Prints the value (#577) rather than only asserting pass/fail.
+
+module standalone.p534_remainder_spawn_probe
+
+import p534_remainder_param
+
+fn routes() -> []int {
+    [7, 8, 9]
+}
+
+fn main() {
+    ro (tx, rx) = Channel[int].new(1)
+    supervised {
+        spawn {
+            tx.try_send(routes().len())
+        }
+    }
+    ro n = rx.try_recv() ?? -1
+    println("ROUTES_LEN ${n}")
+}

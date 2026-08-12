@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier №617) — see ../p617_alias_leak_probe.nv.
+//
+// Mirrors the observed shape (`std/src/collections/vec/access.nv`'s
+// `a.compare(b)`): local `ro` bindings named `p617clash`/`p617other`, used
+// as an instance-method call, unrelated to any import in THIS file. The
+// entry file (`../p617_alias_leak_probe.nv`, same CU) imports a DIFFERENT
+// module under a DIFFERENT alias (`p617mod`) — deliberately NOT reusing
+// `p617clash` as the alias spelling here; see that file's header comment
+// for why (a confirmed, separate emit_c.rs bug fires whenever an import
+// alias spelling collides with ANY other CU file's local-variable spelling,
+// which would make a same-spelled pair CC-FAIL for a reason unrelated to
+// THIS carrier's specific checker-scoping claim).
+
+module standalone.p617_local_collide
+
+type P617Item value { ro n int }
+
+fn P617Item @compare(other P617Item) -> int => @n - other.n
+
+export fn p617_run_collide() -> int {
+    ro p617clash = P617Item{ n: 5 }
+    ro p617other = P617Item{ n: 2 }
+    p617clash.compare(p617other)
+}

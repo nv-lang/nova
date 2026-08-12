@@ -1,0 +1,79 @@
+// EXPECT_STDOUT TARGET_MARKER 111
+// EXPECT_STDOUT COLLIDE_RESULT 3
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier №617).
+//
+// FACT (found by window p576 while drafting a #536 fixture, reported
+// honestly out-of-scope): `import X as a` in one file makes `a` visible
+// CU-WIDE (`TypeCheckCtx::build` collects `imported_modules`/
+// `import_prefix_to_module_last` from EVERY peer file of the merged CU,
+// `compiler-codegen/src/types/mod.rs` — the same reason #536's fix scopes
+// `f1_check_call`'s `Member{obj: Ident(prefix)}` arm by `file_modules`) —
+// unrelated local names `a`/`b` in a DIFFERENT file (e.g.
+// `std/src/collections/vec/access.nv`'s `a.compare(b)`) share the same flat
+// prefix set. NOT ESTABLISHED before this window: whether the leak causes
+// a SILENT wrong-name pick, a LOUD collision, or nothing at all.
+//
+// OUTCOME, CHECKER (`types/mod.rs`, THIS window's zone) — CORRECT SCOPE:
+// `f1_check_call`'s `Member{obj: Ident(prefix)}` arm checks
+// `scope.contains_key(prefix)` FIRST — right before consulting
+// `imported_modules` — so a local variable named the same as some OTHER
+// file's import alias short-circuits there and resolves as an ordinary
+// instance-method receiver; `imported_modules` is never even consulted.
+// It has exactly ONE call site in the whole checker (this arm), always
+// after the local-scope guard, so a local binding can never be shadowed by
+// a same-named alias from another file. Verified directly: `nova check`
+// PASSES on this fixture even when the alias below is renamed to
+// `p617clash` — the EXACT spelling `p617_local_collide/mod.nv` uses for
+// its own unrelated locals (checker output unaffected either way).
+//
+// OUTCOME, CODEGEN (`emit_c.rs` — OUT OF ZONE, read-only, NOT edited; see
+// report first line) — GENUINE LOUD COLLISION, confirmed: renaming the
+// alias below from `p617mod` to `p617clash` (so it EXACTLY matches
+// `p617_local_collide/mod.nv`'s local `ro p617clash`) makes this fixture
+// CC-FAIL: `p617_alias_leak_probe.c: error: use of undeclared identifier
+// 'p617clash'`, generated as `nova_int t = p617clash.p617_target_marker;`
+// — codegen misresolved the module-alias receiver as an instance-field
+// access on the OTHER file's local variable. `nova check` still PASSES on
+// that renamed variant (checker is right; only codegen goes wrong).
+// Independently reproduced with NO second file at all: a bare
+// `import p617_alias_target as a; fn main() { a.marker() }` also CC-FAILs
+// (`a`/`b` specifically; `tgt`/`z`/`p617mod` do not) — std prelude
+// (auto-imported into every CU) plausibly uses `a`/`b` as an ordinary
+// local/param name somewhere, which is enough to poison the SAME
+// mechanism. Root candidate: `CEmitter::var_types`
+// (`compiler-codegen/src/codegen/emit_c.rs:798`, "Maps variable name -> C
+// type string") is initialized ONCE (line 2584, `HashMap::new()`) and is
+// NEVER `.clear()`-ed anywhere in the file (213 combined insert/remove
+// call sites, no reset found) — a genuinely CU-WIDE, cross-FUNCTION,
+// cross-FILE map. `infer_expr_c_type`'s `Ident` arm consults
+// `var_types.get(name)` FIRST (line 62540) and only falls back to the
+// correct `imported_modules.contains(name)` check LAST (line 62649) — a
+// `var_types` entry left over from ANY earlier-compiled function using
+// that bare name as a local (same file OR a completely different one)
+// poisons every LATER use of that same spelling as a module alias. SAME
+// class as #617 (name resolves before scope), a DIFFERENT table, in
+// codegen rather than the checker — and LOUD (CC-FAIL leaking raw C), not
+// silent.
+//
+// THIS fixture is kept GREEN and pinned to the checker-only claim (uses
+// `p617mod`, a spelling that collides with nothing else in this CU) so it
+// actually compiles, runs, and prints values (№577) instead of
+// permanently CC-FAILing on a bug this window cannot fix (zone). The
+// collision variant is described above precisely enough to reproduce
+// (rename `p617mod` -> `p617clash` in the two `import`/call sites below)
+// without committing a permanently-red fixture for a defect belonging to
+// the parallel `emit_c.rs` window.
+
+module standalone.p617_alias_leak_probe
+
+import p617_alias_target as p617mod
+import p617_local_collide
+
+fn main() {
+    ro t = p617mod.p617_target_marker()
+    println("TARGET_MARKER ${t}")
+    ro r = p617_local_collide.p617_run_collide()
+    println("COLLIDE_RESULT ${r}")
+}
