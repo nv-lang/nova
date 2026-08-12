@@ -1,0 +1,46 @@
+// №TBD regression pin (реестр 221.1 №599 causa 2, окно p599-codegen-typing,
+// класс "имя решает раньше объявления", родня №576).
+//
+// `Result[T,E]@map_err[F](fn(E)->F)` called with an UNTYPED closure literal
+// (`|_| ...`) whose body is a bare RECORD-shaped sum-variant construction
+// (`Bad { code: 7 }` — spells ONLY the variant's own name, never the owning
+// sum TYPE's name) used to make the checker's best-effort closure-body peek
+// (`infer_expr_type`'s `RecordLit` arm, `compiler-codegen/src/types/mod.rs`)
+// return `TypeRef::Named{"Bad"}` verbatim — a type name that doesn't exist
+// anywhere (unlike `f1_expr_inner`'s OWN RecordLit channel-materialization,
+// which already did the variant→owner search). Consumed by
+// `resolve_method_return_with_closure_args` to bind `map_err`'s method-level
+// generic `F`, the bogus `Bad` type-arg failed to lower in codegen and
+// silently defaulted to the generic erased-Err placeholder `nova_str` — a
+// `?`-propagated Err payload of the REAL error type got declared/passed as
+// if it were `nova_str`. Root-caused on `std/src/time/cron.nv`'s
+// `parse_int_in`: `s.to_int().map_err(|_| InvalidValue{field,value})?` —
+// CC-FAIL, `cron_test.c`: "passing 'nova_str' to parameter of incompatible
+// type 'Nova_ParseCronError *'".
+//
+// Fix: `infer_expr_type`'s `RecordLit` arm now mirrors the SAME single-
+// unambiguous-owner search `f1_expr_inner` already performs for this exact
+// shape (and its own sibling fallback for a bare UNIT variant, `Ident`) —
+// when the literal's spelled name isn't a real top-level type, look for the
+// ONE non-generic sum type whose variant list has a Record-kind variant of
+// that name.
+// EXPECT_STDOUT MAP_ERR_BARE_VARIANT_OK:7
+
+module standalone.map_err_bare_variant_owner_type
+
+type MyErr enum
+    | Bad { code int }
+
+fn parse_it(s str) -> Result[int, MyErr] {
+    ro n = s.to_int().map_err(|_| Bad { code: 7 })?
+    Ok(n)
+}
+
+fn main() {
+    match parse_it("nope") {
+        Ok(_) => println("UNEXPECTED_OK")
+        Err(e) => match e {
+            Bad { code } => println("MAP_ERR_BARE_VARIANT_OK:${code}")
+        }
+    }
+}
