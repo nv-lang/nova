@@ -231,10 +231,14 @@ generic'и (№600), sum-lift с голым типовым параметром 
 делать, ролбек или коммит».
 
 ```nova
+// Форма `Fail[E]` в подписи допустима, но КАНОН std — без `Fail`, через
+// `Result` (D325 / план 177, Result-everywhere). Уточнено владельцем
+// 2026-08-12; сегодняшний `sql.nv` написан по старому и попадает в те самые
+// «17 файлов, ещё бросающих собственный Fail» из плана 177.
 type Db effect {
-    query(q Sql) Fail[DbError] -> []DbRow
-    exec(q Sql)  Fail[DbError] -> int
-    begin()      Fail[DbError] -> Tx        // вместо in_transaction[T, E]
+    query(q Sql) -> Result[[]DbRow, DbError]
+    exec(q Sql)  -> Result[int, DbError]
+    begin()      -> Result[Tx, DbError]     // вместо in_transaction[T, E]
 }
 
 type Tx consume { … }
