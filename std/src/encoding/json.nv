@@ -72,6 +72,13 @@ import std.collections.index_map.{IndexMap}
 // `IndexMap[str, JsonValue]` via a local binding (free, same repr), call the
 // real implementation, done. Not a copy of the implementation — every line
 // of actual map logic lives ONLY in `std/src/collections/index_map/core.nv`.
+//
+// EXCEPTION (№602, реестр 221.1): `@keys()` is NOT re-declared below — see
+// the note right above that method's old location for why a re-declaration
+// there was worse than useless (a checker/codegen mismatch, not just dead
+// code). `m.keys()` on a `JsonObject` falls through to `IndexMap`'s own
+// `@keys()` — same as every OTHER method here does internally anyway, just
+// without a same-named facade in the way.
 /// Ordered JSON-object map — see the module-level Фаза 3 note above. Iteration
 /// (`@iter()`, `for (k, v) in obj`) always follows insertion order — NOT hash
 /// order. Re-inserting an existing key updates the value and does NOT move
@@ -123,12 +130,25 @@ export fn JsonObject mut @insert(key str, value JsonValue) -> Option[JsonValue] 
     old
 }
 
-/// Keys in insertion order.
-#stable(since = "0.1")
-export fn JsonObject @keys() -> []str {
-    ro m IndexMap[str, JsonValue] = @
-    m.keys()
-}
+// №602 (реестр 221.1): `JsonObject @keys()` is NOT re-declared here — unlike
+// every OTHER method in this file. A re-declared facade would be DEAD CODE
+// for any caller outside this file: confirmed in generated C, `m.keys()`
+// (`m: JsonObject`) always calls `IndexMap`'s OWN `@keys()` directly
+// (`IndexMap____nova_str__Nova_JsonValue_p_method_keys`), never a
+// `JsonObject`-declared one, regardless of that facade's body — the checker
+// resolves an aliased value's method call against the alias TARGET's method
+// table, not the alias's own, whenever both declare the same name
+// (`[M-TBD-alias-method-shadow-cross-module]`, confirmed with a minimal
+// two-file repro outside json.nv — a compiler defect, not fixed here, std
+// source only in this window). `m.keys()` therefore returns EXACTLY what
+// `IndexMap[str, JsonValue].@keys()` returns — see that method's doc comment
+// in `std/src/collections/index_map/core.nv` for why it is a materialized
+// `[]str` (not the lazy iterator registry №506 gave it) precisely BECAUSE of
+// this same alias gap: a lazy iterator is unreachable-safe only for callers
+// who spell the type directly as `IndexMap`, never for `JsonObject`
+// (or any other alias-wrapper) callers, and `json_test.nv`'s
+// `keys.len()`/`keys[0]` assertions need to work through the `JsonObject`
+// spelling.
 
 /// Order-independent structural equality (D109/D237 `Equal`-impl) —
 /// mirrors `HashMap[K, V] @equal` / `IndexMap[K, V] @equal`. Semantic
