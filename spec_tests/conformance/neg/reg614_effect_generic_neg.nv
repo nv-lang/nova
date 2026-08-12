@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_EFFECT_GENERIC_UNSUPPORTED
+//
+// Реестр 221.1 №614 — generic-параметр на САМОМ эффекте (не на
+// операции). Раньше (до владельческого решения 2026-08-12) поведение
+// раздваивалось, и обе ветки были плохи: с подставленным типом в
+// обработчике (`get() -> int => 7`) чекер ВИНИЛ АВТОРА
+// (`E_HANDLER_OP_RETURN_TYPE_MISMATCH` — «declares return type `int`,
+// but the effect's own declaration says `T`»), не говоря, что
+// generic-эффекты не поддержаны вовсе; с голым `T` в обработчике
+// `nova check` был зелёным, а `nova build` падал `unknown type name
+// 'NovaVtable_Store'`. Носитель репро —
+// docs/plans/wip/repro-614-generic-effect.nv.txt (главное дерево).
+//
+// Владелец 2026-08-12: generic-эффект отвергается ЧЕКЕРОМ по имени НА
+// ОБЪЯВЛЕНИИ, до закрытия Q6 (spec/open-questions.ru.md#q6). Отказ на
+// объявлении исключает `Store` из схемы `check_handler_op_declarations`
+// (types/mod.rs) — обработчики того же generic-эффекта больше НЕ
+// проверяются на mismatch отдельно: одна причина, одно сообщение.
+module neg.reg614_effect_generic_neg
+
+// nova:expect E_EFFECT_GENERIC_UNSUPPORTED -- rank-2: один vtable-слот, одна подпись; Q6 открыт (реестр 221.1 №614)
+type Store[T] effect {
+    put(v T) -> ()
+    get() -> T
+}
+
+fn main() -> () {}
