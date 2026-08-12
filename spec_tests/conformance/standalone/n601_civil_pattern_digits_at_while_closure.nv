@@ -1,0 +1,40 @@
+// №601 (реестр 221.1): `civil_arith_test` failed with `integer overflow: *`
+// on EVERY pattern-DSL test (format+parse round-trip, name-pattern, optional
+// sections, strict validation) — not a value mismatch, a runaway loop.
+//
+// Root: `digits_at` (std/src/time/civil/parse.nv) used to read each digit
+// via `c.to_int().map_err(|_| FormatMismatch(i, "digit"))?` — a closure
+// literal created INSIDE the `while i < pos + n { ... }` loop body,
+// capturing `i` (the loop's own condition variable). A compiler defect
+// makes any closure literal capturing a `mut` loop-condition variable,
+// created inside that loop's body, silently stop the variable's mutation
+// (`i += 1`) from being visible on the NEXT iteration — even when the
+// closure is never actually called (confirmed with a repro outside civil/
+// time entirely: a closure merely referencing an outer `mut i` inside a
+// `while` freezes `i` at its first value regardless of whether anything
+// ever calls that closure). `i` froze at `pos` forever, the loop never
+// reached `pos + n`, and `v = v * 10 + d` kept re-adding the SAME digit
+// until it overflowed `i64` — hence "integer overflow: *" with no value
+// context in the original failure (the panic fires deep inside a runaway
+// loop, not at a comparison of two concrete values).
+//
+// Fix: replace `.map_err(closure)` with a `match` arm (no closure literal
+// created inside the loop) — sidesteps the trigger entirely, same digit-loop
+// otherwise. This fixture prints the round-trip VALUES (лесson №577 — a
+// vacuous "ok" print could pass even with the loop still broken if the
+// pattern happened to be 1 digit wide; printing the actual formatted and
+// re-parsed values proves the loop terminated and read back the right date).
+//
+// EXPECT_STDOUT formatted=10.07.2026 parsed=2026-07-10
+
+module standalone.n601_civil_pattern_digits_at_while_closure
+
+import std.time.civil
+
+fn main() {
+    ro f = DateTimeFormat.new().day2().lit(".").month2().lit(".").year4()
+    ro dt = Date.new(2026, Jul, 10)!!.at_midnight()
+    ro formatted = f.format(dt)
+    ro parsed = formatted.to_date_with(f)!!
+    println("formatted=${formatted} parsed=${parsed.to_str()}")
+}
