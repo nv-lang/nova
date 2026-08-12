@@ -2118,6 +2118,11 @@ fn check_module_impl(
     // must be fully typed (`-> Type` mandatory, must match effect schema).
     check_handler_op_declarations(module, &mut errors);
 
+    // Owner decision 2026-08-12 (реестр 221.1 №570/№614, D456 amend): both
+    // axes of generic effects are a NAMED checker refusal, not a silent
+    // pass-through to the C compiler. See `check_effect_generic_refusal`.
+    check_effect_generic_refusal(module, &mut errors);
+
     // Plan 172.1 U.3.4: lift the per-call resolved-callee channel (call-site `ExprId` →
     // chosen callee `FnDecl` span) out of the checker into the `ModuleEnv` so the pipeline
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
@@ -50394,6 +50399,128 @@ fn suspend_call_closure(
 /// both resolve to a known `type X effect { ... }` declaration in this CU —
 /// an unresolved effect/op is left to other diagnostics (unknown-effect/
 /// unknown-op are a different concern, not this pass's job).
+/// Owner decision 2026-08-12 (реестр 221.1 №570 — generic effect OPERATION,
+/// №614 — generic EFFECT itself; D456 amend, `spec/decisions/04-effects.md`):
+/// both axes of generic effects are a NAMED checker refusal, not a silent
+/// pass-through that dies in the C compiler. Before this pass, BOTH forms
+/// were accepted by `check` and crashed `build`:
+///   - Axis 1 (№570): `type Wrap effect { around[T](body fn() -> T) -> T }`
+///     — codegen emits ONE erased `Nova_Wrap_around` function returning a
+///     single C type; a second instantiation fails to typecheck in C.
+///   - Axis 2 (№614): `type Store[T] effect { ... }` — either the handler
+///     supplies a concrete type and the checker (wrongly) blames the
+///     handler author (`E_HANDLER_OP_RETURN_TYPE_MISMATCH`), or the
+///     handler writes the bare `T` back, `check` is green, and `build`
+///     fails with `unknown type name 'NovaVtable_Store'` — the vtable
+///     type was never emitted at all.
+///
+/// Root cause, shared by both axes: an effect operation dispatches through
+/// ONE runtime vtable slot with ONE erased signature. Making that slot
+/// polymorphic per call-site needs rank-2 polymorphism, which is the open
+/// question Q6 (`spec/open-questions.ru.md#q6`) — unresolved. Until Q6
+/// closes, both axes are refused BY NAME here, at the declaration:
+///
+///   - `E_EFFECT_GENERIC_UNSUPPORTED` — `type X[T] effect { ... }` (axis 2,
+///     fires on the type declaration; excludes the type from
+///     `check_handler_op_declarations`'s schema map above, so a generic
+///     effect's handlers never ALSO get blamed via
+///     `E_HANDLER_OP_RETURN_TYPE_MISMATCH` — one cause, one diagnostic).
+///   - `E_EFFECT_OP_GENERIC_UNSUPPORTED` — `op[T](...)` inside a
+///     (non-generic) effect body (axis 1, fires per generic operation).
+///
+/// Generic PROTOCOLS (`TypeDeclKind::Protocol`) are OUT of scope and stay
+/// accepted — verified by build+run (реестр №570): a generic protocol
+/// works both as a static bound (`fn f[S Src[int]](x S)`) and boxed
+/// directly (`fn f(x Src[int])`, fat pointer + vtable). The refusal here
+/// is specific to `TypeDeclKind::Effect`'s runtime handler-stack
+/// dispatch, not to generics-in-a-vtable-shaped-thing in general.
+///
+/// **`arity_exempt` names are OUT of scope too — found empirically, not by
+/// reasoning (checked by RUNNING this pass over `std/src`, not skipped).**
+/// `std/src/prelude/effects.nv:48` declares `export type Fail[E] effect {
+/// fail(e E) -> never }` — the compiler-intrinsic sugar target of `throw`/
+/// `!!`/auto-`Fail`-inference, used by nearly every fallible fn in the
+/// language. It is NOT a user-defined effect going through the general
+/// handler-literal vtable path #570/#614 describe (its own module doc
+/// calls it "runtime-defined": `fail` never reifies as one erased C
+/// function the way `Wrap.around`/`Store.get` do — propagation is a
+/// longjmp-style unwind, typed per call-site, not a single fixed-signature
+/// vtable slot). Refusing it here would not name a real gap; it would
+/// break the entire standard library on the very first `nova check
+/// std/src` run. Reuses `arity_exempt`'s existing name-list (`Fail`,
+/// `Effect`, plus the referential/top/bottom names and `Ask`/`Alloc`,
+/// which are not declared via `Item::Type` at all and would never reach
+/// this loop regardless) — the SAME set the checker already treats as
+/// "built-in effect, flexible/sugared arity, not an ordinary user type"
+/// (see `arity_exempt`'s own doc, just above `check_module_impl`'s callers
+/// in this file).
+pub(crate) fn check_effect_generic_refusal(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::{Item, TypeDeclKind};
+
+    let mut seen_type_spans: HashSet<crate::diag::Span> = HashSet::new();
+    let mut all_item_lists: Vec<&[Item]> = vec![&module.items];
+    for pf in &module.peer_files {
+        all_item_lists.push(&pf.items_here);
+    }
+    for items in &all_item_lists {
+        for it in *items {
+            let Item::Type(td) = it else { continue };
+            let TypeDeclKind::Effect(methods) = &td.kind else { continue };
+            if !seen_type_spans.insert(td.span) { continue; }
+            if arity_exempt(&td.name) { continue; }
+
+            if let Some(g0) = td.generics.first() {
+                let params: Vec<&str> = td.generics.iter().map(|g| g.name.as_str()).collect();
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_EFFECT_GENERIC_UNSUPPORTED] effect `{name}` declares generic \
+                         parameter(s) `{params}` on the effect itself (`type {name}[{params}] \
+                         effect`) — an effect's runtime handler vtable is ONE erased structure \
+                         with ONE signature per slot; instantiating it per type parameter needs \
+                         rank-2 polymorphism, the open question Q6 \
+                         (spec/open-questions.ru.md#q6), not yet closed. Until Q6 closes, a \
+                         generic effect is refused here, at the declaration — not accepted and \
+                         left to crash the C compiler (`unknown type name 'NovaVtable_{name}'`) \
+                         or to misdirect the blame onto a handler author who wrote the only \
+                         sensible signature (реестр 221.1 №614).",
+                        name = td.name,
+                        params = params.join(", "),
+                    ),
+                    g0.span,
+                ));
+                // Ось 2 уже названа на объявлении — операции того же
+                // generic-эффекта не проверяются здесь отдельно (одна
+                // причина, одно сообщение; ветка (а) №614 умирает сама,
+                // до `check_handler_op_declarations` дело не доходит,
+                // см. exclusion выше).
+                continue;
+            }
+
+            for m in methods {
+                let Some(g0) = m.generics.first() else { continue };
+                let params: Vec<&str> = m.generics.iter().map(|g| g.name.as_str()).collect();
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_EFFECT_OP_GENERIC_UNSUPPORTED] effect operation `{eff}.{op}` \
+                         declares generic parameter(s) `{params}` (`{op}[{params}](...)`) — an \
+                         effect operation dispatches through ONE runtime vtable slot with ONE \
+                         erased signature, so a per-call type parameter needs rank-2 \
+                         polymorphism, which the vtable slot does not provide: codegen would \
+                         emit a single erased function and a second instantiation fails to \
+                         typecheck in C. This is open question Q6 \
+                         (spec/open-questions.ru.md#q6), not yet closed. Until Q6 closes, \
+                         generic effect operations are refused here, not accepted and left to \
+                         crash the C compiler (реестр 221.1 №570).",
+                        eff = td.name, op = m.name,
+                        params = params.join(", "),
+                    ),
+                    g0.span,
+                ));
+            }
+        }
+    }
+}
+
 pub(crate) fn check_handler_op_declarations(module: &crate::ast::Module, errors: &mut Vec<Diagnostic>) {
     use crate::ast::{EffectMethod, FnBody, Item, TypeDeclKind};
 
@@ -50408,7 +50535,19 @@ pub(crate) fn check_handler_op_declarations(module: &crate::ast::Module, errors:
             if let Item::Type(td) = it {
                 if let TypeDeclKind::Effect(methods) = &td.kind {
                     if seen_type_spans.insert(td.span) {
-                        effect_decls.insert(td.name.clone(), methods.clone());
+                        // Owner decision 2026-08-12 (№570/№614): a generic
+                        // effect (`type X[T] effect { ... }`) is refused
+                        // BY NAME (`check_effect_generic_refusal`, below) —
+                        // it never gets a usable schema, so matching
+                        // handler-literal ops against it here would either
+                        // duplicate that refusal or blame the handler
+                        // author for a T-vs-concrete mismatch that is not
+                        // theirs (реестр №614 branch (а)). Excluded from
+                        // this schema map; the generic-effect refusal is
+                        // the ONLY diagnostic such a declaration gets.
+                        if td.generics.is_empty() {
+                            effect_decls.insert(td.name.clone(), methods.clone());
+                        }
                     }
                 }
             }
