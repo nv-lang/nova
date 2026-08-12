@@ -13,9 +13,26 @@
 # 2026-08-12: два имени uuid УШЛИ — №559 закрыт (const-агрегат в указательный
 # слот уводится на lazy-путь с GC-корнем, `nova test std/src/identifiers`
 # даёт PASS: 4 FAIL: 0). База опущена, а не подтёрта: причина названа.
+#
+# 2026-08-12 (окно p599-codegen-typing): №599 закрыт для ОБЕИХ оставшихся
+# причин. `cron_test` — УШЁЛ из базы: `?`-проброс `map_err`-результата через
+# бесконтрольный closure-body (bare sum-variant literal) резолвил F не по
+# owning-типу, а по спеллингу варианта — checker (`infer_expr_type`'s
+# RecordLit-арм, types/mod.rs) резолвит F теперь через тот же variant→owner
+# поиск, что и остальной чекер; `nova test std/src/time` PASS:5 FAIL:1 (только
+# №601). `decode_errors_test` — причина №599 (генерик `[]T.deserialize`
+# TurboFish-вызов терял элемент-тип, `NovaOpt_Vec[str]` получал `Vec[int]`)
+# ЗАКРЫТА и подтверждена фикстурой: сгенерированный C для ВСЕХ вызовов
+# `Nova_NovaArray_nova_str_static_deserialize...` теперь несёт правильный
+# `nova_str`, CC-FAIL ушёл. Имя ОСТАЁТСЯ в базе — компиляция теперь проходит,
+# но `nova test std/src/encoding/serde` вскрыл RUN-FAIL, ранее НЕВИДИМЫЙ за
+# тем же CC-FAIL (весь модуль не собирался ни разу): 4 теста в
+# `sum_autoderive_test.nv` (той же CU) падают в рантайме (`<typed err>` /
+# `wrong kind`) — сериализация/десериализация sum-варианта с record-,
+# Option- и Vec-payload, независимо от типизации кодогена. Новый дефект,
+# №TBD, не тот же класс — не чинился в этом окне (см. отчёт p599).
 
-std/src/encoding/serde/decode_errors_test   # №599 (Option-обёртка над Vec)
-std/src/time/cron_test                      # №599 (строка на месте указателя на ошибку)
+std/src/encoding/serde/decode_errors_test   # №TBD (было №599/CC-FAIL, ЗАКРЫТО окном p599; теперь RUN-FAIL в sum_autoderive_test.nv, скрытый прежде тем же CC-FAIL)
 std/src/time/civil/civil_arith_test         # №601 (format+parse round-trip)
 std/src/encoding/json_test                  # №602 (порядок вставки; сверить с №505)
 std/src/net/addr                            # №591 (только CI: wakes a directly-parked accept)
