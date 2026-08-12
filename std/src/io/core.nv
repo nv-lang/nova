@@ -40,7 +40,7 @@ const DEFAULT_CHUNK = 8192
 /// The buffer must already have length (e.g. `buf.resize(cap, 0)`); `n <= buf.len()`.
 #stable(since = "0.1")
 export type Read protocol {
-    mut @read(buf mut []u8) -> Result[int, IoError]
+    mut @read(mut buf []u8) -> Result[int, IoError]
 }
 
 /// Byte sink. `@write(data)` writes some prefix of `data` and returns the count
@@ -95,7 +95,7 @@ export fn SeekFrom.current(n int) -> SeekFrom => Current(n) // [M-lint-findings-
 /// retrying `Interrupted`. `Ok(0)` before the buffer is full → `UnexpectedEof`.
 /// Rust `Read::read_exact`.
 #stable(since = "0.1")
-export fn read_exact[R Read](mut r R, buf mut []u8) -> Result[(), IoError] {
+export fn read_exact[R Read](mut r R, mut buf []u8) -> Result[(), IoError] {
     ro total = buf.len()
     mut filled = 0
     mut chunk []u8 = []u8.new()

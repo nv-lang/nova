@@ -77,7 +77,7 @@ export fn Uuid.v5(namespace Uuid, name str) -> Self {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn push_uuid_bytes(out mut []u8, u Uuid) {
+fn push_uuid_bytes(mut out []u8, u Uuid) {
     mut i = 7
     while i >= 0 {
         out.push(((u.hi >> (i * 8)) & 0xFF) as u8)
@@ -90,7 +90,7 @@ fn push_uuid_bytes(out mut []u8, u Uuid) {
     }
 }
 
-fn set_version_variant(bytes mut []u8, version int) {
+fn set_version_variant(mut bytes []u8, version int) {
     // Version в старшие 4 бита 6-го байта (нумерация с 0).
     bytes[6] = (((bytes[6] as int) & 0x0F) | (version << 4)) as u8
     // Variant 10 в старшие 2 бита 8-го байта.

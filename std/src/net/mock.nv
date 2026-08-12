@@ -82,7 +82,7 @@ fn mock_lookup() -> Result[(int, int), NetError] {
 }
 
 // Copy up to buf.len() bytes of `data` into `buf`; returns the count copied.
-fn mock_fill(buf mut []u8, data []u8) -> int {
+fn mock_fill(mut buf []u8, data []u8) -> int {
     ro n = if data.len() < buf.len() { data.len() } else { buf.len() }
     for i in 0..n {
         buf[i] = data[i]

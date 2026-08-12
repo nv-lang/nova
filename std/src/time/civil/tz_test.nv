@@ -163,11 +163,11 @@ fn build_tzif_v2() -> []u8 {
     b
 }
 
-fn push_str(b mut []u8, s str) {
+fn push_str(mut b []u8, s str) {
     for byte in s.bytes() { b.push(byte) }
 }
 
-fn push_u32(b mut []u8, v i64) {
+fn push_u32(mut b []u8, v i64) {
     ro u = if v < 0 { v + 4_294_967_296 } else { v }
     b.push(((u / 16_777_216) % 256) as u8)
     b.push(((u / 65_536) % 256) as u8)
@@ -175,9 +175,9 @@ fn push_u32(b mut []u8, v i64) {
     b.push((u % 256) as u8)
 }
 
-fn push_i32(b mut []u8, v i64) { push_u32(b, v) }
+fn push_i32(mut b []u8, v i64) { push_u32(b, v) }
 
-fn push_i64(b mut []u8, v i64) {
+fn push_i64(mut b []u8, v i64) {
     // Только неотрицательные в тестовом билдере.
     push_u32(b, v / 4_294_967_296)
     push_u32(b, v % 4_294_967_296)

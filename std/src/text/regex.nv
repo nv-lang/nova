@@ -511,7 +511,7 @@ export fn Regex.compile(pattern str) -> Result[Regex, CompileError] {
 
 // `tchars` — subject text materialised as `[]char` ONCE by the caller (see
 // `try_match`) instead of scanning via `chars().nth()`.
-fn add_state(set mut []bool, states []NfaState, idx int, pos int, tchars []char) -> () {
+fn add_state(mut set []bool, states []NfaState, idx int, pos int, tchars []char) -> () {
     if idx < 0 || idx >= states.len() { return () }
     if set[idx] { return () }
     set[idx] = true

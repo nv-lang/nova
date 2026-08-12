@@ -71,7 +71,7 @@ export fn UdpSocket mut @send_str(s str, addr SocketAddr) Net -> Result[int, Net
 /// Receive the next datagram into `buf`; returns `Ok((n, sender))`.
 /// The bytes land straight in `buf` (zero-copy); `sender` is the peer address.
 #stable(since = "0.1")
-export fn UdpSocket mut @recv_from(buf mut []u8) Net -> Result[(int, SocketAddr), NetError] {
+export fn UdpSocket mut @recv_from(mut buf []u8) Net -> Result[(int, SocketAddr), NetError] {
     mut sender = addr_image()
     match Net.recv_from(@, buf, sender) {
         Ok(n)  => recv_ok(n, SocketAddr.from_image(sender))

@@ -15,7 +15,7 @@
 // Addresses never cross the vtable as a multi-word RETURN either: address getters
 // and the UDP sender fill a caller 20-byte []u8 image, which the public method
 // wraps into a `SocketAddr` value. `SocketAddr` DOES appear as an ARGUMENT
-// (multi-word args are fine — cf. std/io `read_in(buf mut []u8)`).
+// (multi-word args are fine — cf. std/io `read_in(mut buf []u8)`).
 //
 // Operations that wait on I/O (accept/connect/read/write/send_to/recv_from/
 // lookup) park the calling fiber inside real_net and resume from the libuv loop;
@@ -32,7 +32,7 @@ export type Net effect {
     accept(listener TcpListener) -> Result[TcpStream, NetError]
     connect(addr SocketAddr) -> Result[TcpStream, NetError]
     // Fill buf[0..n] from the stream; Ok(0) = clean EOF (peer close).
-    read(stream TcpStream, buf mut []u8) -> Result[int, NetError]
+    read(stream TcpStream, mut buf []u8) -> Result[int, NetError]
     // Send data; Ok(n) = bytes accepted.
     write(stream TcpStream, data []u8) -> Result[int, NetError]
     shutdown(stream TcpStream) -> Result[(), NetError]
@@ -40,11 +40,11 @@ export type Net effect {
     close_listener(listener TcpListener) -> ()
     mark_split(stream TcpStream) -> ()
     listener_local_port(listener TcpListener) -> int
-    listener_local_addr(listener TcpListener, out mut []u8) -> ()
+    listener_local_addr(listener TcpListener, mut out []u8) -> ()
     stream_local_port(stream TcpStream) -> int
     stream_peer_port(stream TcpStream) -> int
-    stream_local_addr(stream TcpStream, out mut []u8) -> ()
-    stream_peer_addr(stream TcpStream, out mut []u8) -> ()
+    stream_local_addr(stream TcpStream, mut out []u8) -> ()
+    stream_peer_addr(stream TcpStream, mut out []u8) -> ()
     set_nodelay(stream TcpStream, on bool) -> ()
     set_keepalive(stream TcpStream, on bool) -> ()
     set_reuse_address(listener TcpListener, on bool) -> ()
@@ -53,10 +53,10 @@ export type Net effect {
     udp_bind(addr SocketAddr) -> Result[UdpSocket, NetError]
     send_to(sock UdpSocket, data []u8, addr SocketAddr) -> Result[int, NetError]
     // Datagram into buf[0..n]; sender's 20-byte image into `sender`.
-    recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError]
+    recv_from(sock UdpSocket, mut buf []u8, mut sender []u8) -> Result[int, NetError]
     close_socket(sock UdpSocket) -> ()
     socket_local_port(sock UdpSocket) -> int
-    socket_local_addr(sock UdpSocket, out mut []u8) -> ()
+    socket_local_addr(sock UdpSocket, mut out []u8) -> ()
 
     // ── DNS ──────────────────────────────────────────────────────────────────
     // Resolve (host):port in one call. Returns (array_base, count) where

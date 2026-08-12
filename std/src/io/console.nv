@@ -22,7 +22,7 @@ module std.io
 /// effect vtable — the buffer-fill shape sidesteps that, and matches `io.Read`.)
 #stable(since = "0.1")
 export type Io effect {
-    read_in(buf mut []u8) -> Result[int, IoError]
+    read_in(mut buf []u8) -> Result[int, IoError]
     write_out(data []u8) -> Result[int, IoError]
     write_err(data []u8) -> Result[int, IoError]
 }
@@ -42,7 +42,7 @@ export fn stdin() -> Stdin => { unit: 0 }
 /// doc): the conformer carries its OWN plumbing effect. The raw `Io.read_in` op
 /// call below is the explicit dispatch to it.
 #stable(since = "0.1")
-export fn Stdin mut @read(buf mut []u8) Io -> Result[int, IoError] => Io.read_in(buf)
+export fn Stdin mut @read(mut buf []u8) Io -> Result[int, IoError] => Io.read_in(buf)
 
 /// `io.Write` handle for standard output — writes through the ambient `Io` effect.
 #stable(since = "0.1")

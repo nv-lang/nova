@@ -146,7 +146,7 @@ fn BufReader[R Read] mut @refill() -> Result[int, IoError] {
 /// io.Read: serve up to `buf.len()` bytes from the internal buffer, refilling
 /// from the inner reader when empty. `Ok(0)` (non-empty `buf`) = EOF.
 #stable(since = "0.1")
-export fn BufReader[R Read] mut @read(buf mut []u8) -> Result[int, IoError] {
+export fn BufReader[R Read] mut @read(mut buf []u8) -> Result[int, IoError] {
     ro want = buf.len()
     if want == 0 { return Ok(0) }
     ro avail = @refill()?

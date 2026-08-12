@@ -1584,15 +1584,17 @@ export extern "nova" fn Mutex.new() -> Self
 
 /// Acquire the mutex. Parks the calling fiber until released.
 ///
-/// V2 (Plan 103.9, D174): returns `MutexGuard consume` — statically
-/// enforced release via the consume-type system. Old callers that discard
+/// Returns `MutexGuard` — a `consume`-declared type (D133), so release is
+/// statically enforced by the consume-type system itself (№616, 2026-08-12:
+/// no `consume` modifier is written on the return type — the type
+/// declaration already carries the obligation). Old callers that discard
 /// the return value (`mu.lock()` as statement) continue to compile;
 /// only `consume g = mu.lock()` creates a consumption obligation.
 ///
 /// NOT reentrant — a repeated call from the same fiber deadlocks.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Mutex @lock() -> consume MutexGuard
+export extern "nova" fn Mutex @lock() -> MutexGuard
 
 /// (Deprecated) Release the mutex without a guard.
 ///
@@ -1738,11 +1740,12 @@ export extern "nova" fn RwLock.new_reader_priority() -> Self
 
 /// Acquire the read lock. Parks if a writer is active or waiting (writer-priority).
 ///
-/// V2: returns `ReadGuard consume`. Use `guard.unlock()` to release.
-/// Old callers that discard the return value still compile.
+/// Returns `ReadGuard` — a `consume`-declared type (D133); no `consume`
+/// modifier on the return type (№616, 2026-08-12). Use `guard.unlock()` to
+/// release. Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock @read() -> consume ReadGuard
+export extern "nova" fn RwLock @read() -> ReadGuard
 
 /// (Deprecated) Release the read lock without a guard.
 ///
@@ -1769,11 +1772,12 @@ export extern "nova" fn RwLock @read_for(timeout Duration) -> bool
 
 /// Acquire the write lock. Waits for all readers and other writers to finish.
 ///
-/// V2: returns `WriteGuard consume`. Use `guard.unlock()` to release.
-/// Old callers that discard the return value still compile.
+/// Returns `WriteGuard` — a `consume`-declared type (D133); no `consume`
+/// modifier on the return type (№616, 2026-08-12). Use `guard.unlock()` to
+/// release. Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock @write() -> consume WriteGuard
+export extern "nova" fn RwLock @write() -> WriteGuard
 
 /// (Deprecated) Release the write lock without a guard.
 ///
@@ -2061,7 +2065,7 @@ export extern "nova" fn Once mut @start_won() -> bool
 /// Not for direct use — the guard is opaque; call `.commit()` or `.abort()`.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn Once mut @make_guard() -> consume OnceGuard
+export extern "nova" fn Once mut @make_guard() -> OnceGuard
 
 /// Attempt to start once initialization. Returns `Some(guard)` to the winning
 /// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
@@ -2538,14 +2542,15 @@ export extern "nova" fn Semaphore.new(permits int) -> Self
 
 /// Acquire 1 permit. Parks until a permit becomes available (FIFO order).
 ///
-/// V2: returns `Permit consume`. Use `permit.release()` to release.
-/// Old callers that discard the return value still compile.
+/// Returns `Permit` — a `consume`-declared type (D133); no `consume`
+/// modifier on the return type (№616, 2026-08-12). Use `permit.release()`
+/// to release. Old callers that discard the return value still compile.
 ///
 /// # Realtime
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Semaphore mut @acquire() -> consume Permit
+export extern "nova" fn Semaphore mut @acquire() -> Permit
 
 /// (Deprecated) Release 1 permit without guard.
 ///
