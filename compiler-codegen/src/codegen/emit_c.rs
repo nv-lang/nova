@@ -37108,56 +37108,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // on a user generic STATIC method declared on a slice receiver
                 // (`fn[T ..] []T.method[..](..) -> Result[.., ..]`, D42/D38): the
                 // receiver is a TurboFish, NOT a bare Ident, so the Ident-only match
-                // above misses and `?` degrades to the `/* ? */` no-op that assigns
-                // the raw `NovaRes_*` pointer straight into the unwrapped local
-                // (garbage `.len()`). Recover the Result type from the method's
-                // DECLARED return `TypeRef` (in `mono_method_decls[("[]T", method)]`)
-                // with the receiver typevar bound to the concrete <elem> from the
-                // turbofish. Only fires in the degraded (non-Result) case, so a
-                // correctly-inferred call is untouched.
-                if !Self::is_result_like(&inner_ty)
-                    && !inner_ty.starts_with("NovaOpt_")
-                {
-                    if let ExprKind::Call { func, .. } = &inner.kind {
-                        if let ExprKind::Member { obj, name } = &func.kind {
-                            if let ExprKind::TurboFish { base, type_args } = &obj.kind {
-                                if matches!(&base.kind, ExprKind::Ident(_)) {
-                                    let key = ("[]T".to_string(), name.clone());
-                                    let fn_decl = self.mono_method_decls.get(&key).cloned();
-                                    if let Some(fn_decl) = fn_decl {
-                                        let is_static = matches!(
-                                            fn_decl.receiver.as_ref().map(|r| &r.kind),
-                                            Some(crate::ast::ReceiverKind::Static));
-                                        if is_static {
-                                            if let (Some(recv_tv), Ok(elem_c), Some(ret_tr)) = (
-                                                fn_decl.generics.first().map(|g| g.name.clone()),
-                                                type_args.first()
-                                                    .map(|tr| self.type_ref_to_c(tr))
-                                                    .unwrap_or_else(|| Ok(String::new())),
-                                                fn_decl.return_type.clone(),
-                                            ) {
-                                                if !elem_c.is_empty() && elem_c != "void*" {
-                                                    let saved = std::mem::replace(
-                                                        &mut self.current_type_subst,
-                                                        Self::subst_map_from_c_pairs(
-                                                            std::iter::once((recv_tv, elem_c))));
-                                                    let ret_c = self.type_ref_to_c(&ret_tr).ok();
-                                                    self.current_type_subst = saved;
-                                                    if let Some(ret_c) = ret_c {
-                                                        if Self::is_result_like(&ret_c)
-                                                            && !self.debt_is_generic_stub_c(&ret_c)
-                                                        {
-                                                            inner_ty = ret_c;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                // above misses and `?` used to degrade to the `/* ? */` no-op that
+                // assigned the raw `NovaRes_*` pointer straight into the unwrapped
+                // local (garbage `.len()`).
+                //
+                // №TBD (реестр 221.1 №599, serde causa 3): the original guard here
+                // was `!is_result_like(&inner_ty)` — "only fires in the degraded
+                // non-Result case". That silently protected a SECOND, more damaging
+                // degradation the comment didn't anticipate: an earlier, more
+                // generic Call-dispatch elsewhere in `infer_expr_c_type` can resolve
+                // `Vec[<elem>].deserialize(..)` to a WELL-FORMED-looking but
+                // WRONG-ELEMENT Result (`NovaRes_Nova_Vec____nova_int_p_...*` — the
+                // codebase's canonical default-T stub standing in for an unresolved
+                // receiver typevar) instead of degrading to non-Result garbage.
+                // `is_result_like` only checks the structural `NovaRes_…*` shape,
+                // not whether its element matches THIS call's turbofish `<elem>` —
+                // so the guard waved the wrong answer through as "already correct".
+                // Repro: `std/src/encoding/serde/serde.nv:328`'s `[]T.deserialize`
+                // via a `#[derive(Deserialize)]`-synthesized `Vec[str].deserialize
+                // (sub)?` field call (auto_derive.rs `deser_field_expr`). Recompute
+                // is now unconditional (see `slice_static_generic_call_ret_c` doc)
+                // — for this exact narrow shape the freshly-substituted answer is
+                // always at least as precise as whatever the broader dispatcher
+                // guessed.
+                if let Some(ret_c) = self.slice_static_generic_call_ret_c(inner) {
+                    inner_ty = ret_c;
                 }
                 let val = self.emit_expr(inner)?;
                 let try_tmp = self.fresh_tmp();
@@ -56509,6 +56484,69 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         (resolve(0, "nova_int"), resolve(1, "nova_str"))
     }
 
+    /// [M-slice-static-deserialize-garbage-len] (extracted №TBD, реестр
+    /// 221.1 №599 causa 3): `Vec[<elem>].method(..)` on a user generic
+    /// STATIC method declared on a slice receiver (`fn[T ..] []T.method[..]
+    /// (..) -> Result[.., ..]`, D42/D38) — the receiver is a `TurboFish`,
+    /// not a bare `Ident`, so a name-keyed/legacy Call dispatcher misses it
+    /// and falls back to a DEFAULT-erased element (`nova_int`, this
+    /// codebase's canonical stand-in for an unresolved receiver typevar).
+    /// Recovers the REAL Result C-type from the method's declared return
+    /// `TypeRef` (`mono_method_decls[("[]T", method)]`) with the receiver
+    /// typevar bound to the concrete `<elem>` from the turbofish.
+    ///
+    /// Originally lived ONLY inside `emit_expr`'s `ExprKind::Try` arm, gated
+    /// on `!is_result_like(&inner_ty)` ("only fires in the degraded
+    /// non-Result case"). Two gaps found together on
+    /// `std/src/encoding/serde/serde.nv:328`'s `[]T.deserialize` via a
+    /// `#[derive(Deserialize)]`-synthesized `Vec[str].deserialize(sub)?`
+    /// field call (auto_derive.rs `deser_field_expr`): (a) the guard was too
+    /// narrow — the earlier dispatcher doesn't always degrade to non-Result
+    /// garbage, it can ALSO produce a well-FORMED-looking but wrong-element
+    /// Result (`NovaRes_Nova_Vec____nova_int_p_...*`), which `is_result_like`
+    /// (structural-shape-only) waved through as "already correct"; (b) the
+    /// fix lived ONLY in the mutating `emit_expr` pass, so the QUERY-only
+    /// `infer_expr_c_type`'s OWN separate `ExprKind::Try` arm (used e.g. by
+    /// `Some(<try-expr>)`'s NovaOpt-wrapper-type inference, which does NOT
+    /// go through `emit_expr` for the wrapped value) still recomputed the
+    /// SAME wrong `nova_int` answer independently — the `try_tmp` local
+    /// ended up correctly `Vec[str]`-typed while the ENCLOSING
+    /// `Some(...)`'s `NovaOpt_...` compound literal still said `Vec[int]`,
+    /// CC-FAIL on the mismatched assignment. Extracted so both call sites
+    /// share one answer instead of two independently-buggy re-derivations —
+    /// `?`-grep для соседей того же вида (см. коммит) не нашёл более.
+    ///
+    /// `None` when the shape doesn't match (not a TurboFish-with-bare-Ident-
+    /// base receiver call, not a registered `[]T` static method, or the
+    /// substituted return doesn't lower to a concrete non-stub Result).
+    ///
+    /// `&self`-only (no `current_type_subst` field-swap): substitutes the
+    /// receiver typevar directly on the AST `TypeRef` via
+    /// `const_fn_trampoline::subst_type_ref_pub` BEFORE lowering — so this
+    /// is callable from the immutable `infer_expr_c_type` query path too,
+    /// not just the mutating `emit_expr` pass (the split was the root of
+    /// gap (b) in the doc above: two independent re-derivations, one fixed
+    /// and one not).
+    fn slice_static_generic_call_ret_c(&self, inner: &crate::ast::Expr) -> Option<String> {
+        let ExprKind::Call { func, .. } = &inner.kind else { return None };
+        let ExprKind::Member { obj, name } = &func.kind else { return None };
+        let ExprKind::TurboFish { base, type_args } = &obj.kind else { return None };
+        if !matches!(&base.kind, ExprKind::Ident(_)) { return None; }
+        let key = ("[]T".to_string(), name.clone());
+        let fn_decl = self.mono_method_decls.get(&key)?.clone();
+        let is_static = matches!(
+            fn_decl.receiver.as_ref().map(|r| &r.kind),
+            Some(crate::ast::ReceiverKind::Static));
+        if !is_static { return None; }
+        let recv_tv = fn_decl.generics.first()?.name.clone();
+        let elem_tr = type_args.first()?.clone();
+        let ret_tr = fn_decl.return_type.clone()?;
+        let subst = std::collections::HashMap::from([(recv_tv, elem_tr)]);
+        let substituted = crate::const_fn_trampoline::subst_type_ref_pub(&ret_tr, &subst);
+        let ret_c = self.type_ref_to_c(&substituted).ok()?;
+        (Self::is_result_like(&ret_c) && !self.debt_is_generic_stub_c(&ret_c)).then_some(ret_c)
+    }
+
     /// Plan 59 Ф.7.5: mangled `<ok_s>_<err_s>` для пары C-типов (без
     /// `NovaRes_` префикса и `*`).
     fn novares_name(ok_c: &str, err_c: &str) -> String {
@@ -64228,7 +64266,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // inner type of Option. Needed for `let data = nova_file_read_all(f)?`
                 // where the variable type must be nova_str (the Ok type), not nova_int.
                 ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                    let inner_ty = self.infer_expr_c_type(inner);
+                    // №TBD (реестр 221.1 №599, serde causa 3): mirror of the
+                    // `emit_expr` Try-arm's `slice_static_generic_call_ret_c`
+                    // recompute (see that fn's doc) — this QUERY-only sibling
+                    // used to re-derive the SAME wrong `Vec[int]` default
+                    // independently (e.g. for `Some(<try-expr>)`'s NovaOpt
+                    // wrapper-type inference at the `"Some"` Call arm above,
+                    // which never goes through `emit_expr` for the wrapped
+                    // value) even after the emission-side fix landed —
+                    // `try_tmp` got the right C type but the ENCLOSING
+                    // `Some(...)` compound literal still didn't.
+                    let inner_ty = self.slice_static_generic_call_ret_c(inner)
+                        .unwrap_or_else(|| self.infer_expr_c_type(inner));
                     if inner_ty.starts_with("NovaOpt_") {
                         // Option? / Option!! → inner T
                         inner_ty.strip_prefix("NovaOpt_")

@@ -20046,11 +20046,66 @@ impl<'a> TypeCheckCtx<'a> {
                 None
             }
             ExprKind::RecordLit { type_name: Some(name), .. } => {
-                Some(TypeRef::Named {
-                    path: name.clone(),
-                    generics: Vec::new(),
-                    span: expr.span,
-                })
+                // №TBD (реестр 221.1 №599, класс "имя решает раньше объявления",
+                // родня №576): a bare RECORD-shaped sum-variant construction
+                // (`InvalidValue { field: .., value: .. }`) spells ONLY the
+                // variant's own name in `type_name` — never the owning sum
+                // TYPE's name (`ParseCronError`). This fn is the "best-effort"
+                // STRUCTURAL peek used by `closure_arg_return_peek` to infer an
+                // untyped closure's return type BEFORE the closure body has gone
+                // through the real check pass — unlike `f1_expr_inner`'s own
+                // RecordLit channel-materialization (~L9256-9281), it had no
+                // variant→owner fallback, so it returned `Named{"InvalidValue"}`
+                // verbatim: a type name that doesn't exist anywhere. Consumed by
+                // `resolve_method_return_with_closure_args` to bind a builtin
+                // method-level generic (e.g. `Result[T,E]@map_err[F](fn(E)->F)`'s
+                // `F`), the bogus `InvalidValue` type-arg then failed to lower in
+                // codegen and silently defaulted to the generic erased-Err
+                // fallback `nova_str` — `parse_int_in`'s `s.to_int().map_err(|_|
+                // InvalidValue{..})?` propagated a `nova_str` Err payload into a
+                // slot the caller declared `Nova_ParseCronError*`, CC-FAIL
+                // (`cron_test.c`: "passing 'nova_str' to parameter of
+                // incompatible type 'Nova_ParseCronError *'"). Mirror the SAME
+                // single-unambiguous-owner search `f1_expr_inner` already does
+                // for this exact shape (and the sibling unit-variant fallback
+                // just above, for `Ident`): when `name`'s last segment isn't a
+                // real top-level type, look for the ONE non-generic sum type
+                // whose variant list has a Record-kind variant of that name.
+                let last = name.last()?;
+                if self.types.contains_key(last.as_str()) {
+                    return Some(TypeRef::Named {
+                        path: name.clone(),
+                        generics: Vec::new(),
+                        span: expr.span,
+                    });
+                }
+                let mut owner: Option<&String> = None;
+                let mut ambiguous = false;
+                for (tn, td) in self.types.iter() {
+                    if let TypeDeclKind::Sum(vs) = &td.kind {
+                        if td.generics.is_empty()
+                            && vs.iter().any(|v| {
+                                &v.name == last && matches!(v.kind, SumVariantKind::Record(_))
+                            })
+                        {
+                            if owner.is_some() {
+                                ambiguous = true;
+                                break;
+                            }
+                            owner = Some(tn);
+                        }
+                    }
+                }
+                match (owner, ambiguous) {
+                    (Some(tn), false) => Some(TypeRef::Named {
+                        path: vec![tn.clone()],
+                        generics: Vec::new(),
+                        span: expr.span,
+                    }),
+                    // Ambiguous or unresolved: honest None (rather than guessing
+                    // — same discipline the source snippet mirrors).
+                    _ => None,
+                }
             }
             ExprKind::As(_, ty) => Some(ty.clone()),
             // Plan 172.1 §0a: Try (`expr?`) unwraps Result[T,E]→T or Option[T]→T.
