@@ -32,7 +32,7 @@ if [ "$rc" -eq 1 ] && echo "$out" | grep -q "spec/syntax.ru.md"; then ok "лов
 printf 'The `x"..."` literal is not yet implemented —\n[Plan 900](../docs/plans/900-thing.md).\n' > "$TMP/spec/syntax.md"
 rm -f "$TMP/spec/syntax.ru.md"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
-if [ "$rc" -eq 1 ] && echo "$out" | grep -q "syntax.en.md"; then ok "ловит английскую форму пометки"; else bad "не поймал английскую форму (код $rc): $out"; fi
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "syntax.md"; then ok "ловит английскую форму пометки"; else bad "не поймал английскую форму (код $rc): $out"; fi
 
 # 4. Пометка БЕЗ ссылки на план — не краснит: судить не по чему (сказано в шапке).
 printf 'Регионы пока не реализованы в компиляторе.\n' > "$TMP/spec/overview.ru.md"

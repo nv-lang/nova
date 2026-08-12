@@ -135,8 +135,27 @@ git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null 2>&1 || {
 # привязано к первому.
 CUT_TS=$(git -C "$ROOT" log -1 --format='%at' "$BASE")
 
+# ИНКРЕМЕНТАЛЬНОСТЬ (2026-08-12, долг из шапки шага гейта: «сделать страж
+# инкрементальным, а не поднимать срок в третий раз»).
+#
+# Логика проверки НЕ меняется ни на букву — меняется только ДИАПАЗОН: уже
+# проверенные коммиты не проверяются заново. Отметка лежит в `.git/` и НЕ
+# версионируется: это локальное состояние прогона, а не факт о проекте.
+# Если отметка не является предком HEAD (историю переписали, ветку сменили) —
+# отметка игнорируется и диапазон берётся полный. Порча кэша может сделать
+# прогон медленнее, но НЕ может сделать его слепым.
+GIT_DIR=$(git -C "$ROOT" rev-parse --git-dir 2>/dev/null)
+VERIFIED_FILE="${NOVA_COMMIT_LANG_VERIFIED:-$GIT_DIR/nova-commit-language-verified}"
+SCAN_FROM="$BASE"
+if [ -f "$VERIFIED_FILE" ]; then
+    LAST=$(head -1 "$VERIFIED_FILE" | tr -d '[:space:]')
+    if [ -n "$LAST" ]        && git -C "$ROOT" rev-parse --verify --quiet "$LAST^{commit}" >/dev/null 2>&1        && git -C "$ROOT" merge-base --is-ancestor "$LAST" HEAD 2>/dev/null        && git -C "$ROOT" merge-base --is-ancestor "$BASE" "$LAST" 2>/dev/null; then
+        SCAN_FROM="$LAST"
+    fi
+fi
+
 BAD=""
-for sha in $(git -C "$ROOT" rev-list "$BASE..HEAD" --no-merges 2>/dev/null); do
+for sha in $(git -C "$ROOT" rev-list "$SCAN_FROM..HEAD" --no-merges 2>/dev/null); do
     ats=$(git -C "$ROOT" log -1 --format='%at' "$sha")
     [ "$ats" -ge "$CUT_TS" ] 2>/dev/null || continue
     if [ -n "$EXEMPT_FILE" ] && [ -f "$EXEMPT_FILE" ] \
@@ -177,5 +196,8 @@ if [ -n "$BAD" ]; then
     exit 1
 fi
 
+# Отметка ставится ТОЛЬКО на зелёном исходе: красный прогон не должен
+# «проглатывать» непроверенные коммиты.
+git -C "$ROOT" rev-parse HEAD > "$VERIFIED_FILE" 2>/dev/null || true
 echo "check-commit-language ok: кириллицы в сообщениях после точки перехода нет"
 exit 0

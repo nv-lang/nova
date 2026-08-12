@@ -124,7 +124,7 @@ run_guard || { note_fail "1a: ложняк на glossary.md без ru-пары (
 printf '# Overview\ncontenu ru\n' > "$TMP/spec/overview.ru.md"
 printf '# Overview\nno header, no frontmatter\n' > "$TMP/spec/overview.md"
 run_guard && note_fail "1b: не поймал spec/overview.md без шапки/frontmatter"
-grep -q "overview.en.md" "$TMP/.stderr" || note_fail "1b: сообщение не называет файл"
+grep -q "overview.md" "$TMP/.stderr" || note_fail "1b: сообщение не называет файл"
 
 cat > "$TMP/spec/overview.md" <<'EOF'
 <!-- source_rev: abc1234; source_date: 2026-08-02 -->
