@@ -13,10 +13,21 @@
 # 2026-08-12: два имени uuid УШЛИ — №559 закрыт (const-агрегат в указательный
 # слот уводится на lazy-путь с GC-корнем, `nova test std/src/identifiers`
 # даёт PASS: 4 FAIL: 0). База опущена, а не подтёрта: причина названа.
+#
+# 2026-08-12: civil_arith_test и json_test УШЛИ — №601 закрыт (digits_at,
+# std/src/time/civil/parse.nv: closure-литерал внутри while-цикла ломал
+# мутацию mut-переменной условия — компиляторный дефект
+# [M-TBD-closure-while-mut-capture]; фикс — match вместо .map_err(closure));
+# №602 закрыт (IndexMap[K,V].@keys(), std/src/collections/index_map/core.nv:
+# теперь материализованный []K вместо ленивого итератора — alias-метод-резолв
+# компиляторный дефект [M-TBD-alias-method-shadow-cross-module] делал
+# JsonObject-фасад недостижимым; #505 сверен отдельно — уже закрыт раньше,
+# не пересекается). `nova test std/src/time/civil std/src/encoding` —
+# PASS без этих двух имён, три прогона подряд. Фикстуры:
+# spec_tests/conformance/standalone/n601_civil_pattern_digits_at_while_closure.nv,
+# n602_json_object_keys_len.nv.
 
 std/src/encoding/serde/decode_errors_test   # №599 (Option-обёртка над Vec)
 std/src/time/cron_test                      # №599 (строка на месте указателя на ошибку)
-std/src/time/civil/civil_arith_test         # №601 (format+parse round-trip)
-std/src/encoding/json_test                  # №602 (порядок вставки; сверить с №505)
 std/src/net/addr                            # №591 (только CI: wakes a directly-parked accept)
 std/src/os/d324_os_env_args_cwd_test        # №591 (только CI: d453 supervised timeout reaps)

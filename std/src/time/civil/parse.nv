@@ -14,6 +14,15 @@ module time.civil
 // ──────────────────────────────────────────────────────────────────────────
 
 // Ровно n ASCII-цифр с позиции pos → (значение, новая позиция).
+//
+// NB: `d` НЕ читается через `.map_err(|_| ...)` — [M-TBD-closure-while-mut-capture]:
+// компилятор ломает мутацию `mut`-переменной цикла (`i += 1` перестаёт быть
+// видимой на следующей итерации), если ВНУТРИ тела `while` создаётся
+// closure-литерал, захватывающий эту переменную, — даже если closure ни разу
+// не вызывается. `i` замирает на первом значении, `while i < pos + n` не
+// сходится, `v = v * 10 + d` крутится на одной и той же цифре и рвёт i64
+// (см. №601 в 221.1). `match` вместо `.map_err(closure)` не создаёт closure —
+// обходит дефект compiler-уровня; корень остаётся в компиляторе, не здесь.
 fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
     if pos + n > s.byte_len() {
         return Err(FormatMismatch(pos, "${n} digits"))
@@ -22,7 +31,10 @@ fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
     mut i = pos
     while i < pos + n {
         ro c = s[i..i + 1]
-        ro d = c.to_int().map_err(|_| FormatMismatch(i, "digit"))?
+        ro d = match c.to_int() {
+            Ok(x) => x
+            Err(_) => return Err(FormatMismatch(i, "digit"))
+        }
         v = v * 10 + (d as i64)
         i += 1
     }

@@ -1,0 +1,52 @@
+// №602 (реестр 221.1): `json_test` failed on `JsonObject: порядок вставки
+// сохраняется при @iter()/@keys()` — `assert(keys.len() == 3)` — the test
+// NAME says "order", but the assert is about LENGTH, and the real value was
+// `0`, not a wrong ORDER of 3 correct keys (confirmed by printing the actual
+// key list before assuming the name was accurate — the list was EMPTY, not
+// merely reordered).
+//
+// Root: `JsonObject` is `type JsonObject alias IndexMap[str, JsonValue]`
+// (std/src/encoding/json.nv). `m.keys()` on a `JsonObject` value always
+// resolved to `IndexMap`'s OWN `@keys()` — confirmed in generated C
+// (`IndexMap____nova_str__Nova_JsonValue_p_method_keys`), never a
+// `JsonObject`-declared facade, regardless of what that facade's body did.
+// `IndexMap.@keys()` (registry №506) used to return a lazy `IndexKeysIter`;
+// the facade's declared `-> []str` and the actual `IndexKeysIter` value
+// crossed at the C level with NO conversion, so `keys.len()` read back `0`
+// no matter how many keys were inserted — a type-confused garbage read, not
+// an ordering bug. Cross-checked against №505 (`IndexMap.@remove` swap-
+// remove breaking order) by READING the code: №505 was ALREADY fixed before
+// this branch point (commit bc4857537 — `@remove` now shifts, preserves
+// order; `@swap_remove` is the explicit fast path) — irrelevant here anyway,
+// since neither failing json_test assertion calls `remove`/`swap_remove` at
+// all. One defect (№602), not two.
+//
+// Fix: `IndexMap[K,V].@keys()` (std/src/collections/index_map/core.nv) now
+// returns a materialized `[]K` directly — the only shape whose `.len()`/`[i]`
+// go through the compiler's BUILT-IN-type codegen path regardless of how
+// `.keys()` got resolved (alias-facade or direct). This fixture prints the
+// actual key COUNT and LIST (лесson from №602 itself: names can lie about
+// what actually broke — print the values, not a vacuous "ok").
+//
+// EXPECT_STDOUT len=3 keys=z_first,a_second,m_third
+
+module standalone.n602_json_object_keys_len
+
+import std.encoding.json.{JsonObject, JsonValue}
+
+fn main() {
+    mut m = JsonObject.new()
+    m.insert("z_first", JsonValue.Num(1.0))
+    m.insert("a_second", JsonValue.Num(2.0))
+    m.insert("m_third", JsonValue.Num(3.0))
+
+    ro keys = m.keys()
+    mut joined = ""
+    mut i = 0
+    while i < keys.len() {
+        if i > 0 { joined += "," }
+        joined += keys[i]
+        i += 1
+    }
+    println("len=${keys.len()} keys=${joined}")
+}
