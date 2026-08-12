@@ -1010,6 +1010,22 @@ Account.new                // static-функция как значение, т�
 The programmer and the LLM instantly distinguish: a call = with
 parentheses, a value = without. No properties with side effects.
 
+### One internal form -- @ as the receiver's type variable (D458)
+
+The sugar above (n Type mut @job(a int) -> @) is unchanged -- it stays
+the only DECLARATION form for a method. D458 (2026-08-12, implementation --
+plan [273](../docs/plans/273-one-form-for-methods-and-functions.md),
+in progress) formalizes what @ is inside the compiler and in a method
+value's type: the receiver's type variable (an analogue of Self), bound by
+the first parameter -- the same variable that already appears in -> @ and
+Option[@]. The consequence for values: Account.@balance is typed as
+n(mut @Account) -> @, not n(Account) -> money -- the type carries @,
+and such a type CANNOT be cast to a plain function type (s fn(...) is
+forbidden both ways for this -- use a lambda instead). The compiler form
+(n job(mut @Type, a int) -> @) is forbidden as a DECLARATION in source
+(E_D458_COMPILER_FORM_IN_SOURCE), but legal as a TYPE annotation:
+o f fn(mut @Type, a int) -> @ = Type.@job.
+
 ### Generics
 
 ```nova
