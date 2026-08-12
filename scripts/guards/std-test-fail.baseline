@@ -50,6 +50,6 @@
 # Option- и Vec-payload, независимо от типизации кодогена. Новый дефект,
 # №TBD, не тот же класс — не чинился в этом окне (см. отчёт p599).
 
-std/src/encoding/serde/decode_errors_test   # №TBD (было №599/CC-FAIL, ЗАКРЫТО окном p599; теперь RUN-FAIL в sum_autoderive_test.nv, скрытый прежде тем же CC-FAIL)
+std/src/encoding/serde/decode_errors_test   # №624 (было №599/CC-FAIL, ЗАКРЫТО окном p599; теперь RUN-FAIL в sum_autoderive_test.nv, скрытый прежде тем же CC-FAIL)
 std/src/net/addr                            # №591 (только CI: wakes a directly-parked accept)
 std/src/os/d324_os_env_args_cwd_test        # №591 (только CI: d453 supervised timeout reaps)
