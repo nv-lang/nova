@@ -36,7 +36,7 @@ fn m465_consume_param_helper(consume s M465Secret) -> int {
     return d
 }
 
-fn m465_return_passthrough(consume s M465Secret) -> consume M465Secret {
+fn m465_return_passthrough(consume s M465Secret) -> M465Secret {
     return s
 }
 

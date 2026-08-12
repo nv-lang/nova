@@ -1,0 +1,27 @@
+// №616 (221.1) positive companion: `-> consume T` is retracted (owner
+// decision 2026-08-12, amends D445) — but linearity itself must NOT suffer
+// from dropping the modifier. A `consume`-declared type returned bare as
+// `-> T` still forces the caller to bind with `consume` (D180,
+// `E_CONSUME_KEYWORD_MISSING` on any other binding form) — the TYPE
+// declaration carries the obligation, not the return annotation. Prints the
+// VALUE read back through the guard (lesson №577 — a vacuous stub could
+// fake a bare "ok"; it cannot fake the real field value).
+//
+// EXPECT_STDOUT: 616
+
+module spec_tests.conformance
+
+type D616Guard consume {
+    v int,
+}
+
+fn D616Guard consume @close() -> int => @v
+
+// No `consume` on the return type (retracted spelling) — linearity comes
+// from `D616Guard` being declared `consume`, per D180.
+fn make_d616_guard() -> D616Guard => { v: 616 }
+
+test "d616 consume-typed bare return keeps linearity" {
+    consume g = make_d616_guard()
+    println(g.close())
+}
