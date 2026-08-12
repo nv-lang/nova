@@ -198,7 +198,7 @@ export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) 
 // ради того, чтобы убедиться, что decorator переписал SQL правильно.
 type CapturedQuery { template str, args []SqlValue }
 
-fn capturing_handler(log mut []CapturedQuery) -> Effect[Db] => effect Db {
+fn capturing_handler(mut log []CapturedQuery) -> Effect[Db] => effect Db {
     query(q) -> []DbRow {
         log.push({ template: q.template, args: q.args })
         []
