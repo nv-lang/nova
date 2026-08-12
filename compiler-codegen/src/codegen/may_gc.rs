@@ -1340,7 +1340,6 @@ mod tests {
             consume: false,
             is_mut: false,
             is_const: false,
-            mut_type_pos_legacy: false,
             fiber_safe_attr: false,
         }
     }

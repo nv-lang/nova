@@ -228,6 +228,42 @@ fn redundant_param_ro_error(span: Span) -> Diagnostic {
     )
 }
 
+/// №611/№615 (221.1, owner decision 2026-08-12, amends D445's D374 AMEND ×3
+/// 2026-07-17 carve-out): postfix `name mut Type` in a parameter is
+/// retracted, in BOTH spellings it used to cover — bare (`buf mut []u8`, D6
+/// legacy synonym of `mut buf []u8`) and R2-split with an explicit leading
+/// `ro` (`ro buf mut []u8`, D246 P6 / Plan 118.5 V3 amend). The 2026-07-17
+/// amendment carved out an exception for view-slices/fixed-arrays and
+/// declared R2-split "sanctioned" — but D445 (2026-08-03) already says the
+/// mode modifier ALWAYS precedes what it describes, without exception; this
+/// carve-out was the one spot D445 never named, so it survived. Proof the
+/// R2-split half was never doing what it claimed: a write through
+/// `ro x mut T` raises `E_READONLY_CONTENT` — the form advertised as
+/// "opt-in for writing content" forbids the write. Canon is exactly three
+/// forms: `buf Type`, `mut buf Type`, `consume buf Type`.
+fn postfix_param_mut_retracted_error(span: Span, name: &str, had_ro_prefix: bool) -> Diagnostic {
+    let extra = if had_ro_prefix {
+        " The leading `ro` is dropped too — the R2-split reading \
+         (`ro` opts out of rebinding, postfix `mut` opts into content-write) \
+         is retracted along with the postfix spelling; a write through it \
+         raised `E_READONLY_CONTENT` regardless, so it was never doing what \
+         it claimed."
+    } else {
+        ""
+    };
+    Diagnostic::new(
+        format!(
+            "[E_PARAM_TYPE_POS_MUT_RETRACTED] postfix `{name} mut Type` in a \
+             parameter is retracted (№611/№615, 2026-08-12 owner decision, \
+             amends D445) — the mode modifier always precedes what it \
+             describes, without exception (view-slices and fixed-arrays \
+             included; that carve-out is retracted too).{extra} Fix: write \
+             `mut {name} Type` (mut before the name)."
+        ),
+        span,
+    )
+}
+
 /// **[M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4, D246 amendment):**
 /// an explicit `mut` in RETURN position is redundant/meaningless — a returned
 /// value is OWNED by the caller (its mutability is decided by the caller's
@@ -248,17 +284,46 @@ fn redundant_return_mut_error(span: Span) -> Diagnostic {
 }
 
 /// №301 (221.1, owner decision 2026-08-03): the postfix return form
-/// `-> T consume` is RETRACTED. Canon is the prefix form `-> consume T`,
-/// matching `-> ro T` / `-> mut T` — the modifier ALWAYS precedes what it
-/// describes (a binding name, a receiver, a return type, a type body).
-/// There is no postfix modifier position left anywhere in the grammar.
+/// `-> T consume` is RETRACTED. **№616 (221.1, owner decision 2026-08-12)
+/// AMENDS this further: the prefix form `-> consume T` that this postfix
+/// form used to point at is ALSO retracted** — see
+/// `return_consume_prefix_retracted_error` below for why. There is no
+/// `consume` spelling left anywhere in return position, prefix or postfix.
 fn postfix_return_consume_retracted_error(span: Span) -> Diagnostic {
     Diagnostic::new(
         "[E_RETURN_CONSUME_POSTFIX_RETRACTED] postfix `-> T consume` is \
-         retracted (№301, 2026-08-03 owner decision) — the canon is the \
-         prefix form `-> consume T`, symmetric with `-> ro T` / `-> mut T`. \
-         The modifier always stands before what it describes. Fix: move \
-         `consume` before the type (`-> consume T`)."
+         retracted (№301, 2026-08-03 owner decision). The prefix form \
+         `-> consume T` it used to point at is ALSO retracted (№616, \
+         2026-08-12 owner decision) — no `consume` modifier is legal in \
+         return position anymore, in either spelling. Linearity is a \
+         property of the TYPE declaration (`type T consume { … }`, D180), \
+         not of the return annotation. Fix: drop `consume` entirely \
+         (`-> T`)."
+            .to_string(),
+        span,
+    )
+}
+
+/// №616 (221.1, owner decision 2026-08-12): the prefix return form
+/// `-> consume T` (D445, 2026-08-03) is RETRACTED. Repro
+/// (`docs/plans/wip/repro-616-consume-return.nv.txt`) proved the modifier
+/// carries no semantics in EITHER direction: (1) a type declared `consume`
+/// enforces linearity by ITSELF — `ro g = make_guard()` (return type
+/// `Guard` with no `-> consume` on the fn) already raises
+/// `E_CONSUME_KEYWORD_MISSING` (D180), the modifier adds nothing; (2) a
+/// type NOT declared `consume`, returned as `-> consume Box`, compiles and
+/// lets `ro b = make_box()` through WITHOUT consuming — the modifier
+/// promises linearity the type does not have. No consume spelling survives
+/// in return position; write the return type bare.
+fn return_consume_prefix_retracted_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_RETURN_CONSUME_PREFIX_RETRACTED] `-> consume T` is retracted \
+         (№616, 2026-08-12 owner decision, amends D445) — the modifier adds \
+         no semantics: a `consume`-declared type already enforces linearity \
+         on its own (D180, `E_CONSUME_KEYWORD_MISSING`), and a non-`consume` \
+         type marked `-> consume T` compiles while promising a linearity it \
+         does not have. Fix: drop `consume` (`-> T`) — the type's own \
+         `consume` declaration decides linearity, not the return annotation."
             .to_string(),
         span,
     )
@@ -3644,14 +3709,17 @@ impl Parser {
                     span: at_span,
                 })
             } else {
-                // №301 (221.1, owner canon 2026-08-03): `-> consume T` —
-                // PREFIX consume-typed return, symmetric with `-> ro T` /
-                // `-> mut T` above. Eat the modifier the same way the
-                // Plan 103.9 (D174) postfix form used to: the information
-                // (that the return is consume-typed) is already carried by
-                // the type name itself — consume-ness is a property of the
-                // type decl, not stored separately on the return type.
-                self.eat(&TokenKind::KwConsume);
+                // №616 (221.1, owner decision 2026-08-12, amends D445):
+                // `-> consume T` (prefix) is RETRACTED — hard error on
+                // sight, same tier as the postfix form below. See
+                // `return_consume_prefix_retracted_error` for the repro
+                // that grounds this (consume-typed returns are already
+                // enforced by the TYPE declaration; a non-consume type
+                // marked `-> consume T` compiles and lies about linearity).
+                if matches!(self.peek().kind, TokenKind::KwConsume) {
+                    let consume_span = self.peek().span;
+                    return Err(return_consume_prefix_retracted_error(consume_span));
+                }
                 let rt = self.parse_type()?;
                 // [M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4,
                 // D246 amendment): `-> mut T` — redundant `mut` in return
@@ -3962,11 +4030,6 @@ impl Parser {
         // Сочетания с `consume`/`readonly` запрещены parser-level —
         // E_PARAM_MOD_CONFLICT.
         let mut is_mut = false;
-        // [M-canon-mut-param-position]: set below only for the bare postfix
-        // `name mut Type` legacy synonym (never for the canonical prefix form
-        // parsed in this very branch, nor for the sanctioned R2-split
-        // `ro name mut Type`) — see the postfix branch after `parse_ident`.
-        let mut mut_type_pos_legacy = false;
         if matches!(self.peek().kind, TokenKind::KwMut) {
             if is_const_param {
                 return Err(Diagnostic::new(
@@ -4052,17 +4115,17 @@ impl Parser {
             }));
         }
         let (name, name_span) = self.parse_ident()?;
-        // D6: mut-маркер после имени — `name mut type` (legacy form).
-        // Plan 108.1: тоже принимаем, помечаем is_mut.
-        //
-        // [M-canon-mut-param-position] (2026-07-17): canon mut-параметров —
-        // ПРЕФИКСНАЯ форма `mut name Type`. Голая постфиксная `name mut Type`
-        // (без предшествующего `ro`, без предшествующего prefix `mut`) — полный
-        // поведенческий синоним, зафиксирован под запрет lint'ом
-        // `W_PARAM_TYPE_POS_MUT` (lints.rs) для НЕ-slice типов; `mut_type_pos_legacy`
-        // отмечает ИМЕННО этот случай. Санкционированный D246 R2-split
-        // `ro name mut Type` (has_readonly_prefix уже true здесь) — НЕ отмечается.
-        let bare_before_postfix_mut = !has_readonly_prefix && !is_mut;
+        // №611/№615 (221.1, owner decision 2026-08-12, amends D445's D374
+        // AMEND ×3 2026-07-17 carve-out): postfix `name mut Type` in a
+        // parameter — bare (D6 legacy synonym) OR with an explicit `ro`
+        // prefix (D246 R2-split, `ro name mut Type`) — is RETRACTED.
+        // D445 says the mode modifier ALWAYS precedes what it describes;
+        // this position was the one spot that survived as a documented
+        // "sanctioned exception" without D445 ever naming it. The
+        // view-slice/fixed-array carve-out (`buf mut []u8`, `out mut
+        // [32]u8`) is retracted along with it — no exceptions left. Canon
+        // is exactly three forms: `buf Type`, `mut buf Type`,
+        // `consume buf Type`.
         if matches!(self.peek().kind, TokenKind::KwMut) {
             if is_consume {
                 return Err(Diagnostic::new(
@@ -4072,18 +4135,11 @@ impl Parser {
                     self.peek().span,
                 ));
             }
-            // **Plan 118.5 V3 amend (binding-context relaxation, 2026-06-05):**
-            // `ro x mut T` — orthogonal binding modifiers. `ro` = no-rebind
-            // semantic at binding level, `mut` = mut-method access at binding.
-            // NOT mutually exclusive per user-confirmed V3 amend. Closes
-            // [M-118.5-V3-binding-context-relaxation].
-            //
-            // (Pre-name `ro` keeps wrapping type as Readonly(T) for content-
-            // readonly compatibility c существующими callers; binding-mut
-            // flag is set additionally — downstream type-checker reads both.)
-            self.bump();
-            is_mut = true;
-            mut_type_pos_legacy = bare_before_postfix_mut;
+            return Err(postfix_param_mut_retracted_error(
+                self.peek().span,
+                &name,
+                has_readonly_prefix,
+            ));
         }
         let ty = {
             let inner = self.parse_type()?;
@@ -4146,7 +4202,6 @@ impl Parser {
             consume: is_consume,
             is_mut,
             is_const: is_const_param,
-            mut_type_pos_legacy,
             fiber_safe_attr,
         })
     }
