@@ -1,0 +1,29 @@
+// Проба: зачем нужен `-> consume T`.
+
+module scratch_c.probe_c
+
+type Guard consume {
+    v int
+}
+
+fn Guard consume @close() -> int => @v
+
+type Box {
+    v int
+}
+
+/// Возврат consume-типа БЕЗ модификатора.
+fn make_guard() -> Guard => { v: 1 }
+
+/// Возврат НЕ-consume типа С модификатором.
+fn make_box() -> consume Box => { v: 2 }
+
+fn main() {
+    consume g = make_guard()
+    print(g.close())
+
+    // НЕ-consume тип, возвращённый как `-> consume Box`:
+    // держит ли чекер линейность здесь?
+    ro b = make_box()
+    print(b.v)
+}
