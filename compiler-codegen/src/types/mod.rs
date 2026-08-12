@@ -50489,10 +50489,11 @@ pub(crate) fn check_effect_generic_refusal(module: &crate::ast::Module, errors: 
                     g0.span,
                 ));
                 // Ось 2 уже названа на объявлении — операции того же
-                // generic-эффекта не проверяются здесь отдельно (одна
-                // причина, одно сообщение; ветка (а) №614 умирает сама,
-                // до `check_handler_op_declarations` дело не доходит,
-                // см. exclusion выше).
+                // generic-эффекта не проверяются здесь отдельно [INV-PROPERTY]
+                // — держится не соглашением, а этим самым `continue`: ветка (а)
+                // №614 умирает на объявлении, до `check_handler_op_declarations`
+                // дело не доходит; закреплено фикстурой reg614_effect_generic_neg
+                // (одна причина, одно сообщение).
                 continue;
             }
 
