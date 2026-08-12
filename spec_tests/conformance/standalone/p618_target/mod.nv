@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier №618) — see ../p618_single_candidate_arity_probe.nv.
+//
+// Deliberately arity-2, and the ONLY export named `p618f` anywhere in this
+// CU: the entry probe's own module has EXACTLY ONE same-named candidate,
+// so `f1_check_call`'s module-scoping (registry #536) narrows the pooled
+// `sig.fn_decls` overloads down to `[single]` -- the exact shape needed to
+// reach the fast path this carrier is about.
+
+module standalone.p618_target
+
+export fn p618f(x int, y int) -> str => "FROM_TARGET"
