@@ -244,7 +244,7 @@ fn read_le_u32(data []u8, offset int) -> u32 =>
     | ((data[offset + 2] as u32) << 16)
     | ((data[offset + 3] as u32) << 24)
 
-fn write_le_u32(out mut [16]u8, offset int, v u32) -> () {
+fn write_le_u32(mut out [16]u8, offset int, v u32) -> () {
     out[offset]     = (v & 0xFF) as u8
     out[offset + 1] = ((v >> 8)  & 0xFF) as u8
     out[offset + 2] = ((v >> 16) & 0xFF) as u8

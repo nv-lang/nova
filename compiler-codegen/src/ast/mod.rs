@@ -783,18 +783,13 @@ pub struct Param {
     /// `const` И return должен быть `const`. Конфликтует с `mut`/
     /// `consume` (E_CONST_PARAM_MOD_CONFLICT).
     pub is_const: bool,
-    /// [M-canon-mut-param-position] (2026-07-17): `true` ТОЛЬКО для голой
-    /// legacy-формы `name mut Type` (D6 "mut-маркер после имени") БЕЗ
-    /// предшествующего явного `ro` — т.е. полный синоним канонической
-    /// префиксной `mut name Type` (parser/mod.rs `parse_param`, ветка после
-    /// `parse_ident`). Санкционированный D246 R2-split `ro name mut Type`
-    /// (explicit `ro` L1 + постфиксный `mut` L2, orthogonal, Plan 118.5 V3
-    /// amend) НЕ отмечается этим флагом — там `has_readonly_prefix` был true
-    /// в момент разбора. Поле существует ИСКЛЮЧИТЕЛЬНО для lint'а
-    /// `W_PARAM_TYPE_POS_MUT` (lints.rs): `is_mut` сам по себе не различает
-    /// префиксную и постфиксную форму (обе схлопываются в `is_mut=true`).
-    /// Default = false (все синтетические/non-parsed конструкторы `Param`).
-    pub mut_type_pos_legacy: bool,
+    // №611/№615 (221.1, owner decision 2026-08-12): поле `mut_type_pos_legacy`
+    // (было здесь под [M-canon-mut-param-position], 2026-07-17) УДАЛЕНО —
+    // постфиксная форма `name mut Type` в параметре (голая И R2-split
+    // `ro name mut Type`) ретрактирована целиком в парсере
+    // (`E_PARAM_TYPE_POS_MUT_RETRACTED`, `parser/mod.rs`), поле стало
+    // недостижимым (AST этой формы больше не строит — парсер отказывает
+    // раньше). Lint `W_PARAM_TYPE_POS_MUT` (lints.rs) снят вместе с полем.
     // Plan 184 (заход-5, п.7): поле `ref_mode: ParamRefMode` и сам enum удалены.
     // D326-ревизия (Plan 184) отменила «ref — режим передачи»: `ref` теперь
     // ОГРАНИЧЕННЫЙ ТИП (`TypeRef::Ref`), а in-out `mut x T` ведётся value-путём

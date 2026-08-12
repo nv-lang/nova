@@ -239,7 +239,7 @@ export fn File.options() -> OpenOptions => OpenOptions.new()
 /// io.Read: read into `buf` at the file's tracked position, advancing it. Uses
 /// positioned reads (portable — no reliance on the OS "current offset" mode).
 #stable(since = "0.1")
-export fn File mut @read(buf mut []u8) Fs -> Result[int, IoError] {
+export fn File mut @read(mut buf []u8) Fs -> Result[int, IoError] {
     ro rc = Fs.read_at(@fd, buf, @pos)
     if rc < 0 { Err(IoError.from_os(0 - rc, "read")) } else { @pos += rc; Ok(rc) }
 }
@@ -278,7 +278,7 @@ export fn File mut @seek(pos SeekFrom) Fs -> Result[int, IoError] {
 /// Positioned read at `offset` — does NOT move the file cursor (Rust `read_at`,
 /// POSIX `pread`).
 #stable(since = "0.1")
-export fn File @read_at(buf mut []u8, offset int) Fs -> Result[int, IoError] =>
+export fn File @read_at(mut buf []u8, offset int) Fs -> Result[int, IoError] =>
     wrap_int(Fs.read_at(@fd, buf, offset), "read_at")
 
 /// Positioned write at `offset` — does NOT move the file cursor (`pwrite`).

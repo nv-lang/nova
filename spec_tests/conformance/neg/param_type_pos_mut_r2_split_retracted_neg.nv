@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_PARAM_TYPE_POS_MUT_RETRACTED
+//
+// №615 (221.1) negative: the R2-split parameter form `ro name mut Type`
+// (D246 P6 / Plan 118.5 V3 amend, carried forward by the 2026-07-17 D374
+// amendment as a "sanctioned, non-canonical exception") is retracted along
+// with the bare postfix form (owner decision 2026-08-12, amends D445) —
+// it is the SAME postfix spelling, just with an explicit `ro` in front.
+// Proof the exception was never doing what it advertised: a write through
+// `ro x mut T` raised `E_READONLY_CONTENT` — the form billed as "opt-in for
+// writing content" forbade the write. Must now hard-error with a fix-it to
+// `mut i int` (the `ro` drops too).
+module neg.param_type_pos_mut_r2_split_retracted
+
+fn touch(ro i mut int) {
+    i = i + 1
+}
+
+fn main() -> () {}

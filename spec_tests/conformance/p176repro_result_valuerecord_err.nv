@@ -13,14 +13,14 @@ type VErr value { ro code int, ro op str }
 fn VErr.new(code int, op str) -> VErr => { code, op }
 
 type Src protocol {
-    mut @pull(buf mut []u8) -> Result[int, VErr]
+    mut @pull(mut buf []u8) -> Result[int, VErr]
 }
 
 type MemSrc { ro data []u8, mut pos int }
 
 fn MemSrc.new(data []u8) -> Self => { data, pos: 0 }
 
-fn MemSrc mut @pull(buf mut []u8) -> Result[int, VErr] {
+fn MemSrc mut @pull(mut buf []u8) -> Result[int, VErr] {
     ro cap = buf.len()
     if cap == 0 { return Ok(0) }
     ro rem = @data.len() - @pos

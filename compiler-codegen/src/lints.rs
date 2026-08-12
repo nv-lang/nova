@@ -46,10 +46,11 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                 check_assume_trust(f, &mut warnings);
                 check_assert_static_unverified(f, &mut warnings);
                 check_protocol_in_effect_position(f, &protocol_names, &effect_names, &mut warnings);
-                // [M-canon-mut-param-position] (2026-07-17): W_PARAM_TYPE_POS_MUT —
-                // unconditional pipeline (owner decision: NOT opt-in CONV_RULES),
-                // runs on every fn signature like the other per-fn checks above.
-                check_param_type_pos_mut(f, &mut warnings);
+                // №611/№615 (221.1, owner decision 2026-08-12): W_PARAM_TYPE_POS_MUT
+                // is RETRACTED — the postfix param-mut form it warned about is now a
+                // parser-level hard error (`E_PARAM_TYPE_POS_MUT_RETRACTED`,
+                // `parser/mod.rs`), so the AST can no longer carry the shape this
+                // lint used to detect. `check_param_type_pos_mut` removed with it.
                 // Plan 96.1 Ф.1: W_VIEW_PUSH_DETACH — warning при push на
                 // slice-view binding (let X = arr[range]; X.push(...)).
                 lint_view_push_detach(f, &mut warnings);
@@ -2830,52 +2831,14 @@ fn check_fn(f: &FnDecl, out: &mut Vec<LintWarning>) {
     }
 }
 
-/// [M-canon-mut-param-position] (owner decision 2026-07-17, research-mut-canon
-/// follow-up): mut-параметров канон — ПРЕФИКСНАЯ форма `mut name Type`. Голая
-/// постфиксная форма `name mut Type` (D6 legacy synonym, БЕЗ предшествующего
-/// `ro`) — полный поведенческий синоним префиксной формы (эмпирика владельца:
-/// `i mut int` реассайнится в теле идентично `mut i int`); позиция ТИПА
-/// зарезервирована исключительно за view-слайсами (`[]u8` и родня — io-канон,
-/// `buf mut []u8`), для прочих типов — footgun-спеллинг, под запрет.
-///
-/// Санкционированный D246 R2-split `ro name mut Type` (explicit `ro` L1 +
-/// постфиксный `mut` L2, Plan 118.5 V3 amend) НЕ флагуется here — parser
-/// (`parse_param`) не отмечает `mut_type_pos_legacy` для этой формы (см. поле
-/// `Param::mut_type_pos_legacy`), так что она отфильтрована уже на входе.
-///
-/// Unconditional pipeline (owner-directed: NOT opt-in `CONV_RULES` — runs on
-/// every fn signature check, same tier as `check_fn`/`check_assume_trust` above).
-fn check_param_type_pos_mut(f: &FnDecl, out: &mut Vec<LintWarning>) {
-    for p in &f.params {
-        if !p.mut_type_pos_legacy {
-            continue;
-        }
-        // Exception: view-слайсы (`[]T`) и fixed-size массивы (`[N]T`) — оба
-        // легитимный io-канон-«родня» (`buf mut []u8` byte-sink, `out mut
-        // [32]u8` hash-digest out-buffer — сверено по факту в std/crypto
-        // sha256.nv/md5.nv/hmac.nv/jwt.nv/uuid_namespace.nv, [M-canon-mut-param-position]
-        // blast-radius sweep 2026-07-17).
-        if matches!(p.ty, TypeRef::Array(..) | TypeRef::FixedArray(..)) {
-            continue;
-        }
-        let ty_str = crate::types::render_type_ref(&p.ty);
-        out.push(LintWarning {
-            rule: "W_PARAM_TYPE_POS_MUT",
-            diag: Diagnostic::new(
-                format!(
-                    "warning: parameter `{}` is declared in postfix form `{} mut {}` \
-                     [W_PARAM_TYPE_POS_MUT] — canon for mut-parameters (owner decision \
-                     2026-07-17): mut BEFORE the name, `mut {} {}`. The position AFTER \
-                     the name is reserved for view-slices (`[]u8` and kin, io-canon, \
-                     `buf mut []u8`); for other types the postfix form is a forbidden \
-                     synonym of the prefix form (behaves identically, D6 legacy spelling).",
-                    p.name, p.name, ty_str, p.name, ty_str,
-                ),
-                p.span,
-            ),
-        });
-    }
-}
+// №611/№615 (221.1, owner decision 2026-08-12): `check_param_type_pos_mut`
+// (W_PARAM_TYPE_POS_MUT, owner decision 2026-07-17) REMOVED — the postfix
+// param-mut form it warned about (bare AND the R2-split `ro name mut Type`
+// exception) is retracted outright in the parser
+// (`E_PARAM_TYPE_POS_MUT_RETRACTED`, `parser/mod.rs::parse_param`). The AST
+// can no longer carry the shape this lint matched on (`Param::mut_type_pos_legacy`
+// is gone too), so the warning-tier check is dead code, not just unreachable —
+// removed rather than left as a stub.
 
 /// Plan 33.8 Ф.3.1: `assume` вне `#trusted`-функции вводит непроверяемое
 /// допущение (rule `trust-introduced`). Внутри `#trusted` функции допущение
@@ -8502,65 +8465,66 @@ mod tests {
         assert_eq!(ws.len(), 0);
     }
 
-    // [M-canon-mut-param-position] (2026-07-17): W_PARAM_TYPE_POS_MUT.
+    // №611/№615 (221.1, owner decision 2026-08-12): postfix `name mut Type`
+    // in a parameter is a PARSER hard error now (`E_PARAM_TYPE_POS_MUT_RETRACTED`),
+    // not a lint warning — `W_PARAM_TYPE_POS_MUT` is retracted along with the
+    // form it warned about. `parse()` in this test module `.unwrap()`s, so
+    // these cases are exercised directly against the parser here instead.
+
+    fn parse_err(src: &str) -> Diagnostic {
+        let toks = lex(src).unwrap();
+        let mut p = Parser::new(toks);
+        p.parse_module().expect_err("expected a parse error")
+    }
 
     #[test]
-    fn warns_on_bare_postfix_mut_non_slice() {
-        // `i mut int` — bare postfix legacy synonym of `mut i int`, non-slice
-        // type — must warn.
-        let m = parse("module foo\nfn bump(i mut int) {\n    i = i + 1\n}\n");
-        let ws = lint_module(&m);
+    fn errors_on_bare_postfix_mut_non_slice() {
+        // `i mut int` — bare postfix legacy synonym of `mut i int` — retracted.
+        let d = parse_err("module foo\nfn bump(i mut int) {\n    i = i + 1\n}\n");
         assert!(
-            ws.iter().any(|w| w.rule == "W_PARAM_TYPE_POS_MUT"),
-            "ожидался W_PARAM_TYPE_POS_MUT, получено: {:?}",
-            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+            d.message.contains("E_PARAM_TYPE_POS_MUT_RETRACTED"),
+            "ожидался E_PARAM_TYPE_POS_MUT_RETRACTED, получено: {}",
+            d.message
         );
     }
 
     #[test]
-    fn no_warning_on_postfix_mut_slice() {
-        // `buf mut []u8` — postfix mut on a SLICE type is the io-канон
-        // exception (`buf mut []u8`) — must NOT warn.
-        let m = parse("module foo\nfn fill(buf mut []u8) {\n    buf[0] = 1\n}\n");
-        let ws = lint_module(&m);
+    fn errors_on_postfix_mut_slice() {
+        // `buf mut []u8` — the former io-канон exception is retracted too.
+        let d = parse_err("module foo\nfn fill(buf mut []u8) {\n    buf[0] = 1\n}\n");
         assert!(
-            !ws.iter().any(|w| w.rule == "W_PARAM_TYPE_POS_MUT"),
-            "не должен fire на slice-типе, получено: {:?}",
-            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+            d.message.contains("E_PARAM_TYPE_POS_MUT_RETRACTED"),
+            "ожидался E_PARAM_TYPE_POS_MUT_RETRACTED на slice-типе, получено: {}",
+            d.message
         );
     }
 
     #[test]
-    fn no_warning_on_postfix_mut_fixed_array() {
-        // `out mut [32]u8` — fixed-size byte array (hash-digest out-buffer,
-        // real std/crypto pattern: sha256/md5/hmac/jwt/uuid_namespace) is
-        // "родня" of the `[]T` slice exception — must NOT warn.
-        let m = parse("module foo\nfn hash(out mut [32]u8) {\n    out[0] = 1 as u8\n}\n");
-        let ws = lint_module(&m);
+    fn errors_on_postfix_mut_fixed_array() {
+        // `out mut [32]u8` — fixed-size byte array exception retracted too.
+        let d = parse_err("module foo\nfn hash(out mut [32]u8) {\n    out[0] = 1 as u8\n}\n");
         assert!(
-            !ws.iter().any(|w| w.rule == "W_PARAM_TYPE_POS_MUT"),
-            "не должен fire на fixed-size array, получено: {:?}",
-            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+            d.message.contains("E_PARAM_TYPE_POS_MUT_RETRACTED"),
+            "ожидался E_PARAM_TYPE_POS_MUT_RETRACTED на fixed-size array, получено: {}",
+            d.message
         );
     }
 
     #[test]
-    fn no_warning_on_r2_split_ro_mut() {
-        // `ro i mut int` — sanctioned D246 R2-split (explicit `ro` L1 +
-        // postfix `mut` L2) — must NOT warn (exempt by construction: parser
-        // never sets `mut_type_pos_legacy` when `ro` was explicit).
-        let m = parse("module foo\nfn touch(ro i mut int) {\n    i = i + 1\n}\n");
-        let ws = lint_module(&m);
+    fn errors_on_r2_split_ro_mut() {
+        // `ro i mut int` — former D246 R2-split "sanctioned exception" —
+        // retracted along with the bare postfix form.
+        let d = parse_err("module foo\nfn touch(ro i mut int) {\n    i = i + 1\n}\n");
         assert!(
-            !ws.iter().any(|w| w.rule == "W_PARAM_TYPE_POS_MUT"),
-            "не должен fire на R2-split `ro x mut T`, получено: {:?}",
-            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+            d.message.contains("E_PARAM_TYPE_POS_MUT_RETRACTED"),
+            "ожидался E_PARAM_TYPE_POS_MUT_RETRACTED на R2-split `ro x mut T`, получено: {}",
+            d.message
         );
     }
 
     #[test]
     fn no_warning_on_canonical_prefix_mut() {
-        // `mut i int` — canonical prefix form — must NOT warn.
+        // `mut i int` — canonical prefix form — must NOT warn, must parse OK.
         let m = parse("module foo\nfn bump(mut i int) {\n    i = i + 1\n}\n");
         let ws = lint_module(&m);
         assert!(

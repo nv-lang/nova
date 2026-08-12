@@ -143,7 +143,7 @@ fn MemFs @fd_index(fd int) -> Option[int] {
 // straight into the SAME real_fs-compatible image via fs_stat_build_into (no
 // syscall), so a mocked stat is byte-for-byte substitutable with a real one at
 // the accessor level (fs_stat_size(img)/... in fs.nv), never an ambient cache.
-fn MemFs @fill_stat_image(i int, img mut []u8) -> () {
+fn MemFs @fill_stat_image(i int, mut img []u8) -> () {
     unsafe {
         fs_stat_build_into(img.ptr(), @datas[i].len(), @mtimes[i], @mtimes[i], @mtimes[i], @modes[i], @kinds[i])
     }
@@ -197,7 +197,7 @@ fn MemFs mut @drop_fd(i int) -> () {
     @fd_live[i] = false   // tombstone; indices stay stable
 }
 
-fn MemFs mut @mem_read(fd int, buf mut []u8) -> int {
+fn MemFs mut @mem_read(fd int, mut buf []u8) -> int {
     match @fd_index(fd) {
         None => 0 - EN_INVAL
         Some(i) => {
@@ -209,7 +209,7 @@ fn MemFs mut @mem_read(fd int, buf mut []u8) -> int {
     }
 }
 
-fn MemFs @read_common(key str, buf mut []u8, pos int) -> int {
+fn MemFs @read_common(key str, mut buf []u8, pos int) -> int {
     ro cap = buf.len()
     if cap == 0 { return 0 }
     match @find(key) {
@@ -225,7 +225,7 @@ fn MemFs @read_common(key str, buf mut []u8, pos int) -> int {
     }
 }
 
-fn MemFs mut @mem_read_at(fd int, buf mut []u8, offset int) -> int {
+fn MemFs mut @mem_read_at(fd int, mut buf []u8, offset int) -> int {
     match @fd_index(fd) {
         None    => 0 - EN_INVAL
         Some(i) => @read_common(@fd_keys[i], buf, offset)
@@ -287,16 +287,16 @@ fn MemFs mut @mem_seek(fd int, offset i64, whence int) -> i64 {
     }
 }
 
-fn MemFs mut @mem_fstat(fd int, img mut []u8) -> int {
+fn MemFs mut @mem_fstat(fd int, mut img []u8) -> int {
     match @fd_index(fd) {
         None    => 0 - EN_INVAL
         Some(i) => @stat_key(@fd_keys[i], img)
     }
 }
 
-fn MemFs mut @mem_stat(path []u8, img mut []u8) -> int => @stat_key(mem_key(path), img)
+fn MemFs mut @mem_stat(path []u8, mut img []u8) -> int => @stat_key(mem_key(path), img)
 
-fn MemFs mut @stat_key(key str, img mut []u8) -> int {
+fn MemFs mut @stat_key(key str, mut img []u8) -> int {
     match @find(key) {
         None    => 0 - EN_NOTFOUND
         Some(i) => { @fill_stat_image(i, img); 0 }

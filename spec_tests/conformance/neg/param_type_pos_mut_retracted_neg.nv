@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_PARAM_TYPE_POS_MUT_RETRACTED
+//
+// №611 (221.1) negative: the bare postfix `name mut Type` in a parameter
+// (D6 legacy synonym of `mut name Type`) is retracted (owner decision
+// 2026-08-12), amending D445 — the mode modifier always precedes what it
+// describes, without exception. The 2026-07-17 amendment carved out a
+// "sanctioned" exception for view-slices/fixed-arrays (`buf mut []u8`,
+// io-canon, ~30 sites in std); that carve-out is retracted along with the
+// bare form — no exceptions left. This spelling used to compile silently
+// (only a `W_PARAM_TYPE_POS_MUT` warning, and not even that for slice
+// types); it must now hard-error with a fix-it to `mut buf []u8`.
+module neg.param_type_pos_mut_retracted
+
+fn fill(buf mut []u8) -> int => buf.len()
+
+fn main() -> () {}

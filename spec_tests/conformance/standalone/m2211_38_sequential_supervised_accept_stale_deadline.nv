@@ -33,7 +33,7 @@ type ReadAttempt enum
     | TimedOut
     | Errored
 
-fn read_attempt(s mut TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
+fn read_attempt(mut s TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
     ro (tx, rx) = Channel[[]u8].new(1)
     // Plan 238 Ф.4 (D441 §3): `with Fail[TimeoutError]` handler исполняется
     // в файбере падающей операции — AtomicBool вместо mut-флага
@@ -65,7 +65,7 @@ fn read_attempt(s mut TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
     }
 }
 
-fn handle_one(stream mut TcpStream) Net Time -> bool {
+fn handle_one(mut stream TcpStream) Net Time -> bool {
     ro t0 = Monotonic.now()
     ro idle_dl = t0 + 60.to_seconds()
     ro result = read_attempt(stream, idle_dl)

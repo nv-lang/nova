@@ -644,48 +644,39 @@ while i < total { rest.push(@buf[i]); i += 1 }
 Вычищено 2026-07-08: io/buffered drain, fs write, path slice_from/slice_to
 (вопрос владельца). Проверка (185): эвристика «push(x[i]) в счётном цикле».
 
-### 18б. `mut`-параметр — позиция ПЕРЕД именем (канон, owner decision 2026-07-17)
+### 18б. `mut`-параметр — позиция ПЕРЕД именем, БЕЗ исключений (канон, owner
+decision 2026-07-17; постфикс снят целиком 2026-08-12)
 
-Канон mut-параметров — ПРЕФИКСНАЯ форма `mut name Type`. Есть ДВЕ разные позиции,
-куда исторически можно было поставить `mut`, и они означают РАЗНОЕ:
-
-- **позиция ПЕРЕД именем** (`mut name Type`) — канон, D176/Plan 108.1: параметр
-  read-only по умолчанию, `mut` — единственный opt-in на mut-методы/index-запись,
-  видимую вызывающему (§18 выше);
-- **позиция ПОСЛЕ имени, ПЕРЕД типом** (`name mut Type`) — D6 legacy-спеллинг того
-  же самого: парсер принимает её как ПОЛНЫЙ поведенческий синоним префиксной формы
-  (`i mut int` реассайнится в теле идентично `mut i int`) — она НЕ даёт другой,
-  более узкой семантики, просто исторический альтернативный спеллинг.
-
-Голая постфиксная форма (без `ro` перед именем) — footgun-спеллинг, под запретом
-lint'а `W_PARAM_TYPE_POS_MUT` (unconditional pipeline, `lints.rs`) для **не-slice**
-типов. Позиция ПОСЛЕ имени зарезервирована ИСКЛЮЧИТЕЛЬНО за view-слайсами и их
-роднёй — `[]u8`/`[]T` (io-канон, `buf mut []u8`) и fixed-size массивами
-`[N]u8`/`[N]T` (hash-digest out-буферы, `std/crypto/sha256.nv` `out mut [32]u8`);
-для любого другого типа (`Mutex`, `StringBuilder`, `HashMap[K,V]`, generic-параметр
-`R`/`W` бэки протокол-bound'ов и т.п.) — пиши mut ПЕРЕД именем.
-
-Санкционированное ИСКЛЮЧЕНИЕ — explicit **R2-split** `ro name mut Type` (D246 P6,
-Plan 118.5 V3 amend): `ro` явно снимает L1 (без реассайна имени), постфиксный
-`mut` явно про L2 (запись в содержимое) — самодокументирующая, НЕ-каноническая, но
-разрешённая строгая форма (`spec_tests/conformance/d246_param_ro_mut_view.nv`). Lint
-её не флагует (parser не отмечает legacy-маркер, когда `ro` был явным).
+Канон mut-параметров — ПРЕФИКСНАЯ форма `mut name Type`, и с 2026-08-12
+(реестр 221.1 №611/№615, D445 amend) это ЕДИНСТВЕННАЯ форма — постфиксная
+позиция `name mut Type` (голая ИЛИ с `ro` спереди) ретрактирована ЦЕЛИКОМ,
+без исключений по типу параметра. Раньше (owner decision 2026-07-17) была
+асимметрия: постфикс писался ПОСЛЕ имени как D6 legacy-спеллинг, «полный
+поведенческий синоним» префиксной формы, под запретом lint'а
+`W_PARAM_TYPE_POS_MUT` — но с двумя живыми исключениями (view-слайсы/
+fixed-массивы, и explicit R2-split `ro name mut Type`). D445 (2026-08-03)
+уже говорило «без исключений и без постфиксной формы где бы то ни было» —
+эти два исключения были именно тем, что D445 отменяло ПО СМЫСЛУ, но не
+называло по имени, поэтому и дожили до 2026-08-12. Теперь названы и сняты:
+`W_PARAM_TYPE_POS_MUT` заменён на жёсткую ошибку
+`E_PARAM_TYPE_POS_MUT_RETRACTED` (parser-level, `parse_param`), без
+exemption по типу — `buf mut []u8` (io-канон) и `out mut [32]u8`
+(hash-digest out-buffer) ошибаются РОВНО ТАК ЖЕ, как `m mut Mutex`.
 
 ```nv
-// КАНОН — mut ПЕРЕД именем
+// КАНОН — mut ПЕРЕД именем, единственная легальная форма
 fn bump(mut i int) { i = i + 1 }
 fn wait(mut m Mutex) { m.lock() }
+fn read(mut buf []u8) -> int => 0                // io-канон — тоже ПЕРЕД именем
+fn hash(mut out [32]u8) { out[0] = 1 as u8 }      // digest out-buffer — тоже
 
-// ЗАПРЕЩЁННЫЙ синоним (postfix, non-slice) — W_PARAM_TYPE_POS_MUT
+// СНЯТО (postfix, любой тип, включая бывшие исключения) — E_PARAM_TYPE_POS_MUT_RETRACTED
 // fn bump(i mut int) { i = i + 1 }        // ⚠ мигрируй на `mut i int`
 // fn wait(m mut Mutex) { m.lock() }       // ⚠ мигрируй на `mut m Mutex`
+// fn read(buf mut []u8) -> int => 0       // ⚠ мигрируй на `mut buf []u8`
 
-// ЛЕГИТИМНО (slice/fixed-array родня) — postfix остаётся
-fn read(buf mut []u8) -> int => 0                // io-канон
-fn hash(out mut [32]u8) { out[0] = 1 as u8 }      // digest out-buffer
-
-// САНКЦИОНИРОВАННОЕ исключение (R2-split, НЕ канон, но разрешено)
-fn touch(ro i mut int) { i = i + 1 }             // explicit ro + explicit mut
+// СНЯТО (бывший «санкционированный» R2-split) — E_PARAM_TYPE_POS_MUT_RETRACTED
+// fn touch(ro i mut int) { i = i + 1 }    // ⚠ мигрируй на `mut i int` (ro тоже уходит)
 ```
 
 ## 19. `consume` — видимая линейная передача на каждом binding-site

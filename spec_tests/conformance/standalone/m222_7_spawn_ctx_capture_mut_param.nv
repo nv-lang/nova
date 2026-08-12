@@ -38,7 +38,7 @@ module standalone.m222_7_spawn_ctx_capture_mut_param
 import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
 import std.time.duration
 
-fn read_via_share(s mut TcpStream) Net -> int {
+fn read_via_share(mut s TcpStream) Net -> int {
     ro (tx, rx) = Channel[int].new(1)
     supervised {
         spawn consume ws = s.share() {

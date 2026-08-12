@@ -52,18 +52,18 @@ export type Fs effect {
     // File lifecycle + positioned/sequential I/O (n / fd / 0, or -errno).
     open(path []u8, flags int, mode int) -> int
     close(fd int) -> int
-    read(fd int, buf mut []u8) -> int
+    read(fd int, mut buf []u8) -> int
     write(fd int, data []u8) -> int
-    read_at(fd int, buf mut []u8, offset int) -> int
+    read_at(fd int, mut buf []u8, offset int) -> int
     write_at(fd int, data []u8, offset int) -> int
     seek(fd int, offset i64, whence int) -> i64
     sync_all(fd int) -> int
     sync_data(fd int) -> int
     // Metadata: 0 or -errno; on success `img` (STAT_IMAGE_BYTES bytes, caller-
     // owned) is filled in place — read it via the stat_* pointer accessors.
-    stat(path []u8, img mut []u8) -> int
-    lstat(path []u8, img mut []u8) -> int
-    fstat(fd int, img mut []u8) -> int
+    stat(path []u8, mut img []u8) -> int
+    lstat(path []u8, mut img []u8) -> int
+    fstat(fd int, mut img []u8) -> int
     // Path-addressed directory / link ops (0 or -errno; copy → byte count).
     mkdir(path []u8, mode int) -> int
     remove_file(path []u8) -> int

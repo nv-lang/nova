@@ -189,7 +189,7 @@ export fn TcpStream.connect(addr str) Net -> Result[TcpStream, NetError] {
 /// directly, unchanged); only this method and `@write`/`@flush` are the
 /// io-conformance surface.
 #stable(since = "0.1")
-export fn TcpStream mut @read(buf mut []u8) Net -> Result[int, IoError] {
+export fn TcpStream mut @read(mut buf []u8) Net -> Result[int, IoError] {
     match Net.read(@, buf) {
         Ok(n)  => Ok(n)
         Err(e) => Err(e.to_io_error("read"))
@@ -380,7 +380,7 @@ export fn TcpStream consume @into_split() Net -> (TcpReadHalf, TcpWriteHalf) {
 
 /// Read up to `buf.len()` bytes into `buf`; `Ok(0)` = EOF.
 #stable(since = "0.1")
-export fn TcpReadHalf mut @read(buf mut []u8) Net -> Result[int, NetError] {
+export fn TcpReadHalf mut @read(mut buf []u8) Net -> Result[int, NetError] {
     Net.read(TcpStream.from_raw(@handle), buf)
 }
 

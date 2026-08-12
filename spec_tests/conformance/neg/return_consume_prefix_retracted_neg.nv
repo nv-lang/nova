@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_RETURN_CONSUME_PREFIX_RETRACTED
+//
+// №616 (221.1) negative: `-> consume T` (the PREFIX return form D445
+// canonized on 2026-08-03) is itself retracted (owner decision
+// 2026-08-12). Repro (docs/plans/wip/repro-616-consume-return.nv.txt)
+// proved the modifier carries no semantics: a `consume`-declared type
+// already enforces linearity by itself (D180), and a non-`consume` type
+// marked `-> consume T` compiles while promising a linearity it does not
+// have. This spelling used to be canon (5 sites in std/src/runtime/sync.nv,
+// migrated to bare `-> T` in the same window); it must now hard-error with
+// a fix-it, not silently keep working.
+module neg.return_consume_prefix_retracted
+
+type P616Box {
+    v int,
+}
+
+fn make_box() -> consume P616Box => { v: 1 }
+
+fn main() -> () {}

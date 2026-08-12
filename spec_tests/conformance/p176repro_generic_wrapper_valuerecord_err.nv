@@ -16,14 +16,14 @@ type WErr value { ro code int }
 fn WErr.new(code int) -> WErr => { code }
 
 type WSrc protocol {
-    mut @pull(buf mut []u8) -> Result[int, WErr]
+    mut @pull(mut buf []u8) -> Result[int, WErr]
 }
 
 type WMem { ro data []u8, mut pos int }
 
 fn WMem.new(data []u8) -> Self => { data, pos: 0 }
 
-fn WMem mut @pull(buf mut []u8) -> Result[int, WErr] {
+fn WMem mut @pull(mut buf []u8) -> Result[int, WErr] {
     ro cap = buf.len()
     if cap == 0 { return Ok(0) }
     ro rem = @data.len() - @pos
@@ -43,7 +43,7 @@ type Wrap[R] {
 
 fn Wrap[R].new(inner R) -> Self => { inner, cnt: 0 }
 
-fn Wrap[R WSrc] mut @pull(buf mut []u8) -> Result[int, WErr] {
+fn Wrap[R WSrc] mut @pull(mut buf []u8) -> Result[int, WErr] {
     @cnt += 1
     @inner.pull(buf)
 }

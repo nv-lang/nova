@@ -38,7 +38,7 @@ export fn BytesReader @remaining() -> int {
 /// io.Read: copy up to `buf.len()` bytes into `buf`, advancing the cursor.
 /// `Ok(0)` (with a non-empty `buf`) means EOF.
 #stable(since = "0.1")
-export fn BytesReader mut @read(buf mut []u8) -> Result[int, IoError] {
+export fn BytesReader mut @read(mut buf []u8) -> Result[int, IoError] {
     ro cap = buf.len()
     if cap == 0 { return Ok(0) }
     ro rem = @data.len() - @pos

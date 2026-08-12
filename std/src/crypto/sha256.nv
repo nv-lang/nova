@@ -236,7 +236,7 @@ fn read_be_u32(data []u8, offset int) -> u32 =>
     | ((data[offset + 2] as u32) << 8)
     | (data[offset + 3] as u32)
 
-fn write_be_u32(out mut [32]u8, offset int, v u32) -> () {
+fn write_be_u32(mut out [32]u8, offset int, v u32) -> () {
     out[offset]     = ((v >> 24) & 0xFF) as u8
     out[offset + 1] = ((v >> 16) & 0xFF) as u8
     out[offset + 2] = ((v >> 8)  & 0xFF) as u8
