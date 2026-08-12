@@ -93,13 +93,19 @@ std/src/{time/civil,encoding,collections}, без правки компилят�
   пользовательском типе компилируется, но `a[i]` синтаксис не маршрутизируется
   через него в codegen — падает на raw C pointer indexing.
 
-## ЧТО ОСТАЛОСЬ ДО ПРИЁМКИ
+## ПРИЁМКА — ВСЁ ЗАКРЫТО
 
-- [ ] 3x прогон json_test + civil_arith_test подряд (зелёный)
-- [ ] Фикстуры в `spec_tests/conformance/standalone/` с `// EXPECT_STDOUT`
-      для №601 (round-trip значений) и №602 (список/длина ключей)
-- [ ] `nova check std/src` ДО (на чистом дереве до этих правок) / ПОСЛЕ
-- [ ] Снять две строки из `scripts/guards/std-test-fail.baseline` с причиной
-- [ ] Sabotage: показать красное (откат фикса) / зелёное (с фиксом)
-- [ ] Коммит(ы), английский текст сообщения
-- [ ] Финальный отчёт по формату брифа
+- [x] 3x прогон json_test + civil_arith_test подряд — зелёный все три раза
+- [x] Фикстуры `spec_tests/conformance/standalone/n601_civil_pattern_digits_at_while_closure.nv`
+      и `n602_json_object_keys_len.nv`, оба `// EXPECT_STDOUT`, PASS
+- [x] `nova check std/src` ДО/ПОСЛЕ — байт-идентично: `PASS: 154 FAIL: 26 WARN: 62`
+      (26 отказов — фон, не мой; не сдвинулись)
+- [x] Обе строки сняты из `scripts/guards/std-test-fail.baseline` с причиной
+- [x] Sabotage: откат к родительскому коммиту (`aa927627c^`) на трёх файлах —
+      красное байт-идентично исходному отчёту №601/№602; восстановление
+      фикса (`git checkout HEAD --`) — снова зелёное
+- [x] Коммиты: `aa927627c` (fix), `affe6e9f5` (fixtures+baseline+checkpoint),
+      сообщения по-английски
+- [ ] Финальный отчёт владельцу — следующим шагом этого окна
+
+Работа окна p601-std-tests завершена по брифу.
