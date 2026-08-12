@@ -33,20 +33,16 @@ type Store effect {
 
 fn make_ints(n int) -> []int {
     mut v = []int.new()
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         v.push(i * 3)
-        i = i + 1
     }
     return v
 }
 
 fn make_points(n int) -> []Point {
     mut v = []Point.new()
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         v.push(Point { x: i, y: i * 2 })
-        i = i + 1
     }
     return v
 }
@@ -54,16 +50,9 @@ fn make_points(n int) -> []Point {
 /// Сжигает кучу между возвратом значения и его чтением.
 fn churn() -> int {
     mut total = 0
-    mut i = 0
-    while i < 60000 {
-        mut junk = []int.new()
-        mut j = 0
-        while j < 50 {
-            junk.push(j)
-            j = j + 1
-        }
-        total = total + junk.len()
-        i = i + 1
+    for _i in 0..60000 {
+        mut junk = (0..50).collect()
+        total += junk.len()
     }
     return total
 }

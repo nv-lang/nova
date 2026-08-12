@@ -15,7 +15,7 @@ type D616Guard consume {
     v int,
 }
 
-fn D616Guard consume @close() -> int => @v
+fn D616Guard consume @into_value() -> int => @v
 
 // No `consume` on the return type (retracted spelling) — linearity comes
 // from `D616Guard` being declared `consume`, per D180.
@@ -23,5 +23,5 @@ fn make_d616_guard() -> D616Guard => { v: 616 }
 
 fn main() {
     consume g = make_d616_guard()
-    println(g.close())
+    println(g.into_value())
 }
