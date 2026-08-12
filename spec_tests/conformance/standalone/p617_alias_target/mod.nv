@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier №617) — see ../p617_alias_leak_probe.nv.
+//
+// Deliberately unrelated to the local-variable collision this probe checks:
+// exists only so the entry file's `import p617_alias_target as a` gives the
+// alias `a` a REAL module to point at, matching #617's report ("`import X as
+// a` in one file...").
+
+module standalone.p617_alias_target
+
+export fn p617_target_marker() -> int => 111
