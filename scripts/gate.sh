@@ -35,6 +35,11 @@ GATE_FAIL_N=0
 # оказывался непрофилируемым: владелец просил профиль, а данных не было вовсе.
 # Профиль не должен зависеть от того, кто как позвал скрипт, поэтому отметку
 # ставит сам шаг. Формат читает scripts/tools/gate-profile.sh.
+# ESC не литералом (2026-08-12, страж check-no-control-chars): невидимый
+# управляющий байт внутри регулярки — форма, которую съедает любой копипаст,
+# и тогда снятие цветовых кодов молча перестаёт работать, а `PASS:` перестаёт
+# находиться. Байт задаётся явно и один раз.
+ESC=$(printf '\033')
 GATE_T0=$(date +%s)
 step() {
     printf '[%5ds] == gate: %s ==\n' "$(( $(date +%s) - GATE_T0 ))" "$1"
@@ -247,6 +252,12 @@ step "публичные страницы парны и на своих язык
 bash "$ROOT/scripts/guards/check-doc-language-pairs.sh" "$ROOT" \
     || fail "страницы без пары или сторона не на своём языке"
 
+# №TBD-control-chars: невидимый управляющий байт в исходнике — код, который
+# читается верным и работает неверным (перенесено из соседнего проекта).
+step "невидимые управляющие байты в исходниках"
+bash "$ROOT/scripts/guards/check-no-control-chars.sh" "$ROOT" \
+    || fail "управляющие байты в исходниках"
+
 # №607: корень публичного репозитория — витрина, а не стол.
 step "в корне репозитория только предусмотренное (№607)"
 bash "$ROOT/scripts/guards/check-repo-root-clean.sh" "$ROOT" \
@@ -343,7 +354,7 @@ if [ -n "$_MEGA_BASE" ] && [ "$_MEGA_BASE" -gt 0 ] 2>/dev/null; then
 else
     echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline не задан — см. scripts/guards/mega-cu-time.baseline)"
 fi
-MEGA_LINE=$(sed -e "s/\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
+MEGA_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
 echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
 # -- Храповик ЧИСЛА SKIP мега-CU (реестр 221.1 №453б) -------------------------
 # ЗАЧЕМ: гейт ассертил только PASS/FAIL -- уехавшая из корпуса фикстура (не
@@ -384,7 +395,7 @@ echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
 
 step "check std/src (byte-canon)"
-STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
+STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/${ESC}\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
 echo "std :: $STD_LINE"
 # Канон 2026-07-29: PASS 147 / FAIL 26 / WARN 1078. Прежний «144/27/1057» устарел
 # и делал гейт красным на чистом main (факт до этого слияния — 146/27/1071: PASS/WARN

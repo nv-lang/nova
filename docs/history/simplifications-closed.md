@@ -14924,10 +14924,10 @@ sub-command. Pragmatic ��� CI integration.
 
 ### Boundary value tests ��� mutation (�.25.4)
 
-**���:** 25_mutation_contracts_positive.nv
+**���:** \f25_mutation_contracts_positive.nv
 **��� ��������:** ����� �������� boundary values (strict_positive(1),
 
-on_negative(0), elow_hundred(99)) ������� **����� ��** killing mutants,
+on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
 �� �� ����������� mutation analysis �� ���� ������ � nova test.
 **������:** 
 ova test �� ��������� --mutate-contracts. ����� verify ���
@@ -15182,11 +15182,11 @@ inference engine through generic-call return types.
 ### sources_by_module_path ������ file_id-based (�.27.1)
 
 **���:** collect_handlers::collect_handlers_workspace API.
-**��� ��������:** Map ���� � module_path: String, �� ile_id: u32.
+**��� ��������:** Map ���� � module_path: String, �� \file_id: u32.
 ���� module = ���� source (��������� ��� file-modules; ��� folder-modules �
 concatenated source, items ������� ����� span offsets ���������).
 **������:** CLI workspace pipeline �� ����������� ���������� file_id parser'�
-(��� modules ile_id = 0). ������������ ile_id ����������� �� FileRegistry
+(��� modules \file_id = 0). ������������ \file_id ����������� �� FileRegistry
 integration � ��� Plan 42 scope.
 **��� ������:** ��� ��������� FileRegistry � Plan 42 � ����������� ��
 (file_id, source) map. ������������ API ����� ��������� ��� helper.
@@ -15211,11 +15211,11 @@ string. Handler scanner �������� �� concatenated, item span'
 ### sources_by_module_path ������ file_id-based (�.27.1)
 
 **���:** collect_handlers::collect_handlers_workspace API.
-**��� ��������:** Map ���� � module_path: String, �� ile_id: u32.
+**��� ��������:** Map ���� � module_path: String, �� \file_id: u32.
 ���� module = ���� source (��������� ��� file-modules; ��� folder-modules �
 concatenated source, items ������� ����� span offsets ���������).
 **������:** CLI workspace pipeline �� ����������� ���������� file_id parser'�
-(��� modules ile_id = 0). ������������ ile_id ����������� �� FileRegistry
+(��� modules \file_id = 0). ������������ \file_id ����������� �� FileRegistry
 integration � ��� Plan 42 scope.
 **��� ������:** ��� ��������� FileRegistry � Plan 42 � ����������� ��
 (file_id, source) map. ������������ API ����� ��������� ��� helper.
@@ -15255,14 +15255,14 @@ last expression block'�. ~30 LOC. ������ ���������
 ���������� ��� <match> / <closure> / <with> placeholder instead of full source.
 **������:** Full pretty-printer ��� ���� ExprKind variants � ~200 LOC,
 duplicates AST pretty-printer (Plan 45.A roadmap'���).
-**��� ������:** �������� st::pretty::print_expr(e) -> String shared util,
+**��� ������:** �������� \ast::pretty::print_expr(e) -> String shared util,
 ���������������� � doc + diag + diagnostics. Plan 45.A.
 **���������:** L � contracts redko ���������� complex expressions; explicit
 <kind> placeholder �������� diagnose limitation.
-**���:** 25_mutation_contracts_positive.nv
+**���:** \f25_mutation_contracts_positive.nv
 **��� ��������:** ����� �������� boundary values (strict_positive(1),
 
-on_negative(0), elow_hundred(99)) ������� **����� ��** killing mutants,
+on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
 �� �� ����������� mutation analysis �� ���� ������ � nova test.
 **������:** 
 ova test �� ��������� --mutate-contracts. ����� verify ���
@@ -15483,9 +15483,9 @@ production-grade (links/collector/doctree/render_md/render_expr).
 
 ### Binary operators always parenthesized
 
-**���:** st::pretty::write_expr � Binary { ... } arm.
+**���:** \ast::pretty::write_expr � Binary { ... } arm.
 **��� ��������:** ������ binary expression ������� � () ��� precedence
-analysis. ��������  + b * c ���������� ��� (a + (b * c)).
+analysis. �������� \a + b * c ���������� ��� (a + (b * c)).
 **������:** ��� precedence parsing easy to introduce bugs ��� pretty(parse(x))
 ����� ������ semantics. Parens ����������� correctness.
 **��� ������:** �������� precedence table, omit parens ����� possible.
@@ -15494,7 +15494,7 @@ analysis. ��������  + b * c ���������� ��
 
 ### Complex stmts (Match/For/While body) � \<kind>\ placeholder
 
-**���:** st::pretty::expr_kind_name fallback.
+**���:** \ast::pretty::expr_kind_name fallback.
 **��� ��������:** Match arms, For/While body, ClosureFull body � ����������
 ��� <match> / <for> / <while> / <closure-full> (kind name).
 **������:** Full implementation ��� ������� variant � ~200 LOC additional.
@@ -15525,7 +15525,7 @@ tracking. Text substitute � 90% case coverage �� 5 LOC.
 - original_expr � comment / string literal > false mutation.
 - Multiple occurrences �� ����� fn > only first mutated.
 - �.28.1 parens may break exact match > outcome NoTests (honest).
-**��� ������:** AST-level mutation ����� st::pretty::print_expr reverse
+**��� ������:** AST-level mutation ����� \ast::pretty::print_expr reverse
 + span-aware insertion. Plan 45.A.
 **���������:** L � ������� ��������� production cases.
 
@@ -15558,7 +15558,7 @@ boundary cases.
 **��� ��������:** Promote � v1.0.0-rc1 �� v1.0.0 �� ������ format_version
 (������� 1). ��� namespace ��� major-bumped breaking changes; rc/stable
 ������� � quality marker, �� version.
-**������:** Consumers parsing ormat_version == 1 ��� ��������; bump ��
+**������:** Consumers parsing \format_version == 1 ��� ��������; bump ��
 2 ��� �� fake breaking change. Schema title � ������������ ����� ��� promote
 visible.
 **��� ������:** �� ����� � ��� ���������� semver semantics.
@@ -19190,10 +19190,10 @@ sub-command. Pragmatic ��� CI integration.
 
 ### Boundary value tests ��� mutation (�.25.4)
 
-**���:** 25_mutation_contracts_positive.nv
+**���:** \f25_mutation_contracts_positive.nv
 **��� ��������:** ����� �������� boundary values (strict_positive(1),
 
-on_negative(0), elow_hundred(99)) ������� **����� ��** killing mutants,
+on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
 �� �� ����������� mutation analysis �� ���� ������ � nova test.
 **������:** 
 ova test �� ��������� --mutate-contracts. ����� verify ���
@@ -19448,11 +19448,11 @@ inference engine through generic-call return types.
 ### sources_by_module_path ������ file_id-based (�.27.1)
 
 **���:** collect_handlers::collect_handlers_workspace API.
-**��� ��������:** Map ���� � module_path: String, �� ile_id: u32.
+**��� ��������:** Map ���� � module_path: String, �� \file_id: u32.
 ���� module = ���� source (��������� ��� file-modules; ��� folder-modules �
 concatenated source, items ������� ����� span offsets ���������).
 **������:** CLI workspace pipeline �� ����������� ���������� file_id parser'�
-(��� modules ile_id = 0). ������������ ile_id ����������� �� FileRegistry
+(��� modules \file_id = 0). ������������ \file_id ����������� �� FileRegistry
 integration � ��� Plan 42 scope.
 **��� ������:** ��� ��������� FileRegistry � Plan 42 � ����������� ��
 (file_id, source) map. ������������ API ����� ��������� ��� helper.
@@ -19477,11 +19477,11 @@ string. Handler scanner �������� �� concatenated, item span'
 ### sources_by_module_path ������ file_id-based (�.27.1)
 
 **���:** collect_handlers::collect_handlers_workspace API.
-**��� ��������:** Map ���� � module_path: String, �� ile_id: u32.
+**��� ��������:** Map ���� � module_path: String, �� \file_id: u32.
 ���� module = ���� source (��������� ��� file-modules; ��� folder-modules �
 concatenated source, items ������� ����� span offsets ���������).
 **������:** CLI workspace pipeline �� ����������� ���������� file_id parser'�
-(��� modules ile_id = 0). ������������ ile_id ����������� �� FileRegistry
+(��� modules \file_id = 0). ������������ \file_id ����������� �� FileRegistry
 integration � ��� Plan 42 scope.
 **��� ������:** ��� ��������� FileRegistry � Plan 42 � ����������� ��
 (file_id, source) map. ������������ API ����� ��������� ��� helper.
@@ -19521,14 +19521,14 @@ last expression block'�. ~30 LOC. ������ ���������
 ���������� ��� <match> / <closure> / <with> placeholder instead of full source.
 **������:** Full pretty-printer ��� ���� ExprKind variants � ~200 LOC,
 duplicates AST pretty-printer (Plan 45.A roadmap'���).
-**��� ������:** �������� st::pretty::print_expr(e) -> String shared util,
+**��� ������:** �������� \ast::pretty::print_expr(e) -> String shared util,
 ���������������� � doc + diag + diagnostics. Plan 45.A.
 **���������:** L � contracts redko ���������� complex expressions; explicit
 <kind> placeholder �������� diagnose limitation.
-**���:** 25_mutation_contracts_positive.nv
+**���:** \f25_mutation_contracts_positive.nv
 **��� ��������:** ����� �������� boundary values (strict_positive(1),
 
-on_negative(0), elow_hundred(99)) ������� **����� ��** killing mutants,
+on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
 �� �� ����������� mutation analysis �� ���� ������ � nova test.
 **������:** 
 ova test �� ��������� --mutate-contracts. ����� verify ���
@@ -19749,9 +19749,9 @@ production-grade (links/collector/doctree/render_md/render_expr).
 
 ### Binary operators always parenthesized
 
-**���:** st::pretty::write_expr � Binary { ... } arm.
+**���:** \ast::pretty::write_expr � Binary { ... } arm.
 **��� ��������:** ������ binary expression ������� � () ��� precedence
-analysis. ��������  + b * c ���������� ��� (a + (b * c)).
+analysis. �������� \a + b * c ���������� ��� (a + (b * c)).
 **������:** ��� precedence parsing easy to introduce bugs ��� pretty(parse(x))
 ����� ������ semantics. Parens ����������� correctness.
 **��� ������:** �������� precedence table, omit parens ����� possible.
@@ -19760,7 +19760,7 @@ analysis. ��������  + b * c ���������� ��
 
 ### Complex stmts (Match/For/While body) � \<kind>\ placeholder
 
-**���:** st::pretty::expr_kind_name fallback.
+**���:** \ast::pretty::expr_kind_name fallback.
 **��� ��������:** Match arms, For/While body, ClosureFull body � ����������
 ��� <match> / <for> / <while> / <closure-full> (kind name).
 **������:** Full implementation ��� ������� variant � ~200 LOC additional.
@@ -19791,7 +19791,7 @@ tracking. Text substitute � 90% case coverage �� 5 LOC.
 - original_expr � comment / string literal > false mutation.
 - Multiple occurrences �� ����� fn > only first mutated.
 - �.28.1 parens may break exact match > outcome NoTests (honest).
-**��� ������:** AST-level mutation ����� st::pretty::print_expr reverse
+**��� ������:** AST-level mutation ����� \ast::pretty::print_expr reverse
 + span-aware insertion. Plan 45.A.
 **���������:** L � ������� ��������� production cases.
 
@@ -19824,7 +19824,7 @@ boundary cases.
 **��� ��������:** Promote � v1.0.0-rc1 �� v1.0.0 �� ������ format_version
 (������� 1). ��� namespace ��� major-bumped breaking changes; rc/stable
 ������� � quality marker, �� version.
-**������:** Consumers parsing ormat_version == 1 ��� ��������; bump ��
+**������:** Consumers parsing \format_version == 1 ��� ��������; bump ��
 2 ��� �� fake breaking change. Schema title � ������������ ����� ��� promote
 visible.
 **��� ������:** �� ����� � ��� ���������� semver semantics.
@@ -21355,13 +21355,13 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   единый, тестовое покрытие в одной директории. Параллель с D169 family
   (Mutex/RwLock/ReentrantMutex в одном блоке).
 
-- **Plan 103.6: fence() as trailing block expression** — ence(SeqCst) used as
+- **Plan 103.6: fence() as trailing block expression** — \fence(SeqCst) used as
   trailing expr in 
 ealtime { fence(SeqCst) } generates (nova_int)(nova_fn_fence(...)) 
   in C, which is invalid because 
-ova_fn_fence returns oid. Root cause: 
+ova_fn_fence returns \void. Root cause: 
   infer_expr_c_type falls back to 
-ova_int for ence() calls not found in 
+ova_int for \fence() calls not found in 
   method_overloads. Fix: restructure test to use fence() as statement (not trailing), 
   followed by let _ = a.load() to make the block have a typed trailing expression. 
   No codegen fix attempted (V2 could fix infer_expr_c_type for void-returning functions).
@@ -28293,7 +28293,7 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - [2026-06-16] [M-153.2-tuple-elem-adapter] + [M-161-parametric-return] CLOSED (commit d5dc0058) — NO simplifications; оба маркера уже были реализованы в Plan 162/164/161, но тесты enumerate_basic/enumerate_chain/enumerate_collect падали с E_IMPORT_GLOB (стар. синтаксис import без as). Фикс: 3 строки (import as). 11/11 plan162 PASS, 12/12 plan161 PASS. backlog-followups.md обновлён.
 - [2026-06-16] Plan 165 Ф.3-Ф.4 followup (commits f957d018 4d1ef9df a5d4a30b 63b9a3bc) — NO simplifications; production-grade cleanup. Ф.3: `Range.step_by` — убран `Fail[OverflowError]` (семантически неверен: невалидный аргумент — нарушение контракта, не recoverable Fail); заменён на `requires step > 0` (D24 compile-time контракт, runtime panic при нарушении). Побочный эффект: `_nova_throw_typed_void` больше не нужен в standalone тестах → добавлены copy-тесты StepRangeIter/ReverseRangeIter в `range.nv`. `for_in_range_iter.nv` очищен (убраны конфликтующие локальные типы). Ф.4: `external fn` → `extern "nova" fn` в `std/runtime/raw_mem.nv` (7 fn) + `std/ffi/cstr.nv` (1 fn) — D282 (Plan 91.12) убрал `external fn` синтаксис; файлы embedded в бинарь через include_str! → надо пересобирать компилятор. 4/4 PASS (plan_value_iter).
 - [2026-06-16] Plan 162.2 (sig_table compile-path wiring + is_known_fn live, D293, branch plan-162c-lazy-typecheck) — NO simplifications; production-grade two-pass resolver closure. Ф.2: collect_all_signatures() called in nova-cli/src/main.rs before TypeCheckCtx build; fallback to ModuleSigTable::new() on Err (backward compat). Ф.3: is_known_fn() wired into fn call resolution in compiler-codegen/src/types/mod.rs as fallback after local lookup fails; #[allow(dead_code)] removed. D293 spec entry added to 07-modules.md. 4/4 PASS (plan162_2), zero new regressions.
-- [2026-06-16] Plan 165 (value-record iterator types + codegen generic-forward-decl fix, D290, commits 1f92f106 3cec7a23 20d4ee8b e7094f97) — NO simplifications; production-grade codegen fix + value-type migration. Ф.1 CODEGEN FIX: ExprKind::Range materialize (ro r = 0..5) hardcoded Nova_Range* = nova_alloc(...) regardless of value/heap declaration; infer_expr_c_type hardcoded "Nova_Range*". Fixed: both branches check alue_record_names.contains("Range") → emit NovaValue_Range tmp; tmp.start = s; tmp.end = e; on stack. Generic value-type forward-decl fix (коммит 1f92f106): 	ype_ref_to_c skipped 	ype_aliases for generic value-types with explicit type args → produces NovaValue_VecIter____nova_int not erased NovaValue_VecIter. ield_cache.rs: "Never" → "never" in is_primitive_leaf + exclude bare generic type param fields from 
+- [2026-06-16] Plan 165 (value-record iterator types + codegen generic-forward-decl fix, D290, commits 1f92f106 3cec7a23 20d4ee8b e7094f97) — NO simplifications; production-grade codegen fix + value-type migration. Ф.1 CODEGEN FIX: ExprKind::Range materialize (ro r = 0..5) hardcoded Nova_Range* = nova_alloc(...) regardless of value/heap declaration; infer_expr_c_type hardcoded "Nova_Range*". Fixed: both branches check \value_record_names.contains("Range") → emit NovaValue_Range tmp; tmp.start = s; tmp.end = e; on stack. Generic value-type forward-decl fix (коммит 1f92f106): 	ype_ref_to_c skipped 	ype_aliases for generic value-types with explicit type args → produces NovaValue_VecIter____nova_int not erased NovaValue_VecIter. \field_cache.rs: "Never" → "never" in is_primitive_leaf + exclude bare generic type param fields from 
 ef_typed. Ф.2 STDLIB: VecIter[T] value — GC-pointer fields (Vec ref) covered by fiber arena D228; cursor semantics → safe on stack. Range/RangeIter/StepRangeIter/ReverseRangeIter value — int-only fields → pure stack, zero GC. Convention D290 §5: new iterator = check value eligibility. TESTS: 4 fixtures (vec_iter_value_pos 7 tests, vec_iter_ro_mut_neg 1 neg, iter_chain_no_malloc_pos, range_value_pos 6 tests); all 4/4 PASS. No new regressions (9 pre-existing syntax FAILs unchanged: closures/compose overload, closure_corner_cases, step_by_cross_file linker, for_in_range_iter checker, match_advanced RUN).
 - [2026-06-16] D289 amend: `import m` last-segment qualified + E_REDUNDANT_IMPORT_ALIAS (commits 0dcec3c3 803c1b7b) — NO simplifications; production-grade. Two changes: (1) E_IMPORT_GLOB removed — `import m` without `as` is legal; last segment of path becomes the qualified namespace name (already implemented in `imported_modules` Plan 81 Ф.2 via `path.last()` unconditional insert). `import std.collections.vec_iter` introduces `vec_iter` in scope; `vec_iter.EnumerateIter` works. f3_import_glob_neg repurposed as positive test. (2) E_REDUNDANT_IMPORT_ALIAS added — `import a.b.X as X` where alias == last segment is forbidden; write `import a.b.X` instead. Condition: `alias.is_some() && items.is_none() && alias == path.last()`. ~123 files migrated `import X as X` → `import X` across nova_tests/ and std/. f6_redundant_alias_neg new negative fixture. plan163 6/6 PASS, plan162 11/11 PASS. Spec D289 amended (option b). Acceptance criteria A5-A8+G0 met.
 - [2026-06-16] D241 amend: canonical type-modifier order revised to ownership → representation → visibility (consume(0) → value(1) → priv(2)). Previous D241 had value(0)→consume(1)→priv(2) (scope-adjacency rationale). Changed to Rust-like ordering: ownership is the most salient property, representation second, visibility last. Enforcement in parser/mod.rs: rank values swapped (consume: 1→0, value: 0→1); error message updated to "ownership → representation → visibility". Test fixtures: `mo_neg_consume_value.nv` flipped from negative (E_MODIFIER_ORDER) to positive test (consume value is now canonical); `mo_neg_value_consume.nv` added as new negative test (value consume inverts ranks → E_MODIFIER_ORDER). Also: `types/mod.rs` migration hint for `external type X consume` updated to use `consume value` order. 18/18 plan148 PASS. NO simplifications — one-canonical-syntax rule unchanged, only the canonical definition updated.
