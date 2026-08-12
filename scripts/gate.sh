@@ -305,23 +305,50 @@ step "язык манифестов (nova.toml / nova.lock.toml — по-анг�
 bash "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"
 
-step "самотесты стражей (все из каталога, по одному разу)"
+step "самотесты стражей (все из каталога, параллельно)"
 # ЕДИНСТВЕННОЕ место, где они запускаются. Каталог обходится целиком,
 # поэтому новый самотест подхватывается сам — дописывать его в gate.sh
 # не нужно и, значит, нельзя забыть.
-for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
-    [ -e "$st" ] || continue
-    # Самотест — проверка проверки. Не уложился в срок — он не медленный,
-    # он сломан (№475).
-    #
-    # 180 -> 300 (2026-08-10, реестр №558). Мера ВРЕМЕННАЯ и названа как долг,
-    # а не как новая норма: `test-check-doc-examples.sh` идёт 207 секунд на
-    # ненагруженной машине и потому падал по сроку ВНУТРИ полного прогона,
-    # оставаясь зелёным поодиночке. Ложно-красный гейт хуже отсутствующего:
-    # его начинают читать выборочно. Приёмка №558 — ни один самотест не
-    # требует больше минуты, и это ИЗМЕРЕНО; тогда срок вернётся вниз.
-    bash "$ROOT/scripts/tools/with-deadline.sh" 300 bash "$st" \
-        || fail "самотест стража: $(basename "$st")"
+#
+# ПАРАЛЛЕЛЬНО с 2026-08-12. Профиль (`scripts/tools/gate-profile.sh` по
+# gate-run8.log) показал: самотесты — 1125 секунд из ~3400, то есть ТРЕТЬ
+# гейта и первый потребитель с большим отрывом; мега-CU, которую все считали
+# главной, — 310 секунд, вшестеро меньше.
+#
+# Последовательность здесь ничего не охраняла: каждый самотест по построению
+# изолирован (свой `mktemp -d` либо `$$`-суффикс), ни один не пишет в рабочее
+# дерево — проверено грепом по всем 43 перед этой правкой. Единственный
+# кандидат в исключение, `test-check-worktree-location.sh`, заводит worktree
+# внутри СВОЕГО временного репозитория.
+#
+# Срок на каждый — прежний (300с) и живёт в обёртке. Провал передаётся ФАЙЛОМ,
+# а не кодом возврата: `xargs` иначе оборвал бы очередь на первом упавшем, и
+# про остальные мы бы не узнали — ровно та слепота, из-за которой гейт вообще
+# копит отказы, а не выходит на первом.
+SELFTEST_JOBS="${NOVA_GATE_SELFTEST_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+[ "$SELFTEST_JOBS" -ge 1 ] || SELFTEST_JOBS=1
+SELFTEST_FAILDIR="${TMPDIR:-/tmp}/gate_selftest_fails_$$"
+rm -rf "$SELFTEST_FAILDIR"
+mkdir -p "$SELFTEST_FAILDIR"
+find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print0 2>/dev/null \
+    | xargs -0 -r -P "$SELFTEST_JOBS" -I{} \
+        bash "$ROOT/scripts/tools/run-guard-selftest.sh" {} "$SELFTEST_FAILDIR" "$ROOT"
+for _f in "$SELFTEST_FAILDIR"/*; do
+    [ -e "$_f" ] || continue
+    fail "самотест стража: $(basename "$_f")"
+done
+rm -rf "$SELFTEST_FAILDIR"
+
+# Самотесты ПЕРЕХВАТЧИКОВ (`scripts/claude-hooks/`) — отдельным шагом: они на
+# python и живут в другом каталоге. Перехватчик правит поведение агента, а не
+# дерево, поэтому его поломка невидима — он просто перестаёт срабатывать
+# (реестр №630: правило про PowerShell завели в тот же день, когда на нём же
+# и обожглись).
+step "самотесты перехватчиков (claude-hooks)"
+for _ht in "$ROOT"/scripts/claude-hooks/selftest/test-*.py; do
+    [ -e "$_ht" ] || continue
+    bash "$ROOT/scripts/tools/with-deadline.sh" 120 python "$_ht" \
+        || fail "самотест перехватчика: $(basename "$_ht")"
 done
 
 step "cargo build --release"
@@ -614,31 +641,36 @@ ANTIROT_LIST="$ROOT/docs/plans/wip/197-f5-gate-list.txt"
 if [ ! -f "$ANTIROT_LIST" ]; then
     fail "нет списка anti-rot $ANTIROT_LIST (CI читает его же)"
 else
-    tr -d "$(printf '\r')" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
-    ANTIROT_FAILED=""
-    ANTIROT_N=0
-    while read -r _kind _path; do
-        case "$_kind" in BUILD|CHECK) ;; *) continue ;; esac
-        ANTIROT_N=$((ANTIROT_N + 1))
-        _alog="${TMPDIR:-/tmp}/gate_antirot_$$.log"
-        if [ "$_kind" = "BUILD" ]; then
-            "$NOVA" build "$ROOT/$_path" --strict-effects \
-                -o "${TMPDIR:-/tmp}/ex_$(basename "$_path" .nv).exe" >"$_alog" 2>&1
-        else
-            "$NOVA" check "$ROOT/$_path" --strict-effects >"$_alog" 2>&1
-        fi
-        if [ $? -ne 0 ]; then
-            echo "anti-rot FAIL :: $_kind $_path"
-            grep -m2 "error:" "$_alog" | sed 's/^/    /'
-            ANTIROT_FAILED="$ANTIROT_FAILED $_path"
-        fi
-        rm -f "$_alog"
     # `tr -d` обязателен: у списка СМЕШАННЫЕ окончания строк, и без очистки
     # `$_path` приходит с невидимым возвратом каретки — nova отвечает
     # `path not found` на путь, который в выводе выглядит совершенно верным.
     # Поймано 2026-08-09: все 32 цели падали в гейте и проходили вручную,
     # потому что вручную я читал грепнутое подмножество, а не файл целиком.
-    done < "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
+    tr -d "$(printf '\r')" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
+    ANTIROT_N=$(awk '$1=="BUILD"||$1=="CHECK"{n++} END{print n+0}' \
+        "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt")
+    # ПАРАЛЛЕЛЬНО с 2026-08-12 — второй потребитель гейта после самотестов
+    # (848с из ~3400). Цели независимы: каждая своя сборка примера, общих
+    # файлов не читают и не пишут. Обёртка `run-antirot-one.sh` попутно чинит
+    # два дефекта, невидимых в последовательном цикле: общий файл лога на все
+    # итерации и столкновение выходных имён (два разных примера дают `hello`).
+    ANTIROT_JOBS="${NOVA_GATE_ANTIROT_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+    [ "$ANTIROT_JOBS" -ge 1 ] || ANTIROT_JOBS=1
+    ANTIROT_FAILDIR="${TMPDIR:-/tmp}/gate_antirot_fails_$$"
+    rm -rf "$ANTIROT_FAILDIR"
+    mkdir -p "$ANTIROT_FAILDIR"
+    awk '$1=="BUILD"||$1=="CHECK"{print $1"\t"$2}' \
+        "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt" \
+        | xargs -r -P "$ANTIROT_JOBS" -I{} sh -c \
+            'printf "%s" "{}" | { IFS="	" read -r k p; \
+             bash "$0/scripts/tools/run-antirot-one.sh" "$k" "$p" "$1" "$0" "$2"; }' \
+            "$ROOT" "$ANTIROT_FAILDIR" "$NOVA"
+    ANTIROT_FAILED=""
+    for _f in "$ANTIROT_FAILDIR"/*; do
+        [ -e "$_f" ] || continue
+        ANTIROT_FAILED="$ANTIROT_FAILED $(basename "$_f")"
+    done
+    rm -rf "$ANTIROT_FAILDIR"
     rm -f "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
     echo "anti-rot :: целей проверено $ANTIROT_N"
     [ -z "$ANTIROT_FAILED" ] || fail "examples anti-rot:$ANTIROT_FAILED"

@@ -90,6 +90,54 @@ RULES = [
      "kak komandu i tiho s'est kusok teksta (221.1 №596; tri sluchaya 2026-08-11). "
      "Zapishi tekst faylom (Write) i peredavay faylom: git commit -F <file>, "
      "python <script.py>."),
+    # ЗАПИСЬ ТЕКСТА В ФАЙЛ ЧЕРЕЗ POWERSHELL (реестр 221.1 №630).
+    #
+    # В PowerShell обратный апостроф — СИМВОЛ ЭКРАНИРОВАНИЯ, и в двойных
+    # кавычках и here-string (@"…"@) markdown-апострофы съедаются МОЛЧА:
+    # `f -> 0x0C, `a -> 0x07, `r -> 0x0D (склеивает строки), `n -> перевод
+    # строки, остальные просто исчезают.
+    #
+    # 2026-08-12: так были испорчены ОБЕ обзорные страницы spec/syntax — в тот
+    # же день, когда завели №620 про этот же класс в bash. Правило знали и
+    # наступили снова, потому что оболочка была ДРУГАЯ: запрет, привязанный к
+    # инструменту, не переносится сам.
+    #
+    # Само правило — в RAW_RULES ниже: оно обязано смотреть ВНУТРЬ кавычек,
+    # а основной список их срезает.
+]
+
+# ПРАВИЛА ПО СЫРОЙ КОМАНДЕ — без срезания кавычек и here-string.
+#
+# Основной список (RULES) намеренно матчит только ИСПОЛНЯЕМУЮ часть: литерал в
+# кавычках — это данные, и правило «git без -C» не должно краснеть на строке,
+# которая лишь УПОМИНАЕТ git. Но правило №630 — ровно про содержимое кавычек:
+# порча происходит ВНУТРИ них. Поэтому отдельный список, и в нём — только те
+# правила, для которых текст в кавычках и есть предмет проверки.
+RAW_RULES = [
+    # ЗАПИСЬ ТЕКСТА В ФАЙЛ ЧЕРЕЗ POWERSHELL (реестр 221.1 №630).
+    #
+    # Ловим ДВА случая, и второй — против КЛАССА, а не против сегодняшнего
+    # текста:
+    #   (1) запись в файл + обратный апостроф где-либо в команде — порча уже
+    #       происходит;
+    #   (2) here-string в ДВОЙНЫХ кавычках (@"…"@) вместе с записью в файл,
+    #       даже если апострофов сейчас нет: форма сама по себе мина —
+    #       достаточно дописать в неё markdown-апостроф, и текст испортится
+    #       молча. Безопасная форма @'…'@ стоит ровно один символ.
+    (re.compile(
+        r"((Set-Content|Out-File|Add-Content|WriteAllText|WriteAllLines)"
+        r"(.|\n)*?`)|"
+        r"(`(.|\n)*?(Set-Content|Out-File|Add-Content|WriteAllText|WriteAllLines))|"
+        r"(@\"(.|\n)*?(Set-Content|Out-File|Add-Content|WriteAllText|WriteAllLines))|"
+        r"((Set-Content|Out-File|Add-Content|WriteAllText|WriteAllLines)(.|\n)*?@\")|"
+        r"(@\"(.|\n)*?`)",
+        re.IGNORECASE),
+     "FORBIDDEN: zapis' teksta v fayl cherez PowerShell — obratnyy apostrof tam "
+     "SIMVOL EKRANIROVANIYA, i markdown-apostrofy s'edayutsya molcha: `f -> 0x0C, "
+     "`a -> 0x07, `r -> 0x0D (skleivaet stroki). 2026-08-12 tak isporcheny obe "
+     "stranicy spec/syntax (221.1 №630). Pishi cherez Write/Edit libo skript-faylom "
+     "na python; odinarnye kavychki i @'...'@ bezopasny, no proshche ne pisat' tekst "
+     "cherez obolochku voobshche."),
 ]
 
 
@@ -109,6 +157,12 @@ def main() -> int:
     stripped = _QUOTED.sub(" ", stripped)
     for rx, msg in RULES:
         if rx.search(stripped):
+            print(msg, file=sys.stderr)
+            return 2
+    # Правила, для которых содержимое кавычек и ЕСТЬ предмет проверки —
+    # по сырой команде (см. комментарий у RAW_RULES).
+    for rx, msg in RAW_RULES:
+        if rx.search(cmd):
             print(msg, file=sys.stderr)
             return 2
     return 0

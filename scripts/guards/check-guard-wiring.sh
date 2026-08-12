@@ -77,11 +77,20 @@ for g in "${guards[@]}"; do
     fi
 
     # 2. Подключён: вызывается из gate.sh — либо напрямую, либо своим самотестом
-    #    через цикл `scripts/selftest/test-*.sh` (тот цикл в gate.sh есть).
+    #    через обход каталога самотестов.
+    #
+    # ФОРМА ОБХОДА НЕ ФИКСИРОВАНА, и это важно. Раньше здесь стоял поиск
+    # буквального `selftest/test-*.sh` — текста цикла `for`. 2026-08-12 гейт
+    # перевели на параллельный запуск (`find … -name 'test-*.sh' | xargs -P`),
+    # и шесть стражей мгновенно объявились «не подключёнными», хотя запускались
+    # как раньше: страж проверял НАПИСАНИЕ цикла, а не факт обхода каталога.
+    # Теперь принимается любая форма, называющая каталог самотестов, — это то
+    # свойство, которое на самом деле требуется.
     wired_directly=0
     grep -q "$name" "$GATE" 2>/dev/null && wired_directly=1
     loop_covers=0
-    grep -q 'selftest/test-\*\.sh' "$GATE" 2>/dev/null && loop_covers=1
+    grep -qE "selftest/test-\*\.sh|selftest[^\"']*-name '?test-\*\.sh|guards/selftest" \
+        "$GATE" 2>/dev/null && loop_covers=1
 
     # 3. Проверен: есть самотест.
     selftest="$SELFTEST_DIR/test-$name.sh"
