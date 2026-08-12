@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT true|80|
+//
+// Реестр 221.1 №579 (план 268, D456). Приёмочная фикстура окна
+// `p579-net-boundary`: `Net.lookup` теперь возвращает
+// `Result[[]SocketAddr, NetError]` прямо через границу эффекта — без
+// прежнего обхода через `(array_base, count)` (адрес GC-массива,
+// притворяющийся целым числом).
+//
+// Фикстура зовёт `resolve("localhost", 80)` через `real_net()` и печатает
+// НАБЛЮДАЕМЫЕ значения — что адреса действительно есть (не «не упало») и
+// порт первого из них, а не просто факт отсутствия паники (урок №577).
+module standalone.net_lookup_prints_socketaddr_values
+
+import std.net.{resolve, real_net}
+
+fn main() Detach {
+    with Net = real_net() {
+        match resolve("localhost", 80) {
+            Ok(addrs) => {
+                print(addrs.len() >= 1)
+                print("|")
+                print(addrs[0].port())
+                print("|")
+            }
+            Err(_) => println("ERR")
+        }
+    }
+}

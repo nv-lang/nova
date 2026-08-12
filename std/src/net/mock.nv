@@ -68,17 +68,18 @@ export fn mock_net() -> Effect[Net] => effect Net {
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(_host []u8, _port int) -> Result[(int, int), NetError] => mock_lookup()
+    lookup(_host []u8, _port int) -> Result[[]SocketAddr, NetError] => mock_lookup()
 }
 
-// A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
-// so `resolve`'s build_addrs copies one image out just like the real path.
-fn mock_lookup() -> Result[(int, int), NetError] {
+// A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub;
+// `build_addrs` copies the one image out and the owned []SocketAddr returns
+// straight through the vtable (dns.nv).
+fn mock_lookup() -> Result[[]SocketAddr, NetError] {
     // `net_addr_loopback` returns `*()` — inferred `unsafe fn`, so the call
     // requires the explicit wrap (mirrors the `net_addr_loopback_into` calls
     // above in this same file).
     ro base = unsafe { net_addr_loopback(0) }
-    lookup_ok(base as int, 1)
+    lookup_ok(build_addrs(base as int, 1))
 }
 
 // Copy up to buf.len() bytes of `data` into `buf`; returns the count copied.

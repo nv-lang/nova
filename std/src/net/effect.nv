@@ -59,10 +59,12 @@ export type Net effect {
     socket_local_addr(sock UdpSocket, out mut []u8) -> ()
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    // Resolve (host):port in one call. Returns (array_base, count) where
-    // `array_base` is the GC address-image array pointer as an int; `resolve`
-    // (dns.nv) builds the owned []SocketAddr from it OUTSIDE the vtable (a
-    // Vec-of-value-records Ok payload does not survive the effect vtable's GC
-    // tracing — the scalar pair does; the array stays live via `array_base`).
-    lookup(host []u8, port int) -> Result[(int, int), NetError]
+    // Resolve (host):port in one call. The handler builds the owned
+    // []SocketAddr itself and returns it straight through the vtable — a
+    // Vec-of-value-records Ok payload DOES survive the effect vtable's GC
+    // tracing (реестр 221.1 №579: the claim that it does not does not
+    // reproduce, see spec_tests/conformance/standalone/
+    // effect_vec_payload_survives.nv). The former (array_base, count) scalar
+    // pair was a workaround for a claim that turned out false.
+    lookup(host []u8, port int) -> Result[[]SocketAddr, NetError]
 }
