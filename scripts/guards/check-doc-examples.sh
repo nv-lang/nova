@@ -153,7 +153,7 @@ add_glob "$ROOT/spec" '*.md'
 # ПЕРИМЕТРА, а не построчным маркером. Без исключения 32 из 112 находок
 # `external fn` (28%) были бы шумом одного нечитательского файла, топящим
 # сигнал по реально опубликованным docs/guide/*. См. летопись baseline.
-file_list="$(printf '%s\n' $file_list | grep -v '/spec/open-questions\.md$')"
+file_list="$(printf '%s\n' $file_list | grep -v '/spec/open-questions\.ru\.md$')"
 
 kept=""
 files_scanned=0
