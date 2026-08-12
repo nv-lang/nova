@@ -262,7 +262,7 @@ expr.ok() (->Option), match (ветвление).
 `std/net/*`, Plan 176, `std/encoding/utf16.nv` (`from_utf16 -> Result` — эталон целевой формы), `std/runtime/string/core.nv` (`try_from_codepoint` уже Result; `from_bytes_*` намеренно инфаллибл — не fallible, не трогать). `examples/effect_density/http.nv` и `examples/real_world/oxsar_port.nv` — user-code style `Fail` (легально под D325), std-triaду не зовут → **вне blast-radius**, правок не нужно. Дрейф-чек 2026-07-03: 0 новых bare-throw API в stable std после 2026-06-25.
 
 ### Отложенный `_experimental` (§9 Q3) — **полный список (Ф.4-аудит 2026-07-04)**
-**17 файлов** ещё throw own-`Fail` (defer до стабилизации модуля; вне scope 177): `encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`, `crypto/{jwt,bcrypt}.nv`, `identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`, `text/regex.nv`, `time/cron.nv`, `concurrency/retry.nv`. Прим.: `retry.@execute`/`sql.in_transaction` внешний `Fail[E]` = forwarded (R5, легально даже после стабилизации); чинить только intrinsic `Db`/retry-ошибки. **Маркер:** `[M-177-experimental-fallible-migration]` (см. §14.2).
+**17 файлов** ещё throw own-`Fail` (defer до стабилизации модуля; вне scope 177): `encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`, `crypto/{jwt,bcrypt}.nv`, `identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`, `text/regex.nv`, `time/cron.nv`, `concurrency/retry.nv`. Прим.: `retry.@execute` внешний `Fail[E]` = forwarded (R5, легально даже после стабилизации); чинить только intrinsic `Db`/retry-ошибки. `sql.in_transaction` снят 2026-08-12, №570 (см. §14.2). **Маркер:** `[M-177-experimental-fallible-migration]` (см. §14.2).
 
 ### 🟡 Остаток stable-std вне scope 177 → Plan 173 (Ф.4-аудит 2026-07-04)
 `std/concurrency/cancellation.nv` — `race2` (both-failed) и `with_timeout` (timeout) `throw` bare `str` через *inferred* Fail (сигнатура `-> T` без `Fail[` → guard §8.2 их не сканирует, §14.3). По R1 = expected failure → должны быть `Result`, НО structured-concurrency error-семантика = **Plan 173-домен** (§10/§13). **НЕ конвертировано** (нужен error-домен-тип + coordination 173 + смена 2 `#stable` сигнатур; whole-subsystem). **Маркер:** `[M-177-concurrency-throw-fallibility]` (home Plan 173; см. §14.1).
@@ -468,8 +468,11 @@ expr.ok() (->Option), match (ветвление).
 (§9 Q3 — pre-prod поверхность, вне scope 177). **17 файлов:**
 `encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`, `crypto/{jwt,bcrypt}.nv`,
 `identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`, `text/regex.nv`, `time/cron.nv`,
-`concurrency/retry.nv`. **NB:** `retry.@execute` / `sql.in_transaction` несут `Fail[E]` **forwarded** из
-closure-параметра (R5, легально даже после стабилизации — чинить только intrinsic-ошибки `Db`/retry).
+`concurrency/retry.nv`. **NB:** `retry.@execute` несёт `Fail[E]` **forwarded** из
+closure-параметра (R5, легально даже после стабилизации — чинить только intrinsic-ошибки retry).
+`sql.in_transaction` **снят 2026-08-12, №570** (owner decision, реестр 221.1: generic-операция
+эффекта — named checker refusal, Q6; носитель убран из `Db` окном `p570-generic-refusal`, не
+переписан — замена спроектирует план 268, `consume`-тип `Tx` + `@cleanup`, план 273 §4-тер).
 **Маркер:** `[M-177-experimental-fallible-migration]` (консолидирует бывш. §6-список sql/jwt/snowflake/ulid/bcrypt/retry — теперь полный).
 
 ### 14.3 Известное ограничение guard'а (честно)

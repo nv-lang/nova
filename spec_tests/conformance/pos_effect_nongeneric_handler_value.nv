@@ -1,0 +1,24 @@
+// Реестр 221.1 №570/№614 (окно p570-generic-refusal, 2026-08-12): regression
+// guard for the ordinary case. The new checker refusal targets ONLY generic
+// effects (`type X[T] effect`) and generic effect operations (`op[T](...)`)
+// — a plain, non-generic effect with a handler must keep compiling AND
+// running exactly as before. Checks a VALUE coming back through the
+// handler dispatch, not just that the file builds (same methodology
+// precedent as реестр №577: "сверяет значение ... а не факт сборки").
+//
+// EXPECT_STDOUT 42
+
+module spec_tests.conformance
+
+type Answer effect {
+    ask() -> int
+}
+
+test "non-generic effect handler still dispatches and returns a value" {
+    ro h = effect Answer {
+        ask() -> int => 42
+    }
+    with Answer = h {
+        println(Answer.ask())
+    }
+}

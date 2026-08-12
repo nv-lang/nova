@@ -1,6 +1,16 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 197 Ф.1/Ф.2 — audit-progress чекпойнт (per-file)
 
+**Амендмент 2026-08-12 (окно `p570-generic-refusal`, реестр 221.1 №570):**
+`Db.in_transaction` — упомянутый ниже как repro-носитель compiler-бага #2
+(`with EFFECT = value { ... }` внутри handler-method body,
+`orm_decorators.nv:145`) — **снят** из `std/src/data/sql.nv` owner-решением
+2026-08-12: generic-операция эффекта (`in_transaction[T, E]`) теперь
+именованный отказ чекера (`E_EFFECT_OP_GENERIC_UNSUPPORTED`, Q6). Записи
+ниже про бага #2 и его repro — история, не текущее состояние API; сам
+парсер-баг (`with` внутри handler-method) от снятия `in_transaction` не
+зависит и репродуцируется на любой другой операции эффекта.
+
 Рабочий чекпойнт для аудита `examples/**/*.nv` (`nova build <file>`,
 C-codegen). Вердикты: **KEEP** (компилится/канон, либо блокирован
 подтверждённым compiler-багом вне скоупа Plan 197) · **FIX** (дешёвая

@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_EFFECT_OP_GENERIC_UNSUPPORTED
+//
+// Реестр 221.1 №570 — generic-параметр на ОПЕРАЦИИ эффекта. Раньше
+// (до владельческого решения 2026-08-12) `nova check` пропускал форму
+// `around[T](body fn() -> T) -> T` зелёной, а `nova build` падал сишной
+// ошибкой компилятора (`initializing 'nova_str' with an expression of
+// incompatible type 'Nova_T *'`) — кодоген выпускает ОДНУ стёртую функцию
+// `Nova_Wrap_around`, вторая инстанциация не приводится к типу. Носитель
+// репро — минимальный пример из самой записи №570.
+//
+// Владелец 2026-08-12: до закрытия Q6 (rank-2 полиморфизм через
+// vtable-слот с одной подписью, spec/open-questions.ru.md#q6)
+// generic-операция эффекта отвергается ЧЕКЕРОМ по имени — `nova check`
+// КРАСНЫЙ на объявлении, до `nova build` дело не доходит.
+module neg.reg570_effect_op_generic_neg
+
+type Wrap effect {
+    // nova:expect E_EFFECT_OP_GENERIC_UNSUPPORTED -- rank-2: один vtable-слот, одна подпись; Q6 открыт (реестр 221.1 №570)
+    around[T](body fn() -> T) -> T
+}
+
+fn main() -> () {}
