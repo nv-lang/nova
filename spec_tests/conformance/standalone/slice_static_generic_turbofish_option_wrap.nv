@@ -1,0 +1,55 @@
+// №TBD regression pin (реестр 221.1 №599 causa 3, окно p599-codegen-typing).
+//
+// `Vec[<elem>].method(..)?` on a user generic STATIC method declared on a
+// slice receiver with its OWN prefix generic (`fn[T] []T.method[U](..) ->
+// Result[.., ..]`, D42/D38 — mirrors `std/src/encoding/serde/serde.nv:328`'s
+// `fn[T Deserialize] []T.deserialize[D Deserializer](..) -> Result[[]T,
+// DeError]`), wrapped right at the call site in `Some(..)` (mirrors
+// `auto_derive.rs`'s `try_wrap_none`, the Option-field-null-check shape
+// serde's `#[derive(Deserialize)]` synthesizes): the receiver is a
+// `TurboFish`, not a bare `Ident`, so a name-keyed/legacy Call-type
+// dispatcher misses it and falls back to a DEFAULT-erased element
+// (`nova_int`, this codebase's canonical stand-in for an unresolved
+// receiver typevar) — even though the CALLEE ITSELF mono's correctly for
+// the real element (found by the CU-wide mono worklist, independent of any
+// one call site). Two independent re-derivations hit this: `emit_expr`'s
+// `ExprKind::Try` arm (typed the `?`-unwrap temp) AND the QUERY-only
+// `infer_expr_c_type`'s OWN separate `ExprKind::Try` arm (typed the
+// enclosing `Some(..)`'s `NovaOpt_` wrapper — reached WITHOUT going through
+// `emit_expr` for the wrapped value). Root-caused on
+// `std/src/encoding/serde/decode_errors_test.c`: `assigning to
+// 'NovaOpt_Nova_Vec____nova_str_p' from incompatible type
+// 'NovaOpt_Nova_Vec____nova_int_p'`.
+//
+// Fix: extracted `slice_static_generic_call_ret_c` — recovers the Result
+// C-type from the method's declared return `TypeRef` (`mono_method_decls
+// [("[]T", method)]`) with the receiver typevar bound to the concrete
+// `<elem>` from the turbofish (substituted on the AST `TypeRef` itself via
+// `const_fn_trampoline::subst_type_ref_pub`, so it needs no shared mutable
+// substitution state and is callable from both `&mut self` emission and
+// `&self`-only query contexts) — both `Try` arms now call the SAME helper.
+// EXPECT_STDOUT SLICE_STATIC_GENERIC_OK:hi
+
+module standalone.slice_static_generic_turbofish_option_wrap
+
+type MyErr enum
+    | Fail
+
+fn[T] []T.only[U](u U) -> Result[[]T, MyErr] {
+    Ok([u])
+}
+
+fn load(present bool) -> Result[Option[[]str], MyErr] {
+    if !present {
+        return Ok(None)
+    }
+    return Ok(Some(Vec[str].only("hi")?))
+}
+
+fn main() {
+    match load(true) {
+        Ok(Some(v)) => println("SLICE_STATIC_GENERIC_OK:${v[0]}")
+        Ok(None) => println("UNEXPECTED_NONE")
+        Err(_) => println("UNEXPECTED_ERR")
+    }
+}
