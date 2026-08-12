@@ -1,0 +1,26 @@
+// РџСЂРѕР±Р°: РґР¶РµРЅРµСЂРёРє РЅР° РЎРђРњРћРњ СЌС„С„РµРєС‚Рµ (РЅРµ РЅР° РѕРїРµСЂР°С†РёРё) вЂ” РґРІРµ РёРЅСЃС‚Р°РЅС†РёР°С†РёРё.
+
+module scratch_ge.probe_ge2
+
+type Store[T] effect {
+    put(v T) -> ()
+    get() -> T
+}
+
+fn main() {
+    ro ints = effect Store[int] {
+        put(_v T) -> () => ()
+        get() -> T => 7
+    }
+    ro strs = effect Store[str] {
+        put(_v T) -> () => ()
+        get() -> T => "seven"
+    }
+
+    with Store[int] = ints {
+        print(Store[int].get())
+    }
+    with Store[str] = strs {
+        print(Store[str].get())
+    }
+}
