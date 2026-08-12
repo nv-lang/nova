@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p617-name-scope, class "name resolves before
+// scope", carrier: remainder of №534) — see
+// ../p534_remainder_spawn_probe.nv.
+//
+// Deliberately arity-1, `[]int` param named `routes` -- the shape #534's
+// original report used (`[]RouteInfo` param, different module) to have the
+// spawn-capture in the OTHER file pick up this parameter's type for its
+// own, unrelated call target named `routes`.
+
+module standalone.p534_remainder_param
+
+export fn p534_use_routes(routes []int) -> int => routes.len()
