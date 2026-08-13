@@ -1,0 +1,542 @@
+# РќР•Р—РђР’Р•Р РЁРЃРќРќРђРЇ Р РђР‘РћРўРђ РћРљРќРђ p458-desugar-f1 (РїР»Р°РЅ 273 Р¤.1, D458)
+#
+# Р§РўРћ Р­РўРћ. Р”РµСЃСѓРіР°СЂРёРЅРі РµРґРёРЅРѕР№ С„РѕСЂРјС‹ РјРµС‚РѕРґРѕРІ Рё С„СѓРЅРєС†РёР№: `@` РєР°Рє РїРµСЂРµРјРµРЅРЅР°СЏ С‚РёРїР°
+# РїСЂРёС‘РјРЅРёРєР°. РћРєРЅРѕ РѕР±РѕСЂРІР°Р»РѕСЃСЊ РЅР° Р»РёРјРёС‚Рµ СЃРµСЃСЃРёРё 2026-08-12, РїСЂР°РІРєРё РѕСЃС‚Р°Р»РёСЃСЊ
+# РќР•Р—РђРљРћРњРњР�Р§Р•РќРќР«РњР� РІ СЂР°Р±РѕС‡РµРј РґРµСЂРµРІРµ nova-p262.
+#
+# РџРћР§Р•РњРЈ Р—Р”Р•РЎР¬, Рђ РќР• Р’ Р’Р•РўРљР•. (1) РџР»Р°РЅ 273 РѕС‚Р»РѕР¶РµРЅ РІ v0.2 СЂРµС€РµРЅРёРµРј РІР»Р°РґРµР»СЊС†Р°
+# 2026-08-13 вЂ” РІРµС‚РєСѓ РЅРёРєС‚Рѕ РЅРµ Р±СѓРґРµС‚ РІРµСЃС‚Рё. (2) РџРѕСЃР»Рµ РІС‹С‡РёСЃС‚РєРё РёСЃС‚РѕСЂРёРё
+# 2026-08-13 РІРµС‚РєР° СЃРёРґРµР»Р° РЅР° РЎРўРђР РћР™ РёСЃС‚РѕСЂРёРё: СЃР»РёСЏРЅРёРµ РІРµСЂРЅСѓР»Рѕ Р±С‹ РІС‹С‡РёС‰РµРЅРЅСѓСЋ
+# СЃС‚СЂРѕРєСѓ РІРјРµСЃС‚Рµ СЃРѕ СЃС‚Р°СЂС‹РјРё РїСЂРµРґРєР°РјРё, С‚Рѕ РµСЃС‚СЊ РІРµС‚РєСѓ РЅРµР»СЊР·СЏ Р±С‹Р»Рѕ СЃР»РёРІР°С‚СЊ, С‚РѕР»СЊРєРѕ
+# РїРµСЂРµР±Р°Р·РёСЂРѕРІР°С‚СЊ. (3) РћС‚СЃС‚Р°РІР°РЅРёРµ вЂ” 83 РєРѕРјРјРёС‚Р°, Рё РѕР±Р° РєСЂСѓРїРЅС‹С… С„Р°Р№Р»Р°
+# (`parser/mod.rs`, `types/mod.rs`) РІ С‚РѕС‚ Р¶Рµ РґРµРЅСЊ РїСЂР°РІРёР»РёСЃСЊ РїРѕ в„–611 Рё в„–631;
+# Рє v0.2 РѕРєРЅРѕ C РїРµСЂРµРїРёС€РµС‚ СЂРѕРІРЅРѕ СЌС‚РѕС‚ С‡РµРєРµСЂ-РєР°РЅР°Р».
+#
+# РљРђРљ РџРћР›Р¬Р—РћР’РђРўР¬РЎРЇ. РќР• РїСЂРёРјРµРЅСЏС‚СЊ РІСЃР»РµРїСѓСЋ (`git apply` РїРѕС‡С‚Рё РЅР°РІРµСЂРЅСЏРєР° РЅРµ Р»СЏР¶РµС‚).
+# Р§РёС‚Р°С‚СЊ РєР°Рє Р—РђРњР«РЎР•Р› Рё РїРµСЂРµРїРёСЃС‹РІР°С‚СЊ РїРѕРґ С‚РѕРіРґР°С€РЅРёР№ parser/types. РћР±СЉС‘Рј:
+# +319/-3 РїРѕ РїСЏС‚Рё С„Р°Р№Р»Р°Рј, РїРѕС‡С‚Рё С†РµР»РёРєРѕРј РґРѕР±Р°РІР»РµРЅРёСЏ.
+#
+# Р’РµСЂС€РёРЅР° РІРµС‚РєРё РЅР° РјРѕРјРµРЅС‚ СЃРѕС…СЂР°РЅРµРЅРёСЏ: 763ea34147ffe3f09c3f3d969e978c2b3275fea2
+# (РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РёР· reflog, РїРѕРєР° РѕРЅ Р¶РёРІ).
+#
+# Р Р°СЃС€РёСЂРµРЅРёРµ .txt вЂ” РЅР°РјРµСЂРµРЅРЅРѕ: С„Р°Р№Р» РЅРµ РґРѕР»Р¶РµРЅ РїРѕРїР°РґР°С‚СЊ РІ РїСЂРѕРіРѕРЅС‹ Рё РІ `git apply`
+# РїРѕ СЃР»СѓС‡Р°Р№РЅРѕСЃС‚Рё (С‚РѕС‚ Р¶Рµ РїСЂРёС‘Рј, С‡С‚Рѕ Сѓ repro-РїСЂРѕР± `.nv.txt`).
+
+diff --git a/compiler-codegen/src/ast/mod.rs b/compiler-codegen/src/ast/mod.rs
+index cba2cde4a..56cb5fa04 100644
+--- a/compiler-codegen/src/ast/mod.rs
++++ b/compiler-codegen/src/ast/mod.rs
+@@ -1776,6 +1776,21 @@ pub enum TypeRef {
+         return_type: Option<Box<TypeRef>>,
+         /// D353: `Some("C")` для `*extern "C" fn`, `None` для Nova-ABI `*fn`.
+         extern_abi: Option<String>,
++        /// **D458 Ф.1 (план 273, `parse_fn_type_signature`):** `true` ТОЛЬКО
++        /// когда этот fn-тип написан компиляторной формой С `@` в позиции
++        /// ПЕРВОГО параметра (`fn(mut @Type, ...) -> @`) — `@` СТИРАЕТСЯ из
++        /// `params[0]`/`return_type` в момент парсинга (подставляется
++        /// конкретным связанным типом ПРЯМО В AST, отсюда «desugar»): при
++        /// `at_receiver == true` `params`/`return_type` СТРУКТУРНО идентичны
++        /// тому, что дала бы запись БЕЗ `@` — единственная разница живёт в
++        /// этом поле. Не участвует ни в одной существующей проверке
++        /// присваиваемости/аннотации (все они деструктурируют `Func` через
++        /// `..` и это поле не читают) — читается ТОЛЬКО новым Ф.1-кодом
++        /// (запрет каста `@`↔обычный тип, `types/mod.rs`). `false` для ЛЮБОГО
++        /// fn-типа, написанного без `@` (в т.ч. существующий вывод типа
++        /// значения метода `Type.@method`, который Ф.1 сознательно НЕ
++        /// трогает — см. бриф п.1).
++        at_receiver: bool,
+         span: Span,
+     },
+     /// Plan 97 Ф.2 (D53 §628, D142): анонимный protocol-тип в позиции
+@@ -3497,6 +3512,7 @@ mod typeref_uses_any_type_param_tests {
+             return_type: Some(Box::new(named(&["bool"]))),
+             effects: vec![],
+             extern_abi: None,
++            at_receiver: false,
+             span: sp(),
+         };
+         assert!(ty.uses_any_type_param(&params));
+@@ -3510,6 +3526,7 @@ mod typeref_uses_any_type_param_tests {
+             return_type: Some(Box::new(named(&["U"]))),
+             effects: vec![],
+             extern_abi: None,
++            at_receiver: false,
+             span: sp(),
+         };
+         assert!(ty.uses_any_type_param(&params));
+@@ -3587,6 +3604,7 @@ mod typeref_uses_any_type_param_tests {
+             return_type: Some(Box::new(named(&["bool"]))),
+             effects: vec![],
+             extern_abi: None,
++            at_receiver: false,
+             span: sp(),
+         };
+         assert!(!ty.uses_any_type_param(&params));
+diff --git a/compiler-codegen/src/codegen/emit_c.rs b/compiler-codegen/src/codegen/emit_c.rs
+index 1a464cc79..5ea3f25ce 100644
+--- a/compiler-codegen/src/codegen/emit_c.rs
++++ b/compiler-codegen/src/codegen/emit_c.rs
+@@ -11872,6 +11872,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
+                     effects: Vec::new(),
+                     return_type: Some(Box::new(r)),
+                     extern_abi: None,
++                    at_receiver: false,
+                     span,
+                 })
+             }
+diff --git a/compiler-codegen/src/const_fn_trampoline.rs b/compiler-codegen/src/const_fn_trampoline.rs
+index 51a1e4ddd..25d6520d8 100644
+--- a/compiler-codegen/src/const_fn_trampoline.rs
++++ b/compiler-codegen/src/const_fn_trampoline.rs
+@@ -1252,13 +1252,15 @@ fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
+         TR::FixedArray(n, inner, span) => {
+             TR::FixedArray(*n, Box::new(subst_type_ref(inner, subst)), *span)
+         }
+-        TR::Func { params, effects, return_type, extern_abi, span } => {
++        TR::Func { params, effects, return_type, extern_abi, at_receiver, span } => {
+             TR::Func {
+                 params: params.iter().map(|p| subst_type_ref(p, subst)).collect(),
+                 effects: effects.clone(),
+                 return_type: return_type.as_ref().map(|r| Box::new(subst_type_ref(r, subst))),
+                 // D353: preserve the ABI-tag through generic substitution.
+                 extern_abi: extern_abi.clone(),
++                // D458 Ф.1: preserve the `@`-carrying marker through substitution.
++                at_receiver: *at_receiver,
+                 span: *span,
+             }
+         }
+diff --git a/compiler-codegen/src/parser/mod.rs b/compiler-codegen/src/parser/mod.rs
+index 0efcf23be..179e0211b 100644
+--- a/compiler-codegen/src/parser/mod.rs
++++ b/compiler-codegen/src/parser/mod.rs
+@@ -139,6 +139,25 @@ pub struct Parser {
+     /// immediately afterwards in `parse_fn` to build the structured receiver
+     /// type (`Receiver.receiver_ty`); never persists across fn declarations.
+     last_carrier_slot_types: Vec<TypeRef>,
++    /// **D458 Ф.1 (план 273):** set for the duration of parsing ONE
++    /// `fn(...) -> ...` TYPE signature (`parse_fn_type_signature`) whose
++    /// FIRST param bound the receiver's type variable (`@Type`/`mut @Type`/
++    /// `consume @Type` — the compiler-form ANNOTATION, legal only in TYPE
++    /// position, D458). `Some(bound_type)` lets a bare `@` reached
++    /// RECURSIVELY while parsing the rest of THAT SAME signature (return
++    /// type, `Option[@]`, a later param, …) know it is a legal USE
++    /// occurrence and substitute it INLINE for `bound_type.clone()` — the
++    /// desugar happens at parse time, so `fn(mut @Type, a int) -> @` and
++    /// `fn(Type, a int) -> Type` produce STRUCTURALLY identical
++    /// `params`/`return_type` (only `TypeRef::Func.at_receiver` differs).
++    /// Saved/restored around the call (not single-consumption like
++    /// `pointee_ctx`) so a NESTED fn-type without its own bound `@`
++    /// (`fn(fn(int) -> int, @Foo) -> @` — the inner `fn(int) -> int` has no
++    /// `@` of its own) doesn't leak the outer binding into the inner
++    /// signature's scan, and so the inner scope's OWN `@` (if any) shadows
++    /// the outer one for its own extent. `None` outside any such signature
++    /// — a bare `@` reached there is a hard parse error (unbound `@`).
++    at_receiver_subst: Option<Box<TypeRef>>,
+ }
+ 
+ /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** build the
+@@ -369,6 +388,7 @@ impl Parser {
+             pointee_ctx: false,
+             receiver_elem_ctx: false,
+             last_carrier_slot_types: Vec::new(),
++            at_receiver_subst: None,
+         }
+     }
+ 
+@@ -4114,6 +4134,34 @@ impl Parser {
+                 applicability: crate::diag::Applicability::MachineApplicable,
+             }));
+         }
++        // D458 Ф.1 (план 273 §4.3): `@` here means the author wrote the
++        // COMPILER FORM (`fn job(mut @Type, a int) -> @ { ... }`) as a
++        // DECLARATION — `parse_param` is ONLY reached from param lists that
++        // require `name Type` (a real declaration: `fn`/lemma/closure-full/
++        // effect-op headers), never from a pure TYPE-expression position
++        // (`parse_fn_type_signature` parses `@Type` itself, BEFORE calling
++        // `parse_param` — it never does). That grammatical split IS the
++        // "declaration vs type position" gate D458 asks for (план 273 §4.3:
++        // "гейтится на грамматической позиции ОБЪЯВЛЕНИЯ... не на встрече
++        // компиляторной формы вообще") — no separate flag needed to tell
++        // the two apart, they're already different call paths.
++        if matches!(self.peek().kind, TokenKind::At) {
++            let at_span = self.peek().span;
++            return Err(Diagnostic::new(
++                "[E_D458_COMPILER_FORM_IN_SOURCE_SABOTAGE] compiler form used as a \
++                 declaration — the receiver-type-variable marker `@` on a \
++                 parameter (`fn job(mut @Type, a int) -> @ { ... }`) is the \
++                 compiler's INTERNAL desugared form (D458, план 273) and is \
++                 not legal as a DECLARATION. Write the method-sugar form \
++                 instead: `fn Type mut @job(a int) -> @ { ... }` (the `@` \
++                 moves from the parameter to the method name, receiver-mut/\
++                 consume goes right after `fn Type`). The compiler form \
++                 stays legal ONLY as a TYPE annotation (`ro f fn(mut @Type, \
++                 a int) -> @ = Type.@job`), never as a declaration."
++                    .to_string(),
++                at_span,
++            ));
++        }
+         let (name, name_span) = self.parse_ident()?;
+         // №611/№615 (221.1, owner decision 2026-08-12, amends D445's D374
+         // AMEND ×3 2026-07-17 carve-out): postfix `name mut Type` in a
+@@ -7463,6 +7511,44 @@ impl Parser {
+                     span: start.merge(end),
+                 })
+             }
++            // D458 Ф.1 (план 273): bare `@` in a TYPE position — the
++            // receiver's type variable, USE occurrence (`-> @`, `Option[@]`,
++            // a later param referencing the same receiver, …). Legal ONLY
++            // while parsing a fn-type signature whose FIRST param already
++            // bound `@` (`at_receiver_subst`, set by `parse_fn_type_
++            // signature`'s bind-detection above) — desugars INLINE to a
++            // clone of the bound type (parse-time substitution, matching
++            // `at_receiver_subst`'s doc comment). Outside that context, `@`
++            // is unbound — the sugar DECLARATION path (`-> @` inside `fn
++            // Type mut @job(...) -> @`) is a SEPARATE, untouched code path
++            // (parser/mod.rs ~3665, D132) that never reaches this arm.
++            TokenKind::At => {
++                let at_span = self.peek().span;
++                self.bump();
++                match self.at_receiver_subst.as_ref() {
++                    Some(bound) => {
++                        // Span kept as the BOUND param's own span (no
++                        // `TypeRef::set_span` exists to re-point it at this
++                        // use-site) — fine: it only affects diagnostic
++                        // underlines for this synthesized node, never the
++                        // shape/identity the checker or codegen sees.
++                        let _ = at_span;
++                        Ok((**bound).clone())
++                    }
++                    None => Err(Diagnostic::new(
++                        "[E_D458_AT_UNBOUND] `@` (the receiver's type \
++                         variable, D458) is not bound here — it is legal \
++                         only inside a function-type signature whose FIRST \
++                         parameter bound it (`fn(mut @Type, ...) -> @`, \
++                         `Option[@]`, …). Bind it on the first parameter, \
++                         or — if you meant the method-DECLARATION sugar \
++                         (`fn Type mut @job(...) -> @`) — that form is \
++                         parsed separately and this position isn't it."
++                            .to_string(),
++                        at_span,
++                    )),
++                }
++            }
+             _ => Err(Diagnostic::new(
+                 format!("expected type, got {}", self.peek().kind.name()),
+                 start,
+@@ -7484,8 +7570,52 @@ impl Parser {
+         self.expect(&TokenKind::KwFn)?;
+         self.expect(&TokenKind::LParen)?;
+         let mut params = Vec::new();
++        // D458 Ф.1 (план 273): save/restore around this ENTIRE signature —
++        // see the field doc on `at_receiver_subst` for why (nested fn-type
++        // isolation).
++        let saved_at_receiver_subst = self.at_receiver_subst.take();
++        let mut at_receiver = false;
++        let mut first = true;
+         while !matches!(self.peek().kind, TokenKind::RParen) {
+-            params.push(self.parse_type()?);
++            let is_at_bind_start = matches!(self.peek().kind, TokenKind::At)
++                || (matches!(self.peek().kind, TokenKind::KwMut | TokenKind::KwConsume)
++                    && matches!(self.peek_at(1).kind, TokenKind::At));
++            if is_at_bind_start && !first {
++                // D458: the receiver is bound by the FIRST parameter,
++                // without exception (`Получатель — первым параметром, на
++                // первом шаге без исключений`, план 273 §4.4).
++                let sp = self.peek().span;
++                return Err(Diagnostic::new(
++                    "[E_D458_AT_NOT_FIRST_PARAM] `@` binds the receiver's \
++                     type variable and is only legal on the FIRST parameter \
++                     of a function type (D458, план 273 §4.4) — found it on \
++                     a later parameter instead. Move the `@`-bound \
++                     parameter to the front."
++                        .to_string(),
++                    sp,
++                ));
++            }
++            if is_at_bind_start {
++                first = false;
++                let qual_start = self.peek().span;
++                if matches!(self.peek().kind, TokenKind::KwMut | TokenKind::KwConsume) {
++                    self.bump(); // mut / consume — parsed for readability only:
++                    // Ф.1 doesn't thread a per-param mode marker through
++                    // `TypeRef::Func.params` (none existed before this
++                    // change either — see brief п.1, the pre-existing
++                    // method-value inference already carries no mut/consume
++                    // marker on the receiver param's TYPE).
++                }
++                self.expect(&TokenKind::At)?;
++                let inner = self.parse_type()?;
++                let _ = qual_start; // span reserved for a future per-param diagnostic
++                at_receiver = true;
++                self.at_receiver_subst = Some(Box::new(inner.clone()));
++                params.push(inner);
++            } else {
++                first = false;
++                params.push(self.parse_type()?);
++            }
+             if self.eat(&TokenKind::Comma).is_none() {
+                 break;
+             }
+@@ -7497,12 +7627,16 @@ impl Parser {
+         } else {
+             None
+         };
++        // Restore the OUTER context (if this signature is itself nested
++        // inside another `@`-bound fn-type, e.g. as a param/return of it).
++        self.at_receiver_subst = saved_at_receiver_subst;
+         let end = self.tokens[self.pos.saturating_sub(1)].span;
+         Ok(TypeRef::Func {
+             params,
+             effects,
+             return_type,
+             extern_abi,
++            at_receiver,
+             span: start.merge(end),
+         })
+     }
+@@ -8752,6 +8886,82 @@ impl Parser {
+             match self.peek().kind {
+                 TokenKind::Dot => {
+                     self.bump();
++                    // D458 Ф.1 (план 273 пп.3-4): `x.(f)(5)` — dot-paren
++                    // CALL of a value in parens (a method-value whose type
++                    // carries `@`, per D458 — but the grammar/desugar here
++                    // doesn't need to KNOW that; it's exactly `f(x, 5)`
++                    // written with the receiver on the left of a dot; the
++                    // untouched general call-checker resolves `f`'s type
++                    // and validates the call same as any other first-class
++                    // fn-value call — план 273 §4-бис.3 asks only that this
++                    // NOT collide with `.0`/`.name`/lambda-call, checked
++                    // below). `x.(f)` NOT immediately followed by `(args)`
++                    // is a HARD PARSE ERROR (план 273 §4-бис.4,
++                    // E_D458_AT_VALUE_CALL_REQUIRED) — the shape has no
++                    // other legal meaning (no partial application), so
++                    // rejecting it at parse time (rather than deferring to
++                    // the checker) is both simplest and exact.
++                    //
++                    // Collision check (план 273 §4-бис.3): the pre-existing
++                    // arms below match on `Int`/`Float` (`.0`/`.0.0`
++                    // positional tuple access), `Ident` (`.field`/`.method`),
++                    // `At` (`.@method`) — none of them can ever see `(` as
++                    // their OWN first token (a positional/field/method name
++                    // token is never `(`), so `LParen` immediately after
++                    // `.` was previously UNREACHABLE by any existing arm —
++                    // it fell to the `_ => Err("expected field name or
++                    // index after `.`")` catch-all. No collision: this arm
++                    // claims token space the grammar left genuinely empty.
++                    if matches!(self.peek().kind, TokenKind::LParen) {
++                        let dot_paren_span = self.peek().span;
++                        self.bump(); // (
++                        self.skip_newlines();
++                        let func_val = self.parse_expr()?;
++                        self.skip_newlines();
++                        self.expect(&TokenKind::RParen)?;
++                        if !matches!(self.peek().kind, TokenKind::LParen) {
++                            return Err(Diagnostic::new(
++                                "[E_D458_AT_VALUE_CALL_REQUIRED_SABOTAGE] `x.(f)` \
++                                 without a call is not allowed (D458, план \
++                                 273 §4-бис.4): `@` forces a receiver-bound \
++                                 method-value to be called through the dot, \
++                                 and there is no partial-application reading \
++                                 — a value that names ONLY the call target \
++                                 without applying it would be a value of a \
++                                 form that can never be called any other \
++                                 way, a dead end. Add the arguments: \
++                                 `x.(f)(...)`."
++                                    .to_string(),
++                                dot_paren_span,
++                            ));
++                        }
++                        self.bump(); // (
++                        self.skip_newlines();
++                        let mut args: Vec<CallArg> = vec![CallArg::Item(expr.clone())];
++                        while !matches!(self.peek().kind, TokenKind::RParen) {
++                            if self.eat(&TokenKind::DotDotDot).is_some() {
++                                let inner = self.parse_expr()?;
++                                args.push(CallArg::Spread(inner));
++                            } else {
++                                args.push(CallArg::Item(self.parse_call_arg_value()?));
++                            }
++                            if self.eat(&TokenKind::Comma).is_some() {
++                                self.skip_newlines();
++                            } else {
++                                break;
++                            }
++                        }
++                        let end = self.expect(&TokenKind::RParen)?.span;
++                        expr = Expr::new(
++                            ExprKind::Call {
++                                func: Box::new(func_val),
++                                args,
++                                trailing: None,
++                            },
++                            expr.span.merge(end),
++                        );
++                        continue;
++                    }
+                     // .field или .0 (positional). Float-токен `0.0` после
+                     // `.` появляется когда лексер увидел `<expr>.0.0` и
+                     // съел `.0.0` как `Dot Float(0.0)` — расщепляем
+diff --git a/compiler-codegen/src/types/mod.rs b/compiler-codegen/src/types/mod.rs
+index 21a453559..3bfddf04b 100644
+--- a/compiler-codegen/src/types/mod.rs
++++ b/compiler-codegen/src/types/mod.rs
+@@ -709,6 +709,7 @@ mod resolved_type_tests {
+             return_type: None,
+             effects: vec![named(&["Fail"], vec![named(&["MyErr"], vec![])])],
+             extern_abi: None,
++            at_receiver: false,
+             span: Span::dummy(),
+         };
+         match ResolvedType::from_type_ref(&func) {
+@@ -735,6 +736,7 @@ mod resolved_type_tests {
+             return_type: None,
+             effects: vec![named(&["Db"], vec![named(&["std", "Conn"], vec![])])],
+             extern_abi: None,
++            at_receiver: false,
+             span: Span::dummy(),
+         };
+         if let ResolvedType::Func { effects, .. } = ResolvedType::from_type_ref(&func2) {
+@@ -10446,6 +10448,42 @@ impl<'a> TypeCheckCtx<'a> {
+             }
+             ExprKind::As(inner, cast_ty) => {
+                 self.f1_expr(inner, gs, scope, errors);
++                // D458 Ф.1 (план 273 §4-бис.2, п.5 брифа p458-desugar-f1):
++                // explicit cast between an `@`-carrying method-value type
++                // and a plain (non-`@`) function type is forbidden in BOTH
++                // directions — no `as fn(...)` ERASURE of `@`, and no
++                // `as`-injection of `@` onto a plain fn value either. Gate:
++                // the WRITTEN cast target is a fn-type (`cast_ty` peeled of
++                // `ro`/`mut`/`uninit` wrappers is `TypeRef::Func`) — an
++                // ordinary non-fn cast target (numeric, pointer, …) never
++                // reaches this arm at all. `expr_denotes_at_carrying_
++                // method_value` recognizes the SOURCE side by EXPRESSION
++                // SHAPE (`Type.@method`) or by a scope-bound name's own
++                // `@`-written type — deliberately NOT by re-deriving
++                // `Type.@method`'s inferred `TypeRef` (that producer stays
++                // `at_receiver: false` on purpose, брифа п.1 — Ф.1 doesn't
++                // change it).
++                if let TypeRef::Func { at_receiver: target_at_receiver, .. } =
++                    cast_ty.strip_modifiers()
++                {
++                    let source_at_receiver =
++                        self.expr_denotes_at_carrying_method_value(inner, scope);
++                    if source_at_receiver != *target_at_receiver {
++                        errors.push(Diagnostic::new(
++                            "[E_D458_AT_CAST_FORBIDDEN_SABOTAGE] explicit cast between an \
++                             `@`-carrying method-value type and a plain function \
++                             type is forbidden in BOTH directions (D458, план 273 \
++                             §4-бис.2) — `@` may be laid out differently in C (a \
++                             method uses the receiver as dispatch context, an \
++                             ordinary function doesn't), so erasing OR injecting \
++                             it via `as` would silently change what codegen \
++                             assumes about the callee. Use a lambda instead: \
++                             `fn(mut q Type, k int) -> int => q.job(k)`."
++                                .to_string(),
++                            e.span,
++                        ));
++                    }
++                }
+                 // **№375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner
+                 // decision 2026-08-06, spec commit 96100421e, window
+                 // p375-ptr2):** `(&place) as *mut T` / `(raw &place) as *mut
+@@ -14985,6 +15023,7 @@ impl<'a> TypeCheckCtx<'a> {
+                     typeref_display(&TypeRef::Func {
+                         params: params.clone(),
+                         effects: Vec::new(),
++                        at_receiver: false,
+                         return_type: return_type.clone(),
+                         extern_abi: None,
+                         span: call_span,
+@@ -16044,6 +16083,37 @@ impl<'a> TypeCheckCtx<'a> {
+         }
+     }
+ 
++    /// D458 Ф.1 (план 273 §4-бис.2): does `e` DENOTE an `@`-carrying
++    /// method-value, for the purpose of the cast-prohibition check
++    /// (`ExprKind::As` arm above)? Two recognized shapes:
++    /// - `Type.@method` — the unbound method-value expression (`ExprKind::
++    ///   Member` with an `@`-prefixed name). D458 says this type ALWAYS
++    ///   carries `@` (`Account.@balance` is `fn(mut @Account) -> @`) even
++    ///   though Ф.1 deliberately leaves its INFERRED `TypeRef` unmarked
++    ///   (`at_receiver: false` at its producer, ~L20387 — брифа п.1: "Само
++    ///   значение Type.@job... не меняется") — recognized here by
++    ///   EXPRESSION SHAPE instead of by re-deriving that TypeRef.
++    /// - A scope-bound name (`ro f fn(mut @Type, ...) -> @ = ...`) whose
++    ///   OWN declared/annotated type was written WITH `@` — that DOES carry
++    ///   `at_receiver: true` on its `TypeRef::Func` (Ф.1's new parser code,
++    ///   `parse_fn_type_signature`), so a plain scope lookup suffices.
++    /// Anything else (a plain fn-value expression, a call result, …) is
++    /// honestly `false` — no invention beyond these two D458-named shapes.
++    fn expr_denotes_at_carrying_method_value(
++        &self,
++        e: &Expr,
++        scope: &HashMap<String, TypeRef>,
++    ) -> bool {
++        match &e.kind {
++            ExprKind::Member { name, .. } if name.starts_with('@') => true,
++            ExprKind::Ident(n) => matches!(
++                scope.get(n),
++                Some(TypeRef::Func { at_receiver: true, .. })
++            ),
++            _ => false,
++        }
++    }
++
+     /// Ф.3: проверить существование поля/метода `name` у `obj`.
+     ///
+     /// Консервативно: проверяется только когда тип `obj` уверенно
+@@ -19011,6 +19081,7 @@ impl<'a> TypeCheckCtx<'a> {
+                 effects: Vec::new(),
+                 return_type: sb.return_type.clone().map(Box::new),
+                 extern_abi: None,
++                at_receiver: false,
+                 span: sb.span,
+             };
+             if !typeref_equal(&param_func, &arg_func) {
+@@ -20002,6 +20073,7 @@ impl<'a> TypeCheckCtx<'a> {
+                             effects: f.effects.clone(),
+                             return_type: f.return_type.clone().map(Box::new),
+                             extern_abi: None,
++                            at_receiver: false,
+                             span: expr.span,
+                         });
+                     }
+@@ -20384,11 +20456,23 @@ impl<'a> TypeCheckCtx<'a> {
+                                     let ret = f.return_type.clone()
+                                         .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(&t, &self_subst))
+                                         .unwrap_or(TypeRef::Unit(expr.span));
++                                    // D458 Ф.1: deliberately NOT `at_receiver: true` here.
++                                    // Brief п.1: "Само значение Type.@job и его РЕАЛЬНОЕ
++                                    // поведение не меняются" — this producer stays exactly
++                                    // as it was (the pre-existing, unmarked `fn(Type, ...)`
++                                    // shape). Marking it here would make it MISMATCH the
++                                    // pre-existing behavior this producer already has
++                                    // everywhere else it's read (cast-prohibition is the
++                                    // ONLY new Ф.1 consumer of the flag, and it treats a
++                                    // syntactic `Type.@method` operand as @-carrying by
++                                    // EXPRESSION SHAPE, not by this inferred TypeRef — see
++                                    // `expr_denotes_at_carrying_value`).
+                                     return Some(TypeRef::Func {
+                                         params,
+                                         effects: Vec::new(),
+                                         return_type: Some(Box::new(ret)),
+                                         extern_abi: None,
++                                        at_receiver: false,
+                                         span: expr.span,
+                                     });
+                                 }
+@@ -49750,11 +49834,12 @@ fn ffi_subst_apply(ty: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
+         }
+         TR::Mut(inner, span) => TR::Mut(Box::new(ffi_subst_apply(inner, subst)), *span),
+         TR::Uninit(inner, span) => TR::Uninit(Box::new(ffi_subst_apply(inner, subst)), *span),
+-        TR::Func { params, effects, return_type, extern_abi, span } => TR::Func {
++        TR::Func { params, effects, return_type, extern_abi, at_receiver, span } => TR::Func {
+             params: params.iter().map(|p| ffi_subst_apply(p, subst)).collect(),
+             effects: effects.clone(),
+             return_type: return_type.as_ref().map(|r| Box::new(ffi_subst_apply(r, subst))),
+             extern_abi: extern_abi.clone(),
++            at_receiver: *at_receiver,
+             span: *span,
+         },
+         other => other.clone(),
