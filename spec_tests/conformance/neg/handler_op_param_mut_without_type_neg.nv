@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE
+//
+// №611 (registry 221.1): handler-operation parameters now accept the canonical
+// `mut name Type`. The modifier describes the parameter's TYPE, so writing
+// `mut name` with no type at all is an error rather than a silently untyped
+// parameter — handler-op params are optionally-typed by construction
+// (`parse_handler_methods` treats a missing type as `None`), and without this
+// check the leading `mut` would simply be dropped on the floor.
+//
+// This fixture exists because the guard that should have demanded it was blind:
+// check-test-fixture-coverage looked for codes written as a whole quoted string
+// (`"E_FOO"`) and never saw the project's canonical form, the code INSIDE the
+// message (`"[E_FOO] …"`) — 351 codes written that way against 81 it could see.
+// Registry #639.
+
+module neg.handler_op_param_mut_without_type_neg
+
+type Probe effect {
+    fill(mut buf []u8) -> int
+}
+
+export fn real_probe() -> Effect[Probe] {
+    effect Probe {
+        fill(mut buf) -> int => 0
+    }
+}
+
+fn main() {
+    with Probe = real_probe() {
+        mut b []u8 = []u8.new()
+        println("n=${Probe.fill(b)}")
+    }
+}
