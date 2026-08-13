@@ -6,7 +6,10 @@
 Гейты зелёные: conformance 503 PASS/1 FAIL(чужой известный пин)/14 SKIP, std
 checksums+collections 16/0, флагман aggregator `--strict-effects` built+works (HTTP 200).
 Замер: c-compile ~5.0с → ~0.7с тёплый (−~4.3с), wall ~8.2с → ~4.0с (−~4.2с). Не смёржено в
-main, не запушено (ждёт решения владельца). **Приоритет:** P1 (крупнейший рычаг
+main, не запушено (ждёт решения владельца). **ПОПРАВКА 2026-08-14: предыдущая фраза
+устарела — работа В MAIN.** Проверено присутствием символа, не диффом:
+`libnova_rt` в `compiler-codegen/src/test_runner.rs` (26 вхождений). Механику
+«предсобранный архив» уже несёт §8.1 плана [274](274-novac-self-hosted-compiler.md). **Приоритет:** P1 (крупнейший рычаг
 build-latency). **Основа:** [startup-latency-research.md](wip/startup-latency-research.md)
 (opus-разведка, замеры).
 
