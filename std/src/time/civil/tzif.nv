@@ -14,7 +14,7 @@
 
 module time.civil
 
-import std.fs.{Path, read}
+import std.fs.{read}
 import std.os.{env}
 
 // ──────────────────────────────────────────────────────────────────────────

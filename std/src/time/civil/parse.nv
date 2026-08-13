@@ -31,6 +31,14 @@ fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
     mut i = pos
     while i < pos + n {
         ro c = s[i..i + 1]
+        // The canonical `c.to_int().map_err(|_| FormatMismatch(i, "digit"))?`
+        // MISCOMPILES here (registry #633). The closure captures the loop's
+        // `mut i`; codegen boxes it and the following `i += 1` stops taking
+        // effect, so the loop never ends and `v * 10` panics with an integer
+        // overflow. Measured, not guessed: with map_err this file fails four
+        // pattern round-trips, with the match form it passes. Restore the
+        // canon once #633 is closed.
+        // nova:allow W_MANUAL_COALESCE -- miscompiles here, registry #633
         ro d = match c.to_int() {
             Ok(x) => x
             Err(_) => return Err(FormatMismatch(i, "digit"))

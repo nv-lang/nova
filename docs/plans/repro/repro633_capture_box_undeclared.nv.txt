@@ -1,0 +1,48 @@
+// Проба 3: минимальный триггер. Нужен ли `map_err`/`?` вообще, или довольно
+// САМОГО ЗАХВАТА изменяемой переменной цикла замыканием.
+module probe3
+
+fn no_closure() {
+    mut i = 0
+    mut n = 0
+    while i < 4 && n < 8 {
+        println("  без замыкания: i=${i}")
+        i += 1
+        n += 1
+    }
+    println("  -> вышли, i=${i} (ожидание 4)")
+}
+
+fn with_closure_unused() {
+    mut i = 0
+    mut n = 0
+    while i < 4 && n < 8 {
+        // Замыкание СОЗДАЁТСЯ и не вызывается — важно, влияет ли сам захват.
+        ro f = || i + 100
+        println("  замыкание не звано: i=${i} f=${f()}")
+        i += 1
+        n += 1
+    }
+    println("  -> вышли, i=${i} (ожидание 4)")
+}
+
+fn with_closure_never_called() {
+    mut i = 0
+    mut n = 0
+    while i < 4 && n < 8 {
+        ro _f = || i + 100
+        println("  замыкание создано, не звано: i=${i}")
+        i += 1
+        n += 1
+    }
+    println("  -> вышли, i=${i} (ожидание 4)")
+}
+
+fn main() {
+    println("1. без замыкания:")
+    no_closure()
+    println("2. замыкание создано и вызвано:")
+    with_closure_unused()
+    println("3. замыкание создано, не вызвано:")
+    with_closure_never_called()
+}

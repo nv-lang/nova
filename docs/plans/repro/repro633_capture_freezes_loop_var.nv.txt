@@ -1,0 +1,49 @@
+// Проба 2: сужаем, ЧТО именно ломает `map_err(...)?`.
+//
+// Проба 1 (Result[int, str], плоские типы) — обе формы дали одно и то же.
+// Здесь повторяется точная форма `digits_at` из std/src/time/civil/parse.nv:
+//   * `Ok` несёт КОРТЕЖ `(i64, int)`;
+//   * `Err` — ВАРИАНТ СУММЫ С ДВУМЯ АРГУМЕНТАМИ, собираемый в замыкании;
+//   * замыкание захватывает `mut i` из цикла.
+module probe2
+
+type ParseErr enum
+    | FormatMismatch(int, str)
+    | Other
+
+fn digits_map_err(s str, pos int, n int) -> Result[(i64, int), ParseErr] {
+    mut v i64 = 0
+    mut i = pos
+    while i < pos + n {
+        ro c = s[i..i + 1]
+        ro d = c.to_int().map_err(|_| FormatMismatch(i, "digit"))?
+        println("  map_err: i=${i} c=${c} d=${d} v_before=${v}")
+        v = v * 10 + (d as i64)
+        i += 1
+    }
+    Ok((v, pos + n))
+}
+
+fn digits_match(s str, pos int, n int) -> Result[(i64, int), ParseErr] {
+    mut v i64 = 0
+    mut i = pos
+    while i < pos + n {
+        ro c = s[i..i + 1]
+        ro d = match c.to_int() {
+            Ok(x) => x
+            Err(_) => return Err(FormatMismatch(i, "digit"))
+        }
+        println("  match:   i=${i} c=${c} d=${d} v_before=${v}")
+        v = v * 10 + (d as i64)
+        i += 1
+    }
+    Ok((v, pos + n))
+}
+
+fn main() {
+    println("map_err:")
+    ro a = digits_map_err("2026", 0, 4)!!
+    println("match:")
+    ro b = digits_match("2026", 0, 4)!!
+    println("итог: map_err=${a.0}/${a.1}  match=${b.0}/${b.1}")
+}
