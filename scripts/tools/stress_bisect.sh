@@ -72,7 +72,10 @@ fi
 export NOVA_GC_LIB_DIR NOVA_GC_INCLUDE_DIR
 
 echo "[stress-bisect] cargo build --release..." >&2
-(cd nova-cli && cargo build --release --quiet 2>&1 | tail -3) >&2
+# `pipefail` ВНУТРИ подоболочки: без него `$?` ниже берёт статус `tail`, а не
+# сборки — то есть ПРОВАЛ СБОРКИ читается как успех, и бисект продолжает мерить
+# несобранным бинарём. Реестр 221.1 №638.
+(set -o pipefail; cd nova-cli && cargo build --release --quiet 2>&1 | tail -3) >&2
 if [ $? -ne 0 ]; then
     echo "[stress-bisect] BUILD FAIL → skip (exit 125)" >&2
     exit 125

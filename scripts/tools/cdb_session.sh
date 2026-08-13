@@ -96,7 +96,9 @@ echo "[cdb] using: $CDB" >&2
 export NOVA_GC_LIB_DIR NOVA_GC_INCLUDE_DIR
 
 echo "[cdb] building nova-cli..." >&2
-(cd nova-cli && cargo build --release --quiet 2>&1 | tail -3) >&2
+# `pipefail` ВНУТРИ подоболочки — иначе `$?` берёт статус `tail`, и провал
+# сборки читается как успех (реестр 221.1 №638).
+(set -o pipefail; cd nova-cli && cargo build --release --quiet 2>&1 | tail -3) >&2
 if [ $? -ne 0 ]; then
     echo "[cdb] nova-cli build FAIL" >&2
     exit 125

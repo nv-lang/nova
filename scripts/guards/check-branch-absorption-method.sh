@@ -57,7 +57,13 @@ SCAN_DIRS=""
 
 if [ -n "$SCAN_DIRS" ]; then
     # shellcheck disable=SC2086
-    HITS=$(grep -rnE 'git +(diff|log|rev-list|shortlog)[^#]*[A-Za-z0-9_"$}/-]\.\.\.[A-Za-z0-9_"$/-]' \
+    # ПРАВАЯ СТОРОНА НЕ ТРЕБУЕТСЯ — дыра, найденная разведкой 2026-08-13.
+    # Первая редакция требовала символ ПОСЛЕ трёх точек и потому пропускала
+    # `git diff main... -- 'путь'` (пустая правая сторона плюс пробел) — живое
+    # нарушение в `docs/dev/compiler-conventions.md:434`, при том что страж
+    # рапортовал «ok». Левый класс, наоборот, ОБЯЗАТЕЛЕН: без него в находки
+    # попадает многоточие прозы («…потом решай...»).
+    HITS=$(grep -rnE 'git +(diff|log|rev-list|shortlog)[^#]*[A-Za-z0-9_"@^~}$/-]\.\.\.' \
              --include='*.sh' --include='*.py' --include='*.md' \
              $SCAN_DIRS 2>/dev/null \
            | grep -v "$SELF_NAME" \

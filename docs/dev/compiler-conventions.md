@@ -431,8 +431,11 @@ rt-хелперы/codegen-интринсики (`compiler-codegen/nova_rt/*.h`/`
 `compiler-codegen/src/codegen/emit_c.rs`):
 
 ```sh
-git diff main... -- 'compiler-codegen/nova_rt/*.h' 'compiler-codegen/nova_rt/*.c' \
-  'compiler-codegen/src/codegen/emit_c.rs' | grep -E '^\+.*(fn |nova_[a-z_]+_chk|nova_[a-z_]+_stack)'
+# Вопрос здесь «что ДОБАВЛЕНО в ветке», а не «поглощена ли она» — для этого
+# трёхточечная форма и предназначена. При нескольких базах слияния она возьмёт
+# произвольную и покажет ЛИШНЕЕ; для чеклиста это безопасная сторона: ревьюер
+# посмотрит на пару хелперов больше. Разбор формы — реестр №629.
+git diff main... -- 'compiler-codegen/nova_rt/*.h' 'compiler-codegen/nova_rt/*.c' 'compiler-codegen/src/codegen/emit_c.rs' | grep -E '^\+.*(fn |nova_[a-z_]+_chk|nova_[a-z_]+_stack)'  # [3DOT-OK: добавленное в ветке, не поглощение]
 ```
 
 Для каждой находки: есть ли уже `.nv`-тело (метод/функция в `std/`/prelude) с той же
