@@ -1,0 +1,7 @@
+module mcrepro.step2
+
+import mcrepro.a.{ANSWER}
+
+test "шаг 2: int const cross-module" {
+    assert(ANSWER == 42)
+}

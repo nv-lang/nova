@@ -1,0 +1,15 @@
+module mcrepro.step4_isolated
+
+import std.math.int128.{i128, ZERO, MIN}
+
+test "ZERO из std.math.int128 (нет конфликта)" {
+    ro z = ZERO
+    assert(z.hi == 0)
+    assert(z.lo == 0)
+}
+
+test "MIN из std.math.int128" {
+    ro m = MIN
+    assert(m.hi == (0x8000000000000000 as u64) as i64)
+    assert(m.lo == 0)
+}

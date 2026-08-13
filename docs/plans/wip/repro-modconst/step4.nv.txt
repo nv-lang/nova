@@ -1,0 +1,10 @@
+module mcrepro.step4
+
+import mcrepro.a.{MyVal, ZERO, ONE}
+import std.math.int128.{i128, ZERO, MIN}
+
+test "шаг 4: ZERO from std.math.int128" {
+    ro z = ZERO  // ожидается i128
+    assert(z.hi == 0)
+    assert(z.lo == 0)
+}

@@ -1,0 +1,9 @@
+module mcrepro.step3
+
+import mcrepro.a.{MyVal, ZERO}
+
+test "шаг 3: typed const cross-module" {
+    ro z = ZERO
+    assert(z.hi == 0)
+    assert(z.lo == 0)
+}

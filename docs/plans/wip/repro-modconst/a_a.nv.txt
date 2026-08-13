@@ -1,0 +1,9 @@
+module mcrepro.a
+
+export type MyVal(hi i64 = 0, lo u64 = 0)
+
+export const ANSWER int = 42
+
+export const ZERO MyVal = MyVal()
+
+export const ONE MyVal = MyVal(0, 1)
