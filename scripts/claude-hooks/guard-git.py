@@ -138,6 +138,26 @@ RAW_RULES = [
      "stranicy spec/syntax (221.1 №630). Pishi cherez Write/Edit libo skript-faylom "
      "na python; odinarnye kavychki i @'...'@ bezopasny, no proshche ne pisat' tekst "
      "cherez obolochku voobshche."),
+
+    # СООБЩЕНИЕ КОММИТА С ОБРАТНЫМ АПОСТРОФОМ ЧЕРЕЗ `-m` (реестр 221.1 №637).
+    #
+    # В двойных кавычках bash делает ПОДСТАНОВКУ КОМАНДЫ: `mut sender` в тексте
+    # сообщения исполняется как команда, а на её место встаёт вывод (обычно
+    # пусто). Сообщение уезжает в историю с дырами там, где автор писал имена
+    # в апострофах — и историю уже не поправить после отправки.
+    #
+    # Ловится 2026-08-13 в ПЯТЫЙ раз за проект и ВТОРОЙ раз за один час: сперва
+    # так испортился комментарий внутри стража, затем — сообщение коммита
+    # gate(#636), где выпали `mut sender`, `out` и `|| echo 0`.
+    #
+    # Правило узкое НАМЕРЕННО: только `git commit` + `-m` + обратный апостроф.
+    # Форма `-F файл` не трогается — она и есть верный ответ, вместе с
+    # heredoc в ОДИНАРНЫХ кавычках.
+    (re.compile(r"git\s+(-C\s+\S+\s+)?commit\b(.|\n)*?-m(.|\n)*?`"),
+     "FORBIDDEN: soobshchenie kommita s obratnym apostrofom cherez -m. V dvoynyh "
+     "kavychkah bash DELAET PODSTANOVKU KOMANDY: `mut sender` ispolnitsya, a v "
+     "tekste ostanetsya dyra (221.1 №637, pyatyy sluchay klassa). Pishi soobshchenie "
+     "v FAYL (Write) i peredavay: git commit -F <fayl>."),
 ]
 
 
