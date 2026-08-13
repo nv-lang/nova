@@ -50,6 +50,35 @@ fail() {
   * $1"
     GATE_FAIL_N=$((GATE_FAIL_N + 1))
 }
+# ШАГ ОБЯЗАН ПРЕДЪЯВИТЬ СВОЮ СТРОКУ (правило П1 №4, реестр 221.1 №645, №647).
+#
+# Код возврата 0 значит «страж не упал», а не «страж проверил». 2026-08-14
+# выяснилось, что шаг про секреты в дереве месяцами проходил вхолостую: из-за
+# литерального `\n` страж получал не тот корень, честно печатал «ok: git не
+# отдал списка файлов» — и гейт принимал это за проверку, потому что смотрел
+# только на код возврата. Строка была; читать её было некому.
+#
+# Отсюда обёртка: страж зовётся через неё, и шаг засчитывается ТОЛЬКО если в
+# выводе появилась строка со словом `ok:`. Нет строки — «шаг ничего не
+# доказал», и это отказ, а не тишина. Ровно то же правило владелец давно
+# сформулировал для тестового фильтра: не рапортовать счёт, которого не видел.
+#
+# Форму «страж зовётся через guard, а не голым bash» держит
+# scripts/guards/check-gate-steps-assert.sh — иначе правило живёт до первого
+# нового шага, написанного по образцу соседней строки.
+guard() {
+    local g="$1"; shift
+    local runner=bash out rc
+    case "$g" in *.py) runner=python ;; esac
+    out="$("$runner" "$g" "$@" 2>&1)"; rc=$?
+    printf '%s\n' "$out"
+    [ "$rc" -eq 0 ] || return "$rc"
+    printf '%s\n' "$out" | grep -q 'ok:' && return 0
+    echo "ШАГ НИЧЕГО НЕ ДОКАЗАЛ: $(basename "$g") вышел с нулём, но не напечатал строку ok:" >&2
+    echo "  Ноль без строки — это «не упал», а не «проверил» (реестр №645)." >&2
+    return 1
+}
+
 # Барьер: вызывается там, где продолжать бессмысленно либо дорого.
 gate_barrier() {
     if [ "$GATE_FAIL_N" -gt 0 ]; then
@@ -106,7 +135,7 @@ if [ -n "$OVERRIDE_FILES" ]; then
 fi
 
 step "arch-ratchet"
-bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
+guard "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 
 # Реестр 221.1 №138 (урок 2026-07-27): копия рантайма внутри пакетной репы/
 # worktree не под git → её протухание невидимо, и она ШАДОВИТ настоящий
@@ -115,7 +144,7 @@ bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth
 # объявляли символ из фикса №108), плюс >1 ГБ мусора по репам. Копия НЕ нужна —
 # есть штатные NOVA_RT_DIR/NOVA_CG_INCLUDE (см. шапку самого стража).
 step "no-runtime-copy"
-bash "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
+guard "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
 
 # Трек Ж (231): страж без самотеста — доверие на слово. Самотесты дешёвые
 # (секунды) и проверяют ОБА свойства: ловит нарушение / не даёт ложняка.
@@ -123,9 +152,9 @@ bash "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия ран�
 # записи в реестре = невидимый долг — обход живёт, а дефекта для планирования нет.
 # Первый прогон стража нашёл 59 таких; ручные аудиты видели 8. Храповик: расти нельзя.
 step "marker-registry-sync"
-bash "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "маркеры в коде без записи в реестре (№155/№161)"
+guard "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "маркеры в коде без записи в реестре (№155/№161)"
 step "bug-number-sync (№217 — каждый новый маркер нумерован в 221.1)"
-bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый маркер без № в 221.1 (правило владельца №217)"
+guard "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый маркер без № в 221.1 (правило владельца №217)"
 
 # Реестр 221.1 №446/№447 (окно presume-cas-gate, 2026-08-08): единственный
 # mco_resume в рантайме держит структурный инвариант «ни одно действие над
@@ -136,22 +165,22 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 step "expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453)"
 step "накопление несведённых веток (никогда не копи)"
 step "форма записей реестра (класс, приоритет, оговорка)"
-bash "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
+guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
 
-bash "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
+guard "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 
-bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
+guard "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 
 step "nova:expect — храповик разметки негативных фикстур (план 262 Б)"
 # Файловый EXPECT_COMPILE_ERROR говорит «где-то в этом файле ошибка», и
 # фикстура остаётся зелёной, даже когда ошибка переехала на другую строку
 # по другой причине. `nova:expect` пришпиливает ожидание к МЕСТУ. Разом
 # разметить 550 фикстур нельзя — храповик не даёт их числу расти.
-bash "$ROOT/scripts/guards/check-nova-expect-ratchet.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-nova-expect-ratchet.sh" "$ROOT" \
     || fail "неразмеченных негативных фикстур стало больше (план 262 Б)"
 
 step "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
-bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
+guard "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
 
 step "invariant-discipline (норма об инвариантах — всеобъемлюща)"
 # №475: ИМЕННО этот страж завис 2026-08-08 на 4 часа (grep-цикл по всему
@@ -162,20 +191,20 @@ step "invariant-discipline (норма об инвариантах — всео�
 # per-guard селфтестов ниже (:259/:463) и тот, в который страж после
 # переписи на awk укладывается за секунды на реальном дереве.
 bash "$ROOT/scripts/tools/with-deadline.sh" 300 \
-    bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
+    guard "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
 step "no-path-deps (D420 — path только под [replace]; №444)"
-bash "$ROOT/scripts/guards/check-no-path-deps.sh" "$ROOT" || fail "path-зависимость в коммитящемся манифесте/локе (D420)"
+guard "$ROOT/scripts/guards/check-no-path-deps.sh" "$ROOT" || fail "path-зависимость в коммитящемся манифесте/локе (D420)"
 
 step "single-mco-resume (№446/№447 — единственный resume-сайт в Vela)"
-bash "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
+guard "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
 
 
 
 step "doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31)"
-bash "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
+guard "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
 
 step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # №322: вторым аргументом — база сравнения для подпроверки same-commit
@@ -188,10 +217,10 @@ step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # require-diff-base.sh делает эту неудачу ОТКАЗОМ шага, а не тихим пропуском.
 DOC_GUARD_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
     || fail "doc-conventions: не вычислить diff-base для guide_same_commit (см. scripts/tools/require-diff-base.sh) — подпроверка не может выполниться"
-bash "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
+guard "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
 
 step "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
-DOC_EXAMPLES_SHOW_MATCHES=0 bash "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
+DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 
 step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
 # №586-класс: та же ошибка, что у DOC_GUARD_BASE выше — пустая база молча
@@ -199,7 +228,7 @@ step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фи
 # и отказ вызывающего тонул в чужом легитимном пропуске.
 TFC_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
     || fail "test-fixture-coverage: не вычислить diff-base (см. scripts/tools/require-diff-base.sh) — rule5/rule1 не могут выполниться"
-bash "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
+guard "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
 
 step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
 # НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
@@ -209,7 +238,13 @@ step "ci-status (внешний авторитетный гейт — GitHub Act
 # Предел 120с: это сетевой запрос, а не вычисление. Недоступный GitHub не
 # должен превращаться в зависший гейт.
 bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
-    bash "$ROOT/scripts/guards/check-ci-status.sh" || true
+    # ЕДИНСТВЕННОЕ ИСКЛЮЧЕНИЕ ИЗ ОБЁРТКИ guard (см. её шапку и
+# scripts/guards/check-gate-steps-assert.sh). Этот шаг СПРАВЕДЛИВО может
+# ничего не проверить: прогонов CI на текущем коммите может ещё не быть, и
+# тогда честный ответ — «нечего смотреть», а не «ok». Учить его печатать `ok:`
+# ради обёртки значило бы встроить ровно ту ложь, против которой обёртка и
+# заведена. Поэтому вызов остаётся голым и не влияет на вердикт.
+bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 
 # Срок 60→240 (2026-08-11): шаг упёрся в предел и стал отказом «шаг ничего не
 # доказал» (№475) — не из-за кириллицы, а потому что история, которую он
@@ -227,19 +262,19 @@ bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
 # ещё нет: там честно нужны минуты, и это не повод считать шаг недоказанным.
 step "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
 bash "$ROOT/scripts/tools/with-deadline.sh" 240 \
-    bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
+    guard "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
 step "устаревшие пометки «не реализован» в спеке (№557)"
-bash "$ROOT/scripts/guards/check-stale-unimplemented.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-stale-unimplemented.sh" "$ROOT" \
     || fail "спека объявляет нереализованным то, что план считает сделанным"
 
 step "рабочие деревья только в d:/Sources/nv-lang (№561)"
-bash "$ROOT/scripts/guards/check-worktree-location.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-worktree-location.sh" "$ROOT" \
     || fail "worktree вне дозволенного корня"
 
 step "страница правил называет всех стражей (№560)"
-bash "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
     || fail "страж без объяснения на странице правил"
 
 # №565: локальный гейт судит НЕ ТО ДЕРЕВО, что судит внешний мир — локально
@@ -247,21 +282,21 @@ bash "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
 # временном дереве из HEAD. Дорогой (минуты), поэтому под сроком.
 step "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
 bash "$ROOT/scripts/tools/with-deadline.sh" 600 \
-    bash "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
+    guard "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
     || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
 # №578: флаг, который никто не взводит и нигде не описывает, снаружи
 # неотличим от несделанной работы (прецедент — №575, много-TU).
 # №612: второго индекса планов не бывает — рукописная сводка расходится молча.
 step "второго индекса планов нет (№612)"
-bash "$ROOT/scripts/guards/check-no-handwritten-plan-index.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-no-handwritten-plan-index.sh" "$ROOT" \
     || fail "рукописная сводка планов вернулась"
 
 # D456/№568/№579: граница эффекта — API на Nova, а не таблица системных вызовов.
 # Правило жило прозой с 2026-08-11 без единого механизма, и обход в `Net.lookup`
 # прожил недели, защищённый комментарием, учившим несуществующему ограничению.
 step "форма границы эффекта (D456 — не таблица системных вызовов)"
-bash "$ROOT/scripts/guards/check-effect-boundary-shape.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-effect-boundary-shape.sh" "$ROOT" \
     || fail "на границе эффекта прибавилось C-форм (сырая ручка, out-параметр, счётчик рядом с данными)"
 
 # №629: о поглощении ветки судят предком и patch-id, а не трёхточечным диффом
@@ -270,65 +305,86 @@ bash "$ROOT/scripts/guards/check-effect-boundary-shape.sh" "$ROOT" \
 # №637/№643: текст, испорченный «UTF-8 прочитан как CP1251», состоит из законных
 # символов — его не видит ни страж управляющих байтов, ни док-конвенции.
 step "текст не испорчен мохибейком (№637)"
-bash "$ROOT/scripts/guards/check-no-mojibake.sh" "$ROOT" \n    || fail "в дереве прибавилось испорченного текста (UTF-8 прочитан как CP1251)"
+guard "$ROOT/scripts/guards/check-no-mojibake.sh" "$ROOT" \
+    || fail "в дереве прибавилось испорченного текста (UTF-8 прочитан как CP1251)"
 
 step "поглощение ветки сверяют предком, не диффом (№629)"
-bash "$ROOT/scripts/guards/check-branch-absorption-method.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-branch-absorption-method.sh" "$ROOT" \
     || fail "трёхточечный дифф судит о ветках либо потеряна дверь branch-absorbed.sh"
 
 # №608/№609: публичная страница на двух языках, и имя стороны не лжёт.
 step "публичные страницы парны и на своих языках (№608, №609)"
-bash "$ROOT/scripts/guards/check-doc-language-pairs.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-doc-language-pairs.sh" "$ROOT" \
     || fail "страницы без пары или сторона не на своём языке"
 
 # №TBD-plan-dup: один и тот же абзац в двух разделах плана — план,
 # который начнёт врать по частям.
 step "дословные повторы между разделами планов"
-python "$ROOT/scripts/guards/check-plan-duplication.py" "$ROOT" \n    || fail "дословный повтор между разделами плана вырос"
+guard "$ROOT/scripts/guards/check-plan-duplication.py" "$ROOT" \
+    || fail "дословный повтор между разделами плана вырос"
+
+# №647: правило «не рапортовать того, чего не видел» (П1 №4) держится
+# механизмом, иначе живёт до первого шага, написанного по образцу соседней
+# строки. Стоит РАНЬШЕ остальных: если сама форма шагов сломана, вердикты
+# нижележащих шагов ничего не стоят.
+step "шаги гейта требуют от стража его собственную строку (П1 №4, №645, №647)"
+guard "$ROOT/scripts/guards/check-gate-steps-assert.sh" "$ROOT" \
+    || fail "шаг гейта засчитывает ноль без доказательства"
+
+# №646: ссылка на коммит обязана вести туда, где что-то есть. Храповик, а не
+# долг к погашению: вычистка истории 2026-08-13 оставила мёртвыми 828 из 2769
+# хешей, названных в доке. Смысл шага — поймать СЛЕДУЮЩЕЕ переписывание
+# истории до отправки в зеркала, а не после.
+step "ссылки на коммиты в доке (мёртвые хеши, зеркала, ссылка без темы)"
+guard "$ROOT/scripts/guards/check-commit-refs.sh" "$ROOT" \
+    || fail "новых мёртвых ссылок на коммиты прибавилось"
 
 # №TBD-secrets: секрет вреден самим фактом попадания в историю.
 step "секреты в дереве (ключи, токены, пароль внутри URL)"
-# ЛИТЕРАЛЬНЫЙ `\n` ВМЕСТО ПЕРЕНОСА СТРОКИ (реестр 221.1 №645). До 2026-08-14
-# здесь стояло `… --tree "$ROOT" \n    || fail …`: оболочка превращала `\n` в
+# ЛИТЕРАЛЬНЫЙ ОБРАТНЫЙ СЛЭШ С БУКВОЙ N ВМЕСТО ПЕРЕНОСА СТРОКИ (реестр 221.1
+# №645). До 2026-08-14 здесь между корнем и «или отказ» стояли два ЛИТЕРАЛЬНЫХ
+# символа вместо настоящего переноса; пример этой формы в комментарии не
+# приводится намеренно — страж на неё смотрит и текст комментария не отличает
+# (наступил при заведении стража, №647). Оболочка превращала их в
 # аргумент `n`, страж брал его за корень дерева, `git -C n ls-files` не отдавал
 # ничего — и шаг рапортовал зелёное, НЕ ПРОВЕРИВ НИ ОДНОГО ФАЙЛА. Страж при
 # этом вёл себя честно и говорил «git не отдал списка файлов»; читать было
 # некому. Разница ровно в одной строке вывода, и по ней это и ловится.
-bash "$ROOT/scripts/guards/check-staged-secrets.sh" --tree "$ROOT" \
+guard "$ROOT/scripts/guards/check-staged-secrets.sh" --tree "$ROOT" \
     || fail "секрет в дереве"
 
 # №TBD-control-chars: невидимый управляющий байт в исходнике — код, который
 # читается верным и работает неверным (перенесено из соседнего проекта).
 step "невидимые управляющие байты в исходниках"
-bash "$ROOT/scripts/guards/check-no-control-chars.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-no-control-chars.sh" "$ROOT" \
     || fail "управляющие байты в исходниках"
 
 # №607: корень публичного репозитория — витрина, а не стол.
 step "в корне репозитория только предусмотренное (№607)"
-bash "$ROOT/scripts/guards/check-repo-root-clean.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-repo-root-clean.sh" "$ROOT" \
     || fail "в корне лежит непредусмотренное"
 
 # №597: код возврата обёртки — не код возврата сборки.
 step "фоновая сборка проверяет результат, а не код обёртки (№597)"
-bash "$ROOT/scripts/guards/check-background-build-verified.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-background-build-verified.sh" "$ROOT" \
     || fail "фоновая сборка без проверки результата"
 
 # №594: реестр говорит «закрыто», а ветки в `main` нет — следующий будет
 # искать несуществующее. 2026-08-11 так пролежала ветка плана 270.
 step "принятая в реестре работа влита (№594)"
-bash "$ROOT/scripts/guards/check-accepted-branch-merged.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-accepted-branch-merged.sh" "$ROOT" \
     || fail "работа принята в реестре, но её ветка не влита"
 
 step "у каждого флага NOVA_* есть вызывающий или описание (№578)"
-bash "$ROOT/scripts/guards/check-flag-has-caller.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-flag-has-caller.sh" "$ROOT" \
     || fail "флаг NOVA_* без вызывающего и без описания"
 
 step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
-bash "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
 
 step "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
-bash "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
+guard "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"
 
 step "самотесты стражей (все из каталога, параллельно)"
@@ -516,7 +572,7 @@ step "nova test std/src (то же, что гоняет CI — №591/№402)"
 # постоянно, а постоянно красный гейт не отличает новое от старого, и
 # каждый пуш шёл через ключ. Теперь дверь одна, и CI зовёт её же
 # (`.github/workflows/nova-test-regression.yml`).
-bash "$ROOT/scripts/guards/check-std-test-baseline.sh" "$ROOT" "$NOVA" \
+guard "$ROOT/scripts/guards/check-std-test-baseline.sh" "$ROOT" "$NOVA" \
     || fail "nova test std: отказ вне базы имён (подмена или регресс)"
 
 step "nova lint --deny std/src (0 findings — 221.1 №416)"

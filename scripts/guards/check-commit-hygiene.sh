@@ -76,5 +76,8 @@ if [ "$VIOL" -gt 0 ]; then
     echo "check-commit-hygiene: FAIL — $VIOL нарушени(й)" >&2
     exit 1
 fi
-echo "check-commit-hygiene ok"
+# Строка с `ok:` и указанием ЧТО именно проверено — требование
+# check-gate-steps-assert.sh: «ok» без двоеточия и без предмета не отличается
+# от молчания (реестр 221.1 №645, №647).
+echo "check-commit-hygiene ok: сообщение коммита и авторство в порядке"
 exit 0

@@ -352,4 +352,7 @@ if [ -d "$ROOT/spec/decisions" ]; then
     info "doc-examples ИНФОРМАЦИОННО (decisions_retired): снятых форм в nova-примерах spec/decisions/** — ${dec_retired:-0}; это исторический норматив, гейт не применяется (см. шапку)"
 fi
 
+# Своя строка на выходе — требование обёртки guard() в гейте: ноль без строки
+# значит «не упал», а не «проверил» (реестр 221.1 №645).
+[ "$fail" -eq 0 ] && echo "check-doc-examples ok: снятых форм в nova-примерах публикуемой доки нет"
 exit $fail
