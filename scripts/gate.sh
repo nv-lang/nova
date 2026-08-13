@@ -257,6 +257,13 @@ step "второго индекса планов нет (№612)"
 bash "$ROOT/scripts/guards/check-no-handwritten-plan-index.sh" "$ROOT" \
     || fail "рукописная сводка планов вернулась"
 
+# №629: о поглощении ветки судят предком и patch-id, а не трёхточечным диффом
+# — тот при нескольких базах слияния молча берёт произвольную и показывает
+# давно влитое как отсутствующее.
+step "поглощение ветки сверяют предком, не диффом (№629)"
+bash "$ROOT/scripts/guards/check-branch-absorption-method.sh" "$ROOT" \
+    || fail "трёхточечный дифф судит о ветках либо потеряна дверь branch-absorbed.sh"
+
 # №608/№609: публичная страница на двух языках, и имя стороны не лжёт.
 step "публичные страницы парны и на своих языках (№608, №609)"
 bash "$ROOT/scripts/guards/check-doc-language-pairs.sh" "$ROOT" \
@@ -484,45 +491,14 @@ echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
 # Счётчик сказал бы «7 <= 8, всё хорошо» и скрыл бы `reflect_test`, который
 # до слияния группы M не падал вовсе.
 step "nova test std/src (то же, что гоняет CI — №591/№402)"
-STD_TEST_BASE_FILE="$ROOT/scripts/guards/std-test-fail.baseline"
-STD_TEST_LOG="${TMPDIR:-/tmp}/gate_std_test_$$.log"
-"$NOVA" test "$ROOT/std/src" > "$STD_TEST_LOG" 2>&1
-STD_TEST_LINE=$(sed -e "s/\[[0-9;]*m//g" "$STD_TEST_LOG" | grep -E "^PASS: " | tail -1)
-echo "std test :: $STD_TEST_LINE"
-if [ -z "$STD_TEST_LINE" ]; then
-    fail "nova test std: нет строки итога — шаг ничего не доказал (№475)"
-else
-    STD_TEST_NOW="${TMPDIR:-/tmp}/gate_std_now_$$.txt"
-    sed -e "s/\[[0-9;]*m//g" "$STD_TEST_LOG" \
-        | grep -aE "^(RUN-FAIL|CC-FAIL)" \
-        | awk '{print $2}' | sort -u > "$STD_TEST_NOW"
-    if [ ! -f "$STD_TEST_BASE_FILE" ]; then
-        fail "nova test std: нет базы $STD_TEST_BASE_FILE"
-    else
-        # Каждое имя в базе обязано нести номер записи (`№NNN`): имя без
-        # номера — отложенный дефект без следа, а не фон (см. №599: №559 был
-        # пронумерован сутками раньше и всё равно оказался невидим).
-        UNLINKED=$(grep -vE '^[[:space:]]*#' "$STD_TEST_BASE_FILE" \
-                   | grep -vE '^[[:space:]]*$' | grep -v '№' || true)
-        if [ -n "$UNLINKED" ]; then
-            echo "$UNLINKED" | sed 's/^/    БЕЗ НОМЕРА ЗАПИСИ: /'
-            fail "nova test std: имя в базе без ссылки на запись реестра"
-        fi
-        grep -vE '^[[:space:]]*#' "$STD_TEST_BASE_FILE" | grep -vE '^[[:space:]]*$' \
-            | sed 's/[[:space:]]*#.*//' | sed 's/[[:space:]]*$//' | sort -u \
-            > "${TMPDIR:-/tmp}/gate_std_base_$$.txt"
-        NEWLY=$(comm -23 "$STD_TEST_NOW" "${TMPDIR:-/tmp}/gate_std_base_$$.txt")
-        GONE=$(comm -13 "$STD_TEST_NOW" "${TMPDIR:-/tmp}/gate_std_base_$$.txt")
-        if [ -n "$NEWLY" ]; then
-            echo "$NEWLY" | sed 's/^/    НОВЫЙ ОТКАЗ: /'
-            fail "nova test std: отказ, которого нет в базе (подмена или регресс)"
-        fi
-        [ -n "$GONE" ] && echo "$GONE" | sed 's/^/    почищено (убери из базы): /'
-        rm -f "${TMPDIR:-/tmp}/gate_std_base_$$.txt"
-    fi
-    rm -f "$STD_TEST_NOW"
-fi
-rm -f "$STD_TEST_LOG"
+# Сверка вынесена в СТРАЖ, а не живёт здесь: пока она была телом шага
+# гейта, CI позвать её было нечем, и он гонял `nova test std` голым —
+# любой известный отказ валил дорожку. Оттого внешний гейт был красен
+# постоянно, а постоянно красный гейт не отличает новое от старого, и
+# каждый пуш шёл через ключ. Теперь дверь одна, и CI зовёт её же
+# (`.github/workflows/nova-test-regression.yml`).
+bash "$ROOT/scripts/guards/check-std-test-baseline.sh" "$ROOT" "$NOVA" \
+    || fail "nova test std: отказ вне базы имён (подмена или регресс)"
 
 step "nova lint --deny std/src (0 findings — 221.1 №416)"
 LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"

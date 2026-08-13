@@ -45,8 +45,13 @@ jobs:
       - name: Run nova_tests (positive-fast, default, non-blocking)
         continue-on-error: true
         run: ./nova-cli/target/release/nova test nova_tests
-      - name: Run std tests
-        run: ./nova-cli/target/release/nova test std
+      # Тот же страж, что гоняет локальный гейт: сверяет ИМЕНА отказов с
+      # базой известных (scripts/guards/std-test-fail.baseline), а не валится
+      # на любом. Раньше здесь стоял голый `nova test std`, у CI базы не было,
+      # и дорожка была красной постоянно от уже заведённых дефектов — реестр
+      # 221.1 №591/№402. Два гейта обязаны проверять ОДНО И ТО ЖЕ.
+      - name: Run std tests (against the known-failure baseline)
+        run: bash scripts/guards/check-std-test-baseline.sh . ./nova-cli/target/release/nova
 
   nova-test-nightly-full:
     name: nova test / full (nightly)
@@ -71,8 +76,13 @@ jobs:
       - name: Run nova_tests full (non-blocking report)
         continue-on-error: true
         run: ./nova-cli/target/release/nova test --full nova_tests 2>&1 | tee nova-test-full-report.txt
-      - name: Run std tests
-        run: ./nova-cli/target/release/nova test std
+      # Тот же страж, что гоняет локальный гейт: сверяет ИМЕНА отказов с
+      # базой известных (scripts/guards/std-test-fail.baseline), а не валится
+      # на любом. Раньше здесь стоял голый `nova test std`, у CI базы не было,
+      # и дорожка была красной постоянно от уже заведённых дефектов — реестр
+      # 221.1 №591/№402. Два гейта обязаны проверять ОДНО И ТО ЖЕ.
+      - name: Run std tests (against the known-failure baseline)
+        run: bash scripts/guards/check-std-test-baseline.sh . ./nova-cli/target/release/nova
       - name: Upload full test report
         if: always()
         uses: actions/upload-artifact@v4
