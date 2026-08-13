@@ -140,6 +140,18 @@ check_body connect \
     curl -s -m 15 --proxytunnel -x "http://127.0.0.1:${BRIDGE_PORT}" "http://127.0.0.1:${TARGET_PORT}/"
 
 if [ "${FAIL}" -ne 0 ]; then
+    # Stop the writers BEFORE reading their logs. Both processes write to a
+    # FILE, so their stdout is block-buffered, and a still-running process has
+    # told the file nothing yet. Until 2026-08-13 this block read the logs with
+    # the bridge still alive and printed an empty "bridge log" every time --
+    # which was then read on CI as evidence that the bridge produced no output
+    # at all (registry #591, #605). It produces plenty: it prints its listening
+    # line at startup. The emptiness was ours, not the bridge's.
+    [ -n "${BRIDGE_PID}" ] && kill "${BRIDGE_PID}" >/dev/null 2>&1
+    [ -n "${STUB_PID}" ] && kill "${STUB_PID}" >/dev/null 2>&1
+    # Give both a moment to flush and exit; `wait` cannot be used here because
+    # these are background jobs of THIS shell and we still want the exit below.
+    sleep 1
     echo "--- SOCKS5 stub log ---"
     cat "${WORKDIR}/stub.log"
     echo "--- bridge log ---"
