@@ -74,6 +74,10 @@ D48 tag-шаблоны). **Не выдумывай синтаксис** — св
   тесты туда не пишутся.
 - Открытые `[M-…]`-маркеры — [backlog-followups.md](../../plans/backlog-followups.md) (в т.ч. свежий
   кластер `[M-flagship-*]` и P67-LEGACY-класс).
+- **Plan 274 — `novac`, компилятор Nova на Nova** (зонтик, проектный):
+  [274](../../plans/274-novac-self-hosted-compiler.md) + механика бутстрапа и
+  дифференциального гейта — [novac-bootstrap.md](novac-bootstrap.md). Статус — в самом
+  плане; сюда вынесена только ссылка, чтобы направление было видно с входа.
 
 ## 3. Инструменты (`docs/dev/prompts/read-toolchain.md`)
 
