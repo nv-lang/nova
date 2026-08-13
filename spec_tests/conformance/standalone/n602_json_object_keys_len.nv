@@ -40,13 +40,18 @@ fn main() {
     m.insert("a_second", JsonValue.Num(2.0))
     m.insert("m_third", JsonValue.Num(3.0))
 
+    // Индексный обход (`keys.len()` / `keys[i]`) сохранён НАМЕРЕННО — он и
+    // есть предмет пробы: именно эта форма идёт через codegen встроенных
+    // типов, на чём №602 и сломался. Сборка строки переведена на
+    // StringBuilder (канон perf-conventions): `joined += …` в цикле — O(N²).
     ro keys = m.keys()
-    mut joined = ""
+    consume sb = StringBuilder.new()
     mut i = 0
     while i < keys.len() {
-        if i > 0 { joined += "," }
-        joined += keys[i]
+        if i > 0 { sb.append(",") }
+        sb.append(keys[i])
         i += 1
     }
+    ro joined = sb.into_str()
     println("len=${keys.len()} keys=${joined}")
 }

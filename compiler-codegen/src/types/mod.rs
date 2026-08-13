@@ -15518,14 +15518,36 @@ impl<'a> TypeCheckCtx<'a> {
                             // still match, so it is deliberately NOT reported,
                             // §0 "gap, not wrong") — a SINGLE candidate has no
                             // such ambiguity: `single` is the only fn this call
-                            // could possibly resolve to, so anything short of
-                            // `Some(true)` (arity binds via `bind_call_args` AND
-                            // every bound arg is type-assignable) means the call
-                            // is DEFINITELY wrong, not merely undetermined.
-                            if !matches!(
-                                self.overload_applicability(single, args, gs, scope),
-                                Some(true)
-                            ) {
+                            // could possibly resolve to.
+                            //
+                            // BUT WE JUDGE ARITY ONLY HERE (registry №631 —
+                            // a diagnostic regression caught by the gate on
+                            // 2026-08-13, hours after this check landed). The
+                            // first edition rejected anything short of
+                            // `Some(true)`, and so covered TWO different faults
+                            // with ONE coarse code:
+                            //   * wrong NUMBER of args — the hole this fix was
+                            //     written for: `bind_call_args` does not bind,
+                            //     the checker used to report a false `ok`, and
+                            //     codegen silently emitted a malformed C call.
+                            //     That is what stays here.
+                            //   * wrong TYPE of an arg — someone else's ground:
+                            //     `spec/decisions/02-types.md` ("E7301 —
+                            //     assignability", `let`-annotation ↔ RHS and
+                            //     ARGUMENT ↔ PARAMETER) pins E7301 to exactly
+                            //     this pair, and the downstream per-argument
+                            //     check emits it naming WHICH argument and
+                            //     WHICH types disagree. `[E_NO_MATCHING_
+                            //     OVERLOAD] no overload … matches` names
+                            //     nothing, and misstates the case besides: a
+                            //     single candidate has no overloading in sight
+                            //     (`h.add_one` is one plain fn to its caller).
+                            // Both sides are pinned by fixtures:
+                            // standalone/p618_single_candidate_arity_probe
+                            // (arity) and neg/f4_alias_arg_mismatch_neg (type,
+                            // expects E7301) — the latter is the one that went
+                            // red.
+                            if crate::argbind::bind_call_args(&single.params, args).is_err() {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` \
