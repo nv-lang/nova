@@ -253,6 +253,26 @@ These identifiers can be **locally overridden** (for example, a `Net` type
 from a user library), but that is an anti-pattern. The linter will emit
 a warning.
 
+## What a release freezes
+
+A tag freezes exactly what carries `#stable(since = "...")` — nothing
+more ([D460](decisions/01-philosophy.md#d460)).
+
+| the interface | the promise |
+|---|---|
+| marked `#stable(since = "0.1")` | shape and observable behaviour are fixed; a change needs a new major release and a spec entry |
+| not marked | works, but is not frozen — it may change in the next version without migration |
+
+The rule applies the same way to `std`, to packages, and to compiler
+flags: the promise comes from the mark, not from the fact that something
+exists and appears to work.
+
+This does not license shipping broken things. Anything unfrozen must be
+either working, or named as not working in the release notes. Silently
+wrong behaviour stays a release blocker whether or not the mark is
+there — precisely because it deceives the reader who was not counting on
+stability in the first place.
+
 ## Main trade-offs
 
 1. **Algebraic effects are hard to implement** — this is the cutting edge of PL,
