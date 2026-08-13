@@ -22,6 +22,7 @@ type Probe effect {
 
 export fn real_probe() -> Effect[Probe] {
     effect Probe {
+        // nova:expect E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE -- the modifier describes the parameter's TYPE, so omitting the type leaves `mut` describing nothing; without this the leading `mut` would be silently dropped
         fill(mut buf) -> int => 0
     }
 }
