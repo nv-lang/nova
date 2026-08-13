@@ -1,0 +1,12 @@
+// REPRO 3b: именованный литерал value-record (с префиксом типа)
+// В контексте, где тип НЕ выводится из сигнатуры (let-присваивание)
+// EXPECT_OUTPUT: ok
+module vrec.repro3b
+
+type Pt value { sign int, x int }
+
+fn main() -> () {
+    ro b = Pt { sign: 1, x: 99 }
+    assert(b.sign == 1 && b.x == 99)
+    println("ok")
+}

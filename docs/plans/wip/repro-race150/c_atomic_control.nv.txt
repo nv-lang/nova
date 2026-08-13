@@ -1,0 +1,29 @@
+// Репро C (контроль корректности): то же, но AtomicInt вместо Vec.
+// Ожидание: 20/20 чисто, точный счёт.
+module race150.c
+
+import std.runtime.sync.{AtomicInt}
+
+fn parallel_spawn(f fn() -> (), n int, m int) {
+    supervised {
+        for _ in 0..n {
+            spawn {
+                for _ in 0..m {
+                    f()
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    mut counter = AtomicInt.new(0)
+    ro add = || { counter.fetch_add(1) }
+    parallel_spawn(add, 8, 10000)
+    ro expected = 80000
+    ro got = counter.load()
+    println("expected ", expected, ", got ", got)
+    if got != expected {
+        println("RACE DETECTED: counter mismatch")
+    }
+}

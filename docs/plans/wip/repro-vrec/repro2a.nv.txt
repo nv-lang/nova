@@ -1,0 +1,16 @@
+// REPRO 2: Option[value-record] в возврате
+// EXPECT_OUTPUT: ok
+module vrec.repro2a
+
+type Pt value { x int, y int }
+
+fn mk(ok bool) -> Option[Pt] {
+    if ok { Some(Pt { x: 1, y: 2 }) } else { None }
+}
+
+fn main() -> () {
+    match mk(true) {
+        Some(p) => { assert(p.x == 1 && p.y == 2); println("ok") }
+        None => { assert(false) }
+    }
+}

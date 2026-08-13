@@ -1,0 +1,13 @@
+// REPRO 1b: newtype Sign(i8) вместо enum в value-record
+// EXPECT_OUTPUT: ok
+module vrec.repro1b
+
+type Sign(i8)
+
+type Pt value { sign Sign, x int }
+
+fn main() -> () {
+    ro p = Pt { sign: Sign(1), x: 42 }
+    assert(p.x == 42)
+    println("ok")
+}

@@ -1,0 +1,13 @@
+// REPRO 3a: анонимный литерал value-record (shorthand, без префикса типа)
+// EXPECT_OUTPUT: ok
+module vrec.repro3a
+
+type Pt value { sign int, x int }
+
+fn mk_anon(sign int, x int) -> Pt => { sign, x }
+
+fn main() -> () {
+    ro a = mk_anon(-1, 42)
+    assert(a.sign == -1 && a.x == 42)
+    println("ok")
+}

@@ -1,0 +1,11 @@
+// REPRO 3c: анонимный литерал в let-присваивании (тип выводится из аннотации)
+// EXPECT_OUTPUT: ok
+module vrec.repro3c
+
+type Pt value { sign int, x int }
+
+fn main() -> () {
+    ro a Pt = { sign: -1, x: 42 }
+    assert(a.sign == -1 && a.x == 42)
+    println("ok")
+}

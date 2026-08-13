@@ -1,0 +1,10 @@
+// Репро A (контроль): прямой mut-захват Vec в spawn-блоке.
+// Ожидание: E_CONCURRENT_MUT_CAPTURE.
+module race150.a
+
+fn main() {
+    mut v = Vec[int].new()
+    supervised {
+        spawn { v.push(1) }
+    }
+}

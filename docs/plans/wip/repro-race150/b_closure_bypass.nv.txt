@@ -1,0 +1,27 @@
+// Репро B (обход границы): замыкание снаружи spawn захватывает mut-Vec.
+// Ожидание: nova check молчит, рантайм под нагрузкой даёт порчу.
+module race150.b
+
+fn parallel_spawn(f fn() -> (), n int, m int) {
+    supervised {
+        for _ in 0..n {
+            spawn {
+                for _ in 0..m {
+                    f()
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    mut v = Vec[int].new()
+    ro push = || { v.push(1) }
+    parallel_spawn(push, 8, 10000)
+    ro expected = 80000
+    ro got = v.len()
+    println("expected ", expected, ", got ", got)
+    if got != expected {
+        println("RACE DETECTED: len mismatch")
+    }
+}

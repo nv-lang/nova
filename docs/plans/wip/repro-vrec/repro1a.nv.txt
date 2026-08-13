@@ -1,0 +1,16 @@
+// REPRO 1a: enum-поле в value-record
+// EXPECT_OUTPUT: ok
+module vrec.repro1a
+
+type Sign enum Neg | Zero | Pos
+
+type Pt value { sign Sign, x int }
+
+fn main() -> () {
+    ro p = Pt { sign: Sign.Pos, x: 42 }
+    match p.sign {
+        Sign.Pos => assert(p.sign == Sign.Pos && p.x == 42)
+        _ => assert(false)
+    }
+    println("ok")
+}

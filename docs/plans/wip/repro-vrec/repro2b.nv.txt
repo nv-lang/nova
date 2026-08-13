@@ -1,0 +1,16 @@
+// REPRO 2b: Option[(Pt, Pt)] — кортеж value-record'ов в Option
+// EXPECT_OUTPUT: ok
+module vrec.repro2b
+
+type Pt value { x int, y int }
+
+fn div_rem(ok bool) -> Option[(Pt, Pt)] {
+    if ok { Some((Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 })) } else { None }
+}
+
+fn main() -> () {
+    match div_rem(true) {
+        Some((a, b)) => { assert(a.x == 1 && b.x == 3); println("ok") }
+        None => { assert(false) }
+    }
+}

@@ -1,0 +1,26 @@
+// Репро B (тяжёлый режим): N=16, M=100000
+module race150.b_heavy
+
+fn parallel_spawn(f fn() -> (), n int, m int) {
+    supervised {
+        for _ in 0..n {
+            spawn {
+                for _ in 0..m {
+                    f()
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    mut v = Vec[int].new()
+    ro push = || { v.push(1) }
+    parallel_spawn(push, 16, 100000)
+    ro expected = 1600000
+    ro got = v.len()
+    println("expected ", expected, ", got ", got)
+    if got != expected {
+        println("RACE DETECTED: len mismatch")
+    }
+}
