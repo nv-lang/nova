@@ -88,6 +88,34 @@ else
     bad "страж не назван в docs/dev/rules-for-agents.md"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-staged-secrets: 8/8 ok"; exit 0; fi
+# 9-11. Конфигурация git — приёмка реестра №648. Периметр «дерево» смотрел то,
+# что уезжает, а единственный известный секрет уезжать и не собирался: он лежал
+# в `.git/config`. Случай 11 закреплён отдельно, потому что первая редакция
+# проверки НЕ СРАБАТЫВАЛА: страж выходил с `ok:` раньше — на пустом списке
+# файлов, — и до конфигурации не доходил (та же болезнь, что в №645).
+CFGT="$(mktemp -d)"
+(cd "$CFGT" && git init -q)
+git -C "$CFGT" remote add probe "https://user:secretpass@example.invalid/x.git"
+out=$(bash "$G" --tree "$CFGT" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "конфигурации git"; then
+    ok "конфиг: ловит пароль в URL удалённого репозитория"
+else
+    bad "пароль в конфиге не пойман (rc=$rc): $out"
+fi
+if echo "$out" | grep -q "secretpass"; then
+    bad "ЗНАЧЕНИЕ СЕКРЕТА НАПЕЧАТАНО — печать утечки это тоже утечка"
+else
+    ok "конфиг: печатает имя файла, а не значение"
+fi
+git -C "$CFGT" remote set-url probe "https://example.invalid/x.git"
+out=$(bash "$G" --tree "$CFGT" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q "дерево не проверялось"; then
+    ok "конфиг: без пароля зелёный, и сказано, что дерево не проверялось"
+else
+    bad "чистый конфиг: ждали ноль и честную оговорку (rc=$rc): $out"
+fi
+rm -rf "$CFGT"
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-staged-secrets: 11/11 ok"; exit 0; fi
 echo "селфтест check-staged-secrets: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

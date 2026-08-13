@@ -66,11 +66,22 @@ fail() {
 # Форму «страж зовётся через guard, а не голым bash» держит
 # scripts/guards/check-gate-steps-assert.sh — иначе правило живёт до первого
 # нового шага, написанного по образцу соседней строки.
+# `--deadline N` — предел времени на шаг. Заворачивать вызов обёртки снаружи
+# (`with-deadline.sh N guard …`) НЕЛЬЗЯ: `guard` — функция оболочки, а не
+# программа, и внешняя команда её не найдёт. Именно так 2026-08-14 я сломал
+# четыре шага разом при механическом переводе на обёртку; форму теперь держит
+# свойство 4 в check-gate-steps-assert.sh.
 guard() {
+    local deadline=""
+    if [ "$1" = "--deadline" ]; then deadline="$2"; shift 2; fi
     local g="$1"; shift
     local runner=bash out rc
     case "$g" in *.py) runner=python ;; esac
-    out="$("$runner" "$g" "$@" 2>&1)"; rc=$?
+    if [ -n "$deadline" ]; then
+        out="$(bash "$ROOT/scripts/tools/with-deadline.sh" "$deadline" "$runner" "$g" "$@" 2>&1)"; rc=$?
+    else
+        out="$("$runner" "$g" "$@" 2>&1)"; rc=$?
+    fi
     printf '%s\n' "$out"
     [ "$rc" -eq 0 ] || return "$rc"
     printf '%s\n' "$out" | grep -q 'ok:' && return 0
@@ -190,8 +201,7 @@ step "invariant-discipline (норма об инвариантах — всео�
 # инцидента остался незавёрнутым. Предел 300с — тот же бюджет, что у
 # per-guard селфтестов ниже (:259/:463) и тот, в который страж после
 # переписи на awk укладывается за секунды на реальном дереве.
-bash "$ROOT/scripts/tools/with-deadline.sh" 300 \
-    guard "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
+guard --deadline 300 "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
@@ -237,14 +247,14 @@ step "ci-status (внешний авторитетный гейт — GitHub Act
 # молча, как расходились сутки 2026-08-05/06 (24 слияния подряд без взгляда в CI).
 # Предел 120с: это сетевой запрос, а не вычисление. Недоступный GitHub не
 # должен превращаться в зависший гейт.
-bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
-    # ЕДИНСТВЕННОЕ ИСКЛЮЧЕНИЕ ИЗ ОБЁРТКИ guard (см. её шапку и
+# ЕДИНСТВЕННОЕ ИСКЛЮЧЕНИЕ ИЗ ОБЁРТКИ guard (см. её шапку и
 # scripts/guards/check-gate-steps-assert.sh). Этот шаг СПРАВЕДЛИВО может
 # ничего не проверить: прогонов CI на текущем коммите может ещё не быть, и
 # тогда честный ответ — «нечего смотреть», а не «ok». Учить его печатать `ok:`
 # ради обёртки значило бы встроить ровно ту ложь, против которой обёртка и
 # заведена. Поэтому вызов остаётся голым и не влияет на вердикт.
-bash "$ROOT/scripts/guards/check-ci-status.sh" || true
+bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
+    bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 
 # Срок 60→240 (2026-08-11): шаг упёрся в предел и стал отказом «шаг ничего не
 # доказал» (№475) — не из-за кириллицы, а потому что история, которую он
@@ -261,8 +271,7 @@ bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 # Срок 240 оставлен как ЗАПАС на первый прогон в свежем клоне, где отметки
 # ещё нет: там честно нужны минуты, и это не повод считать шаг недоказанным.
 step "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
-bash "$ROOT/scripts/tools/with-deadline.sh" 240 \
-    guard "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
+guard --deadline 240 "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
 step "устаревшие пометки «не реализован» в спеке (№557)"
@@ -281,8 +290,7 @@ guard "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
 # активен `nova.override.toml`, которого в коммите нет. Шаг собирает флагман во
 # временном дереве из HEAD. Дорогой (минуты), поэтому под сроком.
 step "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
-bash "$ROOT/scripts/tools/with-deadline.sh" 600 \
-    guard "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
+guard --deadline 600 "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
     || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
 # №578: флаг, который никто не взводит и нигде не описывает, снаружи

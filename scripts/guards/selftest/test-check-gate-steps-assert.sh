@@ -77,6 +77,21 @@ awk '"'"'
 echo "check-probe ok: проверено"'
 check "printf %s\\n и awk [ \\t] — не находка" "$(run)" "0"
 
+echo "== правило 4: обёртка в позиции аргумента чужой команды =="
+# Так 2026-08-14 сломались три шага разом: механический перевод на обёртку
+# подменил `bash` внутри вызова `with-deadline.sh`, и шаги отрапортовали
+# дефекты дерева, которых не было.
+mkfix 'bash "$ROOT/scripts/tools/with-deadline.sh" 300 \
+    guard "$ROOT/scripts/guards/check-probe.sh" "$ROOT" || fail "x"' "$GOOD_GUARD"
+check "guard аргументом with-deadline — падает" "$(run)" "1"
+
+mkfix 'guard --deadline 300 "$ROOT/scripts/guards/check-probe.sh" "$ROOT" || fail "x"' "$GOOD_GUARD"
+check "guard --deadline — законная форма" "$(run)" "0"
+
+mkfix 'guard "$ROOT/scripts/guards/check-probe.sh" \
+    "$ROOT" || fail "x"' "$GOOD_GUARD"
+check "перенос ВНУТРИ вызова guard — не находка" "$(run)" "0"
+
 echo "== настоящее дерево =="
 bash "$GUARD" "$SELF" >/dev/null 2>&1
 check "дерево проекта зелёное" "$?" "0"
