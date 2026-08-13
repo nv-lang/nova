@@ -19,12 +19,14 @@ export LC_ALL=C
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 
-if [ "${NOVA_SKIP_CI_CHECK:-0}" = "1" ]; then
-    echo "pre-push: проверка внешнего гейта пропущена (NOVA_SKIP_CI_CHECK=1)"
-    exit 0
-fi
-
 # Пушим ли мы main? Хук получает строки '<local ref> <local sha> <remote ref> <remote sha>'.
+# ЧИТАЕМ STDIN ПЕРВЫМ ДЕЛОМ. До 2026-08-13 выше стоял ранний выход по
+# NOVA_SKIP_CI_CHECK=1, и он уносил с собой ВСЕ проверки хука, а не только ту,
+# что назвал. В тот день это и сработало: ключ был взведён по разобранной
+# причине (внешний гейт красен чужим), а вместе с ним молча отключилась бы и
+# проверка чистоты дерева — при том что дерево было грязным и уехало не то,
+# что проверялось (реестр №635). Заботы разные, ключи разные, порядок теперь
+# тоже: сперва определяем цель, потом каждая проверка решает про себя сама.
 PUSHING_MAIN=0
 while read -r _lref _lsha rref _rsha; do
     case "$rref" in
@@ -32,6 +34,21 @@ while read -r _lref _lsha rref _rsha; do
     esac
 done
 [ "$PUSHING_MAIN" -eq 1 ] || exit 0
+
+# ── Отправляется ли то, что проверялось (№635) ──────────────────────────────
+TREE_GUARD="$REPO_ROOT/scripts/guards/check-tree-matches-push.sh"
+if [ -f "$TREE_GUARD" ]; then
+    if ! bash "$TREE_GUARD" "$REPO_ROOT"; then
+        echo "" >&2
+        echo "pre-push ОСТАНОВИЛ отправку: проверял одно, отправляешь другое." >&2
+        exit 1
+    fi
+fi
+
+if [ "${NOVA_SKIP_CI_CHECK:-0}" = "1" ]; then
+    echo "pre-push: проверка внешнего гейта пропущена (NOVA_SKIP_CI_CHECK=1)"
+    exit 0
+fi
 
 GUARD="$REPO_ROOT/scripts/guards/check-ci-status.sh"
 [ -x "$GUARD" ] || [ -f "$GUARD" ] || exit 0
