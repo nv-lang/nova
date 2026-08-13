@@ -1,0 +1,25 @@
+// Проба №611, часть 3: форма `effect X { … }` — та, которой написан весь `std`.
+//
+// Уже установлено:
+//   `fn f(buf mut []u8)`              -> ИМЕНОВАННАЯ ошибка E_PARAM_TYPE_POS_MUT_RETRACTED
+//   `handler { fill(buf mut []u8) }`  -> сырая ошибка разбора «expected `)`, got `mut`»
+// Осталась третья сестра — `effect X { … }`, ровно как `std/src/fs/fs.nv:345`.
+module probe611c
+
+type Probe effect {
+    fill(mut buf []u8) -> int
+}
+
+export fn real_probe() -> Effect[Probe] {
+    effect Probe {
+        fill(buf mut []u8) -> int => buf.len()
+    }
+}
+
+fn main() {
+    mut b []u8 = []u8.new()
+    b.resize(4, 0 as u8)
+    with Probe = real_probe() {
+        println("filled=${Probe.fill(b)}")
+    }
+}
