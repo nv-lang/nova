@@ -36,5 +36,14 @@ fn main() {
     ro dt = Date.new(2026, Jul, 10)!!.at_midnight()
     ro formatted = f.format(dt)
     ro parsed = formatted.to_date_with(f)!!
-    println("formatted=${formatted} parsed=${parsed.to_str()}")
+    // The conversion is bound OUTSIDE the interpolation on purpose. Bare
+    // `${parsed}` compiles -- D410's instance fallback picks up `Date.@to_str`
+    // -- and then SEGFAULTS at run time (registry #634). Writing it as
+    // `${parsed.to_str()}` instead trips W_REDUNDANT_TO_STR_INTERP, which
+    // reports at file level (1:1) where no `nova:allow` can reach it. So the
+    // call moves out: the value printed is the same, the fixture keeps
+    // pinning the round-trip, and neither the crash nor a suppression is
+    // needed. Put it back inline once #634 closes.
+    ro shown = parsed.to_str()
+    println("formatted=${formatted} parsed=${shown}")
 }
