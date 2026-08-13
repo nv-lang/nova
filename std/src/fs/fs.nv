@@ -347,7 +347,7 @@ export fn real_fs() -> Effect[Fs] {
             match c_path(path) { Ok(cp) => unsafe { fs_open(cp.ptr(), flags, mode) }, Err(_) => 0 - 22 }
         }
         close(fd int) -> int => fs_close(fd)
-        read(fd int, buf mut []u8) -> int {
+        read(fd int, mut buf []u8) -> int {
             if buf.len() == 0 { return 0 }
             unsafe { fs_read(fd, buf.ptr(), buf.len()) }
         }
@@ -355,7 +355,7 @@ export fn real_fs() -> Effect[Fs] {
             if data.len() == 0 { return 0 }
             unsafe { fs_write(fd, data.ptr(), data.len()) }
         }
-        read_at(fd int, buf mut []u8, offset int) -> int {
+        read_at(fd int, mut buf []u8, offset int) -> int {
             if buf.len() == 0 { return 0 }
             unsafe { fs_read_at(fd, buf.ptr(), buf.len(), offset) }
         }
@@ -366,13 +366,13 @@ export fn real_fs() -> Effect[Fs] {
         seek(fd int, offset i64, whence int) -> i64 => fs_seek(fd, offset, whence)
         sync_all(fd int) -> int => fs_fsync(fd)
         sync_data(fd int) -> int => fs_fdatasync(fd)
-        stat(path []u8, img mut []u8) -> int {
+        stat(path []u8, mut img []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_stat_into(cp.ptr(), img.ptr()) }, Err(_) => 0 - 22 }
         }
-        lstat(path []u8, img mut []u8) -> int {
+        lstat(path []u8, mut img []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_lstat_into(cp.ptr(), img.ptr()) }, Err(_) => 0 - 22 }
         }
-        fstat(fd int, img mut []u8) -> int => unsafe { fs_fstat_into(fd, img.ptr()) }
+        fstat(fd int, mut img []u8) -> int => unsafe { fs_fstat_into(fd, img.ptr()) }
         mkdir(path []u8, mode int) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_mkdir(cp.ptr(), mode) }, Err(_) => 0 - 22 }
         }

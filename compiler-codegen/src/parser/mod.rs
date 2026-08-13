@@ -11116,7 +11116,35 @@ impl Parser {
             self.expect(&TokenKind::LParen)?;
             let mut params = Vec::new();
             while !matches!(self.peek().kind, TokenKind::RParen) {
+                // D445 / registry #611: the mode modifier ALWAYS precedes what
+                // it describes. This loop used to parse `name` then `Type`, so
+                // the only spelling that worked here was the RETRACTED postfix
+                // (`buf mut []u8`) — the `mut` was swallowed by `parse_type`
+                // as part of the type, while the canonical `mut buf []u8` died
+                // on `expected identifier, got mut`. That is why the whole of
+                // `std` writes the retracted form in handler operations: no
+                // other form parsed. Проверено пробами 2026-08-13, все три
+                // сестринские позиции — `fn`, `handler { … }`, `effect X { … }`
+                // — вели себя по-разному.
+                //
+                // Both spellings now fold into the SAME AST (`TypeRef::Mut`),
+                // so nothing downstream changes; only the canonical one is
+                // accepted.
+                let leading_mut = if matches!(self.peek().kind, TokenKind::KwMut) {
+                    Some(self.bump().span)
+                } else {
+                    None
+                };
                 let (pname, pspan) = self.parse_ident()?;
+                // Postfix — the retracted spelling, with the same named
+                // diagnostic and fix-it the `fn` position already gives.
+                if matches!(self.peek().kind, TokenKind::KwMut) {
+                    return Err(postfix_param_mut_retracted_error(
+                        self.peek().span,
+                        &pname,
+                        false,
+                    ));
+                }
                 let pty = if !matches!(
                     self.peek().kind,
                     TokenKind::Comma | TokenKind::RParen
@@ -11131,6 +11159,27 @@ impl Parser {
                     }
                 } else {
                     None
+                };
+                // Свернуть ведущий `mut` в тип — ровно та форма, которую
+                // раньше давал постфикс, чтобы чекер и кодоген не заметили
+                // разницы.
+                let pty = match (leading_mut, pty) {
+                    (Some(msp), Some(t)) => {
+                        let sp = msp.merge(t.span());
+                        Some(TypeRef::Mut(Box::new(t), sp))
+                    }
+                    (Some(msp), None) => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE] `mut {pname}` \
+                                 in a handler operation has no type. The mode \
+                                 modifier describes the parameter's type, so the \
+                                 type must be written: `mut {pname} Type`."
+                            ),
+                            msp,
+                        ));
+                    }
+                    (None, t) => t,
                 };
                 params.push(HandlerMethodParam {
                     name: pname,

@@ -114,7 +114,7 @@ export fn mock_io(mut cap IoCapture) -> Effect[Io] {
     // `nova_int`, so `data.len()` would be typed on `int` without the annotation
     // (handler-body codegen note, see std/testing/handlers.nv).
     effect Io {
-        read_in(buf mut []u8) -> Result[int, IoError] {
+        read_in(mut buf []u8) -> Result[int, IoError] {
             ro want = buf.len()
             ro rem = cap.input.len() - cap.in_pos
             if want == 0 || rem <= 0 { return Ok(0) }
@@ -156,7 +156,7 @@ extern "C" fn io_read_fd(fd int, buf *mut u8, len int) -> int
 #default_handler
 export fn real_io() -> Effect[Io] {
     effect Io {
-        read_in(buf mut []u8) -> Result[int, IoError] {
+        read_in(mut buf []u8) -> Result[int, IoError] {
             ro want = buf.len()
             if want == 0 { return Ok(0) }
             ro rc = unsafe { io_read_fd(0, buf.ptr(), want) }

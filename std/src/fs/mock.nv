@@ -470,16 +470,16 @@ export fn mock_fs(mut fs MemFs) -> Effect[Fs] {
     effect Fs {
         open(path []u8, flags int, mode int) -> int => fs.mem_open(path, flags, mode)
         close(fd int) -> int => fs.mem_close(fd)
-        read(fd int, buf mut []u8) -> int => fs.mem_read(fd, buf)
+        read(fd int, mut buf []u8) -> int => fs.mem_read(fd, buf)
         write(fd int, data []u8) -> int => fs.mem_write(fd, data)
-        read_at(fd int, buf mut []u8, offset int) -> int => fs.mem_read_at(fd, buf, offset)
+        read_at(fd int, mut buf []u8, offset int) -> int => fs.mem_read_at(fd, buf, offset)
         write_at(fd int, data []u8, offset int) -> int => fs.mem_write_at(fd, data, offset)
         seek(fd int, offset i64, whence int) -> i64 => fs.mem_seek(fd, offset, whence)
         sync_all(fd int) -> int => 0
         sync_data(fd int) -> int => 0
-        stat(path []u8, img mut []u8) -> int => fs.mem_stat(path, img)
-        lstat(path []u8, img mut []u8) -> int => fs.mem_stat(path, img)
-        fstat(fd int, img mut []u8) -> int => fs.mem_fstat(fd, img)
+        stat(path []u8, mut img []u8) -> int => fs.mem_stat(path, img)
+        lstat(path []u8, mut img []u8) -> int => fs.mem_stat(path, img)
+        fstat(fd int, mut img []u8) -> int => fs.mem_fstat(fd, img)
         mkdir(path []u8, mode int) -> int => fs.mem_mkdir(path, mode)
         remove_file(path []u8) -> int => fs.mem_remove_file(path)
         remove_dir(path []u8) -> int => fs.mem_remove_dir(path)

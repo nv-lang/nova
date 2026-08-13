@@ -31,22 +31,22 @@ export fn mock_net() -> Effect[Net] => effect Net {
     tcp_bind(_addr SocketAddr) -> Result[TcpListener, NetError] => listener_ok(1 as *())
     accept(_listener TcpListener) -> Result[TcpStream, NetError] => stream_ok(2 as *())
     connect(_addr SocketAddr) -> Result[TcpStream, NetError] => stream_ok(3 as *())
-    read(_stream TcpStream, buf mut []u8) -> Result[int, NetError] => int_ok(mock_fill(buf, "mock-reply"))
+    read(_stream TcpStream, mut buf []u8) -> Result[int, NetError] => int_ok(mock_fill(buf, "mock-reply"))
     write(_stream TcpStream, data []u8) -> Result[int, NetError] => int_ok(data.len())
     shutdown(_stream TcpStream) -> Result[(), NetError] => unit_ok()
     close_stream(_stream TcpStream) -> () {}
     close_listener(_listener TcpListener) -> () {}
     mark_split(_stream TcpStream) -> () {}
     listener_local_port(_listener TcpListener) -> int => 4242
-    listener_local_addr(_listener TcpListener, out mut []u8) -> () {
+    listener_local_addr(_listener TcpListener, mut out []u8) -> () {
         unsafe { net_addr_loopback_into(4242, out.ptr()) }
     }
     stream_local_port(_stream TcpStream) -> int => 5050
     stream_peer_port(_stream TcpStream) -> int => 6060
-    stream_local_addr(_stream TcpStream, out mut []u8) -> () {
+    stream_local_addr(_stream TcpStream, mut out []u8) -> () {
         unsafe { net_addr_loopback_into(5050, out.ptr()) }
     }
-    stream_peer_addr(_stream TcpStream, out mut []u8) -> () {
+    stream_peer_addr(_stream TcpStream, mut out []u8) -> () {
         unsafe { net_addr_loopback_into(6060, out.ptr()) }
     }
     set_nodelay(_stream TcpStream, _on bool) -> () {}
@@ -56,14 +56,14 @@ export fn mock_net() -> Effect[Net] => effect Net {
     // ── UDP ──────────────────────────────────────────────────────────────────
     udp_bind(_addr SocketAddr) -> Result[UdpSocket, NetError] => socket_ok(10 as *())
     send_to(_sock UdpSocket, data []u8, _addr SocketAddr) -> Result[int, NetError] => int_ok(data.len())
-    recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError] {
+    recv_from(_sock UdpSocket, mut buf []u8, mut sender []u8) -> Result[int, NetError] {
         unsafe { net_addr_loopback_into(0, sender.ptr()) }
         ro _ = buf
         int_ok(0)
     }
     close_socket(_sock UdpSocket) -> () {}
     socket_local_port(_sock UdpSocket) -> int => 7070
-    socket_local_addr(_sock UdpSocket, out mut []u8) -> () {
+    socket_local_addr(_sock UdpSocket, mut out []u8) -> () {
         unsafe { net_addr_loopback_into(7070, out.ptr()) }
     }
 

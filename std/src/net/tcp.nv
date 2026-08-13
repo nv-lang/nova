@@ -479,7 +479,7 @@ export fn real_net() -> Effect[Net] => effect Net {
         ro h = unsafe { net_tcp_connect(addr.ptr(), &err) }
         if is_null(h) { err_stream(err) } else { stream_ok(h) }
     }
-    read(stream TcpStream, buf mut []u8) -> Result[int, NetError] {
+    read(stream TcpStream, mut buf []u8) -> Result[int, NetError] {
         ro n = unsafe { net_tcp_read(stream.handle, buf.ptr(), buf.len()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
@@ -495,15 +495,15 @@ export fn real_net() -> Effect[Net] => effect Net {
     close_listener(listener TcpListener) -> () { unsafe { net_listener_close(listener.handle) } }
     mark_split(stream TcpStream) -> () { unsafe { net_tcp_mark_split(stream.handle) } }
     listener_local_port(listener TcpListener) -> int => unsafe { net_listener_local_port(listener.handle) as int }
-    listener_local_addr(listener TcpListener, out mut []u8) -> () {
+    listener_local_addr(listener TcpListener, mut out []u8) -> () {
         unsafe { net_listener_local_addr(listener.handle, out.ptr()) }
     }
     stream_local_port(stream TcpStream) -> int => unsafe { net_tcp_local_port(stream.handle) as int }
     stream_peer_port(stream TcpStream) -> int => unsafe { net_tcp_peer_port(stream.handle) as int }
-    stream_local_addr(stream TcpStream, out mut []u8) -> () {
+    stream_local_addr(stream TcpStream, mut out []u8) -> () {
         unsafe { net_tcp_local_addr(stream.handle, out.ptr()) }
     }
-    stream_peer_addr(stream TcpStream, out mut []u8) -> () {
+    stream_peer_addr(stream TcpStream, mut out []u8) -> () {
         unsafe { net_tcp_peer_addr(stream.handle, out.ptr()) }
     }
     set_nodelay(stream TcpStream, on bool) -> () => unsafe { net_tcp_set_nodelay(stream.handle, on) }
@@ -520,13 +520,13 @@ export fn real_net() -> Effect[Net] => effect Net {
         ro n = unsafe { net_udp_send_to(sock.handle, data.ptr(), data.len(), addr.ptr()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
-    recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError] {
+    recv_from(sock UdpSocket, mut buf []u8, mut sender []u8) -> Result[int, NetError] {
         ro n = unsafe { net_udp_recv_from(sock.handle, buf.ptr(), buf.len(), sender.ptr()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
     close_socket(sock UdpSocket) -> () { unsafe { net_udp_close(sock.handle) } }
     socket_local_port(sock UdpSocket) -> int => unsafe { net_udp_local_port(sock.handle) as int }
-    socket_local_addr(sock UdpSocket, out mut []u8) -> () {
+    socket_local_addr(sock UdpSocket, mut out []u8) -> () {
         unsafe { net_udp_local_addr(sock.handle, out.ptr()) }
     }
 

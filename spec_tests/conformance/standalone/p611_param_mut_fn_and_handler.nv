@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №611 (registry 221.1): the canonical `mut name Type` parameter form works in
+// the handler-operation position too, not only in a plain `fn`.
+//
+// WHY THIS FIXTURE EXISTS. D445 says the mode modifier always precedes what it
+// describes, "without exception and with no postfix form anywhere in the
+// grammar". The hard error for the retracted postfix was added in the `fn`
+// position (E_PARAM_TYPE_POS_MUT_RETRACTED, 2026-08-12) — but handler
+// operations parse their parameters through a SEPARATE hand-written loop
+// (`parse_handler_methods`), which knew nothing about modifiers. There the
+// canonical form did not parse at all (`expected identifier, got mut`) while
+// the retracted one was accepted, because `mut []u8` was swallowed as a TYPE.
+// That is why the whole of std wrote the retracted spelling in handlers: no
+// other spelling existed there.
+//
+// The negative side lives in neg/param_type_pos_mut_retracted_neg.nv and
+// neg/param_type_pos_mut_r2_split_retracted_neg.nv. This is the POSITIVE side:
+// the canon must be accepted everywhere, and behave identically.
+//
+// SCOPE, SAID PLAINLY. Two positions are pinned here: a plain `fn` and a
+// handler operation. The third parameter-carrying form — a full closure — is
+// NOT pinned: the `|...|` spelling is a closure-LIGHT and takes bare names
+// only ("expected closure-light parameter name, got `mut`"), so a `mut`
+// parameter cannot be written in it at all, and the full-closure spelling that
+// does take types goes through `parse_param` — the same code path the `fn`
+// position already covers. Nothing is proven by pretending otherwise.
+//
+// EXPECT_STDOUT fn=4 handler=4
+
+module standalone.p611_param_mut_fn_and_handler
+
+type Fill effect {
+    fill(mut buf []u8) -> int
+}
+
+// Position 1 — a plain function.
+fn via_fn(mut buf []u8) -> int {
+    buf[0] = 1 as u8
+    buf.len()
+}
+
+// Position 2 — a handler operation built with `effect X { ... }`. This is the
+// one that used to reject the canon.
+export fn real_fill() -> Effect[Fill] {
+    effect Fill {
+        fill(mut buf []u8) -> int {
+            buf[1] = 2 as u8
+            buf.len()
+        }
+    }
+}
+
+fn main() {
+    mut b []u8 = []u8.new()
+    b.resize(4, 0 as u8)
+
+    ro a = via_fn(b)
+
+    mut c []u8 = []u8.new()
+    c.resize(4, 0 as u8)
+    ro h = with Fill = real_fill() { Fill.fill(c) }
+
+    println("fn=${a} handler=${h}")
+}
