@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Поставлен scripts/tools/install-hooks.sh. Не редактировать здесь —
+# правь scripts/tools/rebuild-if-stale.sh и переустанови.
+#
+# Пересобирает компилятор ТОЛЬКО если слияние задело compiler-codegen/nova-cli.
+# Слияния планов, реестра и доков проходят без пересборки: лишняя минута на
+# каждое слияние — цена, которая ведёт к обходу дисциплины.
+set -u
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+R="$TOP/scripts/tools/rebuild-if-stale.sh"
+[ -f "$R" ] || exit 0
+if git diff --name-only ORIG_HEAD HEAD 2>/dev/null | grep -qE '^(compiler-codegen|nova-cli)/'; then
+    bash "$R" || echo "post-merge: пересборка не удалась — компилятор УСТАРЕЛ, проверки против него недостоверны" >&2
+fi
+exit 0

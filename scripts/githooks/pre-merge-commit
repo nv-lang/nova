@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Поставлен scripts/tools/install-hooks.sh. Не редактировать здесь —
+# правь scripts/guards/check-merge-discipline.sh и переустанови.
+set -u
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+G="$TOP/scripts/guards/check-merge-discipline.sh"
+[ -f "$G" ] || exit 0
+exec bash "$G" "$TOP"
