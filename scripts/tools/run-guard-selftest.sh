@@ -53,6 +53,11 @@ NAME="$(basename "$ST")"
 # общим повышением предела для всех.
 case "$NAME" in
     test-check-doc-examples.sh) DEADLINE=900 ;;
+    # 2026-08-14: Э1-доки novac (архитектура, bootstrap) добавили nova-команд,
+    # и сам страж doc-truth стал 58с/прогон; его самотест гоняет страж
+    # несколько раз и в одиночку идёт ~210с — под параллельной нагрузкой
+    # цикла (-P) 300с не хватает. Тот же приём, что у doc-examples выше.
+    test-check-doc-truth.sh)    DEADLINE=900 ;;
     *)                          DEADLINE=300 ;;
 esac
 
