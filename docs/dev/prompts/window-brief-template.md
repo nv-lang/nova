@@ -113,11 +113,14 @@ git -C /d/Sources/nv-lang/nova worktree add -b <ветка> /d/Sources/nv-lang/n
 cd /d/Sources/nv-lang/nova-<имя> && cargo build --release --manifest-path nova-cli/Cargo.toml
 ```
 Worktree только в `d:/Sources/nv-lang/` (страж `check-worktree-location.sh`).
-Если сборка ругается на GC/libuv — переменные на главное дерево:
-`NOVA_GC_LIB_DIR`, `NOVA_INCLUDE_DIR`, `NOVA_GC_INCLUDE_DIR`,
-`NOVA_RT_DIR=/d/Sources/nv-lang/nova/compiler-codegen/nova_rt`,
-`NOVA_CG_INCLUDE=/d/Sources/nv-lang/nova/compiler-codegen`.
-(`git worktree add` НЕ инициализирует подмодули — libuv в свежем дереве нет.)
+
+**Готовить окружение НЕ НУЖНО** (реестр №650, 2026-08-14): свежий worktree
+собирает сам — GC-тулчейн находится через главное дерево, libuv-сабмодуль
+материализуется автоматически, о каждой подмене печатается строка. Прежний
+ритуал (env-переменные, копия сабмодуля) отменён; если сборка ВСЁ ЖЕ ругается
+на GC/libuv — это регресс №650: доложи, не чини руками.
+(env `NOVA_GC_LIB_DIR`/`NOVA_RT_DIR`/`NOVA_CG_INCLUDE` остались только для
+standalone-пакетных реп вида nova-tls — блок в `read-project.md`.)
 
 ## 4. Задача — три обязательных части
 
