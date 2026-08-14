@@ -27,11 +27,17 @@ fn fixtures_root() -> PathBuf {
         .join("nova_tests/doc/fixtures")
 }
 
+// №655: компилирующий блок — на нити с гарантированным стеком; на нити
+// cargo-test (Linux, мало) parse/check переполняются. Обёртка снаружи
+// замера времени не живёт — она внутри хелпера, и её цена (~доли мс на
+// spawn) тонет в бюджетах 800/12000 мс.
 fn parse_and_build(src: &str) -> nova_codegen::doc::DocTree {
-    let mut module = nova_codegen::parser::parse(src).expect("parse");
-    let _ = nova_codegen::types::check_module(&module);
-    nova_codegen::types::infer_effects(&mut module);
-    nova_codegen::doc::build(&module)
+    nova_codegen::testing::on_compiler_stack(|| {
+        let mut module = nova_codegen::parser::parse(src).expect("parse");
+        let _ = nova_codegen::types::check_module(&module);
+        nova_codegen::types::infer_effects(&mut module);
+        nova_codegen::doc::build(&module)
+    })
 }
 
 /// Синтезирует source с N экспортированных функций — каждая с
@@ -97,9 +103,15 @@ fn perf_workspace_50_modules() {
              export fn four_{}() -> int => 3\n\n",
             i, i, i, i, i,
         );
-        let mut m = nova_codegen::parser::parse(&src).expect("parse");
-        let _ = nova_codegen::types::check_module(&m);
-        nova_codegen::types::infer_effects(&mut m);
+        // №655: тот же компилирующий блок, та же дверь — при заведении
+        // обёртки этот второй сайт был пропущен, и доказательство на 1 МБ
+        // нитях поймало пропуск до CI.
+        let m = nova_codegen::testing::on_compiler_stack(|| {
+            let mut m = nova_codegen::parser::parse(&src).expect("parse");
+            let _ = nova_codegen::types::check_module(&m);
+            nova_codegen::types::infer_effects(&mut m);
+            m
+        });
         modules.push(m);
     }
     let start = Instant::now();

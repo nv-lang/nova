@@ -23,7 +23,16 @@ fn fixtures_root() -> PathBuf {
         .join("nova_tests/doc/fixtures")
 }
 
+// №655: компиляция — только на нити с гарантированным стеком. Этот харнесс
+// зовёт parse/check_module/doc::build напрямую и три дня валил CI-дорожку
+// nova-doc stack overflow'ом на Linux — НЕВИДИМО, потому что прятался за
+// красным предыдущим шагом воркфлоу (`cargo test doc::`, №655) и вскрылся
+// только после его починки.
 fn run_one(fixture_name: &str) {
+    nova_codegen::testing::on_compiler_stack(|| run_one_impl(fixture_name))
+}
+
+fn run_one_impl(fixture_name: &str) {
     let dir = fixtures_root().join(fixture_name);
     let src_path = dir.join("sample.nv");
     let expected_path = dir.join("expected.json");
