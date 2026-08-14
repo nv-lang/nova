@@ -33,12 +33,17 @@ echo "// пусто" > "$T/src/rogue/r.nv"
 sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && bad "модуль вне карты прошёл" || ok "модуль вне карты пойман"
 rm -rf "$T/src/rogue"
 
+# 4а. Нарушение: корневой main с ./-импортом вне таблицы (слепота поймана 2026-08-14).
+echo "import ./lex.{lex}" > "$T/src/main.nv"
+sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && bad "./-импорт main вне таблицы прошёл" || ok "./-импорт main вне таблицы пойман"
+rm "$T/src/main.nv"
+
 # 4. Законно: нет novac/src вовсе — «судить нечего», зелёный.
 sh "$G" "$ROOT" "$T/absent" "$T/arch.md" >/dev/null 2>&1 && ok "отсутствие дерева — зелёное «судить нечего»" || bad "отсутствие дерева покраснело"
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-deps ok: 4/4"
+    echo "test-check-novac-deps ok: 5/5"
     exit 0
 fi
 echo "test-check-novac-deps: FAIL ($fails)" >&2

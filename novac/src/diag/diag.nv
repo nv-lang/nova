@@ -2,16 +2,27 @@
 // novac/src/diag — the diagnostic form (architecture §2/§7).
 //
 // The schema of §7 is normative and machine-first: the JSON is the product,
-// human text renders FROM the structure, never the reverse. Internally a
-// diagnostic carries byte offsets (produced through the one position door,
-// source.offset_of); `id` is assigned at render time — it is an output-order
-// fact, not a stored one.
+// human text renders FROM the structure, never the reverse. Serialization is
+// std serde (owner's correction 2026-08-14 — hand-rolled StringBuilder JSON
+// was a private copy of a solved judgment, class K4 in miniature): the DTO
+// mirrors the schema one field to one field, and Option[str] None IS the
+// schema's null by the std contract. `id` is assigned at render time — an
+// output-order fact, not a stored one.
 
 module novac.diag
+
+import std.encoding.serde.{Serialize, json_encode}
 
 export type Severity enum
     | ErrorSev
     | WarningSev
+
+export fn Severity @to_str() -> str {
+    match @ {
+        ErrorSev => "error"
+        WarningSev => "warning"
+    }
+}
 
 export type Diagnostic {
     code str
@@ -21,46 +32,33 @@ export type Diagnostic {
     message str
 }
 
-fn sev_str(s Severity) -> str {
-    match s {
-        ErrorSev => "error"
-        WarningSev => "warning"
-    }
+#impl(Serialize)
+type PrimaryDto {
+    file str
+    start int
+    end int
 }
 
-fn esc(s str) -> str {
-    consume out = StringBuilder.new()
-    for b in s.bytes() {
-        if b == 34 || b == 92 {
-            out.append('\\')
-            out.append(b as char)
-        } else if b == 10 {
-            out.append("\\n")
-        } else {
-            out.append(b as char)
-        }
-    }
-    out
+#impl(Serialize)
+type DiagDto {
+    id str
+    code str
+    severity str
+    primary PrimaryDto
+    message str
+    poisoned_by Option[str]
 }
 
 /// Render one diagnostic as a §7 schema JSON line. `id` = position in the
-/// output stream; `file` is passed by the driver door (main).
+/// output stream; `file` is passed by the pipeline door.
 export fn to_json(d Diagnostic, id int, file str) -> str {
-    consume out = StringBuilder.new()
-    out.append("{\"id\": \"d")
-    out.append(id)
-    out.append("\", \"code\": \"")
-    out.append(d.code)
-    out.append("\", \"severity\": \"")
-    out.append(sev_str(d.severity))
-    out.append("\", \"primary\": {\"file\": \"")
-    out.append(esc(file))
-    out.append("\", \"start\": ")
-    out.append(d.lo)
-    out.append(", \"end\": ")
-    out.append(d.hi)
-    out.append("}, \"message\": \"")
-    out.append(esc(d.message))
-    out.append("\", \"poisoned_by\": null}")
-    out
+    ro dto = DiagDto {
+        id: "d${id}",
+        code: d.code,
+        severity: d.severity.to_str(),
+        primary: PrimaryDto { file, start: d.lo, end: d.hi },
+        message: d.message,
+        poisoned_by: None,
+    }
+    json_encode(dto) ?? panic("diag to_json: flat Serialize DTO — encode must not fail")
 }

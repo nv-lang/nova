@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline — the ONE owner of pass order (architecture §2).
+//
+// Nobody else strings phases together: the CLI, the future LSP and the tests
+// call compile() and never name a phase. This module existing is not
+// ceremony — its absence was caught live 2026-08-14: main called five phases
+// directly, the deps guard was blind to root `./` imports, and the violation
+// shipped in a green commit. The guard now parses `./` imports too, and main
+// imports pipeline + diag only, exactly as the §3 table always said.
+
+module novac.pipeline
+
+import ../source.{SourceText}
+import ../lex.{lex}
+import ../parse.{parse}
+import ../check.{check}
+import ../diag.{Diagnostic}
+
+/// The whole E1 front half: text in, diagnostics out. Always returns the
+/// full list; no Result (274 §4 п.1).
+export fn compile(text str) -> []Diagnostic {
+    ro src = SourceText { text }
+    check(parse(lex(text)), src)
+}
