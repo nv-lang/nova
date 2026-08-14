@@ -149,11 +149,9 @@ export fn lex(src str) -> []Token {
 /// token's leading trivia and text reproduces the input byte for byte.
 export fn reserialize(toks []Token) -> str {
     consume out = StringBuilder.new()
-    mut i = 0
-    while i < toks.len() {
-        out.append(toks[i].leading)
-        out.append(toks[i].text)
-        i += 1
+    for t in toks {
+        out.append(t.leading)
+        out.append(t.text)
     }
     out
 }

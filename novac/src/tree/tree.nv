@@ -51,10 +51,8 @@ fn append_node(mut out StringBuilder, n Node) -> () {
             out.append(t.text)
         }
         Branch { children, .. } => {
-            mut i = 0
-            while i < children.len() {
-                append_node(out, children[i])
-                i += 1
+            for c in children {
+                append_node(out, c)
             }
         }
     }
