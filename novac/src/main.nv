@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // EXPECT_EXIT_CODE 2
-// (the test runner executes this main with no args: usage + exit 2 is the
-// CLI door's contract. The #659 self-expiring marker lived here 2026-08-14
-// and fired the same day: the oracle's multi-TU fix landed, CC went green,
-// the expectation failed loudly and came off -- the mechanism worked.)
 // novac — the Nova compiler written in Nova. Plan 274, stage E1.
+// (Exit 2 = usage exit: the test runner invokes the binary with no args.
+// This is the real contract, restored 2026-08-14 when the #659 fix landed
+// and this file's self-expiring negative cc-error marker fell loudly.)
 //
 // The E1 CLI: `novac <file.nv>` lexes, parses and subset-checks one file,
 // prints §7-schema JSON diagnostics one per line, and exits 0 on a clean

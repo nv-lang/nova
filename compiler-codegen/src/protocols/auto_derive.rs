@@ -1226,13 +1226,28 @@ fn block_with_trailing(stmts: Vec<Stmt>, trailing: Expr) -> Block {
 }
 
 /// Создать FnDecl shell для synthesized method.
+///
+/// #659/#660 (2026-08-14): the shell's spans carry the DECLARING TYPE's
+/// `file_id`, not `span_dummy()`'s `MAIN_FILE_ID`. The emitter resolves the
+/// receiver's C base name through the span's file (`emit_fn_forward_decl`
+/// sets `current_emit_file_id` from `f.span.file_id`; `ref_type_base` then
+/// consults `file_type_module[(file, name)]`). With `MAIN_FILE_ID` that
+/// lookup runs against the CU's ENTRY file, so for a name-colliding type
+/// (two `Node`s in one merged CU — D381 qualification) the receiver either
+/// resolved to a BARE base nobody emits (`Nova_Node`, unknown type — #659)
+/// or to the OTHER module's same-named type (wrong union members — #660),
+/// depending on what the entry file happened to import. Exact mirror of the
+/// `make_serde_method` fix below (Plan 180.1 F.1.5): only `file_id` is
+/// load-bearing, a dummy start/end never renders in a diagnostic.
 fn make_synth_method(
     type_name: &str,
     method_name: &str,
     params: Vec<Param>,
     return_type: Option<TypeRef>,
     body: FnBody,
+    file_id: crate::diag::FileId,
 ) -> FnDecl {
+    let fn_span = Span::with_file(0, 0, file_id);
     FnDecl {
         name: method_name.to_string(),
         receiver: Some(Receiver {
@@ -1243,7 +1258,7 @@ fn make_synth_method(
             kind: ReceiverKind::Instance,
             mutable: false,
             consume: false,
-            span: span_dummy(),
+            span: fn_span,
         }),
         params,
         effects: vec![],
@@ -1251,7 +1266,7 @@ fn make_synth_method(
         return_is_const: false,
         returns_receiver: false,
         body,
-        span: span_dummy(),
+        span: fn_span,
         is_export: false,
         is_external: false,
         // Plan 126.2 Ф.1: mark synthesized auto-derive method so downstream
@@ -1317,6 +1332,7 @@ pub fn synthesize_equal<Q: DeriveQuery>(
         vec![make_param("other", type_ref_self())],
         Some(type_ref_named("bool")),
         FnBody::Expr(body_expr),
+        type_decl.span.file_id,
     ))
 }
 
@@ -1363,6 +1379,7 @@ pub fn synthesize_hash<Q: DeriveQuery>(
         vec![],
         Some(type_ref_named("u64")),
         FnBody::Expr(body_expr),
+        type_decl.span.file_id,
     ))
 }
 
@@ -1426,6 +1443,7 @@ pub fn synthesize_clone<Q: DeriveQuery>(
         vec![],
         Some(type_ref_self()),
         FnBody::Expr(body_expr),
+        type_decl.span.file_id,
     ))
 }
 
@@ -1485,6 +1503,7 @@ pub fn synthesize_compare<Q: DeriveQuery>(
         vec![make_param("other", type_ref_self())],
         Some(type_ref_named("int")),
         body,
+        type_decl.span.file_id,
     ))
 }
 
@@ -1591,6 +1610,7 @@ pub fn synthesize_display<Q: DeriveQuery>(
         vec![make_param_mut("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
+        type_decl.span.file_id,
     ))
 }
 
@@ -1630,6 +1650,7 @@ pub fn synthesize_debug<Q: DeriveQuery>(
         vec![make_param_mut("w", type_ref_named("Fmt"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
+        type_decl.span.file_id,
     ))
 }
 

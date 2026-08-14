@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// (The #659 self-expiring marker lived here 2026-08-14 and fired the same
-// day: the oracle's multi-TU fix landed, CC went green, the expectation
-// failed loudly, the marker came off and the property tests below went live
-// -- the mechanism worked exactly as designed.)
-//
 // novac/src/pipeline — tests beside the module, THROUGH the one door: the
 // no-cascade property (one seeded mistake, exactly one diagnostic) is judged
 // on compile(), never by naming phases — the architecture's own rule.
 //
-// Placement note (2026-08-14): these cases first lived in check_test.nv and
-// tripped registry #659 there (the merged multi-TU build of check+parse loses
-// the forward decl of the recursive sum Node). The pipeline CU merges the
-// whole front half and compiles clean, so the door is ALSO the workaround —
-// when #659 falls, check-level units become possible again.
+// History note (2026-08-14): this file carried a self-expiring negative
+// cc-error marker for registry #659 (a synthesized derive method's dummy
+// span made the receiver's C name resolve through the CU entry file; with
+// a name-colliding type in the merged CU the reference went to a base
+// nobody emits). The compiler fix landed the same day, the marker fell
+// loudly as designed, and the six property tests below went live.
+// Check-level units are possible again (the cases first lived in
+// check_test.nv).
 
 module novac.pipeline
 
