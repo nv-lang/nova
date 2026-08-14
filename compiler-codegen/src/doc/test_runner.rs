@@ -87,6 +87,38 @@ pub fn run_doc_tests_with_context(
     original_source: Option<&str>,
     entry_path: Option<&Path>,
 ) -> DocTestSummary {
+    // СТЕК ВЫЗЫВАЮЩЕГО — НЕ НАША ЗАБОТА, И ЭТО ПРИШЛОСЬ ДОКАЗЫВАТЬ (реестр
+    // №591, дорожка nova-doc). `run_one` тянет полный чекер, а глубина его
+    // рекурсии рассчитана на нити компилятора с явным 64 МБ стеком (тот же
+    // паттерн в трёх местах: compiler-codegen/src/main.rs, test_runner.rs,
+    // nova-cli/src/main.rs). Этот вход — ЧЕТВЁРТЫЙ, и он единственный
+    // компилировал на нити вызывающего: у `cargo test` на Linux это 2 МБ, и
+    // `doc::test_runner::tests::compile_fail_passes_when_fails` три дня валил
+    // CI-дорожку stack overflow'ом, который на Windows не воспроизводился.
+    // Дверь одна: стек обеспечивает САМ раннер, а не каждый вызывающий.
+    let tests_owned: Vec<DocTest> = tests.to_vec();
+    let source_owned: Option<String> = original_source.map(str::to_owned);
+    let path_owned: Option<std::path::PathBuf> = entry_path.map(Path::to_path_buf);
+    std::thread::Builder::new()
+        .name("nova-doc-tests".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            run_doc_tests_on_this_stack(
+                &tests_owned,
+                source_owned.as_deref(),
+                path_owned.as_deref(),
+            )
+        })
+        .expect("spawn nova-doc-tests thread")
+        .join()
+        .expect("nova-doc-tests thread panicked")
+}
+
+fn run_doc_tests_on_this_stack(
+    tests: &[DocTest],
+    original_source: Option<&str>,
+    entry_path: Option<&Path>,
+) -> DocTestSummary {
     let mut results = Vec::with_capacity(tests.len());
     for t in tests {
         let outcome = run_one(t, original_source, entry_path);
