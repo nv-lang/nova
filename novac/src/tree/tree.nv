@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/tree — the green tree (architecture §2/§5, Roslyn model).
+//
+// Immutable, lossless, position-free: a node is either a leaf (a lex Token,
+// carried as DATA — edge `tree -> lex` in the §3 table) or a branch with a
+// kind and children. Widths, not positions (owner's correction on the token
+// applies here by construction: nothing in the tree stores an offset).
+// Broken input is representable by construction: an Err branch holds the
+// tokens that did not parse — reserialization still reproduces every byte.
+//
+// The lead invariant extends from lex to here:
+//     tree_reserialize(parse(lex(src))) == src, byte for byte, always.
+
+module novac.tree
+
+import ../lex.{Token}
+
+export type NodeKind enum
+    | File
+    | ModuleDecl
+    | FnDecl
+    | Block
+    | Call
+    | Args
+    | Bin
+    | Lit
+    | Name
+    | Err
+
+export type Node enum
+    | Leaf(Token)
+    | Branch { kind NodeKind, children []Node }
+
+export fn branch(kind NodeKind, children []Node) -> Node =>
+    Node.Branch { kind, children }
+
+export fn leaf(t Token) -> Node => Node.Leaf(t)
+
+/// Reserialize a whole tree by walking leaves in order. The green tree owns
+/// no text of its own: every byte lives in a Token; branches only group.
+export fn tree_reserialize(n Node) -> str {
+    consume out = StringBuilder.new()
+    append_node(out, n)
+    out
+}
+
+fn append_node(mut out StringBuilder, n Node) -> () {
+    match n {
+        Leaf(t) => {
+            out.append(t.leading)
+            out.append(t.text)
+        }
+        Branch { children, .. } => {
+            mut i = 0
+            while i < children.len() {
+                append_node(out, children[i])
+                i += 1
+            }
+        }
+    }
+}
+
+export fn Node @kind_of() -> NodeKind {
+    match @ {
+        Leaf(_) => NodeKind.Err
+        Branch { kind, .. } => kind
+    }
+}

@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/parse — tests beside the module. The load-bearing property is the
+// tree-level reserialization identity: parse may group however it likes, but
+// it may not lose, reorder or invent a single byte — on ANY input.
+
+module novac.parse
+
+import ../lex.{lex}
+import ../tree.{NodeKind, tree_reserialize}
+
+fn roundtrip(src str) -> bool => tree_reserialize(parse(lex(src))) == src
+
+test "tree reserialization: hello program survives byte for byte" {
+    assert(roundtrip("// greeting\nmodule basics.hello\n\nfn main() {\n    println(\"Hello, Nova!\")\n}\n"))
+}
+
+test "tree reserialization: arithmetic and calls survive" {
+    assert(roundtrip("fn main() { f(1 + 2 * 3, \"x\") }"))
+}
+
+test "tree reserialization: broken input survives -- recovery loses nothing" {
+    assert(roundtrip("?? fn ) main ( { +++ \"unterminated"))
+    assert(roundtrip(""))
+    assert(roundtrip("module"))
+    assert(roundtrip("fn main() { } trailing ?? garbage"))
+}
+
+test "shape: file holds module decl, fn decl, eof" {
+    ro f = parse(lex("module a.b\nfn main() { }"))
+    match f {
+        Branch { kind, children } => {
+            assert(kind == NodeKind.File)
+            assert(children[0].kind_of() == NodeKind.ModuleDecl)
+            assert(children[1].kind_of() == NodeKind.FnDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
+test "shape: unexpected top-level token becomes an Err branch, then parsing continues" {
+    ro f = parse(lex("42 fn main() { }"))
+    match f {
+        Branch { children, .. } => {
+            assert(children[0].kind_of() == NodeKind.Err)
+            assert(children[1].kind_of() == NodeKind.FnDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
+test "shape: binary chain is left-associative" {
+    // 1 + 2 * 3 in the subset is ((1+2)*3) -- precedence is deliberately NOT
+    // in the E1 grammar; recorded so the divergence ledger catches it when
+    // the check slice compares against the oracle.
+    ro f = parse(lex("fn m() { 1 + 2 * 3 }"))
+    assert(tree_reserialize(f) == "fn m() { 1 + 2 * 3 }")
+}

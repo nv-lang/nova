@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/parse — tokens to green tree (architecture §2: module `parse`).
+//
+// E1 subset grammar: module declaration, fn declarations with empty parameter
+// lists, blocks, call expressions, string/int literals, names, left-assoc
+// +-*/ binary chains. Everything else is RECOVERED, never fatal: an
+// unexpected token becomes an Err branch holding exactly that token, and
+// parsing continues with the next one. The parser can therefore never lose a
+// byte and never stop early — the lead invariant holds through the tree:
+//     tree_reserialize(parse(lex(src))) == src, for every input.
+//
+// No Result in signatures (274 §4 п.1): parse always returns a File node.
+// Diagnostics for Err nodes are the next slice (edge parse -> diag is in the
+// table; the node IS the representation, the report is separate).
+
+module novac.parse
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, branch, leaf}
+
+type Cursor {
+    toks []Token
+    i int
+}
+
+fn Cursor @peek() -> TokenKind => @toks[@i].kind
+
+fn Cursor mut @take() -> Node {
+    ro n = leaf(@toks[@i])
+    if @i + 1 < @toks.len() { @i += 1 }
+    n
+}
+
+fn Cursor @at_eof() -> bool => @toks[@i].kind == TokenKind.Eof
+
+/// Parse a whole token stream (as produced by lex: Eof-terminated).
+export fn parse(toks []Token) -> Node {
+    mut p = Cursor { toks, i: 0 }
+    mut items = []Node.new()
+    if p.peek() == TokenKind.KwModule {
+        items.push(p.module_decl())
+    }
+    while !p.at_eof() {
+        if p.peek() == TokenKind.KwFn {
+            items.push(p.fn_decl())
+        } else {
+            items.push(branch(NodeKind.Err, []Node.of(p.take())))
+        }
+    }
+    items.push(p.take()) // the Eof leaf carries the file's tail trivia
+    branch(NodeKind.File, items)
+}
+
+fn Cursor mut @module_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwModule
+    if @peek() == TokenKind.Ident {
+        kids.push(@take())
+        while @peek() == TokenKind.Dot {
+            kids.push(@take())
+            if @peek() == TokenKind.Ident { kids.push(@take()) } else { break }
+        }
+    }
+    branch(NodeKind.ModuleDecl, kids)
+}
+
+fn Cursor mut @fn_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwFn
+    if @peek() == TokenKind.Ident { kids.push(@take()) }
+    if @peek() == TokenKind.LParen { kids.push(@take()) }
+    if @peek() == TokenKind.RParen { kids.push(@take()) }
+    if @peek() == TokenKind.LBrace { kids.push(@block()) }
+    branch(NodeKind.FnDecl, kids)
+}
+
+fn Cursor mut @block() -> Node {
+    mut kids = []Node.of(@take()) // LBrace
+    while !@at_eof() && @peek() != TokenKind.RBrace {
+        kids.push(@expr())
+    }
+    if @peek() == TokenKind.RBrace { kids.push(@take()) }
+    branch(NodeKind.Block, kids)
+}
+
+fn is_binop(k TokenKind) -> bool =>
+    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash
+
+fn Cursor mut @expr() -> Node {
+    mut left = @primary()
+    while is_binop(@peek()) {
+        ro op = @take()
+        ro right = @primary()
+        left = branch(NodeKind.Bin, []Node.of(left, op, right))
+    }
+    left
+}
+
+fn Cursor mut @primary() -> Node {
+    if @peek() == TokenKind.IntLit || @peek() == TokenKind.StrLit {
+        return branch(NodeKind.Lit, []Node.of(@take()))
+    }
+    if @peek() == TokenKind.Ident {
+        ro name = @take()
+        if @peek() == TokenKind.LParen {
+            mut kids = []Node.of(name, @take())
+            while !@at_eof() && @peek() != TokenKind.RParen {
+                kids.push(@expr())
+                if @peek() == TokenKind.Comma { kids.push(@take()) }
+            }
+            if @peek() == TokenKind.RParen { kids.push(@take()) }
+            return branch(NodeKind.Call, kids)
+        }
+        return branch(NodeKind.Name, []Node.of(name))
+    }
+    // Recovery: unexpected token — one Err branch, one token, move on.
+    branch(NodeKind.Err, []Node.of(@take()))
+}
