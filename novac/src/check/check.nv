@@ -28,6 +28,19 @@ export fn check(file Node, src SourceText) -> []Diagnostic {
     out
 }
 
+// The ONE table of subset methods (E2-strings wave). check owns the subset
+// knowledge; emit_c IMPORTS this door for its print dispatch (edge
+// `emit_c -> check` recorded in the architecture table the same commit).
+// Return codes mirror the emitter's tiny type lattice: 0=int 1=str 2=bool,
+// -1 = not in the subset (check reports it, the emitter never sees it).
+export fn subset_method_ret(name str) -> int {
+    if name == "byte_len" { return 0 }
+    if name == "to_ascii_upper" { return 1 }
+    if name == "starts_with" { return 2 }
+    if name == "contains" { return 2 }
+    -1
+}
+
 fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
     match n {
         Leaf(t) => report_if_error_token(t, src, out)
@@ -35,11 +48,36 @@ fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
             if kind == NodeKind.Err {
                 report_err_branch(children, src, out)
             } else {
+                if kind == NodeKind.MethodCall { report_if_unknown_method(children, src, out) }
                 for c in children {
                     walk(c, src, out)
                 }
             }
         }
+    }
+}
+
+// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
+// judged against the ONE subset table. An unknown method is an honest
+// E_NOVAC_SUBSET at the method name, not an emitter ice later. (The
+// receiver's TYPE is not judged here — the type checker is a later wave;
+// the named risk lives in the divergence registry next to #652.)
+fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic) -> () {
+    if kids.len() < 3 { return }
+    match kids[2] {
+        Leaf(t) => {
+            if subset_method_ret(t.text) < 0 {
+                ro lo = src.offset_of(t.text)
+                out.push(Diagnostic {
+                    code: "E_NOVAC_SUBSET",
+                    severity: Severity.ErrorSev,
+                    lo,
+                    hi: lo + t.text.byte_len(),
+                    message: "outside the E1 subset: method not in the subset table",
+                })
+            }
+        }
+        Branch { .. } => {}
     }
 }
 

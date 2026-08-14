@@ -1,0 +1,38 @@
+// shell_probe.nv — the umbrella probe for the novac runtime shell (plan 274,
+// E2). COMPILED BY THE ORACLE, never by novac: its emission IS the shell
+// template. The probe's main must USE every std surface the novac emitter
+// can reference, so the oracle's DCE keeps those functions in the emission;
+// scripts/tools/novac-regen-shell.sh then cuts the string literals and the
+// main body out and stamps the two novac slots in their place.
+//
+// Grow this file in the same wave that grows the emitter's subset: an
+// emitter form whose runtime helper is missing here dies at link time in
+// the smoke — loudly, which is the point.
+
+module probe.shell_probe
+
+fn main() {
+    // E1 surface: str literals, int printing, checked arithmetic (all four
+    // operators — division and subtraction are DCE-prone: nothing else in
+    // the probe would keep them), comparisons, for/if/mut/+=.
+    println("probe")
+    println("arith = ", 2 + 3 * 4 - 6 / 2)
+    mut total = 0
+    for i in 0..3 {
+        total += i
+    }
+    if total < 10 {
+        println("total = ", total)
+    }
+    if total <= 3 {
+        println("le")
+    }
+
+    // E2 strings surface: str binding, str-returning and bool-returning
+    // methods, bool printing.
+    ro s = "probe string"
+    println("len = ", s.byte_len())
+    println("upper = ", s.to_ascii_upper())
+    println("starts = ", s.starts_with("p"))
+    println("contains = ", s.contains("ring"))
+}

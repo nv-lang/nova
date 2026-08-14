@@ -33,6 +33,8 @@ export type TokenKind enum
     | KwFor
     | KwIn
     | KwMut
+    | KwRo
+    | KwWhile
     | Ident
     | IntLit
     | StrLit
@@ -100,6 +102,8 @@ fn keyword_kind(t str) -> TokenKind {
     if t == "for" { return TokenKind.KwFor }
     if t == "in" { return TokenKind.KwIn }
     if t == "mut" { return TokenKind.KwMut }
+    if t == "ro" { return TokenKind.KwRo }
+    if t == "while" { return TokenKind.KwWhile }
     TokenKind.Ident
 }
 

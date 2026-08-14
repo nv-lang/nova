@@ -155,12 +155,20 @@ fn Cursor mut @stmt() -> Node {
         if @peek() != TokenKind.RBrace { kids.push(@expr()) }
         return branch(NodeKind.RetStmt, kids)
     }
-    if @peek() == TokenKind.KwMut {
+    if @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo {
+        // One BindStmt for both: the first leaf keeps KwMut/KwRo, C locals
+        // are identical either way (the oracle emits no const).
         mut kids = []Node.of(@take())
         if @peek() == TokenKind.Ident { kids.push(@take()) }
         if @peek() == TokenKind.Assign { kids.push(@take()) }
         kids.push(@expr())
         return branch(NodeKind.BindStmt, kids)
+    }
+    if @peek() == TokenKind.KwWhile {
+        mut kids = []Node.of(@take())
+        kids.push(@expr())
+        if @peek() == TokenKind.LBrace { kids.push(@block()) }
+        return branch(NodeKind.WhileStmt, kids)
     }
     if @peek() == TokenKind.KwFor {
         mut kids = []Node.of(@take())
@@ -193,6 +201,32 @@ fn Cursor mut @expr() -> Node {
 }
 
 fn Cursor mut @primary() -> Node {
+    mut e = @atom()
+    // Postfix loop: `.name(args)` chains left-to-right — `s.trim().len()`
+    // nests MethodCall inside MethodCall. A dot NOT followed by a call
+    // (field access — E2-records, later wave) wraps in Err instead: were it
+    // a plain MethodCall, check would accept it and the emitter's ice would
+    // kill the behavior smoke — the subset boundary must fall in CHECK,
+    // never past it. Bytes stay ours either way — lossless.
+    while @peek() == TokenKind.Dot {
+        mut kids = []Node.of(e, @take()) // recv, '.'
+        if @peek() == TokenKind.Ident { kids.push(@take()) }
+        if @peek() == TokenKind.LParen {
+            kids.push(@take())
+            while !@at_eof() && @peek() != TokenKind.RParen {
+                kids.push(@expr())
+                if @peek() == TokenKind.Comma { kids.push(@take()) }
+            }
+            if @peek() == TokenKind.RParen { kids.push(@take()) }
+            e = branch(NodeKind.MethodCall, kids)
+        } else {
+            e = branch(NodeKind.Err, kids)
+        }
+    }
+    e
+}
+
+fn Cursor mut @atom() -> Node {
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.StrLit {
         return branch(NodeKind.Lit, []Node.of(@take()))
     }

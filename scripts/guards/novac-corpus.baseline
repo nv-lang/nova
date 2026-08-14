@@ -19,5 +19,6 @@
 #
 # База заведена 2026-08-14 (Э1 закрыт): oracle-pin c5a0bc425, novac
 # single-file, корпус examples/ (60 файлов).
-contract-match 8
-behavior-match 2
+# 2026-08-14 Э2-а strings: 8/2 -> 9/3 (strings.nv в подмножестве).
+contract-match 9
+behavior-match 3

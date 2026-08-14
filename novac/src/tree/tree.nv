@@ -30,6 +30,8 @@ export type NodeKind enum
     | BindStmt
     | AssignStmt
     | ForStmt
+    | WhileStmt
+    | MethodCall
     | Param
     | RetType
     | Name

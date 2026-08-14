@@ -56,6 +56,22 @@ test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08
     assert(compile("fn main() { mut i").len() == 1)
 }
 
+test "E2 strings surface is clean: ro, while, subset methods" {
+    ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
+    assert(compile(src).len() == 0)
+}
+
+test "field access is refused in CHECK, not in the emitter (E2 boundary)" {
+    // A dot without a call is E2-records territory. Were this a plain
+    // accept, the emitter's ice would kill the behavior smoke — the subset
+    // boundary must fall in check.
+    assert(compile("fn main() { ro v = p.x }").len() == 1)
+}
+
+test "unknown method is an honest subset refusal at the name" {
+    assert(compile("fn main() { println(\"s\".reverse()) }").len() == 1)
+}
+
 test "escaped interpolation is a literal, not a refusal" {
     // E1 review p.4: `\${` is the escaped literal form — lexes as StrLit.
     // The input is assembled by concatenation so THIS file's own string
