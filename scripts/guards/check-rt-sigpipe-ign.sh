@@ -1,6 +1,9 @@
 #!/bin/sh
 # scripts/guards/check-rt-sigpipe-ign.sh — SIG_IGN(SIGPIPE) обязан жить в
-# двери драйвера (№664, носитель №662): vendored libuv на Linux пишет голым
+# двери драйвера.
+#
+# План/реестр: docs/plans/221.1-bug-sweep.md №664 (носитель №662) —
+# vendored libuv на Linux пишет голым
 # write(), и без SIG_IGN любая гонка «peer закрылся → мы пишем» убивает
 # любой сетевой Nova-процесс сигналом 13 без core и без сообщения.
 #
