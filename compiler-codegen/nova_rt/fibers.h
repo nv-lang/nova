@@ -2417,6 +2417,22 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         return out;
     }
 
+    /* №656, дискриминатор вилки «ребёнок не исполнялся vs декремент потерян»:
+     * счёт ПЕРВЫХ запусков в единственной воронке резюма. Первый запуск
+     * распознаётся по _nova_worker_slot < 0 — преамбула файбера выставит его
+     * при этом же (первом) резюме. Сам декремент считать здесь нельзя — он
+     * эмитится кодогеном в эпилоге (emit_spawn); но inc==first_run при
+     * зависании уже отвечает: все дети бегали → потеря ниже по течению.
+     * Счётчик безусловный (атомарный inc — копейки), печать — только в
+     * дампе состояния (NOVA_DIAG_656/сторож). */
+    {
+        NovaSpawnCtxBase* _d656 = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        if (_d656 && _d656->_nova_worker_slot < 0) {
+            extern void nova_diag656_count_first_run(void);
+            nova_diag656_count_first_run();
+        }
+    }
+
     /* Save the caller's ("outer") TLS, install the fiber's own. */
     NovaFiberQueue*      outer_scope     = _nova_active_scope;
     int                  outer_slot      = _nova_active_slot;
@@ -3563,7 +3579,14 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                 uint64_t elapsed_ns = now - _watchdog_start;
                 if (elapsed_ns / 1000000000ULL >= (uint64_t)_watchdog_threshold_secs) {
                     extern bool nova_runtime_has_stuck_fibers(void);
-                    if (nova_runtime_has_stuck_fibers()) {
+                    /* №656: has_stuck_fibers СЛЕП к никогда не стартовавшему
+                     * ребёнку — он ищет SUSPENDED-not-parked по слотам, а у
+                     * неисполненного нет ни корутины, ни слота. Доказано
+                     * живым зависанием 2026-08-14: remote=1, все очереди
+                     * пусты, дамп не сработал (лог из одной строки). Под
+                     * NOVA_DIAG_656 дамп стреляет по одному порогу времени —
+                     * диагностический режим, по умолчанию поведение прежнее. */
+                    if (nova_runtime_has_stuck_fibers() || getenv("NOVA_DIAG_656")) {
                         _watchdog_fired = true;
                         extern void nova_runtime_dump_state(const char* reason);
                         char buf[64];

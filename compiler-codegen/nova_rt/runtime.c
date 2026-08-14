@@ -297,9 +297,25 @@ static struct NovaFiberQueue* _watchdog_active_scope = NULL;
 void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q) {
     _watchdog_active_scope = q;
 }
+/* №656: дискриминатор вилки «ребёнок не исполнялся vs декремент потерян».
+ * Пара глобальных атомарных счётчиков: диспетчеризации spawn'ов на воркеры
+ * (inc pending_remote) против ПЕРВЫХ запусков в единственной воронке резюма
+ * (nova_resume_fiber, fibers.h). Декремент здесь не считается — он эмитится
+ * кодогеном в эпилоге (emit_spawn); но соотношение при зависании уже
+ * отвечает: spawn==first_run → все дети бегали, потеря ниже по течению;
+ * spawn>first_run → ребёнок исчез до первого запуска. Счёт безусловный
+ * (атомарный inc), печать — в дампе состояния. */
+static nova_atomic_int _g656_spawn_disp;
+static nova_atomic_int _g656_first_run;
+void nova_diag656_count_spawn(void)     { nova_aint_inc(&_g656_spawn_disp); }
+void nova_diag656_count_first_run(void) { nova_aint_inc(&_g656_first_run); }
+
 void nova_runtime_dump_state(const char* reason) {
     fprintf(stderr, "=== NOVA_RUNTIME_DUMP === reason=%s\n",
             reason ? reason : "unspecified");
+    fprintf(stderr, "[656] spawn_dispatched=%d first_run=%d (равенство = потеря ниже воронки резюма)\n",
+            (int)nova_aint_load(&_g656_spawn_disp),
+            (int)nova_aint_load(&_g656_first_run));
     fprintf(stderr, "[globals] n_workers=%d driver_started=%d armed=%d materialized=%d\n",
             _n_workers,
             (int)nova_abool_load(&_nova_driver.started),
@@ -2236,6 +2252,9 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
      * pending_remote > 0 даже если worker сразу подхватит fiber и завершит
      * его до того как main опросит counter. */
     nova_aint_inc(&((NovaFiberQueue*)scope)->pending_remote);
+    /* №656: дискриминатор вилки — счёт диспетчеризаций против первых
+     * запусков (пара к nova_diag656_count_first_run в nova_resume_fiber). */
+    nova_diag656_count_spawn();
     /* Реальный push идёт через spawn_global. */
     nova_runtime_spawn_global(entry, user);
 }
