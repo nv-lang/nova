@@ -1,15 +1,18 @@
 #!/bin/sh
-# scripts/guards/check-novac-oracle-workarounds.sh — форма обхода багов
-# оракула в novac/** нормирована (план 274 §1.5, развилка владельца
-# 2026-08-14: «фиксить в текущем ИЛИ переписать на nv с пометкой»).
+# scripts/guards/check-novac-legacy-workarounds.sh — форма обхода багов
+# оракула (легаси-компилятора) в novac/** нормирована (план 274 §1.5,
+# развилка владельца 2026-08-14: «фиксить в текущем ИЛИ переписать на nv с
+# пометкой»). Имя маркера — LEGACY, в словаре проекта («легаси» = текущий
+# компилятор, корзина bug-legacy реестра расхождений); переименован из
+# ORACLE решением владельца (ассоциации с БД).
 #
-# ПРАВИЛО A (фоссилизация): каждый маркер [ORACLE-#NNN] в novac обязан
+# ПРАВИЛО A (фоссилизация): каждый маркер [LEGACY-#NNN] в novac обязан
 # ссылаться на баг, чья строка есть в реестре №221.1 и НЕ закрыта. Маркер
 # закрытого бага — красный: фикс-волна оракула обязана снимать обходы той же
 # волной (греп на ноль входит в её приёмку).
 #
 # ПРАВИЛО B (атрибуция): самоистекающий маркер EXPECT_CC_ERROR в novac —
-# это обход бага оракула; файл-носитель обязан нести [ORACLE-#NNN], иначе
+# это обход бага оракула; файл-носитель обязан нести [LEGACY-#NNN], иначе
 # счётчик носителей (вход в веху недели §1.4) слеп к этому обходу.
 #
 # Печатает счётчик носителей на баг — это машинное число «налога оракула».
@@ -23,7 +26,7 @@
 # Проверялся: Windows (Git Bash), 2026-08-14.
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
-NAME=check-novac-oracle-workarounds
+NAME=check-novac-legacy-workarounds
 
 SRC="$ROOT/novac"
 REG="$ROOT/docs/plans/221.1-bug-sweep.md"
@@ -39,34 +42,34 @@ fi
 BAD=0
 
 # --- Правило A: маркеры против реестра + счётчик носителей --------------------
-NUMS=$(grep -rho '\[ORACLE-#[0-9][0-9]*\]' "$SRC" 2>/dev/null \
-       | sed 's/\[ORACLE-#\([0-9]*\)\]/\1/' | sort -u)
+NUMS=$(grep -rho '\[LEGACY-#[0-9][0-9]*\]' "$SRC" 2>/dev/null \
+       | sed 's/\[LEGACY-#\([0-9]*\)\]/\1/' | sort -u)
 for n in $NUMS; do
-    CARRIERS=$(grep -rl "\[ORACLE-#$n\]" "$SRC" 2>/dev/null | grep -c . || true)
+    CARRIERS=$(grep -rl "\[LEGACY-#$n\]" "$SRC" 2>/dev/null | grep -c . || true)
     ROW=$(grep "^| $n |" "$REG" || true)
     if [ -z "$ROW" ]; then
-        echo "$NAME: FAIL — [ORACLE-#$n] есть в novac, а строки | $n | в реестре нет" >&2
+        echo "$NAME: FAIL — [LEGACY-#$n] есть в novac, а строки | $n | в реестре нет" >&2
         BAD=1
         continue
     fi
     case "$ROW" in
         *"Статус: ЗАКРЫТ"*)
-            echo "$NAME: FAIL — [ORACLE-#$n] жив в novac, а баг №$n в реестре ЗАКРЫТ:" >&2
-            grep -rn "\[ORACLE-#$n\]" "$SRC" | head -5 | sed 's/^/    /' >&2
+            echo "$NAME: FAIL — [LEGACY-#$n] жив в novac, а баг №$n в реестре ЗАКРЫТ:" >&2
+            grep -rn "\[LEGACY-#$n\]" "$SRC" | head -5 | sed 's/^/    /' >&2
             echo "  Фикс-волна оракула снимает обходы той же волной (§1.5):" >&2
-            echo "  греп [ORACLE-#$n] по novac на ноль — часть её приёмки." >&2
+            echo "  греп [LEGACY-#$n] по novac на ноль — часть её приёмки." >&2
             BAD=1
             ;;
         *)
-            echo "$NAME: носителей [ORACLE-#$n]: $CARRIERS (баг открыт)"
+            echo "$NAME: носителей [LEGACY-#$n]: $CARRIERS (баг открыт)"
             ;;
     esac
 done
 
 # --- Правило B: самоистекающая форма обязана нести атрибуцию ------------------
 for f in $(grep -rl 'EXPECT_CC_ERROR' "$SRC" 2>/dev/null); do
-    if ! grep -q '\[ORACLE-#[0-9]' "$f"; then
-        echo "$NAME: FAIL — $f несёт EXPECT_CC_ERROR без маркера [ORACLE-#NNN]" >&2
+    if ! grep -q '\[LEGACY-#[0-9]' "$f"; then
+        echo "$NAME: FAIL — $f несёт EXPECT_CC_ERROR без маркера [LEGACY-#NNN]" >&2
         echo "  Самоистекающий обход — тоже обход: без атрибуции счётчик" >&2
         echo "  носителей (веха недели, §1.4/§1.5) его не видит." >&2
         BAD=1

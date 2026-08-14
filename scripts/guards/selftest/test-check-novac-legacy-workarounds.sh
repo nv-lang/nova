@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Самотест check-novac-oracle-workarounds.sh — обе стороны, на фикстурном корне.
+# Самотест check-novac-legacy-workarounds.sh — обе стороны, на фикстурном корне.
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-oracle-workarounds.sh"
+G="$ROOT/scripts/guards/check-novac-legacy-workarounds.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -18,12 +18,12 @@ sh "$G" "$TMP/empty-root" >/dev/null 2>&1
 check "нет novac — зелёный" "$?" "0"
 
 printf '| 900 | K1 | bug demo. Статус: ОТКРЫТ |\n' > "$REG"
-printf '// [ORACLE-#900] workaround site\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
+printf '// [LEGACY-#900] workaround site\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
 sh "$G" "$FIX" >/dev/null 2>&1
 check "маркер открытого бага — зелёный" "$?" "0"
 
 echo "== ловит =="
-printf '// [ORACLE-#901] workaround site\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
+printf '// [LEGACY-#901] workaround site\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
 sh "$G" "$FIX" >/dev/null 2>&1
 check "маркер бага без строки в реестре — красный" "$?" "1"
 
@@ -33,9 +33,9 @@ check "маркер ЗАКРЫТОГО бага — красный (фоссил
 
 printf '// EXPECT_CC_ERROR boom\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
 sh "$G" "$FIX" >/dev/null 2>&1
-check "EXPECT_CC_ERROR без [ORACLE-#NNN] — красный" "$?" "1"
+check "EXPECT_CC_ERROR без [LEGACY-#NNN] — красный" "$?" "1"
 
-printf '// EXPECT_CC_ERROR boom\n// [ORACLE-#900] attributed\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
+printf '// EXPECT_CC_ERROR boom\n// [LEGACY-#900] attributed\nfn f() -> int => 1\n' > "$FIX/novac/src/lex/lex.nv"
 sh "$G" "$FIX" >/dev/null 2>&1
 check "EXPECT_CC_ERROR с атрибуцией — зелёный" "$?" "0"
 

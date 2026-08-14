@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // EXPECT_CC_ERROR unknown type name 'Nova_Node'
-// [M-659-multitu-recursive-sum-fwd-decl] [ORACLE-#659] SELF-EXPIRING marker: the test
+// [M-659-multitu-recursive-sum-fwd-decl] [LEGACY-#659] SELF-EXPIRING marker: the test
 // runner's multi-TU merged build of THIS file loses the forward decl of the
 // recursive sum Node (registry #659; the single-file CLI build of the same
 // entry is fine, and the parse module's own tests build and pass). The

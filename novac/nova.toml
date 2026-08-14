@@ -11,11 +11,15 @@
 # is a number, not a feeling. Moving the pin is a conscious act, recorded in
 # the plan.
 #
-# The two lines below are the MACHINE-READABLE contract (E1 review p.6):
-# a future guard greps exactly these keys; edit them only as a conscious
-# act recorded in the plan.
+# The three lines below are the MACHINE-READABLE contract (E1 review p.6;
+# oracle-pin: plan 274 p.7 amendment, 2026-08-14): a future guard and the
+# diff runner grep exactly these keys; edit them only as a conscious act
+# recorded in the plan. oracle-pin = revision of the current compiler the
+# diff gate compares against; it moves by a deliberate commit, mandatorily
+# after each blocker window touching the novac subset (e.g. #659+#660).
 #   spec-point: 2026-08-14
 #   spec-queue: 0
+#   oracle-pin: 2f0c01569
 
 [package]
 name = "novac"
