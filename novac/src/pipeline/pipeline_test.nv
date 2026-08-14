@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_CC_ERROR unknown type name 'Nova_Node'
+// [M-659-multitu-recursive-sum-fwd-decl] SELF-EXPIRING marker, THIRD carrier
+// (after main.nv and the check_test attempt, both 2026-08-14): merging this
+// test CU with the whole front half loses the forward decl of the recursive
+// sum Node — registry #659. The moment the compiler fix lands, CC succeeds,
+// this expectation FAILS loudly, the marker comes off and the six property
+// tests below go live. Three carriers in one day of novac work: #659 has
+// graduated from a marker to a blocker of novac's own test development.
+//
+// novac/src/pipeline — tests beside the module, THROUGH the one door: the
+// no-cascade property (one seeded mistake, exactly one diagnostic) is judged
+// on compile(), never by naming phases — the architecture's own rule.
+//
+// Placement note (2026-08-14): these cases first lived in check_test.nv and
+// tripped registry #659 there (the merged multi-TU build of check+parse loses
+// the forward decl of the recursive sum Node). The pipeline CU merges the
+// whole front half and compiles clean, so the door is ALSO the workaround —
+// when #659 falls, check-level units become possible again.
+
+module novac.pipeline
+
+test "no cascade: a run of top-level junk is one cause, one diagnostic" {
+    // E1 review p.1 (2026-08-14): this used to be THREE diagnostics.
+    assert(compile("1 2 3").len() == 1)
+}
+
+test "no cascade: junk between signature and block is one diagnostic" {
+    assert(compile("fn main junk here () { }").len() == 1)
+}
+
+test "clean subset file: zero diagnostics" {
+    assert(compile("module a.b\nfn main() { println(\"hi\", 1 + 2) }").len() == 0)
+}
+
+test "two separate causes: two diagnostics" {
+    // Junk at top level AND an unterminated string inside a fn are two
+    // independently seeded mistakes — the rule is one PER CAUSE, not one
+    // per file.
+    assert(compile("?? fn main() { \"unterminated").len() == 2)
+}
+
+test "unterminated string alone: one diagnostic, honest refusal" {
+    // E1 review p.4: an unclosed string is ErrorTok now, not a plausible
+    // StrLit.
+    assert(compile("fn main() { \"oops }").len() == 1)
+}
+
+test "escaped interpolation is a literal, not a refusal" {
+    // E1 review p.4: `\${` is the escaped literal form — lexes as StrLit.
+    // The input is assembled by concatenation so THIS file's own string
+    // literal does not interpolate.
+    ro src = "fn main() { println(\"\\".concat("$").concat("{x}\") }")
+    assert(compile(src).len() == 0)
+}

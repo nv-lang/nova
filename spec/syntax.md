@@ -1840,12 +1840,12 @@ Tests are collected and run only under `nova test`. In an ordinary build
 the body is skipped — no `#[cfg(test)]` wrappers. Effects are substituted
 with the same `with`-blocks as in production, no mock framework.
 
-## Panic — not an effect, caught only by the runtime
+## Panic — not an effect; the fiber dies, the PARENT observes
 
 Division by zero, array out of bounds, overflow — these are
-**not an effect**, it is `Panic`. The programmer **does not catch panics in
-code** — a panic means the death of the current fiber, the runtime handles it
-at the boundary:
+**not an effect**, it is `Panic`: no `Fail[DivByZero]` in signatures, no
+`try/catch` around your own code. A panic kills the **current fiber** —
+inside that fiber nothing can intercept it:
 
 ```nova
 fn mean(xs []int) -> int =>
@@ -1854,6 +1854,18 @@ fn mean(xs []int) -> int =>
 fn handle(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
 ```
+
+But a child fiber's death is **observable by its parent** — this is the
+designed door, not a runtime internality
+([D416](decisions/06-concurrency.md#d416), the `Supervisor` effect):
+a `supervised` scope by default re-throws the first failed child's error at
+the scope end, and under `with Supervisor = policy` the parent inspects each
+failure (`on_child_fail(idx int, err any) -> Decision`) and decides
+`Stop`/`Escalate` per child — built-in policies live in
+`std/concurrency/supervisor`. So the precise rule is: *the failing fiber
+cannot catch its own panic; the parent supervises it.* (An earlier revision
+of this page said "the programmer does not catch panics in code" without the
+supervisor half — corrected 2026-08-14 to match D416.)
 
 `panic` is the death of a **fiber**, not the process. In a server only the
 current request falls, everything else works. If you need to kill the

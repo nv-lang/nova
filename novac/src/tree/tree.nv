@@ -16,6 +16,7 @@ module novac.tree
 import ../lex.{Token}
 
 export type NodeKind enum
+    | LeafNode
     | File
     | ModuleDecl
     | FnDecl
@@ -58,9 +59,15 @@ fn append_node(mut out StringBuilder, n Node) -> () {
     }
 }
 
+/// The node's kind. A leaf is NOT an error: the first signature returned
+/// NodeKind.Err for leaves, so a kind-driven walk would silently classify
+/// every healthy token as broken (E1 review p.3, 2026-08-14). A leaf gets
+/// its OWN kind. (An Option[NodeKind] attempt tripped compiler bug #660 --
+/// Option over a plain enum miscompiles in the merged multi-TU build, the
+/// #659 family; the dedicated variant is the honest answer anyway.)
 export fn Node @kind_of() -> NodeKind {
     match @ {
-        Leaf(_) => NodeKind.Err
+        Leaf(_) => NodeKind.LeafNode
         Branch { kind, .. } => kind
     }
 }

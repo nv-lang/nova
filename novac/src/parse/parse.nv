@@ -23,15 +23,29 @@ type Cursor {
     i int
 }
 
-fn Cursor @peek() -> TokenKind => @toks[@i].kind
+// Safe past the end: peek answers Eof forever once the stream is exhausted.
+// Together with the advancing take below this kills two latent doors at
+// once (E1 review p.2, 2026-08-14): an unguarded loop can no longer hang on
+// a non-advancing cursor, and recovery that consumes the Eof leaf (its
+// leading carries the file's TAIL trivia) can no longer lead to that trivia
+// being emitted twice -- the final push in parse() is conditional now.
+fn Cursor @peek() -> TokenKind {
+    if @i >= @toks.len() { return TokenKind.Eof }
+    @toks[@i].kind
+}
 
 fn Cursor mut @take() -> Node {
+    // Never hands out the same token twice; the assert makes the contract
+    // loud instead of latent (asserts run in release too -- the language's
+    // stance). Callers that might legitimately stand past the end go
+    // through peek()/at_eof() first, which are safe there.
+    assert(@i < @toks.len())
     ro n = leaf(@toks[@i])
-    if @i + 1 < @toks.len() { @i += 1 }
+    @i += 1
     n
 }
 
-fn Cursor @at_eof() -> bool => @toks[@i].kind == TokenKind.Eof
+fn Cursor @at_eof() -> bool => @peek() == TokenKind.Eof
 
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
 export fn parse(toks []Token) -> Node {
@@ -44,10 +58,27 @@ export fn parse(toks []Token) -> Node {
         if p.peek() == TokenKind.KwFn {
             items.push(p.fn_decl())
         } else {
-            items.push(branch(NodeKind.Err, []Node.of(p.take())))
+            // Panic-mode bucket, same rule as inside fn_decl (E1 review p.1,
+            // 2026-08-14): a RUN of stray top-level tokens is ONE seeded
+            // mistake and collects into ONE Err branch -- one diagnostic --
+            // instead of an Err per token (a file starting `1 2 3` used to
+            // produce three diagnostics for one cause, a cascade by the
+            // no-cascade guard's own definition).
+            mut junk = []Node.new()
+            while !p.at_eof() && p.peek() != TokenKind.KwFn
+                && p.peek() != TokenKind.KwModule {
+                junk.push(p.take())
+            }
+            items.push(branch(NodeKind.Err, junk))
         }
     }
-    items.push(p.take()) // the Eof leaf carries the file's tail trivia
+    // The Eof leaf carries the file's tail trivia -- emit it exactly ONCE.
+    // Recovery inside a broken expression (e.g. `1 +` at end of file) may
+    // already have consumed it into an Err branch; pushing unconditionally
+    // here would duplicate the tail trivia and break reserialization.
+    if p.i < p.toks.len() {
+        items.push(p.take())
+    }
     branch(NodeKind.File, items)
 }
 

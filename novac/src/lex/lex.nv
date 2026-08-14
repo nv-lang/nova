@@ -127,14 +127,28 @@ export fn lex(src str) -> []Token {
             // model: compound token, inner tokens recursive) is the E2 step.
             i += 1
             mut has_interp = false
-            while i < n && b[i] != 34 {
-                if b[i] == 92 && i + 1 < n { i += 1 }
-                if b[i] == 36 && i + 1 < n && b[i + 1] == 123 { has_interp = true }
-                i += 1
+            mut closed = false
+            while i < n && !closed {
+                if b[i] == 34 {
+                    closed = true
+                    i += 1
+                } else if b[i] == 92 && i + 1 < n {
+                    // An escape consumes BOTH bytes and, deliberately, does
+                    // not look inside: `\${` is the escaped, literal form and
+                    // must NOT flag interpolation (E1 review p.4 -- the old
+                    // loop inspected the already-escaped byte).
+                    i += 2
+                } else {
+                    if b[i] == 36 && i + 1 < n && b[i + 1] == 123 { has_interp = true }
+                    i += 1
+                }
             }
-            if i < n { i += 1 }
             kind = TokenKind.StrLit
-            if has_interp { kind = TokenKind.ErrorTok }
+            // Honest refusals, both K7-shaped (E1 review p.4): a string that
+            // never closed is not a plausible StrLit, and interpolation is
+            // outside the E1 subset (context-dependent lexing is the E2
+            // mode-stack step). Either way the bytes stay ours -- lossless.
+            if has_interp || !closed { kind = TokenKind.ErrorTok }
         } else {
             kind = punct_kind(c)
             i += 1

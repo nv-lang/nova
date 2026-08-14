@@ -11,7 +11,11 @@
 # is a number, not a feeling. Moving the pin is a conscious act, recorded in
 # the plan.
 #
-#   spec-point: 2026-08-14 (start of E1; queue: empty)
+# The two lines below are the MACHINE-READABLE contract (E1 review p.6):
+# a future guard greps exactly these keys; edit them only as a conscious
+# act recorded in the plan.
+#   spec-point: 2026-08-14
+#   spec-queue: 0
 
 [package]
 name = "novac"

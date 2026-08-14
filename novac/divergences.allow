@@ -1,0 +1,12 @@
+# novac/divergences.allow — conscious behaviour divergences from the oracle.
+#
+# CONTRACT (plan 274 §10.3a; enforced by check-novac-differential.sh): one
+# line = one fixture path from the repo root, forward slashes, exact match.
+# A line here says "novac and the oracle disagree on this fixture ON
+# PURPOSE" — and every line MUST have its story in
+# docs/dev/novac-divergences.md (what differs, why ours is right, which
+# D-block if the divergence is visible language behaviour). A line without a
+# story is a silent language change — the exact thing the ledger exists to
+# forbid.
+#
+# Empty is the healthy state.

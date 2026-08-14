@@ -60,5 +60,19 @@ export fn to_json(d Diagnostic, id int, file str) -> str {
         message: d.message,
         poisoned_by: None,
     }
-    json_encode(dto) ?? panic("diag to_json: flat Serialize DTO — encode must not fail")
+    json_encode(dto) ?? ice("diag to_json: flat Serialize DTO encode failed")
+}
+
+/// The ONE internal-invariant door (novac conventions P12, D416 context).
+/// diag is a PURE module (the architecture keeps effects at the door in
+/// main), so ice() cannot print — instead the WHOLE section-7 JSON line IS
+/// the panic message: the runtime prints it when the fiber dies, so the
+/// machine reader still gets one structured E_NOVAC_ICE line, and the death
+/// itself follows the language rule (panic = fiber death, observable by the
+/// parent supervisor — spec "Panic", D416). Hand-built JSON ON PURPOSE, the
+/// one lawful exception to the serde rule above: the last-resort path must
+/// not depend on the machinery it reports about (message content is
+/// compiler-internal ASCII, no escaping hazard by construction).
+export fn ice(msg str) -> never {
+    panic("{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${msg}\",\"poisoned_by\":null}")
 }

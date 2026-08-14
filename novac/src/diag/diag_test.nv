@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/diag — tests beside the module: the JSON line carries every field
+// of the architecture §7 schema (the binary-level diag-schema guard holds the
+// same rule over fixtures; this unit holds it at the producer).
+
+module novac.diag
+
+test "to_json carries every schema field" {
+    ro d = Diagnostic {
+        code: "E_NOVAC_SUBSET",
+        severity: Severity.ErrorSev,
+        lo: 3,
+        hi: 7,
+        message: "outside the subset",
+    }
+    ro j = to_json(d, 0, "a.nv")
+    assert(j.contains("\"id\""))
+    assert(j.contains("\"code\""))
+    assert(j.contains("E_NOVAC_SUBSET"))
+    assert(j.contains("\"severity\""))
+    assert(j.contains("error"))
+    assert(j.contains("\"primary\""))
+    assert(j.contains("a.nv"))
+    assert(j.contains("\"message\""))
+    assert(j.contains("\"poisoned_by\""))
+}
+
+test "severity renders as the schema strings" {
+    assert(Severity.ErrorSev.to_str() == "error")
+    assert(Severity.WarningSev.to_str() == "warning")
+}
