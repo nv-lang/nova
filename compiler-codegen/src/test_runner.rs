@@ -4942,13 +4942,37 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
     let include_dir = libuv_dir.join("include");
     let uv_h = include_dir.join("uv.h");
     if !uv_h.is_file() {
-        eprintln!(
-            "nova: FATAL libuv submodule not initialized at {}.\n\
-             Plan 22 F2: libuv is mandatory. Run:\n\
-             \tgit submodule update --init compiler-codegen/nova_rt/libuv",
-            libuv_dir.display()
-        );
-        std::process::exit(1);
+        // №650: в линкованном worktree сабмодуль пуст ПО ПОСТРОЕНИЮ —
+        // `git worktree add` его не материализует, а FATAL с командой,
+        // которую человек должен запустить руками, — правило на памяти.
+        // Команду из подсказки запускает сам тулчейн: это оффлайн (общий
+        // `.git/modules` уже держит клон) и материализует ровно тот коммит,
+        // который запинила ЭТА ветка, — копия из соседнего дерева могла бы
+        // принести чужой пин. Только когда rt_dir внутри repo_root:
+        // standalone-пакету (NOVA_RT_DIR наружу) сабмодуль недоступен,
+        // ему — прежний честный FATAL.
+        if let Ok(rel) = rt_dir.strip_prefix(repo_root) {
+            let sub = format!("{}/libuv", rel.display()).replace('\\', "/");
+            eprintln!(
+                "nova: libuv submodule empty at {} — running \
+                 `git submodule update --init {}` (offline, shared .git)",
+                libuv_dir.display(), sub
+            );
+            let _ = std::process::Command::new("git")
+                .arg("-C").arg(repo_root)
+                .args(["submodule", "update", "--init", "--"])
+                .arg(&sub)
+                .status();
+        }
+        if !uv_h.is_file() {
+            eprintln!(
+                "nova: FATAL libuv submodule not initialized at {}.\n\
+                 Plan 22 F2: libuv is mandatory. Run:\n\
+                 \tgit submodule update --init compiler-codegen/nova_rt/libuv",
+                libuv_dir.display()
+            );
+            std::process::exit(1);
+        }
     }
     let eventloop_src = rt_dir.join("eventloop.c");
     if !eventloop_src.is_file() {
@@ -4995,17 +5019,23 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
 /// graceful fallback. Returns Some(config) если найден, None — иначе
 /// (caller вызывает resolve_gc_or_exit для honest exit).
 ///
+/// Шаг 2b опирается на main_worktree_root (ниже) — реестр №650.
+///
 /// **Lookup order:**
 ///
 /// 1. `$NOVA_GC_LIB_DIR` (+ optional `$NOVA_GC_INCLUDE_DIR`) — CI/custom override.
 /// 2. **Windows:**
 ///    a. Local vcpkg: `<cg_include>/vcpkg_installed/x64-windows-static/`.
-///    b. Global vcpkg: `$VCPKG_ROOT/installed/x64-windows-static/`.
+///    b. Main-worktree vcpkg — для линкованного worktree, где
+///       `vcpkg_installed` отсутствует по построению (№650).
+///    c. Global vcpkg: `$VCPKG_ROOT/installed/x64-windows-static/`.
 /// 3. **Linux:** проверяет `gc.h` в стандартных paths — если найден, возвращает
 ///    Some({include_dir: Some, lib_dir: None}). Иначе None.
 /// 4. **macOS:** Homebrew (`/opt/homebrew/include/gc.h` на Apple Silicon или
 ///    `/usr/local/include/gc.h` на Intel).
 pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
+    // Порядок 2 расширен шагом 2b (главное дерево) — см. main_worktree_root
+    // и реестр №650: свежий worktree не должен требовать ручного env-ритуала.
     // 1. Env override (highest priority).
     if let Ok(lib_dir_env) = std::env::var("NOVA_GC_LIB_DIR") {
         let lib_dir = PathBuf::from(&lib_dir_env);
@@ -5040,7 +5070,36 @@ pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
                 lib_dir: Some(local_lib),
             });
         }
-        // 2b. Global vcpkg via VCPKG_ROOT.
+        // 2b. vcpkg ГЛАВНОГО дерева — если мы линкованный worktree (№650).
+        // `vcpkg_installed` не под git и в worktree не появляется по
+        // построению; до этой ветки каждое окно решало это руками — env на
+        // главную репу, ритуал держался памятью. Подмена безопасна (ветка
+        // не может нести свой vcpkg) и НЕ молчалива — строка ниже.
+        if let Some(repo_root) = cg_include.parent() {
+            if let Some(main) = main_worktree_root(repo_root) {
+                let main_cg = main.join("compiler-codegen");
+                let main_inc = main_cg
+                    .join("vcpkg_installed")
+                    .join("x64-windows-static")
+                    .join("include");
+                let main_lib = main_cg
+                    .join("vcpkg_installed")
+                    .join("x64-windows-static")
+                    .join("lib");
+                if main_lib.join("gc.lib").is_file() {
+                    eprintln!(
+                        "nova: worktree has no vcpkg_installed — using Boehm GC \
+                         from main worktree {} (NOVA_GC_LIB_DIR overrides)",
+                        main_cg.display()
+                    );
+                    return Some(BoehmConfig {
+                        include_dir: Some(main_inc),
+                        lib_dir: Some(main_lib),
+                    });
+                }
+            }
+        }
+        // 2c. Global vcpkg via VCPKG_ROOT.
         if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
             let global_inc = PathBuf::from(&vcpkg_root)
                 .join("installed")
@@ -5108,6 +5167,46 @@ pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
 
     #[allow(unreachable_code)]
     None
+}
+
+/// Корень ГЛАВНОГО рабочего дерева, если `root` — линкованный worktree
+/// (реестр №650). У worktree `.git` — ФАЙЛ со строкой
+/// `gitdir: <главная>/.git/worktrees/<имя>`; главная репа выводится из неё
+/// без вызова git и без переменных окружения.
+///
+/// ЗАЧЕМ. Не-git-артефакты тулчейна (`vcpkg_installed`) в worktree не
+/// появляются по построению, и каждое окно платило за это ручным ритуалом
+/// «env на главную репу», который держался памятью (класс плана 254 —
+/// правило без механизма; сработал 2026-08-14: пробный замер окна упал
+/// ровно на этом).
+///
+/// ГРАНИЦА, и она принципиальна: через этот корень подменяется только то,
+/// чего в worktree НЕ БЫВАЕТ (vcpkg — он не под git, ветка не может нести
+/// свой). Исходники и `rt_dir` НЕ подменяются никогда: правка рантайма
+/// веткой обязана компилироваться из ветки; молчаливая подмена дерева —
+/// класс №283, и там она была вредна именно молчанием. Поэтому каждый
+/// fallback по этому корню печатает строку о себе.
+pub fn main_worktree_root(root: &Path) -> Option<PathBuf> {
+    let git_file = root.join(".git");
+    if !git_file.is_file() {
+        return None; // главная репа: там `.git` — каталог
+    }
+    let text = std::fs::read_to_string(&git_file).ok()?;
+    let gitdir_raw = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    let gitdir = {
+        let p = Path::new(gitdir_raw);
+        if p.is_absolute() { p.to_path_buf() } else { root.join(p) }
+    };
+    let worktrees = gitdir.parent()?; // …/.git/worktrees
+    if worktrees.file_name()?.to_str()? != "worktrees" {
+        return None;
+    }
+    let git_dir = worktrees.parent()?; // …/.git
+    if git_dir.file_name()?.to_str()? != ".git" {
+        return None;
+    }
+    let main = git_dir.parent()?;
+    if main.is_dir() { Some(main.to_path_buf()) } else { None }
 }
 
 /// #269 Ф.2: `nova_rt` sources use BOTH the flat upstream include convention
