@@ -492,6 +492,15 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
         } else {
             /* Sub-case B: expected_co is dead — slot was legitimately reused. */
             __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+            /* №656: здесь НАМЕРЕННО нет goready. Первая редакция фикса
+             * будила «живого» expected_co и была ОТКАЧЕНА в тот же час:
+             * в этой ветке слот переиспользован, и сам объект корутины
+             * мог быть переиспользован арёной — mco_status читал бы статус
+             * ЧУЖОГО живого файбера, а goready будил бы постороннего
+             * (ровно класс R1-трипваера выше). Транзитный случай этой
+             * ветки закрывается на стороне ПАРКОВЩИКА: перепроверка
+             * предиката после публикации носителя в nova_sched_park_until
+             * (nova_sched.h, №656) видит CLOSED без всякого wake. */
         }
         return;
     }
@@ -499,9 +508,27 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     /* Normal path: publish CLOSED, then wake by-co. */
     __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
 
-    /* Generic wake — resolves parked_co[slot] and funnels through nova_goready;
-     * the WAIT->DISPATCHED latch handles the wake-before-park race. */
-    nova_sched_wake(st->scope, st->slot);
+    /* №656: wake строго BY-CO, не через слот-резолв. Прежняя строка
+     * (`nova_sched_wake(st->scope, st->slot)`) и её комментарий («латч
+     * закрывает wake-before-park race») были верны только при УЖЕ
+     * опубликованном parked_co[slot] — то есть не для ПЕРВОЙ парковки
+     * свежего слота. Окно: файбер прошёл fast-path предиката и идёт от
+     * submit к mark_slot; close_cb в этот момент читает parked_co==NULL и
+     * nova_sched_wake молча выбрасывает пробуждение (nova_sched.h, «if
+     * (co) …» — латчить нечего). После uv_close таймера будить файбер
+     * больше некому: bare-park канал в driver-mode выключен (runtime.c),
+     * токен идемпотентен — WAIT навсегда. При обычном сне окно
+     * недостижимо (close_cb приходит через ms, файбер давно запаркован);
+     * его открывает ТОЛЬКО массовый cancel, ставящий CANCEL_SCOPE в FIFO
+     * вплотную за ARM_SLEEP, а вытеснение на малом числе CPU растягивает
+     * его до миллисекунд. Это ровно 62-секундные зависания
+     * presume_446_stress (реестр №656): Linux/2 CPU ~1/10, стеки хита —
+     * main в supervised_run_impl, все лупы в epoll_pwait без таймеров,
+     * воркеры в cond_wait. Драйвер держит co в руках (expected_co — им
+     * уже будит sub-case A, «strictly cleaner» по его же комментарию);
+     * латч ready-before-park (R3/G3, nova_sched.h) покрывает «wake до
+     * парковки» ПО ПОСТРОЕНИЮ, без резолва слота. */
+    if (st->expected_co) nova_goready(st->expected_co);
 
     /* [M-driver-sleep-main-thread-wake-gap] (found investigating Plan 259
      * regression in std/src/concurrency/supervised_cancel_direct_body_test.nv
