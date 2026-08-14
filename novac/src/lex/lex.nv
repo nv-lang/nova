@@ -35,8 +35,10 @@ export type TokenKind enum
     | KwMut
     | KwRo
     | KwWhile
+    | KwType
     | Ident
     | IntLit
+    | FloatLit
     | StrLit
     | LParen
     | RParen
@@ -53,6 +55,8 @@ export type TokenKind enum
     | Assign
     | PlusAssign
     | DotDot
+    | Ellipsis
+    | Colon
     | Arrow
     | ErrorTok
     | Eof
@@ -104,6 +108,7 @@ fn keyword_kind(t str) -> TokenKind {
     if t == "mut" { return TokenKind.KwMut }
     if t == "ro" { return TokenKind.KwRo }
     if t == "while" { return TokenKind.KwWhile }
+    if t == "type" { return TokenKind.KwType }
     TokenKind.Ident
 }
 
@@ -114,6 +119,7 @@ fn punct_kind(b u8) -> TokenKind {
     if b == ('}' as u8) { return TokenKind.RBrace }
     if b == ('.' as u8) { return TokenKind.Dot }
     if b == (',' as u8) { return TokenKind.Comma }
+    if b == (':' as u8) { return TokenKind.Colon }
     if b == ('+' as u8) { return TokenKind.Plus }
     if b == ('-' as u8) { return TokenKind.Minus }
     if b == ('*' as u8) { return TokenKind.Star }
@@ -162,6 +168,14 @@ export fn lex(src str) -> []Token {
         } else if is_digit(c) {
             while i < n && is_digit(b[i]) { i += 1 }
             kind = TokenKind.IntLit
+            // FloatLit: digits '.' digit+ — but `0..3` must stay
+            // IntLit DotDot IntLit, so the dot is taken ONLY when the very
+            // next byte is a digit (a second dot never is).
+            if i + 1 < n && b[i] == ('.' as u8) && is_digit(b[i + 1]) {
+                i += 1
+                while i < n && is_digit(b[i]) { i += 1 }
+                kind = TokenKind.FloatLit
+            }
         } else if c == ('"' as u8) {
             // String literal: raw bytes between quotes, escapes kept verbatim
             // (lossless; meaning is parse/check business, not lex).
@@ -210,6 +224,9 @@ export fn lex(src str) -> []Token {
         } else if c == ('-' as u8) && i + 1 < n && b[i + 1] == ('>' as u8) {
             i += 2
             kind = TokenKind.Arrow
+        } else if c == ('.' as u8) && i + 2 < n && b[i + 1] == ('.' as u8) && b[i + 2] == ('.' as u8) {
+            i += 3
+            kind = TokenKind.Ellipsis
         } else if c == ('.' as u8) && i + 1 < n && b[i + 1] == ('.' as u8) {
             i += 2
             kind = TokenKind.DotDot

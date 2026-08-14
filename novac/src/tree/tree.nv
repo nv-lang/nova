@@ -32,6 +32,12 @@ export type NodeKind enum
     | ForStmt
     | WhileStmt
     | MethodCall
+    | FieldAccess
+    | TypeDecl
+    | Field
+    | RecordCtor
+    | CtorField
+    | CtorSpread
     | Param
     | RetType
     | Name

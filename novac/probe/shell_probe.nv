@@ -35,4 +35,9 @@ fn main() {
     println("upper = ", s.to_ascii_upper())
     println("starts = ", s.starts_with("p"))
     println("contains = ", s.contains("ring"))
+
+    // E2 records surface: the only NEW runtime helper is f64 printing —
+    // record structs/alloc are emitted by novac itself into the BODY slot
+    // (nova_alloc is already kept alive by the string methods above).
+    println("f = ", 1.5)
 }

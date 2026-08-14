@@ -42,16 +42,59 @@ export fn subset_method_ret(name str) -> int {
 }
 
 fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
+    walk_in(n, src, out, false)
+}
+
+// ctor_ok: a record constructor is a subset form ONLY as the direct
+// initializer of a binding — the emitter's tmp-scheme has exactly that
+// shape. Anywhere else (argument, nested field value, condition) it is an
+// honest E_NOVAC_SUBSET, not an emitter ice later.
+fn walk_in(n Node, src SourceText, mut out []Diagnostic, ctor_ok bool) -> () {
     match n {
         Leaf(t) => report_if_error_token(t, src, out)
         Branch { kind, children } => {
             if kind == NodeKind.Err {
                 report_err_branch(children, src, out)
-            } else {
-                if kind == NodeKind.MethodCall { report_if_unknown_method(children, src, out) }
+                return
+            }
+            if kind == NodeKind.MethodCall { report_if_unknown_method(children, src, out) }
+            if kind == NodeKind.RecordCtor && !ctor_ok {
+                report_first_leaf_of(children, src, out, "outside the E1 subset: record constructor only as a binding initializer")
+                return
+            }
+            if kind == NodeKind.BindStmt {
+                mut i = 0
                 for c in children {
-                    walk(c, src, out)
+                    walk_in(c, src, out, i == children.len() - 1)
+                    i += 1
                 }
+                return
+            }
+            for c in children {
+                walk_in(c, src, out, false)
+            }
+        }
+    }
+}
+
+fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, msg str) -> () {
+    for c in children {
+        match c {
+            Leaf(t) => {
+                ro lo = src.offset_of(t.text)
+                out.push(Diagnostic {
+                    code: "E_NOVAC_SUBSET",
+                    severity: Severity.ErrorSev,
+                    lo,
+                    hi: lo + t.text.byte_len(),
+                    message: msg,
+                })
+                return
+            }
+            Branch { children: inner, .. } => {
+                ro before = out.len()
+                report_first_leaf_of(inner, src, out, msg)
+                if out.len() > before { return }
             }
         }
     }

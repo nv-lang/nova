@@ -6,16 +6,23 @@
 // (novac/probe/shell_probe.nv + scripts/tools/novac-regen-shell.sh): the
 // probe's oracle emission IS the shell, so every std helper the emitter can
 // reference survives the oracle's DCE. The emitter generates ONLY the two
-// slots: string-literal definitions and the user functions (main included).
-// novac never invents ABI — a form whose helper is missing in the probe
-// dies loudly at the smoke's link step, and the probe grows the same wave.
+// slots: string-literal definitions and the user code (type declarations
+// first, then functions, main included). novac never invents ABI — a form
+// whose helper is missing in the probe dies loudly at the smoke's link step,
+// and the probe grows the same wave.
 //
-// Types in the emitter are a THREE-POINT lattice: 0=int 1=str 2=bool. The
-// subset-method table (names AND return types) lives in check — the one
-// door of subset knowledge; edge `emit_c -> check` is in the architecture
-// table. The emitter is reached ONLY through pipeline and ONLY on a clean
-// check — poisoning discipline: broken input never gets this far, which is
-// why an unknown shape HERE is an ice(), not a diagnostic.
+// Records follow the oracle's shape exactly (fixed point on records.nv):
+// a record value is a GC pointer — `Nova_X* tmp = nova_alloc(sizeof)`,
+// field stores in constructor order, spread = `*tmp = *src;` then
+// overrides; field access is `(p->x)`.
+//
+// Types are a tiny lattice: 0=int 1=str 2=bool 3=f64, 100+k = k-th record
+// type of the file (Ctx below). The subset-method table (names AND return
+// types) lives in check — the one door of subset knowledge; edge
+// `emit_c -> check` is in the architecture table. The emitter is reached
+// ONLY through pipeline and ONLY on a clean check — poisoning discipline:
+// broken input never gets this far, which is why an unknown shape HERE is
+// an ice(), not a diagnostic.
 //
 // Edge note (table §3): E2-temporary rows `emit_c` -> `tree`/`lex` mirror
 // check's — the emitter walks the green tree until `lower` exists (E4);
@@ -30,12 +37,114 @@ import ../check.{subset_method_ret}
 
 fn shell_template() -> []u8 => embed("shell.tpl.c")
 
+// File-level type context: record types as FLAT parallel vectors (owner
+// index + field name + field type code) — deliberately no nested Vec and no
+// HashMap, to stay inside the future self-hosting subset.
+type Ctx {
+    type_names []str
+    field_owner []int
+    field_names []str
+    field_types []int
+}
+
 /// Emit the whole C translation unit for a checked subset file.
 export fn emit(file Node) -> str {
+    ro ctx = collect_types(file)
     mut lits = []str.new()
     consume body = StringBuilder.new()
-    emit_file(file, lits, body)
+    emit_type_decls(ctx, body)
+    emit_file(file, ctx, lits, body)
     render(lits, body.into_str())
+}
+
+fn collect_types(file Node) -> Ctx {
+    mut type_names = []str.new()
+    mut field_owner = []int.new()
+    mut field_names = []str.new()
+    mut field_types = []int.new()
+    // First pass: names only, so field types can reference ANY record of
+    // the file regardless of declaration order.
+    for c in branch_children(file) {
+        if c.kind_of() == NodeKind.TypeDecl {
+            type_names.push(leaf_text(branch_children(c)[1]))
+        }
+    }
+    mut owner = 0
+    for c in branch_children(file) {
+        if c.kind_of() == NodeKind.TypeDecl {
+            for f in branch_children(c) {
+                if f.kind_of() == NodeKind.Field {
+                    ro fk = branch_children(f)
+                    field_owner.push(owner)
+                    field_names.push(leaf_text(fk[0]))
+                    if fk.len() > 1 {
+                        field_types.push(type_code_by_name(type_names, leaf_text(fk[1])))
+                    } else {
+                        field_types.push(0)
+                    }
+                }
+            }
+            owner += 1
+        }
+    }
+    Ctx { type_names, field_owner, field_names, field_types }
+}
+
+fn type_code_by_name(type_names []str, name str) -> int {
+    if name == "str" { return 1 }
+    if name == "bool" { return 2 }
+    if name == "f64" { return 3 }
+    mut i = 0
+    for t in type_names {
+        if t == name { return 100 + i }
+        i += 1
+    }
+    0
+}
+
+fn c_type_name(ctx Ctx, t int) -> str {
+    if t == 1 { return "nova_str" }
+    if t == 2 { return "nova_bool" }
+    if t == 3 { return "nova_f64" }
+    if t >= 100 { return "Nova_${ctx.type_names[t - 100]}*" }
+    "nova_int"
+}
+
+fn record_c_name(ctx Ctx, t int) -> str {
+    if t < 100 { ice("emit: not a record type code") }
+    "Nova_${ctx.type_names[t - 100]}"
+}
+
+fn field_type(ctx Ctx, owner_code int, fname str) -> int {
+    if owner_code < 100 { ice("emit: field access on a non-record (type checker is a later wave)") }
+    ro owner = owner_code - 100
+    mut i = 0
+    for o in ctx.field_owner {
+        if o == owner && ctx.field_names[i] == fname { return ctx.field_types[i] }
+        i += 1
+    }
+    ice("emit: unknown field past check")
+}
+
+fn emit_type_decls(ctx Ctx, mut body StringBuilder) -> () {
+    mut i = 0
+    for tname in ctx.type_names {
+        body.append("typedef struct Nova_${tname} Nova_${tname};\n")
+        body.append("struct Nova_${tname} {\n")
+        mut j = 0
+        for o in ctx.field_owner {
+            if o == i {
+                body.append("    ")
+                body.append(c_type_name(ctx, ctx.field_types[j]))
+                body.append(" ")
+                body.append(ctx.field_names[j])
+                body.append(";\n")
+            }
+            j += 1
+        }
+        body.append("};\n\n")
+        i += 1
+    }
 }
 
 fn render(lits []str, body str) -> str {
@@ -75,14 +184,14 @@ fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
     }
 }
 
-fn emit_file(file Node, mut lits []str, mut body StringBuilder) -> () {
+fn emit_file(file Node, ctx Ctx, mut lits []str, mut body StringBuilder) -> () {
     match file {
         Leaf(_) => ice("emit: file node must be a branch")
         Branch { kind, children } => {
             if kind != NodeKind.File { ice("emit: root is not File") }
             for c in children {
                 if c.kind_of() == NodeKind.FnDecl {
-                    emit_fn(c, lits, body)
+                    emit_fn(c, ctx, lits, body)
                 }
             }
         }
@@ -110,23 +219,9 @@ fn leaf_kind(n Node) -> TokenKind {
     }
 }
 
-// ---- the tiny type lattice: 0=int 1=str 2=bool ---------------------------
-
-fn c_type_name(t int) -> str {
-    if t == 1 { return "nova_str" }
-    if t == 2 { return "nova_bool" }
-    "nova_int"
-}
-
-fn decl_type_code(name str) -> int {
-    if name == "str" { return 1 }
-    if name == "bool" { return 2 }
-    0
-}
+// ---- the tiny type lattice ----------------------------------------------
 
 // Local scope: two parallel vectors (name, type code), function-wide.
-// Deliberately NOT a HashMap: linear scan over a handful of locals keeps
-// this inside the future self-hosting subset.
 fn lookup(names []str, types []int, name str) -> int {
     mut i = 0
     for n in names {
@@ -136,10 +231,12 @@ fn lookup(names []str, types []int, name str) -> int {
     0
 }
 
-fn type_of(e Node, names []str, types []int) -> int {
+fn type_of(e Node, ctx Ctx, names []str, types []int) -> int {
     ro k = e.kind_of()
     if k == NodeKind.Lit {
-        if leaf_kind(branch_children(e)[0]) == TokenKind.StrLit { return 1 }
+        ro lk = leaf_kind(branch_children(e)[0])
+        if lk == TokenKind.StrLit { return 1 }
+        if lk == TokenKind.FloatLit { return 3 }
         return 0
     }
     if k == NodeKind.Name { return lookup(names, types, expr_leaf_name(e)) }
@@ -149,6 +246,25 @@ fn type_of(e Node, names []str, types []int) -> int {
         ro rt = subset_method_ret(leaf_text(kids[2]))
         if rt < 0 { ice("emit: unknown method past check") }
         return rt
+    }
+    if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        if kids.len() < 3 { ice("emit: field access without a name") }
+        ro recv_t = type_of(kids[0], ctx, names, types)
+        return field_type(ctx, recv_t, leaf_text(kids[2]))
+    }
+    if k == NodeKind.RecordCtor {
+        ro kids = branch_children(e)
+        if kids[0].kind_of() == NodeKind.Name {
+            return type_code_by_name(ctx.type_names, expr_leaf_name(kids[0]))
+        }
+        // Anonymous `{ ...src, ... }`: the record type is the spread's.
+        for c in kids {
+            if c.kind_of() == NodeKind.CtorSpread {
+                return type_of(branch_children(c)[1], ctx, names, types)
+            }
+        }
+        ice("emit: anonymous constructor without a spread")
     }
     if k == NodeKind.Bin {
         ro op = leaf_kind(branch_children(e)[1])
@@ -161,7 +277,7 @@ fn type_of(e Node, names []str, types []int) -> int {
 
 // ---- functions -----------------------------------------------------------
 
-fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
+fn emit_fn(f Node, ctx Ctx, mut lits []str, mut body StringBuilder) -> () {
     ro kids = branch_children(f)
     ro name = leaf_text(kids[1])
     mut names = []str.new()
@@ -178,11 +294,11 @@ fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
                 mut ptype = 0
                 if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
                     if leaf_kind(pk[1]) == TokenKind.Ident {
-                        ptype = decl_type_code(leaf_text(pk[1]))
+                        ptype = type_code_by_name(ctx.type_names, leaf_text(pk[1]))
                     }
                 }
                 if !first { body.append(", ") }
-                body.append(c_type_name(ptype))
+                body.append(c_type_name(ctx, ptype))
                 body.append(" ")
                 body.append(pname)
                 names.push(pname)
@@ -195,7 +311,7 @@ fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
     }
     for c in kids {
         if c.kind_of() == NodeKind.Block {
-            emit_block_stmts_fn(c, lits, body, name != "main", names, types)
+            emit_block_stmts_fn(c, ctx, lits, body, name != "main", names, types)
         }
     }
     if name == "main" {
@@ -205,11 +321,11 @@ fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
     }
 }
 
-fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall
+fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess
 
 // tail=true: the LAST expression statement of an int fn body is its return
 // value (Nova tail-expression semantics; arithmetic.nv relies on it).
-fn emit_block_stmts_fn(b Node, mut lits []str, mut body StringBuilder, tail bool, mut names []str, mut types []int) -> () {
+fn emit_block_stmts_fn(b Node, ctx Ctx, mut lits []str, mut body StringBuilder, tail bool, mut names []str, mut types []int) -> () {
     ro kids = branch_children(b)
     mut last_branch = -1
     if tail {
@@ -229,10 +345,10 @@ fn emit_block_stmts_fn(b Node, mut lits []str, mut body StringBuilder, tail bool
             Branch { .. } => {
                 if tail && j == last_branch && is_expr_kind(c.kind_of()) && c.kind_of() != NodeKind.Call {
                     body.append("    return ")
-                    emit_expr(c, lits, body, names, types)
+                    emit_expr(c, ctx, lits, body, names, types)
                     body.append(";\n")
                 } else {
-                    emit_stmt(c, lits, body, names, types)
+                    emit_stmt(c, ctx, lits, body, names, types)
                 }
             }
         }
@@ -240,42 +356,31 @@ fn emit_block_stmts_fn(b Node, mut lits []str, mut body StringBuilder, tail bool
     }
 }
 
-fn emit_stmt(st Node, mut lits []str, mut body StringBuilder, mut names []str, mut types []int) -> () {
+fn emit_stmt(st Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut names []str, mut types []int) -> () {
     ro k = st.kind_of()
     if k == NodeKind.Call {
-        emit_println(st, lits, body, names, types)
+        emit_println(st, ctx, lits, body, names, types)
     } else if k == NodeKind.IfStmt {
         ro kids = branch_children(st)
         body.append("    if (")
-        emit_expr(kids[1], lits, body, names, types)
+        emit_expr(kids[1], ctx, lits, body, names, types)
         body.append(") {\n")
-        emit_block_stmts_fn(kids[2], lits, body, false, names, types)
+        emit_block_stmts_fn(kids[2], ctx, lits, body, false, names, types)
         body.append("    }\n")
     } else if k == NodeKind.WhileStmt {
         ro kids = branch_children(st)
         body.append("    while (")
-        emit_expr(kids[1], lits, body, names, types)
+        emit_expr(kids[1], ctx, lits, body, names, types)
         body.append(") {\n")
-        emit_block_stmts_fn(kids[2], lits, body, false, names, types)
+        emit_block_stmts_fn(kids[2], ctx, lits, body, false, names, types)
         body.append("    }\n")
     } else if k == NodeKind.RetStmt {
         ro kids = branch_children(st)
         body.append("    return ")
-        if kids.len() > 1 { emit_expr(kids[1], lits, body, names, types) } else { body.append("NOVA_UNIT") }
+        if kids.len() > 1 { emit_expr(kids[1], ctx, lits, body, names, types) } else { body.append("NOVA_UNIT") }
         body.append(";\n")
     } else if k == NodeKind.BindStmt {
-        ro kids = branch_children(st)
-        ro vname = leaf_text(kids[1])
-        ro vtype = type_of(kids[3], names, types)
-        body.append("    ")
-        body.append(c_type_name(vtype))
-        body.append(" ")
-        body.append(vname)
-        body.append(" = ")
-        emit_expr(kids[3], lits, body, names, types)
-        body.append(";\n")
-        names.push(vname)
-        types.push(vtype)
+        emit_bind(st, ctx, lits, body, names, types)
     } else if k == NodeKind.AssignStmt {
         ro kids = branch_children(st)
         ro target = expr_leaf_name(kids[0])
@@ -285,11 +390,11 @@ fn emit_stmt(st Node, mut lits []str, mut body StringBuilder, mut names []str, m
             body.append(" = nova_int_checked_add(")
             body.append(target)
             body.append(", ")
-            emit_expr(kids[2], lits, body, names, types)
+            emit_expr(kids[2], ctx, lits, body, names, types)
             body.append(")")
         } else {
             body.append(" = ")
-            emit_expr(kids[2], lits, body, names, types)
+            emit_expr(kids[2], ctx, lits, body, names, types)
         }
         body.append(";\n")
     } else if k == NodeKind.ForStmt {
@@ -297,21 +402,66 @@ fn emit_stmt(st Node, mut lits []str, mut body StringBuilder, mut names []str, m
         ro v = leaf_text(kids[1])
         ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
         body.append("    for (nova_int ${v} = ")
-        emit_expr(range[0], lits, body, names, types)
+        emit_expr(range[0], ctx, lits, body, names, types)
         body.append("; ${v} < ")
-        emit_expr(range[2], lits, body, names, types)
+        emit_expr(range[2], ctx, lits, body, names, types)
         body.append("; ${v}++) {\n")
         names.push(v)
         types.push(0)
-        emit_block_stmts_fn(kids[4], lits, body, false, names, types)
+        emit_block_stmts_fn(kids[4], ctx, lits, body, false, names, types)
         body.append("    }\n")
-    } else if k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.MethodCall {
+    } else if is_expr_kind(k) {
         body.append("    (void)(")
-        emit_expr(st, lits, body, names, types)
+        emit_expr(st, ctx, lits, body, names, types)
         body.append(");\n")
     } else {
         ice("emit: statement kind outside the subset")
     }
+}
+
+// Binding. A record-constructor initializer follows the oracle's tmp scheme
+// (fixed point on records.nv): alloc, spread copy, field stores in source
+// order, then the named pointer. Everything else is a plain typed local.
+fn emit_bind(st Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut names []str, mut types []int) -> () {
+    ro kids = branch_children(st)
+    ro vname = leaf_text(kids[1])
+    ro init = kids[kids.len() - 1]
+    ro vtype = type_of(init, ctx, names, types)
+    if init.kind_of() == NodeKind.RecordCtor {
+        ro rec = record_c_name(ctx, vtype)
+        ro tmp = "_novac_tmp_${vname}"
+        body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
+        for c in branch_children(init) {
+            ro ck = c.kind_of()
+            if ck == NodeKind.CtorSpread {
+                body.append("    *${tmp} = *")
+                emit_expr(branch_children(c)[1], ctx, lits, body, names, types)
+                body.append(";\n")
+            } else if ck == NodeKind.CtorField {
+                ro fk = branch_children(c)
+                ro fname = leaf_text(fk[0])
+                body.append("    ${tmp}->${fname} = ")
+                if fk.len() > 1 {
+                    emit_expr(fk[2], ctx, lits, body, names, types)
+                } else {
+                    // Punning: `Point { x }` stores the local of that name.
+                    body.append(fname)
+                }
+                body.append(";\n")
+            }
+        }
+        body.append("    ${rec}* ${vname} = ${tmp};\n")
+    } else {
+        body.append("    ")
+        body.append(c_type_name(ctx, vtype))
+        body.append(" ")
+        body.append(vname)
+        body.append(" = ")
+        emit_expr(init, ctx, lits, body, names, types)
+        body.append(";\n")
+    }
+    names.push(vname)
+    types.push(vtype)
 }
 
 fn expr_leaf_name(e Node) -> str {
@@ -333,14 +483,19 @@ fn cmp_op(op TokenKind) -> str {
     ""
 }
 
-fn emit_expr(e Node, mut lits []str, mut body StringBuilder, names []str, types []int) -> () {
+fn emit_expr(e Node, ctx Ctx, mut lits []str, mut body StringBuilder, names []str, types []int) -> () {
     ro k = e.kind_of()
     if k == NodeKind.Lit {
         ro t = branch_children(e)[0]
-        if leaf_kind(t) == TokenKind.IntLit {
+        ro lk = leaf_kind(t)
+        if lk == TokenKind.IntLit {
             body.append("((nova_int)")
             body.append(leaf_text(t))
             body.append("LL)")
+        } else if lk == TokenKind.FloatLit {
+            body.append("((nova_f64)")
+            body.append(leaf_text(t))
+            body.append(")")
         } else {
             // A string literal in value position (binding init, method
             // argument): registered like a println literal, referenced by
@@ -351,18 +506,25 @@ fn emit_expr(e Node, mut lits []str, mut body StringBuilder, names []str, types 
         }
     } else if k == NodeKind.Name {
         body.append(expr_leaf_name(e))
+    } else if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        body.append("(")
+        emit_expr(kids[0], ctx, lits, body, names, types)
+        body.append("->")
+        body.append(leaf_text(kids[2]))
+        body.append(")")
     } else if k == NodeKind.MethodCall {
         // kids: [recv, '.', name, '(', args..., ')'] -> Nova_str_method_<name>(recv, args...)
         ro kids = branch_children(e)
         body.append("Nova_str_method_")
         body.append(leaf_text(kids[2]))
         body.append("(")
-        emit_expr(kids[0], lits, body, names, types)
+        emit_expr(kids[0], ctx, lits, body, names, types)
         mut i = 0
         for c in kids {
             if i > 2 && is_expr_kind(c.kind_of()) {
                 body.append(", ")
-                emit_expr(c, lits, body, names, types)
+                emit_expr(c, ctx, lits, body, names, types)
             }
             i += 1
         }
@@ -376,7 +538,7 @@ fn emit_expr(e Node, mut lits []str, mut body StringBuilder, names []str, types 
         for c in kids {
             if is_expr_kind(c.kind_of()) {
                 if !first { body.append(", ") }
-                emit_expr(c, lits, body, names, types)
+                emit_expr(c, ctx, lits, body, names, types)
                 first = false
             }
         }
@@ -388,20 +550,20 @@ fn emit_expr(e Node, mut lits []str, mut body StringBuilder, names []str, types 
         if chk != "" {
             body.append(chk)
             body.append("(")
-            emit_expr(kids[0], lits, body, names, types)
+            emit_expr(kids[0], ctx, lits, body, names, types)
             body.append(", ")
-            emit_expr(kids[2], lits, body, names, types)
+            emit_expr(kids[2], ctx, lits, body, names, types)
             body.append(")")
             return
         }
         ro cmp = cmp_op(op)
         if cmp != "" {
             body.append("((nova_int)((")
-            emit_expr(kids[0], lits, body, names, types)
+            emit_expr(kids[0], ctx, lits, body, names, types)
             body.append(") ")
             body.append(cmp)
             body.append(" (")
-            emit_expr(kids[2], lits, body, names, types)
+            emit_expr(kids[2], ctx, lits, body, names, types)
             body.append(")))")
             return
         }
@@ -423,7 +585,7 @@ fn call_callee_text(kids []Node) -> str {
     }
 }
 
-fn emit_println(call Node, mut lits []str, mut body StringBuilder, names []str, types []int) -> () {
+fn emit_println(call Node, ctx Ctx, mut lits []str, mut body StringBuilder, names []str, types []int) -> () {
     ro kids = branch_children(call)
     if call_callee_text(kids) != "println" {
         ice("emit: the subset knows only println calls in statement position")
@@ -438,15 +600,17 @@ fn emit_println(call Node, mut lits []str, mut body StringBuilder, names []str, 
         } else if is_expr_kind(ck) {
             // Dispatch on the tiny lattice — the oracle prints each argument
             // with its own printer, newline once at the end.
-            ro at = type_of(c, names, types)
+            ro at = type_of(c, ctx, names, types)
             if at == 1 {
                 body.append("    nova_print_str(")
             } else if at == 2 {
                 body.append("    nova_print_bool(")
+            } else if at == 3 {
+                body.append("    nova_print_f64(")
             } else {
                 body.append("    nova_print_int(")
             }
-            emit_expr(c, lits, body, names, types)
+            emit_expr(c, ctx, lits, body, names, types)
             body.append(");\n")
         }
     }
