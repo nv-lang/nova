@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #658 minimal fixture (2026-08-14): a bare variant ctor
+// (`Other(x)` with no sum qualifier) in a static-ctor argument position,
+// with TWO differently-named sums in the CU sharing the variant NAMES.
+// Pre-fix codegen resolved the bare ctor BY NAME CU-wide
+// (find_variant_compat first-wins/lexicographic) -- blind to the
+// call-site expected type -- so the ctor landed in the WRONG sum: a clang
+// type error when the payloads differ, a silently wrong value when they
+// match. The fix: the checker records the expected-type resolution into
+// the `resolved_variant_ctors` channel at its one canonical compat choke
+// point (`assignable_direct`), and codegen consults it FIRST. The entry
+// imports functions only -- it NEVER names the types.
+
+module plan221_658.bare_variant_ctor_cross_enum_test
+
+import ./one.{mk_other, mk_shared, payload_of}
+import ./two.{mk_other_two, mk_shared_two, num_of, text_of, maybe_shared, text_of_kind}
+
+test "bare ctor with differing payloads lands in its own sum" {
+    assert(payload_of(mk_other()) == "from-one")
+    assert(num_of(mk_other_two()) == 42)      // pre-fix: the CU does not even build
+}
+
+test "same-payload bare ctor round-trips through the RIGHT sum" {
+    assert(payload_of(mk_shared()) == "one-value")
+    assert(text_of(mk_shared_two()) == "two-value")   // caught ONLY by the value assert
+}
+
+test "boxed bare ctor inside Some keeps its sum" {
+    match maybe_shared() {
+        Some(k) => assert(text_of_kind(k) == "boxed-two")
+        None => assert(false)
+    }
+}

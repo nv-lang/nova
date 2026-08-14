@@ -1229,6 +1229,14 @@ pub struct CEmitter {
     /// [M-172.1-U4-typedir-substrate]
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resolved_callees: std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
+    /// №658 (реестр 221.1): the bare-variant-ctor channel (bare `Variant(args)`
+    /// call-site `ExprId` → `(sum simple name as the checker resolved it,
+    /// variant index in the declaration)`) the checker populated in
+    /// `assignable_direct` (`ModuleEnv.resolved_variant_ctors`). Read via
+    /// `channel_variant_ctx` BEFORE the name-based `debt_find_variant_ctx`
+    /// heuristics (emit_call + `infer_expr_c_type` Channel 6); ANY miss falls
+    /// back to those untouched (strangler-fig, mirrors the 196 channels).
+    resolved_variant_ctors: std::collections::HashMap<crate::ast::ExprId, (String, usize)>,
     /// Plan 196.5 Stage-A: the subst-value channel (call-site `ExprId` → ordered
     /// `(generic-param name → concrete ResolvedType)`) the checker populated
     /// (`ModuleEnv.node_substs`). Mirrors `resolved_callees`'s plumbing. Stage-B1
@@ -2646,6 +2654,7 @@ impl CEmitter {
             resolved_types: std::collections::HashMap::new(),
             pattern_variant_types: std::collections::HashMap::new(),
             resolved_callees: std::collections::HashMap::new(),
+            resolved_variant_ctors: std::collections::HashMap::new(),
             node_substs: std::collections::HashMap::new(),
             fn_ret_by_span: std::collections::HashMap::new(),
             proven_overflow_sites: std::collections::HashSet::new(),
@@ -3320,6 +3329,15 @@ impl CEmitter {
     }
 
     pub fn set_pattern_variant_types(&mut self, m: &std::collections::HashMap<Span, String>) { self.pattern_variant_types = m.clone(); }
+    /// №658: feed the bare-variant-ctor channel (call-site `ExprId` → (sum
+    /// simple name, variant decl index)) the checker populated. Mirrors
+    /// `set_pattern_variant_types`. Read via `channel_variant_ctx`.
+    pub fn set_resolved_variant_ctors(
+        &mut self,
+        m: &std::collections::HashMap<crate::ast::ExprId, (String, usize)>,
+    ) {
+        self.resolved_variant_ctors = m.clone();
+    }
     /// Plan 172.1 U.4.3: feed the resolved-callee channel (`ExprId` → chosen callee
     /// `FnDecl.span`) the checker populated. Mirrors `set_resolved_types`. Codegen reads
     /// it via the U.4.3 equivalence-assert (stage a: free-fn); later stages make it the
@@ -4642,6 +4660,59 @@ impl CEmitter {
             return self.qualify_type_base(name, syntactic_module);
         }
         name.to_string()
+    }
+
+    /// №658 (реестр 221.1): channel-first resolution of a BARE variant-ctor
+    /// call — consult the checker's `resolved_variant_ctors` channel (the
+    /// call-site EXPECTED-type truth recorded by `assignable_direct`) BEFORE
+    /// the name-based `debt_find_variant_ctx` heuristics below. Returns the
+    /// collision-aware sum base (the key the schema actually resolved under —
+    /// the ctor emit must use it) + the variant's field-C-types on a
+    /// validated hit; ANY miss (no entry, unset id, generic/mono base, no
+    /// schema, variant/arity mismatch) returns `None` so the caller falls
+    /// back to the untouched legacy path (strangler-fig — never a panic,
+    /// never exclusive).
+    fn channel_variant_ctx(
+        &self,
+        call_id: crate::ast::ExprId,
+        variant: &str,
+        argc: usize,
+    ) -> Option<(String, Vec<String>)> {
+        if !call_id.is_set() {
+            return None;
+        }
+        let (sum_name, idx) = self.resolved_variant_ctors.get(&call_id).cloned()?;
+        // Collision-aware sum base — mirrors the qualified-receiver ctor path
+        // (`try_emit_explicit_variant_ctor`'s `ref_type_base`).
+        let base = self.ref_type_base(&sum_name, &[]);
+        // Generic sums own their mono ctor path (arg boxing + instance
+        // queuing) — do not intercept (mirrors `debt_find_variant_ctx`'s
+        // plain-only filter and `try_emit_explicit_variant_ctor`'s guard).
+        if base.contains("____")
+            || self.generic_types.contains(&base)
+            || self.generic_types.contains(&sum_name)
+        {
+            return None;
+        }
+        // Double lookup — mirrors `try_emit_explicit_variant_ctor`: the schema
+        // may be registered under the collision-aware base OR the plain name;
+        // remember WHICH key actually resolved.
+        let (key, entry) = match self.sum_schema_registry.lookup_sum_schema(&base) {
+            Some(e) => (base, e),
+            None => (
+                sum_name.clone(),
+                self.sum_schema_registry.lookup_sum_schema(&sum_name)?,
+            ),
+        };
+        // Validate the channel value against codegen's OWN schema view — a
+        // mismatch (drifted index, wrong variant, wrong arity) is a miss, not
+        // an error.
+        let v = entry.variants.get(idx)?;
+        if v.variant_name == variant && v.field_c_types.len() == argc {
+            Some((key, v.field_c_types.clone()))
+        } else {
+            None
+        }
     }
 
     /// [M-sync-crossmodule…] (D381): resolve a BARE variant name to its sum,
@@ -40354,7 +40425,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // variant shared across colliding sums (byte-identical for unique
                 // variants). `args.len()` distinguishes `InvalidData(msg)` (compress,
                 // 1 payload) from io's unit `InvalidData` (0 payload).
-                if let Some((type_name, _)) = self.debt_find_variant_ctx(name, Some(args.len())) {
+                // №658: the checker's `resolved_variant_ctors` channel is
+                // consulted FIRST (`channel_variant_ctx` — the call-site
+                // expected-type truth); any miss falls back to the untouched
+                // name-based heuristics.
+                if let Some((type_name, _)) = self
+                    .channel_variant_ctx(call_id, name, args.len())
+                    .or_else(|| self.debt_find_variant_ctx(name, Some(args.len())))
+                {
                     // Plan 59 Ф.7.5 D3: legacy typed-Err early-return
                     // (`nova_make_Result_Err_typed` для non-str Err через
                     // `err_typed_payload`/`tid` hybrid) удалён. Полная
@@ -62231,7 +62309,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // DIFFERENT sums (CC-FAIL / silent type confusion, M-178).
                 // Byte-identical for a unique variant (falls straight through
                 // to `find_variant_compat`).
-                if let Some((type_name, _)) = self.debt_find_variant_ctx(name, Some(args.len())) {
+                // №658: channel-first here TOO — the emission side (emit_call)
+                // reads the same channel, and this inference channel feeds the
+                // wrapper-type derivation for the SAME expr; diverging the two
+                // would re-open the M-178 class (emission and C-type naming
+                // two DIFFERENT sums).
+                if let Some((type_name, _)) = self
+                    .channel_variant_ctx(expr.id, name, args.len())
+                    .or_else(|| self.debt_find_variant_ctx(name, Some(args.len())))
+                {
                     if type_name == "Option" || type_name == "NovaOpt_nova_int" {
                         if name == "Some" && !args.is_empty() {
                             let arg_ty = self.infer_expr_c_type(args[0].expr());

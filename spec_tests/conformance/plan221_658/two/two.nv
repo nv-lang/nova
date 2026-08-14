@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #658 minimal fixture, module TWO: the OTHER sum sharing the
+// variant names `Other`/`Shared` with ./one's `Fault`. Its bare ctors in
+// the static-ctor argument position are the #658 core: pre-fix codegen
+// resolved them BY NAME CU-wide and landed them in the wrong sum.
+
+module plan221_658.two
+
+export type Mishap enum
+    | Other(int)      // same variant name, DIFFERENT payload -- the clang-catchable #658 form
+    | Shared(str)     // same variant name, SAME payload -- the "silently wrong value" form
+                      // (live std pair: sql.nv:152 DbError.Other(str) vs serde.nv:72)
+    | Beta
+
+export type Report2 { kind Mishap }
+export fn Report2.new(kind Mishap) -> Report2 => { kind }
+
+export fn mk_other_two() -> Report2 => Report2.new(Other(42))
+    // pre-fix: find_variant_compat picks "Fault" ("Fault" < "Mishap") ->
+    // nova_make_Fault_Other(42) -> clang: int into a nova_str parameter --
+    // the RED core of the fixture
+export fn mk_shared_two() -> Report2 => Report2.new(Shared("two-value"))
+export fn num_of(r Report2) -> int => match r.kind { Other(n) => n, _ => -1 }
+export fn text_of(r Report2) -> str => match r.kind { Shared(s) => s, _ => "" }
+export fn maybe_shared() -> Option[Mishap] { Some(Shared("boxed-two")) }   // boxed form (class M-178)
+export fn text_of_kind(k Mishap) -> str => match k { Shared(s) => s, _ => "" }

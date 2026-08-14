@@ -311,11 +311,7 @@ fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError]
         None    => Err(DeError.unexpected("array", json_kind(@cur)))
         Some(a) => match a.get(i) {
             Some(v) => Ok(JsonDeserializer.new(v, @depth + 1, @max_depth))
-            // [M-658-bare-variant-ctor-resolves-cross-enum] qualified on
-            // purpose: the bare `Other(...)` ctor is resolved BY NAME
-            // CU-wide by codegen and lands in io.ErrorKind.Other(int) when
-            // fs is linked too (registry #658; checker-channel fix pending).
-            None    => Err(DeError.new(DeErrorKind.Other("sequence index out of range")))
+            None    => Err(DeError.new(Other("sequence index out of range")))
         }
     }
 }

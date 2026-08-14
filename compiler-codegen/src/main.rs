@@ -550,6 +550,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     emitter.set_resolved_types(&module_env.resolved_types);
     // №279: feed the per-pattern resolved-sum-name channel to the emitter.
     emitter.set_pattern_variant_types(&module_env.pattern_variant_types);
+    // №658: feed the bare-variant-ctor channel (call-site ExprId → (sum simple
+    // name, variant decl index)) — consulted before the name-based
+    // debt_find_variant_ctx heuristics.
+    emitter.set_resolved_variant_ctors(&module_env.resolved_variant_ctors);
     // Plan 172.1 U.4.3: feed the resolved-callee channel (ExprId → chosen callee
     // FnDecl.span) the checker populated (U.3.4-prep) so codegen can read its OWN view
     // of the chosen callee instead of re-resolving the overload (§0).
