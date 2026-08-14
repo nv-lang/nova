@@ -253,8 +253,15 @@ step "ci-status (внешний авторитетный гейт — GitHub Act
 # тогда честный ответ — «нечего смотреть», а не «ok». Учить его печатать `ok:`
 # ради обёртки значило бы встроить ровно ту ложь, против которой обёртка и
 # заведена. Поэтому вызов остаётся голым и не влияет на вердикт.
-bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
-    bash "$ROOT/scripts/guards/check-ci-status.sh" || true
+# №651: вывод шага запоминается, и строка вердикта ПОВТОРЯЕТСЯ у финального
+# итога. Совещательный вердикт (exit 0) печатался в середине сотен строк — и
+# два прогона подряд «RED на 7aa5be9b2» прошли мимо читающего, который смотрел
+# tail и грепал GATE FAIL. Класс №645: строка была, читать было некому. Приём
+# тот же, что у override-предупреждения (№283): печать в начале И у вердикта.
+CI_STATUS_OUT=$(bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
+    bash "$ROOT/scripts/guards/check-ci-status.sh" 2>&1 || true)
+printf '%s\n' "$CI_STATUS_OUT"
+CI_VERDICT_LINE=$(printf '%s\n' "$CI_STATUS_OUT" | grep -m1 '^check-ci-status: ' || true)
 
 # Срок 60→240 (2026-08-11): шаг упёрся в предел и стал отказом «шаг ничего не
 # доказал» (№475) — не из-за кириллицы, а потому что история, которую он
@@ -825,11 +832,21 @@ step "D-number uniqueness"
 DUPES=$(grep -rhoE "^## D[0-9]+(\.|[[:space:]]+—)" spec/decisions/*.md \
         | grep -oE "[0-9]+" | sort -n | uniq -d)
 [ -n "$DUPES" ] && fail "дублирующиеся номера D-блоков: $(echo "$DUPES" | tr '\n' ' ')"
+# №651: вердикт внешнего гейта — у итога, где его прочтут. Красный CI не
+# роняет локальный гейт (совещательный шаг, см. его вызов), но GATE OK не
+# имеет права ВЫГЛЯДЕТЬ полной правдой, когда авторитетный гейт красен.
+CI_TAIL=""
+if [ -n "${CI_VERDICT_LINE:-}" ]; then
+    echo "внешний гейт (повтор вердикта, №651): $CI_VERDICT_LINE"
+    case "$CI_VERDICT_LINE" in
+        *RED*|*STALE*|*ОШИБКА*) CI_TAIL=" [ВНЕШНИЙ CI НЕ ЗЕЛЁНЫЙ — см. строку выше; пуш остановит pre-push]" ;;
+    esac
+fi
 if [ -n "$OVERRIDE_FILES" ]; then
     print_override_warning
-    echo "GATE OK (final) [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]"
+    echo "GATE OK (final) [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]$CI_TAIL"
 else
-    echo "GATE OK (final)"
+    echo "GATE OK (final)$CI_TAIL"
 fi
 
 # Итоговый рубеж: сюда доходим, если мега-CU прошёл.
