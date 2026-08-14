@@ -202,6 +202,10 @@ step "invariant-discipline (норма об инвариантах — всео�
 # per-guard селфтестов ниже (:259/:463) и тот, в который страж после
 # переписи на awk укладывается за секунды на реальном дереве.
 guard --deadline 300 "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
+step "novac-arch-class-proofs (три доказательства у каждого класса — 274.1)"
+guard "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "$ROOT" || fail "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
+step "novac-arch-invariants (счётчик инвариантов у разделов карты)"
+guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
