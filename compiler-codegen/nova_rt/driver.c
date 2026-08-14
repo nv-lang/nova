@@ -39,8 +39,9 @@ void nova_driver_init(void) {
     /* Idempotent guard. */
     if (nova_abool_load(&_nova_driver.started)) return;
 
-    /* №664 (носитель №662, 2026-08-15): SIGPIPE обязан быть проигнорирован
-     * ДО первого сетевого write — и дверь именно ЗДЕСЬ, а не в
+    /* №664 (носитель №662, 2026-08-15): SIGPIPE игнорируется ДО первого
+     * сетевого write [INV-GUARD: check-rt-sigpipe-ign.sh] — и дверь именно
+     * ЗДЕСЬ, а не в
      * nova_runtime_init (тот — явный тюнер runtime.init(), обычный бинарь
      * его не зовёт; проверено мостом: SIG_IGN в runtime_init смерть НЕ
      * снял, exit=141 остался). Vendored libuv на Linux пишет голым
