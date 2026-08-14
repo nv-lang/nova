@@ -76,6 +76,18 @@ test "unknown method is an honest subset refusal at the name" {
     assert(compile("fn main() { println(\"s\".reverse()) }").len() == 1)
 }
 
+test "no silent type defaults: fn without a return type is refused (#652 class)" {
+    // The owner's rule 2026-08-14: a quiet nova_int fallback bred a bug
+    // family in the current compiler — the boundary falls in check, the
+    // emitter's ice is only the second floor.
+    assert(compile("fn helper() { println(\"x\") }\nfn main() { }").len() == 1)
+}
+
+test "E2 match surface is clean: sum decl, arms, guards, expression fn" {
+    ro src = "type S\n | A(f64)\n | B(f64, f64)\nfn area(s S) -> f64 => match s {\n A(r) => r\n B(w, h) => w * h\n}\nfn main() { println(area(A(1.5))) }"
+    assert(compile(src).len() == 0)
+}
+
 test "escaped interpolation is a literal, not a refusal" {
     // E1 review p.4: `\${` is the escaped literal form — lexes as StrLit.
     // The input is assembled by concatenation so THIS file's own string

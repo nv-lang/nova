@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/names — the ONE name door (architecture §2/§4a: identity is an
+// id, never a name).
+//
+// Every resolve table in novac keys by integer id; the ONLY str-keyed maps
+// live HERE, one per namespace, so "who owns name resolution" has a single
+// answer and lookups are O(1). A linear name scan anywhere else in
+// novac/src is the guarded anti-pattern (owner's rule 2026-08-14: compile
+// speed is the top priority, and the number of user types is unbounded —
+// range-coded ids and for-loop scans do not survive that);
+// check-novac-no-string-keys.sh holds both halves.
+//
+// E2 note: today the door is a thin NameTable over std HashMap. The full
+// `names` layer of the architecture (scopes, declarations, the
+// NamespaceId-keyed resolver over the syntax projection) grows here — same
+// module, same door — so nothing has to move later.
+
+module novac.names
+
+export type NamespaceId enum
+    | NsDefs
+    | NsFields
+    | NsLocals
+
+export type NameTable {
+    ns NamespaceId
+    map HashMap[str, int] // the NamespaceId key component is @ns, one field up
+}
+
+export fn NameTable.new(ns NamespaceId) -> NameTable =>
+    { ns, map: HashMap[str, int].new() } // ns is the NamespaceId key component
+
+export fn NameTable mut @put(name str, id int) -> () {
+    @map.insert(name, id)
+}
+
+/// -1 = absent. O(1) — the whole point of the door.
+export fn NameTable @find(name str) -> int => @map.get(name) ?? -1

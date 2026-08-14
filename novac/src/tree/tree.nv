@@ -38,6 +38,13 @@ export type NodeKind enum
     | RecordCtor
     | CtorField
     | CtorSpread
+    | SumDecl
+    | Variant
+    | MatchExpr
+    | MatchArm
+    | Pattern
+    | Guard
+    | FnExprBody
     | Param
     | RetType
     | Name

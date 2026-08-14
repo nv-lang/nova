@@ -98,12 +98,29 @@ export fn parse(toks []Token) -> Node {
 }
 
 // `type Name { field type ... }` — fields are newline-separated pairs of
-// idents, no commas. Sum types (`type X enum ...` / leading `|`) are the
-// match_demo wave; a non-brace after the name falls into the fn_decl-style
-// junk rules via the top loop's recovery on the next token.
+// idents, no commas. `type Name` followed by leading `|` variants is a sum
+// (the corpus form on the pin; the oracle accepts it — divergence registry,
+// prediction 1). A non-brace, non-pipe tail falls into the top loop's
+// recovery on the next token.
 fn Cursor mut @type_decl() -> Node {
     mut kids = []Node.of(@take()) // KwType
     if @peek() == TokenKind.Ident { kids.push(@take()) }
+    if @peek() == TokenKind.Pipe {
+        while @peek() == TokenKind.Pipe {
+            mut vk = []Node.of(@take()) // '|'
+            if @peek() == TokenKind.Ident { vk.push(@take()) }
+            if @peek() == TokenKind.LParen {
+                vk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    vk.push(@take()) // payload type name
+                    if @peek() == TokenKind.Comma { vk.push(@take()) }
+                }
+                if @peek() == TokenKind.RParen { vk.push(@take()) }
+            }
+            kids.push(branch(NodeKind.Variant, vk))
+        }
+        return branch(NodeKind.SumDecl, kids)
+    }
     if @peek() == TokenKind.LBrace {
         kids.push(@take())
         while @peek() == TokenKind.Ident {
@@ -144,17 +161,26 @@ fn Cursor mut @fn_decl() -> Node {
         if @peek() == TokenKind.Ident { rt.push(@take()) }
         kids.push(branch(NodeKind.RetType, rt))
     }
-    if @peek() != TokenKind.LBrace {
+    if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {
         // Panic-mode bucket (no-cascade guard's catch, 2026-08-14): garbage
-        // between the signature and the block collects into ONE Err branch —
+        // between the signature and the body collects into ONE Err branch —
         // one seeded mistake, one diagnostic — instead of leaking token by
-        // token into the top level.
+        // token into the top level. FatArrow is a body form (`=> expr`),
+        // not junk — the bucket stops on it like on LBrace.
         mut junk = []Node.new()
         while !@at_eof() && @peek() != TokenKind.LBrace
+            && @peek() != TokenKind.FatArrow
             && @peek() != TokenKind.KwFn && @peek() != TokenKind.KwModule {
             junk.push(@take())
         }
         if junk.len() > 0 { kids.push(branch(NodeKind.Err, junk)) }
+    }
+    if @peek() == TokenKind.FatArrow {
+        // Expression-bodied fn: `fn area(...) -> f64 => match ...`
+        mut ek = []Node.of(@take())
+        ek.push(@expr())
+        kids.push(branch(NodeKind.FnExprBody, ek))
+        return branch(NodeKind.FnDecl, kids)
     }
     if @peek() == TokenKind.LBrace { kids.push(@block()) }
     branch(NodeKind.FnDecl, kids)
@@ -222,7 +248,7 @@ fn Cursor mut @stmt() -> Node {
 }
 
 fn is_binop(k TokenKind) -> bool =>
-    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash || k == TokenKind.Lt || k == TokenKind.Le || k == TokenKind.DotDot
+    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash || k == TokenKind.Lt || k == TokenKind.Le || k == TokenKind.Gt || k == TokenKind.DotDot
 
 fn Cursor mut @expr() -> Node {
     mut left = @primary()
@@ -258,6 +284,49 @@ fn Cursor mut @primary() -> Node {
     e
 }
 
+// `match scrutinee { arm* }` — an arm is `pattern [if guard] => expr`.
+// Patterns of the subset: int literal · binder ident (`_` included — the
+// emitter treats any binder named `_` as bindless) · `Variant(b1, b2)`.
+// Arm separators are newlines (D452 land); the tree does not care — arms
+// run to the closing brace, lossless either way.
+fn Cursor mut @match_expr() -> Node {
+    mut kids = []Node.of(@take()) // KwMatch
+    kids.push(@head_expr())       // scrutinee: `match s {` — brace is the body
+    if @peek() == TokenKind.LBrace { kids.push(@take()) }
+    while !@at_eof() && @peek() != TokenKind.RBrace {
+        mut ak = []Node.new()
+        // pattern
+        if @peek() == TokenKind.IntLit {
+            ak.push(branch(NodeKind.Pattern, []Node.of(@take())))
+        } else if @peek() == TokenKind.Ident {
+            mut pk = []Node.of(@take())
+            if @peek() == TokenKind.LParen {
+                pk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    pk.push(@take())
+                    if @peek() == TokenKind.Comma { pk.push(@take()) }
+                }
+                if @peek() == TokenKind.RParen { pk.push(@take()) }
+            }
+            ak.push(branch(NodeKind.Pattern, pk))
+        } else {
+            // Recovery: one Err, one token, keep the arm loop advancing.
+            kids.push(branch(NodeKind.Err, []Node.of(@take())))
+            continue
+        }
+        if @peek() == TokenKind.KwIf {
+            mut gk = []Node.of(@take())
+            gk.push(@expr())
+            ak.push(branch(NodeKind.Guard, gk))
+        }
+        if @peek() == TokenKind.FatArrow { ak.push(@take()) }
+        ak.push(@expr())
+        kids.push(branch(NodeKind.MatchArm, ak))
+    }
+    if @peek() == TokenKind.RBrace { kids.push(@take()) }
+    branch(NodeKind.MatchExpr, kids)
+}
+
 // Constructor field list after the opening brace: `name: expr`, punning
 // `name`, spread `...expr` — comma-separated; the closing brace ends it.
 fn Cursor mut @ctor_fields(mut kids []Node) -> () {
@@ -286,6 +355,17 @@ fn Cursor mut @atom() -> Node {
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit {
         return branch(NodeKind.Lit, []Node.of(@take()))
     }
+    if @peek() == TokenKind.Minus {
+        // Unary minus on a numeric literal only (`describe(-3)`); anything
+        // else after `-` recovers as Err through the literal branch below.
+        mut kids = []Node.of(@take())
+        if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit {
+            kids.push(@take())
+            return branch(NodeKind.Lit, kids)
+        }
+        return branch(NodeKind.Err, kids)
+    }
+    if @peek() == TokenKind.KwMatch { return @match_expr() }
     if @peek() == TokenKind.LBrace && !@no_ctor {
         // Anonymous constructor `{ ...p, y: 10.0 }` — the record type comes
         // from the spread's expression (type inference is the emitter's
