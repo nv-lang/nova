@@ -1,6 +1,7 @@
 #!/bin/sh
 # scripts/guards/check-novac-arch-invariants.sh — счётчик инвариантов у каждого
 # раздела карты архитектуры novac.
+# План: docs/plans/274.1-novac-architecture.md §2б; зонтик docs/plans/274-novac-self-hosted-compiler.md.
 #
 # ПРАВИЛО (274.1 §2б, норма 253/conventions-governance): каждый раздел КАРТЫ
 # (§1–§10 в docs/dev/novac-architecture.md — слои, модули, рёбра, информация,

@@ -1,6 +1,7 @@
 #!/bin/sh
 # scripts/guards/check-novac-no-string-keys.sh — идентичность — не имя:
 # строковый ключ таблицы в novac/src вне закона.
+# План: docs/plans/274-novac-self-hosted-compiler.md §10.3; архитектура — docs/dev/novac-architecture.md §4а.
 #
 # ПРАВИЛО (архитектура novac §4а; К2 §16, инварианты (а) и (б); страж назван
 # в плане 274 §10.3): имя — ключ ровно в одной двери (`names`). ПОСЛЕ `names`
