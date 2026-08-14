@@ -68,6 +68,18 @@ fn Cursor mut @fn_decl() -> Node {
     if @peek() == TokenKind.Ident { kids.push(@take()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
     if @peek() == TokenKind.RParen { kids.push(@take()) }
+    if @peek() != TokenKind.LBrace {
+        // Panic-mode bucket (no-cascade guard's catch, 2026-08-14): garbage
+        // between the signature and the block collects into ONE Err branch —
+        // one seeded mistake, one diagnostic — instead of leaking token by
+        // token into the top level.
+        mut junk = []Node.new()
+        while !@at_eof() && @peek() != TokenKind.LBrace
+            && @peek() != TokenKind.KwFn && @peek() != TokenKind.KwModule {
+            junk.push(@take())
+        }
+        if junk.len() > 0 { kids.push(branch(NodeKind.Err, junk)) }
+    }
     if @peek() == TokenKind.LBrace { kids.push(@block()) }
     branch(NodeKind.FnDecl, kids)
 }

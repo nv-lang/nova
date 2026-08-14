@@ -1,13 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_EXIT_CODE 2
+// (the test runner executes this main with no args: usage + exit 2 is the
+// CONTRACT of the CLI door, so the runner asserts exactly that.)
 // novac — the Nova compiler written in Nova. Plan 274, stage E1.
 //
-// This binary is the E1 skeleton: it exists so the package builds, the guards
-// have a subject, and the differential gate has an entry point. The vertical
-// slice (lex -> tree -> parse -> check -> emit_c for the E1 subset) lands
-// behind this door module by module, per the edge table in
-// docs/dev/novac-architecture.md §3.
+// The E1 CLI: `novac <file.nv>` lexes, parses and subset-checks one file,
+// prints §7-schema JSON diagnostics one per line, and exits 0 on a clean
+// subset file / 1 on diagnostics / 2 on usage or IO errors. This is the
+// entry the binary guard quartet judges (differential vs the oracle,
+// diag-schema, no-cascade, no-panic) and the seam the driver will call.
+//
+// Effects at the door only: Fs and Os are handled HERE (real_fs/real_os);
+// the compiler modules below are pure functions over the handed-in text
+// (274 §2: the compiler reads nothing itself).
 
 module novac
 
+import ./source.{SourceText}
+import ./lex.{lex}
+import ./parse.{parse}
+import ./check.{check}
+import ./diag.{to_json}
+import std.fs.{read_text, real_fs}
+import std.os.{args, exit_process, real_os}
+
+fn compile_one(text str, file str) -> int {
+    ro src = SourceText { text }
+    ro diags = check(parse(lex(text)), src)
+    mut i = 0
+    for d in diags {
+        println(to_json(d, i, file))
+        i += 1
+    }
+    if diags.len() > 0 { 1 } else { 0 }
+}
+
 fn main() {
-    println("novac 0.0.1 (E1 skeleton; subset compiler under construction)")
+    with Fs = real_fs(), Os = real_os() {
+        ro a = args()
+        if a.len() < 3 || a[1] != "check" {
+            println("usage: novac check <file.nv>")
+            exit_process(2)
+            return
+        }
+        ro path = a[2]
+        match read_text(path.to_path()) {
+            Ok(text) => exit_process(compile_one(text, path))
+            Err(_) => {
+                println("novac: cannot read ", path)
+                exit_process(2)
+            }
+        }
+    }
 }

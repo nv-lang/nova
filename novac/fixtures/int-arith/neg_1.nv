@@ -1,0 +1,5 @@
+module int_arith.neg_1
+
+fn main() {
+    println(1 + ~)
+}

@@ -1,0 +1,5 @@
+module str_lit.neg_1
+
+fn main() {
+    println("has ${interp}")
+}

@@ -1,0 +1,5 @@
+module str_lit.pos_1
+
+fn main() {
+    println("plain string, no interpolation")
+}

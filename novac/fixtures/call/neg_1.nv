@@ -1,0 +1,5 @@
+module call.neg_1
+
+fn main() {
+    println(;)
+}

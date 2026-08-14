@@ -1,0 +1,5 @@
+module fn_decl.pos_1
+
+fn main() {
+    println("f")
+}

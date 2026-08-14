@@ -1,0 +1,5 @@
+module call.pos_1
+
+fn main() {
+    println("x", 7)
+}

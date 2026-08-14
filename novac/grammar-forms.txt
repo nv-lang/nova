@@ -1,0 +1,5 @@
+module-decl
+fn-decl
+call
+int-arith
+str-lit

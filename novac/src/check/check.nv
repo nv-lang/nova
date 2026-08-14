@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check — the E1 mini-checker (architecture §2: module `check`).
+//
+// The subset rule is ONE: everything the parser had to recover from is
+// outside the E1 subset, and every such place is reported HONESTLY as
+// E_NOVAC_SUBSET with its exact byte position — computed through the one
+// position door (source.offset_of on the leaf's text slice). One Err branch
+// produces exactly one diagnostic: no cascades by construction, which is what
+// check-novac-no-cascade.sh will hold once fixtures exist.
+//
+// Poisoning discipline (§7): an Err branch is already-reported by definition;
+// nothing else looks inside it. There is no permissive unknown here to
+// swallow anything (the №652 lesson) — the subset checker either understands
+// a node kind or reports it, an exhaustive match with no silent default.
+
+module novac.check
+
+import ../source.{SourceText}
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind}
+import ../diag.{Diagnostic, Severity}
+
+/// Check a parsed file against the E1 subset. Always returns the full list;
+/// no Result (274 §4 п.1).
+export fn check(file Node, src SourceText) -> []Diagnostic {
+    mut out = []Diagnostic.new()
+    walk(file, src, out)
+    out
+}
+
+fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
+    match n {
+        Leaf(t) => report_if_error_token(t, src, out)
+        Branch { kind, children } => {
+            if kind == NodeKind.Err {
+                report_err_branch(children, src, out)
+            } else {
+                for c in children {
+                    walk(c, src, out)
+                }
+            }
+        }
+    }
+}
+
+fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
+    if t.kind == TokenKind.ErrorTok {
+        ro lo = src.offset_of(t.text)
+        out.push(Diagnostic {
+            code: "E_NOVAC_SUBSET",
+            severity: Severity.ErrorSev,
+            lo,
+            hi: lo + t.text.byte_len(),
+            message: "outside the E1 subset: unrecognized or context-dependent token",
+        })
+    }
+}
+
+fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> () {
+    // One Err branch — one diagnostic, spanning its first leaf's text.
+    for c in children {
+        match c {
+            Leaf(t) => {
+                ro lo = src.offset_of(t.text)
+                out.push(Diagnostic {
+                    code: "E_NOVAC_SUBSET",
+                    severity: Severity.ErrorSev,
+                    lo,
+                    hi: lo + t.text.byte_len(),
+                    message: "outside the E1 subset: construct not in the MVP grammar",
+                })
+                return
+            }
+            Branch { .. } => {}
+        }
+    }
+}

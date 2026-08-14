@@ -1,0 +1,14 @@
+# Fixture corpus of novac (plan 274, E1). Its own package so the oracle's D78
+# path rule matches: form-dir/file == module path. pos_* must be accepted by
+# BOTH compilers; neg_* carries exactly ONE seeded mistake (the no-cascade
+# guard counts one error diagnostic per neg fixture).
+[package]
+name = "novac_fixtures"
+version = "0.0.1"
+nova-version = "0.5"
+license = "MIT OR Apache-2.0"
+description = "novac E1 grammar-form fixtures"
+repository = "https://github.com/nv-lang/nova.git"
+
+[lib]
+src = "."
