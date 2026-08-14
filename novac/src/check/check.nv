@@ -57,8 +57,13 @@ fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
 }
 
 fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> () {
-    // One Err branch — one diagnostic, spanning its first leaf's text.
+    // One Err branch — one diagnostic, at its FIRST leaf. The leaf can nest:
+    // parse wraps a stray non-header module declaration as a whole ModuleDecl
+    // branch inside Err (fuzzer catch 2026-08-14); the old flat scan found no
+    // direct leaf there and reported NOTHING — a silent pass on a broken file.
+    ro before = out.len()
     for c in children {
+        if out.len() > before { return } // the one diagnostic is out already
         match c {
             Leaf(t) => {
                 ro lo = src.offset_of(t.text)
@@ -71,7 +76,7 @@ fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> (
                 })
                 return
             }
-            Branch { .. } => {}
+            Branch { children: inner, .. } => report_err_branch(inner, src, out)
         }
     }
 }

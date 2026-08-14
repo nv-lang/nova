@@ -77,6 +77,11 @@ const B_TAB u8 = 0x09
 const B_LF u8 = 0x0A
 const B_CR u8 = 0x0D
 const B_BACKSLASH u8 = 0x5C
+// UTF-8 continuation bytes (10xxxxxx). lex only ever sees VALID UTF-8 (main
+// validates via to_str before the pipeline), so "next byte is not a
+// continuation byte" is exactly "codepoint boundary".
+const B_UTF8_TAIL_LO u8 = 0x80
+const B_UTF8_TAIL_HI u8 = 0xBF
 
 fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
 
@@ -133,7 +138,14 @@ export fn lex(src str) -> []Token {
         }
         ro leading = src[trivia_start..i]
         if i >= n {
-            toks.push(Token { kind: TokenKind.Eof, leading, text: "" })
+            // The Eof text is the EMPTY SLICE ANCHORED AT THE END, not the ""
+            // literal: every token text must be a real slice of src, or the
+            // one position door (source.offset_of, pointer distance) gets a
+            // foreign pointer and its contract assert fires — fuzzer catch
+            // 2026-08-14: recovery at EOF puts this leaf into an Err branch
+            // and check reports a position on it. text[n..n] is contract-legal
+            // (str @index admits start == end == byte_len).
+            toks.push(Token { kind: TokenKind.Eof, leading, text: src[n..n] })
             return toks
         }
         // Token text.
@@ -165,7 +177,7 @@ export fn lex(src str) -> []Token {
                 if b[i] == ('"' as u8) {
                     closed = true
                     i += 1
-                } else if b[i] == ('\\' as u8) && i + 1 < n {
+                } else if b[i] == B_BACKSLASH && i + 1 < n {
                     // An escape consumes BOTH bytes and, deliberately, does
                     // not look inside: `\${` is the escaped, literal form and
                     // must NOT flag interpolation (E1 review p.4 -- the old
@@ -203,10 +215,20 @@ export fn lex(src str) -> []Token {
         } else {
             kind = punct_kind(c)
             i += 1
+            if c >= B_UTF8_TAIL_LO {
+                // A non-ASCII byte outside every token class starts a
+                // multi-byte codepoint: the ErrorTok must swallow the WHOLE
+                // sequence, or the src[start..i] slice below splits the
+                // codepoint and the str-slice contract panics (fuzzer catch
+                // 2026-08-14: corruption byte ahead of a Cyrillic comment).
+                while i < n && b[i] >= B_UTF8_TAIL_LO && b[i] <= B_UTF8_TAIL_HI { i += 1 }
+            }
         }
         toks.push(Token { kind, leading, text: src[start..i] })
     }
-    toks.push(Token { kind: TokenKind.Eof, leading: "", text: "" })
+    // Same end-anchored empty slices as the early return above — the Eof
+    // leaf must point INTO src for the position door.
+    toks.push(Token { kind: TokenKind.Eof, leading: src[n..n], text: src[n..n] })
     toks
 }
 

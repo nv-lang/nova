@@ -42,6 +42,22 @@ test "unterminated string alone: one diagnostic, honest refusal" {
     assert(compile("fn main() { \"oops }").len() == 1)
 }
 
+test "stray module after the header: one diagnostic, no hang (fuzzer 2026-08-14)" {
+    // The doubled-file mutation. KwModule is a sync point for BOTH junk
+    // buckets, so the top loop itself must consume it: before the fix this
+    // input spun forever pushing empty Err branches until the GC died.
+    assert(compile("fn main() { }\nmodule").len() == 1)
+    assert(compile("module a\nfn main() { }\nmodule a\nfn main() { }").len() == 1)
+}
+
+test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08-14)" {
+    // Truncation mid-statement: primary() recovers by consuming the Eof
+    // leaf. Its text used to be the "" literal — a foreign pointer for the
+    // position door, killed by offset_of's contract assert. Now it is the
+    // end-anchored empty slice and the report is honest.
+    assert(compile("fn main() { mut i").len() == 1)
+}
+
 test "escaped interpolation is a literal, not a refusal" {
     // E1 review p.4: `\${` is the escaped literal form — lexes as StrLit.
     // The input is assembled by concatenation so THIS file's own string

@@ -96,6 +96,16 @@ test "arithmetic file reserializes byte for byte" {
     assert(reserialize(lex(src)) == src)
 }
 
+test "multi-byte codepoint outside every token class: one ErrorTok, lossless (fuzzer 2026-08-14)" {
+    // An em-dash hits the punct fallback; eating it ONE byte at a time made
+    // src[start..i] split the codepoint and the str-slice contract panicked.
+    ro src = "a — b"
+    ro toks = lex(src)
+    assert(toks[1].kind == TokenKind.ErrorTok)
+    assert(toks[1].text.byte_len() == 3)
+    assert(reserialize(toks) == src)
+}
+
 test "eof token carries tail trivia" {
     ro toks = lex("x  // tail")
     ro last = toks[toks.len() - 1]

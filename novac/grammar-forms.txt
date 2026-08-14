@@ -1,5 +1,5 @@
-module-decl
-fn-decl
+module_decl
+fn_decl
 call
-int-arith
-str-lit
+int_arith
+str_lit

@@ -57,6 +57,14 @@ export fn parse(toks []Token) -> Node {
     while !p.at_eof() {
         if p.peek() == TokenKind.KwFn {
             items.push(p.fn_decl())
+        } else if p.peek() == TokenKind.KwModule {
+            // A module declaration that is NOT the file header is outside
+            // the language shape — wrap it in Err so check reports it. It
+            // MUST be consumed here: both junk buckets stop at KwModule as
+            // a sync point, so a loop iteration that never eats it does not
+            // advance (fuzzer catch 2026-08-14: a doubled file hung forever
+            // pushing empty Err branches until the GC died).
+            items.push(branch(NodeKind.Err, []Node.of(p.module_decl())))
         } else {
             // Panic-mode bucket, same rule as inside fn_decl (E1 review p.1,
             // 2026-08-14): a RUN of stray top-level tokens is ONE seeded
