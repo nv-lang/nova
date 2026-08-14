@@ -208,6 +208,8 @@ step "novac-arch-invariants (счётчик инвариантов у разде
 guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
 step "novac-no-naked-panic (явный инвариант — через дверь ice(), П12)"
 guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+step "novac-oracle-workarounds (форма обхода багов оракула — 274 §1.5)"
+guard "$ROOT/scripts/guards/check-novac-oracle-workarounds.sh" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 step "novac-deps (рёбра только из таблицы §3 архитектуры)"
 guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
 step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"

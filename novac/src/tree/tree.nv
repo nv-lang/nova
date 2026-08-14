@@ -65,6 +65,8 @@ fn append_node(mut out StringBuilder, n Node) -> () {
 /// its OWN kind. (An Option[NodeKind] attempt tripped compiler bug #660 --
 /// Option over a plain enum miscompiles in the merged multi-TU build, the
 /// #659 family; the dedicated variant is the honest answer anyway.)
+/// [ORACLE-#660] bug-shaped site (plan 274 p.1.5): on the fix wave,
+/// re-decide Option[NodeKind] vs the dedicated kind and drop this marker.
 export fn Node @kind_of() -> NodeKind {
     match @ {
         Leaf(_) => NodeKind.LeafNode
