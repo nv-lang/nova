@@ -19,12 +19,12 @@ cat > "$T/arch.md" <<'EOF'
 EOF
 
 # 1. Законно: parse импортирует lex (ребро есть).
-echo "import novac.lex" > "$T/src/parse/parse.nv"
+echo "import ../lex.{lex}" > "$T/src/parse/parse.nv"
 sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && ok "разрешённое ребро проходит" || bad "разрешённое покраснело"
 sh "$G" "$ROOT" "$T/src" "$T/arch.md" 2>/dev/null | grep -q 'ok:' && ok "печатает ok:" || bad "нет ok: (№645)"
 
 # 2. Нарушение: lex импортирует parse (ребра нет).
-echo "import novac.parse" > "$T/src/lex/lex.nv"
+echo "import ../parse.{p}" > "$T/src/lex/lex.nv"
 sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && bad "запрещённое ребро прошло" || ok "запрещённое ребро поймано"
 rm "$T/src/lex/lex.nv"
 

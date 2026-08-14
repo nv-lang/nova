@@ -58,7 +58,7 @@ for f in $(find "$SRC" -name '*.nv' 2>/dev/null); do
             continue
         fi
     fi
-    for imp in $(grep -E '^import novac\.' "$f" 2>/dev/null | sed 's/^import novac\.//; s/[ .].*//'); do
+    for imp in $(grep -E '^import \.\./' "$f" 2>/dev/null | sed 's|^import \.\./||; s/[ .{].*//'); do
         N=$((N+1))
         printf '%s\n' "$EDGES" | grep -q "^$mod:$imp$" || \
             BAD="$BAD\n  $rel: импорт '$imp' — ребра '$mod -> $imp' нет в таблице §3"

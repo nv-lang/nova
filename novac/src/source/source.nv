@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/source — the source-text door (architecture §2: module `source`).
+//
+// One class of task: representing input text and positions in it. Everything
+// downstream speaks in byte offsets into the original text; nothing here
+// knows about tokens or trees (edge table §3: `source` is a leaf).
+
+module novac.source
+
+/// Half-open byte range [lo, hi) into the source text.
+export type Span {
+    lo int
+    hi int
+}
+
+export fn Span @len() -> int => @hi - @lo
+
+/// The compiler never reads files itself (274 §2: the driver hands text in),
+/// so the source module carries only the text and derived facts about it.
+export type SourceText {
+    text str
+}
+
+export fn SourceText @len() -> int => @text.byte_len()
+
+export fn SourceText @slice(sp Span) -> str => @text[sp.lo..sp.hi]

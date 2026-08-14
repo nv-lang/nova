@@ -1,0 +1,144 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/lex — the tokenization door (architecture §2: module `lex`).
+//
+// Lossless: every byte of the input lands in exactly one token, either as
+// leading trivia (whitespace, newlines, `//` comments) or as token text.
+// The lead invariant of the whole frontend (architecture §5) starts here:
+//     reserialize(lex(src)) == src, byte for byte, for EVERY input,
+// including broken input — an unexpected byte becomes an ErrorTok that still
+// carries its text. No Result in signatures (274 §4 p.1): lexing always
+// returns tokens; brokenness is represented, not thrown.
+//
+// E1 deviation, recorded: trivia is LEADING-only (the Eof token carries the
+// file's tail trivia). Roslyn-style trailing trivia arrives with the green
+// tree, where the attachment rule matters for node boundaries; for the
+// reserialization invariant leading-only is equivalent and simpler.
+//
+// Edge table §3: lex -> source only. Lexer errors do not import diag:
+// ErrorTok IS the representation (parse reports it with a position).
+
+module novac.lex
+
+import ../source.{Span}
+
+export type TokenKind enum
+    | KwModule
+    | KwFn
+    | Ident
+    | IntLit
+    | StrLit
+    | LParen
+    | RParen
+    | LBrace
+    | RBrace
+    | Dot
+    | Comma
+    | Plus
+    | Minus
+    | Star
+    | Slash
+    | ErrorTok
+    | Eof
+
+export type Token {
+    kind TokenKind
+    leading str
+    text str
+    span Span
+}
+
+fn is_space(b u8) -> bool => b == 32 || b == 9 || b == 13 || b == 10
+
+fn is_digit(b u8) -> bool => b >= 48 && b <= 57
+
+fn is_ident_start(b u8) -> bool =>
+    (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95
+
+fn is_ident_byte(b u8) -> bool => is_ident_start(b) || is_digit(b)
+
+fn keyword_kind(t str) -> TokenKind {
+    if t == "module" { return TokenKind.KwModule }
+    if t == "fn" { return TokenKind.KwFn }
+    TokenKind.Ident
+}
+
+fn punct_kind(b u8) -> TokenKind {
+    if b == 40 { return TokenKind.LParen }
+    if b == 41 { return TokenKind.RParen }
+    if b == 123 { return TokenKind.LBrace }
+    if b == 125 { return TokenKind.RBrace }
+    if b == 46 { return TokenKind.Dot }
+    if b == 44 { return TokenKind.Comma }
+    if b == 43 { return TokenKind.Plus }
+    if b == 45 { return TokenKind.Minus }
+    if b == 42 { return TokenKind.Star }
+    if b == 47 { return TokenKind.Slash }
+    TokenKind.ErrorTok
+}
+
+/// Tokenize the whole input. Always succeeds; always covers every byte.
+export fn lex(src str) -> []Token {
+    ro b = src.bytes()
+    ro n = src.byte_len()
+    mut toks = []Token.new()
+    mut i = 0
+    while i < n {
+        // Leading trivia: spaces, newlines, // comments (up to newline).
+        ro trivia_start = i
+        mut in_trivia = true
+        while in_trivia && i < n {
+            if is_space(b[i]) {
+                i += 1
+            } else if b[i] == 47 && i + 1 < n && b[i + 1] == 47 {
+                while i < n && b[i] != 10 { i += 1 }
+            } else {
+                in_trivia = false
+            }
+        }
+        ro leading = src[trivia_start..i]
+        if i >= n {
+            toks.push(Token { kind: TokenKind.Eof, leading, text: "", span: Span { lo: i, hi: i } })
+            return toks
+        }
+        // Token text.
+        ro start = i
+        ro c = b[i]
+        mut kind = TokenKind.ErrorTok
+        if is_ident_start(c) {
+            while i < n && is_ident_byte(b[i]) { i += 1 }
+            kind = keyword_kind(src[start..i])
+        } else if is_digit(c) {
+            while i < n && is_digit(b[i]) { i += 1 }
+            kind = TokenKind.IntLit
+        } else if c == 34 {
+            // String literal: raw bytes between quotes, escapes kept verbatim
+            // (lossless; meaning is parse/check business, not lex).
+            i += 1
+            while i < n && b[i] != 34 {
+                if b[i] == 92 && i + 1 < n { i += 1 }
+                i += 1
+            }
+            if i < n { i += 1 }
+            kind = TokenKind.StrLit
+        } else {
+            kind = punct_kind(c)
+            i += 1
+        }
+        toks.push(Token { kind, leading, text: src[start..i], span: Span { lo: start, hi: i } })
+    }
+    toks.push(Token { kind: TokenKind.Eof, leading: "", text: "", span: Span { lo: n, hi: n } })
+    toks
+}
+
+/// The reserialization half of the lead invariant: concatenating every
+/// token's leading trivia and text reproduces the input byte for byte.
+export fn reserialize(toks []Token) -> str {
+    consume out = StringBuilder.new()
+    mut i = 0
+    while i < toks.len() {
+        out.append(toks[i].leading)
+        out.append(toks[i].text)
+        i += 1
+    }
+    out
+}

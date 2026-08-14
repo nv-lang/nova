@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/lex — tests beside the module (project convention).
+//
+// The load-bearing test is reserialization identity: it is the lex half of
+// the frontend's lead invariant (architecture §5) and the property the
+// diff-gate will check on the whole corpus once the vertical slice closes.
+
+module novac.lex
+
+test "reserialization: hello program survives byte for byte" {
+    ro src = "// greeting\nmodule basics.hello\n\nfn main() {\n    println(\"Hello, Nova!\")\n}\n"
+    assert(reserialize(lex(src)) == src)
+}
+
+test "reserialization: broken input survives too" {
+    ro src = "fn @@ ??? \"unterminated\n// tail comment"
+    assert(reserialize(lex(src)) == src)
+}
+
+test "reserialization: empty and trivia-only inputs" {
+    assert(reserialize(lex("")) == "")
+    ro only_trivia = "   \n// just a comment\n\t\n"
+    assert(reserialize(lex(only_trivia)) == only_trivia)
+}
+
+test "kinds: keywords, idents, ints, strings, punct" {
+    ro toks = lex("module a.b\nfn main() { println(\"hi\", 42) }")
+    assert(toks[0].kind == TokenKind.KwModule)
+    assert(toks[1].kind == TokenKind.Ident)
+    assert(toks[2].kind == TokenKind.Dot)
+    assert(toks[3].kind == TokenKind.Ident)
+    assert(toks[4].kind == TokenKind.KwFn)
+    assert(toks[5].kind == TokenKind.Ident)
+    assert(toks[5].text == "main")
+}
+
+test "trivia: comment lands in leading of the next token" {
+    ro toks = lex("// c\nfn x")
+    assert(toks[0].kind == TokenKind.KwFn)
+    assert(toks[0].leading == "// c\n")
+    assert(toks[0].text == "fn")
+}
+
+test "string literal keeps escapes verbatim and stays lossless" {
+    ro src = "\"a\\\"b\" tail"
+    ro toks = lex(src)
+    assert(toks[0].kind == TokenKind.StrLit)
+    assert(reserialize(toks) == src)
+}
+
+test "unknown byte becomes ErrorTok, not a panic, and keeps its text" {
+    ro toks = lex("a ? b")
+    assert(toks[1].kind == TokenKind.ErrorTok)
+    assert(toks[1].text == "?")
+}
+
+test "spans: token span slices the source back to its text" {
+    ro src = "fn  main"
+    ro toks = lex(src)
+    assert(toks[1].span.lo == 4)
+    assert(toks[1].span.hi == 8)
+}
+
+test "eof token carries tail trivia" {
+    ro toks = lex("x  // tail")
+    ro last = toks[toks.len() - 1]
+    assert(last.kind == TokenKind.Eof)
+    assert(last.leading == "  // tail")
+}
