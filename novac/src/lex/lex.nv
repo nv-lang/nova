@@ -25,6 +25,8 @@
 
 module novac.lex
 
+/// Every lexeme class of the subset; two-char operators lex BEFORE their
+/// one-char prefixes; ErrorTok carries unrecognized bytes losslessly.
 export type TokenKind enum
     | KwModule
     | KwFn
@@ -65,10 +67,13 @@ export type TokenKind enum
     | ErrorTok
     | Eof
 
+/// One green token: no positions stored (widths, not positions — offsets
+/// derive by prefix summing; the lossless invariant makes that exact).
 export type Token {
-    kind TokenKind
-    leading str
-    text str
+    kind TokenKind // lexeme class
+    leading str    // leading trivia (spaces/comments) — a slice of src
+    text str       // the token's own bytes — ALWAYS a slice of src (the
+                   // position door depends on it; Eof carries src[n..n])
 }
 
 // [LEGACY-#TBD-char-literal-permissive] TWO oracle inconsistencies around

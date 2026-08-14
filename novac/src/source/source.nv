@@ -9,8 +9,8 @@ module novac.source
 
 /// Half-open byte range [lo, hi) into the source text.
 export type Span {
-    lo int
-    hi int
+    lo int // start byte offset (inclusive)
+    hi int // end byte offset (exclusive)
 }
 
 export fn Span @len() -> int => @hi - @lo
@@ -18,7 +18,7 @@ export fn Span @len() -> int => @hi - @lo
 /// The compiler never reads files itself (274 §2: the driver hands text in),
 /// so the source module carries only the text and derived facts about it.
 export type SourceText {
-    text str
+    text str // the whole input, handed in by the driver — never read here
 }
 
 export fn SourceText @len() -> int => @text.byte_len()

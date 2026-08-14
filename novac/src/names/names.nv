@@ -17,13 +17,17 @@
 
 module novac.names
 
+/// Which namespace a NameTable serves — the key component the string-keys
+/// guard demands (identity is (namespace, name), never a bare name).
 export type NamespaceId enum
     | NsDefs
     | NsFields
     | NsLocals
 
+/// The ONE str -> id door: O(1) map per namespace; every other novac table
+/// keys by integer id (linear name scans are guard-red).
 export type NameTable {
-    ns NamespaceId
+    ns NamespaceId        // which namespace these names belong to
     map HashMap[str, int] // the NamespaceId key component is @ns, one field up
 }
 

@@ -13,6 +13,7 @@ module novac.diag
 
 import std.encoding.serde.{json_encode}
 
+/// Diagnostic severity of the §7 schema (renders "error"/"warning").
 export type Severity enum
     | ErrorSev
     | WarningSev
@@ -24,29 +25,33 @@ export fn Severity @to_str() -> str {
     }
 }
 
+/// One compiler diagnostic as the phases produce it (positions in byte
+/// offsets; file/id arrive at render time through the pipeline door).
 export type Diagnostic {
-    code str
-    severity Severity
-    lo int
-    hi int
-    message str
+    code str          // machine code, e.g. E_NOVAC_SUBSET / E_NOVAC_ICE
+    severity Severity // error/warning — the §7 schema's severity field
+    lo int            // primary span start, byte offset into the source
+    hi int            // primary span end (half-open), byte offset
+    message str       // human half, English (project rule)
 }
 
+// Serde DTO of the §7 primary-span object (file + byte range).
 #impl(Serialize)
 type PrimaryDto {
-    file str
-    start int
-    end int
+    file str  // path exactly as the CLI received it
+    start int // = Diagnostic.lo
+    end int   // = Diagnostic.hi
 }
 
+// Serde DTO of one §7 JSON line — field names ARE the schema.
 #impl(Serialize)
 type DiagDto {
-    id str
-    code str
-    severity str
-    primary PrimaryDto
-    message str
-    poisoned_by Option[str]
+    id str                  // stable per-run id: "d<position in stream>"
+    code str                // = Diagnostic.code
+    severity str            // rendered Severity (to_str)
+    primary PrimaryDto      // the primary span
+    message str             // = Diagnostic.message
+    poisoned_by Option[str] // id of the causing diagnostic; None = root cause
 }
 
 /// Render one diagnostic as a §7 schema JSON line. `id` = position in the

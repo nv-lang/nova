@@ -18,9 +18,10 @@ module novac.parse
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, branch, leaf}
 
+// The parser's walking state over one Eof-terminated token stream.
 type Cursor {
-    toks []Token
-    i int
+    toks []Token // the lex output being parsed
+    i int        // next-token index; take() is the only advancer
     // Go's composite-literal rule: inside an if/while/for HEAD a record
     // constructor is not parsed — `if x {` must read the brace as the
     // block, not as `x { ... }`. Set for the head expression only; block

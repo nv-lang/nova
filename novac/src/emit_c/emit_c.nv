@@ -11,12 +11,10 @@
 // whose helper is missing in the probe dies loudly at the smoke's link
 // step, and the probe grows the same wave.
 //
-// TYPES ARE A SINGLE REGISTRY (owner's correction 2026-08-14: the number of
-// user types is unbounded — no range-coded ids, no name scans): a type id
-// is an INDEX into the registry vectors (kind + name); ids 0..3 are the
-// pre-seeded primitives int/str/bool/f64. Every name -> id step goes
-// through the ONE name door (names.NameTable, O(1)); the only remaining
-// string comparisons against literals are the subset-method table in check.
+// This module is C RENDER ONLY (owner's review 2026-08-15): the type
+// registry, the unified def table and expression typing live in `sem` —
+// any backend consumes them, none owns them (the rustc_middle model). A
+// libFirm backend (plan §12) imports the same sem and renders its own IR.
 //
 // Records and sums follow the oracle's shape exactly (fixed points on
 // records.nv and match_demo.nv): values are GC pointers; constructors are
@@ -24,8 +22,8 @@
 // (p->x); sums are tag enum + tagged union + a maker per variant; match is
 // scrutinee/result/matched-flag plus an if-chain, guards nest one more if.
 //
-// Edge note (table §3): E2-temporary rows `emit_c` -> `tree`/`lex`/`check`/
-// `names` — the emitter walks the green tree until `lower` exists (E4);
+// Edge note (table §3): E2-temporary rows `emit_c` -> `tree`/`lex`/`names`/
+// `sem` — the emitter walks the green tree until `lower` exists (E4);
 // removal obligation recorded in the table.
 
 module novac.emit_c
@@ -33,47 +31,10 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../check.{subset_method_ret}
 import ../names.{NameTable, NamespaceId}
+import ../sem.{Ctx, DefKind, TypeKind, T_INT, T_STR, T_BOOL, T_F64, collect_types, type_id, field_row_type, bind_local, local_type, type_of, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text}
 
 fn shell_template() -> []u8 => embed("shell.tpl.c")
-
-// Primitive ids of the registry (indexes into type_kinds/type_names).
-const T_INT = 0
-const T_STR = 1
-const T_BOOL = 2
-const T_F64 = 3
-
-// File-level context. Registry vectors are FLAT and id-indexed; all the
-// name -> id maps are NameTable doors (no scans). Field rows are addressed
-// through the fields table keyed "ownerId.field" (the owner id is the
-// namespace component of that key).
-// Def kinds of the unified top-level registry (the rustc/Go model: ONE
-// lookup answers "what is this name" — a kind plus a payload id; cascading
-// per-kind tables was the owner-rejected shape 2026-08-14).
-const DEF_TYPE = 1
-const DEF_VARIANT = 2
-const DEF_FN = 3
-
-type Ctx {
-    type_kinds []int   // 0 prim · 1 record · 2 sum
-    type_names []str
-    type_row_off []int // id-indexed: first row of this type's fields/variants
-    type_row_cnt []int // ...and how many (0 for primitives)
-    defs NameTable     // THE top-level name registry: name -> def row
-    def_kinds []int    // def row -> DEF_*
-    def_ids []int      // def row -> payload: type id / vrow / fn row
-    field_names []str  // record rows, grouped per type via off/cnt
-    field_types []int  // type id
-    fields NameTable   // "ownerId.field" -> row (fields resolve only through
-                       // a receiver type — never as bare names; same as Go/rustc)
-    variant_sum []int  // vrow -> sum type id (for the tag name)
-    variant_names []str
-    vf_off []int       // vrow-indexed: first payload row
-    vf_cnt []int       // ...and how many
-    vf_types []int     // payload rows: type ids
-    fn_rets []int      // type id (-1 = no declared return, main only)
-}
 
 /// Emit the whole C translation unit for a checked subset file.
 export fn emit(file Node) -> str {
@@ -85,143 +46,12 @@ export fn emit(file Node) -> str {
     render(lits, body.into_str())
 }
 
-// Register one def row; name collisions across kinds are check's ground
-// (later wave) — last put wins for now, recorded honestly.
-fn add_def(mut defs NameTable, mut def_kinds []int, mut def_ids []int, name str, kind int, id int) -> () {
-    defs.put(name, def_kinds.len())
-    def_kinds.push(kind)
-    def_ids.push(id)
-}
-
-// Type-position resolve during collection: the name MUST be a type.
-fn collect_type_id(defs NameTable, def_kinds []int, def_ids []int, name str) -> int {
-    ro d = defs.find(name)
-    if d < 0 { ice("emit: type name not in the registry — no silent int default (#652 class)") }
-    if def_kinds[d] != DEF_TYPE { ice("emit: name in type position is not a type (#652 class)") }
-    def_ids[d]
-}
-
-fn collect_types(file Node) -> Ctx {
-    mut type_kinds = []int.of(0, 0, 0, 0)
-    mut type_names = []str.of("int", "str", "bool", "f64")
-    mut defs = NameTable.new(NamespaceId.NsDefs)
-    mut def_kinds = []int.new()
-    mut def_ids = []int.new()
-    add_def(defs, def_kinds, def_ids, "int", DEF_TYPE, T_INT)
-    add_def(defs, def_kinds, def_ids, "str", DEF_TYPE, T_STR)
-    add_def(defs, def_kinds, def_ids, "bool", DEF_TYPE, T_BOOL)
-    add_def(defs, def_kinds, def_ids, "f64", DEF_TYPE, T_F64)
-    mut type_row_off = []int.of(0, 0, 0, 0)
-    mut type_row_cnt = []int.of(0, 0, 0, 0)
-    mut field_names = []str.new()
-    mut field_types = []int.new()
-    mut fields = NameTable.new(NamespaceId.NsFields)
-    mut variant_sum = []int.new()
-    mut variant_names = []str.new()
-    mut vf_off = []int.new()
-    mut vf_cnt = []int.new()
-    mut vf_types = []int.new()
-    mut fn_rets = []int.new()
-    // First pass: register every type NAME, so later rows can reference any
-    // type of the file regardless of declaration order.
-    for c in branch_children(file) {
-        ro k = c.kind_of()
-        if k == NodeKind.TypeDecl || k == NodeKind.SumDecl {
-            ro tname = leaf_text(branch_children(c)[1])
-            add_def(defs, def_kinds, def_ids, tname, DEF_TYPE, type_kinds.len())
-            type_names.push(tname)
-            if k == NodeKind.TypeDecl { type_kinds.push(1) } else { type_kinds.push(2) }
-        }
-    }
-    for c in branch_children(file) {
-        ro k = c.kind_of()
-        if k == NodeKind.TypeDecl {
-            ro owner = collect_type_id(defs, def_kinds, def_ids, leaf_text(branch_children(c)[1]))
-            type_row_off.push(field_names.len())
-            mut cnt = 0
-            for f in branch_children(c) {
-                if f.kind_of() == NodeKind.Field {
-                    ro fk = branch_children(f)
-                    ro fname = leaf_text(fk[0])
-                    fields.put("${owner}.${fname}", field_names.len())
-                    field_names.push(fname)
-                    if fk.len() > 1 {
-                        field_types.push(collect_type_id(defs, def_kinds, def_ids, leaf_text(fk[1])))
-                    } else {
-                        ice("emit: field without a type past check — no silent int default (#652 class)")
-                    }
-                    cnt += 1
-                }
-            }
-            type_row_cnt.push(cnt)
-        }
-        if k == NodeKind.SumDecl {
-            ro sum_id = collect_type_id(defs, def_kinds, def_ids, leaf_text(branch_children(c)[1]))
-            type_row_off.push(variant_names.len())
-            mut vcnt = 0
-            for v in branch_children(c) {
-                if v.kind_of() == NodeKind.Variant {
-                    ro vk = branch_children(v)
-                    ro vname = leaf_text(vk[1])
-                    add_def(defs, def_kinds, def_ids, vname, DEF_VARIANT, variant_names.len())
-                    variant_sum.push(sum_id)
-                    variant_names.push(vname)
-                    vf_off.push(vf_types.len())
-                    mut pcnt = 0
-                    // payload type names sit between '(' and ')'
-                    mut j = 2
-                    while j < vk.len() {
-                        // [LEGACY-#TBD-var-index-method] `vk[j].kind_of()`
-                        // with a VARIABLE index miscompiles in the oracle
-                        // (E_RECV_METHOD_MISMATCH: receiver resolves as Vec;
-                        // a constant index works). Found 2026-08-14; the
-                        // binding hop is the workaround.
-                        ro pj = vk[j]
-                        if pj.kind_of() == NodeKind.LeafNode {
-                            if leaf_kind(pj) == TokenKind.Ident {
-                                vf_types.push(collect_type_id(defs, def_kinds, def_ids, leaf_text(pj)))
-                                pcnt += 1
-                            }
-                        }
-                        j += 1
-                    }
-                    vf_cnt.push(pcnt)
-                    vcnt += 1
-                }
-            }
-            type_row_cnt.push(vcnt)
-        }
-        if k == NodeKind.FnDecl {
-            ro fk = branch_children(c)
-            add_def(defs, def_kinds, def_ids, leaf_text(fk[1]), DEF_FN, fn_rets.len())
-            // -1 sentinel = no declared return. Legal ONLY for main (check
-            // refuses it elsewhere); c_type_name ices on -1 as the second
-            // floor — never a silent int (#652 class).
-            mut ret = -1
-            for r in fk {
-                if r.kind_of() == NodeKind.RetType {
-                    ro rk = branch_children(r)
-                    if rk.len() > 1 { ret = collect_type_id(defs, def_kinds, def_ids, leaf_text(rk[1])) }
-                }
-            }
-            fn_rets.push(ret)
-        }
-    }
-    Ctx { type_kinds, type_names, type_row_off, type_row_cnt, defs, def_kinds, def_ids, field_names, field_types, fields, variant_sum, variant_names, vf_off, vf_cnt, vf_types, fn_rets }
-}
-
-// Name -> type id in TYPE POSITION (params, fields, returns, constructor
-// heads): ONE lookup in the unified registry, then the kind must be a
-// type. NO SILENT DEFAULT (#652 class).
-fn type_id(ctx Ctx, name str) -> int =>
-    collect_type_id(ctx.defs, ctx.def_kinds, ctx.def_ids, name)
-
 fn c_type_name(ctx Ctx, t int) -> str {
     if t == T_INT { return "nova_int" }
     if t == T_STR { return "nova_str" }
     if t == T_BOOL { return "nova_bool" }
     if t == T_F64 { return "nova_f64" }
-    if t >= 4 && t < ctx.type_kinds.len() { return "Nova_${ctx.type_names[t]}*" } // records AND sums: GC pointers
+    if t >= 4 && t < ctx.types.len() { return "Nova_${ctx.types[t].name}*" } // records AND sums: GC pointers
     ice("emit: type id outside the registry — no silent int default (#652 class)")
     // [LEGACY-#TBD-never-in-tail] `ice() -> never` in a str fn's TAIL
     // miscompiles: the oracle drops never and emits the C nova_int call
@@ -231,24 +61,18 @@ fn c_type_name(ctx Ctx, t int) -> str {
     ""
 }
 
-fn field_row_type(ctx Ctx, owner_id int, fname str) -> int {
-    ro row = ctx.fields.find("${owner_id}.${fname}")
-    if row < 0 { ice("emit: unknown field past check (type checker is a later wave)") }
-    ctx.field_types[row]
-}
-
 fn emit_type_decls(ctx Ctx, mut body StringBuilder) -> () {
-    for t in 4..ctx.type_kinds.len() { // primitives 0..3 have no decls
-        ro tname = ctx.type_names[t]
-        if ctx.type_kinds[t] == 1 {
-            body.append("typedef struct Nova_${tname} Nova_${tname};\n")
-            body.append("struct Nova_${tname} {\n")
-            ro off = ctx.type_row_off[t]
-            for j in off..off + ctx.type_row_cnt[t] {
+    for t in 4..ctx.types.len() { // primitives 0..3 have no decls
+        ro td = ctx.types[t]
+        if td.kind == TypeKind.TkRecord {
+            body.append("typedef struct Nova_${td.name} Nova_${td.name};\n")
+            body.append("struct Nova_${td.name} {\n")
+            for j in td.row_off..td.row_off + td.row_cnt {
+                ro fd = ctx.field_rows[j]
                 body.append("    ")
-                body.append(c_type_name(ctx, ctx.field_types[j]))
+                body.append(c_type_name(ctx, fd.type_id))
                 body.append(" ")
-                body.append(ctx.field_names[j])
+                body.append(fd.name)
                 body.append(";\n")
             }
             body.append("};\n\n")
@@ -260,43 +84,43 @@ fn emit_type_decls(ctx Ctx, mut body StringBuilder) -> () {
 
 // Sum: tag enum + tagged union + a maker per variant — the oracle's exact
 // shape (fixed point on match_demo.nv), novac's own namespace. The type's
-// variant rows are the range type_row_off/cnt; each variant's payload rows
-// are vf_off/cnt — no filter loops (owner's rule: compile speed first).
+// variant rows are the TypeDef.row_off/cnt range; each variant's payload
+// rows are VariantDef.payload_off/cnt — no filter loops (compile speed first).
 fn emit_sum_decl(ctx Ctx, sum_id int, mut body StringBuilder) -> () {
-    ro sname = ctx.type_names[sum_id]
-    ro voff = ctx.type_row_off[sum_id]
-    ro vend = voff + ctx.type_row_cnt[sum_id]
+    ro td = ctx.types[sum_id]
+    ro sname = td.name
+    ro vend = td.row_off + td.row_cnt
     body.append("typedef enum {\n")
-    for v in voff..vend {
-        body.append("    NOVAC_TAG_${sname}_${ctx.variant_names[v]},\n")
+    for v in td.row_off..vend {
+        body.append("    NOVAC_TAG_${sname}_${ctx.variant_rows[v].name},\n")
     }
     body.append("} Nova_${sname}_Tag;\n")
     body.append("typedef struct Nova_${sname} Nova_${sname};\n")
     body.append("struct Nova_${sname} {\n    Nova_${sname}_Tag tag;\n    union {\n")
-    for v in voff..vend {
+    for v in td.row_off..vend {
+        ro vd = ctx.variant_rows[v]
         body.append("        struct {\n")
-        for p in 0..ctx.vf_cnt[v] {
+        for p in 0..vd.payload_cnt {
             body.append("            ")
-            body.append(c_type_name(ctx, ctx.vf_types[ctx.vf_off[v] + p]))
+            body.append(c_type_name(ctx, ctx.payload_types[vd.payload_off + p]))
             body.append(" _${p};\n")
         }
-        body.append("        } ${ctx.variant_names[v]};\n")
+        body.append("        } ${vd.name};\n")
     }
     body.append("    } payload;\n};\n\n")
-    for v in voff..vend {
-        ro vname = ctx.variant_names[v]
-        ro pcnt = ctx.vf_cnt[v]
-        body.append("static Nova_${sname}* novac_make_${sname}_${vname}(")
-        for p in 0..pcnt {
+    for v in td.row_off..vend {
+        ro vd = ctx.variant_rows[v]
+        body.append("static Nova_${sname}* novac_make_${sname}_${vd.name}(")
+        for p in 0..vd.payload_cnt {
             if p > 0 { body.append(", ") }
-            body.append(c_type_name(ctx, ctx.vf_types[ctx.vf_off[v] + p]))
+            body.append(c_type_name(ctx, ctx.payload_types[vd.payload_off + p]))
             body.append(" _${p}")
         }
-        if pcnt == 0 { body.append("void") }
+        if vd.payload_cnt == 0 { body.append("void") }
         body.append(") {\n    Nova_${sname}* _r = (Nova_${sname}*)nova_alloc(sizeof(Nova_${sname}));\n")
-        body.append("    _r->tag = NOVAC_TAG_${sname}_${vname};\n")
-        for q in 0..pcnt {
-            body.append("    _r->payload.${vname}._${q} = _${q};\n")
+        body.append("    _r->tag = NOVAC_TAG_${sname}_${vd.name};\n")
+        for q in 0..vd.payload_cnt {
+            body.append("    _r->payload.${vd.name}._${q} = _${q};\n")
         }
         body.append("    return _r;\n}\n\n")
     }
@@ -353,120 +177,6 @@ fn emit_file(file Node, ctx Ctx, mut lits []str, mut body StringBuilder) -> () {
     }
 }
 
-fn branch_children(n Node) -> []Node {
-    match n {
-        Leaf(_) => ice("emit: expected a branch node")
-        Branch { children, .. } => children
-    }
-}
-
-fn leaf_text(n Node) -> str {
-    match n {
-        Leaf(t) => t.text
-        Branch { .. } => ice("emit: expected a leaf")
-    }
-}
-
-fn leaf_kind(n Node) -> TokenKind {
-    match n {
-        Leaf(t) => t.kind
-        Branch { .. } => ice("emit: expected a leaf")
-    }
-}
-
-// ---- local scope: the same door, NsLocals namespace ----------------------
-
-fn bind_local(mut locals NameTable, mut ltypes []int, name str, t int) -> () {
-    locals.put(name, ltypes.len()) // shadowing = last put wins
-    ltypes.push(t)
-}
-
-fn local_type(locals NameTable, ltypes []int, name str) -> int {
-    ro row = locals.find(name)
-    if row < 0 { ice("emit: unbound name — resolve is check's ground, no silent int default (#652 class)") }
-    ltypes[row]
-}
-
-fn type_of(e Node, ctx Ctx, locals NameTable, ltypes []int) -> int {
-    ro k = e.kind_of()
-    if k == NodeKind.Lit {
-        // A negated literal is [Minus, lit] — judge the LAST leaf. Every
-        // literal kind is checked POSITIVELY (owner's rule 2026-08-14: a
-        // residual branch never decides a type — that residual `return
-        // T_INT` is exactly how the #652 family was born).
-        ro lk_kids = branch_children(e)
-        ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
-        if lk == TokenKind.StrLit { return T_STR }
-        if lk == TokenKind.FloatLit { return T_F64 }
-        if lk == TokenKind.IntLit { return T_INT }
-        ice("emit: literal token kind without a type rule (#652 class)")
-    }
-    if k == NodeKind.Name { return local_type(locals, ltypes, expr_leaf_name(e)) }
-    if k == NodeKind.MethodCall {
-        ro kids = branch_children(e)
-        if kids.len() < 3 { ice("emit: method call without a name") }
-        ro rt = subset_method_ret(leaf_text(kids[2]))
-        if rt < 0 { ice("emit: unknown method past check") }
-        return rt
-    }
-    if k == NodeKind.FieldAccess {
-        ro kids = branch_children(e)
-        if kids.len() < 3 { ice("emit: field access without a name") }
-        ro recv_t = type_of(kids[0], ctx, locals, ltypes)
-        return field_row_type(ctx, recv_t, leaf_text(kids[2]))
-    }
-    if k == NodeKind.RecordCtor {
-        ro kids = branch_children(e)
-        if kids[0].kind_of() == NodeKind.Name {
-            return type_id(ctx, expr_leaf_name(kids[0]))
-        }
-        // Anonymous `{ ...src, ... }`: the record type is the spread's.
-        for c in kids {
-            if c.kind_of() == NodeKind.CtorSpread {
-                return type_of(branch_children(c)[1], ctx, locals, ltypes)
-            }
-        }
-        ice("emit: anonymous constructor without a spread")
-    }
-    if k == NodeKind.Bin {
-        ro kids = branch_children(e)
-        ro op = leaf_kind(kids[1])
-        if op == TokenKind.Lt || op == TokenKind.Le || op == TokenKind.Gt { return T_BOOL }
-        ro lt = type_of(kids[0], ctx, locals, ltypes)
-        ro rt = type_of(kids[2], ctx, locals, ltypes)
-        if lt == T_F64 || rt == T_F64 { return T_F64 }
-        // Both sides must be PROVEN int — arithmetic on str/bool/records is
-        // not a silent int (#652 class), it is an invariant break here.
-        if lt == T_INT && rt == T_INT { return T_INT }
-        ice("emit: binary arithmetic on non-numeric operands past check (#652 class)")
-    }
-    if k == NodeKind.MatchExpr {
-        // The match's value type: its FIRST arm expression (the corpus arms
-        // agree by construction; the type checker wave will judge).
-        for c in branch_children(e) {
-            if c.kind_of() == NodeKind.MatchArm {
-                ro ak = branch_children(c)
-                return type_of(ak[ak.len() - 1], ctx, locals, ltypes)
-            }
-        }
-        ice("emit: match without arms past check")
-    }
-    if k == NodeKind.Call {
-        // ONE lookup answers "what is this name" (the rustc Res / Go Object
-        // model — owner's correction 2026-08-14), then the kind decides.
-        ro d = ctx.defs.find(call_callee_text(branch_children(e)))
-        if d < 0 { ice("emit: call target not in the registry — no silent int default (#652 class)") }
-        if ctx.def_kinds[d] == DEF_VARIANT { return ctx.variant_sum[ctx.def_ids[d]] }
-        if ctx.def_kinds[d] == DEF_FN {
-            ro ret = ctx.fn_rets[ctx.def_ids[d]]
-            if ret < 0 { ice("emit: call of a fn without a declared return type (#652 class)") }
-            return ret
-        }
-        ice("emit: call target is a type, not a callable (#652 class)")
-    }
-    ice("emit: expression kind without a type rule — no silent int default (#652 class)")
-}
-
 // ---- functions -----------------------------------------------------------
 
 fn emit_fn(f Node, ctx Ctx, mut lits []str, mut body StringBuilder) -> () {
@@ -474,8 +184,8 @@ fn emit_fn(f Node, ctx Ctx, mut lits []str, mut body StringBuilder) -> () {
     ro name = leaf_text(kids[1])
     ro d = ctx.defs.find(name)
     if d < 0 { ice("emit: fn missing from the registry") }
-    if ctx.def_kinds[d] != DEF_FN { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
-    ro ret = ctx.fn_rets[ctx.def_ids[d]] // -1 for main only; check refuses it elsewhere
+    if ctx.def_rows[d].kind != DefKind.DefFn { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
+    ro ret = ctx.fn_rets[ctx.def_rows[d].id] // -1 for main only; check refuses it elsewhere
     mut locals = NameTable.new(NamespaceId.NsLocals)
     mut ltypes = []int.new()
     mut has_expr_body = false
@@ -579,10 +289,10 @@ fn emit_arm(arm Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut local
     } else {
         if pat.len() > 1 {
             ro d = ctx.defs.find(leaf_text(p0))
-            if d >= 0 && ctx.def_kinds[d] == DEF_VARIANT { vrow = ctx.def_ids[d] }
+            if d >= 0 && ctx.def_rows[d].kind == DefKind.DefVariant { vrow = ctx.def_rows[d].id }
         }
         if vrow >= 0 {
-            body.append("(_novac_scr_${uniq}->tag == NOVAC_TAG_${ctx.type_names[ctx.variant_sum[vrow]]}_${leaf_text(p0)})")
+            body.append("(_novac_scr_${uniq}->tag == NOVAC_TAG_${ctx.types[ctx.variant_rows[vrow].sum].name}_${leaf_text(p0)})")
         } else {
             body.append("true")
         }
@@ -606,7 +316,7 @@ fn emit_arm(arm Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut local
         }
         mut pi = 0
         for bname in binders {
-            ro bt = ctx.vf_types[ctx.vf_off[vrow] + pi]
+            ro bt = ctx.payload_types[ctx.variant_rows[vrow].payload_off + pi]
             body.append("        ")
             body.append(c_type_name(ctx, bt))
             body.append(" ${bname} = _novac_scr_${uniq}->payload.${vname}._${pi};\n")
@@ -638,8 +348,6 @@ fn emit_arm(arm Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut local
     }
     body.append("    }\n")
 }
-
-fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess
 
 // tail=true: the LAST expression statement of an int fn body is its return
 // value (Nova tail-expression semantics; arithmetic.nv relies on it).
@@ -753,7 +461,7 @@ fn emit_bind(st Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut local
         return
     }
     if init.kind_of() == NodeKind.RecordCtor {
-        ro rec = "Nova_${ctx.type_names[vtype]}"
+        ro rec = "Nova_${ctx.types[vtype].name}"
         ro tmp = "_novac_tmp_${vname}"
         body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
         for c in branch_children(init) {
@@ -786,11 +494,6 @@ fn emit_bind(st Node, ctx Ctx, mut lits []str, mut body StringBuilder, mut local
         body.append(";\n")
     }
     bind_local(locals, ltypes, vname, vtype)
-}
-
-fn expr_leaf_name(e Node) -> str {
-    ro kids = branch_children(e)
-    leaf_text(kids[0])
 }
 
 fn checked_op(op TokenKind) -> str {
@@ -872,10 +575,10 @@ fn emit_expr(e Node, ctx Ctx, mut lits []str, mut body StringBuilder, locals Nam
         // ONE lookup, then the kind decides (owner's correction 2026-08-14).
         ro d = ctx.defs.find(cname)
         if d < 0 { ice("emit: call target not in the registry (#652 class)") }
-        if ctx.def_kinds[d] == DEF_VARIANT {
+        if ctx.def_rows[d].kind == DefKind.DefVariant {
             // Variant constructor call -> the maker.
-            ro vrow = ctx.def_ids[d]
-            body.append("novac_make_${ctx.type_names[ctx.variant_sum[vrow]]}_${cname}(")
+            ro vrow = ctx.def_rows[d].id
+            body.append("novac_make_${ctx.types[ctx.variant_rows[vrow].sum].name}_${cname}(")
         } else {
             body.append("novac_user_${cname}(")
         }
@@ -927,18 +630,6 @@ fn emit_expr(e Node, ctx Ctx, mut lits []str, mut body StringBuilder, locals Nam
         ice("emit: binary operator outside the subset")
     } else {
         ice("emit: expression kind outside the subset")
-    }
-}
-
-fn call_callee_text(kids []Node) -> str {
-    match kids[0] {
-        Leaf(t) => t.text
-        Branch { children, .. } => {
-            match children[0] {
-                Leaf(t) => t.text
-                Branch { .. } => ""
-            }
-        }
     }
 }
 
