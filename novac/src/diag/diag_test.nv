@@ -29,3 +29,18 @@ test "severity renders as the schema strings" {
     assert(Severity.ErrorSev.to_str() == "error")
     assert(Severity.WarningSev.to_str() == "warning")
 }
+
+test "ice_json carries every schema field and the message" {
+    // The hand-built last-resort JSON (see ice_json's doc for WHY it is not
+    // serde) is pinned to the schema HERE -- silent drift of the hand copy
+    // is the exact K4 risk the owner questioned, and this unit is its guard.
+    ro j = ice_json("probe message")
+    assert(j.contains("\"id\""))
+    assert(j.contains("E_NOVAC_ICE"))
+    assert(j.contains("\"severity\""))
+    assert(j.contains("\"primary\""))
+    assert(j.contains("\"message\""))
+    assert(j.contains("\"poisoned_by\""))
+    assert(j.contains("probe message"))
+    assert(j.contains("novac bug, not yours"))
+}
