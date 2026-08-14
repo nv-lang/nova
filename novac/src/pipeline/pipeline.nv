@@ -15,10 +15,25 @@ import ../lex.{lex}
 import ../parse.{parse}
 import ../check.{check}
 import ../diag.{Diagnostic}
+import ../emit_c.{emit}
 
 /// The whole E1 front half: text in, diagnostics out. Always returns the
 /// full list; no Result (274 §4 п.1).
 export fn compile(text str) -> []Diagnostic {
     ro src = SourceText { text }
     check(parse(lex(text)), src)
+}
+
+/// Emit C for a CLEAN e1 file. Contract: call only when compile() returned
+/// an empty list — the emitter never sees broken input (poisoning). Returns
+/// (diags, c_text): non-empty diags means c_text is empty and must not be
+/// used; no Result in signatures (274 p4.1).
+export fn compile_to_c(text str) -> ([]Diagnostic, str) {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro diags = check(tree, src)
+    if diags.len() > 0 {
+        return (diags, "")
+    }
+    (diags, emit(tree))
 }

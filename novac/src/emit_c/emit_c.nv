@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/emit_c — backend A: C text (architecture §2/§9).
+//
+// E1 vertical: the runtime SHELL is a fixed, file-independent template
+// (shell.tpl.c, embedded at build time — proven by the day's probe: the
+// existing driver cc+links it against the real nova_rt and the binary runs).
+// The emitter generates ONLY the two slots: string-literal definitions and
+// the body of nova_fn_main_impl. Everything the shell contains — runtime
+// init, effect vtables, supervisor bridge — is the oracle's own emission
+// shape, extracted once; novac never invents ABI.
+//
+// E1 subset emitted here: fn main with println(str-lit) statements. The
+// emitter is reached ONLY through pipeline and ONLY on a clean check —
+// poisoning discipline: broken input never gets this far.
+//
+// Edge note (table §3): E1-temporary rows `emit_c` -> `tree`/`lex` mirror
+// check's — the emitter walks the green tree until `lower` exists (E2);
+// removal obligation recorded in the table.
+
+module novac.emit_c
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+
+fn shell_template() -> []u8 => embed("shell.tpl.c")
+
+/// Emit the whole C translation unit for a checked E1 file.
+export fn emit(file Node) -> str {
+    mut lits = []str.new()
+    consume body = StringBuilder.new()
+    emit_file(file, lits, body)
+    render(lits, body.into_str())
+}
+
+fn render(lits []str, body str) -> str {
+    ro tpl_bytes = shell_template()
+    ro tpl = tpl_bytes.to_str() ?? ice("emit: shell.tpl.c is not UTF-8")
+    consume out = StringBuilder.new()
+    mut emitted_lits = false
+    mut emitted_body = false
+    for line in tpl.lines() {
+        if line.contains("__NOVAC_STRLITS__") {
+            emit_strlit_defs(out, lits)
+            emitted_lits = true
+        } else if line.contains("__NOVAC_BODY__") {
+            out.append("static nova_unit nova_fn_main_impl(void) {\n")
+            out.append(body)
+            out.append("    return NOVA_UNIT;\n}\n")
+            emitted_body = true
+        } else {
+            out.append(line)
+            out.append("\n")
+        }
+    }
+    if !emitted_lits || !emitted_body { ice("emit: template slots missing") }
+    out
+}
+
+fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
+    mut i = 0
+    for raw in lits {
+        // raw is the token text INCLUDING quotes; escapes verbatim. The E1
+        // subset string has no interpolation (lex refuses it), and Nova's
+        // escape set in the subset (\" \\ \n) matches C's — recorded subset
+        // boundary, the diff gate holds it honest.
+        out.append("static const uint8_t _novac_strlit_${i}_buf[] = ")
+        out.append(raw)
+        out.append(";\n")
+        out.append("static const nova_str _novac_strlit_${i} = { .ptr = _novac_strlit_${i}_buf, .len = sizeof(_novac_strlit_${i}_buf) - 1 };\n")
+        i += 1
+    }
+}
+
+fn emit_file(file Node, mut lits []str, mut body StringBuilder) -> () {
+    match file {
+        Leaf(_) => ice("emit: file node must be a branch")
+        Branch { kind, children } => {
+            if kind != NodeKind.File { ice("emit: root is not File") }
+            for c in children {
+                if c.kind_of() == NodeKind.FnDecl {
+                    emit_fn(c, lits, body)
+                }
+            }
+        }
+    }
+}
+
+fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
+    match f {
+        Leaf(_) => ice("emit: fn node must be a branch")
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.Block {
+                    emit_block(c, lits, body)
+                }
+            }
+        }
+    }
+}
+
+fn emit_block(b Node, mut lits []str, mut body StringBuilder) -> () {
+    match b {
+        Leaf(_) => ice("emit: block node must be a branch")
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.Call {
+                    emit_println(c, lits, body)
+                }
+            }
+        }
+    }
+}
+
+fn call_callee_text(kids []Node) -> str {
+    // Call shape from parse: [Name-branch(name-leaf), LParen, args..., RParen]
+    match kids[0] {
+        Leaf(t) => t.text
+        Branch { children, .. } => {
+            match children[0] {
+                Leaf(t) => t.text
+                Branch { .. } => ""
+            }
+        }
+    }
+}
+
+fn emit_println(call Node, mut lits []str, mut body StringBuilder) -> () {
+    match call {
+        Leaf(_) => ice("emit: call node must be a branch")
+        Branch { children, .. } => {
+            if call_callee_text(children) != "println" {
+                ice("emit: E1 subset knows only println calls")
+            }
+            for c in children {
+                if c.kind_of() == NodeKind.Lit {
+                    emit_print_arg(c, lits, body)
+                }
+            }
+            body.append("    nova_print_newline();\n")
+        }
+    }
+}
+
+fn emit_print_arg(lit Node, mut lits []str, mut body StringBuilder) -> () {
+    match lit {
+        Leaf(_) => ice("emit: lit node must be a branch")
+        Branch { children, .. } => {
+            match children[0] {
+                Leaf(t) => {
+                    if t.kind == TokenKind.StrLit {
+                        ro idx = lits.len()
+                        lits.push(t.text)
+                        body.append("    nova_print_str(_novac_strlit_${idx});\n")
+                    } else if t.kind == TokenKind.IntLit {
+                        body.append("    nova_print_int((nova_int)${t.text}LL);\n")
+                    } else {
+                        ice("emit: E1 literal is str or int only")
+                    }
+                }
+                Branch { .. } => ice("emit: lit child must be a leaf")
+            }
+        }
+    }
+}

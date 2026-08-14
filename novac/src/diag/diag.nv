@@ -11,7 +11,7 @@
 
 module novac.diag
 
-import std.encoding.serde.{Serialize, json_encode}
+import std.encoding.serde.{json_encode}
 
 export type Severity enum
     | ErrorSev

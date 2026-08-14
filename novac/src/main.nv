@@ -22,10 +22,24 @@
 
 module novac
 
-import ./pipeline.{compile}
+import ./pipeline.{compile, compile_to_c}
 import ./diag.{to_json}
 import std.fs.{read, real_fs}
 import std.os.{args, exit_process, real_os}
+
+fn emit_one(text str, file str) -> int {
+    ro (diags, c_text) = compile_to_c(text)
+    if diags.len() > 0 {
+        mut i = 0
+        for d in diags {
+            println(to_json(d, i, file))
+            i += 1
+        }
+        return 1
+    }
+    println(c_text)
+    0
+}
 
 fn compile_one(text str, file str) -> int {
     ro diags = compile(text)
@@ -40,8 +54,8 @@ fn compile_one(text str, file str) -> int {
 fn main() {
     with Fs = real_fs(), Os = real_os() {
         ro a = args()
-        if a.len() < 3 || a[1] != "check" {
-            println("usage: novac check <file.nv>")
+        if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
+            println("usage: novac check|emit <file.nv>")
             exit_process(2)
             return
         }
@@ -49,7 +63,12 @@ fn main() {
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
-                    Ok(text) => exit_process(compile_one(text, path))
+                    Ok(text) => {
+                        if a[1] == "emit" {
+                            exit_process(emit_one(text, path))
+                        }
+                        exit_process(compile_one(text, path))
+                    }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
                         exit_process(2)
