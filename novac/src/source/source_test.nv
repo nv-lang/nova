@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/source — tests beside the module.
+//
+// The load-bearing probe (owner's design 2026-08-14): a str slice is a VIEW
+// into its parent text, so the byte offset of a slice recovers in O(1) as a
+// pointer distance — no prefix sums, no stored spans. If this test holds,
+// `offset_of` is the one position door of the compiler.
+
+module novac.source
+
+test "slice is a view: pointer distance recovers the byte offset" {
+    ro text = SourceText { text: "fn  main() { }" }
+    ro s = text.text[4..8] // "main"
+    assert(s == "main")
+    assert(text.offset_of(s) == 4)
+    assert(text.offset_of(text.text[0..2]) == 0)
+}
+
+test "offset_of composes with spans back to slices" {
+    ro text = SourceText { text: "hello world" }
+    ro w = text.text[6..11]
+    ro sp = Span { lo: text.offset_of(w), hi: text.offset_of(w) + w.byte_len() }
+    assert(text.slice(sp) == "world")
+}

@@ -64,6 +64,15 @@ test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {
     assert(lo1 + toks[1].text.byte_len() == 8)
 }
 
+test "interpolated string is refused honestly, not mislexed (owner 2026-08-14)" {
+    // Flat scan would close the outer string at the inner quote -- plausibly
+    // wrong tokenization. E1 marks the token ErrorTok instead; bytes survive.
+    ro src = "f(\"hello \${x}\")"
+    ro toks = lex(src)
+    assert(toks[2].kind == TokenKind.ErrorTok)
+    assert(reserialize(toks) == src)
+}
+
 test "eof token carries tail trivia" {
     ro toks = lex("x  // tail")
     ro last = toks[toks.len() - 1]

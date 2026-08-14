@@ -24,3 +24,14 @@ export type SourceText {
 export fn SourceText @len() -> int => @text.byte_len()
 
 export fn SourceText @slice(sp Span) -> str => @text[sp.lo..sp.hi]
+
+/// Byte offset of a slice of `@text` — O(1) via pointer distance (owner's
+/// design 2026-08-14). PRECONDITION: `s` must be a slice of `@text`; a
+/// foreign str gives a meaningless number (checked by the debug assert, not
+/// by the type — recorded honestly). This is the ONE position door: nothing
+/// else in the compiler computes offsets.
+export fn SourceText @offset_of(s str) -> int {
+    ro d = unsafe { s.ptr().dist(@text.ptr()) }
+    assert(d >= 0 && d <= @text.byte_len())
+    d
+}

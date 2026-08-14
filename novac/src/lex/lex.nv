@@ -116,13 +116,25 @@ export fn lex(src str) -> []Token {
         } else if c == 34 {
             // String literal: raw bytes between quotes, escapes kept verbatim
             // (lossless; meaning is parse/check business, not lex).
+            //
+            // Owner's catch 2026-08-14: Nova strings are CONTEXT-DEPENDENT --
+            // "${expr}" nests real tokens (including strings) inside. A flat
+            // scan-to-quote would tokenize that PLAUSIBLY BUT WRONG, which is
+            // class K7 (silent half-capability). E1 therefore refuses
+            // honestly: a string containing `${` lexes as ErrorTok (still
+            // lossless), so parse wraps it in Err and the subset boundary is
+            // visible. The mode-stack lexer (Roslyn interpolated-string
+            // model: compound token, inner tokens recursive) is the E2 step.
             i += 1
+            mut has_interp = false
             while i < n && b[i] != 34 {
                 if b[i] == 92 && i + 1 < n { i += 1 }
+                if b[i] == 36 && i + 1 < n && b[i + 1] == 123 { has_interp = true }
                 i += 1
             }
             if i < n { i += 1 }
             kind = TokenKind.StrLit
+            if has_interp { kind = TokenKind.ErrorTok }
         } else {
             kind = punct_kind(c)
             i += 1
