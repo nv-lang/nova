@@ -25,6 +25,9 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#ifndef _WIN32
+#include <signal.h>  /* №664: SIG_IGN для SIGPIPE в nova_runtime_init */
+#endif
 
 #ifndef NOVA_USE_LIBUV
 #  error "Plan 44 requires NOVA_USE_LIBUV — libuv mandatory for M:N"
@@ -1787,6 +1790,16 @@ void nova_runtime_init(int n_workers) {
         nova_mutex_unlock(&_init_mu);
         return;
     }
+
+    /* №664 (носитель №662, 2026-08-15): второй ремень SIG_IGN(SIGPIPE) для
+     * программ, зовущих runtime.init() до какого-либо I/O. ГЛАВНАЯ дверь —
+     * nova_driver_init (driver.c): обычный бинарь runtime.init не зовёт
+     * вовсе (это явный одноразовый тюнер), что и доказал мост №662 —
+     * SIG_IGN только здесь смерть 141 не снял. Полное обоснование — у
+     * главной двери. */
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     /* Plan 52 Ф.22: SipHash seed init upfront — готовность hash до пула. */
     nova_hash_seed_ensure_init();
