@@ -14,12 +14,16 @@
 // tree, where the attachment rule matters for node boundaries; for the
 // reserialization invariant leading-only is equivalent and simpler.
 //
-// Edge table §3: lex -> source only. Lexer errors do not import diag:
-// ErrorTok IS the representation (parse reports it with a position).
+// Edge table §3: lex -> source only (currently unused: the token stores NO
+// absolute positions at all — owner's correction 2026-08-14. Positions are
+// DERIVED by prefix-summing leading+text lengths, which the lossless
+// invariant makes exact; storing a span alongside would be a second copy of
+// the truth with its own consistency invariant — exactly what §5 forbids the
+// green layer: widths, not positions. Span stays the position CURRENCY,
+// computed by the red layer for diagnostics). Lexer errors do not import
+// diag: ErrorTok IS the representation (parse reports it with a position).
 
 module novac.lex
-
-import ../source.{Span}
 
 export type TokenKind enum
     | KwModule
@@ -44,7 +48,6 @@ export type Token {
     kind TokenKind
     leading str
     text str
-    span Span
 }
 
 fn is_space(b u8) -> bool => b == 32 || b == 9 || b == 13 || b == 10
@@ -97,7 +100,7 @@ export fn lex(src str) -> []Token {
         }
         ro leading = src[trivia_start..i]
         if i >= n {
-            toks.push(Token { kind: TokenKind.Eof, leading, text: "", span: Span { lo: i, hi: i } })
+            toks.push(Token { kind: TokenKind.Eof, leading, text: "" })
             return toks
         }
         // Token text.
@@ -124,9 +127,9 @@ export fn lex(src str) -> []Token {
             kind = punct_kind(c)
             i += 1
         }
-        toks.push(Token { kind, leading, text: src[start..i], span: Span { lo: start, hi: i } })
+        toks.push(Token { kind, leading, text: src[start..i] })
     }
-    toks.push(Token { kind: TokenKind.Eof, leading: "", text: "", span: Span { lo: n, hi: n } })
+    toks.push(Token { kind: TokenKind.Eof, leading: "", text: "" })
     toks
 }
 

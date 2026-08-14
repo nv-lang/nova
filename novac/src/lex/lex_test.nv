@@ -54,11 +54,14 @@ test "unknown byte becomes ErrorTok, not a panic, and keeps its text" {
     assert(toks[1].text == "?")
 }
 
-test "spans: token span slices the source back to its text" {
+test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {
     ro src = "fn  main"
     ro toks = lex(src)
-    assert(toks[1].span.lo == 4)
-    assert(toks[1].span.hi == 8)
+    // lo of token k == sum of byte lengths of everything before it; the
+    // lossless invariant makes this exact, so the green token needs no span.
+    ro lo1 = toks[0].leading.byte_len() + toks[0].text.byte_len() + toks[1].leading.byte_len()
+    assert(lo1 == 4)
+    assert(lo1 + toks[1].text.byte_len() == 8)
 }
 
 test "eof token carries tail trivia" {
