@@ -90,7 +90,7 @@ rustc  →  nova.exe (Rust)  →  novac (Nova)  →  novac собирает са
 | номер | сквозной, `D-NNN` |
 | корзина | `bug-novac` · `bug-legacy` · `by-design` · `open-question` · `miscompiled-novac` |
 | предмет | какой файл корпуса, какая позиция |
-| ссылка | номер в №221.1 (для `bug-legacy`) или D-блок (для `by-design`) |
+| ссылка | номер в №221.1 (для `bug-legacy` И `miscompiled-novac`) или D-блок (для `by-design`) |
 | статус | предсказано заранее / обнаружено постфактум |
 
 **Корзины и что каждая обязывает:**
