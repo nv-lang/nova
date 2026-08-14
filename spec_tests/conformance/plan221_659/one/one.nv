@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #659/#660 minimal fixture, module ONE: the sum type that carries
+// the derive. Its name deliberately collides with ./two's `Node` so the
+// merged CU qualifies both C bases (D381). The synthesized `equal` must
+// name THIS module's qualified base -- pre-fix its dummy span resolved the
+// receiver through the CU ENTRY file, which imports helpers only (never a
+// `Node`), so the reference went to a bare base nobody emits.
+
+module plan221_659.one
+
+#impl(Equal)
+export type Node enum
+    | A(int)
+    | B
+
+export fn mk(x int) -> Node => Node.A(x)
+
+export fn mk_b() -> Node => Node.B
+
+/// The call that genuinely anchors the derived equal: `==` on the sum
+/// lowers to the synthesized method, so the method is reachable by a real
+/// call site, not merely by the name-intersection over-keep.
+export fn same(a Node, b Node) -> bool => a == b
+
+/// #660's original reproducer shape: Option over the colliding sum in the
+/// same merged CU (the registry carrier was `kind_of() -> Option[NodeKind]`
+/// in novac's check CU).
+export fn maybe(x int) -> Option[Node] {
+    if x > 0 { Some(Node.A(x)) } else { None }
+}

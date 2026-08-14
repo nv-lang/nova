@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #659/#660 minimal fixture, module TWO: the OTHER `Node` -- its
+// only job is to make the simple name collide CU-wide so both types emit
+// under qualified C bases. It is constructed here so the type is genuinely
+// used; the entry imports only `twos`, never the type name.
+
+module plan221_659.two
+
+export type Node enum
+    | X
+    | Y
+
+export fn twos() -> int {
+    ro n = Node.X
+    match n {
+        X => 2
+        Y => 3
+    }
+}

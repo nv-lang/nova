@@ -13565,7 +13565,18 @@ impl<'a> TypeCheckCtx<'a> {
                             None
                         };
                         if let Some(sn) = resolved {
-                            self.pattern_variant_types_buf.borrow_mut().insert(*span, sn);
+                            // #659/#660 family guard (2026-08-14): a synthesized
+                            // (auto-derive) pattern carries `Span::dummy()` — EVERY
+                            // such pattern across EVERY derived body of the CU maps
+                            // to the same key, so inserting here is last-write-wins
+                            // cross-contamination: one type's variant tags leak into
+                            // another derived body (observed: `NOVA_TAG_Shape_Val`
+                            // inside Node's equal). A dummy span identifies nothing —
+                            // never write it; those patterns resolve through the
+                            // schema registry / `find_variant_compat` fallback.
+                            if *span != crate::diag::Span::dummy() {
+                                self.pattern_variant_types_buf.borrow_mut().insert(*span, sn);
+                            }
                         }
                     }
                 }

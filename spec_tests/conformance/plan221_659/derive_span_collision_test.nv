@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #659/#660 minimal fixture (2026-08-14), the class in one CU:
+// two same-named sum types in two modules (name collision -> qualified C
+// bases, D381), one of them with a derived protocol, and an ENTRY file
+// that imports helper functions only -- never a type named `Node`.
+//
+// Mechanism under test: a synthesized derive method used to carry a dummy
+// span, so the emitter resolved its receiver's C name through the CU entry
+// file. Entry ignorant of the name -> bare `Nova_Node`, a base nobody
+// emits ("unknown type name", #659, carriers novac main/pipeline); entry
+// importing the OTHER same-named type -> the wrong module's full type
+// (missing union members / foreign tags, #660, carrier novac check). The
+// fix tags the synthesized method with the DECLARING type's file_id
+// (mirror of the serde-method precedent), so this file must now compile
+// AND the derived equal must behave structurally.
+
+module plan221_659.derive_span_collision_test
+
+import ./one.{mk, mk_b, same, maybe}
+import ./two.{twos}
+
+test "derived equal on a name-colliding sum resolves to the declaring module" {
+    assert(same(mk(3), mk(3)))
+    assert(!same(mk(3), mk(4)))
+    assert(!same(mk(3), mk_b()))
+    assert(same(mk_b(), mk_b()))
+}
+
+test "the colliding neighbor type stays usable in the same CU" {
+    assert(twos() == 2)
+}
+
+test "Option over the colliding sum compiles and matches (the #660 shape)" {
+    match maybe(5) {
+        Some(n) => assert(same(n, mk(5)))
+        None => assert(false)
+    }
+    match maybe(0) {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}

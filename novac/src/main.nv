@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// EXPECT_CC_ERROR unknown type name 'Nova_Node'
-// [M-659-multitu-recursive-sum-fwd-decl] [LEGACY-#659] SELF-EXPIRING marker: the test
-// runner's multi-TU merged build of THIS file loses the forward decl of the
-// recursive sum Node (registry #659; the single-file CLI build of the same
-// entry is fine, and the parse module's own tests build and pass). The
-// marker asserts today's truth; the moment the compiler fix lands, CC
-// succeeds, this expectation FAILS loudly, and the marker must be removed --
-// restoring the real contract below.
-// (real contract, restored on #659 fix: EXPECT_EXIT_CODE 2 -- usage exit.)
+// EXPECT_EXIT_CODE 2
 // novac — the Nova compiler written in Nova. Plan 274, stage E1.
+// (Exit 2 = usage exit: the test runner invokes the binary with no args.
+// This is the real contract, restored 2026-08-14 when the #659 fix landed
+// and this file's self-expiring negative cc-error marker fell loudly.)
 //
 // The E1 CLI: `novac <file.nv>` lexes, parses and subset-checks one file,
 // prints §7-schema JSON diagnostics one per line, and exits 0 on a clean
