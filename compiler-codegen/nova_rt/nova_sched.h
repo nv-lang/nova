@@ -501,18 +501,72 @@ typedef nova_bool (*NovaParkPredicate)(void* ctx);
 static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
                                           NovaParkPredicate pred, void* ctx) {
     if (pred && pred(ctx)) return;       /* fast-path: condition уже выполнено */
-    for (;;) {
-        /* Plan 83-go-cmn Ф.2: each nova_sched_park is a fresh gopark transaction.
-         * gopark resets _nova_park_state to NIL on its normal (yield) return, so
-         * a ready-before-park goready latched during THIS iteration is consumed
-         * by gopark's G3 recheck (returns immediately) and the predicate re-check
-         * below sees the published state — no lost spurious-wake, no stale READY
-         * carried into the next iteration (review correction #3). */
+    if (!pred) {                         /* legacy single-shot — как было */
         nova_sched_park(scope, slot);
-        if (!pred) return;               /* legacy single-shot */
+        return;
+    }
+    for (;;) {
+        /* №656: futex/AtomicWaker — ПУБЛИКАЦИЯ НОСИТЕЛЯ ПЕРЕД ПЕРЕПРОВЕРКОЙ.
+         * Прежний порядок (pred → park, без перепроверки между mark_slot и
+         * WAIT) терял пробуждение, чей паблишер стреляет в окне между чтением
+         * предиката и публикацией parked_co: паблишер без собственного wake
+         * (close_cb sub-case B, driver.c) публиковал CLOSED, резолвить ему
+         * было нечего, а файбер уходил в WAIT навсегда — 62-секундные
+         * зависания presume_446_stress, застрявший назван поимённо (c330,
+         * PARKED/WAIT, воркер-слот 72; реестр №656, серии 3-5). Сайт сна
+         * (fibers.h Ф.3) ИМЕННО ЭТОТ протокол когда-то и документировал;
+         * переход на generic park_until оправдывался «pending_wake[]
+         * integration», удалённой shim-переписыванием, — обоснование молча
+         * стало ложным (№645-класс в C-комментарии).
+         *
+         * Порядок Деккера: mark_slot публикует parked (SEQ_CST = XCHG, полный
+         * барьер на x86) → перепроверка предиката читает опубликованное
+         * паблишером (его сторона: SC-store состояния → load parked_co).
+         * Хотя бы одна из сторон видит другую; потерять пробуждение стало
+         * некому. Если предикат истинен после публикации — слот снимается и
+         * возврат БЕЗ gopark: до G1 никакой goready не мог перевести нас в
+         * DISPATCHED (R2 требует WAIT), максимум — латч NIL→READY, который
+         * следующий gopark потребит как spurious (пред-циклы это переживают
+         * по контракту). */
+        mco_coro* _co656 = mco_running();
+        if (!_co656) {
+            nova_sched_park(scope, slot); /* его же честный abort не-fiber */
+            return;
+        }
+        if (!scope || slot < 0 || slot >= scope->count) {
+            nova_sched_park(scope, slot); /* его же честный abort границ */
+            return;
+        }
+        _nova_park_mark_slot(scope, slot, _co656);
+        if (pred(ctx)) {
+            _nova_park_clear_slot(scope, slot);
+            return;
+        }
+        nova_gopark(NULL, NULL);
+        _nova_park_clear_slot(scope, slot);
         if (pred(ctx)) return;           /* predicate satisfied */
         /* spurious wake → re-park */
     }
+}
+
+/* №656 (б): wake по слоту С ПРОВЕРКОЙ ТОЖДЕСТВА. Для паблишера, который
+ * ЗНАЕТ своего адресата (close_cb держит st->expected_co), но не смеет
+ * будить слот вслепую: parked_co[slot] может нести устаревший указатель
+ * ЧУЖОГО файбера (clear_slot чистит только флаг), и слепой goready по нему —
+ * UAF на пуленом ctx. Тождество с ожидаемым co доказывает: это НАШ файбер,
+ * его публикация состоялась, goready безопасен (для close_cb сна адресат
+ * доказуемо жив: файбер не покидает sleep до CLOSED, а второго close_cb на
+ * один st не бывает). Несовпадение/NULL — безвредный no-op: адресат ещё не
+ * опубликовался, и его post-mark перепроверка предиката (см. park_until
+ * выше) увидит состояние сама. */
+static inline void nova_sched_wake_expected(NovaFiberQueue* scope, int slot,
+                                             mco_coro* expected) {
+    if (!scope || !expected || slot < 0 || slot >= scope->count) return;
+    NovaSchedState* st = nova_sched_find_state(scope);
+    if (!st || slot >= nova_sched_cap_acq(st)) return;
+    mco_coro** pco = nova_sched_parked_co_at(st, slot);
+    mco_coro* co = pco ? __atomic_load_n(pco, __ATOMIC_SEQ_CST) : NULL;
+    if (co == expected) nova_goready(expected);
 }
 
 /* ─── Cancel-integration ──────────────────────────────────────── */
