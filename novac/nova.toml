@@ -1,0 +1,25 @@
+# nova.toml — novac: the Nova compiler written in Nova.
+#
+# Plan 274 (docs/plans/274-novac-self-hosted-compiler.md). The architecture,
+# module map and edge table live in docs/dev/novac-architecture.md; the module
+# map is normative — check-novac-deps.sh parses the edge table from that
+# document directly, so there is deliberately NO second machine-readable copy
+# of the edges here (single source; class K4).
+#
+# Language pin (274 §1.1): novac tracks the spec at the pinned point below.
+# D-blocks accepted after the pin queue up and are taken in batches; the lag
+# is a number, not a feeling. Moving the pin is a conscious act, recorded in
+# the plan.
+#
+#   spec-point: 2026-08-14 (start of E1; queue: empty)
+
+[package]
+name = "novac"
+version = "0.0.1"
+nova-version = "0.5"
+license = "MIT OR Apache-2.0"
+description = "The Nova compiler, in Nova (plan 274; E1 subset)"
+repository = "https://github.com/nv-lang/nova.git"
+
+[lib]
+src = "src"

@@ -17,4 +17,5 @@ members = [
     "examples",
     "nova_tests",
     "spec_tests",
+    "novac",
 ]

@@ -1,0 +1,13 @@
+// novac — the Nova compiler written in Nova. Plan 274, stage E1.
+//
+// This binary is the E1 skeleton: it exists so the package builds, the guards
+// have a subject, and the differential gate has an entry point. The vertical
+// slice (lex -> tree -> parse -> check -> emit_c for the E1 subset) lands
+// behind this door module by module, per the edge table in
+// docs/dev/novac-architecture.md §3.
+
+module novac
+
+fn main() {
+    println("novac 0.0.1 (E1 skeleton; subset compiler under construction)")
+}
