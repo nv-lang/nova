@@ -14,7 +14,8 @@ test "slice is a view: pointer distance recovers the byte offset" {
     assert(s == "main")
     assert(text.offset_of(s) == 4)
     assert(text.offset_of(text.text[0..2]) == 0)
-    // Empty slice anchored at the very end: d == len is legal exactly here.
+    // Empty slice at the end is legal BY the std contract (slice.nv:
+    // requires start <= end && end <= byte_len; start==end==len satisfies).
     ro n = text.text.byte_len()
     assert(text.offset_of(text.text[n..n]) == n)
 }

@@ -34,9 +34,11 @@ export fn SourceText @offset_of(s str) -> int {
     ro d = unsafe { s.ptr().dist(@text.ptr()) }
     // The WHOLE slice must lie inside the text (owner's question 2026-08-14:
     // why <=?). `d == len` is legal ONLY for the empty slice anchored at the
-    // end (text[len..len]); checking d alone would admit a non-empty slice
-    // starting at len, which no real slice of @text can be. Range check
-    // covers both: empty-at-end passes (d + 0 <= len), garbage edges fail.
+    // end: text[len..len] is admitted BY CONTRACT -- str @index requires
+    // `0 <= r.start && r.start <= r.end && r.end <= @byte_len()`
+    // (std/src/runtime/string/slice.nv), and start == end == len satisfies
+    // it. This assert mirrors that same contract shape for the recovered
+    // offset: empty-at-end passes (d + 0 <= len), garbage edges fail.
     assert(d >= 0 && d + s.byte_len() <= @text.byte_len())
     d
 }
