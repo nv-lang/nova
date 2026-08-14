@@ -15,6 +15,17 @@
 # Контракт вызова: '<bin> check <file>'; если CLI novac окажется иным —
 # страж правится тем же коммитом, что вводит бинарь.
 #
+# С Э2 (274 §10.4) страж — ещё и судья храповика НА ПРОГРЕСС: зовёт
+# scripts/tools/novac-diff-corpus.sh (корпус examples/), парсит его машинную
+# строку baseline-numbers и сверяет с novac-corpus.baseline В ОБЕ СТОРОНЫ:
+# меньше базы — откат (красный), больше базы — рост без поднятия базы тем же
+# коммитом (тоже красный). Корзины «вне точки»/«заблокировано оракулом»/
+# «расстояние до самосборки» печатаются раннером рядом с базой (§10.4).
+# БЮДЖЕТ: корпусная часть ~2–6 мин (замер 2026-08-14: 334с под нагрузкой,
+# из них ~200с — поведенческие смоуки). Для быстрых локальных итераций:
+# NOVAC_CORPUS=0 отключает корпусную часть (фикстуры остаются); отключение
+# в ГЕЙТЕ — только сознательным решением интегратора, не тихим дефолтом.
+#
 # Страж «ожидает бинарь»: пока novac/target/novac.exe не существует — зелёный
 # честной строкой: страж до кода легален, молчание нелегально (№645).
 #
@@ -87,4 +98,41 @@ if [ "$bad" -gt 0 ]; then
     exit 1
 fi
 echo "$NAME ok: фикстур $N, исходы совпали с оракулом (в allow: $allowed)"
+
+# ---- Храповик корпуса (274 §10.4; с Э2) ----------------------------------
+if [ "${NOVAC_CORPUS:-1}" = "0" ]; then
+    echo "$NAME: корпусная часть пропущена (NOVAC_CORPUS=0 — локальная итерация)"
+    exit 0
+fi
+BASE="$ROOT/scripts/guards/novac-corpus.baseline"
+if [ ! -f "$BASE" ]; then
+    echo "$NAME ok: храповика ещё нет (novac-corpus.baseline отсутствует — Э1)"
+    exit 0
+fi
+RUN="$ROOT/scripts/tools/novac-diff-corpus.sh"
+if ! sh "$RUN" > "$T/corpus.out" 2>&1; then
+    echo "$NAME: FAIL — корпусный прогон красный:" >&2
+    tail -10 "$T/corpus.out" >&2
+    exit 1
+fi
+NUMS=$(grep '^novac-diff-corpus baseline-numbers:' "$T/corpus.out")
+cm=$(echo "$NUMS" | sed -n 's/.*contract-match=\([0-9]*\).*/\1/p')
+bm=$(echo "$NUMS" | sed -n 's/.*behavior-match=\([0-9]*\).*/\1/p')
+base_cm=$(tr -d '\r' < "$BASE" | sed -n 's/^contract-match \([0-9]*\)$/\1/p')
+base_bm=$(tr -d '\r' < "$BASE" | sed -n 's/^behavior-match \([0-9]*\)$/\1/p')
+if [ -z "$cm" ] || [ -z "$bm" ] || [ -z "$base_cm" ] || [ -z "$base_bm" ]; then
+    echo "$NAME: FAIL — не распарсил числа храповика (прогон: '$NUMS'; база: cm='$base_cm' bm='$base_bm')" >&2
+    exit 1
+fi
+grep -E '^novac-diff-corpus: (файлов|поведенчески)' "$T/corpus.out" | sed "s/^/$NAME: /"
+if [ "$cm" -lt "$base_cm" ] || [ "$bm" -lt "$base_bm" ]; then
+    echo "$NAME: FAIL — ОТКАТ храповика: contract $cm (база $base_cm), behavior $bm (база $base_bm)" >&2
+    exit 1
+fi
+if [ "$cm" -gt "$base_cm" ] || [ "$bm" -gt "$base_bm" ]; then
+    echo "$NAME: FAIL — прогресс без поднятия базы: contract $cm (база $base_cm), behavior $bm (база $base_bm)." >&2
+    echo "  Подними числа в scripts/guards/novac-corpus.baseline ТЕМ ЖЕ коммитом (§10.4)." >&2
+    exit 1
+fi
+echo "$NAME ok: храповик корпуса — contract $cm, behavior $bm (== база)"
 exit 0
