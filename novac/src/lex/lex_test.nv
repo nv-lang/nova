@@ -73,6 +73,29 @@ test "interpolated string is refused honestly, not mislexed (owner 2026-08-14)" 
     assert(reserialize(toks) == src)
 }
 
+test "arithmetic tokens: two-char operators split before one-char (E1 growth)" {
+    ro toks = lex("if a <= b { return a < c } x += 1 .. 2 -> mut")
+    assert(toks[0].kind == TokenKind.KwIf)
+    assert(toks[2].kind == TokenKind.Le)
+    assert(toks[5].kind == TokenKind.KwReturn)
+    assert(toks[7].kind == TokenKind.Lt)
+    assert(toks[11].kind == TokenKind.PlusAssign)
+    assert(toks[13].kind == TokenKind.DotDot)
+    assert(toks[15].kind == TokenKind.Arrow)
+    assert(toks[16].kind == TokenKind.KwMut)
+}
+
+test "arithmetic file reserializes byte for byte" {
+    ro src = "fn factorial(n int) -> int {
+    if n <= 1 {
+        return 1
+    }
+    n * factorial(n - 1)
+}
+"
+    assert(reserialize(lex(src)) == src)
+}
+
 test "eof token carries tail trivia" {
     ro toks = lex("x  // tail")
     ro last = toks[toks.len() - 1]

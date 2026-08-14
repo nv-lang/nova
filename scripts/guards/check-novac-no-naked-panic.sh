@@ -32,7 +32,7 @@ if [ ! -d "$SRC" ]; then
 fi
 
 HITS=$(grep -rn 'panic(' "$SRC" --include='*.nv' 2>/dev/null \
-       | grep -v '^[^:]*diag/diag\.nv:' \
+       | grep -v 'diag/diag\.nv:' \
        | grep -v '// ' || true)
 N=$(printf '%s\n' "$HITS" | grep -c . || true)
 N=${N:-0}

@@ -44,9 +44,7 @@ fn render(lits []str, body str) -> str {
             emit_strlit_defs(out, lits)
             emitted_lits = true
         } else if line.contains("__NOVAC_BODY__") {
-            out.append("static nova_unit nova_fn_main_impl(void) {\n")
             out.append(body)
-            out.append("    return NOVA_UNIT;\n}\n")
             emitted_body = true
         } else {
             out.append(line)
@@ -86,34 +84,236 @@ fn emit_file(file Node, mut lits []str, mut body StringBuilder) -> () {
     }
 }
 
-fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
-    match f {
-        Leaf(_) => ice("emit: fn node must be a branch")
-        Branch { children, .. } => {
-            for c in children {
-                if c.kind_of() == NodeKind.Block {
-                    emit_block(c, lits, body)
-                }
-            }
-        }
+fn branch_children(n Node) -> []Node {
+    match n {
+        Leaf(_) => ice("emit: expected a branch node")
+        Branch { children, .. } => children
     }
 }
 
-fn emit_block(b Node, mut lits []str, mut body StringBuilder) -> () {
-    match b {
-        Leaf(_) => ice("emit: block node must be a branch")
-        Branch { children, .. } => {
-            for c in children {
-                if c.kind_of() == NodeKind.Call {
-                    emit_println(c, lits, body)
+fn leaf_text(n Node) -> str {
+    match n {
+        Leaf(t) => t.text
+        Branch { .. } => ice("emit: expected a leaf")
+    }
+}
+
+fn leaf_kind(n Node) -> TokenKind {
+    match n {
+        Leaf(t) => t.kind
+        Branch { .. } => ice("emit: expected a leaf")
+    }
+}
+
+// E1 user functions are all (nova_int...) -> nova_int; main is the impl slot.
+fn emit_fn(f Node, mut lits []str, mut body StringBuilder) -> () {
+    ro kids = branch_children(f)
+    ro name = leaf_text(kids[1])
+    if name == "main" {
+        body.append("static nova_unit nova_fn_main_impl(void) {\n")
+    } else {
+        body.append("static nova_int novac_user_${name}(")
+        mut first = true
+        for c in kids {
+            if c.kind_of() == NodeKind.Param {
+                if !first { body.append(", ") }
+                body.append("nova_int ")
+                body.append(leaf_text(branch_children(c)[0]))
+                first = false
+            }
+        }
+        if first { body.append("void") }
+        body.append(") {\n")
+    }
+    for c in kids {
+        if c.kind_of() == NodeKind.Block {
+            emit_block_stmts_fn(c, lits, body, name != "main")
+        }
+    }
+    if name == "main" {
+        body.append("    return NOVA_UNIT;\n}\n")
+    } else {
+        body.append("    return (nova_int)0LL;\n}\n")
+    }
+}
+
+fn emit_block_stmts(b Node, mut lits []str, mut body StringBuilder) -> () {
+    emit_block_stmts_fn(b, lits, body, false)
+}
+
+fn is_expr_kind(k NodeKind) -> bool =>
+    k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call
+
+// tail=true: the LAST expression statement of an int fn body is its return
+// value (Nova tail-expression semantics; arithmetic.nv relies on it).
+fn emit_block_stmts_fn(b Node, mut lits []str, mut body StringBuilder, tail bool) -> () {
+    ro kids = branch_children(b)
+    mut last_branch = -1
+    if tail {
+        mut j = 0
+        for c in kids {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => { last_branch = j }
+            }
+            j += 1
+        }
+    }
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's own braces -- trivia carriers, not statements
+            Branch { .. } => {
+                if tail && j == last_branch && is_expr_kind(c.kind_of()) && c.kind_of() != NodeKind.Call {
+                    body.append("    return ")
+                    emit_expr(c, body)
+                    body.append(";\n")
+                } else {
+                    emit_stmt(c, lits, body)
                 }
             }
         }
+        j += 1
+    }
+}
+
+fn emit_stmt(st Node, mut lits []str, mut body StringBuilder) -> () {
+    ro k = st.kind_of()
+    if k == NodeKind.Call {
+        emit_println(st, lits, body)
+    } else if k == NodeKind.IfStmt {
+        ro kids = branch_children(st)
+        body.append("    if (")
+        emit_expr(kids[1], body)
+        body.append(") {\n")
+        emit_block_stmts(kids[2], lits, body)
+        body.append("    }\n")
+    } else if k == NodeKind.RetStmt {
+        ro kids = branch_children(st)
+        body.append("    return ")
+        if kids.len() > 1 { emit_expr(kids[1], body) } else { body.append("NOVA_UNIT") }
+        body.append(";\n")
+    } else if k == NodeKind.BindStmt {
+        ro kids = branch_children(st)
+        body.append("    nova_int ")
+        body.append(leaf_text(kids[1]))
+        body.append(" = ")
+        emit_expr(kids[3], body)
+        body.append(";\n")
+    } else if k == NodeKind.AssignStmt {
+        ro kids = branch_children(st)
+        ro target = expr_leaf_name(kids[0])
+        body.append("    ")
+        body.append(target)
+        if leaf_kind(kids[1]) == TokenKind.PlusAssign {
+            body.append(" = nova_int_checked_add(")
+            body.append(target)
+            body.append(", ")
+            emit_expr(kids[2], body)
+            body.append(")")
+        } else {
+            body.append(" = ")
+            emit_expr(kids[2], body)
+        }
+        body.append(";\n")
+    } else if k == NodeKind.ForStmt {
+        ro kids = branch_children(st)
+        ro v = leaf_text(kids[1])
+        ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
+        body.append("    for (nova_int ${v} = ")
+        emit_expr(range[0], body)
+        body.append("; ${v} < ")
+        emit_expr(range[2], body)
+        body.append("; ${v}++) {\n")
+        emit_block_stmts(kids[4], lits, body)
+        body.append("    }\n")
+    } else if k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name {
+        body.append("    (void)(")
+        emit_expr(st, body)
+        body.append(");\n")
+    } else {
+        ice("emit: statement kind outside the E1 subset")
+    }
+}
+
+fn expr_leaf_name(e Node) -> str {
+    ro kids = branch_children(e)
+    leaf_text(kids[0])
+}
+
+fn checked_op(op TokenKind) -> str {
+    if op == TokenKind.Plus { return "nova_int_checked_add" }
+    if op == TokenKind.Minus { return "nova_int_checked_sub" }
+    if op == TokenKind.Star { return "nova_int_checked_mul" }
+    if op == TokenKind.Slash { return "nova_int_checked_div" }
+    ""
+}
+
+fn cmp_op(op TokenKind) -> str {
+    if op == TokenKind.Lt { return "<" }
+    if op == TokenKind.Le { return "<=" }
+    ""
+}
+
+fn emit_expr(e Node, mut body StringBuilder) -> () {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit {
+        ro t = branch_children(e)[0]
+        if leaf_kind(t) == TokenKind.IntLit {
+            body.append("((nova_int)")
+            body.append(leaf_text(t))
+            body.append("LL)")
+        } else {
+            ice("emit: string literal in a value position is outside E1")
+        }
+    } else if k == NodeKind.Name {
+        body.append(expr_leaf_name(e))
+    } else if k == NodeKind.Call {
+        ro kids = branch_children(e)
+        body.append("novac_user_")
+        body.append(call_callee_text(kids))
+        body.append("(")
+        mut first = true
+        for c in kids {
+            ro ck = c.kind_of()
+            if ck == NodeKind.Bin || ck == NodeKind.Lit || ck == NodeKind.Name || ck == NodeKind.Call {
+                if !first { body.append(", ") }
+                emit_expr(c, body)
+                first = false
+            }
+        }
+        body.append(")")
+    } else if k == NodeKind.Bin {
+        ro kids = branch_children(e)
+        ro op = leaf_kind(kids[1])
+        ro chk = checked_op(op)
+        if chk != "" {
+            body.append(chk)
+            body.append("(")
+            emit_expr(kids[0], body)
+            body.append(", ")
+            emit_expr(kids[2], body)
+            body.append(")")
+            return
+        }
+        ro cmp = cmp_op(op)
+        if cmp != "" {
+            body.append("((nova_int)((")
+            emit_expr(kids[0], body)
+            body.append(") ")
+            body.append(cmp)
+            body.append(" (")
+            emit_expr(kids[2], body)
+            body.append(")))")
+            return
+        }
+        ice("emit: binary operator outside the E1 subset")
+    } else {
+        ice("emit: expression kind outside the E1 subset")
     }
 }
 
 fn call_callee_text(kids []Node) -> str {
-    // Call shape from parse: [Name-branch(name-leaf), LParen, args..., RParen]
     match kids[0] {
         Leaf(t) => t.text
         Branch { children, .. } => {
@@ -126,40 +326,22 @@ fn call_callee_text(kids []Node) -> str {
 }
 
 fn emit_println(call Node, mut lits []str, mut body StringBuilder) -> () {
-    match call {
-        Leaf(_) => ice("emit: call node must be a branch")
-        Branch { children, .. } => {
-            if call_callee_text(children) != "println" {
-                ice("emit: E1 subset knows only println calls")
-            }
-            for c in children {
-                if c.kind_of() == NodeKind.Lit {
-                    emit_print_arg(c, lits, body)
-                }
-            }
-            body.append("    nova_print_newline();\n")
+    ro kids = branch_children(call)
+    if call_callee_text(kids) != "println" {
+        ice("emit: E1 subset knows only println calls in statement position")
+    }
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit && leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {
+            ro t = branch_children(c)[0]
+            ro idx = lits.len()
+            lits.push(leaf_text(t))
+            body.append("    nova_print_str(_novac_strlit_${idx});\n")
+        } else if ck == NodeKind.Lit || ck == NodeKind.Bin || ck == NodeKind.Name || ck == NodeKind.Call {
+            body.append("    nova_print_int(")
+            emit_expr(c, body)
+            body.append(");\n")
         }
     }
-}
-
-fn emit_print_arg(lit Node, mut lits []str, mut body StringBuilder) -> () {
-    match lit {
-        Leaf(_) => ice("emit: lit node must be a branch")
-        Branch { children, .. } => {
-            match children[0] {
-                Leaf(t) => {
-                    if t.kind == TokenKind.StrLit {
-                        ro idx = lits.len()
-                        lits.push(t.text)
-                        body.append("    nova_print_str(_novac_strlit_${idx});\n")
-                    } else if t.kind == TokenKind.IntLit {
-                        body.append("    nova_print_int((nova_int)${t.text}LL);\n")
-                    } else {
-                        ice("emit: E1 literal is str or int only")
-                    }
-                }
-                Branch { .. } => ice("emit: lit child must be a leaf")
-            }
-        }
-    }
+    body.append("    nova_print_newline();\n")
 }

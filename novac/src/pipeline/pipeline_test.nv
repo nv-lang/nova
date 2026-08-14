@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// EXPECT_CC_ERROR unknown type name 'Nova_Node'
-// [M-659-multitu-recursive-sum-fwd-decl] [LEGACY-#659] SELF-EXPIRING marker, THIRD carrier
-// (after main.nv and the check_test attempt, both 2026-08-14): merging this
-// test CU with the whole front half loses the forward decl of the recursive
-// sum Node — registry #659. The moment the compiler fix lands, CC succeeds,
-// this expectation FAILS loudly, the marker comes off and the six property
-// tests below go live. Three carriers in one day of novac work: #659 has
-// graduated from a marker to a blocker of novac's own test development.
+// (The #659 self-expiring marker lived here 2026-08-14 and fired the same
+// day: the oracle's multi-TU fix landed, CC went green, the expectation
+// failed loudly, the marker came off and the property tests below went live
+// -- the mechanism worked exactly as designed.)
 //
 // novac/src/pipeline — tests beside the module, THROUGH the one door: the
 // no-cascade property (one seeded mistake, exactly one diagnostic) is judged

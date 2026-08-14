@@ -98,7 +98,18 @@ fn Cursor mut @fn_decl() -> Node {
     mut kids = []Node.of(@take()) // KwFn
     if @peek() == TokenKind.Ident { kids.push(@take()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
+    while @peek() == TokenKind.Ident {
+        mut pk = []Node.of(@take()) // имя параметра
+        if @peek() == TokenKind.Ident { pk.push(@take()) } // тип (E1: int)
+        if @peek() == TokenKind.Comma { pk.push(@take()) }
+        kids.push(branch(NodeKind.Param, pk))
+    }
     if @peek() == TokenKind.RParen { kids.push(@take()) }
+    if @peek() == TokenKind.Arrow {
+        mut rt = []Node.of(@take())
+        if @peek() == TokenKind.Ident { rt.push(@take()) }
+        kids.push(branch(NodeKind.RetType, rt))
+    }
     if @peek() != TokenKind.LBrace {
         // Panic-mode bucket (no-cascade guard's catch, 2026-08-14): garbage
         // between the signature and the block collects into ONE Err branch —
@@ -118,14 +129,50 @@ fn Cursor mut @fn_decl() -> Node {
 fn Cursor mut @block() -> Node {
     mut kids = []Node.of(@take()) // LBrace
     while !@at_eof() && @peek() != TokenKind.RBrace {
-        kids.push(@expr())
+        kids.push(@stmt())
     }
     if @peek() == TokenKind.RBrace { kids.push(@take()) }
     branch(NodeKind.Block, kids)
 }
 
+fn Cursor mut @stmt() -> Node {
+    if @peek() == TokenKind.KwIf {
+        mut kids = []Node.of(@take())
+        kids.push(@expr())
+        if @peek() == TokenKind.LBrace { kids.push(@block()) }
+        return branch(NodeKind.IfStmt, kids)
+    }
+    if @peek() == TokenKind.KwReturn {
+        mut kids = []Node.of(@take())
+        if @peek() != TokenKind.RBrace { kids.push(@expr()) }
+        return branch(NodeKind.RetStmt, kids)
+    }
+    if @peek() == TokenKind.KwMut {
+        mut kids = []Node.of(@take())
+        if @peek() == TokenKind.Ident { kids.push(@take()) }
+        if @peek() == TokenKind.Assign { kids.push(@take()) }
+        kids.push(@expr())
+        return branch(NodeKind.BindStmt, kids)
+    }
+    if @peek() == TokenKind.KwFor {
+        mut kids = []Node.of(@take())
+        if @peek() == TokenKind.Ident { kids.push(@take()) }
+        if @peek() == TokenKind.KwIn { kids.push(@take()) }
+        kids.push(@expr())
+        if @peek() == TokenKind.LBrace { kids.push(@block()) }
+        return branch(NodeKind.ForStmt, kids)
+    }
+    ro e = @expr()
+    if @peek() == TokenKind.PlusAssign || @peek() == TokenKind.Assign {
+        mut kids = []Node.of(e, @take())
+        kids.push(@expr())
+        return branch(NodeKind.AssignStmt, kids)
+    }
+    e
+}
+
 fn is_binop(k TokenKind) -> bool =>
-    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash
+    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash || k == TokenKind.Lt || k == TokenKind.Le || k == TokenKind.DotDot
 
 fn Cursor mut @expr() -> Node {
     mut left = @primary()

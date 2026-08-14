@@ -25,6 +25,13 @@ export type NodeKind enum
     | Args
     | Bin
     | Lit
+    | IfStmt
+    | RetStmt
+    | BindStmt
+    | AssignStmt
+    | ForStmt
+    | Param
+    | RetType
     | Name
     | Err
 

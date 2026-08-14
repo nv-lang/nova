@@ -48,6 +48,37 @@ test "shape: unexpected top-level token becomes an Err branch, then parsing cont
     }
 }
 
+test "arithmetic grammar: full file reserializes and shapes parse" {
+    ro src = "module basics.a
+
+fn factorial(n int) -> int {
+    if n <= 1 {
+        return 1
+    }
+    n * factorial(n - 1)
+}
+
+fn main() {
+    println(\"5! = \", factorial(5))
+    mut sum = 0
+    for i in 0..11 {
+        sum += i
+    }
+    println(\"sum = \", sum)
+}
+"
+    assert(roundtrip(src))
+    ro f = parse(lex(src))
+    match f {
+        Branch { children, .. } => {
+            assert(children[0].kind_of() == NodeKind.ModuleDecl)
+            assert(children[1].kind_of() == NodeKind.FnDecl)
+            assert(children[2].kind_of() == NodeKind.FnDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
 test "shape: binary chain is left-associative" {
     // 1 + 2 * 3 in the subset is ((1+2)*3) -- precedence is deliberately NOT
     // in the E1 grammar; recorded so the divergence ledger catches it when
