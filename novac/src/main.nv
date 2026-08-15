@@ -48,25 +48,55 @@ fn compile_one(text str, file str) -> int {
     if diags.len() > 0 { 1 } else { 0 }
 }
 
-/// CLI entry: `novac check|emit <file.nv>`; effects are handled here only.
+/// Check one path (read + compile), printing diagnostics; returns the exit
+/// code contribution: 0 clean, 1 diagnostics, 2 IO/UTF-8 error.
+fn check_path(path str) -> int {
+    match read(path.to_path()) {
+        Ok(bytes) => {
+            match bytes.to_str() {
+                Ok(text) => compile_one(text, path)
+                Err(_) => {
+                    println("novac: not UTF-8: ", path)
+                    2
+                }
+            }
+        }
+        Err(_) => {
+            println("novac: cannot read ", path)
+            2
+        }
+    }
+}
+
+/// CLI entry: `novac check <file.nv>...` (batch: one process, per-file
+/// diagnostics; exit = worst of the files) or `novac emit <file.nv>` (one
+/// file: its C on stdout). Effects are handled here only. Batch check exists
+/// for the cost of the loop (plan 274.2): the process start dominates a
+/// single check, so the fuzzer and the diff runner feed a LIST.
 fn main() {
     with Fs = real_fs(), Os = real_os() {
         ro a = args()
         if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
-            println("usage: novac check|emit <file.nv>")
+            println("usage: novac check <file.nv>... | novac emit <file.nv>")
             exit_process(2)
+            return
+        }
+        if a[1] == "check" {
+            mut worst = 0
+            mut i = 2
+            while i < a.len() {
+                ro rc = check_path(a[i])
+                if rc > worst { worst = rc }
+                i += 1
+            }
+            exit_process(worst)
             return
         }
         ro path = a[2]
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
-                    Ok(text) => {
-                        if a[1] == "emit" {
-                            exit_process(emit_one(text, path))
-                        }
-                        exit_process(compile_one(text, path))
-                    }
+                    Ok(text) => { exit_process(emit_one(text, path)) }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
                         exit_process(2)

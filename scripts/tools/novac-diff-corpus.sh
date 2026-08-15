@@ -60,6 +60,13 @@ N=$(wc -l < "$T/list" | tr -d ' ')
 acc=0; rej=0; subset=0; outpoint=0; blocked=0; danger=0; panic=0; allowed=0
 t_novac=0; t_oracle=0
 wall0=$(date +%s%N)
+# Bucket «вне точки» needs each file's git ADD date. One bulk `git log
+# --name-only` over the corpus (0.35s) instead of `--follow` per file
+# (0.46s × ~50 files = 25s of the old 6-minute run — plan 274.2 §3.1).
+# Format: lines of "<date>" then the paths added by that commit; we keep
+# the OLDEST date per path (files listed under several commits keep the
+# first-seen = most recent in log order, so process reversed).
+git -C "$ROOT" log --diff-filter=A --format='%as' --name-only -- "$CORPUS" 2>/dev/null     | awk 'NF==0{next} /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/{d=$0; next} {print $0"	"d}'     | tac | awk -F'	' '!seen[$1]++' > "$T/added_dates" 2>/dev/null || : > "$T/added_dates"
 while IFS= read -r f; do
     rel=${f#"$ROOT"/}
     s=$(date +%s%N)
@@ -86,7 +93,7 @@ while IFS= read -r f; do
         if grep -q 'LEGACY-#\|EXPECT_CC_ERROR' "$f"; then
             blocked=$((blocked+1))
         else
-            added=$(git -C "$ROOT" log --diff-filter=A --follow --format=%as -1 -- "$rel" 2>/dev/null)
+            added=$(awk -F'	' -v f="$rel" '$1==f{print $2; exit}' "$T/added_dates")
             if [ -n "$added" ] && [ -n "$SPEC_POINT" ] && [ "$added" \> "$SPEC_POINT" ]; then
                 outpoint=$((outpoint+1))
                 echo "$rel ($added)" >> "$T/outpoint"
