@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/mangle — THE mangling door: every C identifier a backend
+// emits for a Nova entity comes from HERE, as a FUNCTION of the entity —
+// never as a stored string (owner's verdict 2026-08-15 on C_VEC_INT_TYPE:
+// a constant per type combination is the first member of an infinite
+// series; the oracle's `Nova_Vec____nova_int*` is the VALUE of a mangling
+// function at one point, and copying values instead of the function is the
+// P1 class — a consumer recomputing a fact — turned into hard-coding it).
+//
+// Reference: rustc_symbol_mangling (v0: a deterministic function of the
+// Instance), Go's types.LinkString. The rules below are the ORACLE'S
+// (fixed point on its emission; primitives spell as nova_rt.h says);
+// check-novac-mangle-fixed-point.sh judges them against the oracle's
+// emission of the probe — the rules are held honest by diff, not by prose.
+//
+// Same module as sem.nv (folder = one module of co-equal files): the
+// door reads the type registry it names.
+
+module novac.sem
+
+import ../diag.{ice}
+import ../builtins.{TypeKind}
+
+/// C spelling of a type id: primitives by their runtime ABI name (a stored
+/// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
+export fn c_type(ctx Ctx, t int) -> str {
+    if t >= 0 && t < ctx.types.len() {
+        ro td = ctx.types[t]
+        match td.kind {
+            TkPrim => { return td.c_name }
+            TkRecord => { return "Nova_${td.name}*" }
+            TkSum => { return "Nova_${td.name}*" }
+        }
+    }
+    ice("mangle: type id outside the registry — no silent int default (#652 class)")
+    // [LEGACY-#TBD-never-in-tail] unreachable pacifier (see emit_c history).
+    ""
+}
+
+/// C name of a user type's struct (no pointer): `Nova_<name>`.
+export fn c_struct(ctx Ctx, t int) -> str {
+    ro td = ctx.types[t]
+    if td.kind == TypeKind.TkPrim { ice("mangle: a primitive has no struct name") }
+    "Nova_${td.name}"
+}
+
+/// C name of a sum's tag constant for a variant: `NOVAC_TAG_<Sum>_<Variant>`
+/// (novac's own namespace for user sums — the oracle's NOVA_TAG_ is its).
+export fn c_tag(ctx Ctx, vrow int) -> str {
+    ro vd = ctx.variant_rows[vrow]
+    "NOVAC_TAG_${ctx.types[vd.sum].name}_${vd.name}"
+}
+
+/// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
+export fn c_maker(ctx Ctx, vrow int) -> str {
+    ro vd = ctx.variant_rows[vrow]
+    "novac_make_${ctx.types[vd.sum].name}_${vd.name}"
+}
+
+/// C name of a method call on a receiver type: the oracle's shape is
+/// `<Recv>_method_<name>` where <Recv> is the receiver's C base spelling
+/// (`Nova_str` for str). Only str receivers exist in the subset today; the
+/// rule generalizes with the registry (records: `Nova_<name>`).
+export fn c_method(ctx Ctx, recv_t int, name str) -> str {
+    ro td = ctx.types[recv_t]
+    match td.kind {
+        TkPrim => { return "Nova_${td.name}_method_${name}" }
+        TkRecord => { return "Nova_${td.name}_method_${name}" }
+        TkSum => { return "Nova_${td.name}_method_${name}" }
+    }
+    ""
+}
+
+/// C name of a user function: main is the runtime's entry slot; others
+/// `novac_user_<name>`.
+export fn c_fn(name str, is_entry bool) -> str {
+    if is_entry { return "nova_fn_main_impl" }
+    "novac_user_${name}"
+}

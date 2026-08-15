@@ -25,8 +25,8 @@ module novac.sem
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../check.{subset_method_ret}
 import ../names.{NameTable, NamespaceId}
+import ../builtins.{TypeKind, builtin_types, builtin_method_ret}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
 /// a SUM, not int constants (owner 2026-08-14: the language's own type
@@ -36,24 +36,16 @@ export type DefKind enum
     | DefVariant
     | DefFn
 
-/// What a registry type IS — selects which row table the off/cnt range
-/// addresses (record -> fields, sum -> variants; primitives own no rows).
-export type TypeKind enum
-    | TkPrim
-    | TkRecord
-    | TkSum
-    | TkStd
-
 /// One type of the file registry; a type id is this record's interned
 /// index in Ctx.types (see the terminology note above). Registry rows are
 /// VALUE records: a plain record is a GC pointer — one heap allocation per
 /// row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
-    kind TypeKind // Which row table the off/cnt range addresses (TkStd owns no rows).
-    name str // Source spelling (`int`, `Point`, `[]int`); records/sums derive C names from it.
-    c_name str // Oracle-exact C spelling for TkPrim/TkStd (fixed point on the oracle's emission); "" for records/sums (backend derives).
+    kind TypeKind // Which row table the off/cnt range addresses.
+    name str // Source spelling (`int`, `Point`); the mangling door derives C names from it.
+    c_name str // Runtime ABI spelling for TkPrim ONLY (nova_rt.h fact); "" otherwise — mangling is a door, never a stored string.
     row_off int // First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum).
-    row_cnt int // How many rows; 0 for primitives and std instances.
+    row_cnt int // How many rows; 0 for primitives.
 }
 
 /// One top-level declaration of the unified name registry: what a name IS.
@@ -141,8 +133,6 @@ export type Prims value {
     t_str int // Type id of `str`.
     t_bool int // Type id of `bool`.
     t_f64 int // Type id of `f64`.
-    t_vec_int int // Type id of `[]int` (E2-arrays: the ONE mono instance the subset knows; generics proper are E2-b).
-    t_opt_int int // Type id of `Option[int]` (value type in C, tag+value; Some/None register as its variants).
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
@@ -160,9 +150,9 @@ export type Ctx {
 
 /// Seed one pre-declared type: the registry row and the def row are born
 /// together; the ACTUAL id flows back to the caller (never hard-coded).
-fn seed(mut types []TypeDef, mut defs DefTable, kind TypeKind, name str, c_name str) -> int {
+fn seed(mut types []TypeDef, mut defs DefTable, name str, c_name str) -> int {
     ro id = types.len()
-    types.push(TypeDef { kind, name, c_name, row_off: 0, row_cnt: 0 })
+    types.push(TypeDef { kind: TypeKind.TkPrim, name, c_name, row_off: 0, row_cnt: 0 })
     defs.add(name, DefKind.DefType, id)
     id
 }
@@ -172,28 +162,17 @@ fn seed(mut types []TypeDef, mut defs DefTable, kind TypeKind, name str, c_name 
 export fn collect_types(file Node) -> Ctx {
     mut types = []TypeDef.new()
     mut defs = DefTable.new()
-    ro t_int = seed(types, defs, TypeKind.TkPrim, "int", "nova_int")
-    ro t_str = seed(types, defs, TypeKind.TkPrim, "str", "nova_str")
-    ro t_bool = seed(types, defs, TypeKind.TkPrim, "bool", "nova_bool")
-    ro t_f64 = seed(types, defs, TypeKind.TkPrim, "f64", "nova_f64")
-    // E2-arrays: the two std instances demo.nv needs, C spellings from the
-    // oracle's emission (fixed point 2026-08-15). Vec is a GC pointer;
-    // Option is a VALUE (tag + value) — the backend renders by c_name.
-    ro t_vec_int = seed(types, defs, TypeKind.TkStd, "[]int", "Nova_Vec____nova_int*")
-    ro t_opt_int = seed(types, defs, TypeKind.TkStd, "Option[int]", "NovaOpt_nova_int")
-    ro prims = Prims { t_int, t_str, t_bool, t_f64, t_vec_int, t_opt_int }
+    // Pre-declared types come from the ONE builtins table (P5), in Prims
+    // order; the seed hands the ACTUAL ids back (CommonTypes model).
+    mut seeded = []int.new()
+    for bt in builtin_types() {
+        seeded.push(seed(types, defs, bt.name, bt.c_name))
+    }
+    ro prims = Prims { t_int: seeded[0], t_str: seeded[1], t_bool: seeded[2], t_f64: seeded[3] }
     mut fields = FieldTable.new()
     mut variant_rows = []VariantDef.new()
     mut payload_types = []int.new()
     mut fn_rets = []int.new()
-    // Some/None are Option[int]'s variants in the unified registry — a
-    // match arm `Some(n)` resolves through the SAME door as user variants
-    // (one Res lookup; the backend renders std-tag names for TkStd sums).
-    defs.add("Some", DefKind.DefVariant, variant_rows.len())
-    payload_types.push(t_int)
-    variant_rows.push(VariantDef { sum: t_opt_int, name: "Some", payload_off: payload_types.len() - 1, payload_cnt: 1 })
-    defs.add("None", DefKind.DefVariant, variant_rows.len())
-    variant_rows.push(VariantDef { sum: t_opt_int, name: "None", payload_off: payload_types.len(), payload_cnt: 0 })
     // First pass: register every type NAME (id = order of appearance after
     // the primitives), so later rows can reference any type of the file
     // regardless of declaration order. TypeDef records are BUILT on the
@@ -348,28 +327,13 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro kids = branch_children(e)
         if kids.len() < 3 { ice("sem: method call without a name") }
         ro mname = leaf_text(kids[2])
-        // Receiver-typed dispatch (E2-arrays): []int methods first — the
-        // check-owned table is str-only and predates the registry;
-        // unification into ONE receiver-keyed method table is the E4
-        // checker's job (recorded).
-        ro recv_t = type_of(kids[0], ctx, scope)
-        if recv_t == ctx.prims.t_vec_int {
-            if mname == "len" { return ctx.prims.t_int }
-            if mname == "get" { return ctx.prims.t_opt_int }
-            ice("sem: []int method outside the subset past check")
-        }
-        // The check-owned subset table answers in lattice codes 0=int
-        // 1=str 2=bool — mapped HERE onto real type ids.
-        ro rt = subset_method_ret(mname)
+        // The builtins table (str methods only, [LEGACY-SUBSET E2-b]) answers
+        // in lattice codes 0=int 1=str 2=bool — mapped HERE onto type ids.
+        ro rt = builtin_method_ret(mname)
         if rt == 0 { return ctx.prims.t_int }
         if rt == 1 { return ctx.prims.t_str }
         if rt == 2 { return ctx.prims.t_bool }
         ice("sem: unknown method past check")
-    }
-    if k == NodeKind.ArrayLit {
-        // The subset's only array type (elements are int by construction
-        // of the corpus; a checker wave will judge element types).
-        return ctx.prims.t_vec_int
     }
     if k == NodeKind.FieldAccess {
         ro kids = branch_children(e)
@@ -431,7 +395,7 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
 }
 
 /// Node kinds that stand as expressions (argument/operand positions).
-export fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess || k == NodeKind.ArrayLit || k == NodeKind.MatchExpr
+export fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess || k == NodeKind.MatchExpr
 
 /// First-leaf text of a Name-like node (its identifier).
 export fn expr_leaf_name(e Node) -> str {

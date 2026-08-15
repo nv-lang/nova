@@ -19,6 +19,7 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{Diagnostic, Severity}
+import ../builtins.{builtin_method_ret, ENTRY_FN}
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
 /// no Result (274 §4 п.1).
@@ -33,19 +34,7 @@ export fn check(file Node, src SourceText) -> []Diagnostic {
 /// `emit_c -> check` recorded in the architecture table the same commit).
 /// Return codes mirror the emitter's tiny type lattice: 0=int 1=str 2=bool,
 /// -1 = not in the subset (check reports it, the emitter never sees it).
-export fn subset_method_ret(name str) -> int {
-    if name == "byte_len" { return 0 }
-    if name == "to_ascii_upper" { return 1 }
-    if name == "starts_with" { return 2 }
-    if name == "contains" { return 2 }
-    // E2-arrays (demo.nv): []int methods. Codes 3/4 = "typed by the
-    // receiver in sem" — this name-only table cannot say Vec's return
-    // types; sem answers len -> int, get -> Option[int]. The receiver-keyed
-    // method table that replaces this one is the E4 checker's job.
-    if name == "len" { return 3 }
-    if name == "get" { return 4 }
-    -1
-}
+export fn subset_method_ret(name str) -> int => builtin_method_ret(name)
 
 /// Walk the whole tree and collect subset diagnostics.
 fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
@@ -71,6 +60,15 @@ fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool) -> () {
             if kind == NodeKind.Param { report_if_missing_type(children, src, out, "outside the E1 subset: parameter must declare a type") }
             if kind == NodeKind.RecordCtor && !init_pos {
                 report_first_leaf_of(children, src, out, "outside the E1 subset: record constructor only as a binding initializer")
+                return
+            }
+            if kind == NodeKind.ArrayLit {
+                // Owner's rollback 2026-08-15: []int was taken as a hard-coded
+                // std instance (one seed row + C_VEC_INT_* constants) — a K7
+                // half-capability (novac 'knows' []int, silently not []str).
+                // Arrays return with generics through `mono` (E2-b); until
+                // then this is an honest subset refusal, not a fake take.
+                report_first_leaf_of(children, src, out, "outside the subset: arrays arrive with generics (E2-b), not as one hard-coded instance")
                 return
             }
             if kind == NodeKind.MatchExpr && !init_pos {
@@ -113,7 +111,7 @@ fn report_if_missing_ret(kids []Node, src SourceText, mut out []Diagnostic) -> (
     if kids.len() < 2 { return }
     match kids[1] {
         Leaf(t) => {
-            if t.text == "main" { return }
+            if t.text == ENTRY_FN { return }
             for c in kids {
                 match c {
                     Leaf(_) => {}

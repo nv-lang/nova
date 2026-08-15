@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/builtins — THE ONE FILE where names of the language may appear as
+// string literals (convention P5, guard check-novac-no-name-hardcode.sh; owner
+// 2026-08-15). What is legitimate here, by the reference compilers (rustc
+// `sym`/LangItem, Go `types.Universe`, Zig builtins): (a) the universe —
+// primitive types with their runtime ABI spelling; (b) language entry
+// points the compiler itself must know (main, the println statement form).
+// What is NOT legitimate here and was rolled back the same day: names of
+// std types/methods (they are DECLARATIONS to be read, E2-b), instances of
+// generics (they come from `mono`), and C names of anything but primitives
+// (they come from the mangling door, sem/mangle).
+//
+// Its own module (the rustc_span::sym model): every layer that must SPELL a
+// name imports this leaf — check, sem, emit_c — and no edge points back.
+
+module novac.builtins
+
+/// What a registry type IS — selects which row table the off/cnt range
+/// addresses (record -> fields, sum -> variants; primitives own no rows).
+/// Lives here, not in sem, because the builtin seed rows carry it and sem
+/// imports builtins (no back edge).
+export type TypeKind enum
+    | TkPrim
+    | TkRecord
+    | TkSum
+
+/// Name of the program entry function.
+export const ENTRY_FN = "main"
+
+/// Name of the print statement the subset understands (a statement form
+/// today, not a std function — the one println the runtime prints through).
+export const PRINT_FN = "println"
+
+/// Return-type CODE of a str method by NAME: 0=int 1=str 2=bool, -1 = not
+/// in the subset. [LEGACY-SUBSET E2-b] this name-keyed table is the last
+/// P5 remainder: str's methods are DECLARED in std/src/runtime/string/*.nv
+/// and E2-b's signature reader replaces this function; the guard keeps it
+/// from spreading (only builtins may spell these names).
+export fn builtin_method_ret(name str) -> int {
+    if name == "byte_len" { return 0 }
+    if name == "to_ascii_upper" { return 1 }
+    if name == "starts_with" { return 2 }
+    if name == "contains" { return 2 }
+    -1
+}
+
+/// One pre-declared type of the universe: (source name, runtime C spelling).
+/// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a
+/// fact, not a mangling result; everything non-primitive goes through the
+/// mangling door.
+export type BuiltinType value {
+    name str // canonical Nova spelling
+    c_name str // runtime ABI spelling (nova_rt.h)
+}
+
+/// The universe, in Prims order; the seed hands the ACTUAL ids back
+/// (CommonTypes model, no hard-coded indexes).
+export fn builtin_types() -> []BuiltinType => []BuiltinType.of(
+    BuiltinType { name: "int", c_name: "nova_int" },
+    BuiltinType { name: "str", c_name: "nova_str" },
+    BuiltinType { name: "bool", c_name: "nova_bool" },
+    BuiltinType { name: "f64", c_name: "nova_f64" })
