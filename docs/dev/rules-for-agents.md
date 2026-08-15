@@ -150,6 +150,11 @@
   `check-novac-legacy-workarounds.sh` — обход бага оракула в novac обязан нести
   маркер `[LEGACY-#NNN]` открытого бага (274 §1.5); фикс-волна оракула снимает
   обходы той же волной (греп на ноль — часть её приёмки).
+  `check-panic-report-contract.sh` — терминальная запись отказа обязана давать
+  оба рендерера (D462): человеческий по умолчанию с `(throw site)` и
+  `propagation trace`, и `NOVA_PANIC_FORMAT=json` — одной строкой с полями
+  kind/message/site/trace/suppressed. Проверяет ИСПОЛНЕНИЕМ, не грепом:
+  №445 жил ровно в зазоре между «код написан» и «вывод сложился».
   `check-rt-sigpipe-ign.sh` — живой `signal(SIGPIPE, SIG_IGN)` в теле
   `nova_driver_init` (№664): без него любой сетевой бинарь на Linux умирает
   молча от гонки «peer закрылся → мы пишем».

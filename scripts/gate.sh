@@ -212,6 +212,8 @@ step "driver-channel-parity (три драйвера кормят одни ка�
 guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
 step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
 guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SIGPIPE) пропал из nova_driver_init (№664)"
+step "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
+guard "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
 step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
 guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.sh" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"

@@ -41,8 +41,8 @@ fn D45Point @sum() => @x + @y
 // --- unit body: -> () можно опускать ---
 
 fn d45_unit_body() {
-    mut _x = 1
-    _x = 2
+    mut x_val = 1
+    x_val = 2
 }
 
 // --- тесты ---

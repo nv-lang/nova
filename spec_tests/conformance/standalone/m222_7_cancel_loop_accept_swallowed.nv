@@ -45,7 +45,9 @@ test "supervised(timeout:) cancels a while-loop-retried accept() (no leak/hang)"
                     mut n = 0
                     while running {
                         match lst.accept() {
-                            Ok(_) => {}
+                            // D461 §Б: принятое соединение — линейное значение;
+                            // выбросить его `_`-паттерном значит утечь сокетом.
+                            Ok(consume conn) => conn.close()
                             Err(_) => {
                                 n = n + 1
                                 // A well-behaved retry loop backs off and

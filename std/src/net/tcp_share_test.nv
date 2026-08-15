@@ -85,8 +85,8 @@ test "tcp/share: конкурентные share-копии per-fiber, авто-c
                         assert(must_io(w1.write("xy")) == 2)
                     }
                     spawn consume w2 = c.share() {
-                        ro _held = w2.rc.load()          // владеет долей до выхода
-                        assert(_held >= 2)
+                        ro held = w2.rc.load()          // владеет долей до выхода
+                        assert(held >= 2)
                     }
                 }
                 c.close()                               // последний — real close

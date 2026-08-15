@@ -392,8 +392,138 @@ static inline void nova_throw_site_mark(const char* file, int line) {
     _nova_throw_site.line = line;
 }
 
+/* fwd (D462): the renderer below prints the throw site via this helper. */
+static inline void nova_throw_site_dump(void);
+
 /* Печать throw-site + propagation-trace в uncaught-abort ветках
  * (обе части независимо no-op при отсутствии данных). */
+/* ──────────────────────────────────────────────────────────────────
+ * D462 (владелец 2026-08-15): ОДИН источник записи об отказе, ДВА рендерера.
+ *
+ * Данные об отказе рантайм собирал и раньше — вид (panic/throw/cancel/typed),
+ * сообщение, точку броска, `?`-цепочку (_nova_throw_trace), цепочку
+ * подавленных (D158). Не было КОНТРАКТА ВЫВОДА: четыре места печатали их
+ * своими fprintf'ами, поэтому машине текст приходилось разбирать догадкой, а
+ * novac был вынужден клеить §7-JSON руками внутрь строки паники (дверь ice()).
+ *
+ * Теперь печать идёт через `nova_report_emit`, а ФОРМАТ выбирает переменная
+ * окружения `NOVA_PANIC_FORMAT`:
+ *   не задана / `text` (ПО УМОЛЧАНИЮ) — прежний человеческий вывод, байт в байт;
+ *   `json` — одна строка JSON со всеми полями записи.
+ * Дефолт намеренно человеческий: инструмент просит машинный формат явно, а
+ * пользователь не должен читать JSON, не попросив.
+ * ────────────────────────────────────────────────────────────────── */
+static inline int nova_report_json_mode(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("NOVA_PANIC_FORMAT");
+        cached = (v && v[0] == 'j') ? 1 : 0;   /* "json" */
+    }
+    return cached;
+}
+
+static inline const char* nova_report_kind_name(NovaThrowKind k) {
+    switch (k) {
+        case NOVA_THROW_CANCEL:     return "cancel";
+        case NOVA_THROW_PANIC:      return "panic";
+        case NOVA_THROW_USER_TYPED: return "typed";
+        default:                    return "fail";
+    }
+}
+
+/* JSON-строка: экранируем всё, что требует JSON.
+ * [INV-GUARD: check-panic-report-contract.sh] — страж разбирает
+ * выведенную запись НАСТОЯЩИМ парсером, так что пропущенное экранирование
+ * падает шагом гейта, а не остаётся обещанием в комментарии. */
+static inline void nova_report_json_str(FILE* out, const char* s, size_t n) {
+    fputc('"', out);
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"':  fputs("\\\"", out); break;
+            case '\\': fputs("\\\\", out); break;
+            case '\n': fputs("\\n", out);  break;
+            case '\r': fputs("\\r", out);  break;
+            case '\t': fputs("\\t", out);  break;
+            default:
+                if (c < 0x20) fprintf(out, "\\u%04x", c);
+                else fputc((int)c, out);
+        }
+    }
+    fputc('"', out);
+}
+
+/* Единая точка терминальной печати отказа.
+ * `headline` — человеческая шапка прежнего вида ("panic: ", "nova: unhandled
+ * Fail: " и т.д.); в JSON она не участвует — там есть поле `kind`.
+ * `suppressed` — голова цепочки D158 или NULL. */
+static inline void nova_report_emit(NovaThrowKind kind,
+                                    const char* headline,
+                                    nova_str msg,
+                                    const char* type_name,
+                                    NovaErrorChain* suppressed) {
+    if (!nova_report_json_mode()) {
+        fwrite(headline, 1, strlen(headline), stderr);
+        /* D437-compat: у typed Fail имя типа payload'а стоит в скобках ПЕРЕД
+         * сообщением — прежняя форма `(<Type>): <msg>`. В JSON то же самое
+         * живёт отдельным полем `payload_type`. */
+        if (type_name) { fputc('(', stderr); fputs(type_name, stderr); fputs("): ", stderr); }
+        if (msg.len > 0) fwrite(msg.ptr, 1, msg.len, stderr);
+        fwrite("\n", 1, 1, stderr);
+        {
+            NovaErrorChain* c = suppressed;
+            int i = 1;
+            while (c) {
+                fprintf(stderr, "  suppressed [%d]: %.*s\n", i, (int)c->msg.len, c->msg.ptr);
+                c = c->next; i++;
+            }
+        }
+        nova_throw_site_dump();
+        return;
+    }
+    /* JSON: одна строка, стабильные ключи. */
+    fputs("{\"nova_failure\":1,\"kind\":", stderr);
+    nova_report_json_str(stderr, nova_report_kind_name(kind), strlen(nova_report_kind_name(kind)));
+    fputs(",\"message\":", stderr);
+    nova_report_json_str(stderr, msg.len ? (const char*)msg.ptr : "", msg.len);
+    if (type_name) {
+        fputs(",\"payload_type\":", stderr);
+        nova_report_json_str(stderr, type_name, strlen(type_name));
+    }
+    if (_nova_throw_site.file) {
+        fputs(",\"site\":{\"file\":", stderr);
+        nova_report_json_str(stderr, _nova_throw_site.file, strlen(_nova_throw_site.file));
+        fprintf(stderr, ",\"line\":%d}", _nova_throw_site.line);
+    }
+    {
+        int total = _nova_throw_trace.count;
+        int kept  = total < NOVA_THROW_TRACE_CAP ? total : NOVA_THROW_TRACE_CAP;
+        int first = total - kept;
+        fputs(",\"trace\":[", stderr);
+        for (int i = first; i < total; i++) {
+            NovaThrowSite* e = &_nova_throw_trace.entries[i % NOVA_THROW_TRACE_CAP];
+            if (i > first) fputc(',', stderr);
+            fputs("{\"file\":", stderr);
+            nova_report_json_str(stderr, e->file ? e->file : "", e->file ? strlen(e->file) : 0);
+            fprintf(stderr, ",\"line\":%d}", e->line);
+        }
+        fputc(']', stderr);
+        fprintf(stderr, ",\"trace_dropped\":%d", first > 0 ? first : 0);
+    }
+    {
+        NovaErrorChain* c = suppressed;
+        fputs(",\"suppressed\":[", stderr);
+        int i = 0;
+        while (c) {
+            if (i > 0) fputc(',', stderr);
+            nova_report_json_str(stderr, c->msg.len ? (const char*)c->msg.ptr : "", c->msg.len);
+            c = c->next; i++;
+        }
+        fputc(']', stderr);
+    }
+    fputs("}\n", stderr);
+}
+
 static inline void nova_throw_site_dump(void) {
     if (_nova_throw_site.file) {
         fprintf(stderr, "  at %s:%d (throw site)\n",
@@ -477,9 +607,7 @@ static inline void nova_throw_ex(nova_str msg, NovaErrorChain* suppressed) {
      * в output. Без этого defer-cleanup print видно в exit-code, но
      * не в stdout (теряется при abort). */
     fflush(stdout);
-    fprintf(stderr, "nova: unhandled Fail: %.*s\n",
-        (int)msg.len, msg.ptr);
-    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
+    nova_report_emit(NOVA_THROW_USER, "nova: unhandled Fail: ", msg, NULL, suppressed);  /* D462 */
     nova_exit_program_error();  /* №436: ошибка ПРОГРАММЫ — управляемый выход, не авария */
 }
 
@@ -636,18 +764,8 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
     }
     /* No outer fail-frame — abort с dump (primary + chain). */
     fflush(stdout);
-    fprintf(stderr, "nova: unhandled Fail (D158 composite): %.*s\n",
-        (int)frame->error_msg.len, frame->error_msg.ptr);
-    {
-        NovaErrorChain* c = frame->error_suppressed;
-        int i = 1;
-        while (c) {
-            fprintf(stderr, "  suppressed [%d]: %.*s\n", i, (int)c->msg.len, c->msg.ptr);
-            c = c->next;
-            i++;
-        }
-    }
-    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
+    nova_report_emit(frame->error_kind, "nova: unhandled Fail (D158 composite): ",
+                     frame->error_msg, NULL, frame->error_suppressed);  /* D462 */
     abort();
 }
 
@@ -1009,15 +1127,27 @@ static inline void nova_assert_loc(
                 "%s:%d: assert failed: %s",
                 file, line, expr_str);
         }
+        /* №679: `buf` — стековый; fail-frame увозит сообщение через longjmp с
+         * ЭТОГО же кадра, а дальше — через слот родителя на ДРУГОЙ поток.
+         * Копия в кучу делается ОДИН раз здесь — именно то, что doc-комментарий
+         * функции утверждал и до этой правки. Цена — один nova_alloc на и без
+         * того фатальном пути. */
+        char* msg_heap;
+        {
+            size_t n = 0;
+            while (buf[n]) n++;
+            msg_heap = (char*)nova_alloc(n + 1);
+            for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
+        }
         /* Inside a fiber: route through the nearest NovaFailFrame so longjmp
          * stays on the fiber's own stack — never crosses the mco boundary.
          * Spawn-entry pushes a per-fiber fail-frame; supervised_run re-throws
          * on main flow via nova_throw, which the test runner's _tf_fail catches.
          * On main flow (no fiber): route to _nova_test_frame as before. */
         if (nova_in_fiber() && _nova_fail_top) {
-            nova_last_error_set(nova_str_from_cstr(buf), NOVA_THROW_PANIC,
+            nova_last_error_set(nova_str_from_cstr(msg_heap), NOVA_THROW_PANIC,
                                 NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
-            _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+            _nova_fail_top->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
             /* Plan 140.3 (D13 amend): assert failure is a PANIC-class failure
              * (spec D13: "assert failure = panic"), identical to nv_panic and
              * contract violations. Tag error_kind so ConsumeScope/supervised
@@ -1027,13 +1157,9 @@ static inline void nova_assert_loc(
             longjmp(_nova_fail_top->jmp, 1);
         }
         if (_nova_test_frame) {
-            /* fail_msg holds const char* — buf is stack-local, so copy via
-             * nova_alloc to survive the longjmp (mirror of contracts.h). */
-            size_t n = 0;
-            while (buf[n]) n++;
-            char* heap = (char*)nova_alloc(n + 1);
-            for (size_t i = 0; i <= n; i++) heap[i] = buf[i];
-            _nova_test_frame->fail_msg = heap;
+            /* №679: копия уже сделана выше — ОДНА на все ветки,
+             * а не только для этой одной. */
+            _nova_test_frame->fail_msg = msg_heap;
             longjmp(_nova_test_frame->jmp, 1);
         }
         fprintf(stderr, "%s\n", buf);
@@ -1088,10 +1214,7 @@ static inline void nv_panic_ex(nova_str msg, NovaErrorChain* suppressed) {
         _nova_test_frame->fail_msg = buf;
         longjmp(_nova_test_frame->jmp, 1);
     }
-    fwrite("panic: ", 1, 7, stderr);
-    if (msg.len > 0) fwrite(msg.ptr, 1, msg.len, stderr);
-    fwrite("\n", 1, 1, stderr);
-    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
+    nova_report_emit(NOVA_THROW_PANIC, "panic: ", msg, NULL, suppressed);  /* D462 */
     nova_exit_program_error();  /* №436: ошибка ПРОГРАММЫ — управляемый выход, не авария */
 }
 
@@ -1489,10 +1612,8 @@ static inline nova_unit nova_throw_typed_ex(nova_str msg_repr,
     }
     /* No fail-frame at all — abort с diagnostic. */
     fflush(stdout);
-    fprintf(stderr, "nova: unhandled typed Fail (%s): %.*s\n",
-        nova_typeid_to_name(tid),
-        (int)msg_repr.len, msg_repr.ptr);
-    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
+    nova_report_emit(NOVA_THROW_USER_TYPED, "nova: unhandled typed Fail ", msg_repr,
+                     nova_typeid_to_name(tid), NULL);  /* D462 */
     nova_exit_program_error();  /* №436: ошибка ПРОГРАММЫ — управляемый выход, не авария */
     return NOVA_UNIT;  /* unreachable */
 }

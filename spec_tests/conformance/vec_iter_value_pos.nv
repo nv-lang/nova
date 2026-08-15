@@ -8,9 +8,9 @@ import std.collections.vec_iter
 test "VecIter copy by value — independent cursors" {
     ro v = Vec[int].of(1, 2, 3)
     mut it = v.iter()
-    ro _first = it.next()       // advances it to idx=1
+    ro first_val = it.next()       // advances it to idx=1
     mut it2 = it                // copy by value — it2 starts at idx=1
-    assert(_first == Some(1))
+    assert(first_val == Some(1))
     assert(it2.next() == Some(2))   // it2 is independent copy
     assert(it2.next() == Some(3))
     assert(it2.next() == None)
