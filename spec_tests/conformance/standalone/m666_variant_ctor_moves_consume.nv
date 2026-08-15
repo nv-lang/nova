@@ -1,0 +1,154 @@
+// #666 (registry 221.1; carrier #662 layer 2, 2026-08-15): a VARIANT
+// CONSTRUCTOR takes ownership of a `consume` argument -- `Ok(r)`, `Some(r)`,
+// any user `Variant(r)` -- exactly like a consume-param call does, so the
+// moved binding's auto-cleanup (D432) must be DISARMED at that site.
+//
+// Before the fix the codegen's disarm knew two doors only (consuming receiver
+// method; consume-param position of a free fn/method): a variant ctor is
+// neither, so `consume r = open(); Ok(r)` ran `@cleanup` on `r` at the fn's
+// exit AND handed the (dead) value out inside `Ok` -- the receiver owned a
+// corpse. In the http_proxy_chain bridge the corpse was the freshly dialed
+// upstream TcpStream (fd open, TCP CLOSED): the CONNECT tunnel died right
+// after a successful SOCKS handshake, `curl: (56)`. This fixture is the class
+// without any network: ResourceTrace counts clean cleanups; the receiver
+// closes explicitly (D432 covers bare `consume X = e;` only -- a match-arm
+// `Ok(consume r)` binding must consume explicitly, D133), and the count must
+// be exactly ONE, observed AFTER the receiver's close -- zero at the moment
+// the value arrives.
+//
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.m666_variant_ctor_moves_consume
+
+import std.time.duration
+
+type M666Res consume { tag int }
+
+fn M666Res consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn M666Res consume @close() -> () { () }
+
+fn m666_make(tag int) -> M666Res => { tag }
+
+/// Form A: bare consume binding moved into `Ok(...)` as the fn's tail.
+fn m666_open(tag int) -> Result[M666Res, ()] {
+    if tag > 0 {
+        consume r = m666_make(tag)
+        Ok(r)
+    } else { Err(()) }
+}
+
+/// Form B: match-arm relay `Ok(consume r) => Ok(r)` -- the bridge's shape.
+fn m666_relay(tag int) -> Result[M666Res, ()] {
+    match m666_open(tag) {
+        Ok(consume r) => Ok(r)
+        Err(_)        => Err(())
+    }
+}
+
+/// Form C: the relay carried OUT of `supervised(timeout:)` as its tail value
+/// -- `connect_guarded` in the bridge, verbatim shape.
+fn m666_dial_guarded(tag int) Time -> Result[M666Res, ()] {
+    supervised(timeout: 5000.to_millis(), on_timeout: |_e| { Err(()) }) {
+        match m666_open(tag) {
+            Ok(consume r) => Ok(r)
+            Err(_)        => Err(())
+        }
+    }
+}
+
+/// Form D: `Some(r)` -- the other builtin ctor.
+fn m666_maybe(tag int) -> Option[M666Res] {
+    if tag > 0 {
+        consume r = m666_make(tag)
+        Some(r)
+    } else { None }
+}
+
+test "#666 A: consume moved into Ok(...) at fn tail -- one cleanup, at the receiver, not before" {
+    mut exits = AtomicInt.new(0)
+    mut at_receive = -1
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        match m666_open(7) {
+            Ok(consume r) => {
+                at_receive = exits.load()
+                assert(r.tag == 7)
+                r.close()
+            }
+            Err(_) => assert(false)
+        }
+    }
+    assert(at_receive == 0)
+}
+
+test "#666 B: match-arm relay Ok(consume r) => Ok(r) hands ownership on intact" {
+    mut exits = AtomicInt.new(0)
+    mut at_receive = -1
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        match m666_relay(8) {
+            Ok(consume r) => {
+                at_receive = exits.load()
+                assert(r.tag == 8)
+                r.close()
+            }
+            Err(_) => assert(false)
+        }
+    }
+    assert(at_receive == 0)
+}
+
+test "#666 C: relay carried out of supervised(timeout:) as its tail -- the bridge's connect_guarded" {
+    mut exits = AtomicInt.new(0)
+    mut at_receive = -1
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        match m666_dial_guarded(9) {
+            Ok(consume r) => {
+                at_receive = exits.load()
+                assert(r.tag == 9)
+                r.close()
+            }
+            Err(_) => assert(false)
+        }
+    }
+    assert(at_receive == 0)
+}
+
+test "#666 D: consume moved into Some(...) -- same rule for Option" {
+    mut exits = AtomicInt.new(0)
+    mut at_receive = -1
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        match m666_maybe(5) {
+            Some(consume r) => {
+                at_receive = exits.load()
+                assert(r.tag == 5)
+                r.close()
+            }
+            None => assert(false)
+        }
+    }
+    assert(at_receive == 0)
+}
