@@ -4514,6 +4514,7 @@ mod tests {
                 discriminant: None,
                 span: Span::dummy(),
                 serde_attrs: Vec::new(),
+                doc: None,
             },
             SumVariant {
                 name: "Dot".to_string(),
@@ -4521,6 +4522,7 @@ mod tests {
                 discriminant: None,
                 span: Span::dummy(),
                 serde_attrs: Vec::new(),
+                doc: None,
             },
             SumVariant {
                 name: "Ring".to_string(),
@@ -4533,6 +4535,7 @@ mod tests {
                 discriminant: None,
                 span: Span::dummy(),
                 serde_attrs: Vec::new(),
+                doc: None,
             },
         ];
         let mut td = TypeDecl {
@@ -4651,6 +4654,7 @@ mod tests {
                 discriminant: None,
                 span: Span::dummy(),
                 serde_attrs: Vec::new(),
+                doc: None,
             }]),
             span: Span::dummy(),
             ..TypeDecl::default()

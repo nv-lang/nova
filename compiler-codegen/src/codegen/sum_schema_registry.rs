@@ -1695,6 +1695,7 @@ mod tests {
             discriminant: None,
             span: Span::default(),
             serde_attrs: Vec::new(),
+            doc: None,
         };
 
         // Конструируем prelude-declaration RuntimeError — все 6 variants,
@@ -1781,6 +1782,7 @@ mod tests {
             discriminant: None,
             span: Span::default(),
             serde_attrs: Vec::new(),
+            doc: None,
         };
 
         // Drift: declaration с extra variant "MyExtra" + missing 5 baseline'ных.
@@ -1847,6 +1849,7 @@ mod tests {
                     discriminant: None,
                     span: Span::default(),
                     serde_attrs: Vec::new(),
+                    doc: None,
                 },
             ]),
             ..Default::default()

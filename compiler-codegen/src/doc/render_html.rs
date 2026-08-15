@@ -647,6 +647,12 @@ fn write_type_def(out: &mut String, name: &str, def: &TypeDefinition) {
         TypeDefinition::Record(fields) => {
             let _ = writeln!(out, "type {} {{", html_escape(name));
             for f in fields {
+                // D104 rev-2: the field's own `///` doc, on the line above it.
+                if let Some(d) = &f.doc {
+                    for line in d.lines() {
+                        let _ = writeln!(out, "    /// {}", html_escape(line));
+                    }
+                }
                 // Plan 124.5 (D220/D222): priv badge.
                 let priv_kw = if f.priv_field { "priv " } else { "" };
                 let _ = writeln!(out, "    {}{} {}", priv_kw, html_escape(&f.name), html_escape(&f.ty));
@@ -655,8 +661,21 @@ fn write_type_def(out: &mut String, name: &str, def: &TypeDefinition) {
         }
         TypeDefinition::Sum(variants) => {
             let _ = write!(out, "type {}", html_escape(name));
-            for v in variants {
-                let _ = write!(out, " | {}", html_escape(&v.name));
+            // D104 rev-2: a documented variant list renders one variant per line
+            // with its `///` doc above; undocumented lists keep the inline form.
+            if variants.iter().any(|v| v.doc.is_some()) {
+                for v in variants {
+                    if let Some(d) = &v.doc {
+                        for line in d.lines() {
+                            let _ = write!(out, "\n    /// {}", html_escape(line));
+                        }
+                    }
+                    let _ = write!(out, "\n    | {}", html_escape(&v.name));
+                }
+            } else {
+                for v in variants {
+                    let _ = write!(out, " | {}", html_escape(&v.name));
+                }
             }
         }
     }

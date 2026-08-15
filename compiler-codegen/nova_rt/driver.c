@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <signal.h>  /* №664: SIG_IGN для SIGPIPE в nova_driver_init */
+#endif
 
 #ifdef NOVA_GC_BOEHM
 #include <gc.h>
@@ -35,6 +38,24 @@ static void _nova_driver_process_job(NovaDriverJob* job);
 void nova_driver_init(void) {
     /* Idempotent guard. */
     if (nova_abool_load(&_nova_driver.started)) return;
+
+    /* №664 (носитель №662, 2026-08-15): SIGPIPE игнорируется ДО первого
+     * сетевого write [INV-GUARD: check-rt-sigpipe-ign.sh] — и дверь именно
+     * ЗДЕСЬ, а не в
+     * nova_runtime_init (тот — явный тюнер runtime.init(), обычный бинарь
+     * его не зовёт; проверено мостом: SIG_IGN в runtime_init смерть НЕ
+     * снял, exit=141 остался). Vendored libuv на Linux пишет голым
+     * write()/writev() (MSG_NOSIGNAL нет, SO_NOSIGPIPE — BSD/macOS,
+     * libuv/src/unix/core.c:532), его документация прямо требует SIG_IGN от
+     * приложения (libuv/docs/src/guide/filesystem.rst:270). Без него ЛЮБАЯ
+     * гонка «peer закрылся → мы пишем» убивает процесс сигналом 13 без core
+     * и без сообщения — поймано gdb: uv__stream_io доливал отложенную
+     * очередь в мёртвый upstream, write → EPIPE → SIGPIPE (реестр №662,
+     * 10/10 на 2 ядрах). С SIG_IGN write возвращает EPIPE и стрим отдаёт
+     * честную ошибку вместо тихой смерти процесса. */
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     /* Init job queue. */
     nova_mutex_init(&_nova_driver.jobs.mu);

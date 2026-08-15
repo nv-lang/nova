@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_DOC_TRAILING_ON_DECL
+//
+// D104 rev-2 (2026-08-15): the trailing `///` form exists ONLY for record
+// fields and sum variants. On a declaration (`fn`/`type`/...) a trailing
+// `///` is not introduced: it is E_DOC_TRAILING_ON_DECL -- an error, not a
+// silent re-binding of the doc to the NEXT item (the pre-rev-2 behavior).
+// Spec: spec/decisions/03-syntax.md D104 rev-2 p.2.
+module neg.d104_rev2_trailing_doc_on_fn_neg
+
+// nova:expect E_DOC_TRAILING_ON_DECL -- a trailing `///` after a fn declaration is not a form; trailing docs exist for fields and variants only (D104 rev-2 p.2)
+fn one() -> int => 1 /// trailing doc on a fn -- not a form
+
+fn main() {
+    println("${one()}")
+}

@@ -1431,6 +1431,9 @@ pub struct RecordField {
     /// consumed for `SumVariantKind::Record` payload fields yet (sum-serde
     /// rich synth is a separate gate, `[M-126-sum-*-rich]`).
     pub serde_attrs: Vec<SerdeArg>,
+    /// D104 rev-2 (2026-08-15): outer `///` on the line ABOVE the field.
+    /// Same type as a declaration's doc; `None` = undocumented.
+    pub doc: Option<DocBlock>,
 }
 
 #[derive(Debug, Clone)]
@@ -1444,6 +1447,9 @@ pub struct SumVariant {
     /// Record-variant's PAYLOAD field attrs above) remain unconsumed —
     /// out of 180.1 Ф.1 scope (record types only).
     pub serde_attrs: Vec<SerdeArg>,
+    /// D104 rev-2 (2026-08-15): outer `///` on the line ABOVE the variant.
+    /// Same type as a declaration's doc; `None` = undocumented.
+    pub doc: Option<DocBlock>,
 }
 
 #[derive(Debug, Clone)]

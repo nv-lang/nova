@@ -214,11 +214,12 @@ fn render_hover_markdown(sym: &SymbolInfo) -> String {
             let code = format!("import {}", module_path);
             render_code_and_doc(&code, None)
         }
-        SymbolInfo::FieldDecl { owner, name, ty_text, .. } => {
+        SymbolInfo::FieldDecl { owner, name, ty_text, doc, .. } => {
             // Member-access field hover (Ф.6): render `Owner.field type` so the
             // reader sees both the owning type and the field's real type.
+            // D104 rev-2: plus the field's own `///` doc, like a declaration.
             let code = format!("{}.{} {}", owner, name, ty_text);
-            render_code_and_doc(&code, None)
+            render_code_and_doc(&code, doc.as_deref())
         }
     }
 }

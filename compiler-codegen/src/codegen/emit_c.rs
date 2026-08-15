@@ -10,6 +10,9 @@ use std::fmt::Write as FmtWrite;
 // scripts/guards/arch-ratchet.sh only measures this file). See that
 // module's doc comment.
 mod emit_detach;
+// №658: setter + channel-first lookup of `resolved_variant_ctors` live in the
+// child module (same ratchet rule; see its doc). Field + two consult sites stay.
+mod variant_ctor_channel;
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -1229,6 +1232,14 @@ pub struct CEmitter {
     /// [M-172.1-U4-typedir-substrate]
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resolved_callees: std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
+    /// №658 (реестр 221.1): the bare-variant-ctor channel (bare `Variant(args)`
+    /// call-site `ExprId` → `(sum simple name as the checker resolved it,
+    /// variant index in the declaration)`) the checker populated in
+    /// `assignable_direct` (`ModuleEnv.resolved_variant_ctors`). Read via
+    /// `channel_variant_ctx` BEFORE the name-based `debt_find_variant_ctx`
+    /// heuristics (emit_call + `infer_expr_c_type` Channel 6); ANY miss falls
+    /// back to those untouched (strangler-fig, mirrors the 196 channels).
+    resolved_variant_ctors: std::collections::HashMap<crate::ast::ExprId, (String, usize)>,
     /// Plan 196.5 Stage-A: the subst-value channel (call-site `ExprId` → ordered
     /// `(generic-param name → concrete ResolvedType)`) the checker populated
     /// (`ModuleEnv.node_substs`). Mirrors `resolved_callees`'s plumbing. Stage-B1
@@ -2646,6 +2657,7 @@ impl CEmitter {
             resolved_types: std::collections::HashMap::new(),
             pattern_variant_types: std::collections::HashMap::new(),
             resolved_callees: std::collections::HashMap::new(),
+            resolved_variant_ctors: std::collections::HashMap::new(),
             node_substs: std::collections::HashMap::new(),
             fn_ret_by_span: std::collections::HashMap::new(),
             proven_overflow_sites: std::collections::HashSet::new(),
@@ -40354,7 +40366,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // variant shared across colliding sums (byte-identical for unique
                 // variants). `args.len()` distinguishes `InvalidData(msg)` (compress,
                 // 1 payload) from io's unit `InvalidData` (0 payload).
-                if let Some((type_name, _)) = self.debt_find_variant_ctx(name, Some(args.len())) {
+                // №658: the checker's `resolved_variant_ctors` channel is
+                // consulted FIRST (`channel_variant_ctx` — the call-site
+                // expected-type truth); any miss falls back to the untouched
+                // name-based heuristics.
+                if let Some((type_name, _)) = self
+                    .channel_variant_ctx(call_id, name, args.len())
+                    .or_else(|| self.debt_find_variant_ctx(name, Some(args.len())))
+                {
                     // Plan 59 Ф.7.5 D3: legacy typed-Err early-return
                     // (`nova_make_Result_Err_typed` для non-str Err через
                     // `err_typed_payload`/`tid` hybrid) удалён. Полная
@@ -62231,7 +62250,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // DIFFERENT sums (CC-FAIL / silent type confusion, M-178).
                 // Byte-identical for a unique variant (falls straight through
                 // to `find_variant_compat`).
-                if let Some((type_name, _)) = self.debt_find_variant_ctx(name, Some(args.len())) {
+                // №658: channel-first here TOO — the emission side (emit_call)
+                // reads the same channel, and this inference channel feeds the
+                // wrapper-type derivation for the SAME expr; diverging the two
+                // would re-open the M-178 class (emission and C-type naming
+                // two DIFFERENT sums).
+                if let Some((type_name, _)) = self
+                    .channel_variant_ctx(expr.id, name, args.len())
+                    .or_else(|| self.debt_find_variant_ctx(name, Some(args.len())))
+                {
                     if type_name == "Option" || type_name == "NovaOpt_nova_int" {
                         if name == "Some" && !args.is_empty() {
                             let arg_ty = self.infer_expr_c_type(args[0].expr());

@@ -846,6 +846,21 @@ impl Parser {
     /// blank-line) объединяются: лексер уже сливает строки в один токен,
     /// но parser может встретить два таких токена, разделённых newline'ом.
     /// Этот метод объединяет их через `\n\n` (markdown paragraph break).
+    /// D104 rev-2 trailing form (owner 2026-08-15): an outer `///` token that
+    /// sits on the SAME line right after a field type / a sum variant (no
+    /// `Newline` between) is that element's trailing doc. Returns `None` and
+    /// consumes nothing when the next token is anything else -- in particular
+    /// a `Newline` (a `///` on the NEXT line belongs to the next element).
+    fn consume_trailing_doc(&mut self) -> Option<crate::ast::DocBlock> {
+        if let TokenKind::DocComment { kind: crate::lexer::DocCommentKind::Outer, content } = &self.peek().kind {
+            let content = content.clone();
+            let span = self.peek().span;
+            self.bump();
+            return Some(crate::ast::DocBlock { kind: crate::lexer::DocCommentKind::Outer, content, span });
+        }
+        None
+    }
+
     fn consume_doc_block_of_kind(
         &mut self,
         kind: crate::lexer::DocCommentKind,
@@ -1484,6 +1499,25 @@ impl Parser {
         // — собираем; передаём дальше через `pending_doc`. Если за doc'ом
         // следует `let` / `test` (которые doc-поля не имеют) — doc
         // отбрасывается (lint warning в Ф.3).
+        // D104 rev-2 (owner 2026-08-15): the TRAILING doc form exists only for
+        // record fields and sum variants. An outer `///` that starts on the
+        // SAME line where the previous item ended (no Newline token between
+        // the previous token and the doc token) is a trailing doc on a
+        // declaration -- an error, not a silent re-binding to the NEXT item
+        // (the same no-silent-reattachment stance as E_DOC_BOTH_FORMS).
+        if self.pos > 0
+            && matches!(self.peek().kind, TokenKind::DocComment { kind: crate::lexer::DocCommentKind::Outer, .. })
+            && !matches!(self.tokens[self.pos - 1].kind, TokenKind::Newline | TokenKind::Semicolon)
+        {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_DOC_TRAILING_ON_DECL] a trailing doc-comment (`///` on the same line \
+                 after a declaration) is not a form: the trailing doc form exists only \
+                 for record fields and sum variants (D104 rev-2). Put the `///` on the \
+                 line ABOVE the item it documents",
+                sp,
+            ));
+        }
         let pending_doc =
             self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Outer);
 
@@ -5076,6 +5110,21 @@ impl Parser {
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // D104 rev-2 (2026-08-15): outer `///` on the line ABOVE a field
+            // documents that field -- same door as `parse_item`. A doc block
+            // followed by `}` (no field after it) is an orphan: warning as in
+            // D104 p.7, the doc is dropped, the record still parses.
+            let field_doc = self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Outer);
+            if matches!(self.peek().kind, TokenKind::RBrace) {
+                if let Some(d) = &field_doc {
+                    eprintln!(
+                        "warning: orphan doc-comment (`///`) before `}}` -- no record field \
+                         follows it (D104 rev-2). span: {:?}",
+                        d.span
+                    );
+                }
+                break;
+            }
             // [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): in-body
             // `const NAME T = expr` внутри `type X { ... }` РЕТРАКТИРОВАНА —
             // «одна дверь», каноническая форма теперь ВНЕ тела:
@@ -5343,6 +5392,23 @@ impl Parser {
                 (n, sp, false)
             };
             let ty = self.parse_type()?;
+            // D104 rev-2 trailing form: `name T /// short doc` on the same line.
+            // Both forms on one field (a `///` line above AND a trailing one)
+            // is E_DOC_BOTH_FORMS -- never a silent concatenation.
+            let trailing_doc = self.consume_trailing_doc();
+            let had_trailing = trailing_doc.is_some();
+            let field_doc = match (field_doc, trailing_doc) {
+                (Some(above), Some(trail)) => {
+                    return Err(Diagnostic::new(
+                        "[E_DOC_BOTH_FORMS] this field has BOTH a doc-comment on the line \
+                         above and a trailing doc-comment on its own line; keep one \
+                         (D104 rev-2: the two forms are alternatives, not halves)",
+                        above.span.merge(trail.span),
+                    ));
+                }
+                (Some(d), None) | (None, Some(d)) => Some(d),
+                (None, None) => None,
+            };
             // Synthesize anonymous embed name на основе типа (для уникальности
             // в record-схеме и доступа). По convention: `__embed_<TypeName>`.
             let final_name = if anonymous {
@@ -5367,6 +5433,7 @@ impl Parser {
                 priv_module_field: field_priv_module,
                 visible_to,
                 serde_attrs: field_serde_attrs,
+                doc: field_doc,
             });
             // Separator: comma (inline or multi-line) OR newline (multi-line
             // only). Per D49 + D215 spec: on a SINGLE LINE, a comma is
@@ -5374,6 +5441,11 @@ impl Parser {
             // it actually appears. Without either, `{ x int y int }` would
             // silently parse — now we reject it.
             if self.eat(&TokenKind::Comma).is_some() {
+                self.skip_newlines();
+            } else if had_trailing {
+                // D104 rev-2 trailing form: the doc token ended the line (the
+                // lexer consumes the `\n` after a doc line), so the separator
+                // is already behind us -- the next token is the next field or `}`.
                 self.skip_newlines();
             } else if matches!(
                 self.peek().kind,
@@ -5467,10 +5539,36 @@ impl Parser {
     /// Используется и в старом синтаксисе и в D406 многострочном.
     fn parse_sum_variants_list(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
         let mut variants = Vec::new();
-        while matches!(self.peek().kind, TokenKind::Pipe) {
+        loop {
+            // D104 rev-2 (2026-08-15): outer `///` on the line ABOVE `| Variant`
+            // documents that variant.
+            // The doc is consumed ONLY when a `|` follows it: a `///` after the
+            // last variant belongs to the NEXT top-level item (the multi-line
+            // sum has no closing token), so it is rolled back, not reported.
+            let save = self.pos;
+            let variant_doc = self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Outer);
+            if !matches!(self.peek().kind, TokenKind::Pipe) {
+                self.pos = save;
+                break;
+            }
             self.bump(); // |
             self.skip_newlines();
-            variants.push(self.parse_one_sum_variant()?);
+            let mut v = self.parse_one_sum_variant()?;
+            // D104 rev-2 trailing form: `| Variant /// short doc` on the same line.
+            let trailing_doc = self.consume_trailing_doc();
+            v.doc = match (variant_doc, trailing_doc) {
+                (Some(above), Some(trail)) => {
+                    return Err(Diagnostic::new(
+                        "[E_DOC_BOTH_FORMS] this variant has BOTH a doc-comment on the line \
+                         above and a trailing doc-comment on its own line; keep one \
+                         (D104 rev-2: the two forms are alternatives, not halves)",
+                        above.span.merge(trail.span),
+                    ));
+                }
+                (Some(d), None) | (None, Some(d)) => Some(d),
+                (None, None) => None,
+            };
+            variants.push(v);
             self.skip_newlines();
         }
         Ok(variants)
@@ -5540,6 +5638,8 @@ impl Parser {
             discriminant,
             span: name_span.merge(end),
             serde_attrs: variant_serde_attrs,
+            // D104 rev-2: the list parser owns the doc (it sits before `|`).
+            doc: None,
         })
     }
 

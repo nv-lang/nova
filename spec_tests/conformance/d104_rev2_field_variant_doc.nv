@@ -1,0 +1,133 @@
+// D104 rev-2 (2026-08-15) — outer `///` documents a record field / sum variant
+// in TWO forms: on the line ABOVE the element (binding "to the next element"
+// like a declaration) or TRAILING on the element's own line (short docs). Doc-comments never
+// change runtime behavior — this fixture proves the PARSER accepts every
+// documented shape and the program still computes: full docs, partial docs,
+// multi-line doc merging (D104 p.4), indentation stripping (p.5), and a
+// documented sum. Spec: spec/decisions/03-syntax.md D104 (rev-2 amendment).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+/// A half-open byte range: every field documented.
+type D104r2Span {
+    /// Start offset, inclusive.
+    lo int
+    /// End offset, exclusive.
+    hi int
+}
+
+/// Only some fields documented — undocumented ones stay plain (no warning).
+type D104r2Partial {
+    /// The documented one.
+    a int
+    b int
+    /// A multi-line doc:
+    /// second line merges with the first (D104 p.4),
+    ///
+    /// and a blank doc line stays a paragraph break.
+    c int
+}
+
+/// Indented doc bodies keep their INNER indentation (D104 p.5).
+type D104r2Indented {
+        /// Outer indent is stripped uniformly:
+        ///   inner detail keeps two spaces
+        v int
+}
+
+/// A documented sum: doc above each `| Variant`.
+type D104r2Kind enum
+    /// A type declaration.
+    | DefType
+    /// A sum variant, with a payload.
+    | DefVariant(int)
+    /// A record variant.
+    | DefRecord { n int }
+
+fn d104r2_width(s D104r2Span) -> int => s.hi - s.lo
+
+fn d104r2_kind_code(k D104r2Kind) -> int {
+    match k {
+        DefType => 1
+        DefVariant(n) => 10 + n
+        DefRecord { n } => 100 + n
+    }
+}
+
+test "d104 rev-2: fully documented record parses and works" {
+    ro s = D104r2Span { lo: 3, hi: 10 }
+    assert(d104r2_width(s) == 7)
+}
+
+test "d104 rev-2: partially documented + multi-line doc record" {
+    ro p = D104r2Partial { a: 1, b: 2, c: 3 }
+    assert(p.a + p.b + p.c == 6)
+}
+
+test "d104 rev-2: indented doc body" {
+    ro i = D104r2Indented { v: 42 }
+    assert(i.v == 42)
+}
+
+test "d104 rev-2: documented sum variants" {
+    assert(d104r2_kind_code(D104r2Kind.DefType) == 1)
+    assert(d104r2_kind_code(D104r2Kind.DefVariant(5)) == 15)
+    assert(d104r2_kind_code(D104r2Kind.DefRecord { n: 7 }) == 107)
+}
+
+/// Orphan doc before `}` (no field after it): a WARNING to stderr like the
+/// declaration-level orphan of D104 p.7 (Plan 45 F.3 prints it, no lint code
+/// yet), the doc is dropped, the record still parses and works.
+type D104r2Orphan {
+    x int
+    /// dangling: nothing follows me
+}
+
+/// A `///` after the LAST variant of a multi-line sum is NOT an orphan: the
+/// sum has no closing token, so that doc belongs to the NEXT item -- here it
+/// documents the test below, exactly as before rev-2 (no false warning).
+type D104r2Tail enum
+    | Only
+
+// (A `///` here would bind to the test below and be reported as ignored per
+// D104 p.6 -- which is exactly the proof it was NOT swallowed by the sum.)
+test "d104 rev-2: orphan doc before `}` is a warning; doc after a sum's last variant binds to the next item" {
+    ro o = D104r2Orphan { x: 9 }
+    assert(o.x == 9)
+    match D104r2Tail.Only {
+        Only => assert(true)
+    }
+}
+
+/// Trailing form (owner's extension 2026-08-15): both forms in one file, on
+/// DIFFERENT fields -- above-form on `a`, trailing on `b` and `c`.
+type D104r2Mixed {
+    /// Above-form doc.
+    a int
+    b int /// trailing doc, short
+    c str /// another trailing one
+}
+
+/// Trailing form on variants, mixed with the above-form.
+type D104r2MixedKind enum
+    /// Above-form on the first variant.
+    | Alpha
+    | Beta(int) /// trailing on a payload variant
+    | Gamma     /// trailing on a unit variant
+
+fn d104r2_mixed_code(k D104r2MixedKind) -> int {
+    match k {
+        Alpha => 1
+        Beta(n) => 10 + n
+        Gamma => 3
+    }
+}
+
+test "d104 rev-2: trailing doc form on fields and variants, mixed with above-form" {
+    ro m = D104r2Mixed { a: 1, b: 2, c: "x" }
+    assert(m.a + m.b == 3)
+    assert(m.c == "x")
+    assert(d104r2_mixed_code(D104r2MixedKind.Alpha) == 1)
+    assert(d104r2_mixed_code(D104r2MixedKind.Beta(4)) == 14)
+    assert(d104r2_mixed_code(D104r2MixedKind.Gamma) == 3)
+}

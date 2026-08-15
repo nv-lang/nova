@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #658 minimal fixture, module ONE: the sum whose variant NAMES
+// collide with ./two's `Mishap` (`Other`, `Shared`) while the sum names
+// differ on purpose -- two same-named sums would drag the fixture into
+// #136 (last-write-wins in the checker's type map), a different bug. The
+// static ctor `Report1.new(...)` is the exact json.nv shape
+// (`DeError.new(Other(...))`): the D381 call-site heuristics do NOT save
+// it (the fn returns a record, not a sum, and no expected_sum_hint is set
+// for a static-method argument), so pre-fix the bare ctor resolves by
+// name CU-wide.
+
+module plan221_658.one
+
+export type Fault enum
+    | Other(str)
+    | Shared(str)
+    | Alpha
+
+export type Report1 { kind Fault }
+export fn Report1.new(kind Fault) -> Report1 => { kind }
+
+export fn mk_other() -> Report1 => Report1.new(Other("from-one"))
+export fn mk_shared() -> Report1 => Report1.new(Shared("one-value"))
+export fn payload_of(r Report1) -> str => match r.kind {
+    Other(s) => s
+    Shared(s) => s
+    Alpha => ""
+}

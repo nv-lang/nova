@@ -1013,7 +1013,7 @@ mod tests {
     }
 
     fn unit_variant(name: &str) -> SumVariant {
-        SumVariant { name: name.to_string(), kind: SumVariantKind::Unit, discriminant: None, span: sp(), serde_attrs: Vec::new() }
+        SumVariant { name: name.to_string(), kind: SumVariantKind::Unit, discriminant: None, span: sp(), serde_attrs: Vec::new() , doc: None}
     }
 
     fn tuple_variant(name: &str, types: Vec<TypeRef>) -> SumVariant {
@@ -1023,6 +1023,7 @@ mod tests {
             discriminant: None,
             span: sp(),
             serde_attrs: Vec::new(),
+            doc: None,
         }
     }
 
@@ -1282,6 +1283,7 @@ mod tests {
                     discriminant: None,
                     span: sp(),
                     serde_attrs: Vec::new(),
+                    doc: None,
                 },
             ],
         );

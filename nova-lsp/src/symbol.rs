@@ -80,6 +80,9 @@ pub enum SymbolInfo {
         name: String,
         ty_text: String,
         span: Span,
+        /// D104 rev-2 (2026-08-15): the field's own outer `///` doc, from the
+        /// declaration (`RecordField.doc`) -- rendered by hover like a decl's.
+        doc: Option<String>,
     },
 }
 
@@ -987,19 +990,20 @@ fn resolve_field_or_method(module: &Module, owner: &str, field_name: &str) -> Op
                 TypeDeclKind::Record(fields) => fields
                     .iter()
                     .find(|f| f.name == field_name)
-                    .map(|f| (f.name.clone(), format_type_ref(&f.ty), f.span)),
+                    .map(|f| (f.name.clone(), format_type_ref(&f.ty), f.span, extract_doc(&f.doc))),
                 TypeDeclKind::NamedTuple(fields) => fields
                     .iter()
                     .find(|f| f.name == field_name)
-                    .map(|f| (f.name.clone(), format_type_ref(&f.ty), f.span)),
+                    .map(|f| (f.name.clone(), format_type_ref(&f.ty), f.span, None)),
                 _ => None,
             };
-            if let Some((name, ty_text, span)) = field {
+            if let Some((name, ty_text, span, doc)) = field {
                 return Some(SymbolInfo::FieldDecl {
                     owner: owner.to_string(),
                     name,
                     ty_text,
                     span,
+                    doc,
                 });
             }
         }

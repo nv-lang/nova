@@ -923,6 +923,20 @@ pub struct ModuleEnv {
     /// rationale. Lifted from that buffer after the check pass (mirrors
     /// `resolved_types`).
     pub pattern_variant_types: HashMap<Span, String>,
+    /// №658 (реестр 221.1): per-call resolved bare-VARIANT-CTOR channel — the
+    /// expression-side twin of `pattern_variant_types` (№279). Key: the bare
+    /// `Variant(args)` Call expression's own `ExprId` (the SAME call-site key
+    /// as `resolved_callees`/`node_substs`); value: `(sum type's simple name
+    /// as the checker resolved it, variant index in the declaration)`.
+    /// Producer: `assignable_direct`'s Call arm (the ONE canonical compat
+    /// choke point every call shape funnels through), written ONLY on a
+    /// genuine, unambiguous expected-type resolve. Consumer: codegen
+    /// `emit_call` / `infer_expr_c_type` Channel 6 via `channel_variant_ctx`;
+    /// ANY miss falls back to the untouched name-based
+    /// `debt_find_variant_ctx` heuristics (D381) — strangler-fig, never
+    /// exclusive. Lifted from `TypeCheckCtx::resolved_variant_ctors_buf`
+    /// after the check pass (mirrors `pattern_variant_types`).
+    pub resolved_variant_ctors: HashMap<crate::ast::ExprId, (String, usize)>,
     /// Plan 172.1 U.3.4: per-call resolved-CALLEE channel (call-site `ExprId` → chosen
     /// callee `FnDecl` declaration `Span`). The checker resolves each call's overload
     /// ONCE (it already does, for arg-checking) and records WHICH `FnDecl` it picked;
@@ -2136,6 +2150,8 @@ fn check_module_impl(
     env.resolved_types = type_check_ctx.resolved_types_buf.take();
     // №279: lift the pattern-variant resolved-sum-name channel (mirrors resolved_types).
     env.pattern_variant_types = type_check_ctx.pattern_variant_types_buf.take();
+    // №658: lift the bare-variant-ctor channel (mirrors pattern_variant_types).
+    env.resolved_variant_ctors = type_check_ctx.resolved_variant_ctors_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
     // guarantee for the normal compile path.
@@ -3911,6 +3927,21 @@ struct TypeCheckCtx<'a> {
     /// FIRST, not exclusively; `find_variant_compat` remains the fallback
     /// for spans this pass didn't reach/resolve).
     pattern_variant_types_buf: std::cell::RefCell<HashMap<Span, String>>,
+    /// №658 (реестр 221.1): per-call resolved bare-VARIANT-CTOR channel buffer
+    /// (bare `Variant(args)` Call expr's own `ExprId` → `(sum simple name,
+    /// variant index in the declaration)`) — the expression-side twin of
+    /// `pattern_variant_types_buf` above. Filled by `assignable_direct`'s
+    /// Call arm whenever the EXPECTED type at the one canonical compat choke
+    /// point names a concrete non-generic Sum that owns a tuple variant
+    /// spelled exactly like the bare out-of-scope callee with matching arity
+    /// — the call-site `expected` signal codegen's CU-wide name-based
+    /// `debt_find_variant_ctx`/`find_variant_compat` heuristics never see
+    /// (two unrelated sums sharing a variant name land the ctor in the WRONG
+    /// sum: clang type error at best, silent cross-enum confusion at worst).
+    /// Defensive discipline (mirrors `pattern_variant_types_buf`): only
+    /// written on genuine, unambiguous resolution; consulted FIRST by
+    /// codegen, never exclusively — the legacy heuristics stay the fallback.
+    resolved_variant_ctors_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, (String, usize)>>,
     /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
     /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
     /// annotation) left `T` permanently untracked (window p-chan, №143/№286
@@ -4672,6 +4703,8 @@ impl<'a> TypeCheckCtx<'a> {
             // №279: empty pattern-variant resolved-sum-name channel; filled
             // during the check walk.
             pattern_variant_types_buf: std::cell::RefCell::new(HashMap::new()),
+            // №658: empty bare-variant-ctor channel; filled during the check walk.
+            resolved_variant_ctors_buf: std::cell::RefCell::new(HashMap::new()),
             // Plan 221.1 №286 residual gap (window p286): empty first-send
             // T-inference hint channel; filled per-block during the check walk.
             channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
@@ -8048,6 +8081,11 @@ impl<'a> TypeCheckCtx<'a> {
                     // 2026-07-23): 3rd position of the norm — RETURN.
                     self.check_ro_launder_return(e, ret, &scope, errors);
                     self.materialize_literal_coercion(e, ret);
+                    // №658: return is a DEFINITE expected-type position, but the
+                    // return-compat path never runs `assignable` (see the doc
+                    // above) — fill the bare-variant-ctor channel here directly
+                    // (mirrors the materialize call one line up).
+                    self.record_bare_variant_ctor(e, ret, &scope);
                     // a block-arrow body `=> { …; return X }` can hold explicit returns.
                     self.materialize_returns_in_expr(e, ret);
                     self.check_closure_scalar_return_in_expr(e, ret, errors);
@@ -8065,6 +8103,9 @@ impl<'a> TypeCheckCtx<'a> {
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
                         self.check_ro_launder_return(trailing, ret, &scope, errors);
                         self.materialize_literal_coercion(trailing, ret);
+                        // №658: implicit tail return — same fill as the
+                        // arrow-body site above.
+                        self.record_bare_variant_ctor(trailing, ret, &scope);
                     }
                     // … and every explicit `return <expr>` anywhere in the body.
                     self.materialize_returns_in_block(b, ret);
@@ -8727,6 +8768,10 @@ impl<'a> TypeCheckCtx<'a> {
                     // declared `-> *mut T`.
                     if let Some(ret_ty) = self.current_fn_return_ty.borrow().clone() {
                         self.check_addrof_mut_from_ro_source(v, &ret_ty, errors);
+                        // №658: explicit `return <expr>` — the scope-bearing
+                        // sibling of the arrow-body / tail-trailing fill sites
+                        // (`materialize_returns_in_*` walks without a scope).
+                        self.record_bare_variant_ctor(v, &ret_ty, scope);
                     }
                 }
             }
@@ -19087,6 +19132,85 @@ impl<'a> TypeCheckCtx<'a> {
         params.len() == sb.params.len()
     }
 
+    /// №658 (реестр 221.1): the bare-variant-ctor FILL for the
+    /// `resolved_variant_ctors` channel (see `resolved_variant_ctors_buf` for
+    /// the full rationale). Called from ONE site — `assignable_direct`, the
+    /// canonical compat choke point every call shape funnels through (free
+    /// fn, method, static ctor `Type.new(...)`, return, let-init, match-arm)
+    /// — and recursing through the builtin wrapper ctors' payload slot:
+    /// `Some(inner)`/`Ok(inner)`/`Err(inner)` against `Option[T]`/
+    /// `Result[T,E]` descends into `inner` with the INSTANTIATED slot type
+    /// (the boxed form, class M-178 — mirrors the descent
+    /// `materialize_literal_coercion`'s ctor arm already performs for the
+    /// literal channel). Fill-only by construction: returns nothing, changes
+    /// no diagnostics; the ONLY writes are the №658 channel entry and the
+    /// literal-width materialize for a MATCHED variant's payload fields.
+    /// Guards: out-of-scope callee name only; not a declared free fn (same
+    /// `sig.fn_decls` map as the Plan-228 fallback — else the channel would
+    /// hijack a real call); concrete NON-generic expected Sum only (keeps
+    /// Option/Result and their dual-mode codegen out); Tuple variant with
+    /// matching arity.
+    fn record_bare_variant_ctor(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+    ) {
+        let ExprKind::Call { func, args, .. } = &expr.kind else { return };
+        let ExprKind::Ident(name) = &func.kind else { return };
+        if scope.contains_key(name) {
+            return;
+        }
+        // Boxed payload descent: `Some(inner)`/`Ok(inner)`/`Err(inner)`
+        // against `Option[T]`/`Result[T,E]` — recurse with the instantiated
+        // payload type. The wrapper call itself is never channel-recorded
+        // (generic sums stay codegen's own mono path).
+        if args.len() == 1 {
+            if let Some(elem) = ctor_payload_expected(name, expected) {
+                self.record_bare_variant_ctor(args[0].expr(), elem, scope);
+                return;
+            }
+        }
+        // Not a declared free fn — else the channel would hijack a real call.
+        if self
+            .sig
+            .fn_decls
+            .get(name)
+            .map_or(false, |ov| ov.iter().any(|f| f.receiver.is_none()))
+        {
+            return;
+        }
+        let TypeRef::Named { path, generics, .. } = expected else { return };
+        if !generics.is_empty() {
+            return;
+        }
+        let Some(tname) = path.last() else { return };
+        let Some(td) = self.types.get(tname) else { return };
+        if !td.generics.is_empty() {
+            return;
+        }
+        let TypeDeclKind::Sum(variants) = &td.kind else { return };
+        let hit = variants.iter().enumerate().find(|(_, v)| {
+            &v.name == name
+                && matches!(&v.kind,
+                    SumVariantKind::Tuple(fields) if fields.len() == args.len())
+        });
+        let Some((idx, v)) = hit else { return };
+        if expr.id.is_set() {
+            self.resolved_variant_ctors_buf
+                .borrow_mut()
+                .insert(expr.id, (tname.clone(), idx));
+        }
+        // Literal payloads: seed their C-width from the variant's declared
+        // field type (no-op for wide defaults — mirrors the call-arg
+        // materialize).
+        if let SumVariantKind::Tuple(fields) = &v.kind {
+            for (a, fty) in args.iter().zip(fields.iter()) {
+                self.materialize_literal_coercion(a.expr(), fty);
+            }
+        }
+    }
+
     fn assignable_direct(
         &self,
         expr: &Expr,
@@ -19404,6 +19528,25 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // №658 (реестр 221.1): bare VARIANT-CTOR resolution channel — the Call
+        // sibling of the bare-Ident unit-variant arm above ([M-208-v2]). A
+        // bare `Variant(args)` callee is resolved by codegen BY NAME, CU-wide
+        // (`debt_find_variant_ctx` → `find_variant_compat` first-wins), blind
+        // to the call-site `expected` type — so two unrelated sums sharing a
+        // variant name (serde's `DeErrorKind.Other(str)` vs io's
+        // `ErrorKind.Other(int)`) make the ctor land in the WRONG sum once
+        // both are linked into one CU (clang type error at best, silent
+        // cross-enum value confusion at worst). `expected` — right here, at
+        // the ONE canonical compat choke point every call shape funnels
+        // through (free fn, method, static ctor `Type.new(...)`, return,
+        // let-init, match-arm) — is exactly the missing signal. Record the
+        // resolution into `resolved_variant_ctors_buf` for codegen to consult
+        // FIRST (`channel_variant_ctx`); NO early return — fall through to
+        // the existing infer/Unknown path so diagnostics are UNCHANGED (the
+        // fill is strictly additive). Guards + the boxed `Some/Ok/Err`
+        // payload descent live in `record_bare_variant_ctor` (fill-only by
+        // construction).
+        self.record_bare_variant_ctor(expr, expected, scope);
         // Не-литерал: вывести тип; не вышло → Unknown (skip, не ошибка).
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
@@ -52931,6 +53074,7 @@ mod named_tuple_ctor_infer_tests {
             discriminant: None,
             span: dummy_span(),
             serde_attrs: Vec::new(),
+            doc: None,
         };
         TypeDecl {
             name: sum_name.to_string(),

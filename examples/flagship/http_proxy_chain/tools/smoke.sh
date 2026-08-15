@@ -112,32 +112,48 @@ STUB_PID=$!
 sleep 1
 
 # ── Start the bridge, pointed at the local stub ──────────────────────────
-SOCKS5_PROXY="127.0.0.1:${SOCKS_PORT}" "${BRIDGE_BIN}" "${BRIDGE_PORT}" \
+# #662 blind-spot fix: with stdout redirected to a FILE the bridge's output
+# is block-buffered, and the 2026-08-13 kill-before-read fix was not enough —
+# SIGTERM kills without flushing stdio, so the CI artifact STILL showed an
+# empty bridge log (not even the startup line printed a second before the
+# kill). `stdbuf -oL` forces line-buffering where available (Linux CI — the
+# only place the flake lives); elsewhere it degrades to the old behavior.
+STDBUF=""
+command -v stdbuf >/dev/null 2>&1 && STDBUF="stdbuf -oL -eL"
+SOCKS5_PROXY="127.0.0.1:${SOCKS_PORT}" ${STDBUF} "${BRIDGE_BIN}" "${BRIDGE_PORT}" \
     >"${WORKDIR}/bridge.log" 2>&1 &
 BRIDGE_PID=$!
 sleep 1
 
 check_body() {
     local label="$1"; shift
-    local body
+    local body rc
     body="$("$@" 2>"${WORKDIR}/curl_${label}.err")"
+    rc=$?
     if [ "${body}" = "PROBE-OK" ]; then
         echo "smoke: ${label} path — PASS (body: ${body})"
     else
-        fail "${label} path — expected body 'PROBE-OK', got '${body}'"
+        # #662 blind-spot fix: the FAIL line names curl's exit code — with
+        # `-s` alone the stage that died (CONNECT refused? empty reply?
+        # reset mid-body?) was invisible, and the one CI artifact we get
+        # from a flake said only "got ''".
+        fail "${label} path — expected body 'PROBE-OK', got '${body}' (curl exit ${rc})"
         echo "  --- curl stderr (${label}) ---"
         sed 's/^/  /' "${WORKDIR}/curl_${label}.err"
     fi
 }
 
 # Plain-HTTP-over-proxy path (Ф.3): curl sends an absolute-URI GET, no CONNECT.
+# `-sS`: silent progress but errors STILL reach stderr (#662 blind-spot fix —
+# plain `-s` swallowed the failure reason entirely, the flake's CI artifact
+# had an empty curl stderr and nothing to reason from).
 check_body plain \
-    curl -s -m 15 -x "http://127.0.0.1:${BRIDGE_PORT}" "http://127.0.0.1:${TARGET_PORT}/"
+    curl -sS -m 15 -x "http://127.0.0.1:${BRIDGE_PORT}" "http://127.0.0.1:${TARGET_PORT}/"
 
 # CONNECT path (Ф.2, primary — what an HTTPS proxy setting actually uses):
 # --proxytunnel forces CONNECT even for a plain http:// target URL.
 check_body connect \
-    curl -s -m 15 --proxytunnel -x "http://127.0.0.1:${BRIDGE_PORT}" "http://127.0.0.1:${TARGET_PORT}/"
+    curl -sS -v -m 15 --proxytunnel -x "http://127.0.0.1:${BRIDGE_PORT}" "http://127.0.0.1:${TARGET_PORT}/"
 
 if [ "${FAIL}" -ne 0 ]; then
     # Stop the writers BEFORE reading their logs. Both processes write to a

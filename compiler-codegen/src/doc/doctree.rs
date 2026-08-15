@@ -562,12 +562,17 @@ pub struct RecordField {
     /// priv fields by default; `--include-private` flag показывает.
     /// LSP renders 🔒 badge в hover/code-lens.
     pub priv_field: bool,
+    /// D104 rev-2 (2026-08-15): the field's outer `///` doc (raw content),
+    /// `None` = undocumented. Rendered under the field by every renderer.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SumVariant {
     pub name: String,
     pub payload: VariantPayload,
+    /// D104 rev-2 (2026-08-15): the variant's outer `///` doc (raw content).
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
