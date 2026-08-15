@@ -354,7 +354,7 @@ is a read-only VFS protocol, conformed to by **both** sources:
 ```nova
 import std.fs.{ReadFs, DirFs}
 
-fn serve_assets[F ReadFs](mux mut ServeMux, assets F) -> () {
+fn serve_assets[F ReadFs](mut mux ServeMux, assets F) -> () {
     mux.get("/{path...}", handler_fn(|req| {
         ro key = req.param("path").unwrap_or("index.html")
         match assets.read_file(key) {

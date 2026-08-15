@@ -2409,7 +2409,7 @@ fn_call(arg, User { name: "a" })                // record внутри args
 
 ```nova
 fn with_timeout[T](dur Duration, body fn() -> T) Fail -> T
-fn transaction[T](db mut Db, body fn() Db Fail -> T) Db Fail -> T
+fn transaction[T](mut db Db, body fn() Db Fail -> T) Db Fail -> T
 fn retry[T](attempts int, body fn() Fail -> T) Fail -> T
 ```
 

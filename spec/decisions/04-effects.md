@@ -4096,7 +4096,7 @@ fn checksum(data []u8) -> int {
 ### Пример: lock-критичная секция
 
 ```nova
-fn update_counter(counter mut Counter) {
+fn update_counter(mut counter Counter) {
     counter.lock()
     realtime {
         counter.value += 1     // не должно yield'нуть с захваченным lock'ом
@@ -7007,7 +7007,7 @@ Temporal (единая `Duration`) узнаёт «календарная она 
 ### Протоколы (byte I/O)
 
 ```nova
-type io.Read  protocol { mut @read(buf mut []u8) -> Result[int, IoError] }
+type io.Read  protocol { mut @read(mut buf []u8) -> Result[int, IoError] }
 type io.Write protocol { mut @write(data []u8) -> Result[int, IoError]; mut @flush() -> Result[(), IoError] }
 type io.Seek  protocol { mut @seek(pos SeekFrom) -> Result[int, IoError] }
 type SeekFrom | Start(int) | End(int) | Current(int)   // всё int (i64); Start(<0) → InvalidInput
