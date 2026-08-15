@@ -393,7 +393,13 @@ fn ie_mark_all(e: &Expr, out: &mut HashSet<String>) {
         }
         ExprKind::RecordLit { fields, .. } => {
             for f in fields {
-                if let Some(v) = &f.value { ie_mark_all(v, out); }
+                match &f.value {
+                    Some(v) => ie_mark_all(v, out),
+                    // #668: D52 shorthand `{ name }` IS `{ name: name }` -- the
+                    // local named `name` escapes into the record field.
+                    None if !f.is_spread => { out.insert(f.name.clone()); }
+                    None => {}
+                }
             }
         }
         ExprKind::InterpolatedStr { parts } => {
@@ -561,8 +567,14 @@ fn ie_expr(e: &Expr, esc: bool, out: &mut HashSet<String>) {
         }
         ExprKind::RecordLit { fields, .. } => {
             for f in fields {
-                if let Some(v) = &f.value {
-                    ie_expr(v, true, out);
+                match &f.value {
+                    Some(v) => ie_expr(v, true, out),
+                    // #668: shorthand `{ name }` = `{ name: name }` -- an escape sink
+                    // for the local `name` (the sret stack-slot predicate consults
+                    // this set; a miss here handed a dangling stack pointer out
+                    // inside a heap record -- the http_proxy_chain leftover corruption).
+                    None if !f.is_spread => { out.insert(f.name.clone()); }
+                    None => {}
                 }
             }
         }
