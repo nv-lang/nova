@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_UNDERSCORE_NAME_USED
+//
+// D461 rule (A), the `let` form -- twin of d461_underscore_name_used_neg.nv.
+// The rule is about the NAME, not about the binding form: `ro _y = 7; _y * 2`
+// compiled in silence before it.
+module neg.d461_underscore_let_used_neg
+
+fn use_it() -> int {
+    ro _y = 7
+    // nova:expect E_UNDERSCORE_NAME_USED -- `_y` is declared unused and then read (D461 rule A)
+    _y * 2
+}
+
+test "reading a `_`-prefixed local is a compile error" {
+    assert(use_it() == 14)
+}

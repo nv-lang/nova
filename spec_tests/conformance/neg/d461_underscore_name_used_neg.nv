@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_UNDERSCORE_NAME_USED
+//
+// D461 rule (A) (owner's decision 2026-08-15, registry #674): a name with a
+// leading underscore is declared DELIBERATELY UNUSED, and referring to it
+// contradicts that declaration. The rule holds for ANY type, not only linear
+// ones: a convention the machine does not enforce is not a convention, and it
+// misleads the reader exactly where they trust it. Before the rule this file
+// compiled in silence.
+module neg.d461_underscore_name_used_neg
+
+fn maybe(n int) -> Option[int] => Some(n)
+
+fn use_it() -> int {
+    match maybe(5) {
+        // nova:expect E_UNDERSCORE_NAME_USED -- `_x` is declared unused and then read (D461 rule A)
+        Some(_x) => _x + 1
+        None     => 0
+    }
+}
+
+test "reading a `_`-prefixed arm binding is a compile error" {
+    assert(use_it() == 6)
+}

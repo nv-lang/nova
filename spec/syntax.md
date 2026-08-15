@@ -815,6 +815,29 @@ takes the first one where the pattern matched AND the guard is true.
 | Tuple | `(a, b)`, `(_, value)` | destructures a tuple |
 | Guard | `n if n < 0` | a pattern + an extra condition |
 
+**A `_`-prefixed name may not be used, and `_` may not discard a linear
+value** ([D461](decisions/03-syntax.md#d461)). The prefix is a promise that the
+value is not needed, and the compiler holds you to it -- for any type, not only
+linear ones. And `_` binds nothing, so discarding a linear (`consume`) payload
+with it would leak the resource without a single keyword: that is an error too.
+Prefixes reserved for the compiler (`_nova_`, `_at_`, `__`) are exempt -- the
+rule is about a human convention.
+
+```nova
+ro _y = 7
+_y * 2                       // error: `_y` is declared unused
+
+match open() {
+    Ok(_)  => ()             // error: a linear payload may not be discarded
+    Err(_) => ()             // fine: `()` is not linear
+}
+
+match open() {
+    Ok(consume r) => r.close()   // the one lawful spelling
+    Err(_)        => ()
+}
+```
+
 **Exhaustiveness check.** The compiler checks that the match covers all
 possible cases. If not — an error naming the uncovered variant. This works
 for sum types and bool. For general types (`int`, `str`) you need either a
