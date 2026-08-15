@@ -59,7 +59,16 @@ tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
 # goes through `nova.override.toml` (never committed); the manifest itself must
 # point at something PUBLISHED. `nova-http` has tags (v0.1.0…v0.1.2).
 http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
-polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.1" }
+# ВРЕМЕННО ПИН ПО РЕВИЗИИ (2026-08-15, реестр №667): фикс компилятора №667
+# превратил тихую утечку в честную ошибку, и она нашлась в polaris v0.1.2 —
+# `Permit` семафора брался арм-биндингом и НИКОГДА не возвращался (после
+# max_inflight соединений сервер вставал навсегда). Фикс влит в polaris main
+# (277d612), но тега на нём нет, а `version = "0.1"` резолвится в теги —
+# `nova update` возвращал бы сломанный v0.1.2 и флагман не собирался бы на
+# чистом дереве (страж check-clean-checkout-build, №565). `rev` — штатная
+# форма пина манифеста, не обход. СНЯТЬ, вернув `version = "0.1"`, как только
+# у polaris будет тег с этим фиксом (тег — по слову владельца).
+polaris = { git = "https://github.com/nv-lang/nova-polaris", rev = "277d612d21cfa63a4a14662660ddc6cf60bdde37" }
 # Plan 249 (examples/flagship/http_socks5_bridge). Wired 2026-08-09: both
 # blockers are gone — `nova-socks` now publishes `v0.1.0` on all three mirrors
 # (verified with `git ls-remote --tags`, so D420 §4 lock RESOLUTION has a
