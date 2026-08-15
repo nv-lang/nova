@@ -44,3 +44,27 @@ novac_is_silent_door() {
     [ -s "$3" ] && return 1
     return 0
 }
+
+# novac_load_scale ROOT — F10: поправка на ЗАГРУЗКУ машины, общая для всех
+# бюджетов времени. Печатает множитель в сотых (100 = машина как при записи
+# базы, 300 = втрое медленнее). Считается по эталонному fork оболочки — под
+# MSYS это главный источник шума — против записанного в базе `cal-ms`.
+# Абсолютный wall-clock судить нельзя: один и тот же `novac check` даёт 150мс
+# на тихой машине и 3300мс под полным прогоном гейта, а дифф-раннер — 50с и
+# 146с (оба случая пойманы ложными красными 2026-08-15).
+novac_load_scale() {
+    _base="$1/scripts/guards/novac-iteration-cost.baseline"
+    _cal_base=$(tr -d '\r' < "$_base" 2>/dev/null | sed -n 's/^cal-ms \([0-9][0-9]*\)$/\1/p' | head -n 1)
+    [ -n "$_cal_base" ] && [ "$_cal_base" -gt 0 ] 2>/dev/null || { echo 100; return 0; }
+    _b=999999
+    for _i in 1 2 3; do
+        _s=$(date +%s%N | cut -c1-13)
+        sh -c : >/dev/null 2>&1
+        _e=$(( $(date +%s%N | cut -c1-13) - _s ))
+        [ "$_e" -lt "$_b" ] && _b=$_e
+    done
+    _sc=$(( _b * 100 / _cal_base ))
+    [ "$_sc" -lt 100 ] && _sc=100
+    [ "$_sc" -gt 2000 ] && _sc=2000
+    echo "$_sc"
+}

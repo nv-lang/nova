@@ -250,6 +250,16 @@ guard "$ROOT/scripts/guards/check-novac-no-panic.sh" "$ROOT" || fail "паник
 # звался вообще, а единственный его вызыватель (страж цены) выбрасывал код
 # возврата — механизм числился живым и не работал (класс №519).
 guard --deadline 300 "$ROOT/scripts/tools/novac-fuzz-mutations.sh" || fail "паника/зависание novac на мутациях корпуса (274 решение 11: ноль паник)"
+# 274.3/F12+F5: стражи, существовавшие ФАЙЛОМ, но не вызывавшиеся гейтом —
+# «страж вне гейта хуже отсутствия: даёт ложное чувство защиты» (мета-страж
+# check-novac-guard-registry.sh сверяет четыре множества и держит это правилом).
+guard "$ROOT/scripts/guards/check-novac-type-field-docs.sh" "$ROOT" || fail "тип/поле/функция novac без документации (конвенция П13, D104 rev-2)"
+guard "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "$ROOT" || fail "имя языка/std строкой вне novac/src/builtins (конвенция П5)"
+guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён (П2/П4, класс №652)"
+guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом (дверь sem/mangle, 274.3)"
+guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух: не равен эмиссии оракула по probe (274.3/F6)"
+guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла novac вне бюджета (конвенция П14, план 274.2)"
+guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "реестр стражей novac разошёлся: план §10.3а ↔ файлы ↔ gate.sh ↔ самотесты (274.3/F12)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 

@@ -2,23 +2,34 @@
 # scripts/guards/check-novac-no-name-hardcode.sh — никакого хардкода имён
 # Nova/std в компиляторе (конвенция П5; заведён 2026-08-15 по слову владельца:
 # «subset_method_ret — хардкод, страж почему не ловит?» — потому что стража
-# не было; статус П5 был 🕐 Э2, Э2 идёт).
+# не было).
 #
-# ПРАВИЛО: строковый литерал с именем языка/std (ключевые слова-сущности,
-# имена std-типов и методов, entry/print, оракульские C-имена моно-инстансов
-# и тэгов) законен ТОЛЬКО в novac/src/sem/builtins.nv — едином реестре
-# «легитимного остатка П5». Везде ещё в novac/src — красный. Остаток
-# снимается Э2-б (чтение деклараций std) — файл builtins.nv худеет, страж
-# остаётся.
+# ПРАВИЛО (П5; план 274): строковый литерал с именем языка/std законен ТОЛЬКО
+# в novac/src/builtins/builtins.nv — едином реестре «легитимного остатка П5».
+# Везде ещё в novac/src — красный. Остаток снимается Э2-б (чтение деклараций
+# std): файл builtins.nv худеет, страж остаётся.
 #
 # ПРОВЕРЯЕТ: грепом по novac/src/**/*.nv (кроме builtins.nv и *_test.nv)
-# литералов из списка NAMES ниже. Список — данные стража, растёт вместе с
-# builtins.nv (новое имя в builtins без строки здесь — ревью-красный).
-# НЕ ПРОВЕРЯЕТ: имена в комментариях (греп по литералам в кавычках);
-# ключевые слова ГРАММАТИКИ в лексере (`"fn"`, `"module"` — это лексер по
-# определению, у rustc тоже таблица kw::*; П5 — про сущности std/языка,
-# которые обязаны браться из деклараций, а не про синтаксис);
-# коды диагностик E_*/W_* (это имена novac, не Nova).
+# строковые литералы, целиком равные имени из списка. СПИСОК ВЫВОДИТСЯ ИЗ
+# ДАННЫХ, а не зашит (дефект F14, снят 2026-08-15: список внутри стража
+# пополнялся «ревью-красным», то есть правилом без механизма — ровно тем, от
+# чего страж и заведён):
+#   (1) все строковые литералы самого builtins.nv, имеющие форму
+#       идентификатора — единственный законный дом имён; худеет builtins.nv,
+#       автоматически худеет и список;
+#   (2) короткий список имён ПРЕЛЮДИИ языка (Option Result Some None Ok Err
+#       Vec HashMap) — это поверхность языка, она меняется только вместе со
+#       спекой, потому и стоит здесь строкой, а не выводится.
+# НЕ ПРОВЕРЯЕТ: имена в комментариях (строки //... срезаются перед грепом —
+# и вместе с ними литерал, содержащий «//», например URL); литералы, не
+# имеющие формы идентификатора («[]int», «Nova_Vec____» с решётками и
+# скобками, куски интерполяции) — из builtins.nv берутся только
+# идентификаторы, чтобы список не втащил в греп регэксп-метасимвол; имена,
+# собранные из кусков в рантайме («Nova_" + "str"»); ключевые слова
+# ГРАММАТИКИ в лексере («fn», «module» — это лексер по определению, у rustc
+# тоже таблица kw::*; П5 — про сущности std/языка, которые обязаны браться из
+# деклараций, а не про синтаксис) — они не попадают в список, пока их нет в
+# builtins.nv; коды диагностик E_*/W_* (это имена novac, не Nova).
 #
 # $1 — корень репозитория; $2 — override сканируемой директории (самотест).
 # Проверялся: Windows (Git Bash), 2026-08-15.
@@ -32,21 +43,63 @@ if [ ! -d "$SRC" ]; then
     exit 0
 fi
 
-# Names of the language and std the compiler is tempted to spell out.
-NAMES='main|println|print|Some|None|Ok|Err|Option|Result|Vec|HashMap|byte_len|to_ascii_upper|starts_with|contains|len|get|push|to_str|int|str|bool|f64|u8|\[\]int|Nova_str_method_|Vec____nova_int|Nova_Vec____|NovaOpt_|NOVA_TAG_|nova_int|nova_str|nova_bool|nova_f64'
+strip_comments() {
+    # Срезает //-комментарий, но НЕ внутри строкового литерала (274.3/F14,
+    # адверсарная проверка: `sed 's|//.*$||'` резал строку на литерале вида
+    # "http://…" и прятал за ним всё остальное, включая нарушение).
+    awk '{
+        out = ""; inq = 0; n = length($0)
+        for (i = 1; i <= n; i++) {
+            c = substr($0, i, 1)
+            p = (i > 1) ? substr($0, i - 1, 1) : ""
+            if (c == "\"" && p != "\\") { inq = !inq }
+            if (!inq && c == "/" && substr($0, i + 1, 1) == "/") { break }
+            out = out c
+        }
+        print out
+    }' "$1"
+}
+
+# (1) The one legitimate home of names: every identifier-shaped literal in it.
+BUILTINS=$(find "$SRC" -type f -name 'builtins.nv' | sort | head -n 1)
+FROM_BUILTINS=""
+if [ -n "$BUILTINS" ]; then
+    FROM_BUILTINS=$(strip_comments "$BUILTINS" | grep -oE '"[^"]*"' | tr -d '"' \
+        | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' | sort -u)
+fi
+
+# (2) The prelude: language surface, moves only with the spec.
+PRELUDE='Option
+Result
+Some
+None
+Ok
+Err
+Vec
+HashMap'
+
+NAMES=$(printf '%s\n%s\n' "$FROM_BUILTINS" "$PRELUDE" | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' | sort -u)
+NB=$(printf '%s\n' "$FROM_BUILTINS" | grep -c '[A-Za-z_]')
+NN=$(printf '%s\n' "$NAMES" | grep -c '[A-Za-z_]')
+ALT=$(printf '%s\n' "$NAMES" | tr '\n' '|' | sed 's/|$//')
+
+if [ -z "$ALT" ]; then
+    echo "$NAME: FAIL — список имён пуст: ни builtins.nv, ни прелюдия не дали ни одного имени" >&2
+    exit 1
+fi
 
 BAD=$(find "$SRC" -type f -name '*.nv' ! -name 'builtins.nv' ! -name '*_test.nv' | sort | while IFS= read -r f; do
     rel=${f#"$SRC"/}
-    # a literal is "..." on a non-comment line; strip //-comments first
-    sed 's|//.*$||' "$f" | grep -n -E "\"($NAMES)\"" | sed "s|^|  $rel:|"
+    # literal = "..." вне комментария; комментарии срезаются С УЧЁТОМ кавычек
+    strip_comments "$f" | grep -n -E "\"($ALT)\"" | sed "s|^|  $rel:|"
 done)
 
 if [ -n "$BAD" ]; then
-    echo "$NAME: FAIL — имена языка/std как строковые литералы вне sem/builtins.nv (П5):" >&2
+    echo "$NAME: FAIL — имена языка/std как строковые литералы вне builtins.nv (П5):" >&2
     printf '%s\n' "$BAD" >&2
-    echo "  Имя — в novac/src/sem/builtins.nv (единый реестр остатка П5), здесь — константа/дверь." >&2
+    echo "  Имя — в novac/src/builtins/builtins.nv (единый реестр остатка П5), здесь — константа/дверь." >&2
     exit 1
 fi
 N=$(find "$SRC" -type f -name '*.nv' ! -name 'builtins.nv' ! -name '*_test.nv' | wc -l | tr -d '[:space:]')
-echo "$NAME ok: файлов .nv: $N, хардкод-имён вне builtins.nv: 0"
+echo "$NAME ok: файлов .nv: $N, имён в списке: $NN (из builtins.nv: $NB + прелюдия), хардкод-имён вне builtins.nv: 0"
 exit 0
