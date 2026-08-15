@@ -63,33 +63,51 @@ export fn emit(file Node, ctx Ctx) -> str {
     consume e = Emitter { ctx, lits: []str.new(), scope: Scope.new(), body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_file(file)
-    ro lits = e.lits // read the pool BEFORE the builder is spent
+    // The pool is read into a binding first, and NOT because of evaluation
+    // order — 03-syntax fixes arguments as left-to-right, so `render(e.lits,
+    // e.finish())` would read before the consume. The reason is the rule one
+    // paragraph up (the consume rule, item 2): a value in a consume position PLUS
+    // another occurrence of that same value in the SAME expression is called
+    // a violation. Today's checker accepts the inline form; the binding does
+    // not lean on that, and it costs nothing — `[]str` is a slice header.
+    ro lits = e.lits
     render(lits, e.finish())
 }
 
 
-/// Emit struct/enum declarations for every user type of the file (shell owns the rest).
+/// Emit declarations for every user type of the file (shell owns the rest).
+/// The dispatch is an EXHAUSTIVE match over TypeKind, not an if-chain ending
+/// in `else`: the owner's rule 2026-08-16. An `else` on a closed set means
+/// "everything I did not name is a sum", so a fourth kind would be emitted as
+/// a sum in silence — the #652 class again. With a match, a new variant is a
+/// compile error at exactly this line.
 fn Emitter mut @emit_type_decls() -> () {
     for t in 0..@ctx.types.len() {
         ro td = @ctx.types[t]
-        if td.kind == TypeKind.TkPrim { continue } // primitives own no decls
-        if td.kind == TypeKind.TkRecord {
-            ro sn = c_struct(@ctx, t)
-            @body.append("typedef struct ${sn} ${sn};\n")
-            @body.append("struct ${sn} {\n")
-            for j in td.row_off..td.row_off + td.row_cnt {
-                ro fd = @ctx.fields.rows[j]
-                @body.append("    ")
-                @body.append(c_type(@ctx, fd.type_id))
-                @body.append(" ")
-                @body.append(fd.name)
-                @body.append(";\n")
-            }
-            @body.append("};\n\n")
-        } else {
-            @emit_sum_decl(t)
+        match td.kind {
+            TkPrim => {} // primitives own no declarations
+            TkRecord => @emit_record_decl(t)
+            TkSum => @emit_sum_decl(t)
         }
     }
+}
+
+/// Record: a typedef plus the struct with one member per field row, in the
+/// declaration order the registry stored (TypeDef.row_off/row_cnt).
+fn Emitter mut @emit_record_decl(rec_id int) -> () {
+    ro td = @ctx.types[rec_id]
+    ro sn = c_struct(@ctx, rec_id)
+    @body.append("typedef struct ${sn} ${sn};\n")
+    @body.append("struct ${sn} {\n")
+    for j in td.row_off..td.row_off + td.row_cnt {
+        ro fd = @ctx.fields.rows[j]
+        @body.append("    ")
+        @body.append(c_type(@ctx, fd.type_id))
+        @body.append(" ")
+        @body.append(fd.name)
+        @body.append(";\n")
+    }
+    @body.append("};\n\n")
 }
 
 /// Sum: tag enum + tagged union + a maker per variant — the oracle's exact
@@ -242,10 +260,12 @@ fn Emitter mut @emit_fn(f Node) -> () {
             if e.kind_of() == NodeKind.MatchExpr {
                 @emit_match(e, name, ret)
                 @body.append("    return _novac_match_${name};\n")
-            } else {
+            } else if is_expr_kind(e.kind_of()) {
                 @body.append("    return ")
                 @emit_expr(e)
                 @body.append(";\n")
+            } else {
+                ice("emit_c: fn expression body is neither a match nor an expression")
             }
         }
     }
@@ -306,7 +326,7 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         @body.append("(_novac_scr_${uniq} == ")
         @body.append(leaf_text(p0))
         @body.append("LL)")
-    } else {
+    } else if leaf_kind(p0) == TokenKind.Ident {
         // A bare `None` (no parens) is a variant too — resolve by name
         // regardless of arity; only a NON-variant ident is a binder.
         ro d = @ctx.defs.find(leaf_text(p0))
@@ -316,6 +336,8 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         } else {
             @body.append("true")
         }
+    } else {
+        ice("emit_c: match pattern is neither an int literal nor an identifier")
     }
     @body.append(")) {\n")
     if vrow >= 0 {
@@ -406,7 +428,7 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
 fn Emitter mut @emit_stmt(st Node) -> () {
     ro k = st.kind_of()
     if k == NodeKind.Call {
-        @emit_println(st)
+        @emit_call_stmt(st)
     } else if k == NodeKind.IfStmt {
         ro kids = branch_children(st)
         @body.append("    if (")
@@ -439,9 +461,11 @@ fn Emitter mut @emit_stmt(st Node) -> () {
             @body.append(", ")
             @emit_expr(kids[2])
             @body.append(")")
-        } else {
+        } else if leaf_kind(kids[1]) == TokenKind.Assign {
             @body.append(" = ")
             @emit_expr(kids[2])
+        } else {
+            ice("emit_c: assignment operator outside the subset")
         }
         @body.append(";\n")
     } else if k == NodeKind.ForStmt {
@@ -505,7 +529,7 @@ fn Emitter mut @emit_bind(st Node) -> () {
             }
         }
         @body.append("    ${rec}* ${vname} = ${tmp};\n")
-    } else {
+    } else if is_expr_kind(init.kind_of()) {
         @body.append("    ")
         @body.append(c_type(@ctx, vtype))
         @body.append(" ")
@@ -513,6 +537,8 @@ fn Emitter mut @emit_bind(st Node) -> () {
         @body.append(" = ")
         @emit_expr(init)
         @body.append(";\n")
+    } else {
+        ice("emit_c: binding initializer is neither a match, a ctor nor an expression")
     }
     @scope.bind(vname, vtype)
 }
@@ -561,13 +587,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
             if neg { @body.append("-") }
             @body.append(leaf_text(t))
             @body.append(")")
-        } else {
+        } else if lk == TokenKind.StrLit {
             // A string literal in value position (binding init, method
             // argument): registered like a println literal, referenced by
             // its C name — the oracle emits the same shape.
             ro idx = @lits.len()
             @lits.push(leaf_text(t))
             @body.append("_novac_strlit_${idx}")
+        } else {
+            ice("emit_c: literal kind outside the subset")
         }
     } else if k == NodeKind.Name {
         @body.append(expr_leaf_name(e))
@@ -606,8 +634,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // Variant constructor call -> the maker.
             ro vrow = @ctx.defs.rows[d].payload
             @body.append("${c_maker(@ctx, vrow)}(")
-        } else {
+        } else if @ctx.defs.rows[d].kind == DefKind.DefFn {
             @body.append("${c_fn(cname, false)}(")
+        } else {
+            ice("emit_c: call target is neither a variant nor a fn")
         }
         mut first = true
         for c in kids {
@@ -660,8 +690,12 @@ fn Emitter mut @emit_expr(e Node) -> () {
     }
 }
 
-/// Emit a println call: one printer per argument by its type, then a newline.
-fn Emitter mut @emit_println(call Node) -> () {
+/// Emit a CALL STATEMENT. The subset knows exactly one callee here,
+/// `println`, and check refuses the rest — the ice below is the second
+/// floor, not the first answer (owner's question 2026-08-16: the name
+/// `emit_println` read as if every Call were a println).
+/// One printer per argument by its type, then a newline.
+fn Emitter mut @emit_call_stmt(call Node) -> () {
     ro kids = branch_children(call)
     if call_callee_text(kids) != PRINT_FN {
         ice("emit: the subset knows only println calls in statement position")

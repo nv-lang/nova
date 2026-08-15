@@ -514,7 +514,7 @@ export fn branch_children(n Node) -> []Node {
 export fn leaf_text(n Node) -> str {
     match n {
         Leaf(t) => t.text
-        Branch { .. } => ice("sem: expected a leaf")
+        Branch { .. } => ice("sem: leaf_text on a branch node")
     }
 }
 
@@ -522,7 +522,7 @@ export fn leaf_text(n Node) -> str {
 export fn leaf_kind(n Node) -> TokenKind {
     match n {
         Leaf(t) => t.kind
-        Branch { .. } => ice("sem: expected a leaf")
+        Branch { .. } => ice("sem: leaf_kind on a branch node")
     }
 }
 

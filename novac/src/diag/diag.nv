@@ -66,7 +66,7 @@ export fn to_json(d Diagnostic, id int, file str) -> str {
         message: d.message,
         poisoned_by: None,
     }
-    json_encode(dto) ?? ice("diag to_json: flat Serialize DTO encode failed")
+    json_encode(dto) ?? ice("diag: to_json could not encode the flat Serialize DTO")
 }
 
 /// The ONE internal-invariant door (novac conventions P12, D416 context).

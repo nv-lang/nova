@@ -19,13 +19,11 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{Diagnostic, Severity}
-import ../builtins.{ENTRY_FN}
-import ../sem.{Ctx}
+import ../builtins.{ENTRY_FN, PRINT_FN}
+import ../sem.{Ctx, branch_children, call_callee_text}
 
-/// Check a parsed file against the E1 subset. Always returns the full list;
-/// no Result (274 §4 item 1).
-/// State of one check run: the source (for positions), the collected
-/// diagnostics, and the semantic context. A receiver, not a triple of
+/// State of one check run: the source (for positions), the semantic context
+/// and the diagnostics collected so far. A receiver, not a triple of
 /// parameters on every function — the shape of every reference (Go
 /// `*Checker`, Roslyn `Binder`, rustc `FnCtxt`, Zig `*Sema`).
 ///
@@ -39,29 +37,56 @@ import ../sem.{Ctx}
 /// ambient `ty::tls` is left only for diagnostics and debugging.
 type Checker {
     src SourceText /// the file text: the one source of positions
-    ctx Ctx /// type registry and method table, read from the declarations
+    ctx Ctx /// type registry and callable table, read from the declarations
     out []Diagnostic /// diagnostics collected by this run
 }
 
-/// Check a parsed file against the subset. Always returns the full list;
+/// Check a parsed file against the E1 subset. Always returns the full list;
 /// no Result (274 §4 item 1).
+///
+/// WHY THIS IS A FREE FUNCTION AND NOT A METHOD ON `Ctx` (owner's question,
+/// 2026-08-16). `Ctx` is DATA — the type registry and the callable table.
+/// Hanging a pass on it would make the registry own the pass, and then
+/// `emit` would want to hang there too: `Ctx` becomes the object that knows
+/// every backend, which is exactly the ownership the architecture keeps
+/// apart (the rustc_middle model — `TyCtxt` holds data, passes consume it).
+/// It would also invert an edge of the §3 table: `Ctx` lives in `sem`, so a
+/// method on it would make `sem` reference `Diagnostic` and the checker,
+/// and `check-novac-deps.sh` refuses that edge by construction. What the
+/// entry point IS, is a constructor plus a run — the same shape `emit_c`
+/// uses for `Emitter`: the module has one door, and the receiver lives
+/// behind it.
 export fn check(file Node, src SourceText, ctx Ctx) -> []Diagnostic {
     mut c = Checker { src, ctx, out: []Diagnostic.new() }
     c.walk(file)
     c.out
 }
 
-/// Walk the whole tree and collect subset diagnostics.
-fn Checker mut @walk(n Node) -> () {
-    @walk_in(n, false)
+/// Record one subset refusal at the token's exact bytes. THE one place that
+/// knows the code, the severity and how a span is derived from a leaf — it
+/// used to be copied into five reporters, so a change to the span rule had
+/// five chances to be applied four times (owner's review 2026-08-16).
+fn Checker mut @refuse(t Token, msg str) -> () {
+    ro lo = @src.offset_of(t.text)
+    @out.push(Diagnostic {
+        code: "E_NOVAC_SUBSET",
+        severity: Severity.ErrorSev,
+        lo,
+        hi: lo + t.text.byte_len(),
+        message: msg,
+    })
 }
 
+/// Walk the tree and collect subset diagnostics.
+///
 /// init_pos: record constructors and match expressions are subset forms ONLY
 /// in an initializer position — the direct init of a binding or the body of
 /// an expression-bodied fn. The emitter's tmp-schemes have exactly those
 /// shapes; anywhere else (argument, nested field value, condition, arm) the
-/// form is an honest E_NOVAC_SUBSET, not an emitter ice later.
-fn Checker mut @walk_in(n Node, init_pos bool) -> () {
+/// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
+/// is the common case, so only the two places that actually open an
+/// initializer position say so.
+fn Checker mut @walk(n Node, init_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children } => {
@@ -69,6 +94,7 @@ fn Checker mut @walk_in(n Node, init_pos bool) -> () {
                 @report_err_branch(children)
                 return
             }
+            if kind == NodeKind.Block { @report_if_bad_call_stmt(children) }
             if kind == NodeKind.MethodCall { @report_if_unknown_method(children) }
             if kind == NodeKind.FnDecl { @report_if_missing_ret(children) }
             if kind == NodeKind.Field { @report_if_missing_type(children, "outside the E1 subset: field must declare a type") }
@@ -93,13 +119,13 @@ fn Checker mut @walk_in(n Node, init_pos bool) -> () {
             if kind == NodeKind.BindStmt || kind == NodeKind.FnExprBody {
                 mut i = 0
                 for c in children {
-                    @walk_in(c, i == children.len() - 1)
+                    @walk(c, init_pos: i == children.len() - 1)
                     i += 1
                 }
                 return
             }
             for c in children {
-                @walk_in(c, false)
+                @walk(c)
             }
         }
     }
@@ -133,14 +159,7 @@ fn Checker mut @report_if_missing_ret(kids []Node) -> () {
                     Branch { kind, .. } => { if kind == NodeKind.RetType { return } }
                 }
             }
-            ro lo = @src.offset_of(t.text)
-            @out.push(Diagnostic {
-                code: "E_NOVAC_SUBSET",
-                severity: Severity.ErrorSev,
-                lo,
-                hi: lo + t.text.byte_len(),
-                message: "outside the E1 subset: fn requires a declared return type",
-            })
+            @refuse(t, "outside the E1 subset: fn requires a declared return type")
         }
         Branch { .. } => {}
     }
@@ -151,20 +170,34 @@ fn Checker mut @report_first_leaf_of(children []Node, msg str) -> () {
     for c in children {
         match c {
             Leaf(t) => {
-                ro lo = @src.offset_of(t.text)
-                @out.push(Diagnostic {
-                    code: "E_NOVAC_SUBSET",
-                    severity: Severity.ErrorSev,
-                    lo,
-                    hi: lo + t.text.byte_len(),
-                    message: msg,
-                })
+                @refuse(t, msg)
                 return
             }
             Branch { children: inner, .. } => {
                 ro before = @out.len()
                 @report_first_leaf_of(inner, msg)
                 if @out.len() > before { return }
+            }
+        }
+    }
+}
+
+/// A CALL in statement position is `println` and nothing else in the subset.
+/// Owner's question 2026-08-16 ("does every Call really become a println?"):
+/// it did, and the emitter's ice was the FIRST answer for `helper()` as a
+/// statement — the #652 class again, where the boundary belongs in check and
+/// the ice is only the second floor. Expression-position calls are a
+/// different question and go through the emitter's Call branch.
+fn Checker mut @report_if_bad_call_stmt(stmts []Node) -> () {
+    for st in stmts {
+        match st {
+            Leaf(_) => {}
+            Branch { kind, children } => {
+                if kind == NodeKind.Call {
+                    if call_callee_text(children) != PRINT_FN {
+                        @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
+                    }
+                }
             }
         }
     }
@@ -185,14 +218,7 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
             if !@ctx.fns.has_name(t.text) {
-                ro lo = @src.offset_of(t.text)
-                @out.push(Diagnostic {
-                    code: "E_NOVAC_SUBSET",
-                    severity: Severity.ErrorSev,
-                    lo,
-                    hi: lo + t.text.byte_len(),
-                    message: "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)",
-                })
+                @refuse(t, "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)")
             }
         }
         Branch { .. } => {}
@@ -202,14 +228,7 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
 /// An ErrorTok leaf is a lexer refusal: report it at its position.
 fn Checker mut @report_if_error_token(t Token) -> () {
     if t.kind == TokenKind.ErrorTok {
-        ro lo = @src.offset_of(t.text)
-        @out.push(Diagnostic {
-            code: "E_NOVAC_SUBSET",
-            severity: Severity.ErrorSev,
-            lo,
-            hi: lo + t.text.byte_len(),
-            message: "outside the E1 subset: unrecognized or context-dependent token",
-        })
+        @refuse(t, "outside the E1 subset: unrecognized or context-dependent token")
     }
 }
 
@@ -224,14 +243,7 @@ fn Checker mut @report_err_branch(children []Node) -> () {
         if @out.len() > before { return } // the one diagnostic is out already
         match c {
             Leaf(t) => {
-                ro lo = @src.offset_of(t.text)
-                @out.push(Diagnostic {
-                    code: "E_NOVAC_SUBSET",
-                    severity: Severity.ErrorSev,
-                    lo,
-                    hi: lo + t.text.byte_len(),
-                    message: "outside the E1 subset: construct not in the MVP grammar",
-                })
+                @refuse(t, "outside the E1 subset: construct not in the MVP grammar")
                 return
             }
             Branch { children: inner, .. } => @report_err_branch(inner)

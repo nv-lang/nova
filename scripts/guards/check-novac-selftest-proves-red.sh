@@ -72,7 +72,19 @@ for g in "$GUARDS"/check-novac-*.sh; do
     # на диске на текущий прогон не влияет (П16 п.2 — правило без исключений)
     cksum < "$g" > "$T/before.$base"
     cp "$g" "$g.proving-backup"
-    printf '#!/bin/sh\nexit 0\n' > "$g"
+    printf '#!/bin/sh\nexit 0\n' > "$g" 2>/dev/null
+    # Запись заглушки может не пройти (на Windows файл иногда занят). Молча
+    # пропустить нельзя: самотест тогда прогонится против НАСТОЯЩЕГО стража,
+    # пройдёт, и мы зачтём доказательство, которого не было. Одна повторная
+    # попытка, затем красный (поймано живым прогоном 2026-08-16).
+    if [ "$(wc -l < "$g" | tr -d '[:space:]')" != "2" ]; then
+        printf '#!/bin/sh\nexit 0\n' > "$g" 2>/dev/null
+    fi
+    if [ "$(wc -l < "$g" | tr -d '[:space:]')" != "2" ]; then
+        mv "$g.proving-backup" "$g"
+        echo "$NAME: FAIL — не удалось подменить $base заглушкой (файл занят?): доказательство не получено" >&2
+        exit 1
+    fi
     ( NOVAC_CORPUS=0 NOVAC_COST=0 NOVAC_PROVE=0 timeout "$DEADLINE" sh "$st" ) > "$T/out" 2>&1
     rc=$?
     mv "$g.proving-backup" "$g"
