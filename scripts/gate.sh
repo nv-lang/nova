@@ -245,6 +245,11 @@ guard "$ROOT/scripts/guards/check-novac-differential.sh" "$ROOT" || fail "рас
 guard "$ROOT/scripts/guards/check-novac-diag-schema.sh" "$ROOT" || fail "диагностика novac не по схеме §7"
 guard "$ROOT/scripts/guards/check-novac-no-cascade.sh" "$ROOT" || fail "каскад диагностик от одной причины (274 §6)"
 guard "$ROOT/scripts/guards/check-novac-no-panic.sh" "$ROOT" || fail "паника/крэш novac на фикстурах (решение 11: ноль паник)"
+# 274.3/F2: фикстуры — не фаззинг. Приёмка ЯДРА Э1 (решение 11) требует
+# «ноль паник на мутациях корпуса»; до сегодня мутационный фаззер гейтом не
+# звался вообще, а единственный его вызыватель (страж цены) выбрасывал код
+# возврата — механизм числился живым и не работал (класс №519).
+guard --deadline 300 "$ROOT/scripts/tools/novac-fuzz-mutations.sh" || fail "паника/зависание novac на мутациях корпуса (274 решение 11: ноль паник)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 

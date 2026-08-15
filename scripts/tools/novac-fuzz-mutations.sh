@@ -21,6 +21,7 @@
 # Проверялся: Windows (Git Bash), 2026-08-15.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/guards/lib/novac.sh"   # novac_is_panic_rc: контракт §7 — только 0/1
 NOVAC="$ROOT/novac/target/novac.exe"
 STEP="${1:-40}"
 T="${TMPDIR:-/tmp}/novac-fuzz.$$"
@@ -53,7 +54,7 @@ judge() {   # $1 = list file; prints nothing on green, case ids on red
     # shellcheck disable=SC2046
     ( cd "$T/cases" && timeout 120 "$NOVAC" check $(cat "$1") ) > "$T/out" 2> "$T/err"
     rc=$?
-    if [ "$rc" -ge 124 ] || grep -qi "panic" "$T/err"; then
+    if novac_is_panic_rc "$rc" || grep -qi "panic" "$T/err"; then
         return 1
     fi
     return 0

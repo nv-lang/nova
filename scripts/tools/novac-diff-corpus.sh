@@ -12,7 +12,9 @@
 #             «заблокировано оракулом» — носители [LEGACY-#NNN]/EXPECT_CC_ERROR;
 #             остальное     — честное отставание подмножества;
 #   DANGER  (novac ПРИНЯЛ, оракул отверг) — класс К7; красный вне allow;
-#   PANIC   (rc>=124 или 'panic' в stderr novac) — всегда красный.
+#   PANIC   (274.3/F3, одно определение на все механизмы — lib/novac.sh:
+#           код возврата не 0/1 (вердикт) и не 2 (честный отказ двери с
+#           сообщением), либо 'panic' в stderr) — всегда красный.
 #
 # Второе монотонное число (274 §9/Э2): файлы «совпали-приняли», собранные
 # ОБОИМИ компиляторами с поведенческим совпадением (exit+stdout байт-в-байт)
@@ -31,6 +33,7 @@
 # Проверялся: Windows (Git Bash), 2026-08-14.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/scripts/guards/lib/novac.sh"   # novac_is_panic_rc (274.3/F3)
 CORPUS="${1:-$ROOT/examples}"
 NOVAC="$ROOT/novac/target/novac.exe"
 ALLOW="$ROOT/novac/divergences.allow"
@@ -51,7 +54,21 @@ fi
 PIN=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*oracle-pin:[[:space:]]*\([0-9a-f][0-9a-f]*\)$/\1/p')
 SPEC_POINT=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*spec-point:[[:space:]]*\([0-9-]*\)$/\1/p')
 ORACLE_REV=$(git -C "$(dirname "$ORACLE")" rev-parse --short HEAD 2>/dev/null)
-echo "novac-diff-corpus: oracle-pin=$PIN oracle-HEAD=$ORACLE_REV spec-point=$SPEC_POINT сборка novac=single-file корпус=$CORPUS"
+# spec-queue (274.3/F13): отставание от спеки — МАШИННОЕ число, а не запись
+# рукой в nova.toml. Считается как число коммитов в spec/decisions после
+# закреплённой точки; расхождение с toml — красный (план §1.1: «лаг — число,
+# не ощущение»).
+QUEUE_REAL=$(git -C "$ROOT" log --since="$SPEC_POINT 23:59:59" --format=%h -- spec/decisions 2>/dev/null | wc -l | tr -d " ")
+QUEUE_TOML=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*spec-queue:[[:space:]]*\([0-9][0-9]*\)$/\1/p')
+echo "novac-diff-corpus: oracle-pin=$PIN oracle-HEAD=$ORACLE_REV spec-point=$SPEC_POINT spec-queue=$QUEUE_REAL (в nova.toml: $QUEUE_TOML) сборка novac=single-file корпус=$CORPUS"
+if [ -z "$QUEUE_TOML" ]; then
+    echo "novac-diff-corpus: FAIL — строка spec-queue в novac/nova.toml не распознана (строгий формат «#   spec-queue: N», без хвостовых комментариев). Пустой якорь = тихо отключённая проверка (274.3/F13)." >&2
+    exit 1
+fi
+if [ "$QUEUE_REAL" != "$QUEUE_TOML" ]; then
+    echo "novac-diff-corpus: FAIL — spec-queue в novac/nova.toml ($QUEUE_TOML) расходится с фактом ($QUEUE_REAL D-коммитов в spec/decisions после $SPEC_POINT). Обнови строку или двигай spec-point сознательно (274.3/F13, план §1.1)." >&2
+    exit 1
+fi
 
 find "$CORPUS" -type f -name '*.nv' | sort > "$T/list"
 N=$(wc -l < "$T/list" | tr -d ' ')
@@ -77,7 +94,7 @@ while IFS= read -r f; do
     "$ORACLE" check "$f" >/dev/null 2>&1 </dev/null
     ro=$?
     t_oracle=$(( t_oracle + ( $(date +%s%N) - s ) / 1000000 ))
-    if [ "$rn" -ge 124 ] || grep -qi "panic" "$T/err"; then
+    if novac_is_panic_rc "$rn" || grep -qi "panic" "$T/err"; then
         panic=$((panic+1))
         echo "  PANIC/HANG: $rel (novac rc=$rn)" >> "$T/red"
         head -1 "$T/err" | sed 's/^/    /' >> "$T/red"

@@ -17,8 +17,14 @@
 # recorded in the plan. oracle-pin = revision of the current compiler the
 # diff gate compares against; it moves by a deliberate commit, mandatorily
 # after each blocker window touching the novac subset (e.g. #659+#660).
+# spec-queue СЧИТАЕТСЯ машиной (274.3/F13): число коммитов в spec/decisions
+# после spec-point; дифф-раннер сверяет с этой строкой и краснеет на
+# расхождении. Значение 2 = D104 rev-2 (два коммита 2026-08-15).
+# ВАЖНО: у трёх строк ниже СТРОГИЙ формат «#   ключ: значение» без
+# хвостовых комментариев — иначе якорь их не видит и проверка тихо
+# отключается (поймано на себе 2026-08-15).
 #   spec-point: 2026-08-14
-#   spec-queue: 0
+#   spec-queue: 2
 #   oracle-pin: 3883310ba
 
 [package]
