@@ -50,6 +50,7 @@ export type NodeKind enum
     | Guard
     | FnExprBody
     | Param
+    | Recv
     | RetType
     | Name
     | Err

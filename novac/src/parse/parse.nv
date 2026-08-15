@@ -42,18 +42,53 @@ fn Cursor @peek() -> TokenKind {
 
 /// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
-    // Never hands out the same token twice; the assert makes the contract
-    // loud instead of latent (asserts run in release too -- the language's
-    // stance). Callers that might legitimately stand past the end go
-    // through peek()/at_eof() first, which are safe there.
-    assert(@i < @toks.len())
+    // За концом потока take() отдаёт ПУСТОЙ лист и НЕ двигает курсор
+    // (274.3/F16, модель Roslyn MissingToken): раньше здесь стоял assert, и
+    // единственная будущая правка в восстановлении превращала обрезанный файл
+    // в смерть процесса без диагностики. Пустой лист несёт срез src[n..n] —
+    // дверь позиций получает настоящий указатель, а не чужой.
+    if @i >= @toks.len() {
+        ro last = @toks[@toks.len() - 1]
+        return leaf(Token { kind: TokenKind.Eof, leading: "", text: last.text })
+    }
     ro n = leaf(@toks[@i])
     @i += 1
     n
 }
 
+/// Отсутствующий токен: лист НУЛЕВОЙ ШИРИНЫ на позиции текущего токена
+/// (модель Roslyn MissingToken). Курсор не двигается, реcериализация не
+/// меняется (пустой текст ничего не добавляет), но у диагностики есть точная
+/// позиция — без него восстановление на терминаторе давало Err без листьев,
+/// то есть МОЛЧАЛИВОЕ принятие сломанного ввода (поймано фаззером сразу же
+/// после ввода терминаторов, 274.3/F15).
+fn Cursor @missing() -> Node {
+    if @i >= @toks.len() {
+        ro last = @toks[@toks.len() - 1]
+        return leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: last.text })
+    }
+    ro t = @toks[@i]
+    leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[0..0] })
+}
+
+/// Токены, которые ЗАКРЫВАЮТ объемлющую конструкцию: их нельзя съедать при
+/// восстановлении (274.3/F15, модель Roslyn IsTerminator / rustc
+/// expect_one_of). Съеденная закрывающая скобка утаскивала весь остаток
+/// файла: `g(1 + )` давал четыре диагностики, а объявления после сломанного
+/// места переставали существовать в дереве вообще.
+fn is_terminator(k TokenKind) -> bool =>
+    k == TokenKind.RParen || k == TokenKind.RBrace || k == TokenKind.RBracket || k == TokenKind.KwFn || k == TokenKind.KwType || k == TokenKind.KwModule || k == TokenKind.Eof
+
 /// True once the stream is exhausted.
 fn Cursor @at_eof() -> bool => @peek() == TokenKind.Eof
+
+/// Вид токена ЧЕРЕЗ один — нужен ровно там, где форма опознаётся парой:
+/// `fn <Recv> @<имя>` (метод) против `fn <имя>` (функция). Как и peek(),
+/// безопасен за концом потока.
+fn Cursor @peek2() -> TokenKind {
+    if @i + 1 >= @toks.len() { return TokenKind.Eof }
+    @toks[@i + 1].kind
+}
 
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
 export fn parse(toks []Token) -> Node {
@@ -152,6 +187,15 @@ fn Cursor mut @module_decl() -> Node {
 /// Parse `fn name(params) -> T { body }` or `=> expr`, with junk recovery.
 fn Cursor mut @fn_decl() -> Node {
     mut kids = []Node.of(@take()) // KwFn
+    // Метод-декларация `fn <Recv> @<имя>(...)`: ресивер — отдельный узел, имя
+    // читается после '@'. Форма нужна не ради подмножества (методы novac не
+    // объявляет), а ради ЧТЕНИЯ сигнатур std: таблица методов подмножества
+    // строится из деклараций, а не из списка имён в компиляторе (П5).
+    if @peek() == TokenKind.Ident && @peek2() == TokenKind.At {
+        mut rk = []Node.of(@take()) // тип-ресивер
+        rk.push(@take())            // '@'
+        kids.push(branch(NodeKind.Recv, rk))
+    }
     if @peek() == TokenKind.Ident { kids.push(@take()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
     while @peek() == TokenKind.Ident {
@@ -195,7 +239,12 @@ fn Cursor mut @fn_decl() -> Node {
 fn Cursor mut @block() -> Node {
     mut kids = []Node.of(@take()) // LBrace
     while !@at_eof() && @peek() != TokenKind.RBrace {
+        // Защита от непродвижения (274.3/F15-F16): восстановление может вернуть
+        // узел нулевой ширины, не тронув курсор — тогда цикл обязан выйти, а не
+        // крутиться. Раньше эту роль играл assert в take(), то есть смерть.
+        ro before = @i
         kids.push(@stmt())
+        if @i == before { break }
     }
     if @peek() == TokenKind.RBrace { kids.push(@take()) }
     branch(NodeKind.Block, kids)
@@ -282,8 +331,10 @@ fn Cursor mut @primary() -> Node {
         if @peek() == TokenKind.LParen {
             kids.push(@take())
             while !@at_eof() && @peek() != TokenKind.RParen {
+                ro before = @i
                 kids.push(@expr())
                 if @peek() == TokenKind.Comma { kids.push(@take()) }
+                if @i == before { break }
             }
             if @peek() == TokenKind.RParen { kids.push(@take()) }
             e = branch(NodeKind.MethodCall, kids)
@@ -304,6 +355,7 @@ fn Cursor mut @match_expr() -> Node {
     kids.push(@head_expr())       // scrutinee: `match s {` — brace is the body
     if @peek() == TokenKind.LBrace { kids.push(@take()) }
     while !@at_eof() && @peek() != TokenKind.RBrace {
+        ro before = @i
         mut ak = []Node.new()
         // pattern
         if @peek() == TokenKind.IntLit {
@@ -347,6 +399,7 @@ fn Cursor mut @match_expr() -> Node {
         if @peek() == TokenKind.FatArrow { ak.push(@take()) }
         ak.push(@expr())
         kids.push(branch(NodeKind.MatchArm, ak))
+        if @i == before { break }
     }
     if @peek() == TokenKind.RBrace { kids.push(@take()) }
     branch(NodeKind.MatchExpr, kids)
@@ -356,6 +409,7 @@ fn Cursor mut @match_expr() -> Node {
 /// `name`, spread `...expr` — comma-separated; the closing brace ends it.
 fn Cursor mut @ctor_fields(mut kids []Node) -> () {
     while !@at_eof() && @peek() != TokenKind.RBrace {
+        ro before = @i
         if @peek() == TokenKind.Ellipsis {
             mut sk = []Node.of(@take())
             sk.push(@expr())
@@ -372,6 +426,7 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
             kids.push(branch(NodeKind.Err, []Node.of(@take())))
         }
         if @peek() == TokenKind.Comma { kids.push(@take()) }
+        if @i == before { break }
     }
     if @peek() == TokenKind.RBrace { kids.push(@take()) }
 }
@@ -397,6 +452,7 @@ fn Cursor mut @atom() -> Node {
         // element is ArraySpread [Ellipsis, expr].
         mut kids = []Node.of(@take())
         while !@at_eof() && @peek() != TokenKind.RBracket {
+            ro before = @i
             if @peek() == TokenKind.Ellipsis {
                 mut sk = []Node.of(@take())
                 sk.push(@expr())
@@ -405,6 +461,7 @@ fn Cursor mut @atom() -> Node {
                 kids.push(@expr())
             }
             if @peek() == TokenKind.Comma { kids.push(@take()) }
+            if @i == before { break }
         }
         if @peek() == TokenKind.RBracket { kids.push(@take()) }
         return branch(NodeKind.ArrayLit, kids)
@@ -422,8 +479,10 @@ fn Cursor mut @atom() -> Node {
         if @peek() == TokenKind.LParen {
             mut kids = []Node.of(name, @take())
             while !@at_eof() && @peek() != TokenKind.RParen {
+                ro before = @i
                 kids.push(@expr())
                 if @peek() == TokenKind.Comma { kids.push(@take()) }
+                if @i == before { break }
             }
             if @peek() == TokenKind.RParen { kids.push(@take()) }
             return branch(NodeKind.Call, kids)
@@ -435,6 +494,12 @@ fn Cursor mut @atom() -> Node {
         }
         return branch(NodeKind.Name, []Node.of(name))
     }
-    // Recovery: unexpected token — one Err branch, one token, move on.
+    // Восстановление: неожиданный токен — один Err, один токен, дальше. Но
+    // ЗАКРЫВАЮЩИЙ токен не потребляется: он принадлежит объемлющей форме
+    // (274.3/F15). Err нулевой ширины — курсор не двигается, а объемлющий
+    // цикл обязан это заметить (см. защиту от непродвижения в block/args).
+    if is_terminator(@peek()) {
+        return branch(NodeKind.Err, []Node.of(@missing()))
+    }
     branch(NodeKind.Err, []Node.of(@take()))
 }

@@ -87,7 +87,7 @@ git -C "$ROOT" log --diff-filter=A --format='%as' --name-only -- "$CORPUS" 2>/de
 while IFS= read -r f; do
     rel=${f#"$ROOT"/}
     s=$(date +%s%N)
-    timeout 10 "$NOVAC" check "$f" >/dev/null 2>"$T/err" </dev/null
+    timeout 10 "$NOVAC" check --std "$ROOT/std/src/runtime/string" "$f" >/dev/null 2>"$T/err" </dev/null
     rn=$?
     t_novac=$(( t_novac + ( $(date +%s%N) - s ) / 1000000 ))
     s=$(date +%s%N)
@@ -145,7 +145,7 @@ self_total=0; self_rej=0
 for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
     [ -f "$f" ] || continue
     self_total=$((self_total+1))
-    timeout 10 "$NOVAC" check "$f" >/dev/null 2>&1 </dev/null || self_rej=$((self_rej+1))
+    timeout 10 "$NOVAC" check --std "$ROOT/std/src/runtime/string" "$f" >/dev/null 2>&1 </dev/null || self_rej=$((self_rej+1))
 done
 wall=$(( ( $(date +%s%N) - wall0 ) / 1000000 ))
 

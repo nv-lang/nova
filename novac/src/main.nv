@@ -19,12 +19,12 @@ module novac
 
 import ./pipeline.{compile, compile_to_c}
 import ./diag.{to_json}
-import std.fs.{read, real_fs}
+import std.fs.{read, read_dir, real_fs}
 import std.os.{args, exit_process, real_os}
 
 /// Emit C for one file: print diagnostics (exit 1) or the C text (exit 0).
-fn emit_one(text str, file str) -> int {
-    ro (diags, c_text) = compile_to_c(text)
+fn emit_one(text str, file str, decls []str) -> int {
+    ro (diags, c_text) = compile_to_c(text, decls)
     if diags.len() > 0 {
         mut i = 0
         for d in diags {
@@ -38,8 +38,8 @@ fn emit_one(text str, file str) -> int {
 }
 
 /// Check one file: print §7 diagnostics one per line; exit 0 clean / 1 diagnostics.
-fn compile_one(text str, file str) -> int {
-    ro diags = compile(text)
+fn compile_one(text str, file str, decls []str) -> int {
+    ro diags = compile(text, decls)
     mut i = 0
     for d in diags {
         println(to_json(d, i, file))
@@ -48,13 +48,48 @@ fn compile_one(text str, file str) -> int {
     if diags.len() > 0 { 1 } else { 0 }
 }
 
+/// Прочитать тексты деклараций из каталога (`--std <dir>`): все *.nv, без
+/// рекурсии. ЭТО ДВЕРЬ: обход ФС живёт здесь, компилятор получает тексты
+/// (архитектура §1 — компилятор читает только переданное). Нет каталога или
+/// нечитаем — пустой список: тогда методы неизвестны и всякий вызов метода
+/// получает честный отказ подмножества, а не тихий «неизвестный метод».
+fn read_decls(dir str) Fs -> []str {
+    mut out = []str.new()
+    if dir == "" { return out }
+    match read_dir(dir.to_path()) {
+        Ok(entries) => {
+            for e in entries {
+                // DirEntry несёт ИМЯ (Path), не полный путь — склеиваем сами;
+                // байты имени -> str через ту же дверь, что и весь ввод.
+                ro nm = e.name.os_bytes().to_str() ?? ""
+                if nm == "" { continue }
+                if !nm.ends_with(".nv") { continue }
+                ro full = "${dir}/${nm}"
+                match read(full.to_path()) {
+                    Ok(bytes) => {
+                        match bytes.to_str() {
+                            Ok(t) => { out.push(t) }
+                            Err(_) => {}
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        Err(_) => {
+            println("novac: cannot read declarations dir ", dir)
+        }
+    }
+    out
+}
+
 /// Check one path (read + compile), printing diagnostics; returns the exit
 /// code contribution: 0 clean, 1 diagnostics, 2 IO/UTF-8 error.
-fn check_path(path str) -> int {
+fn check_path(path str, decls []str) -> int {
     match read(path.to_path()) {
         Ok(bytes) => {
             match bytes.to_str() {
-                Ok(text) => compile_one(text, path)
+                Ok(text) => compile_one(text, path, decls)
                 Err(_) => {
                     println("novac: not UTF-8: ", path)
                     2
@@ -77,26 +112,41 @@ fn main() {
     with Fs = real_fs(), Os = real_os() {
         ro a = args()
         if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
-            println("usage: novac check <file.nv>... | novac emit <file.nv>")
+            println("usage: novac check [--std <dir>] <file.nv>... | novac emit [--std <dir>] <file.nv>")
+            exit_process(2)
+            return
+        }
+        // `--std <dir>` — интерфейс std, который novac ЧИТАЕТ (сигнатуры
+        // методов), а не знает наизусть (П5). Без флага таблица методов пуста
+        // и всякий вызов метода — честный отказ подмножества.
+        mut argi = 2
+        mut std_dir = ""
+        if a.len() > 3 && a[2] == "--std" {
+            std_dir = a[3]
+            argi = 4
+        }
+        ro decls = read_decls(std_dir)
+        if argi >= a.len() {
+            println("usage: novac check [--std <dir>] <file.nv>... | novac emit [--std <dir>] <file.nv>")
             exit_process(2)
             return
         }
         if a[1] == "check" {
             mut worst = 0
-            mut i = 2
+            mut i = argi
             while i < a.len() {
-                ro rc = check_path(a[i])
+                ro rc = check_path(a[i], decls)
                 worst = worst.max(rc)
                 i += 1
             }
             exit_process(worst)
             return
         }
-        ro path = a[2]
+        ro path = a[argi]
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
-                    Ok(text) => { exit_process(emit_one(text, path)) }
+                    Ok(text) => { exit_process(emit_one(text, path, decls)) }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
                         exit_process(2)

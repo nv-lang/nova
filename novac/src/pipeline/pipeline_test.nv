@@ -14,38 +14,43 @@
 
 module novac.pipeline
 
+// Тесты подмножества деклараций не читают: сигнатуры std приходят через дверь
+// (`--std`), а здесь судится сам конвейер. Хелпер держит это в ОДНОМ месте —
+// иначе каждая проверка несла бы пустой список руками.
+fn n_diags(text str) -> int => compile(text, []str.new()).len()
+
 test "no cascade: a run of top-level junk is one cause, one diagnostic" {
     // E1 review p.1 (2026-08-14): this used to be THREE diagnostics.
-    assert(compile("1 2 3").len() == 1)
+    assert(n_diags("1 2 3") == 1)
 }
 
 test "no cascade: junk between signature and block is one diagnostic" {
-    assert(compile("fn main junk here () { }").len() == 1)
+    assert(n_diags("fn main junk here () { }") == 1)
 }
 
 test "clean subset file: zero diagnostics" {
-    assert(compile("module a.b\nfn main() { println(\"hi\", 1 + 2) }").len() == 0)
+    assert(n_diags("module a.b\nfn main() { println(\"hi\", 1 + 2) }") == 0)
 }
 
 test "two separate causes: two diagnostics" {
     // Junk at top level AND an unterminated string inside a fn are two
     // independently seeded mistakes — the rule is one PER CAUSE, not one
     // per file.
-    assert(compile("?? fn main() { \"unterminated").len() == 2)
+    assert(n_diags("?? fn main() { \"unterminated") == 2)
 }
 
 test "unterminated string alone: one diagnostic, honest refusal" {
     // E1 review p.4: an unclosed string is ErrorTok now, not a plausible
     // StrLit.
-    assert(compile("fn main() { \"oops }").len() == 1)
+    assert(n_diags("fn main() { \"oops }") == 1)
 }
 
 test "stray module after the header: one diagnostic, no hang (fuzzer 2026-08-14)" {
     // The doubled-file mutation. KwModule is a sync point for BOTH junk
     // buckets, so the top loop itself must consume it: before the fix this
     // input spun forever pushing empty Err branches until the GC died.
-    assert(compile("fn main() { }\nmodule").len() == 1)
-    assert(compile("module a\nfn main() { }\nmodule a\nfn main() { }").len() == 1)
+    assert(n_diags("fn main() { }\nmodule") == 1)
+    assert(n_diags("module a\nfn main() { }\nmodule a\nfn main() { }") == 1)
 }
 
 test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08-14)" {
@@ -53,39 +58,39 @@ test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08
     // leaf. Its text used to be the "" literal — a foreign pointer for the
     // position door, killed by offset_of's contract assert. Now it is the
     // end-anchored empty slice and the report is honest.
-    assert(compile("fn main() { mut i").len() == 1)
+    assert(n_diags("fn main() { mut i") == 1)
 }
 
 test "E2 strings surface is clean: ro, while, subset methods" {
     ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
-    assert(compile(src).len() == 0)
+    assert(n_diags(src) == 0)
 }
 
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
     ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
-    assert(compile(src).len() == 0)
+    assert(n_diags(src) == 0)
 }
 
 test "record ctor outside a binding initializer is refused in CHECK (E2 boundary)" {
     // The emitter's tmp scheme exists only for the binding-init shape; a
     // green check here would turn into an emitter ice killing the smoke.
-    assert(compile("type P { a int }\nfn main() { println(P { a: 1 }) }").len() == 1)
+    assert(n_diags("type P { a int }\nfn main() { println(P { a: 1 }) }") == 1)
 }
 
 test "unknown method is an honest subset refusal at the name" {
-    assert(compile("fn main() { println(\"s\".reverse()) }").len() == 1)
+    assert(n_diags("fn main() { println(\"s\".reverse()) }") == 1)
 }
 
 test "no silent type defaults: fn without a return type is refused (#652 class)" {
     // The owner's rule 2026-08-14: a quiet nova_int fallback bred a bug
     // family in the current compiler — the boundary falls in check, the
     // emitter's ice is only the second floor.
-    assert(compile("fn helper() { println(\"x\") }\nfn main() { }").len() == 1)
+    assert(n_diags("fn helper() { println(\"x\") }\nfn main() { }") == 1)
 }
 
 test "E2 match surface is clean: sum decl, arms, guards, expression fn" {
     ro src = "type S\n | A(f64)\n | B(f64, f64)\nfn area(s S) -> f64 => match s {\n A(r) => r\n B(w, h) => w * h\n}\nfn main() { println(area(A(1.5))) }"
-    assert(compile(src).len() == 0)
+    assert(n_diags(src) == 0)
 }
 
 test "escaped interpolation is a literal, not a refusal" {
@@ -93,5 +98,5 @@ test "escaped interpolation is a literal, not a refusal" {
     // The input is assembled by concatenation so THIS file's own string
     // literal does not interpolate.
     ro src = "fn main() { println(\"\\".concat("$").concat("{x}\") }")
-    assert(compile(src).len() == 0)
+    assert(n_diags(src) == 0)
 }

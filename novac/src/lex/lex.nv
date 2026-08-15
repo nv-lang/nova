@@ -65,6 +65,7 @@ export type TokenKind enum
     | DotDot
     | Ellipsis
     | Colon
+    | At
     | Arrow
     | ErrorTok
     | Eof
@@ -139,6 +140,7 @@ fn punct_kind(b u8) -> TokenKind {
     if b == ('.' as u8) { return TokenKind.Dot }
     if b == (',' as u8) { return TokenKind.Comma }
     if b == (':' as u8) { return TokenKind.Colon }
+    if b == ('@' as u8) { return TokenKind.At }
     if b == ('+' as u8) { return TokenKind.Plus }
     if b == ('-' as u8) { return TokenKind.Minus }
     if b == ('*' as u8) { return TokenKind.Star }

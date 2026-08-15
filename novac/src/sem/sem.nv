@@ -26,7 +26,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
-import ../builtins.{TypeKind, builtin_types, builtin_method_ret}
+import ../builtins.{TypeKind, builtin_types}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
 /// a SUM, not int constants (owner 2026-08-14: the language's own type
@@ -78,6 +78,19 @@ export fn DefTable mut @add(name str, kind DefKind, payload int) -> () {
 
 /// Row of `name`, or -1.
 export fn DefTable @find(name str) -> int => @names.find(name)
+
+/// Тип по имени при СБОРЕ: -1, если имя неизвестно или это не тип. Сбор
+/// терпим к сломанному вводу СОЗНАТЕЛЬНО (274.3/F-B4): картина файла строится
+/// и для check, а тот обязан выдать диагностику, а не умереть в ICE. Судит
+/// check (правило «тип в позиции типа обязан быть объявлен»); sem ничего не
+/// придумывает — просто не регистрирует то, чего не понял.
+export fn DefTable @type_id_opt(name str) -> int {
+    ro d = @names.find(name)
+    if d < 0 { return -1 }
+    ro def = @rows[d]
+    if def.kind != DefKind.DefType { return -1 }
+    def.payload
+}
 
 /// Resolve `name` in TYPE POSITION (params, fields, returns, constructor
 /// heads): ONE lookup, then the kind must be a type. NO SILENT DEFAULT.
@@ -138,6 +151,66 @@ export type Prims value {
     t_f64 int /// Type id of `f64`.
 }
 
+/// Чем закончился поиск метода в ПРОЧИТАННЫХ декларациях std.
+/// Сумма, а не int-код: «не нашли» и «перегрузка» — разные ответы, и оба
+/// обязаны быть представимы (П13.5; тихий int-дефолт — класс №652).
+export type MethodLookup enum
+    | MethodFound(int)
+    | MethodUnknown
+    | MethodAmbiguous
+
+/// Одна сигнатура метода, прочитанная из декларации `fn <Recv> @<имя>(...) -> R`.
+export type MethodDef value {
+    recv int /// type id ресивера
+    name str /// имя метода как написано в декларации
+    ret int /// type id возврата
+    dup bool /// встретилась вторая декларация с тем же (recv, имя) — перегрузка
+}
+
+/// Таблица методов подмножества. Наполняется ТОЛЬКО чтением деклараций
+/// (П5: имена std — данные, а не знание компилятора); ключ — (тип ресивера,
+/// имя), поэтому `p.contains(..)` на записи не резолвится в метод строки.
+export type MethodTable {
+    names NameTable /// "recvId.имя" -> строка в rows (пространство NsMethods)
+    bare NameTable /// "имя" -> 1: существует ли метод с таким именем ХОТЬ У КОГО-ТО
+    rows []MethodDef /// прочитанные сигнатуры
+}
+
+/// Пустая таблица методов.
+export fn MethodTable.new() -> MethodTable =>
+    { names: NameTable.new(NamespaceId.NsMethods), bare: NameTable.new(NamespaceId.NsMethods), rows: []MethodDef.new() }
+
+/// Зарегистрировать прочитанную сигнатуру; повтор (recv, имя) помечает
+/// перегрузку — выбирать молча нельзя.
+export fn MethodTable mut @add(md MethodDef) -> () {
+    ro key = "${md.recv}.${md.name}"
+    ro row = @names.find(key)
+    if row >= 0 {
+        @rows[row] = MethodDef { recv: @rows[row].recv, name: @rows[row].name, ret: @rows[row].ret, dup: true }
+        return
+    }
+    @names.put(key, @rows.len())
+    @bare.put(md.name, 1)
+    @rows.push(md)
+}
+
+/// Есть ли метод с таким именем ХОТЬ У КАКОГО-ТО ресивера в прочитанных
+/// декларациях. Слабее точного (ресивер, имя) и применяется ровно там, где
+/// точный ответ невозможен: `check` идёт по дереву без локалов, тип ресивера
+/// ему ещё не известен. Опечатка в имени ловится здесь; несовпадение ресивера
+/// (`p.contains(..)` на записи) остаётся находкой C9 плана 274.3 — она
+/// закрывается волной 3, когда типизацию локалов получит check, а не эмиттер.
+export fn MethodTable @has_name(name str) -> bool => @bare.find(name) >= 0
+
+/// Тип возврата метода на ресивере — или причина отказа.
+export fn MethodTable @lookup(recv int, name str) -> MethodLookup {
+    ro row = @names.find("${recv}.${name}")
+    if row < 0 { return MethodLookup.MethodUnknown }
+    ro md = @rows[row]
+    if md.dup { return MethodLookup.MethodAmbiguous }
+    MethodLookup.MethodFound(md.ret)
+}
+
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
 /// VALUE row records (rustc IndexVec camp; architecture «референс
 /// хранения»); every name -> id step goes through a table door.
@@ -149,6 +222,7 @@ export type Ctx {
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
     payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
     fn_rets []int /// fn ROW -> return type id (-1 = none declared, main only).
+    methods MethodTable /// сигнатуры методов, ПРОЧИТАННЫЕ из деклараций std (П5)
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -162,6 +236,83 @@ fn seed(mut types []TypeDef, mut defs DefTable, name str, c_name str) -> int {
 
 /// Build the semantic context of one checked file (E2: called by the
 /// backend; E4: check becomes the single writer).
+/// Собрать сигнатуры методов из ПРОЧИТАННЫХ деклараций (`fn <Recv> @<имя>()
+/// -> R`). Берутся только те, у которых И ресивер, И возврат — типы, уже
+/// известные реестру: остальное методом подмножества не становится и получает
+/// честный отказ на месте использования. Перегрузки (две сигнатуры на одно
+/// (ресивер, имя)) помечаются и тоже отказываются — молча выбирать нельзя.
+fn harvest_methods(decls []Node, defs DefTable, mut methods MethodTable) -> () {
+    for d in decls {
+        harvest_in(d, defs, methods)
+    }
+}
+
+/// Обход РЕКУРСИВНЫЙ, а не по верхнему уровню: восстановление парсера может
+/// вложить объявление внутрь чужого узла (та самая находка A2 плана 274.3 —
+/// `atom()` съедает закрывающую скобку и утаскивает хвост файла). Пока
+/// восстановление не починено волной 2, сбор сигнатур не должен от него
+/// зависеть: декларация найдена там, где она оказалась.
+fn harvest_in(n Node, defs DefTable, mut methods MethodTable) -> () {
+    match n {
+        Leaf(_) => {}
+        Branch { kind, children } => {
+            if kind == NodeKind.FnDecl {
+                harvest_fn(children, defs, methods)
+                return
+            }
+            for c in children {
+                harvest_in(c, defs, methods)
+            }
+        }
+    }
+}
+
+/// Одна декларация: ресивер, имя, тип возврата. Берётся, только если И
+/// ресивер, И возврат уже известны реестру — иначе метод в подмножество не
+/// попадает и получит честный отказ на месте использования.
+fn harvest_fn(kids []Node, defs DefTable, mut methods MethodTable) -> () {
+    mut recv_name = ""
+    mut mname = ""
+    mut ret_name = ""
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Recv {
+            recv_name = leaf_text(branch_children(c)[0])
+        } else if ck == NodeKind.RetType {
+            ro rk = branch_children(c)
+            if rk.len() > 1 { ret_name = leaf_text(rk[1]) }
+        } else if ck == NodeKind.LeafNode && mname == "" && recv_name != "" {
+            if leaf_kind(c) == TokenKind.Ident { mname = leaf_text(c) }
+        }
+    }
+    if recv_name == "" || mname == "" || ret_name == "" { return }
+    ro recv_t = defs.type_id_opt(recv_name)
+    ro ret_t = defs.type_id_opt(ret_name)
+    if recv_t < 0 || ret_t < 0 { return }
+    // Сигнатура годна, только если известны ВСЕ её типы, включая параметры.
+    // Иначе перегрузки std попадали бы в таблицу как «одно имя дважды» и
+    // отказывались как неоднозначные: у `str` есть и `@contains(needle str)`,
+    // и `@contains(c char)` — вторая не про подмножество, потому что `char`
+    // реестру неизвестен. Так отбор делает ТИПОВАЯ система, а не список имён.
+    for c in kids {
+        if c.kind_of() != NodeKind.Param { continue }
+        ro pk = branch_children(c)
+        if pk.len() < 2 { return }
+        if pk[1].kind_of() != NodeKind.LeafNode { return }
+        if defs.type_id_opt(leaf_text(pk[1])) < 0 { return }
+    }
+    methods.add(MethodDef { recv: recv_t, name: mname, ret: ret_t, dup: false })
+}
+
+/// Построить семантический контекст: типы файла + методы из деклараций.
+export fn collect(file Node, decls []Node) -> Ctx {
+    mut ctx = collect_types(file)
+    harvest_methods(decls, ctx.defs, ctx.methods)
+    ctx
+}
+
+/// Реестр типов и деклараций ОДНОГО файла (без методов: их приносит
+/// collect() из прочитанных сигнатур).
 export fn collect_types(file Node) -> Ctx {
     mut types = []TypeDef.new()
     mut defs = DefTable.new()
@@ -185,38 +336,54 @@ export fn collect_types(file Node) -> Ctx {
     for c in branch_children(file) {
         ro k = c.kind_of()
         if k == NodeKind.TypeDecl || k == NodeKind.SumDecl {
-            defs.add(leaf_text(branch_children(c)[1]), DefKind.DefType, next_id)
-            next_id += 1
+            ro nk = branch_children(c)
+            if nk.len() > 1 && nk[1].kind_of() == NodeKind.LeafNode {
+                defs.add(leaf_text(nk[1]), DefKind.DefType, next_id)
+                next_id += 1
+            }
         }
     }
     for c in branch_children(file) {
         ro k = c.kind_of()
         if k == NodeKind.TypeDecl {
-            ro tname = leaf_text(branch_children(c)[1])
-            ro owner = defs.type_id(tname)
+            ro tkids = branch_children(c)
+            if tkids.len() < 2 { continue }
+            if tkids[1].kind_of() != NodeKind.LeafNode { continue }
+            ro tname = leaf_text(tkids[1])
+            ro owner = defs.type_id_opt(tname)
+            if owner < 0 { continue }
             ro off = fields.rows.len()
             mut cnt = 0
             for f in branch_children(c) {
                 if f.kind_of() == NodeKind.Field {
                     ro fk = branch_children(f)
-                    if fk.len() > 1 {
-                        fields.add(owner, FieldDef { name: leaf_text(fk[0]), type_id: defs.type_id(leaf_text(fk[1])) })
-                    } else {
-                        ice("sem: field without a type past check — no silent int default (#652 class)")
+                    if fk.len() > 1 && fk[0].kind_of() == NodeKind.LeafNode && fk[1].kind_of() == NodeKind.LeafNode {
+                        ro ft = defs.type_id_opt(leaf_text(fk[1]))
+                        if ft >= 0 {
+                            fields.add(owner, FieldDef { name: leaf_text(fk[0]), type_id: ft })
+                            cnt += 1
+                        }
                     }
-                    cnt += 1
                 }
             }
             types.push(TypeDef { kind: TypeKind.TkRecord, name: tname, c_name: "", row_off: off, row_cnt: cnt })
         }
         if k == NodeKind.SumDecl {
-            ro sname = leaf_text(branch_children(c)[1])
-            ro sum_id = defs.type_id(sname)
+            ro skids = branch_children(c)
+            if skids.len() < 2 { continue }
+            if skids[1].kind_of() != NodeKind.LeafNode { continue }
+            ro sname = leaf_text(skids[1])
+            ro sum_id = defs.type_id_opt(sname)
+            if sum_id < 0 { continue }
             ro off = variant_rows.len()
             mut vcnt = 0
             for v in branch_children(c) {
                 if v.kind_of() == NodeKind.Variant {
                     ro vk = branch_children(v)
+                    // Вариант без имени (восстановление после сломанной суммы):
+                    // пропускаем — судит check, sem не падает (274.3/F-B4).
+                    if vk.len() < 2 { continue }
+                    if vk[1].kind_of() != NodeKind.LeafNode { continue }
                     ro vname = leaf_text(vk[1])
                     defs.add(vname, DefKind.DefVariant, variant_rows.len())
                     ro poff = payload_types.len()
@@ -232,8 +399,11 @@ export fn collect_types(file Node) -> Ctx {
                         ro pj = vk[j]
                         if pj.kind_of() == NodeKind.LeafNode {
                             if leaf_kind(pj) == TokenKind.Ident {
-                                payload_types.push(defs.type_id(leaf_text(pj)))
-                                pcnt += 1
+                                ro pt = defs.type_id_opt(leaf_text(pj))
+                                if pt >= 0 {
+                                    payload_types.push(pt)
+                                    pcnt += 1
+                                }
                             }
                         }
                         j += 1
@@ -246,6 +416,8 @@ export fn collect_types(file Node) -> Ctx {
         }
         if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
+            if fk.len() < 2 { continue }
+            if fk[1].kind_of() != NodeKind.LeafNode { continue }
             defs.add(leaf_text(fk[1]), DefKind.DefFn, fn_rets.len())
             // -1 sentinel = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on -1 as the second
@@ -254,13 +426,13 @@ export fn collect_types(file Node) -> Ctx {
             for r in fk {
                 if r.kind_of() == NodeKind.RetType {
                     ro rk = branch_children(r)
-                    if rk.len() > 1 { ret = defs.type_id(leaf_text(rk[1])) }
+                    if rk.len() > 1 && rk[1].kind_of() == NodeKind.LeafNode { ret = defs.type_id_opt(leaf_text(rk[1])) }
                 }
             }
             fn_rets.push(ret)
         }
     }
-    Ctx { types, prims, defs, fields, variant_rows, payload_types, fn_rets }
+    Ctx { types, prims, defs, fields, variant_rows, payload_types, fn_rets, methods: MethodTable.new() }
 }
 
 /// Children of a branch node; a leaf here is an invariant break.
@@ -330,13 +502,15 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro kids = branch_children(e)
         if kids.len() < 3 { ice("sem: method call without a name") }
         ro mname = leaf_text(kids[2])
-        // The builtins table (str methods only, [LEGACY-SUBSET E2-b]) answers
-        // in lattice codes 0=int 1=str 2=bool — mapped HERE onto type ids.
-        ro rt = builtin_method_ret(mname)
-        if rt == 0 { return ctx.prims.t_int }
-        if rt == 1 { return ctx.prims.t_str }
-        if rt == 2 { return ctx.prims.t_bool }
-        ice("sem: unknown method past check")
+        // Тип возврата — из ПРОЧИТАННОЙ сигнатуры (П5): компилятор не знает
+        // имён методов std, он их читает. Сюда доходит только то, что check
+        // уже принял, поэтому отказы здесь — ice (нарушение отравления).
+        ro recv_t = type_of(kids[0], ctx, scope)
+        match ctx.methods.lookup(recv_t, mname) {
+            MethodFound(r) => { return r }
+            MethodUnknown => { ice("sem: method not in the read declarations past check") }
+            MethodAmbiguous => { ice("sem: overloaded method past check") }
+        }
     }
     if k == NodeKind.FieldAccess {
         ro kids = branch_children(e)

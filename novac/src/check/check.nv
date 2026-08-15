@@ -19,26 +19,20 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{Diagnostic, Severity}
-import ../builtins.{builtin_method_ret, ENTRY_FN}
+import ../builtins.{ENTRY_FN}
+import ../sem.{Ctx}
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
 /// no Result (274 §4 п.1).
-export fn check(file Node, src SourceText) -> []Diagnostic {
+export fn check(file Node, src SourceText, ctx Ctx) -> []Diagnostic {
     mut out = []Diagnostic.new()
-    walk(file, src, out)
+    walk(file, src, out, ctx)
     out
 }
 
-/// The ONE table of subset methods (E2-strings wave). check owns the subset
-/// knowledge; emit_c IMPORTS this door for its print dispatch (edge
-/// `emit_c -> check` recorded in the architecture table the same commit).
-/// Return codes mirror the emitter's tiny type lattice: 0=int 1=str 2=bool,
-/// -1 = not in the subset (check reports it, the emitter never sees it).
-export fn subset_method_ret(name str) -> int => builtin_method_ret(name)
-
 /// Walk the whole tree and collect subset diagnostics.
-fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
-    walk_in(n, src, out, false)
+fn walk(n Node, src SourceText, mut out []Diagnostic, ctx Ctx) -> () {
+    walk_in(n, src, out, false, ctx)
 }
 
 /// init_pos: record constructors and match expressions are subset forms ONLY
@@ -46,7 +40,7 @@ fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
 /// an expression-bodied fn. The emitter's tmp-schemes have exactly those
 /// shapes; anywhere else (argument, nested field value, condition, arm) the
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later.
-fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool) -> () {
+fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool, ctx Ctx) -> () {
     match n {
         Leaf(t) => report_if_error_token(t, src, out)
         Branch { kind, children } => {
@@ -54,7 +48,7 @@ fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool) -> () {
                 report_err_branch(children, src, out)
                 return
             }
-            if kind == NodeKind.MethodCall { report_if_unknown_method(children, src, out) }
+            if kind == NodeKind.MethodCall { report_if_unknown_method(children, src, out, ctx) }
             if kind == NodeKind.FnDecl { report_if_missing_ret(children, src, out) }
             if kind == NodeKind.Field { report_if_missing_type(children, src, out, "outside the E1 subset: field must declare a type") }
             if kind == NodeKind.Param { report_if_missing_type(children, src, out, "outside the E1 subset: parameter must declare a type") }
@@ -78,13 +72,13 @@ fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool) -> () {
             if kind == NodeKind.BindStmt || kind == NodeKind.FnExprBody {
                 mut i = 0
                 for c in children {
-                    walk_in(c, src, out, i == children.len() - 1)
+                    walk_in(c, src, out, i == children.len() - 1, ctx)
                     i += 1
                 }
                 return
             }
             for c in children {
-                walk_in(c, src, out, false)
+                walk_in(c, src, out, false, ctx)
             }
         }
     }
@@ -160,18 +154,22 @@ fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, m
 /// E_NOVAC_SUBSET at the method name, not an emitter ice later. (The
 /// receiver's TYPE is not judged here — the type checker is a later wave;
 /// the named risk lives in the divergence registry next to #652.)
-fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic) -> () {
+fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic, ctx Ctx) -> () {
     if kids.len() < 3 { return }
     match kids[2] {
         Leaf(t) => {
-            if subset_method_ret(t.text) < 0 {
+            // Метод известен novac ТОЛЬКО из прочитанных деклараций (П5:
+            // имён std компилятор не знает). На этом этапе локалов ещё нет,
+            // поэтому тип ресивера неизвестен и судится существование имени;
+            // точная пара (тип ресивера, имя) — находка C9 плана 274.3, волна 3.
+            if !ctx.methods.has_name(t.text) {
                 ro lo = src.offset_of(t.text)
                 out.push(Diagnostic {
                     code: "E_NOVAC_SUBSET",
                     severity: Severity.ErrorSev,
                     lo,
                     hi: lo + t.text.byte_len(),
-                    message: "outside the E1 subset: method not in the subset table",
+                    message: "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)",
                 })
             }
         }

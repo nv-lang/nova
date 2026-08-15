@@ -34,7 +34,7 @@ RT_HDRS=$(ls "$ROOT"/compiler-codegen/nova_rt/*.h "$ROOT"/compiler-codegen/*.h 2
 cat "$SHELL_TPL" $RT_HDRS | grep -oE '\b(Nova|nova)_[A-Za-z0-9_]+' | sort -u > "$T/shell_syms"
 for f in "$ROOT"/examples/basics/*.nv; do
     rel=${f#"$ROOT"/}
-    "$NOVAC" emit "$f" > "$T/out.c" 2>/dev/null || continue   # subset refusals are not this guard's matter
+    "$NOVAC" emit --std "$ROOT/std/src/runtime/string" "$f" > "$T/out.c" 2>/dev/null || continue   # subset refusals are not this guard's matter
     # Every Nova_*/nova_* identifier the emission uses, minus novac's OWN
     # namespace (novac_*/NOVAC_*) and the file's own user types
     # (Nova_<UserType>[_Tag]) — the rest is oracle-defined and MUST exist in
