@@ -107,13 +107,21 @@ export fn DefTable @type_id(name str) -> int {
 export type FieldDef value {
     name str /// Field spelling; the backend uses it for the member name verbatim.
     type_id int /// The field's type id.
+    owner int /// Owning type id; the door takes the NAME and compares this as an integer.
+    next int /// Next row carrying the SAME field name, or -1; see FieldTable.
 }
 
 /// Record-field registry: fields resolve ONLY through a receiver type —
-/// never as bare names (same as Go/rustc) — so the door key carries the
-/// owner: "ownerTypeId.fieldName".
+/// never as bare names (same as Go/rustc). The door therefore takes the
+/// field name and walks a chain of same-named rows, comparing the owner as
+/// an INTEGER. The first shape built the key as text ("${owner}.${name}"),
+/// which allocated and formatted a string on every field access and put
+/// structure back into a string right after §4а spent a rule on "identity
+/// is not a name"; the chain does the same job with one integer compare per
+/// candidate and no allocation. Rows stay in per-type insertion order, so
+/// TypeDef.row_off/row_cnt still address a contiguous range.
 export type FieldTable {
-    names NameTable /// "ownerId.field" -> row in `rows` (NsFields namespace).
+    names NameTable /// field name -> FIRST row with that name (NsFields); FieldDef.next walks the rest.
     rows []FieldDef /// The field rows, grouped per type via TypeDef.row_off/cnt.
 }
 
@@ -121,17 +129,22 @@ export type FieldTable {
 export fn FieldTable.new() -> FieldTable =>
     { names: NameTable.new(NamespaceId.NsFields), rows: []FieldDef.new() }
 
-/// Register one field of `owner`.
-export fn FieldTable mut @add(owner int, fd FieldDef) -> () {
-    @names.put("${owner}.${fd.name}", @rows.len())
-    @rows.push(fd)
+/// Register one field of `owner`, keeping the same-name chain linked.
+export fn FieldTable mut @add(owner int, name str, type_id int) -> () {
+    ro head = @names.find(name)
+    @names.put(name, @rows.len())
+    @rows.push(FieldDef { name, type_id, owner, next: head })
 }
 
 /// Type id of `owner`.`fname` — an unknown field past check is an ice.
 export fn FieldTable @field_type(owner int, fname str) -> int {
-    ro row = @names.find("${owner}.${fname}")
-    if row < 0 { ice("sem: unknown field past check (type checker is a later wave)") }
-    @rows[row].type_id
+    mut r = @names.find(fname)
+    while r >= 0 {
+        ro fd = @rows[r]
+        if fd.owner == owner { return fd.type_id }
+        r = fd.next
+    }
+    ice("sem: unknown field past check (type checker is a later wave)")
 }
 
 /// One sum variant; a variant row is this record's index in Ctx.variant_rows.
@@ -170,39 +183,60 @@ export type FnDef value {
     name str /// name as written in the declaration
     ret int /// return type id; -1 = none declared (legal for main only)
     dup bool /// a second declaration with the same (recv, name) showed up — overload
+    next int /// next row carrying the SAME name, or -1; see FnTable
 }
 
 /// THE callable registry: file functions and the method signatures READ
 /// from std declarations live in the SAME rows (П5: std names are data,
-/// not compiler knowledge). Two doors open onto those rows — they are
-/// indexes, not registries: `by_key` answers the exact (receiver, name),
-/// `by_name` answers the weaker "does SOME receiver carry this name".
+/// not compiler knowledge).
+///
+/// The door takes the NAME only, and rows sharing a name form a chain
+/// through `next`; the receiver is compared as an INTEGER while walking it.
+/// The first shape built the key as text ("${recv}.${name}") — the owner's
+/// question 2026-08-16 ("what if there is no receiver?") holds, since a
+/// free function keys as -1 and type ids are never negative, but the shape
+/// was wrong for two better reasons: it allocated and formatted a string on
+/// EVERY lookup, in the hottest path there is (П14), and it encoded
+/// structure into text right after the architecture spent a whole rule on
+/// "identity is not a name" (§4а). A chain costs one integer compare per
+/// candidate and allocates nothing; chains are 1-3 long because they only
+/// hold callables that literally share a name.
 export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
-    by_key NameTable /// "<recv>.<name>" -> row (recv is -1 for a free function)
-    by_name NameTable /// "<name>" -> 1, for RECEIVER-carrying rows only; see @has_name
+    heads NameTable /// name -> FIRST row with that name; `FnDef.next` walks the rest
 }
 
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
-    { rows: []FnDef.new(), by_key: NameTable.new(NamespaceId.NsCallables), by_name: NameTable.new(NamespaceId.NsCallables) }
+    { rows: []FnDef.new(), heads: NameTable.new(NamespaceId.NsCallables) }
+
+/// Row of this exact (receiver, name), or -1. The chain walk is the whole
+/// lookup mechanism — one place, used by add, lookup and has_name.
+export fn FnTable @row_of(recv int, name str) -> int {
+    mut r = @heads.find(name)
+    while r >= 0 {
+        ro fd = @rows[r]
+        if fd.recv == recv { return r }
+        r = fd.next
+    }
+    -1
+}
 
 /// Register one callable; a repeat (receiver, name) marks an overload —
 /// silent choosing is not allowed.
 export fn FnTable mut @add(fd FnDef) -> () {
-    ro key = "${fd.recv}.${fd.name}"
-    ro row = @by_key.find(key)
+    ro row = @row_of(fd.recv, fd.name)
     if row >= 0 {
-        @rows[row] = FnDef { recv: @rows[row].recv, name: @rows[row].name, ret: @rows[row].ret, dup: true }
+        @rows[row] = FnDef { recv: @rows[row].recv, name: @rows[row].name, ret: @rows[row].ret, dup: true, next: @rows[row].next }
         return
     }
-    @by_key.put(key, @rows.len())
-    if fd.recv >= 0 { @by_name.put(fd.name, 1) }
-    @rows.push(fd)
+    ro head = @heads.find(fd.name)
+    @heads.put(fd.name, @rows.len())
+    @rows.push(FnDef { recv: fd.recv, name: fd.name, ret: fd.ret, dup: fd.dup, next: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
-/// Free functions are deliberately NOT in this door: it answers a question
+/// Free functions are deliberately NOT an answer here: the question is
 /// about METHOD names, and `foo()` being declared says nothing about
 /// `x.foo()` being legal. Weaker than the exact (receiver, name) and used
 /// exactly where the exact answer is impossible: `check` walks the tree
@@ -210,12 +244,20 @@ export fn FnTable mut @add(fd FnDef) -> () {
 /// the name is caught here; a receiver mismatch (`p.contains(..)` on a
 /// record) stays finding C9 of plan 274.3 — it closes in wave 3, when
 /// check, not the emitter, gets local typing.
-export fn FnTable @has_name(name str) -> bool => @by_name.find(name) >= 0
+export fn FnTable @has_name(name str) -> bool {
+    mut r = @heads.find(name)
+    while r >= 0 {
+        ro fd = @rows[r]
+        if fd.recv >= 0 { return true }
+        r = fd.next
+    }
+    false
+}
 
 /// The callable's return type on this receiver — or the reason for
-/// rejection. A free function asks with recv = -1, the same door.
+/// rejection. A free function asks with recv = -1, through the same door.
 export fn FnTable @lookup(recv int, name str) -> FnLookup {
-    ro row = @by_key.find("${recv}.${name}")
+    ro row = @row_of(recv, name)
     if row < 0 { return FnLookup.FnUnknown }
     ro fd = @rows[row]
     if fd.dup { return FnLookup.FnAmbiguous }
@@ -316,7 +358,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         if pk[1].kind_of() != NodeKind.LeafNode { return }
         if defs.type_id_opt(leaf_text(pk[1])) < 0 { return }
     }
-    fns.add(FnDef { recv: recv_t, name: mname, ret: ret_t, dup: false })
+    fns.add(FnDef { recv: recv_t, name: mname, ret: ret_t, dup: false, next: -1 })
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -375,7 +417,7 @@ export fn collect_types(file Node) -> Ctx {
                     if fk.len() > 1 && fk[0].kind_of() == NodeKind.LeafNode && fk[1].kind_of() == NodeKind.LeafNode {
                         ro ft = defs.type_id_opt(leaf_text(fk[1]))
                         if ft >= 0 {
-                            fields.add(owner, FieldDef { name: leaf_text(fk[0]), type_id: ft })
+                            fields.add(owner, leaf_text(fk[0]), ft)
                             cnt += 1
                         }
                     }
@@ -446,7 +488,7 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            fns.add(FnDef { recv: -1, name: fname, ret, dup: false })
+            fns.add(FnDef { recv: -1, name: fname, ret, dup: false, next: -1 })
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }

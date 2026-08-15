@@ -76,9 +76,47 @@ fn resolve() {
 EOF
 sh "$G" "$ROOT" "$T/g7" >/dev/null 2>&1 && ok "вложенная форма с NamespaceId проходит" || bad "вложенная форма с NamespaceId покраснела"
 
+# 8. Нарушение ВТОРОЙ половины правила (владелец 2026-08-16): ключ двери
+# СИНТЕЗИРОВАН интерполяцией. Дверь `names` законна, поэтому первая
+# половина тут молчит — красным обязана быть именно склейка.
+mkdir -p "$T/g8/sem"
+cat > "$T/g8/sem/fields.nv" <<'EOF'
+fn add(owner int, fd FieldDef) {
+    @names.put("${owner}.${fd.name}", 1)
+}
+EOF
+sh "$G" "$ROOT" "$T/g8" > "$T/o8" 2> "$T/e8" && bad "синтезированный ключ в put прошёл" || ok "синтезированный ключ в put пойман"
+grep -q "sem/fields.nv" "$T/e8" && ok "файл-нарушитель синтеза назван" || bad "нарушитель синтеза не назван"
+
+# 9. То же через find — вторая дверь.
+mkdir -p "$T/g9/sem"
+cat > "$T/g9/sem/look.nv" <<'EOF'
+fn field_type(owner int, fname str) -> int {
+    ro row = @names.find("${owner}.${fname}")
+    row
+}
+EOF
+sh "$G" "$ROOT" "$T/g9" >/dev/null 2>&1 && bad "синтезированный ключ в find прошёл" || ok "синтезированный ключ в find пойман"
+
+# 10. Законная форма: дверь берёт голое имя, второй ключ сравнивается целым
+# числом при обходе цепочки — зелёный (иначе правило запрещало бы починку).
+mkdir -p "$T/g10/sem"
+cat > "$T/g10/sem/chain.nv" <<'EOF'
+fn row_of(recv int, name str) -> int {
+    mut r = @heads.find(name)
+    while r >= 0 {
+        ro fd = @rows[r]
+        if fd.recv == recv { return r }
+        r = fd.next
+    }
+    -1
+}
+EOF
+sh "$G" "$ROOT" "$T/g10" >/dev/null 2>&1 && ok "цепочка с целочисленным сравнением проходит" || bad "законная цепочка покраснела"
+
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-no-string-keys ok: 8/8"
+    echo "test-check-novac-no-string-keys ok: 12/12"
     exit 0
 fi
 echo "test-check-novac-no-string-keys: FAIL ($fails)" >&2

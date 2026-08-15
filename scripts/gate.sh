@@ -255,6 +255,13 @@ guard --deadline 300 "$ROOT/scripts/tools/novac-fuzz-mutations.sh" || fail "па
 # check-novac-guard-registry.sh сверяет четыре множества и держит это правилом).
 guard "$ROOT/scripts/guards/check-novac-type-field-docs.sh" "$ROOT" || fail "тип/поле/функция novac без документации (конвенция П13, D104 rev-2)"
 guard "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "$ROOT" || fail "имя языка/std строкой вне novac/src/builtins (конвенция П5)"
+guard "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "$ROOT" || fail "novac объявил имя, которое экспортирует прелюдия: тень компилируется молча"
+guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "русский текст в .nv novac (конвенция П13: дока и сообщения по-английски)"
+guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx заведена без строки плана §10.3б (П17: одно понятие — одна таблица)"
+# П16 (владелец 2026-08-16): самотест обязан ДОКАЗАТЬ, что его страж ловит.
+# Проверка мутацией — каждый страж подменяется заглушкой exit 0, его самотест
+# обязан упасть. Держится последним в блоке: гоняет все самотесты novac разом.
+guard --deadline 600 "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "$ROOT" || fail "самотест стража novac проходит над заглушкой: он ничего не доказывает (П16)"
 guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён (П2/П4, класс №652)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом (дверь sem/mangle, 274.3)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух: не равен эмиссии оракула по probe (274.3/F6)"
