@@ -34,8 +34,8 @@ fn main() {
 
 test "D432: bare consume-let never touched still compiles + runs" {
     consume r = make(1)
-    ro _id = r.id
-    assert(_id == 1)
+    ro id_val = r.id
+    assert(id_val == 1)
 }
 
 // Explicit consume still works exactly as before (strict linear form).

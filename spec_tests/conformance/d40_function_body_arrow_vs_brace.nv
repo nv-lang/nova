@@ -37,8 +37,8 @@ fn d40_next_pow2(n int) -> int {
 }
 
 fn d40_unit_block() {
-    mut _x = 1
-    _x += 1
+    mut x_val = 1
+    x_val += 1
 }
 
 // --- match-arm с block-form `=> { block }` ---

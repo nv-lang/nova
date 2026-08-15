@@ -31,9 +31,9 @@ test "Range copy — same len after copy" {
 test "RangeIter copy by value — independent cursors" {
     ro r = 1..5
     mut it = r.iter()
-    ro _a = it.next()          // advance to idx=2
+    ro a_val = it.next()          // advance to idx=2
     mut it2 = it               // copy by value — it2 shares same cursor position
-    assert(_a == Some(1))
+    assert(a_val == Some(1))
     assert(it2.next() == Some(2))
     assert(it2.next() == Some(3))
     assert(it2.next() == Some(4))

@@ -28,8 +28,13 @@ test "Semaphore: try_acquire (Option[Permit]) / счётчик разрешен�
         }
         assert(d170_sem.available_permits() == 0)
         match d170_sem.try_acquire() {
-            Some(_) => assert(false)
-            None    => ()
+            // D461 §Б: линейный payload нельзя выбросить `_`-паттерном даже в
+            // ветке «этого не должно случиться» — если она всё же выполнится,
+            // permit exists and must be released BEFORE the test fails.
+                // [INV-PROPERTY] — линейность Permit проверяет чекер (D133):
+                // неосвобождённый пермит — ошибка компиляции, не соглашение.
+            Some(consume p3) => { p3.release(); assert(false) }
+            None             => ()
         }
     }
     assert(d170_sem.available_permits() == 2)
