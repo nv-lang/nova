@@ -407,13 +407,13 @@ fn server(ids []int) -> () =>
 приходится:
 
 ```
-$ ./app                              # никто не разбирает — читает человек
+$ ./app                              # nobody is parsing — a person reads it
 nova: unhandled Fail: leaf-error
   at app.nv:29 (throw site)
   propagation trace (`?`-chain, oldest first):
     via app.nv:19 (?)
 
-$ NOVA_PANIC_FORMAT=json ./app       # разбирает инструмент — одна строка
+$ NOVA_PANIC_FORMAT=json ./app       # a tool is parsing — one line, stable keys
 {"nova_failure":1,"kind":"fail","message":"leaf-error",
  "site":{"file":"app.nv","line":29},"trace":[{"file":"app.nv","line":19}],
  "trace_dropped":0,"suppressed":[]}
