@@ -39084,6 +39084,29 @@ struct ConsumeCtx<'a> {
     /// проверка молча пропускается (см. PROGRESS-p315.md «Known scope
     /// narrowing»).
     current_fn_effects: Option<&'a [TypeRef]>,
+    /// #667 (2026-08-15): true ONLY while `check_and_clear_arm_pattern_obligations`
+    /// runs the exit-check for a match arm's OWN pattern bindings
+    /// (`Ok(consume r) => { .. }`). D432 auto-cleanup covers bare
+    /// `consume X = e;` bindings only (D432 s.2: destructuring/pattern bindings
+    /// stay under plain D133) -- the codegen never emits an auto-cleanup for a
+    /// pattern binding, so exempting it here as `is_auto_cleanup_eligible` was
+    /// a checker/codegen split: the resource silently leaked with no
+    /// diagnostic (probe: `Ok(consume r) => { assert(r.tag == 4) }` compiled;
+    /// ResourceTrace counted zero cleanups). Under this flag the exemption is
+    /// off and a Live pattern binding is D133-not-consumed with a hint.
+    arm_pattern_exit_check: bool,
+    /// #671 (2026-08-15): имена вариантов сумм, ПРИНИМАЮЩИХ аргументы
+    /// (tuple/record-payload), плюс builtin `Ok`/`Err`/`Some`. Конструктор
+    /// варианта ЗАБИРАЕТ владение аргументом (`Ok(r)` кладёт `r` в payload и
+    /// уносит наружу вместе со значением) — ровно как consume-параметр
+    /// функции. Ходок этого не знал: канонический `fn open() -> Result[R, E]
+    /// { consume r = mk(); Ok(r) }` давал ложный `D133-not-consumed` для типа
+    /// БЕЗ `@cleanup`, а для типа С `@cleanup` молчал лишь потому, что
+    /// D432-исключение на выходе гасило обязательство (см. #667). Зеркало
+    /// #666, где ту же передачу владения не видел КОДОГЕН (не дизармил
+    /// auto-cleanup) — один корень: конструктор суммы как точка передачи
+    /// владения был невидим обеим сторонам.
+    variant_ctor_names: HashSet<String>,
     /// №325 Ш.2 (D156-амендмент 2026-08-04): module AST, needed ONLY by
     /// `infer_let_type_ref`'s generic-aware `type_is_consume` call
     /// (container-inherits-linearity — `Vec[Res]` is must-consume when
@@ -39131,6 +39154,8 @@ impl<'a> ConsumeCtx<'a> {
             guard_violations: Vec::new(),
             coerce_consumed_via: HashMap::new(),
             current_fn_effects: None,
+            arm_pattern_exit_check: false,
+            variant_ctor_names: collect_variant_ctor_names(module),
             module,
         }
     }
@@ -39901,7 +39926,10 @@ impl<'a> ConsumeCtx<'a> {
             // строгая линейность без изменений (`cleanup_effects` даёт
             // `None` для них).
             let cleanup_row = if is_strict_generic { None } else { self.lin_reg.cleanup_effects(&ty) };
-            let is_auto_cleanup_eligible = cleanup_row.is_some();
+            // #667: a match-arm PATTERN binding gets no auto-cleanup from the
+            // codegen (D432 s.2) -- it must be consumed explicitly, like a type
+            // without `@cleanup`. The exemption below is for bare bindings only.
+            let is_auto_cleanup_eligible = cleanup_row.is_some() && !self.arm_pattern_exit_check;
             let leftover_at_exit = matches!(state, Some(VarState::Live) | Some(VarState::MaybeConsumed(_)));
             if is_auto_cleanup_eligible && leftover_at_exit {
                 if let (Some(row), Some(cfe)) = (cleanup_row, self.current_fn_effects) {
@@ -42416,6 +42444,31 @@ fn consume_declare_arm_pattern(
 /// the treatment `consume_walk_block_inner` already gives ordinary `consume`
 /// lets. Symmetric fix for `Match` arms AND `IfLet`'s `then` branch (same
 /// `consume_declare_arm_pattern` call site, same gap).
+/// #671: имена вариантов-конструкторов (принимающих аргументы) модуля —
+/// tuple- и record-payload варианты всех объявленных сумм, плюс builtin
+/// `Ok`/`Err`/`Some`. Unit-варианты (`None`, `Alpha`) аргументов не берут и
+/// владения не переносят — в множество не входят.
+fn collect_variant_ctor_names(module: &Module) -> HashSet<String> {
+    let mut out: HashSet<String> = HashSet::new();
+    out.insert("Ok".to_string());
+    out.insert("Err".to_string());
+    out.insert("Some".to_string());
+    for item in &module.items {
+        if let Item::Type(td) = item {
+            if let TypeDeclKind::Sum(variants) = &td.kind {
+                for v in variants {
+                    match &v.kind {
+                        SumVariantKind::Tuple(fs) if !fs.is_empty() => { out.insert(v.name.clone()); }
+                        SumVariantKind::Record(_) => { out.insert(v.name.clone()); }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn check_and_clear_arm_pattern_obligations(
     ctx: &mut ConsumeCtx,
     obligations_before: &std::collections::HashSet<String>,
@@ -42430,7 +42483,11 @@ fn check_and_clear_arm_pattern_obligations(
     let full_obligations = std::mem::replace(
         &mut ctx.consume_obligations,
         new_obligations.iter().cloned().collect());
+    // #667: pattern bindings are exit-checked WITHOUT the D432 auto-cleanup
+    // exemption (see `arm_pattern_exit_check` doc).
+    ctx.arm_pattern_exit_check = true;
     ctx.check_obligations_at_exit(exit_span, errors);
+    ctx.arm_pattern_exit_check = false;
     ctx.consume_obligations = full_obligations;
     for n in &new_obligations {
         ctx.consume_obligations.remove(n);
@@ -44251,6 +44308,29 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Вызовы — точки consume ───
         ExprKind::Call { func, args, trailing } => {
+            // #671: конструктор варианта ЗАБИРАЕТ владение своими аргументами
+            // (см. `variant_ctor_names`). Имена собираем здесь, а помечаем
+            // потреблёнными В КОНЦЕ ветки — после обхода аргументов: пометка до
+            // обхода превращала `Ok(r)` в use-after-consume (D131) на самом же
+            // `r`, потому что обход аргумента видит уже потреблённое имя.
+            // Только голый `Ident`-callee, которого нет среди объявленных
+            // свободных функций: одноимённая функция выигрывает (её consume-
+            // позиции обрабатываются штатно ниже), вариант — частный случай.
+            let variant_ctor_moved: Vec<(String, Span)> = match &func.kind {
+                ExprKind::Ident(cname)
+                    if ctx.variant_ctor_names.contains(cname.as_str())
+                        && !ctx.reg.fn_params.contains_key(cname.as_str())
+                        && !ctx.reg.fn_view_params.contains_key(cname.as_str()) =>
+                {
+                    args.iter()
+                        .filter_map(|a| match &a.expr().kind {
+                            ExprKind::Ident(n) => Some((n.clone(), a.expr().span)),
+                            _ => None,
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
             // №513 (D79-амендмент 2026-08-09): bare `Channel.new(cap)` —
             // no explicit element type — REJECTED. Canon is
             // `Channel[T].new(cap)` (D79, spec/decisions/06-concurrency.md
@@ -45051,6 +45131,24 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     consume_walk_expr(ctx, func, errors);
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                }
+            }
+            // #671: владение ушло в payload варианта — гасим обязательство
+            // ПОСЛЕ обхода аргументов (см. комментарий у `variant_ctor_moved`).
+            for (arg_name, span) in variant_ctor_moved {
+                // Биндинг `consume X { … }`-блока исключён: владение внутри блока
+                // безусловно держит САМ блок (D188-амендмент, Plan 201), а
+                // легальный вынос `return Ok(s)` уже разбирается его собственной
+                // машинерией (#548 — форма SOCKS5-рукопожатия). Пометка здесь
+                // превратила бы её в `E_CONSUME_BLOCK_MOVE_OUT` (поймано
+                // фикстурой m548_consume_scope_return_ok_disarm).
+                if ctx.block_guards.contains(arg_name.as_str()) {
+                    continue;
+                }
+                if ctx.consume_obligations.contains(arg_name.as_str())
+                    || ctx.all_declared_consume.contains(arg_name.as_str())
+                {
+                    ctx.mark_consumed(&arg_name, span);
                 }
             }
         }

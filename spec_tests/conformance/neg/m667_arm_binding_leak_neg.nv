@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// #667 (registry 221.1, 2026-08-15): a match-arm `consume` pattern binding is
+// NOT covered by D432 auto-cleanup (section 2: bare `consume X = e;` only --
+// destructuring patterns stay under plain D133), and the codegen emits no
+// cleanup for it. Before the fix the checker exempted it anyway, so this
+// program compiled and leaked the resource with no diagnostic at all.
+module neg.m667_arm_binding_leak_neg
+
+type M667Leak consume { tag int }
+
+fn M667Leak consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn M667Leak consume @close() -> () { () }
+
+fn m667_open(tag int) -> Result[M667Leak, ()] {
+    consume r = M667Leak { tag }
+    Ok(r)
+}
+
+fn main() {
+    match m667_open(4) {
+        // nova:expect D133-not-consumed -- the arm binding owns the resource and gets no auto-cleanup (D432 s.2); it must be consumed explicitly (#667)
+        Ok(consume r) => { assert(r.tag == 4) }
+        Err(_) => assert(false)
+    }
+}
