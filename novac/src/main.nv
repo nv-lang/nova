@@ -27,14 +27,14 @@ import std.os.{args, exit_process, real_os}
 /// exactly three, and the guards read anything else as a panic. A closed
 /// type is what keeps a fourth code from ever being invented — an int
 /// return could grow one silently (the #652 class).
-type Outcome enum
+type Verdict enum
     | Clean /// nothing to report: the file is inside the subset
     | Refused /// judged and refused; the diagnostics are already printed
     | DoorError /// the door failed: bad usage, unreadable path, or not UTF-8
 
 /// The process exit code this outcome reports (the §7 contract, and the
 /// order of the codes IS the order of severity — see worse).
-fn Outcome @code() -> int => match @ {
+fn Verdict @code() -> int => match @ {
     Clean => 0
     Refused => 1
     DoorError => 2
@@ -42,10 +42,10 @@ fn Outcome @code() -> int => match @ {
 
 /// The worse of two outcomes. A batch reports the worst file it saw, so a
 /// door error outranks a refusal and a refusal outranks a clean file.
-fn worse(a Outcome, b Outcome) -> Outcome => if b.code() > a.code() { b } else { a }
+fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else { a }
 
 /// Emit C for one file: print diagnostics, or the C text when there are none.
-fn emit_one(text str, file str, decls []str) -> Outcome {
+fn emit_one(text str, file str, decls []str) -> Verdict {
     ro (diags, c_text) = compile_to_c(text, decls)
     if diags.len() > 0 {
         mut i = 0
@@ -53,21 +53,21 @@ fn emit_one(text str, file str, decls []str) -> Outcome {
             println(to_json(d, i, file))
             i += 1
         }
-        return Outcome.Refused
+        return Verdict.Refused
     }
     println(c_text)
-    Outcome.Clean
+    Verdict.Clean
 }
 
 /// Check one file: print §7 diagnostics one per line, one JSON per line.
-fn compile_one(text str, file str, decls []str) -> Outcome {
+fn compile_one(text str, file str, decls []str) -> Verdict {
     ro diags = compile(text, decls)
     mut i = 0
     for d in diags {
         println(to_json(d, i, file))
         i += 1
     }
-    if diags.len() > 0 { Outcome.Refused } else { Outcome.Clean }
+    if diags.len() > 0 { Verdict.Refused } else { Verdict.Clean }
 }
 
 /// Read the declaration texts of a directory (`--std <dir>`): every *.nv,
@@ -109,20 +109,20 @@ fn read_decls(dir str) Fs -> []str {
 
 /// Check one path (read + compile), printing diagnostics; the outcome is
 /// this file's contribution to the batch verdict.
-fn check_path(path str, decls []str) -> Outcome {
+fn check_path(path str, decls []str) -> Verdict {
     match read(path.to_path()) {
         Ok(bytes) => {
             match bytes.to_str() {
                 Ok(text) => compile_one(text, path, decls)
                 Err(_) => {
                     println("novac: not UTF-8: ", path)
-                    Outcome.DoorError
+                    Verdict.DoorError
                 }
             }
         }
         Err(_) => {
             println("novac: cannot read ", path)
-            Outcome.DoorError
+            Verdict.DoorError
         }
     }
 }
@@ -137,7 +137,7 @@ fn main() {
         ro a = args()
         if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
             println("usage: novac check [--std <dir>] <file.nv>... | novac emit [--std <dir>] <file.nv>")
-            exit_process(Outcome.DoorError.code())
+            exit_process(Verdict.DoorError.code())
             return
         }
         // `--std <dir>` is the std interface novac READS (method signatures)
@@ -153,11 +153,11 @@ fn main() {
         ro decls = read_decls(std_dir)
         if argi >= a.len() {
             println("usage: novac check [--std <dir>] <file.nv>... | novac emit [--std <dir>] <file.nv>")
-            exit_process(Outcome.DoorError.code())
+            exit_process(Verdict.DoorError.code())
             return
         }
         if a[1] == "check" {
-            mut worst = Outcome.Clean
+            mut worst = Verdict.Clean
             mut i = argi
             while i < a.len() {
                 worst = worse(worst, check_path(a[i], decls))
@@ -173,13 +173,13 @@ fn main() {
                     Ok(text) => { exit_process(emit_one(text, path, decls).code()) }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
-                        exit_process(Outcome.DoorError.code())
+                        exit_process(Verdict.DoorError.code())
                     }
                 }
             }
             Err(_) => {
                 println("novac: cannot read ", path)
-                exit_process(Outcome.DoorError.code())
+                exit_process(Verdict.DoorError.code())
             }
         }
     }

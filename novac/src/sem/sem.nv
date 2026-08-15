@@ -79,11 +79,12 @@ export fn DefTable mut @add(name str, kind DefKind, payload int) -> () {
 /// Row of `name`, or -1.
 export fn DefTable @find(name str) -> int => @names.find(name)
 
-/// Тип по имени при СБОРЕ: -1, если имя неизвестно или это не тип. Сбор
-/// терпим к сломанному вводу СОЗНАТЕЛЬНО (274.3/F-B4): картина файла строится
-/// и для check, а тот обязан выдать диагностику, а не умереть в ICE. Судит
-/// check (правило «тип в позиции типа обязан быть объявлен»); sem ничего не
-/// придумывает — просто не регистрирует то, чего не понял.
+/// Type by name during COLLECTION: -1 if the name is unknown or not a
+/// type. Collection is DELIBERATELY tolerant of broken input
+/// (274.3/F-B4): the file picture is built for check too, and check
+/// must issue a diagnostic, not die in an ICE. check is the judge (the
+/// rule "a type in type position must be declared"); sem invents
+/// nothing — it just does not register what it did not understand.
 export fn DefTable @type_id_opt(name str) -> int {
     ro d = @names.find(name)
     if d < 0 { return -1 }
@@ -151,37 +152,39 @@ export type Prims value {
     t_f64 int /// Type id of `f64`.
 }
 
-/// Чем закончился поиск метода в ПРОЧИТАННЫХ декларациях std.
-/// Сумма, а не int-код: «не нашли» и «перегрузка» — разные ответы, и оба
-/// обязаны быть представимы (П13.5; тихий int-дефолт — класс №652).
+/// How a method lookup in the READ std declarations turned out.
+/// A sum, not an int code: "not found" and "overload" are different
+/// answers, and both must be representable (П13.5; a silent int
+/// default is the №652 class).
 export type MethodLookup enum
     | MethodFound(int)
     | MethodUnknown
     | MethodAmbiguous
 
-/// Одна сигнатура метода, прочитанная из декларации `fn <Recv> @<имя>(...) -> R`.
+/// One method signature, read from the declaration `fn <Recv> @<name>(...) -> R`.
 export type MethodDef value {
-    recv int /// type id ресивера
-    name str /// имя метода как написано в декларации
-    ret int /// type id возврата
-    dup bool /// встретилась вторая декларация с тем же (recv, имя) — перегрузка
+    recv int /// receiver's type id
+    name str /// method name as written in the declaration
+    ret int /// return type id
+    dup bool /// a second declaration with the same (recv, name) showed up — overload
 }
 
-/// Таблица методов подмножества. Наполняется ТОЛЬКО чтением деклараций
-/// (П5: имена std — данные, а не знание компилятора); ключ — (тип ресивера,
-/// имя), поэтому `p.contains(..)` на записи не резолвится в метод строки.
+/// The subset method table. Filled ONLY by reading declarations
+/// (П5: std names are data, not compiler knowledge); the key is
+/// (receiver type, name), so `p.contains(..)` on a record does not
+/// resolve to the str method.
 export type MethodTable {
-    names NameTable /// "recvId.имя" -> строка в rows (пространство NsMethods)
-    bare NameTable /// "имя" -> 1: существует ли метод с таким именем ХОТЬ У КОГО-ТО
-    rows []MethodDef /// прочитанные сигнатуры
+    names NameTable /// "recvId.name" -> row in rows (the NsMethods namespace)
+    bare NameTable /// "name" -> 1: does a method with this name exist for ANYONE at all
+    rows []MethodDef /// signatures read so far
 }
 
-/// Пустая таблица методов.
+/// An empty method table.
 export fn MethodTable.new() -> MethodTable =>
     { names: NameTable.new(NamespaceId.NsMethods), bare: NameTable.new(NamespaceId.NsMethods), rows: []MethodDef.new() }
 
-/// Зарегистрировать прочитанную сигнатуру; повтор (recv, имя) помечает
-/// перегрузку — выбирать молча нельзя.
+/// Register a signature that was read; a repeat (recv, name) marks
+/// an overload — silent choosing is not allowed.
 export fn MethodTable mut @add(md MethodDef) -> () {
     ro key = "${md.recv}.${md.name}"
     ro row = @names.find(key)
@@ -194,15 +197,17 @@ export fn MethodTable mut @add(md MethodDef) -> () {
     @rows.push(md)
 }
 
-/// Есть ли метод с таким именем ХОТЬ У КАКОГО-ТО ресивера в прочитанных
-/// декларациях. Слабее точного (ресивер, имя) и применяется ровно там, где
-/// точный ответ невозможен: `check` идёт по дереву без локалов, тип ресивера
-/// ему ещё не известен. Опечатка в имени ловится здесь; несовпадение ресивера
-/// (`p.contains(..)` на записи) остаётся находкой C9 плана 274.3 — она
-/// закрывается волной 3, когда типизацию локалов получит check, а не эмиттер.
+/// Whether a method with this name exists for SOME receiver at all,
+/// among the read declarations. Weaker than the exact (receiver,
+/// name) and used exactly where the exact answer is impossible:
+/// `check` walks the tree without locals, so it does not yet know the
+/// receiver's type. A typo in the name is caught here; a receiver
+/// mismatch (`p.contains(..)` on a record) stays finding C9 of plan
+/// 274.3 — it closes in wave 3, when check, not the emitter, gets
+/// local typing.
 export fn MethodTable @has_name(name str) -> bool => @bare.find(name) >= 0
 
-/// Тип возврата метода на ресивере — или причина отказа.
+/// The method's return type on the receiver — or the reason for rejection.
 export fn MethodTable @lookup(recv int, name str) -> MethodLookup {
     ro row = @names.find("${recv}.${name}")
     if row < 0 { return MethodLookup.MethodUnknown }
@@ -212,8 +217,8 @@ export fn MethodTable @lookup(recv int, name str) -> MethodLookup {
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
-/// VALUE row records (rustc IndexVec camp; architecture «референс
-/// хранения»); every name -> id step goes through a table door.
+/// VALUE row records (rustc IndexVec camp; the architecture's "storage
+/// reference"); every name -> id step goes through a table door.
 export type Ctx {
     types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
     prims Prims /// Type ids of the primitives (the CommonTypes model).
@@ -222,7 +227,7 @@ export type Ctx {
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
     payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
     fn_rets []int /// fn ROW -> return type id (-1 = none declared, main only).
-    methods MethodTable /// сигнатуры методов, ПРОЧИТАННЫЕ из деклараций std (П5)
+    methods MethodTable /// method signatures, READ from std declarations (П5)
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -236,22 +241,24 @@ fn seed(mut types []TypeDef, mut defs DefTable, name str, c_name str) -> int {
 
 /// Build the semantic context of one checked file (E2: called by the
 /// backend; E4: check becomes the single writer).
-/// Собрать сигнатуры методов из ПРОЧИТАННЫХ деклараций (`fn <Recv> @<имя>()
-/// -> R`). Берутся только те, у которых И ресивер, И возврат — типы, уже
-/// известные реестру: остальное методом подмножества не становится и получает
-/// честный отказ на месте использования. Перегрузки (две сигнатуры на одно
-/// (ресивер, имя)) помечаются и тоже отказываются — молча выбирать нельзя.
+/// Collect method signatures from READ declarations (`fn <Recv>
+/// @<name>() -> R`). Only signatures where BOTH the receiver AND the
+/// return are types already known to the registry are taken: the rest
+/// does not become a subset method and gets an honest rejection at the
+/// point of use. Overloads (two signatures for one (receiver, name))
+/// are marked and also rejected — silent choosing is not allowed.
 fn harvest_methods(decls []Node, defs DefTable, mut methods MethodTable) -> () {
     for d in decls {
         harvest_in(d, defs, methods)
     }
 }
 
-/// Обход РЕКУРСИВНЫЙ, а не по верхнему уровню: восстановление парсера может
-/// вложить объявление внутрь чужого узла (та самая находка A2 плана 274.3 —
-/// `atom()` съедает закрывающую скобку и утаскивает хвост файла). Пока
-/// восстановление не починено волной 2, сбор сигнатур не должен от него
-/// зависеть: декларация найдена там, где она оказалась.
+/// The walk is RECURSIVE, not top-level only: parser recovery can
+/// nest a declaration inside a foreign node (that same finding A2 of
+/// plan 274.3 — `atom()` eats the closing bracket and drags away the
+/// tail of the file). Until recovery is fixed in wave 2, signature
+/// collection must not depend on it: a declaration is found wherever
+/// it ended up.
 fn harvest_in(n Node, defs DefTable, mut methods MethodTable) -> () {
     match n {
         Leaf(_) => {}
@@ -267,9 +274,10 @@ fn harvest_in(n Node, defs DefTable, mut methods MethodTable) -> () {
     }
 }
 
-/// Одна декларация: ресивер, имя, тип возврата. Берётся, только если И
-/// ресивер, И возврат уже известны реестру — иначе метод в подмножество не
-/// попадает и получит честный отказ на месте использования.
+/// One declaration: receiver, name, return type. Taken only if BOTH
+/// the receiver AND the return are already known to the registry —
+/// otherwise the method does not enter the subset and gets an
+/// honest rejection at the point of use.
 fn harvest_fn(kids []Node, defs DefTable, mut methods MethodTable) -> () {
     mut recv_name = ""
     mut mname = ""
@@ -289,11 +297,13 @@ fn harvest_fn(kids []Node, defs DefTable, mut methods MethodTable) -> () {
     ro recv_t = defs.type_id_opt(recv_name)
     ro ret_t = defs.type_id_opt(ret_name)
     if recv_t < 0 || ret_t < 0 { return }
-    // Сигнатура годна, только если известны ВСЕ её типы, включая параметры.
-    // Иначе перегрузки std попадали бы в таблицу как «одно имя дважды» и
-    // отказывались как неоднозначные: у `str` есть и `@contains(needle str)`,
-    // и `@contains(c char)` — вторая не про подмножество, потому что `char`
-    // реестру неизвестен. Так отбор делает ТИПОВАЯ система, а не список имён.
+    // A signature is valid only if ALL its types are known, including
+    // its parameters. Otherwise std overloads would land in the table
+    // as "one name twice" and get rejected as ambiguous: `str` has both
+    // `@contains(needle str)` and `@contains(c char)` — the second is
+    // not part of the subset, because `char` is unknown to the
+    // registry. This way the TYPE system does the picking, not a list
+    // of names.
     for c in kids {
         if c.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(c)
@@ -304,15 +314,15 @@ fn harvest_fn(kids []Node, defs DefTable, mut methods MethodTable) -> () {
     methods.add(MethodDef { recv: recv_t, name: mname, ret: ret_t, dup: false })
 }
 
-/// Построить семантический контекст: типы файла + методы из деклараций.
+/// Build the semantic context: the file's types + methods from declarations.
 export fn collect(file Node, decls []Node) -> Ctx {
     mut ctx = collect_types(file)
     harvest_methods(decls, ctx.defs, ctx.methods)
     ctx
 }
 
-/// Реестр типов и деклараций ОДНОГО файла (без методов: их приносит
-/// collect() из прочитанных сигнатур).
+/// The type and declaration registry of ONE file (without methods:
+/// collect() brings those in from the signatures it read).
 export fn collect_types(file Node) -> Ctx {
     mut types = []TypeDef.new()
     mut defs = DefTable.new()
@@ -380,8 +390,8 @@ export fn collect_types(file Node) -> Ctx {
             for v in branch_children(c) {
                 if v.kind_of() == NodeKind.Variant {
                     ro vk = branch_children(v)
-                    // Вариант без имени (восстановление после сломанной суммы):
-                    // пропускаем — судит check, sem не падает (274.3/F-B4).
+                    // A variant with no name (recovery after a broken sum):
+                    // skipped — check is the judge, sem does not fail (274.3/F-B4).
                     if vk.len() < 2 { continue }
                     if vk[1].kind_of() != NodeKind.LeafNode { continue }
                     ro vname = leaf_text(vk[1])
@@ -502,9 +512,10 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro kids = branch_children(e)
         if kids.len() < 3 { ice("sem: method call without a name") }
         ro mname = leaf_text(kids[2])
-        // Тип возврата — из ПРОЧИТАННОЙ сигнатуры (П5): компилятор не знает
-        // имён методов std, он их читает. Сюда доходит только то, что check
-        // уже принял, поэтому отказы здесь — ice (нарушение отравления).
+        // The return type — from the READ signature (П5): the
+        // compiler does not know std method names, it reads them. Only
+        // what check has already accepted reaches here, so a rejection
+        // here is an ice (a poisoning-discipline violation).
         ro recv_t = type_of(kids[0], ctx, scope)
         match ctx.methods.lookup(recv_t, mname) {
             MethodFound(r) => { return r }

@@ -19,10 +19,11 @@ import ../diag.{Diagnostic}
 import ../emit_c.{emit}
 import ../sem.{Ctx, collect}
 
-/// Семантический контекст файла: типы файла + сигнатуры методов, ПРОЧИТАННЫЕ
-/// из переданных деклараций. Компилятор не ходит по ФС и не резолвит пакеты
-/// (§1): тексты деклараций подаёт дверь (main), как драйвер подаёт интерфейс
-/// std настоящему компилятору.
+/// A file's semantic context: the file's types + method signatures, READ
+/// from the declarations passed in. The compiler does not walk the
+/// filesystem and does not resolve packages (§1): the door (main) hands
+/// it declaration texts, the way a driver hands a real compiler the std
+/// interface.
 fn context(tree Node, decl_texts []str) -> Ctx {
     mut decls = []Node.new()
     for d in decl_texts { decls.push(parse(lex(d))) }
@@ -30,9 +31,9 @@ fn context(tree Node, decl_texts []str) -> Ctx {
 }
 
 /// The whole E1 front half: text in, diagnostics out. Always returns the
-/// full list; no Result (274 §4 п.1). `decl_texts` — тексты деклараций std
-/// (пусто = методы не известны никакие, и всякий вызов метода получает
-/// честный отказ подмножества).
+/// full list; no Result (274 §4 item 1). `decl_texts` — std declaration
+/// texts (empty = no methods are known at all, and every method call
+/// gets an honest subset rejection).
 export fn compile(text str, decl_texts []str) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(lex(text))

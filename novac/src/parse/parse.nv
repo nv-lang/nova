@@ -9,7 +9,7 @@
 // byte and never stop early — the lead invariant holds through the tree:
 //     tree_reserialize(parse(lex(src))) == src, for every input.
 //
-// No Result in signatures (274 §4 п.1): parse always returns a File node.
+// No Result in signatures (274 §4 item 1): parse always returns a File node.
 // Diagnostics for Err nodes are the next slice (edge parse -> diag is in the
 // table; the node IS the representation, the report is separate).
 
@@ -42,11 +42,12 @@ fn Cursor @peek() -> TokenKind {
 
 /// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
-    // За концом потока take() отдаёт ПУСТОЙ лист и НЕ двигает курсор
-    // (274.3/F16, модель Roslyn MissingToken): раньше здесь стоял assert, и
-    // единственная будущая правка в восстановлении превращала обрезанный файл
-    // в смерть процесса без диагностики. Пустой лист несёт срез src[n..n] —
-    // дверь позиций получает настоящий указатель, а не чужой.
+    // Past the end of the stream, take() returns an EMPTY leaf and does
+    // NOT move the cursor (274.3/F16, the Roslyn MissingToken model):
+    // there used to be an assert here, and one future recovery edit
+    // turned a truncated file into a process death with no diagnostic.
+    // The empty leaf carries the slice src[n..n] — the positions door
+    // gets a real pointer, not someone else's.
     if @i >= @toks.len() {
         ro last = @toks[@toks.len() - 1]
         return leaf(Token { kind: TokenKind.Eof, leading: "", text: last.text })
@@ -56,12 +57,13 @@ fn Cursor mut @take() -> Node {
     n
 }
 
-/// Отсутствующий токен: лист НУЛЕВОЙ ШИРИНЫ на позиции текущего токена
-/// (модель Roslyn MissingToken). Курсор не двигается, реcериализация не
-/// меняется (пустой текст ничего не добавляет), но у диагностики есть точная
-/// позиция — без него восстановление на терминаторе давало Err без листьев,
-/// то есть МОЛЧАЛИВОЕ принятие сломанного ввода (поймано фаззером сразу же
-/// после ввода терминаторов, 274.3/F15).
+/// A missing token: a ZERO-WIDTH leaf at the position of the current
+/// token (the Roslyn MissingToken model). The cursor does not move,
+/// reserialization does not change (empty text adds nothing), but the
+/// diagnostic gets an exact position — without it, recovery at a
+/// terminator gave an Err with no leaves, that is SILENT acceptance of
+/// broken input (caught by the fuzzer right after terminator input was
+/// added, 274.3/F15).
 fn Cursor @missing() -> Node {
     if @i >= @toks.len() {
         ro last = @toks[@toks.len() - 1]
@@ -71,20 +73,21 @@ fn Cursor @missing() -> Node {
     leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[0..0] })
 }
 
-/// Токены, которые ЗАКРЫВАЮТ объемлющую конструкцию: их нельзя съедать при
-/// восстановлении (274.3/F15, модель Roslyn IsTerminator / rustc
-/// expect_one_of). Съеденная закрывающая скобка утаскивала весь остаток
-/// файла: `g(1 + )` давал четыре диагностики, а объявления после сломанного
-/// места переставали существовать в дереве вообще.
+/// Tokens that CLOSE the enclosing construct: recovery must not eat
+/// them (274.3/F15, the Roslyn IsTerminator / rustc expect_one_of
+/// model). An eaten closing bracket used to drag away the whole rest
+/// of the file: `g(1 + )` gave four diagnostics, and declarations
+/// after the broken spot stopped existing in the tree at all.
 fn is_terminator(k TokenKind) -> bool =>
     k == TokenKind.RParen || k == TokenKind.RBrace || k == TokenKind.RBracket || k == TokenKind.KwFn || k == TokenKind.KwType || k == TokenKind.KwModule || k == TokenKind.Eof
 
 /// True once the stream is exhausted.
 fn Cursor @at_eof() -> bool => @peek() == TokenKind.Eof
 
-/// Вид токена ЧЕРЕЗ один — нужен ровно там, где форма опознаётся парой:
-/// `fn <Recv> @<имя>` (метод) против `fn <имя>` (функция). Как и peek(),
-/// безопасен за концом потока.
+/// The kind of the token one AHEAD — needed exactly where the form is
+/// told apart by a pair: `fn <Recv> @<name>` (method) versus
+/// `fn <name>` (function). Like peek(), safe past the end of the
+/// stream.
 fn Cursor @peek2() -> TokenKind {
     if @i + 1 >= @toks.len() { return TokenKind.Eof }
     @toks[@i + 1].kind
@@ -187,20 +190,21 @@ fn Cursor mut @module_decl() -> Node {
 /// Parse `fn name(params) -> T { body }` or `=> expr`, with junk recovery.
 fn Cursor mut @fn_decl() -> Node {
     mut kids = []Node.of(@take()) // KwFn
-    // Метод-декларация `fn <Recv> @<имя>(...)`: ресивер — отдельный узел, имя
-    // читается после '@'. Форма нужна не ради подмножества (методы novac не
-    // объявляет), а ради ЧТЕНИЯ сигнатур std: таблица методов подмножества
-    // строится из деклараций, а не из списка имён в компиляторе (П5).
+    // Method declaration `fn <Recv> @<name>(...)`: the receiver is a
+    // separate node, the name is read after '@'. This form is not for the
+    // subset (novac does not declare methods), but for READING std
+    // signatures: the subset method table is built from declarations, not
+    // from a list of names in the compiler (П5).
     if @peek() == TokenKind.Ident && @peek2() == TokenKind.At {
-        mut rk = []Node.of(@take()) // тип-ресивер
+        mut rk = []Node.of(@take()) // receiver type
         rk.push(@take())            // '@'
         kids.push(branch(NodeKind.Recv, rk))
     }
     if @peek() == TokenKind.Ident { kids.push(@take()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
     while @peek() == TokenKind.Ident {
-        mut pk = []Node.of(@take()) // имя параметра
-        if @peek() == TokenKind.Ident { pk.push(@take()) } // тип (E1: int)
+        mut pk = []Node.of(@take()) // parameter name
+        if @peek() == TokenKind.Ident { pk.push(@take()) } // type (E1: int)
         if @peek() == TokenKind.Comma { pk.push(@take()) }
         kids.push(branch(NodeKind.Param, pk))
     }
@@ -239,9 +243,10 @@ fn Cursor mut @fn_decl() -> Node {
 fn Cursor mut @block() -> Node {
     mut kids = []Node.of(@take()) // LBrace
     while !@at_eof() && @peek() != TokenKind.RBrace {
-        // Защита от непродвижения (274.3/F15-F16): восстановление может вернуть
-        // узел нулевой ширины, не тронув курсор — тогда цикл обязан выйти, а не
-        // крутиться. Раньше эту роль играл assert в take(), то есть смерть.
+        // Guard against non-advancement (274.3/F15-F16): recovery can
+        // return a zero-width node without moving the cursor — then the loop
+        // must exit, not spin. This role used to be played by an assert in
+        // take(), which meant death.
         ro before = @i
         kids.push(@stmt())
         if @i == before { break }
@@ -494,10 +499,11 @@ fn Cursor mut @atom() -> Node {
         }
         return branch(NodeKind.Name, []Node.of(name))
     }
-    // Восстановление: неожиданный токен — один Err, один токен, дальше. Но
-    // ЗАКРЫВАЮЩИЙ токен не потребляется: он принадлежит объемлющей форме
-    // (274.3/F15). Err нулевой ширины — курсор не двигается, а объемлющий
-    // цикл обязан это заметить (см. защиту от непродвижения в block/args).
+    // Recovery: an unexpected token — one Err, one token, move on. But a
+    // CLOSING token is not consumed: it belongs to the enclosing form
+    // (274.3/F15). A zero-width Err — the cursor does not move, and the
+    // enclosing loop must notice this (see the non-advancement guard in
+    // block/args).
     if is_terminator(@peek()) {
         return branch(NodeKind.Err, []Node.of(@missing()))
     }

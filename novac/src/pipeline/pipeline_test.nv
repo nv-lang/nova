@@ -14,9 +14,10 @@
 
 module novac.pipeline
 
-// Тесты подмножества деклараций не читают: сигнатуры std приходят через дверь
-// (`--std`), а здесь судится сам конвейер. Хелпер держит это в ОДНОМ месте —
-// иначе каждая проверка несла бы пустой список руками.
+// Subset tests do not read declarations: std signatures come through
+// the door (`--std`), and here it is the pipeline itself being judged.
+// The helper keeps this in ONE place — otherwise every check would
+// carry an empty list by hand.
 fn n_diags(text str) -> int => compile(text, []str.new()).len()
 
 test "no cascade: a run of top-level junk is one cause, one diagnostic" {
