@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_DOC_BOTH_FORMS
+//
+// D104 rev-2 (2026-08-15, owner's extension): a field may carry its doc in
+// ONE of two forms -- `///` on the line above, or trailing `///` on its own
+// line. BOTH on the same field is E_DOC_BOTH_FORMS, never a silent
+// concatenation. Spec: spec/decisions/03-syntax.md D104 rev-2 p.2.
+module neg.d104_rev2_doc_both_forms_neg
+
+type Bad {
+    // nova:expect E_DOC_BOTH_FORMS -- the field has a doc line above AND a trailing doc; the two forms are alternatives, not halves (D104 rev-2 p.2)
+    /// Above-form doc for lo.
+    lo int /// and a trailing doc too
+    hi int
+}
+
+fn main() {
+    ro b = Bad { lo: 1, hi: 2 }
+    println("${b.lo}")
+}
