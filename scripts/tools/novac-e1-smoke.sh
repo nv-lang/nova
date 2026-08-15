@@ -2,19 +2,19 @@
 # scripts/tools/novac-e1-smoke.sh — the E1/E2 vertical smoke: a file compiled
 # by novac must BEHAVE identically to the oracle's binary (plan 274 §9 core).
 #
-# Fast path (owner 2026-08-15: «секунды, а не минута»). Profiling showed the
-# oracle's `nova build` spends ~20s OUTSIDE the compiler (dep-lock of the
-# examples package ~12s, vcvars capture ~7s per call) and ~1s in cc. So:
-#   1. the ORACLE binary of a file is built once and CACHED by the file's
-#      content hash (+ oracle mtime) — the second smoke of the same file
-#      never calls `nova build`;
-#   2. novac's C is linked DIRECTLY by clang with the exact argv the oracle
-#      uses, captured ONCE through the NOVA_CLANG interception door
-#      (compiler-codegen/src/test_runner.rs: NOVA_CLANG overrides the clang
-#      path) and cached next to the oracle binary; re-captured when the
-#      oracle binary changes. No hand-written link flags: the flags ARE the
-#      oracle's, byte for byte.
-# Result: ~1.5s per file after the first run instead of ~40s.
+# Cost discipline (plan 274 §1.4 «цена итерации», owner 2026-08-15): the
+# oracle's `nova build` spends ~20s OUTSIDE the compiler; the smoke pays it
+# ONCE per file+oracle and never again:
+#   1. the ORACLE binary is cached by (file content, oracle mtime);
+#   2. novac's C is linked DIRECTLY by clang with the oracle's exact argv,
+#      captured ONCE through the NOVA_CLANG interception door on the same
+#      build that produced the reference binary; -g dropped, lld linker;
+#   3. the runtime headers (nova_rt.h -> gc/libuv, ~82k preprocessed lines,
+#      0.43s of the 0.5s compile) are a PCH built once per oracle;
+#   4. the hot path forks as few processes as MSYS allows: no git/cygpath/
+#      md5sum per run — the cache key is the file's bytes via cksum, paths
+#      are computed once into the argv cache.
+# Warm target: <= 2s per file (emit + clang ~0.5s + two runs).
 #
 # Usage: sh scripts/tools/novac-e1-smoke.sh [file.nv]   (default: hello)
 # Проверялся: Windows (Git Bash), 2026-08-15.
@@ -22,65 +22,73 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FILE="${1:-examples/basics/hello.nv}"
 NOVAC="$ROOT/novac/target/novac.exe"
-ORACLE_MAIN=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-ORACLE="$ORACLE_MAIN/../nova-cli/target/release/nova.exe"
-[ -f "$ORACLE" ] || ORACLE="$ROOT/nova-cli/target/release/nova.exe"
 CACHE="${NOVAC_SMOKE_CACHE:-${TMPDIR:-/tmp}/novac-smoke-cache}"
-mkdir -p "$CACHE"
 T="${TMPDIR:-/tmp}/novac-smoke.$$"
-mkdir -p "$T"
+mkdir -p "$CACHE" "$T"
 trap 'rm -rf "$T"' 0
-
 fail() { echo "novac-e1-smoke: FAIL — $1" >&2; exit 1; }
 [ -f "$NOVAC" ] || fail "нет $NOVAC (собери novac)"
-[ -f "$ORACLE" ] || fail "нет оракула"
 cd "$ROOT" || exit 2
 
-# ---- 1. oracle binary, cached by content hash + oracle mtime -------------
-ORACLE_STAMP=$(stat -c %Y "$ORACLE" 2>/dev/null || echo 0)
-KEY=$( { cat "$FILE"; echo "$ORACLE_STAMP"; } | md5sum | cut -c1-16)
+# ---- oracle location & stamp: computed once per cache dir ---------------
+if [ ! -f "$CACHE/oracle.path" ]; then
+    ORACLE_MAIN=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    ORACLE="$ORACLE_MAIN/../nova-cli/target/release/nova.exe"
+    [ -f "$ORACLE" ] || ORACLE="$ROOT/nova-cli/target/release/nova.exe"
+    [ -f "$ORACLE" ] || fail "нет оракула"
+    printf '%s\n' "$ORACLE" > "$CACHE/oracle.path"
+fi
+read -r ORACLE < "$CACHE/oracle.path"
+ORACLE_STAMP=$(stat -c %Y "$ORACLE")
+REAL_CLANG="${NOVA_CLANG:-C:/Program Files/LLVM/bin/clang.exe}"
+
+# ---- 1. oracle binary + captured argv, cached ---------------------------
+KEY=$(cksum < "$FILE" | cut -d' ' -f1)-$ORACLE_STAMP
 ORACLE_EXE="$CACHE/oracle-$KEY.exe"
 LINKCMD="$CACHE/link-$ORACLE_STAMP.argv"
+CFLAGS="$CACHE/cflags-$ORACLE_STAMP.argv"
+PCH="$CACHE/prelude-$ORACLE_STAMP.pch"
 if [ ! -f "$ORACLE_EXE" ] || [ ! -f "$LINKCMD" ]; then
-    # Build OUTSIDE the examples package (module renamed to the file stem:
-    # D78 root-peer rule) — skips the package's dep-lock entirely.
     STEM=$(basename "$FILE" .nv)
     mkdir -p "$T/pkgless"
     sed "s/^module [a-zA-Z_.]*${STEM}\$/module ${STEM}/" "$FILE" > "$T/pkgless/$STEM.nv"
-    # Capture the oracle's clang argv through the NOVA_CLANG door on the
-    # SAME build that produces the reference binary — one build, two facts.
-    WIN_T=$(cygpath -w "$T" 2>/dev/null || echo "$T")
-    LOG="$T/cc.log"; : > "$LOG"
-    WIN_LOG=$(cygpath -w "$LOG" 2>/dev/null || echo "$LOG")
-    REAL_CLANG="${NOVA_CLANG:-C:\Program Files\LLVM\bin\clang.exe}"
-    printf '@echo off\r\nsetlocal\r\n:loop\r\nif "%%~1"=="" goto run\r\necho %%1>> "%s"\r\nshift\r\ngoto loop\r\n:run\r\necho __END__>> "%s"\r\n"%s" %%*\r\n' "$WIN_LOG" "$WIN_LOG" "$REAL_CLANG" > "$T/clang-log.cmd"
-    NOVA_CLANG="$WIN_T\clang-log.cmd" "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
+    WIN_T=$(cygpath -w "$T"); LOG="$T/cc.log"; : > "$LOG"; WIN_LOG=$(cygpath -w "$LOG")
+    printf '@echo off\r\nsetlocal\r\n:loop\r\nif "%%~1"=="" goto run\r\necho %%1>> "%s"\r\nshift\r\ngoto loop\r\n:run\r\necho __END__>> "%s"\r\n"%s" %%*\r\n' "$WIN_LOG" "$WIN_LOG" "$(cygpath -w "$REAL_CLANG")" > "$T/clang-log.cmd"
+    NOVA_CLANG="$WIN_T\\clang-log.cmd" "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
         || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
     cp "$T/oracle.exe" "$ORACLE_EXE"
-    # Keep every arg except -o/<exe> and the .c input (they vary per file).
-    # Backslashes -> forward slashes: clang on Windows takes both, and the
-    # shell eval below would eat backslashes.
-    awk 'BEGIN{skip=0} /^__END__/{exit} skip{skip=0; next} /^-o$/{skip=1; next} /\.c"?$/{next} {print}' "$LOG" | tr -d '\r' | sed 's|\\|/|g' > "$LINKCMD"
-    grep -q "libnova_rt" "$LINKCMD" || fail "перехват clang-argv не сработал (нет rt-архива в $LINKCMD)"
+    if [ ! -f "$LINKCMD" ]; then
+        # link argv: everything but -o/<exe>/<input>; -g dropped; lld added
+        awk 'BEGIN{skip=0} /^__END__/{exit} skip{skip=0; next} /^-o$/{skip=1; next} /\.c"?$/{next} /^-g$/{next} {print}' "$LOG" \
+            | tr -d '\r' | sed 's|\\|/|g' > "$LINKCMD"
+        printf '%s\n' "-fuse-ld=lld" >> "$LINKCMD"
+        grep -q "libnova_rt" "$LINKCMD" || fail "перехват clang-argv не сработал"
+        # compile-only flags (for the PCH and the -c step): no libs/linker flags
+        grep -vE '\.lib$|^-l|^-L$|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' "$LINKCMD" > "$CFLAGS"
+    fi
 fi
 
-# ---- 2. novac emit + direct clang link with the oracle's own argv --------
-"$NOVAC" emit "$FILE" > "$T/novac.c" 2>"$T/emit.err" || fail "novac emit упал: $(cat "$T/emit.err")"
-REAL_CLANG="${NOVA_CLANG:-C:/Program Files/LLVM/bin/clang.exe}"
-# argv file -> command line: args are already shell-safe tokens (paths without
-# spaces except the quoted ones, which the log kept quoted).
-ARGS=$(tr '\n' ' ' < "$LINKCMD")
-NOVAC_EXE_W=$(cygpath -m "$T/novac.exe" 2>/dev/null || echo "$T/novac.exe")
-NOVAC_C_W=$(cygpath -m "$T/novac.c" 2>/dev/null || echo "$T/novac.c")
-eval "\"$REAL_CLANG\" $ARGS -o \"$NOVAC_EXE_W\" \"$NOVAC_C_W\"" > "$T/link.out" 2>&1 \
-    || fail "clang не слинковал C от novac: $(head -5 "$T/link.out")"
+# ---- 2. PCH of the runtime prelude, once per oracle ----------------------
+if [ ! -f "$PCH" ]; then
+    # the PCH records its source header's path — keep it in the cache too
+    printf '#include "nova_rt/nova_rt.h"\n' > "$CACHE/prelude-$ORACLE_STAMP.h"
+    eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -x c-header \"$CACHE/prelude-$ORACLE_STAMP.h\" -o \"$PCH\"" > "$T/pch.out" 2>&1 \
+        || fail "PCH не собрался: $(head -3 "$T/pch.out")"
+fi
 
-# ---- 3. behavior diff ---------------------------------------------------
+# ---- 3. novac emit -> compile against PCH -> link with the oracle's argv --
+"$NOVAC" emit "$FILE" > "$T/novac.c" 2>"$T/emit.err" || fail "novac emit упал: $(cat "$T/emit.err")"
+# the emission's first include IS the PCH prelude; drop that one line
+sed '0,/^#include "nova_rt\/nova_rt.h"$/{//d}' "$T/novac.c" > "$T/body.c"
+eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -include-pch \"$PCH\" -c \"$T/body.c\" -o \"$T/body.o\"" > "$T/cc.out" 2>&1 \
+    || fail "clang -c упал: $(head -5 "$T/cc.out")"
+eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/novac.exe\" \"$T/body.o\"" > "$T/link.out" 2>&1 \
+    || fail "clang не слинковал: $(head -5 "$T/link.out")"
+
+# ---- 4. behavior diff ---------------------------------------------------
 "$ORACLE_EXE" > "$T/out.oracle" 2>&1; e_o=$?
 "$T/novac.exe"  > "$T/out.novac"  2>&1; e_n=$?
-diff "$T/out.oracle" "$T/out.novac" > "$T/out.diff" 2>&1 \
-    || fail "stdout расходится: $(head -3 "$T/out.diff")"
+cmp -s "$T/out.oracle" "$T/out.novac" || fail "stdout расходится: $(diff "$T/out.oracle" "$T/out.novac" | head -3)"
 [ "$e_o" -eq "$e_n" ] || fail "exit-коды расходятся: oracle=$e_o novac=$e_n"
-
 echo "novac-e1-smoke ok: $FILE — поведение идентично оракулу (stdout байт-в-байт, exit $e_o)"
 exit 0
