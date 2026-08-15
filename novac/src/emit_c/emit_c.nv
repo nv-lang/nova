@@ -55,23 +55,26 @@ type Emitter consume {
     consume body StringBuilder /// the code slot of the shell, built in a single pass
 }
 
-/// Finish the emission: the accumulated code as text, the builder spent.
-fn Emitter consume @finish() -> str => @body.into_str()
+/// Finish the emission: the literal pool AND the accumulated code, together.
+///
+/// Returning both is not a convenience. The owner's review 2026-08-16 killed
+/// the previous shape, which read `e.lits` into a binding and then consumed
+/// `e` in the same call: the binding copies only a POINTER, so nothing in
+/// the TYPE stops a consume method from touching that same object — the
+/// safety rested on the body of `finish`, not on anything checkable. Worse,
+/// it leaned on argument evaluation order, and a probe the same day showed
+/// the C backend evaluating arguments RIGHT-TO-LEFT despite the spec calling
+/// left-to-right normative (reported to the compiler window). One move, one
+/// result: no aliasing question and no order to depend on.
+fn Emitter consume @finish() -> ([]str, str) => (@lits, @body.into_str())
 
 /// Emit the whole C translation unit for a checked subset file.
 export fn emit(file Node, ctx Ctx) -> str {
     consume e = Emitter { ctx, lits: []str.new(), scope: Scope.new(), body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_file(file)
-    // The pool is read into a binding first, and NOT because of evaluation
-    // order — 03-syntax fixes arguments as left-to-right, so `render(e.lits,
-    // e.finish())` would read before the consume. The reason is the rule one
-    // paragraph up (the consume rule, item 2): a value in a consume position PLUS
-    // another occurrence of that same value in the SAME expression is called
-    // a violation. Today's checker accepts the inline form; the binding does
-    // not lean on that, and it costs nothing — `[]str` is a slice header.
-    ro lits = e.lits
-    render(lits, e.finish())
+    ro (lits, code) = e.finish()
+    render(lits, code)
 }
 
 
