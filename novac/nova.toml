@@ -19,7 +19,7 @@
 # after each blocker window touching the novac subset (e.g. #659+#660).
 #   spec-point: 2026-08-14
 #   spec-queue: 0
-#   oracle-pin: c5a0bc425
+#   oracle-pin: 3883310ba
 
 [package]
 name = "novac"

@@ -86,7 +86,7 @@ fn main() {
             mut i = 2
             while i < a.len() {
                 ro rc = check_path(a[i])
-                if rc > worst { worst = rc }
+                worst = worst.max(rc)
                 i += 1
             }
             exit_process(worst)

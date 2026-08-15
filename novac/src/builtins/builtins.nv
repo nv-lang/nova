@@ -49,8 +49,8 @@ export fn builtin_method_ret(name str) -> int {
 /// fact, not a mangling result; everything non-primitive goes through the
 /// mangling door.
 export type BuiltinType value {
-    name str // canonical Nova spelling
-    c_name str // runtime ABI spelling (nova_rt.h)
+    name str /// canonical Nova spelling
+    c_name str /// runtime ABI spelling (nova_rt.h)
 }
 
 /// The universe, in Prims order; the seed hands the ACTUAL ids back

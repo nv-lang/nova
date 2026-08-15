@@ -41,25 +41,28 @@ export type DefKind enum
 /// VALUE records: a plain record is a GC pointer — one heap allocation per
 /// row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
-    kind TypeKind // Which row table the off/cnt range addresses.
-    name str // Source spelling (`int`, `Point`); the mangling door derives C names from it.
-    c_name str // Runtime ABI spelling for TkPrim ONLY (nova_rt.h fact); "" otherwise — mangling is a door, never a stored string.
-    row_off int // First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum).
-    row_cnt int // How many rows; 0 for primitives.
+    kind TypeKind /// Which row table the off/cnt range addresses.
+    name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
+    c_name str /// Runtime ABI spelling for TkPrim ONLY (nova_rt.h fact); "" otherwise — mangling is a door, never a stored string.
+    row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum).
+    row_cnt int /// How many rows; 0 for primitives.
 }
 
 /// One top-level declaration of the unified name registry: what a name IS.
 export type Def value {
-    kind DefKind // What this name is — drives the payload's meaning.
-    payload int // DefType: a type id · DefVariant: a Ctx.variant_rows ROW · DefFn: a Ctx.fn_rets ROW. Named payload, not id: two of the three are plain row indexes (owner's id-vs-idx question 2026-08-15).
+    kind DefKind /// What this name is — drives the payload's meaning.
+    /// DefType: a type id · DefVariant: a Ctx.variant_rows ROW · DefFn: a
+    /// Ctx.fn_rets ROW. Named payload, not id: two of the three are plain
+    /// row indexes (owner's id-vs-idx question 2026-08-15).
+    payload int
 }
 
 /// THE unified name registry: the O(1) name door and the row it answers
 /// with — one record, because they only ever travel together (owner
 /// 2026-08-15: a pair that always walks in pairs belongs in one record).
 export type DefTable {
-    names NameTable // name -> row in `rows` (NsDefs namespace).
-    rows []Def // What each registered name is.
+    names NameTable /// name -> row in `rows` (NsDefs namespace).
+    rows []Def /// What each registered name is.
 }
 
 /// Empty registry with the NsDefs namespace.
@@ -88,16 +91,16 @@ export fn DefTable @type_id(name str) -> int {
 
 /// One record field; a field row is this record's index in Ctx.field_rows.
 export type FieldDef value {
-    name str // Field spelling; the backend uses it for the member name verbatim.
-    type_id int // The field's type id.
+    name str /// Field spelling; the backend uses it for the member name verbatim.
+    type_id int /// The field's type id.
 }
 
 /// Record-field registry: fields resolve ONLY through a receiver type —
 /// never as bare names (same as Go/rustc) — so the door key carries the
 /// owner: "ownerTypeId.fieldName".
 export type FieldTable {
-    names NameTable // "ownerId.field" -> row in `rows` (NsFields namespace).
-    rows []FieldDef // The field rows, grouped per type via TypeDef.row_off/cnt.
+    names NameTable /// "ownerId.field" -> row in `rows` (NsFields namespace).
+    rows []FieldDef /// The field rows, grouped per type via TypeDef.row_off/cnt.
 }
 
 /// Empty field registry with the NsFields namespace.
@@ -119,33 +122,33 @@ export fn FieldTable @field_type(owner int, fname str) -> int {
 
 /// One sum variant; a variant row is this record's index in Ctx.variant_rows.
 export type VariantDef value {
-    sum int // Owning sum's type id (backends derive the tag name from it).
-    name str // Variant spelling; backends derive maker names from it.
-    payload_off int // First payload row in Ctx.payload_types.
-    payload_cnt int // How many payload fields.
+    sum int /// Owning sum's type id (backends derive the tag name from it).
+    name str /// Variant spelling; backends derive maker names from it.
+    payload_off int /// First payload row in Ctx.payload_types.
+    payload_cnt int /// How many payload fields.
 }
 
 /// Type ids of the pre-seeded primitives — the rustc CommonTypes model
 /// (owner 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
 /// out and everything compares against these fields).
 export type Prims value {
-    t_int int // Type id of `int`.
-    t_str int // Type id of `str`.
-    t_bool int // Type id of `bool`.
-    t_f64 int // Type id of `f64`.
+    t_int int /// Type id of `int`.
+    t_str int /// Type id of `str`.
+    t_bool int /// Type id of `bool`.
+    t_f64 int /// Type id of `f64`.
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
 /// VALUE row records (rustc IndexVec camp; architecture «референс
 /// хранения»); every name -> id step goes through a table door.
 export type Ctx {
-    types []TypeDef // The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
-    prims Prims // Type ids of the primitives (the CommonTypes model).
-    defs DefTable // THE unified top-level name registry (types, variants, fns).
-    fields FieldTable // Record fields, addressed through the owner type.
-    variant_rows []VariantDef // Sum variants, grouped per type via TypeDef.row_off/cnt.
-    payload_types []int // Variant payload rows: type ids, grouped via VariantDef.
-    fn_rets []int // fn ROW -> return type id (-1 = none declared, main only).
+    types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
+    prims Prims /// Type ids of the primitives (the CommonTypes model).
+    defs DefTable /// THE unified top-level name registry (types, variants, fns).
+    fields FieldTable /// Record fields, addressed through the owner type.
+    variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
+    payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
+    fn_rets []int /// fn ROW -> return type id (-1 = none declared, main only).
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -288,8 +291,8 @@ export fn leaf_kind(n Node) -> TokenKind {
 /// binding — one record, they only travel together. Shadowing = last bind
 /// wins (the door's put overwrites).
 export type Scope {
-    names NameTable // name -> row in `types` (NsLocals namespace).
-    types []int // Type id of each binding row.
+    names NameTable /// name -> row in `types` (NsLocals namespace).
+    types []int /// Type id of each binding row.
 }
 
 /// Empty scope with the NsLocals namespace.
