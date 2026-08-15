@@ -24,8 +24,9 @@ commit = "53638fba444a1addfe8ab4af0a515d4cdb3e1acd"
 name = "polaris"
 source = "git"
 git = "https://github.com/nv-lang/nova-polaris"
-pin = "rev:277d612d21cfa63a4a14662660ddc6cf60bdde37"
-commit = "277d612d21cfa63a4a14662660ddc6cf60bdde37"
+pin = "version:>=0.1.0, <0.2.0"
+version = "0.1.3"
+commit = "fd0f35bb3c529f9396df06dff4a710dd5f5adfc7"
 
 [[package]]
 name = "socks"
