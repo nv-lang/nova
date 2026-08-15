@@ -26,9 +26,19 @@ if [ ! -d "$SRC" ]; then
     exit 0
 fi
 
+# Field-doc strictness follows the oracle pin (self-expiring transition):
+# D104 rev-2 (fields/variants take ///, both forms) landed in main at
+# 9a69411b3; while novac/nova.toml still pins an OLDER oracle the guard
+# accepts `//` on fields as the transition form; once the pin moves to a
+# revision containing 9a69411b3, `//` on a field is red — same wave as the
+# pin move (P13.2).
+PIN=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*oracle-pin:[[:space:]]*\([0-9a-f][0-9a-f]*\)$/\1/p')
+FIELD_STRICT=0
+if [ -n "$PIN" ] && git -C "$ROOT" merge-base --is-ancestor 9a69411b3 "$PIN" 2>/dev/null; then FIELD_STRICT=1; fi
+
 BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | while IFS= read -r f; do
     rel=${f#"$SRC"/}
-    awk -v rel="$rel" '
+    awk -v rel="$rel" -v strict="$FIELD_STRICT" '
         { line = $0; sub(/\r$/, "", line) }
         # memory of the PREVIOUS line: doc (///) or plain comment (//);
         # attribute lines (#impl(...) etc.) between a doc and its
@@ -52,8 +62,13 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | while IFS= r
                 in_block = (line ~ /\{[[:space:]]*$/)
             } else if (in_block) {
                 if (line ~ /^\}/) { in_block = 0 }
-                else if (line ~ /^[[:space:]]+[a-z_][a-zA-Z0-9_]* / && line !~ /\/\//) {
-                    if (!prev_comment) {
+                else if (line ~ /^[[:space:]]+[a-z_][a-zA-Z0-9_]* /) {
+                    if (strict) {
+                        # D104 rev-2: trailing /// on the line, or /// above; // is not a doc
+                        if (line !~ /\/\/\// && !prev_doc) {
+                            printf "  %s:%d: поле без ///-дока (D104 rev-2: trailing или строкой выше): %s\n", rel, NR, line
+                        }
+                    } else if (line !~ /\/\// && !prev_comment) {
                         printf "  %s:%d: поле без комментария: %s\n", rel, NR, line
                     }
                 }
@@ -72,5 +87,6 @@ if [ -n "$BAD" ]; then
     exit 1
 fi
 N=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | wc -l | tr -d '[:space:]')
-echo "$NAME ok: файлов .nv: $N, типов/функций/полей без документации: 0"
+MODE="переходный // (пин < 9a69411b3)"; [ "$FIELD_STRICT" = 1 ] && MODE="/// строго (D104 rev-2)"
+echo "$NAME ok: файлов .nv: $N, типов/функций/полей без документации: 0 (поля: $MODE)"
 exit 0
