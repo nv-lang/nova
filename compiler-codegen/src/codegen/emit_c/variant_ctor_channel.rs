@@ -40,7 +40,11 @@ impl CEmitter {
         if !call_id.is_set() {
             return None;
         }
-        let (sum_name, idx) = self.resolved_variant_ctors.get(&call_id).cloned()?;
+        let hit = self.resolved_variant_ctors.get(&call_id).cloned();
+        if std::env::var_os("NOVA_DIAG_658").is_some() {
+            eprintln!("[658-read] {}({}) id_set={} hit={:?}", variant, argc, call_id.is_set(), hit);
+        }
+        let (sum_name, idx) = hit?;
         // Collision-aware sum base — mirrors the qualified-receiver ctor path
         // (`try_emit_explicit_variant_ctor`'s `ref_type_base`).
         let base = self.ref_type_base(&sum_name, &[]);

@@ -5384,6 +5384,18 @@ fn cmd_build(
                 emitter.set_proven_index_sites_contract(&build_env.proven_index_sites_contract);
                 emitter.set_resolved_types(&build_env.resolved_types);
                 emitter.set_resolved_callees(&build_env.resolved_callees);
+                // #669 (2026-08-15, third occurrence of the F.4c class): the two
+                // OTHER checker channels the test/standalone drivers feed were still
+                // missing HERE -- #279 pattern_variant_types and #658
+                // resolved_variant_ctors. Removing the std workaround of #658
+                // (json.nv bare `Other(...)`) exposed it: `nova build` fell back to
+                // the by-name ctor resolution and picked a foreign sum. The
+                // driver-parity guard (check-driver-channel-parity.sh) now holds
+                // this list in lockstep with test_runner.rs.
+                emitter.set_pattern_variant_types(&build_env.pattern_variant_types);
+                emitter.set_resolved_variant_ctors(&build_env.resolved_variant_ctors);
+                // Plan 196.5 subst channel -- same omission, same fix.
+                emitter.set_node_substs(&build_env.node_substs);
                 // Plan 209 Ф.2: `emit_module_multi_tu` back-compat wrapper —
                 // runs the IDENTICAL emission `emit_module` always ran, then
                 // only if `NOVA_MULTI_TU=1` AND the CU exceeds the Ф.1
