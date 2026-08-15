@@ -258,6 +258,7 @@ guard "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "$ROOT" || fail "и
 guard "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "$ROOT" || fail "novac объявил имя, которое экспортирует прелюдия: тень компилируется молча"
 guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "русский текст в .nv novac (конвенция П13: дока и сообщения по-английски)"
 guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx заведена без строки плана §10.3б (П17: одно понятие — одна таблица)"
+guard "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "$ROOT" || fail "дверь поиска novac аллоцирует: составной ключ собирается текстом на каждый поиск (П18)"
 # П16 (владелец 2026-08-16): самотест обязан ДОКАЗАТЬ, что его страж ловит.
 # Проверка мутацией — каждый страж подменяется заглушкой exit 0, его самотест
 # обязан упасть. Держится последним в блоке: гоняет все самотесты novac разом.
