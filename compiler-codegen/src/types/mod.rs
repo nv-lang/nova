@@ -53074,6 +53074,7 @@ mod named_tuple_ctor_infer_tests {
             discriminant: None,
             span: dummy_span(),
             serde_attrs: Vec::new(),
+            doc: None,
         };
         TypeDecl {
             name: sum_name.to_string(),

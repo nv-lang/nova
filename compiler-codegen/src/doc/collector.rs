@@ -473,6 +473,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                     ty: render_type(&f.ty),
                     mutable: f.mutable,
                     priv_field: f.priv_field,
+                    doc: f.doc.as_ref().map(|d| d.content.clone()),
                 })
                 .collect();
             ItemKind::Type(TypeDefinition::Record(record_fields))
@@ -482,6 +483,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                 .iter()
                 .map(|v| SumVariant {
                     name: v.name.clone(),
+                    doc: v.doc.as_ref().map(|d| d.content.clone()),
                     payload: match &v.kind {
                         crate::ast::SumVariantKind::Unit => VariantPayload::Unit,
                         crate::ast::SumVariantKind::Tuple(ts) => VariantPayload::Tuple(
@@ -495,6 +497,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                                         ty: render_type(&f.ty),
                                         mutable: f.mutable,
                                         priv_field: f.priv_field,
+                                        doc: f.doc.as_ref().map(|d| d.content.clone()),
                                     })
                                     .collect(),
                             )
@@ -575,6 +578,9 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                     ty: render_type(&f.ty),
                     mutable: false,
                     priv_field: f.priv_field,
+                    // D104 rev-2 covers record fields + sum variants; named-tuple
+                    // fields are outside its scope (no `doc` on NamedTupleField).
+                    doc: None,
                 })
                 .collect();
             ItemKind::Type(TypeDefinition::Record(record_fields))

@@ -531,6 +531,7 @@ mod tests {
                         discriminant: None,
                         span: Span::dummy(),
                         serde_attrs: vec![],
+                        doc: None,
                     },
                     SumVariant {
                         name: "B".into(),
@@ -538,6 +539,7 @@ mod tests {
                         discriminant: None,
                         span: Span::dummy(),
                         serde_attrs: vec![],
+                        doc: None,
                     },
                 ]),
                 ..TypeDecl::default()

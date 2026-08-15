@@ -505,10 +505,24 @@ fn render_type_definition(name: &str, def: &TypeDefinition, consume: bool) -> St
                 else { format!("{}{} {}", priv_kw, f.name, f.ty) }
             }).collect::<Vec<_>>().join("; ");
             let _ = write!(s, "{} }}", fs);
+            // D104 rev-2: documented fields get a bullet list under the signature.
+            if fields.iter().any(|f| f.doc.is_some()) {
+                for f in fields {
+                    if let Some(d) = &f.doc {
+                        let _ = write!(s, "\n- `{}` — {}", f.name, d.trim().replace('\n', " "));
+                    }
+                }
+            }
         }
         TypeDefinition::Sum(variants) => {
             let _ = write!(s, "type {}{} =", name, consume_kw);
             for v in variants {
+                // D104 rev-2: the variant's own `///` doc, on the line above it.
+                if let Some(d) = &v.doc {
+                    for line in d.lines() {
+                        let _ = write!(s, "\n    /// {}", line);
+                    }
+                }
                 match &v.payload {
                     VariantPayload::Unit => { let _ = write!(s, "\n    | {}", v.name); }
                     VariantPayload::Tuple(tys) => {

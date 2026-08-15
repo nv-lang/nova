@@ -5076,6 +5076,21 @@ impl Parser {
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // D104 rev-2 (2026-08-15): outer `///` on the line ABOVE a field
+            // documents that field -- same door as `parse_item`. A doc block
+            // followed by `}` (no field after it) is an orphan: warning as in
+            // D104 p.7, the doc is dropped, the record still parses.
+            let field_doc = self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Outer);
+            if matches!(self.peek().kind, TokenKind::RBrace) {
+                if let Some(d) = &field_doc {
+                    eprintln!(
+                        "warning: orphan doc-comment (`///`) before `}}` -- no record field \
+                         follows it (D104 rev-2). span: {:?}",
+                        d.span
+                    );
+                }
+                break;
+            }
             // [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): in-body
             // `const NAME T = expr` внутри `type X { ... }` РЕТРАКТИРОВАНА —
             // «одна дверь», каноническая форма теперь ВНЕ тела:
@@ -5367,6 +5382,7 @@ impl Parser {
                 priv_module_field: field_priv_module,
                 visible_to,
                 serde_attrs: field_serde_attrs,
+                doc: field_doc,
             });
             // Separator: comma (inline or multi-line) OR newline (multi-line
             // only). Per D49 + D215 spec: on a SINGLE LINE, a comma is
@@ -5385,7 +5401,8 @@ impl Parser {
                 return Err(Diagnostic::new(
                     "[E_RECORD_FIELD_MISSING_SEPARATOR] record fields on the same line must be \
                      separated by a comma; add `,` after this field, or move the next field to \
-                     a new line",
+                     a new line (a doc-comment for a field goes on the line ABOVE it: \
+                     `/// text` then the field; inline `field T /// text` is not a form)",
                     sp,
                 ));
             }
@@ -5467,10 +5484,23 @@ impl Parser {
     /// Используется и в старом синтаксисе и в D406 многострочном.
     fn parse_sum_variants_list(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
         let mut variants = Vec::new();
-        while matches!(self.peek().kind, TokenKind::Pipe) {
+        loop {
+            // D104 rev-2 (2026-08-15): outer `///` on the line ABOVE `| Variant`
+            // documents that variant.
+            // The doc is consumed ONLY when a `|` follows it: a `///` after the
+            // last variant belongs to the NEXT top-level item (the multi-line
+            // sum has no closing token), so it is rolled back, not reported.
+            let save = self.pos;
+            let variant_doc = self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Outer);
+            if !matches!(self.peek().kind, TokenKind::Pipe) {
+                self.pos = save;
+                break;
+            }
             self.bump(); // |
             self.skip_newlines();
-            variants.push(self.parse_one_sum_variant()?);
+            let mut v = self.parse_one_sum_variant()?;
+            v.doc = variant_doc;
+            variants.push(v);
             self.skip_newlines();
         }
         Ok(variants)
@@ -5540,6 +5570,8 @@ impl Parser {
             discriminant,
             span: name_span.merge(end),
             serde_attrs: variant_serde_attrs,
+            // D104 rev-2: the list parser owns the doc (it sits before `|`).
+            doc: None,
         })
     }
 

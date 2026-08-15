@@ -469,6 +469,8 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
                         // tooling-aware consumers (LSP / IDE).
                         w.field_bool("priv_field", f.priv_field);
                         w.field_str("type", &f.ty);
+                        // D104 rev-2: the field's `///` doc (absent = undocumented).
+                        if let Some(d) = &f.doc { w.field_str("doc", d); }
                     });
                 }
             });
@@ -480,6 +482,8 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
                 for v in variants {
                     w.array_object(|w| {
                         w.field_str("name", &v.name);
+                        // D104 rev-2: the variant's `///` doc (absent = undocumented).
+                        if let Some(d) = &v.doc { w.field_str("doc", d); }
                         match &v.payload {
                             VariantPayload::Unit => {
                                 w.field_str("payload_kind", "unit");
