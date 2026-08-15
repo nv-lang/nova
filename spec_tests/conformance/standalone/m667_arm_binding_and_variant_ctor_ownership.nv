@@ -1,0 +1,148 @@
+// #667 + #671 (registry 221.1, 2026-08-15): the two sides of ONE fact --
+// where ownership of a `consume` binding really goes.
+//
+// #667 -- a match-arm PATTERN binding (`Ok(consume r) => { ... }`) gets NO
+// auto-cleanup from the codegen: D432 section 2 covers bare `consume X = e;`
+// only ("destructuring patterns stay under plain D133"). The checker's
+// exit-check nonetheless exempted ANY binding whose type declares `@cleanup`
+// as auto-cleanup-eligible, so an unconsumed arm binding compiled silently and
+// the resource leaked (ResourceTrace counted zero cleanups). It must be an
+// honest D133-not-consumed instead -- pinned by the negative fixture beside
+// this file (m667_arm_binding_leak_neg).
+//
+// #671 -- the mirror hole, found the moment #667 stopped hiding it: the
+// consume-walker did not count a move INTO A VARIANT CONSTRUCTOR (`Ok(r)`,
+// `Some(r)`, any `Variant(r)`) as consumption, so the canonical
+// `fn open() -> Result[R, E] { consume r = mk(); Ok(r) }` was a false
+// D133-not-consumed for a type WITHOUT `@cleanup` (and stayed hidden for one
+// WITH `@cleanup` only because the same exemption swallowed it). This is the
+// checker-side twin of #666, where the CODEGEN missed the same transfer and
+// ran `@cleanup` on a value it had already handed away.
+//
+// This fixture pins the POSITIVE half of both: every legitimate ownership
+// route compiles and runs, and each resource is cleaned exactly once.
+//
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.m667_arm_binding_and_variant_ctor_ownership
+
+/// Carries `@cleanup` -- the D432 auto-cleanup shape (bare bindings only).
+type M667Res consume { tag int }
+
+fn M667Res consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn M667Res consume @close() -> () { () }
+
+fn m667_make(tag int) -> M667Res => { tag }
+
+/// NO `@cleanup` -- strict linearity, no exemption anywhere. #671's own shape:
+/// the move into `Ok(...)` IS the consumption; without the fix this function
+/// did not compile at all.
+type M667Strict consume { tag int }
+
+fn M667Strict consume @close() -> () { () }
+
+fn m667_strict(tag int) -> M667Strict => { tag }
+
+fn m667_open_strict(tag int) -> Result[M667Strict, ()] {
+    consume s = m667_strict(tag)
+    Ok(s)
+}
+
+fn m667_maybe_strict(tag int) -> Option[M667Strict] {
+    consume s = m667_strict(tag)
+    Some(s)
+}
+
+fn m667_open(tag int) -> Result[M667Res, ()] {
+    consume r = m667_make(tag)
+    Ok(r)
+}
+
+/// The relay shape of the http_proxy_chain bridge: arm binding straight back
+/// into a variant constructor -- ownership passes through, no cleanup here.
+fn m667_relay(tag int) -> Result[M667Res, ()] {
+    match m667_open(tag) {
+        Ok(consume r) => Ok(r)
+        Err(_)        => Err(())
+    }
+}
+
+test "#671: a bare binding moved into Ok(...) / Some(...) is consumed -- strict type, no @cleanup to hide behind" {
+    match m667_open_strict(1) {
+        Ok(consume s) => s.close()
+        Err(_)        => assert(false)
+    }
+    match m667_maybe_strict(2) {
+        Some(consume s) => s.close()
+        None            => assert(false)
+    }
+}
+
+test "#667: an arm binding consumed explicitly runs no auto-cleanup -- the trace stays silent" {
+    mut exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        match m667_open(7) {
+            Ok(consume r) => {
+                assert(r.tag == 7)
+                r.close()
+            }
+            Err(_) => assert(false)
+        }
+    }
+    // ResourceTrace observes the AUTO-cleanup path only (emit_c fires
+    // `on_resource_exit` from the auto-inserted cleanup, not from an explicit
+    // consume-method call) -- an explicitly closed binding is silent, and that
+    // silence is exactly the proof no second, automatic cleanup ran.
+    assert(exits.load() == 0)
+}
+
+test "#671: the relay passes ownership through the arm into a constructor -- one cleanup, at the final owner" {
+    mut exits = AtomicInt.new(0)
+    mut at_receive = -1
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        match m667_relay(9) {
+            Ok(consume r) => {
+                at_receive = exits.load()
+                assert(r.tag == 9)
+                r.close()
+            }
+            Err(_) => assert(false)
+        }
+    }
+    // Zero at the moment the value arrives (no cleanup en route through the
+    // relay's arm) and zero after the final owner closed it explicitly (see
+    // the note above): ownership travelled intact and was released once, by
+    // hand.
+    assert(at_receive == 0)
+    assert(exits.load() == 0)
+}
+
+test "#667: a bare binding still rides D432 auto-cleanup -- the exemption is intact where it belongs" {
+    mut exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exits.fetch_add(1)
+            return ()
+        }
+    } {
+        {
+            consume r = m667_make(3)
+            assert(r.tag == 3)
+        }
+        assert(exits.load() == 1)
+    }
+}

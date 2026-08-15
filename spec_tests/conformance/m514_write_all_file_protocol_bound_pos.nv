@@ -35,6 +35,13 @@ test "write_all[W Write] on a File conformer — generic bound resolves to the b
                     Ok(()) => assert(true)
                     Err(_) => assert(false)
                 }
+                // #667 (2026-08-15): a match-arm `consume` binding gets NO
+                // auto-cleanup from the codegen (D432 covers bare bindings
+                // only), so it must be consumed explicitly -- `write_all`
+                // takes `mut w W`, a borrow, not ownership. Before #667 the
+                // checker exempted arm bindings as auto-cleanup-eligible and
+                // this File handle leaked silently.
+                ro _ = w.close()
             }
         }
     }
