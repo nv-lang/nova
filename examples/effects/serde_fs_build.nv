@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std serde + std fs in ONE binary through `nova build` -- the #669 sentinel.
+//
+// #658 (2026-08-14) removed the std workaround that had kept json.nv's bare
+// `Other(...)` qualified; the checker channel that resolves a bare variant
+// constructor by the call-site expected type made the qualification
+// unnecessary -- in `nova test`. `nova build` (nova-cli) had never been fed
+// that channel (nor #279's pattern_variant_types, nor node_substs): the
+// bare ctor fell back to by-name resolution and picked io.ErrorKind.Other(int)
+// -> a C type clash the moment fs and serde met in one binary (#669). The
+// conformance corpus runs through `nova test`, so it could not see it; this
+// example is BUILT by the anti-rot gate (and CI) exactly like a user program.
+module effects.serde_fs_build
+
+import std.encoding.serde.{json_encode}
+import std.fs.{read, real_fs}
+
+#impl(Serialize)
+type Probe { a int, name str }
+
+fn main() Fs Os -> () {
+    with Fs = real_fs() {
+        // A real fs call keeps io's ErrorKind sum in the CU (the collision
+        // partner of serde's DeErrorKind.Other); the file need not exist.
+        ro n = match read("nonexistent-serde-fs-probe.txt".to_path()) {
+            Ok(_)  => 1
+            Err(_) => 0
+        }
+        println(json_encode(Probe { a: n, name: "serde+fs" })!!)
+    }
+}

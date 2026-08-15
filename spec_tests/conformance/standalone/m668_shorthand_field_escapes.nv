@@ -1,0 +1,69 @@
+// #668 (registry 221.1; carrier #662 layer 3, 2026-08-15): a D52 shorthand
+// record-literal field `{ name }` is `{ name: name }` -- the local `name`
+// ESCAPES into the record. The ident-escape walkers of escape_analyze
+// (`ie_mark_all`, `ie_expr`) matched only `Some(value)` fields and skipped
+// the shorthand, so `ro leftover = buf[a..]; HR { head, leftover }` was
+// judged non-escaping: the sret stack-slot predicate (Plan 172.14/172.15)
+// armed a STACK temp for the slice, and the heap record carried a dangling
+// pointer into a dead frame -- the next call reused the stack and
+// `leftover.len()` read as a foreign local (in the http_proxy_chain bridge
+// it read as `port`, 48597 bytes of garbage went into the tunnel: 414 URI
+// Too Long / HTTP-0.9 fragments). The class without any network: the
+// field must keep its own value across a later nested match/call.
+//
+module standalone.m668_shorthand_field_escapes
+
+type HR { head str, leftover []u8 }
+type Req enum
+    | Connect { host str, port int }
+    | Invalid
+
+fn mk(buf []u8, end_idx int) -> Result[HR, ()] {
+    ro leftover = buf[(end_idx + 4)..]
+    Ok(HR { head: "CONN", leftover })
+}
+fn eight() -> []u8 {
+    mut buf []u8 = []u8.new()
+    buf.append([67 as u8, 79 as u8, 78 as u8, 78 as u8, 13 as u8, 10 as u8, 13 as u8, 10 as u8])
+    buf
+}
+fn parse(head str) -> Req {
+    if head == "CONN" { Connect { host: "127.0.0.1", port: 48597 } } else { Invalid }
+}
+
+test "W1: read headers.leftover BEFORE the record-variant match" {
+    match mk(eight(), 4) {
+        Ok(headers) => {
+            ro before = headers.leftover.len()
+            match parse(headers.head) {
+                Connect { host, port } => { assert(port == 48597); assert(before == 0) }
+                Invalid => assert(false)
+            }
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "W2: read headers.leftover INSIDE the record-variant arm" {
+    match mk(eight(), 4) {
+        Ok(headers) => {
+            match parse(headers.head) {
+                Connect { host, port } => { assert(port == 48597); assert(headers.leftover.len() == 0) }
+                Invalid => assert(false)
+            }
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "W3: unit-variant match, then read headers.leftover inside arm" {
+    match mk(eight(), 4) {
+        Ok(headers) => {
+            match parse("nope") {
+                Connect { host, port } => assert(false)
+                Invalid => assert(headers.leftover.len() == 0)
+            }
+        }
+        Err(_) => assert(false)
+    }
+}

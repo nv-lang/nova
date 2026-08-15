@@ -19196,6 +19196,9 @@ impl<'a> TypeCheckCtx<'a> {
                     SumVariantKind::Tuple(fields) if fields.len() == args.len())
         });
         let Some((idx, v)) = hit else { return };
+        if std::env::var_os("NOVA_DIAG_658").is_some() {
+            eprintln!("[658-fill] {}({}) -> {} idx={} id_set={}", name, args.len(), tname, idx, expr.id.is_set());
+        }
         if expr.id.is_set() {
             self.resolved_variant_ctors_buf
                 .borrow_mut()

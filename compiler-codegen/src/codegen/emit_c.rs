@@ -13,6 +13,7 @@ mod emit_detach;
 // №658: setter + channel-first lookup of `resolved_variant_ctors` live in the
 // child module (same ratchet rule; see its doc). Field + two consult sites stay.
 mod variant_ctor_channel;
+mod variant_ctor_disarm; // #666, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -31787,6 +31788,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// disarming here would be a silent resource leak (the OPPOSITE
     /// failure mode from the double-cleanup this fixes).
     fn disarm_auto_cleanup_receiver_call(&mut self, e: &Expr) {
+        self.disarm_auto_cleanup_variant_ctor_args(e); // #666 third arm (child module)
         let ExprKind::Call { func, args, .. } = &e.kind else { return };
         // (a) receiver form `X.method(...)`.
         if let ExprKind::Member { obj, name: method_name } = &func.kind {

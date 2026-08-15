@@ -208,6 +208,8 @@ step "novac-arch-invariants (счётчик инвариантов у разде
 guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
 step "novac-no-naked-panic (явный инвариант — через дверь ice(), П12)"
 guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+step "driver-channel-parity (три драйвера кормят одни каналы — №669)"
+guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
 step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
 guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SIGPIPE) пропал из nova_driver_init (№664)"
 step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"

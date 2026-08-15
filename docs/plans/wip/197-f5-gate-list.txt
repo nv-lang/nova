@@ -20,6 +20,7 @@ BUILD examples/basics/strings.nv
 BUILD examples/effects/effects.nv
 BUILD examples/effects/effects_d61.nv
 BUILD examples/effects/spawn_demo.nv
+BUILD examples/effects/serde_fs_build.nv
 BUILD examples/ffi/ptr_basics.nv
 CHECK examples/ffi/sqlite_mini.nv
 BUILD examples/getting_started.nv

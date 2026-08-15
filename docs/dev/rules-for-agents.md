@@ -153,6 +153,9 @@
   `check-rt-sigpipe-ign.sh` — живой `signal(SIGPIPE, SIG_IGN)` в теле
   `nova_driver_init` (№664): без него любой сетевой бинарь на Linux умирает
   молча от гонки «peer закрылся → мы пишем».
+  `check-driver-channel-parity.sh` — каждый чекер-канал `emitter.set_*(&env.*)`,
+  проведённый в test_runner, обязан быть и в `nova build`, и в standalone (№669: `nova build`
+  трижды терял каналы молча при зелёном `nova test`).
   `check-novac-time-ledger.sh` — коммит, коснувшийся `novac/**`, требует строки
   в леджере `docs/dev/novac-time-ledger.md` за ту же дату (274 §1.4: доля
   «274 против 221» дня 30 считается из леджера).
