@@ -38,9 +38,9 @@ import ../sem.{Ctx}
 /// rustc держит `TyCtxt` явным, а амбиентный `ty::tls` оставляет только для
 /// диагностик и отладки.
 type Checker {
-    src SourceText /// текст файла: единственный источник позиций
-    ctx Ctx /// реестр типов и таблица методов, прочитанная из деклараций
-    out []Diagnostic /// накопленные диагностики этого прогона
+    src SourceText /// the file text: the one source of positions
+    ctx Ctx /// type registry and method table, read from the declarations
+    out []Diagnostic /// diagnostics collected by this run
 }
 
 /// Check a parsed file against the subset. Always returns the full list;
