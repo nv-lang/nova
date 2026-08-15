@@ -124,7 +124,14 @@ if [ -z "$cm" ] || [ -z "$bm" ] || [ -z "$base_cm" ] || [ -z "$base_bm" ]; then
     echo "$NAME: FAIL — не распарсил числа храповика (прогон: '$NUMS'; база: cm='$base_cm' bm='$base_bm')" >&2
     exit 1
 fi
-grep -E '^novac-diff-corpus: (файлов|поведенчески)' "$T/corpus.out" | sed "s/^/$NAME: /"
+grep -E '^novac-diff-corpus: (файлов|поведенчески|цена)' "$T/corpus.out" | sed "s/^/$NAME: /"
+# Cost ratchet (P14): the corpus run's wall must stay within its budget.
+wall_ms=$(sed -n 's/^novac-diff-corpus: цена прогона.*стена \([0-9]*\)ms.*/\1/p' "$T/corpus.out")
+bud_ms=$(tr -d '\r' < "$ROOT/scripts/guards/novac-iteration-cost.baseline" 2>/dev/null | sed -n 's/^diff-corpus-ms \([0-9]*\)$/\1/p')
+if [ -n "$wall_ms" ] && [ -n "$bud_ms" ] && [ "$wall_ms" -gt "$bud_ms" ]; then
+    echo "$NAME: FAIL — ПРОСАДКА цены дифф-раннера: ${wall_ms}мс > бюджет ${bud_ms}мс (П14, novac-iteration-cost.baseline)" >&2
+    exit 1
+fi
 if [ "$cm" -lt "$base_cm" ] || [ "$bm" -lt "$base_bm" ]; then
     echo "$NAME: FAIL — ОТКАТ храповика: contract $cm (база $base_cm), behavior $bm (база $base_bm)" >&2
     exit 1
