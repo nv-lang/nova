@@ -29,7 +29,7 @@ import ../names.{NameTable, NamespaceId}
 import ../builtins.{TypeKind, builtin_types}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
-/// a SUM, not int constants (owner 2026-08-14: the language's own type
+/// a SUM, not int constants (owner_id 2026-08-14: the language's own type
 /// safety judges kind dispatch, an arbitrary int cannot leak in).
 export type DefKind enum
     | DefType
@@ -44,7 +44,7 @@ export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     c_name str /// Runtime ABI spelling for TkPrim ONLY (nova_rt.h fact); "" otherwise — mangling is a door, never a stored string.
-    row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum).
+    row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum_id).
     row_cnt int /// How many rows; 0 for primitives.
 }
 
@@ -58,7 +58,7 @@ export type Def value {
 }
 
 /// THE unified name registry: the O(1) name door and the row it answers
-/// with — one record, because they only ever travel together (owner
+/// with — one record, because they only ever travel together (owner_id
 /// 2026-08-15: a pair that always walks in pairs belongs in one record).
 export type DefTable {
     names NameTable /// name -> row in `rows` (NsDefs namespace).
@@ -77,6 +77,7 @@ export fn DefTable mut @add(name str, kind DefKind, payload int) -> () {
 }
 
 /// Row of `name`, or -1.
+#realtime nogc
 export fn DefTable @find(name str) -> int => @names.find(name)
 
 /// Type by name during COLLECTION: -1 if the name is unknown or not a
@@ -85,6 +86,7 @@ export fn DefTable @find(name str) -> int => @names.find(name)
 /// must issue a diagnostic, not die in an ICE. check is the judge (the
 /// rule "a type in type position must be declared"); sem invents
 /// nothing — it just does not register what it did not understand.
+#realtime nogc
 export fn DefTable @type_id_opt(name str) -> int {
     ro d = @names.find(name)
     if d < 0 { return -1 }
@@ -95,6 +97,7 @@ export fn DefTable @type_id_opt(name str) -> int {
 
 /// Resolve `name` in TYPE POSITION (params, fields, returns, constructor
 /// heads): ONE lookup, then the kind must be a type. NO SILENT DEFAULT.
+#realtime nogc
 export fn DefTable @type_id(name str) -> int {
     ro d = @names.find(name)
     if d < 0 { ice("sem: type name not in the registry — no silent int default (#652 class)") }
@@ -107,14 +110,14 @@ export fn DefTable @type_id(name str) -> int {
 export type FieldDef value {
     name str /// Field spelling; the backend uses it for the member name verbatim.
     type_id int /// The field's type id.
-    owner int /// Owning type id; the door takes the NAME and compares this as an integer.
-    next int /// Next row carrying the SAME field name, or -1; see FieldTable.
+    owner_id int /// Owning type id; the door takes the NAME and compares this as an integer.
+    next_row int /// Next row carrying the SAME field name, or -1; see FieldTable.
 }
 
 /// Record-field registry: fields resolve ONLY through a receiver type —
 /// never as bare names (same as Go/rustc). The door therefore takes the
 /// field name and walks a chain of same-named rows, comparing the owner as
-/// an INTEGER. The first shape built the key as text ("${owner}.${name}"),
+/// an INTEGER. The first shape built the key as text ("${owner_id}.${name}"),
 /// which allocated and formatted a string on every field access and put
 /// structure back into a string right after §4а spent a rule on "identity
 /// is not a name"; the chain does the same job with one integer compare per
@@ -129,43 +132,44 @@ export type FieldTable {
 export fn FieldTable.new() -> FieldTable =>
     { names: NameTable.new(NamespaceId.NsFields), rows: []FieldDef.new() }
 
-/// Register one field of `owner`, keeping the same-name chain linked.
-export fn FieldTable mut @add(owner int, name str, type_id int) -> () {
+/// Register one field of `owner_id`, keeping the same-name chain linked.
+export fn FieldTable mut @add(owner_id int, name str, type_id int) -> () {
     ro head = @names.find(name)
     @names.put(name, @rows.len())
-    @rows.push(FieldDef { name, type_id, owner, next: head })
+    @rows.push(FieldDef { name, type_id, owner_id, next_row: head })
 }
 
-/// Type id of `owner`.`fname` — an unknown field past check is an ice.
-export fn FieldTable @field_type(owner int, fname str) -> int {
+/// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
+#realtime nogc
+export fn FieldTable @field_type(owner_id int, fname str) -> int {
     mut r = @names.find(fname)
     while r >= 0 {
         ro fd = @rows[r]
-        if fd.owner == owner { return fd.type_id }
-        r = fd.next
+        if fd.owner_id == owner_id { return fd.type_id }
+        r = fd.next_row
     }
     ice("sem: unknown field past check (type checker is a later wave)")
 }
 
-/// One sum variant; a variant row is this record's index in Ctx.variant_rows.
+/// One sum_id variant; a variant row is this record's index in Ctx.variant_rows.
 export type VariantDef value {
-    sum int /// Owning sum's type id (backends derive the tag name from it).
+    sum_id int /// Owning sum's type id (backends derive the tag name from it).
     name str /// Variant spelling; backends derive maker names from it.
     payload_off int /// First payload row in Ctx.payload_types.
     payload_cnt int /// How many payload fields.
 }
 
 /// Type ids of the pre-seeded primitives — the rustc CommonTypes model
-/// (owner 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
+/// (owner_id 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
 /// out and everything compares against these fields).
 export type Prims value {
-    t_int int /// Type id of `int`.
-    t_str int /// Type id of `str`.
-    t_bool int /// Type id of `bool`.
-    t_f64 int /// Type id of `f64`.
+    int_id int /// Type id of `int`.
+    str_id int /// Type id of `str`.
+    bool_id int /// Type id of `bool`.
+    f64_id int /// Type id of `f64`.
 }
 
-/// How a callable lookup turned out. A sum, not an int code: "not found"
+/// How a callable lookup turned out. A sum_id, not an int code: "not found"
 /// and "overload" are different answers, and both must be representable
 /// (П13.5; a silent int default is the №652 class).
 export type FnLookup enum
@@ -179,11 +183,11 @@ export type FnLookup enum
 /// the class plan 273 §2 names: every pass then needs two cases, and the
 /// two drift.
 export type FnDef value {
-    recv int /// receiver's type id, or -1 when this callable is a free function
+    recv_id int /// receiver's type id, or -1 when this callable is a free function
     name str /// name as written in the declaration
-    ret int /// return type id; -1 = none declared (legal for main only)
+    ret_id int /// return type id; -1 = none declared (legal for main only)
     dup bool /// a second declaration with the same (recv, name) showed up — overload
-    next int /// next row carrying the SAME name, or -1; see FnTable
+    next_row int /// next row carrying the SAME name, or -1; see FnTable
 }
 
 /// THE callable registry: file functions and the method signatures READ
@@ -203,7 +207,7 @@ export type FnDef value {
 /// hold callables that literally share a name.
 export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
-    heads NameTable /// name -> FIRST row with that name; `FnDef.next` walks the rest
+    heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
 }
 
 /// An empty callable registry.
@@ -212,12 +216,13 @@ export fn FnTable.new() -> FnTable =>
 
 /// Row of this exact (receiver, name), or -1. The chain walk is the whole
 /// lookup mechanism — one place, used by add, lookup and has_name.
-export fn FnTable @row_of(recv int, name str) -> int {
+#realtime nogc
+export fn FnTable @row_of(recv_id int, name str) -> int {
     mut r = @heads.find(name)
     while r >= 0 {
         ro fd = @rows[r]
-        if fd.recv == recv { return r }
-        r = fd.next
+        if fd.recv_id == recv_id { return r }
+        r = fd.next_row
     }
     -1
 }
@@ -225,14 +230,14 @@ export fn FnTable @row_of(recv int, name str) -> int {
 /// Register one callable; a repeat (receiver, name) marks an overload —
 /// silent choosing is not allowed.
 export fn FnTable mut @add(fd FnDef) -> () {
-    ro row = @row_of(fd.recv, fd.name)
+    ro row = @row_of(fd.recv_id, fd.name)
     if row >= 0 {
-        @rows[row] = FnDef { recv: @rows[row].recv, name: @rows[row].name, ret: @rows[row].ret, dup: true, next: @rows[row].next }
+        @rows[row] = FnDef { recv_id: @rows[row].recv_id, name: @rows[row].name, ret_id: @rows[row].ret_id, dup: true, next_row: @rows[row].next_row }
         return
     }
     ro head = @heads.find(fd.name)
     @heads.put(fd.name, @rows.len())
-    @rows.push(FnDef { recv: fd.recv, name: fd.name, ret: fd.ret, dup: fd.dup, next: head })
+    @rows.push(FnDef { recv_id: fd.recv_id, name: fd.name, ret_id: fd.ret_id, dup: fd.dup, next_row: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
@@ -244,24 +249,26 @@ export fn FnTable mut @add(fd FnDef) -> () {
 /// the name is caught here; a receiver mismatch (`p.contains(..)` on a
 /// record) stays finding C9 of plan 274.3 — it closes in wave 3, when
 /// check, not the emitter, gets local typing.
+#realtime nogc
 export fn FnTable @has_name(name str) -> bool {
     mut r = @heads.find(name)
     while r >= 0 {
         ro fd = @rows[r]
-        if fd.recv >= 0 { return true }
-        r = fd.next
+        if fd.recv_id >= 0 { return true }
+        r = fd.next_row
     }
     false
 }
 
 /// The callable's return type on this receiver — or the reason for
 /// rejection. A free function asks with recv = -1, through the same door.
-export fn FnTable @lookup(recv int, name str) -> FnLookup {
-    ro row = @row_of(recv, name)
+#realtime nogc
+export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
+    ro row = @row_of(recv_id, name)
     if row < 0 { return FnLookup.FnUnknown }
     ro fd = @rows[row]
     if fd.dup { return FnLookup.FnAmbiguous }
-    FnLookup.FnFound(fd.ret)
+    FnLookup.FnFound(fd.ret_id)
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
@@ -358,7 +365,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         if pk[1].kind_of() != NodeKind.LeafNode { return }
         if defs.type_id_opt(leaf_text(pk[1])) < 0 { return }
     }
-    fns.add(FnDef { recv: recv_t, name: mname, ret: ret_t, dup: false, next: -1 })
+    fns.add(FnDef { recv_id: recv_t, name: mname, ret_id: ret_t, dup: false, next_row: -1 })
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -379,7 +386,7 @@ export fn collect_types(file Node) -> Ctx {
     for bt in builtin_types() {
         seeded.push(seed(types, defs, bt.name, bt.c_name))
     }
-    ro prims = Prims { t_int: seeded[0], t_str: seeded[1], t_bool: seeded[2], t_f64: seeded[3] }
+    ro prims = Prims { int_id: seeded[0], str_id: seeded[1], bool_id: seeded[2], f64_id: seeded[3] }
     mut fields = FieldTable.new()
     mut variant_rows = []VariantDef.new()
     mut payload_types = []int.new()
@@ -407,8 +414,8 @@ export fn collect_types(file Node) -> Ctx {
             if tkids.len() < 2 { continue }
             if tkids[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(tkids[1])
-            ro owner = defs.type_id_opt(tname)
-            if owner < 0 { continue }
+            ro owner_id = defs.type_id_opt(tname)
+            if owner_id < 0 { continue }
             ro off = fields.rows.len()
             mut cnt = 0
             for f in branch_children(c) {
@@ -417,7 +424,7 @@ export fn collect_types(file Node) -> Ctx {
                     if fk.len() > 1 && fk[0].kind_of() == NodeKind.LeafNode && fk[1].kind_of() == NodeKind.LeafNode {
                         ro ft = defs.type_id_opt(leaf_text(fk[1]))
                         if ft >= 0 {
-                            fields.add(owner, leaf_text(fk[0]), ft)
+                            fields.add(owner_id, leaf_text(fk[0]), ft)
                             cnt += 1
                         }
                     }
@@ -437,7 +444,7 @@ export fn collect_types(file Node) -> Ctx {
             for v in branch_children(c) {
                 if v.kind_of() == NodeKind.Variant {
                     ro vk = branch_children(v)
-                    // A variant with no name (recovery after a broken sum):
+                    // A variant with no name (recovery after a broken sum_id):
                     // skipped — check is the judge, sem does not fail (274.3/F-B4).
                     if vk.len() < 2 { continue }
                     if vk[1].kind_of() != NodeKind.LeafNode { continue }
@@ -448,7 +455,7 @@ export fn collect_types(file Node) -> Ctx {
                     // payload type names sit between '(' and ')'
                     mut j = 2
                     while j < vk.len() {
-                        // [LEGACY-#TBD-var-index-method] `vk[j].kind_of()`
+                        // [LEGACY-#676] var-index-method: `vk[j].kind_of()`
                         // with a VARIABLE index miscompiles in the oracle
                         // (E_RECV_METHOD_MISMATCH: receiver resolves as Vec;
                         // a constant index works). Found 2026-08-14; the
@@ -465,7 +472,7 @@ export fn collect_types(file Node) -> Ctx {
                         }
                         j += 1
                     }
-                    variant_rows.push(VariantDef { sum: sum_id, name: vname, payload_off: poff, payload_cnt: pcnt })
+                    variant_rows.push(VariantDef { sum_id, name: vname, payload_off: poff, payload_cnt: pcnt })
                     vcnt += 1
                 }
             }
@@ -488,7 +495,7 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            fns.add(FnDef { recv: -1, name: fname, ret, dup: false, next: -1 })
+            fns.add(FnDef { recv_id: -1, name: fname, ret_id: ret, dup: false, next_row: -1 })
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
@@ -538,6 +545,7 @@ export fn Scope mut @bind(name str, t int) -> () {
 }
 
 /// Type id of a bound name; an unbound name past check is an ice.
+#realtime nogc
 export fn Scope @type_of_name(name str) -> int {
     ro row = @names.find(name)
     if row < 0 { ice("sem: unbound name — resolve is check's ground, no silent int default (#652 class)") }
@@ -546,15 +554,16 @@ export fn Scope @type_of_name(name str) -> int {
 
 /// Type of an expression over the tiny registry lattice. Every kind is
 /// judged positively; the residual is an ice, never an int (#652 class).
+#realtime nogc
 export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     ro k = e.kind_of()
     if k == NodeKind.Lit {
         // A negated literal is [Minus, lit] — judge the LAST leaf.
         ro lk_kids = branch_children(e)
         ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
-        if lk == TokenKind.StrLit { return ctx.prims.t_str }
-        if lk == TokenKind.FloatLit { return ctx.prims.t_f64 }
-        if lk == TokenKind.IntLit { return ctx.prims.t_int }
+        if lk == TokenKind.StrLit { return ctx.prims.str_id }
+        if lk == TokenKind.FloatLit { return ctx.prims.f64_id }
+        if lk == TokenKind.IntLit { return ctx.prims.int_id }
         ice("sem: literal token kind without a type rule (#652 class)")
     }
     if k == NodeKind.Name { return scope.type_of_name(expr_leaf_name(e)) }
@@ -595,13 +604,13 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     if k == NodeKind.Bin {
         ro kids = branch_children(e)
         ro op = leaf_kind(kids[1])
-        if op == TokenKind.Lt || op == TokenKind.Le || op == TokenKind.Gt { return ctx.prims.t_bool }
+        if op == TokenKind.Lt || op == TokenKind.Le || op == TokenKind.Gt { return ctx.prims.bool_id }
         ro lt = type_of(kids[0], ctx, scope)
         ro rt = type_of(kids[2], ctx, scope)
-        if lt == ctx.prims.t_f64 || rt == ctx.prims.t_f64 { return ctx.prims.t_f64 }
+        if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }
         // Both sides must be PROVEN int — arithmetic on str/bool/records is
         // not a silent int (#652 class), it is an invariant break here.
-        if lt == ctx.prims.t_int && rt == ctx.prims.t_int { return ctx.prims.t_int }
+        if lt == ctx.prims.int_id && rt == ctx.prims.int_id { return ctx.prims.int_id }
         ice("sem: binary arithmetic on non-numeric operands past check (#652 class)")
     }
     if k == NodeKind.MatchExpr {
@@ -621,9 +630,9 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro d = ctx.defs.find(call_callee_text(branch_children(e)))
         if d < 0 { ice("sem: call target not in the registry — no silent int default (#652 class)") }
         ro def = ctx.defs.rows[d]
-        if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum }
+        if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
         if def.kind == DefKind.DefFn {
-            ro ret = ctx.fns.rows[def.payload].ret
+            ro ret = ctx.fns.rows[def.payload].ret_id
             if ret < 0 { ice("sem: call of a fn without a declared return type (#652 class)") }
             return ret
         }

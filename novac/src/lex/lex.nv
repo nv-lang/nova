@@ -78,7 +78,7 @@ export type Token {
     text str /// the token's own bytes — ALWAYS a slice of src (the position door depends on it; Eof carries src[n..n])
 }
 
-// [LEGACY-#TBD-char-literal-permissive] TWO oracle inconsistencies around
+// [LEGACY-#675] char-literal-permissive: TWO oracle inconsistencies around
 // char literals, both found 2026-08-14 by dogfooding: (a) the backslash
 // literal fails standalone ("expected closing ' in char literal") yet the
 // same spelling inside this file was silently accepted and MISCOMPILED;

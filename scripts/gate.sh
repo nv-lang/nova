@@ -261,6 +261,7 @@ guard "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "$ROOT" || fail "n
 guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "русский текст в .nv novac (конвенция П13: дока и сообщения по-английски)"
 guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx заведена без строки плана §10.3б (П17: одно понятие — одна таблица)"
 guard "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "$ROOT" || fail "дверь поиска novac аллоцирует: составной ключ собирается текстом на каждый поиск (П18)"
+guard "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "$ROOT" || fail "поле-ссылка novac без суффикса пространства (П19: _id / _row / _off+_cnt)"
 # П16 (владелец 2026-08-16): самотест обязан ДОКАЗАТЬ, что его страж ловит.
 # Проверка мутацией — каждый страж подменяется заглушкой exit 0, его самотест
 # обязан упасть. Держится последним в блоке: гоняет все самотесты novac разом.

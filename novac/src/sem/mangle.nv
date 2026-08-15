@@ -33,7 +33,7 @@ export fn c_type(ctx Ctx, t int) -> str {
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
-    // [LEGACY-#TBD-never-in-tail] unreachable pacifier (see emit_c history).
+    // [LEGACY-#677] never-in-tail: unreachable pacifier (see emit_c history).
     ""
 }
 
@@ -48,13 +48,13 @@ export fn c_struct(ctx Ctx, t int) -> str {
 /// (novac's own namespace for user sums — the oracle's NOVA_TAG_ is its).
 export fn c_tag(ctx Ctx, vrow int) -> str {
     ro vd = ctx.variant_rows[vrow]
-    "NOVAC_TAG_${ctx.types[vd.sum].name}_${vd.name}"
+    "NOVAC_TAG_${ctx.types[vd.sum_id].name}_${vd.name}"
 }
 
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
 export fn c_maker(ctx Ctx, vrow int) -> str {
     ro vd = ctx.variant_rows[vrow]
-    "novac_make_${ctx.types[vd.sum].name}_${vd.name}"
+    "novac_make_${ctx.types[vd.sum_id].name}_${vd.name}"
 }
 
 /// C name of a method call on a receiver type: the oracle's shape is

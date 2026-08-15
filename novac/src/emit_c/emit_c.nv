@@ -199,7 +199,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro d = @ctx.defs.find(name)
     if d < 0 { ice("emit: fn missing from the registry") }
     if @ctx.defs.rows[d].kind != DefKind.DefFn { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
-    ro ret = @ctx.fns.rows[@ctx.defs.rows[d].payload].ret // -1 for main only; check refuses it elsewhere
+    ro ret = @ctx.fns.rows[@ctx.defs.rows[d].payload].ret_id // -1 for main only; check refuses it elsewhere
     @scope = Scope.new() // every function body starts with its own locals
     mut has_expr_body = false
     if name == ENTRY_FN {
@@ -255,7 +255,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
         // Trailing safety return only for block bodies of int fns (the E1
         // shape); an expression body IS the return, and non-int returns
         // never fall through in the subset.
-        if !has_expr_body && ret == @ctx.prims.t_int { @body.append("    return (nova_int)0LL;\n") }
+        if !has_expr_body && ret == @ctx.prims.int_id { @body.append("    return (nova_int)0LL;\n") }
         @body.append("}\n")
     }
 }
@@ -326,7 +326,7 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         mut binders = []str.new()
         mut j = 2
         while j < pat.len() {
-            // [LEGACY-#TBD-var-index-method] same workaround as in
+            // [LEGACY-#676] var-index-method: same workaround as in
             // collect_types: variable-index receiver miscompiles.
             ro pj = pat[j]
             if pj.kind_of() == NodeKind.LeafNode {
@@ -453,7 +453,7 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append("; ${v} < ")
         @emit_expr(range[2])
         @body.append("; ${v}++) {\n")
-        @scope.bind(v, @ctx.prims.t_int)
+        @scope.bind(v, @ctx.prims.int_id)
         @emit_block_stmts_fn(kids[4], false)
         @body.append("    }\n")
     } else if is_expr_kind(k) {
@@ -621,7 +621,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
         ro op = leaf_kind(kids[1])
-        if type_of(e, @ctx, @scope) == @ctx.prims.t_f64 && raw_op(op) != "" {
+        if type_of(e, @ctx, @scope) == @ctx.prims.f64_id && raw_op(op) != "" {
             // f64 arithmetic is RAW C with left-assoc parens — the oracle's
             // shape: ((((nova_f64)3.14) * r) * r). Never checked_*.
             @body.append("(")
@@ -677,11 +677,11 @@ fn Emitter mut @emit_println(call Node) -> () {
             // Dispatch on the registry — the oracle prints each argument
             // with its own printer, newline once at the end.
             ro at = type_of(c, @ctx, @scope)
-            if at == @ctx.prims.t_str {
+            if at == @ctx.prims.str_id {
                 @body.append("    nova_print_str(")
-            } else if at == @ctx.prims.t_bool {
+            } else if at == @ctx.prims.bool_id {
                 @body.append("    nova_print_bool(")
-            } else if at == @ctx.prims.t_f64 {
+            } else if at == @ctx.prims.f64_id {
                 @body.append("    nova_print_f64(")
             } else {
                 @body.append("    nova_print_int(")

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// novac/src/pipeline — the ONE owner of pass order (architecture §2).
+// novac/src/pipeline — the ONE owner_id of pass order (architecture §2).
 //
 // Nobody else strings phases together: the CLI, the future LSP and the tests
 // call compile() and never name a phase. This module existing is not

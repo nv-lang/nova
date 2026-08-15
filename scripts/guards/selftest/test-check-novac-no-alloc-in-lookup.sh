@@ -25,6 +25,7 @@ mk g1 <<'EOF'
 module novac.sem
 
 /// Row of this exact pair, or -1.
+#realtime nogc
 export fn FnTable @row_of(recv int, name str) -> int {
     mut r = @heads.find(name)
     while r >= 0 {
@@ -117,6 +118,7 @@ mk g7 <<'EOF'
 module novac.sem
 
 /// Lookup that reports an invariant break.
+#realtime nogc
 export fn T @lookup(name str) -> int {
     ro r = @names.find(name)
     if r < 0 { ice("sem: unknown name ${name} past check") }
@@ -133,6 +135,7 @@ module novac.sem
 
 /// The first shape built the key as text ("${recv}.${name}") and allocated
 /// on every lookup; the chain replaced it.
+#realtime nogc
 export fn FnTable @row_of(recv int, name str) -> int {
     // was: ro key = "${recv}.${name}" — snyato
     mut r = @heads.find(name)
@@ -172,6 +175,24 @@ export fn FnTable mut @add(fd FnDef) -> () {
 }
 EOF
 run "$T/g8v" && bad "метод таблицы с интерполяцией прошёл (спрятался за append)" || ok "метод таблицы судится всегда, даже если пишет"
+
+# --- 8г. Дверь БЕЗ пометки `#realtime nogc` — красная: без неё компилятор
+# не проверяет её на аллокацию, и вторая сеть исчезает молча.
+mk g8g <<'EOF'
+module novac.sem
+
+/// Row of this exact pair, or -1.
+export fn FnTable @row_of(recv int, name str) -> int {
+    mut r = @heads.find(name)
+    while r >= 0 { r = @rows[r].next }
+    -1
+}
+EOF
+if run "$T/g8g"; then
+    bad "дверь без #realtime nogc прошла — вторую сеть можно снять молча"
+else
+    grep -q "без пометки" "$T/err" && ok "дверь без пометки поймана" || bad "красный, но не про пометку"
+fi
 
 # --- 9. тесты исключены ---------------------------------------------------
 mkdir -p "$T/g9/sem"

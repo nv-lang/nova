@@ -42,4 +42,5 @@ export fn NameTable mut @put(name str, id int) -> () {
 }
 
 /// -1 = absent. O(1) — the whole point of the door.
+#realtime nogc
 export fn NameTable @find(name str) -> int => @map.get(name) ?? -1
