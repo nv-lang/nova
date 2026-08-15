@@ -24,15 +24,36 @@ import ../sem.{Ctx}
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
 /// no Result (274 §4 п.1).
+/// Состояние одного прогона проверки: исходник (для позиций), собранные
+/// диагностики и семантический контекст. Ресивер, а не тройка параметров у
+/// каждой функции — форма всех эталонов (Go `*Checker`, Roslyn `Binder`,
+/// rustc `FnCtxt`, Zig `*Sema`).
+///
+/// ПОЧЕМУ НЕ ЭФФЕКТ (вопрос владельца 2026-08-16). Эффекты Nova моделируют
+/// СПОСОБНОСТИ и управление — `Fs`, `Os`, `Fail`, `Supervisor`; контекст
+/// компиляции — чистые данные. Амбиентный контекст (а) прячет поток данных,
+/// на видимости которого стоит карта §3/§4 («что течёт по ребру» — под
+/// стражем), (б) платит TLS-vtable за каждое чтение в горячем цикле
+/// `type_of` при П14 «скорость — приоритет №1», (в) расходится с эталонами:
+/// rustc держит `TyCtxt` явным, а амбиентный `ty::tls` оставляет только для
+/// диагностик и отладки.
+type Checker {
+    src SourceText /// текст файла: единственный источник позиций
+    ctx Ctx /// реестр типов и таблица методов, прочитанная из деклараций
+    out []Diagnostic /// накопленные диагностики этого прогона
+}
+
+/// Check a parsed file against the subset. Always returns the full list;
+/// no Result (274 §4 п.1).
 export fn check(file Node, src SourceText, ctx Ctx) -> []Diagnostic {
-    mut out = []Diagnostic.new()
-    walk(file, src, out, ctx)
-    out
+    mut c = Checker { src, ctx, out: []Diagnostic.new() }
+    c.walk(file)
+    c.out
 }
 
 /// Walk the whole tree and collect subset diagnostics.
-fn walk(n Node, src SourceText, mut out []Diagnostic, ctx Ctx) -> () {
-    walk_in(n, src, out, false, ctx)
+fn Checker mut @walk(n Node) -> () {
+    @walk_in(n, false)
 }
 
 /// init_pos: record constructors and match expressions are subset forms ONLY
@@ -40,20 +61,20 @@ fn walk(n Node, src SourceText, mut out []Diagnostic, ctx Ctx) -> () {
 /// an expression-bodied fn. The emitter's tmp-schemes have exactly those
 /// shapes; anywhere else (argument, nested field value, condition, arm) the
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later.
-fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool, ctx Ctx) -> () {
+fn Checker mut @walk_in(n Node, init_pos bool) -> () {
     match n {
-        Leaf(t) => report_if_error_token(t, src, out)
+        Leaf(t) => @report_if_error_token(t)
         Branch { kind, children } => {
             if kind == NodeKind.Err {
-                report_err_branch(children, src, out)
+                @report_err_branch(children)
                 return
             }
-            if kind == NodeKind.MethodCall { report_if_unknown_method(children, src, out, ctx) }
-            if kind == NodeKind.FnDecl { report_if_missing_ret(children, src, out) }
-            if kind == NodeKind.Field { report_if_missing_type(children, src, out, "outside the E1 subset: field must declare a type") }
-            if kind == NodeKind.Param { report_if_missing_type(children, src, out, "outside the E1 subset: parameter must declare a type") }
+            if kind == NodeKind.MethodCall { @report_if_unknown_method(children) }
+            if kind == NodeKind.FnDecl { @report_if_missing_ret(children) }
+            if kind == NodeKind.Field { @report_if_missing_type(children, "outside the E1 subset: field must declare a type") }
+            if kind == NodeKind.Param { @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type") }
             if kind == NodeKind.RecordCtor && !init_pos {
-                report_first_leaf_of(children, src, out, "outside the E1 subset: record constructor only as a binding initializer")
+                @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer")
                 return
             }
             if kind == NodeKind.ArrayLit {
@@ -62,23 +83,23 @@ fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool, ctx Ctx)
                 // half-capability (novac 'knows' []int, silently not []str).
                 // Arrays return with generics through `mono` (E2-b); until
                 // then this is an honest subset refusal, not a fake take.
-                report_first_leaf_of(children, src, out, "outside the subset: arrays arrive with generics (E2-b), not as one hard-coded instance")
+                @report_first_leaf_of(children, "outside the subset: arrays arrive with generics (E2-b), not as one hard-coded instance")
                 return
             }
             if kind == NodeKind.MatchExpr && !init_pos {
-                report_first_leaf_of(children, src, out, "outside the E1 subset: match only as a binding initializer or an expression fn body")
+                @report_first_leaf_of(children, "outside the E1 subset: match only as a binding initializer or an expression fn body")
                 return
             }
             if kind == NodeKind.BindStmt || kind == NodeKind.FnExprBody {
                 mut i = 0
                 for c in children {
-                    walk_in(c, src, out, i == children.len() - 1, ctx)
+                    @walk_in(c, i == children.len() - 1)
                     i += 1
                 }
                 return
             }
             for c in children {
-                walk_in(c, src, out, false, ctx)
+                @walk_in(c, false)
             }
         }
     }
@@ -90,18 +111,18 @@ fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool, ctx Ctx)
 // is the second floor, never the first answer.
 
 /// [name, type-ident, ...] — the second child must be an Ident leaf.
-fn report_if_missing_type(kids []Node, src SourceText, mut out []Diagnostic, msg str) -> () {
+fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     if kids.len() >= 2 {
         match kids[1] {
             Leaf(t) => { if t.kind == TokenKind.Ident { return } }
             Branch { .. } => {}
         }
     }
-    report_first_leaf_of(kids, src, out, msg)
+    @report_first_leaf_of(kids, msg)
 }
 
 /// Every fn except main must declare `-> T` in the subset.
-fn report_if_missing_ret(kids []Node, src SourceText, mut out []Diagnostic) -> () {
+fn Checker mut @report_if_missing_ret(kids []Node) -> () {
     if kids.len() < 2 { return }
     match kids[1] {
         Leaf(t) => {
@@ -112,8 +133,8 @@ fn report_if_missing_ret(kids []Node, src SourceText, mut out []Diagnostic) -> (
                     Branch { kind, .. } => { if kind == NodeKind.RetType { return } }
                 }
             }
-            ro lo = src.offset_of(t.text)
-            out.push(Diagnostic {
+            ro lo = @src.offset_of(t.text)
+            @out.push(Diagnostic {
                 code: "E_NOVAC_SUBSET",
                 severity: Severity.ErrorSev,
                 lo,
@@ -126,12 +147,12 @@ fn report_if_missing_ret(kids []Node, src SourceText, mut out []Diagnostic) -> (
 }
 
 /// Report `msg` at the first leaf found under `children` (depth-first).
-fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, msg str) -> () {
+fn Checker mut @report_first_leaf_of(children []Node, msg str) -> () {
     for c in children {
         match c {
             Leaf(t) => {
-                ro lo = src.offset_of(t.text)
-                out.push(Diagnostic {
+                ro lo = @src.offset_of(t.text)
+                @out.push(Diagnostic {
                     code: "E_NOVAC_SUBSET",
                     severity: Severity.ErrorSev,
                     lo,
@@ -141,9 +162,9 @@ fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, m
                 return
             }
             Branch { children: inner, .. } => {
-                ro before = out.len()
-                report_first_leaf_of(inner, src, out, msg)
-                if out.len() > before { return }
+                ro before = @out.len()
+                @report_first_leaf_of(inner, msg)
+                if @out.len() > before { return }
             }
         }
     }
@@ -154,7 +175,7 @@ fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, m
 /// E_NOVAC_SUBSET at the method name, not an emitter ice later. (The
 /// receiver's TYPE is not judged here — the type checker is a later wave;
 /// the named risk lives in the divergence registry next to #652.)
-fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic, ctx Ctx) -> () {
+fn Checker mut @report_if_unknown_method(kids []Node) -> () {
     if kids.len() < 3 { return }
     match kids[2] {
         Leaf(t) => {
@@ -162,9 +183,9 @@ fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic, c
             // имён std компилятор не знает). На этом этапе локалов ещё нет,
             // поэтому тип ресивера неизвестен и судится существование имени;
             // точная пара (тип ресивера, имя) — находка C9 плана 274.3, волна 3.
-            if !ctx.methods.has_name(t.text) {
-                ro lo = src.offset_of(t.text)
-                out.push(Diagnostic {
+            if !@ctx.methods.has_name(t.text) {
+                ro lo = @src.offset_of(t.text)
+                @out.push(Diagnostic {
                     code: "E_NOVAC_SUBSET",
                     severity: Severity.ErrorSev,
                     lo,
@@ -178,10 +199,10 @@ fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic, c
 }
 
 /// An ErrorTok leaf is a lexer refusal: report it at its position.
-fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
+fn Checker mut @report_if_error_token(t Token) -> () {
     if t.kind == TokenKind.ErrorTok {
-        ro lo = src.offset_of(t.text)
-        out.push(Diagnostic {
+        ro lo = @src.offset_of(t.text)
+        @out.push(Diagnostic {
             code: "E_NOVAC_SUBSET",
             severity: Severity.ErrorSev,
             lo,
@@ -192,18 +213,18 @@ fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
 }
 
 /// An Err branch is ONE recovered mistake: one diagnostic at its first leaf.
-fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> () {
+fn Checker mut @report_err_branch(children []Node) -> () {
     // One Err branch — one diagnostic, at its FIRST leaf. The leaf can nest:
     // parse wraps a stray non-header module declaration as a whole ModuleDecl
     // branch inside Err (fuzzer catch 2026-08-14); the old flat scan found no
     // direct leaf there and reported NOTHING — a silent pass on a broken file.
-    ro before = out.len()
+    ro before = @out.len()
     for c in children {
-        if out.len() > before { return } // the one diagnostic is out already
+        if @out.len() > before { return } // the one diagnostic is out already
         match c {
             Leaf(t) => {
-                ro lo = src.offset_of(t.text)
-                out.push(Diagnostic {
+                ro lo = @src.offset_of(t.text)
+                @out.push(Diagnostic {
                     code: "E_NOVAC_SUBSET",
                     severity: Severity.ErrorSev,
                     lo,
@@ -212,7 +233,7 @@ fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> (
                 })
                 return
             }
-            Branch { children: inner, .. } => report_err_branch(inner, src, out)
+            Branch { children: inner, .. } => @report_err_branch(inner)
         }
     }
 }
