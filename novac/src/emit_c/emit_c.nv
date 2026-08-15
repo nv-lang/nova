@@ -199,7 +199,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro d = @ctx.defs.find(name)
     if d < 0 { ice("emit: fn missing from the registry") }
     if @ctx.defs.rows[d].kind != DefKind.DefFn { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
-    ro ret = @ctx.fn_rets[@ctx.defs.rows[d].payload] // -1 for main only; check refuses it elsewhere
+    ro ret = @ctx.fns.rows[@ctx.defs.rows[d].payload].ret // -1 for main only; check refuses it elsewhere
     @scope = Scope.new() // every function body starts with its own locals
     mut has_expr_body = false
     if name == ENTRY_FN {

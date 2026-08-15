@@ -22,7 +22,7 @@ module novac.names
 export type NamespaceId enum
     | NsDefs
     | NsFields
-    | NsMethods
+    | NsCallables
     | NsLocals
 
 /// The ONE str -> id door: O(1) map per namespace; every other novac table

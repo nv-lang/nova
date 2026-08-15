@@ -52,7 +52,7 @@ export type TypeDef value {
 export type Def value {
     kind DefKind /// What this name is — drives the payload's meaning.
     /// DefType: a type id · DefVariant: a Ctx.variant_rows ROW · DefFn: a
-    /// Ctx.fn_rets ROW. Named payload, not id: two of the three are plain
+    /// Ctx.fns ROW. Named payload, not id: two of the three are plain
     /// row indexes (owner's id-vs-idx question 2026-08-15).
     payload int
 }
@@ -152,68 +152,74 @@ export type Prims value {
     t_f64 int /// Type id of `f64`.
 }
 
-/// How a method lookup in the READ std declarations turned out.
-/// A sum, not an int code: "not found" and "overload" are different
-/// answers, and both must be representable (П13.5; a silent int
-/// default is the №652 class).
-export type MethodLookup enum
-    | MethodFound(int)
-    | MethodUnknown
-    | MethodAmbiguous
+/// How a callable lookup turned out. A sum, not an int code: "not found"
+/// and "overload" are different answers, and both must be representable
+/// (П13.5; a silent int default is the №652 class).
+export type FnLookup enum
+    | FnFound(int)
+    | FnUnknown
+    | FnAmbiguous
 
-/// One method signature, read from the declaration `fn <Recv> @<name>(...) -> R`.
-export type MethodDef value {
-    recv int /// receiver's type id
-    name str /// method name as written in the declaration
-    ret int /// return type id
+/// One callable — plan 273 form: a method IS a function whose first
+/// parameter is the receiver, so there is ONE row shape for both. A free
+/// function simply carries no receiver. Keeping two shapes is the root of
+/// the class plan 273 §2 names: every pass then needs two cases, and the
+/// two drift.
+export type FnDef value {
+    recv int /// receiver's type id, or -1 when this callable is a free function
+    name str /// name as written in the declaration
+    ret int /// return type id; -1 = none declared (legal for main only)
     dup bool /// a second declaration with the same (recv, name) showed up — overload
 }
 
-/// The subset method table. Filled ONLY by reading declarations
-/// (П5: std names are data, not compiler knowledge); the key is
-/// (receiver type, name), so `p.contains(..)` on a record does not
-/// resolve to the str method.
-export type MethodTable {
-    names NameTable /// "recvId.name" -> row in rows (the NsMethods namespace)
-    bare NameTable /// "name" -> 1: does a method with this name exist for ANYONE at all
-    rows []MethodDef /// signatures read so far
+/// THE callable registry: file functions and the method signatures READ
+/// from std declarations live in the SAME rows (П5: std names are data,
+/// not compiler knowledge). Two doors open onto those rows — they are
+/// indexes, not registries: `by_key` answers the exact (receiver, name),
+/// `by_name` answers the weaker "does SOME receiver carry this name".
+export type FnTable {
+    rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
+    by_key NameTable /// "<recv>.<name>" -> row (recv is -1 for a free function)
+    by_name NameTable /// "<name>" -> 1, for RECEIVER-carrying rows only; see @has_name
 }
 
-/// An empty method table.
-export fn MethodTable.new() -> MethodTable =>
-    { names: NameTable.new(NamespaceId.NsMethods), bare: NameTable.new(NamespaceId.NsMethods), rows: []MethodDef.new() }
+/// An empty callable registry.
+export fn FnTable.new() -> FnTable =>
+    { rows: []FnDef.new(), by_key: NameTable.new(NamespaceId.NsCallables), by_name: NameTable.new(NamespaceId.NsCallables) }
 
-/// Register a signature that was read; a repeat (recv, name) marks
-/// an overload — silent choosing is not allowed.
-export fn MethodTable mut @add(md MethodDef) -> () {
-    ro key = "${md.recv}.${md.name}"
-    ro row = @names.find(key)
+/// Register one callable; a repeat (receiver, name) marks an overload —
+/// silent choosing is not allowed.
+export fn FnTable mut @add(fd FnDef) -> () {
+    ro key = "${fd.recv}.${fd.name}"
+    ro row = @by_key.find(key)
     if row >= 0 {
-        @rows[row] = MethodDef { recv: @rows[row].recv, name: @rows[row].name, ret: @rows[row].ret, dup: true }
+        @rows[row] = FnDef { recv: @rows[row].recv, name: @rows[row].name, ret: @rows[row].ret, dup: true }
         return
     }
-    @names.put(key, @rows.len())
-    @bare.put(md.name, 1)
-    @rows.push(md)
+    @by_key.put(key, @rows.len())
+    if fd.recv >= 0 { @by_name.put(fd.name, 1) }
+    @rows.push(fd)
 }
 
-/// Whether a method with this name exists for SOME receiver at all,
-/// among the read declarations. Weaker than the exact (receiver,
-/// name) and used exactly where the exact answer is impossible:
-/// `check` walks the tree without locals, so it does not yet know the
-/// receiver's type. A typo in the name is caught here; a receiver
-/// mismatch (`p.contains(..)` on a record) stays finding C9 of plan
-/// 274.3 — it closes in wave 3, when check, not the emitter, gets
-/// local typing.
-export fn MethodTable @has_name(name str) -> bool => @bare.find(name) >= 0
+/// Whether a callable with this name exists for SOME receiver at all.
+/// Free functions are deliberately NOT in this door: it answers a question
+/// about METHOD names, and `foo()` being declared says nothing about
+/// `x.foo()` being legal. Weaker than the exact (receiver, name) and used
+/// exactly where the exact answer is impossible: `check` walks the tree
+/// without locals, so it does not yet know the receiver's type. A typo in
+/// the name is caught here; a receiver mismatch (`p.contains(..)` on a
+/// record) stays finding C9 of plan 274.3 — it closes in wave 3, when
+/// check, not the emitter, gets local typing.
+export fn FnTable @has_name(name str) -> bool => @by_name.find(name) >= 0
 
-/// The method's return type on the receiver — or the reason for rejection.
-export fn MethodTable @lookup(recv int, name str) -> MethodLookup {
-    ro row = @names.find("${recv}.${name}")
-    if row < 0 { return MethodLookup.MethodUnknown }
-    ro md = @rows[row]
-    if md.dup { return MethodLookup.MethodAmbiguous }
-    MethodLookup.MethodFound(md.ret)
+/// The callable's return type on this receiver — or the reason for
+/// rejection. A free function asks with recv = -1, the same door.
+export fn FnTable @lookup(recv int, name str) -> FnLookup {
+    ro row = @by_key.find("${recv}.${name}")
+    if row < 0 { return FnLookup.FnUnknown }
+    ro fd = @rows[row]
+    if fd.dup { return FnLookup.FnAmbiguous }
+    FnLookup.FnFound(fd.ret)
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
@@ -226,8 +232,7 @@ export type Ctx {
     fields FieldTable /// Record fields, addressed through the owner type.
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
     payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
-    fn_rets []int /// fn ROW -> return type id (-1 = none declared, main only).
-    methods MethodTable /// method signatures, READ from std declarations (П5)
+    fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -247,9 +252,9 @@ fn seed(mut types []TypeDef, mut defs DefTable, name str, c_name str) -> int {
 /// does not become a subset method and gets an honest rejection at the
 /// point of use. Overloads (two signatures for one (receiver, name))
 /// are marked and also rejected — silent choosing is not allowed.
-fn harvest_methods(decls []Node, defs DefTable, mut methods MethodTable) -> () {
+fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable) -> () {
     for d in decls {
-        harvest_in(d, defs, methods)
+        harvest_in(d, defs, fns)
     }
 }
 
@@ -259,16 +264,16 @@ fn harvest_methods(decls []Node, defs DefTable, mut methods MethodTable) -> () {
 /// tail of the file). Until recovery is fixed in wave 2, signature
 /// collection must not depend on it: a declaration is found wherever
 /// it ended up.
-fn harvest_in(n Node, defs DefTable, mut methods MethodTable) -> () {
+fn harvest_in(n Node, defs DefTable, mut fns FnTable) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children } => {
             if kind == NodeKind.FnDecl {
-                harvest_fn(children, defs, methods)
+                harvest_fn(children, defs, fns)
                 return
             }
             for c in children {
-                harvest_in(c, defs, methods)
+                harvest_in(c, defs, fns)
             }
         }
     }
@@ -278,7 +283,7 @@ fn harvest_in(n Node, defs DefTable, mut methods MethodTable) -> () {
 /// the receiver AND the return are already known to the registry —
 /// otherwise the method does not enter the subset and gets an
 /// honest rejection at the point of use.
-fn harvest_fn(kids []Node, defs DefTable, mut methods MethodTable) -> () {
+fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     mut recv_name = ""
     mut mname = ""
     mut ret_name = ""
@@ -311,13 +316,13 @@ fn harvest_fn(kids []Node, defs DefTable, mut methods MethodTable) -> () {
         if pk[1].kind_of() != NodeKind.LeafNode { return }
         if defs.type_id_opt(leaf_text(pk[1])) < 0 { return }
     }
-    methods.add(MethodDef { recv: recv_t, name: mname, ret: ret_t, dup: false })
+    fns.add(FnDef { recv: recv_t, name: mname, ret: ret_t, dup: false })
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
 export fn collect(file Node, decls []Node) -> Ctx {
     mut ctx = collect_types(file)
-    harvest_methods(decls, ctx.defs, ctx.methods)
+    harvest_methods(decls, ctx.defs, ctx.fns)
     ctx
 }
 
@@ -336,7 +341,7 @@ export fn collect_types(file Node) -> Ctx {
     mut fields = FieldTable.new()
     mut variant_rows = []VariantDef.new()
     mut payload_types = []int.new()
-    mut fn_rets = []int.new()
+    mut fns = FnTable.new()
     // First pass: register every type NAME (id = order of appearance after
     // the primitives), so later rows can reference any type of the file
     // regardless of declaration order. TypeDef records are BUILT on the
@@ -428,7 +433,6 @@ export fn collect_types(file Node) -> Ctx {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }
             if fk[1].kind_of() != NodeKind.LeafNode { continue }
-            defs.add(leaf_text(fk[1]), DefKind.DefFn, fn_rets.len())
             // -1 sentinel = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on -1 as the second
             // floor — never a silent int (#652 class).
@@ -439,10 +443,14 @@ export fn collect_types(file Node) -> Ctx {
                     if rk.len() > 1 && rk[1].kind_of() == NodeKind.LeafNode { ret = defs.type_id_opt(leaf_text(rk[1])) }
                 }
             }
-            fn_rets.push(ret)
+            // A file function is a callable with no receiver (plan 273):
+            // same row shape as a read method signature, same table.
+            ro fname = leaf_text(fk[1])
+            fns.add(FnDef { recv: -1, name: fname, ret, dup: false })
+            defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
-    Ctx { types, prims, defs, fields, variant_rows, payload_types, fn_rets, methods: MethodTable.new() }
+    Ctx { types, prims, defs, fields, variant_rows, payload_types, fns }
 }
 
 /// Children of a branch node; a leaf here is an invariant break.
@@ -517,10 +525,10 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // what check has already accepted reaches here, so a rejection
         // here is an ice (a poisoning-discipline violation).
         ro recv_t = type_of(kids[0], ctx, scope)
-        match ctx.methods.lookup(recv_t, mname) {
-            MethodFound(r) => { return r }
-            MethodUnknown => { ice("sem: method not in the read declarations past check") }
-            MethodAmbiguous => { ice("sem: overloaded method past check") }
+        match ctx.fns.lookup(recv_t, mname) {
+            FnFound(r) => { return r }
+            FnUnknown => { ice("sem: method not in the read declarations past check") }
+            FnAmbiguous => { ice("sem: overloaded method past check") }
         }
     }
     if k == NodeKind.FieldAccess {
@@ -573,7 +581,7 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro def = ctx.defs.rows[d]
         if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum }
         if def.kind == DefKind.DefFn {
-            ro ret = ctx.fn_rets[def.payload]
+            ro ret = ctx.fns.rows[def.payload].ret
             if ret < 0 { ice("sem: call of a fn without a declared return type (#652 class)") }
             return ret
         }

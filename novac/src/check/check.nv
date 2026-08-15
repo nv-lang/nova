@@ -184,7 +184,7 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // no locals yet, so the receiver's type is unknown and only
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
-            if !@ctx.methods.has_name(t.text) {
+            if !@ctx.fns.has_name(t.text) {
                 ro lo = @src.offset_of(t.text)
                 @out.push(Diagnostic {
                     code: "E_NOVAC_SUBSET",

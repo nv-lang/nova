@@ -14,11 +14,20 @@
 
 module novac.pipeline
 
-// Subset tests do not read declarations: std signatures come through
-// the door (`--std`), and here it is the pipeline itself being judged.
-// The helper keeps this in ONE place — otherwise every check would
-// carry an empty list by hand.
-fn n_diags(text str) -> int => compile(text, []str.new()).len()
+// The std signatures these tests need, handed in the way the driver hands
+// them: as TEXT through the one door. Inline and tiny on purpose — the
+// tests stay hermetic (no filesystem, no path, no --std) and still exercise
+// the real declaration-reading path instead of a special case.
+//
+// History (2026-08-15): this used to hand an EMPTY list, which was right
+// while methods were a hardcoded table and wrong the moment they became
+// read data. The strings test went red and stayed red unnoticed, because
+// the module tests were blocked by an unrelated oracle regression at the
+// time. Handing the signatures is the honest fix; weakening the assert
+// would have hidden the same hole.
+fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_ascii_upper() -> str => \"\"\nfn str @starts_with(needle str) -> bool => true\n")
+
+fn n_diags(text str) -> int => compile(text, std_decls()).len()
 
 test "no cascade: a run of top-level junk is one cause, one diagnostic" {
     // E1 review p.1 (2026-08-14): this used to be THREE diagnostics.
