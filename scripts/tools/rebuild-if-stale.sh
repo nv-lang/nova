@@ -33,6 +33,16 @@ cd "$ROOT" || exit 1
 BIN="$ROOT/nova-cli/target/release/nova.exe"
 [ -f "$BIN" ] || BIN="$ROOT/nova-cli/target/release/nova"
 
+# LSP собран из ТОГО ЖЕ crate compiler-codegen, но живёт отдельной сборкой и
+# пересобирается только руками. Гейт обновляет nova.exe, LSP не обновляет
+# никто — и он молча подаёт в редактор диагностику недельной давности.
+# Замер 2026-08-16: бинарь от 2026-08-09 краснил `field T /// doc` (D104
+# rev-2, слит 2026-08-15 13:54) на коде, который `nova check` принимает.
+# Расширение ищет его как `<workspace>/target/release/nova-lsp[.exe]`.
+LSP_BIN="$ROOT/target/release/nova-lsp.exe"
+[ -f "$LSP_BIN" ] || LSP_BIN="$ROOT/target/release/nova-lsp"
+[ -f "$LSP_BIN" ] || LSP_BIN="$ROOT/nova-lsp/target/release/nova-lsp.exe"
+
 MODE=run
 SINCE=""
 while [ $# -gt 0 ]; do
@@ -55,7 +65,7 @@ else
     # Сверяем НЕ с HEAD, а с последним коммитом, ЗАТРОНУВШИМ компилятор:
     # иначе всякая правка планов и доков объявляла бы бинарь устаревшим, и
     # пересборка шла бы впустую — а лишняя цена дисциплины ведёт к её обходу.
-    H_TS=$(git log -1 --format=%ct HEAD -- compiler-codegen nova-cli 2>/dev/null)
+    H_TS=$(git log -1 --format=%ct HEAD -- compiler-codegen nova-cli nova-lsp 2>/dev/null)
     if [ -n "${B_TS:-}" ] && [ -n "${H_TS:-}" ] && [ "$B_TS" -lt "$H_TS" ]; then
         stale_reason="бинарь ($(date -d "@$B_TS" '+%F %T' 2>/dev/null)) старше последней правки компилятора ($(date -d "@$H_TS" '+%F %T' 2>/dev/null))"
     fi
@@ -65,15 +75,29 @@ fi
 touched=1
 if [ -n "$SINCE" ]; then
     if git diff --name-only "$SINCE" HEAD 2>/dev/null \
-       | grep -qE '^(compiler-codegen|nova-cli)/'; then
+       | grep -qE '^(compiler-codegen|nova-cli|nova-lsp)/'; then
         touched=1
     else
         touched=0
     fi
 fi
 
-if [ -z "$stale_reason" ]; then
-    echo "rebuild-if-stale: бинарь свежий — пересборка не нужна"
+# Протухший LSP — ОТДЕЛЬНЫЙ вердикт, а не часть первого: у бинарей разные
+# сроки жизни, и молчание про LSP при свежем nova.exe — ровно тот случай,
+# который и наблюдался.
+lsp_reason=""
+if [ ! -f "$LSP_BIN" ]; then
+    lsp_reason="бинаря LSP нет ($LSP_BIN)"
+else
+    L_TS=$(stat -c %Y "$LSP_BIN" 2>/dev/null)
+    HL_TS=$(git log -1 --format=%ct HEAD -- compiler-codegen nova-lsp 2>/dev/null)
+    if [ -n "${L_TS:-}" ] && [ -n "${HL_TS:-}" ] && [ "$L_TS" -lt "$HL_TS" ]; then
+        lsp_reason="бинарь LSP ($(date -d "@$L_TS" '+%F %T' 2>/dev/null)) старше последней правки компилятора ($(date -d "@$HL_TS" '+%F %T' 2>/dev/null)) — редактор краснит на верном коде"
+    fi
+fi
+
+if [ -z "$stale_reason" ] && [ -z "$lsp_reason" ]; then
+    echo "rebuild-if-stale: оба бинаря свежие (nova, nova-lsp) — пересборка не нужна"
     exit 0
 fi
 
@@ -83,7 +107,8 @@ if [ "$touched" -eq 0 ]; then
 fi
 
 if [ "$MODE" = check ]; then
-    echo "rebuild-if-stale: УСТАРЕЛ — $stale_reason" >&2
+    [ -n "$stale_reason" ] && echo "rebuild-if-stale: УСТАРЕЛ — $stale_reason" >&2
+    [ -n "$lsp_reason" ]   && echo "rebuild-if-stale: УСТАРЕЛ LSP — $lsp_reason" >&2
     exit 1
 fi
 
@@ -100,7 +125,7 @@ echo "rebuild-if-stale: $stale_reason — пересобираю"
 # ровно то, на чём этот дефект и вскрылся.
 if [ -f "$BIN" ]; then
     NEW_TS=$(stat -c %Y "$BIN" 2>/dev/null)
-    H_TS=$(git log -1 --format=%ct HEAD -- compiler-codegen nova-cli 2>/dev/null)
+    H_TS=$(git log -1 --format=%ct HEAD -- compiler-codegen nova-cli nova-lsp 2>/dev/null)
     if [ -n "${NEW_TS:-}" ] && [ -n "${H_TS:-}" ] && [ "$NEW_TS" -lt "$H_TS" ]; then
         echo "rebuild-if-stale: сборка отчиталась успехом, но бинарь НЕ обновился" >&2
         exit 1
