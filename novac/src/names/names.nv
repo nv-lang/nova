@@ -31,9 +31,11 @@ export type NameTable {
     map HashMap[str, int] // the NamespaceId key component is @ns, one field up
 }
 
+/// Empty table for one namespace.
 export fn NameTable.new(ns NamespaceId) -> NameTable =>
     { ns, map: HashMap[str, int].new() } // ns is the NamespaceId key component
 
+/// Bind name -> id (a later put overwrites: shadowing).
 export fn NameTable mut @put(name str, id int) -> () {
     @map.insert(name, id)
 }

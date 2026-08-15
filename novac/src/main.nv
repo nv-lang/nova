@@ -22,6 +22,7 @@ import ./diag.{to_json}
 import std.fs.{read, real_fs}
 import std.os.{args, exit_process, real_os}
 
+/// Emit C for one file: print diagnostics (exit 1) or the C text (exit 0).
 fn emit_one(text str, file str) -> int {
     ro (diags, c_text) = compile_to_c(text)
     if diags.len() > 0 {
@@ -36,6 +37,7 @@ fn emit_one(text str, file str) -> int {
     0
 }
 
+/// Check one file: print §7 diagnostics one per line; exit 0 clean / 1 diagnostics.
 fn compile_one(text str, file str) -> int {
     ro diags = compile(text)
     mut i = 0
@@ -46,6 +48,7 @@ fn compile_one(text str, file str) -> int {
     if diags.len() > 0 { 1 } else { 0 }
 }
 
+/// CLI entry: `novac check|emit <file.nv>`; effects are handled here only.
 fn main() {
     with Fs = real_fs(), Os = real_os() {
         ro a = args()

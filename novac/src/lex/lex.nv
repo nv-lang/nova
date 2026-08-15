@@ -47,6 +47,8 @@ export type TokenKind enum
     | RParen
     | LBrace
     | RBrace
+    | LBracket
+    | RBracket
     | Dot
     | Comma
     | Plus
@@ -98,15 +100,20 @@ const B_BACKSLASH u8 = 0x5C
 const B_UTF8_TAIL_LO u8 = 0x80
 const B_UTF8_TAIL_HI u8 = 0xBF
 
+/// Whitespace byte: space, tab, CR, LF.
 fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
 
+/// ASCII digit byte.
 fn is_digit(b u8) -> bool => b >= ('0' as u8) && b <= ('9' as u8)
 
+/// Byte that may start an identifier: ASCII letter or underscore.
 fn is_ident_start(b u8) -> bool =>
     (b >= ('a' as u8) && b <= ('z' as u8)) || (b >= ('A' as u8) && b <= ('Z' as u8)) || b == ('_' as u8)
 
+/// Byte that may continue an identifier: start byte or digit.
 fn is_ident_byte(b u8) -> bool => is_ident_start(b) || is_digit(b)
 
+/// Keyword kind for an identifier text, or Ident when it is not a keyword.
 fn keyword_kind(t str) -> TokenKind {
     if t == "module" { return TokenKind.KwModule }
     if t == "fn" { return TokenKind.KwFn }
@@ -122,11 +129,14 @@ fn keyword_kind(t str) -> TokenKind {
     TokenKind.Ident
 }
 
+/// Token kind for a one-byte punctuation, or ErrorTok when unknown.
 fn punct_kind(b u8) -> TokenKind {
     if b == ('(' as u8) { return TokenKind.LParen }
     if b == (')' as u8) { return TokenKind.RParen }
     if b == ('{' as u8) { return TokenKind.LBrace }
     if b == ('}' as u8) { return TokenKind.RBrace }
+    if b == ('[' as u8) { return TokenKind.LBracket }
+    if b == (']' as u8) { return TokenKind.RBracket }
     if b == ('.' as u8) { return TokenKind.Dot }
     if b == (',' as u8) { return TokenKind.Comma }
     if b == (':' as u8) { return TokenKind.Colon }

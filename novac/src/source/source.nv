@@ -13,6 +13,7 @@ export type Span {
     hi int // end byte offset (exclusive)
 }
 
+/// Byte length of the span.
 export fn Span @len() -> int => @hi - @lo
 
 /// The compiler never reads files itself (274 §2: the driver hands text in),
@@ -21,8 +22,10 @@ export type SourceText {
     text str // the whole input, handed in by the driver — never read here
 }
 
+/// Byte length of the whole text.
 export fn SourceText @len() -> int => @text.byte_len()
 
+/// The text under a span.
 export fn SourceText @slice(sp Span) -> str => @text[sp.lo..sp.hi]
 
 /// Byte offset of a slice of `@text` — O(1) via pointer distance (owner's

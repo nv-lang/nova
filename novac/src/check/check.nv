@@ -28,28 +28,35 @@ export fn check(file Node, src SourceText) -> []Diagnostic {
     out
 }
 
-// The ONE table of subset methods (E2-strings wave). check owns the subset
-// knowledge; emit_c IMPORTS this door for its print dispatch (edge
-// `emit_c -> check` recorded in the architecture table the same commit).
-// Return codes mirror the emitter's tiny type lattice: 0=int 1=str 2=bool,
-// -1 = not in the subset (check reports it, the emitter never sees it).
+/// The ONE table of subset methods (E2-strings wave). check owns the subset
+/// knowledge; emit_c IMPORTS this door for its print dispatch (edge
+/// `emit_c -> check` recorded in the architecture table the same commit).
+/// Return codes mirror the emitter's tiny type lattice: 0=int 1=str 2=bool,
+/// -1 = not in the subset (check reports it, the emitter never sees it).
 export fn subset_method_ret(name str) -> int {
     if name == "byte_len" { return 0 }
     if name == "to_ascii_upper" { return 1 }
     if name == "starts_with" { return 2 }
     if name == "contains" { return 2 }
+    // E2-arrays (demo.nv): []int methods. Codes 3/4 = "typed by the
+    // receiver in sem" — this name-only table cannot say Vec's return
+    // types; sem answers len -> int, get -> Option[int]. The receiver-keyed
+    // method table that replaces this one is the E4 checker's job.
+    if name == "len" { return 3 }
+    if name == "get" { return 4 }
     -1
 }
 
+/// Walk the whole tree and collect subset diagnostics.
 fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
     walk_in(n, src, out, false)
 }
 
-// init_pos: record constructors and match expressions are subset forms ONLY
-// in an initializer position — the direct init of a binding or the body of
-// an expression-bodied fn. The emitter's tmp-schemes have exactly those
-// shapes; anywhere else (argument, nested field value, condition, arm) the
-// form is an honest E_NOVAC_SUBSET, not an emitter ice later.
+/// init_pos: record constructors and match expressions are subset forms ONLY
+/// in an initializer position — the direct init of a binding or the body of
+/// an expression-bodied fn. The emitter's tmp-schemes have exactly those
+/// shapes; anywhere else (argument, nested field value, condition, arm) the
+/// form is an honest E_NOVAC_SUBSET, not an emitter ice later.
 fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool) -> () {
     match n {
         Leaf(t) => report_if_error_token(t, src, out)
@@ -90,7 +97,7 @@ fn walk_in(n Node, src SourceText, mut out []Diagnostic, init_pos bool) -> () {
 // shape with a missing type is refused HERE — the emitter's matching ice
 // is the second floor, never the first answer.
 
-// [name, type-ident, ...] — the second child must be an Ident leaf.
+/// [name, type-ident, ...] — the second child must be an Ident leaf.
 fn report_if_missing_type(kids []Node, src SourceText, mut out []Diagnostic, msg str) -> () {
     if kids.len() >= 2 {
         match kids[1] {
@@ -101,7 +108,7 @@ fn report_if_missing_type(kids []Node, src SourceText, mut out []Diagnostic, msg
     report_first_leaf_of(kids, src, out, msg)
 }
 
-// Every fn except main must declare `-> T` in the subset.
+/// Every fn except main must declare `-> T` in the subset.
 fn report_if_missing_ret(kids []Node, src SourceText, mut out []Diagnostic) -> () {
     if kids.len() < 2 { return }
     match kids[1] {
@@ -126,6 +133,7 @@ fn report_if_missing_ret(kids []Node, src SourceText, mut out []Diagnostic) -> (
     }
 }
 
+/// Report `msg` at the first leaf found under `children` (depth-first).
 fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, msg str) -> () {
     for c in children {
         match c {
@@ -149,11 +157,11 @@ fn report_first_leaf_of(children []Node, src SourceText, mut out []Diagnostic, m
     }
 }
 
-// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
-// judged against the ONE subset table. An unknown method is an honest
-// E_NOVAC_SUBSET at the method name, not an emitter ice later. (The
-// receiver's TYPE is not judged here — the type checker is a later wave;
-// the named risk lives in the divergence registry next to #652.)
+/// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
+/// judged against the ONE subset table. An unknown method is an honest
+/// E_NOVAC_SUBSET at the method name, not an emitter ice later. (The
+/// receiver's TYPE is not judged here — the type checker is a later wave;
+/// the named risk lives in the divergence registry next to #652.)
 fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic) -> () {
     if kids.len() < 3 { return }
     match kids[2] {
@@ -173,6 +181,7 @@ fn report_if_unknown_method(kids []Node, src SourceText, mut out []Diagnostic) -
     }
 }
 
+/// An ErrorTok leaf is a lexer refusal: report it at its position.
 fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
     if t.kind == TokenKind.ErrorTok {
         ro lo = src.offset_of(t.text)
@@ -186,6 +195,7 @@ fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
     }
 }
 
+/// An Err branch is ONE recovered mistake: one diagnostic at its first leaf.
 fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> () {
     // One Err branch — one diagnostic, at its FIRST leaf. The leaf can nest:
     // parse wraps a stray non-header module declaration as a whole ModuleDecl

@@ -40,4 +40,17 @@ fn main() {
     // record structs/alloc are emitted by novac itself into the BODY slot
     // (nova_alloc is already kept alive by the string methods above).
     println("f = ", 1.5)
+
+    // E2 arrays surface (demo.nv): the []int instance is MONOMORPHIZED
+    // only when used — literal + spread keep static_new/push, len/get keep
+    // their methods, the Option match keeps NovaOpt_nova_int's tag/value.
+    ro nums = [1, 2, 3]
+    ro ext = [0, ...nums, 4]
+    println("len = ", ext.len())
+    ro maybe = ext.get(100)
+    ro text = match maybe {
+        Some(n) => "some"
+        None => "none"
+    }
+    println("get = ", text)
 }

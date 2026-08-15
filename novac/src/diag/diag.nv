@@ -18,6 +18,7 @@ export type Severity enum
     | ErrorSev
     | WarningSev
 
+/// Render the severity as the §7 schema string.
 export fn Severity @to_str() -> str {
     match @ {
         ErrorSev => "error"
@@ -35,7 +36,7 @@ export type Diagnostic {
     message str       // human half, English (project rule)
 }
 
-// Serde DTO of the §7 primary-span object (file + byte range).
+/// Serde DTO of the §7 primary-span object (file + byte range).
 #impl(Serialize)
 type PrimaryDto {
     file str  // path exactly as the CLI received it
@@ -43,7 +44,7 @@ type PrimaryDto {
     end int   // = Diagnostic.hi
 }
 
-// Serde DTO of one §7 JSON line — field names ARE the schema.
+/// Serde DTO of one §7 JSON line — field names ARE the schema.
 #impl(Serialize)
 type DiagDto {
     id str                  // stable per-run id: "d<position in stream>"
@@ -88,6 +89,7 @@ fn ice_json(msg str) -> str {
     "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${msg}\",\"poisoned_by\":null}"
 }
 
+/// The ONE internal-error door: print a §7 E_NOVAC_ICE line, then die (P12).
 export fn ice(msg str) -> never {
     panic(ice_json(msg))
 }

@@ -45,6 +45,8 @@ export type NodeKind enum
     | MatchExpr
     | MatchArm
     | Pattern
+    | ArrayLit
+    | ArraySpread
     | Guard
     | FnExprBody
     | Param
@@ -58,9 +60,11 @@ export type Node enum
     | Leaf(Token)
     | Branch { kind NodeKind, children []Node }
 
+/// Build a branch node.
 export fn branch(kind NodeKind, children []Node) -> Node =>
     Node.Branch { kind, children }
 
+/// Build a leaf node from a token.
 export fn leaf(t Token) -> Node => Node.Leaf(t)
 
 /// Reserialize a whole tree by walking leaves in order. The green tree owns
@@ -71,6 +75,7 @@ export fn tree_reserialize(n Node) -> str {
     out
 }
 
+/// Append a node's bytes (leading trivia + text of every leaf, in order).
 fn append_node(mut out StringBuilder, n Node) -> () {
     match n {
         Leaf(t) => {

@@ -22,5 +22,6 @@
 # 2026-08-14 Э2-а strings: 8/2 -> 9/3 (strings.nv в подмножестве).
 # 2026-08-14 Э2-а records: 9/3 -> 10/4 (records.nv в подмножестве).
 # 2026-08-14 Э2-а match_demo: 10/4 -> 11/5 (суммы, match, гарды, f64).
-contract-match 11
-behavior-match 5
+# 2026-08-15 Э2-а demo: 11/5 -> 12/6 (массивы/Option — basics ЦЕЛИКОМ 6/6).
+contract-match 12
+behavior-match 6
