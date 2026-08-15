@@ -37,6 +37,15 @@ gate rather than passing quietly.
 * Never `git push --force`; never rewrite history (`rebase`, `filter-branch`)
   without permission — other windows' worktrees sit on those commits.
 * Tags in the `nova` repository: owner only.
+* Satellite package repositories (`nova-polaris`, `nova-http`, `nova-tls`,
+  `nova-socks`, `nova-compress`, `nova-bignum`, ...) are the opposite case:
+  merging, pushing **and tagging** them is the integrator's own call, no
+  separate word needed. A package is pulled by `version = "0.1"`, so the
+  resolver picks the newest matching **tag** -- a fix sitting on the
+  package's `main` is invisible to every consumer until it is tagged, and
+  the clean-tree build stays red. Stopping to ask is what makes the release
+  wait (observed 2026-08-16). Push the tag to all three mirrors and verify
+  with `git ls-remote` that they carry the same object.
 
 **Language**
 
