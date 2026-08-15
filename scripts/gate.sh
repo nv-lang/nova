@@ -218,6 +218,22 @@ step "novac-time-ledger (доля 274/221 из леджера, не по пам�
 guard "$ROOT/scripts/guards/check-novac-time-ledger.sh" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
 step "novac-deps (рёбра только из таблицы §3 архитектуры)"
 guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
+step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено»)"
+# Ревью трёх линз 2026-08-15 (274.3, класс К-A): все бинарь-зависимые стражи novac
+# начинались с «нет бинаря — ok, судить нечего», а гейт бинарь не строил; сутки
+# блокера std serde прошли для гейта зелёными. Теперь: если novac/src/main.nv
+# существует, гейт ОБЯЗАН собрать novac; провал сборки — красный (это регресс
+# оракула по подмножеству novac либо регресс novac — оба требуют глаз, не тишины).
+if [ -f "$ROOT/novac/src/main.nv" ]; then
+    NOVA_BIN="$ROOT/nova-cli/target/release/nova.exe"
+    [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
+    if [ -f "$NOVA_BIN" ]; then
+        mkdir -p "$ROOT/target" "$ROOT/novac/target"
+        bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1             || fail "novac не собирается текущим оракулом (274.3/F1) - см. target/novac-build.log; регресс оракула по подмножеству novac или регресс novac"
+    else
+        fail "оракул nova-cli/target/release/nova не собран — novac нечем строить (274.3/F1)"
+    fi
+fi
 step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"
 guard "$ROOT/scripts/guards/check-novac-file-size.sh" "$ROOT" || fail "файл novac длиннее 1000 строк (решение 12)"
 guard "$ROOT/scripts/guards/check-novac-atomics-door.sh" "$ROOT" || fail "атомики/TLS мимо одной двери (274 §8.1)"

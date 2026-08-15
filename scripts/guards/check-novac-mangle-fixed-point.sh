@@ -18,9 +18,10 @@
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 NAME=check-novac-mangle-fixed-point
+. "$(dirname "$0")/lib/novac.sh"
 NOVAC="$ROOT/novac/target/novac.exe"
 SHELL_TPL="$ROOT/novac/src/emit_c/shell.tpl.c"
-[ -f "$NOVAC" ] || { echo "$NAME ok: судить нечего (novac не собран)"; exit 0; }
+novac_require_bin "$NAME" "$ROOT" "$NOVAC"
 [ -f "$SHELL_TPL" ] || { echo "$NAME: FAIL — нет $SHELL_TPL" >&2; exit 1; }
 T="${TMPDIR:-/tmp}/novac-mangle.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' 0
 

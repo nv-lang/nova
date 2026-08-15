@@ -37,11 +37,9 @@ export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BIN="${2:-$ROOT/novac/target/novac.exe}"
 NAME=check-novac-differential
+. "$(dirname "$0")/lib/novac.sh"
 
-if [ ! -f "$BIN" ]; then
-    echo "$NAME ok: судить нечего (novac ещё не собирается)"
-    exit 0
-fi
+novac_require_bin "$NAME" "$ROOT" "$BIN"
 
 ORACLE="$ROOT/nova-cli/target/release/nova.exe"
 if [ ! -f "$ORACLE" ]; then
