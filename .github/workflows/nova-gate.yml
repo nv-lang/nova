@@ -127,6 +127,75 @@ jobs:
           set -uo pipefail
           bash scripts/guards/check-doc-examples.sh "$(pwd)"
 
+  # ── novac: самохостящийся компилятор ОБЯЗАН собираться в CI ─────────────
+  # Замер 2026-08-15 (сигнал окна 274): до этой работы `novac` в CI не
+  # собирался вовсе — двадцать один страж вокруг него проверял доку,
+  # архитектуру и маркеры обходов, но НЕ то, что исходник компилируется.
+  # Сломанный novac доезжал бы до main незамеченным. Работа отдельная (а не
+  # шаг внутри `gate`), чтобы её падение читалось именно как «novac не
+  # собрался», а не терялось в длинном логе конформанса.
+  novac-gate:
+    name: novac-gate (self-hosted compiler builds + module tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install system deps (docs/guide/linux-build.md recipe)
+        run: sudo apt-get update && sudo apt-get install -y clang cmake make libgc-dev build-essential
+
+      - name: Cache cargo registry + nova-cli target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nova-cli/target
+          key: ${{ runner.os }}-novac-gate-cargo-${{ hashFiles('nova-cli/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-novac-gate-cargo-
+
+      - name: Build nova-cli (release — the oracle that compiles novac)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+
+      - name: Build novac (the self-hosted compiler itself)
+        run: |
+          set -uo pipefail
+          mkdir -p novac/target
+          ./nova-cli/target/release/nova build novac/src/main.nv -o novac/target/novac
+
+      - name: novac module tests (each *_test.nv beside its module)
+        run: |
+          set -uo pipefail
+          rc=0
+          for t in novac/src/*/*_test.nv; do
+            [ -e "$t" ] || continue
+            echo "== $t"
+            out="$(timeout 300 ./nova-cli/target/release/nova test "$t" 2>&1)" || true
+            echo "$out" | tail -20
+            # Вердикт читается ТОЛЬКО из строки PASS:/FAIL — не из кода выхода
+            # обёртки: молчащий раннер не должен читаться как зелёный.
+            line="$(echo "$out" | grep -E '^PASS: [0-9]+ +FAIL: [0-9]+' | tail -1)"
+            if [ -z "$line" ]; then
+              echo "НЕТ строки вердикта у $t — считаем красным"
+              rc=1
+              continue
+            fi
+            case "$line" in
+              *"FAIL: 0"*) ;;
+              *) echo "КРАСНЫЙ: $line"; rc=1 ;;
+            esac
+          done
+          exit $rc
+
   gate:
     name: nova-gate (conformance + flagship examples)
     runs-on: ubuntu-latest
