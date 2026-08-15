@@ -380,6 +380,31 @@ Otherwise `Fail[DivByZero]` would be in every other signature — the
 informativeness of effects would disappear. A conscious compromise,
 in detail — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
 
+## What a failure prints ([D462](decisions/08-runtime.md#d462))
+
+An unhandled failure — a `Fail` nobody caught, a `panic`, a typed `Fail` — is
+ONE record: the kind, the message, the throw site, the `?`-propagation chain
+that carried it, and any cleanup errors it suppressed. Whoever RUNS the program
+picks the shape; whoever built it does not have to decide in advance:
+
+```
+$ ./app                              # nobody is parsing — a person reads it
+nova: unhandled Fail: leaf-error
+  at app.nv:29 (throw site)
+  propagation trace (`?`-chain, oldest first):
+    via app.nv:19 (?)
+
+$ NOVA_PANIC_FORMAT=json ./app       # a tool is parsing — one line, stable keys
+{"nova_failure":1,"kind":"fail","message":"leaf-error",
+ "site":{"file":"app.nv","line":29},"trace":[{"file":"app.nv","line":19}],
+ "trace_dropped":0,"suppressed":[]}
+```
+
+Human output is the default: a tool asks for the machine format explicitly, a
+person should never have to read JSON without asking. An environment variable
+rather than a build flag — rebuilding a program to get a machine-readable log
+would be absurd.
+
 ## Cross-fiber safety — a property of the type, a requirement at the boundary (D446)
 
 The rule in one sentence: **a value may be reachable from more than one fiber

@@ -69,9 +69,21 @@ static inline void nova_contract_violation(
             file, line, kind_str, contract_src);
     }
 
+    /* №679: `buf` — стековый; fail-frame увозит сообщение через longjmp с
+     * ЭТОГО же кадра, а дальше — через слот родителя на ДРУГОЙ поток.
+     * Копия в кучу делается ОДИН раз здесь — именно то, что doc-комментарий
+     * функции утверждал и до этой правки. Цена — один nova_alloc на и без
+     * того фатальном пути. */
+    char* msg_heap;
+    {
+        size_t n = 0;
+        while (buf[n]) n++;
+        msg_heap = (char*)nova_alloc(n + 1);
+        for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
+    }
     /* Routing: fiber → fail-frame → test-frame → stderr+abort. */
     if (nova_in_fiber() && _nova_fail_top) {
-        _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+        _nova_fail_top->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
         /* Plan 140.3 (D24/D13 amend): a contract violation is a PANIC-class
          * failure (a bug), identical to assert and nv_panic. Tag error_kind so
          * ConsumeScope/supervised classify the caught error as Panic(msg), not
@@ -81,13 +93,7 @@ static inline void nova_contract_violation(
         longjmp(_nova_fail_top->jmp, 1);
     }
     if (_nova_test_frame) {
-        /* fail_msg хранит const char* — buf на стеке, поэтому копируем
-         * через nova_alloc для пере-жития longjmp'а. */
-        size_t n = 0;
-        while (buf[n]) n++;
-        char* heap = (char*)nova_alloc(n + 1);
-        for (size_t i = 0; i <= n; i++) heap[i] = buf[i];
-        _nova_test_frame->fail_msg = heap;
+        _nova_test_frame->fail_msg = msg_heap;  /* №679: копия одна на все ветки */
         longjmp(_nova_test_frame->jmp, 1);
     }
     fprintf(stderr, "%s\n", buf);
@@ -119,17 +125,25 @@ static inline void nova_contract_violation_dyn(
         file, line, kind_str,
         (int)user_msg.len, (const char*)user_msg.ptr, contract_src);
 
+    /* №679: `buf` — стековый; fail-frame увозит сообщение через longjmp с
+     * ЭТОГО же кадра, а дальше — через слот родителя на ДРУГОЙ поток.
+     * Копия в кучу делается ОДИН раз здесь — именно то, что doc-комментарий
+     * функции утверждал и до этой правки. Цена — один nova_alloc на и без
+     * того фатальном пути. */
+    char* msg_heap;
+    {
+        size_t n = 0;
+        while (buf[n]) n++;
+        msg_heap = (char*)nova_alloc(n + 1);
+        for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
+    }
     if (nova_in_fiber() && _nova_fail_top) {
-        _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+        _nova_fail_top->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
         _nova_fail_top->error_kind = NOVA_THROW_PANIC;
         longjmp(_nova_fail_top->jmp, 1);
     }
     if (_nova_test_frame) {
-        size_t n = 0;
-        while (buf[n]) n++;
-        char* heap = (char*)nova_alloc(n + 1);
-        for (size_t i = 0; i <= n; i++) heap[i] = buf[i];
-        _nova_test_frame->fail_msg = heap;
+        _nova_test_frame->fail_msg = msg_heap;  /* №679: копия одна на все ветки */
         longjmp(_nova_test_frame->jmp, 1);
     }
     fprintf(stderr, "%s\n", buf);

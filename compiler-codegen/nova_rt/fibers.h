@@ -334,6 +334,16 @@ typedef struct NovaFiberQueue {
     const char*     first_error;
     NovaThrowKind   first_error_kind;     /* USER (default) или CANCEL */
     void*           first_error_reason;   /* box'нутый T для CANCEL, NULL для USER */
+    /* №445 / D462 (2026-08-15): СНИМОК ДИАГНОСТИКИ ПЕРВОЙ ОШИБКИ.
+     * throw-site и `?`-propagation-trace живут в per-fiber бакете
+     * (Plan 201, NovaFiberErrorState), а переброс наружу происходит
+     * на ДРУГОМ потоке с другим бакетом — без этого снимка
+     * терминальный дамп печатал панику без `at file:line` и без
+     * трассы (измерено 2026-08-15; держало красной паник-дорожку).
+     * Снимается там же и по тем же правилам приоритета, что и
+     * `first_error`, восстанавливается перед `nova_rethrow_scope`. */
+    NovaThrowSite  first_error_site;
+    NovaThrowTrace first_error_trace;
     /* Cancellation: set to true after the first fiber throws.
      * Other fibers see this on their next yield-point and throw "cancelled"
      * (cooperative cancellation — D50).
@@ -2536,6 +2546,8 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
         q->first_error = msg;
         q->first_error_kind = kind;
         q->first_error_reason = reason_ptr;
+        q->first_error_site  = _nova_throw_site;   /* №445/D462 */
+        q->first_error_trace = _nova_throw_trace;  /* №445/D462 */
     } else if (nova_throw_kind_precedence(kind) >
                nova_throw_kind_precedence(q->first_error_kind)) {
         /* incoming rank выше — overwrite primary. PANIC бьёт USER/CANCEL
@@ -2544,6 +2556,8 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
         q->first_error = msg;
         q->first_error_kind = kind;
         q->first_error_reason = reason_ptr;
+        q->first_error_site  = _nova_throw_site;   /* №445/D462 */
+        q->first_error_trace = _nova_throw_trace;  /* №445/D462 */
     }
     /* USER errors також сигналят cancel_requested (peer fibers пробудятся
      * и выйдут через CANCEL); CANCEL errors не сбрасывают чужие USER'ы. */
@@ -3447,9 +3461,19 @@ static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
  * Диспетчеризует на explicit-suppressed вариант throw-пути по `kind`
  * (единственный вызывающий — хвост `nova_supervised_run_impl` ниже, где
  * kind уже классифицирован: USER_TYPED cross-worker / PANIC / USER-иначе). */
-static inline void nova_rethrow_scope(const char* err_cstr, NovaThrowKind kind,
-                                       void* payload, NovaTypeId tid,
-                                       NovaErrorChain* suppressed) {
+static inline void nova_rethrow_scope_diag(const char* err_cstr, NovaThrowKind kind,
+                                           void* payload, NovaTypeId tid,
+                                           NovaErrorChain* suppressed,
+                                           const NovaThrowSite* site,
+                                           const NovaThrowTrace* trace) {
+    /* №445/D462: вернуть диагностику первой ошибки в АКТИВНЫЙ бакет —
+     * переброс идёт на вызывающем C-потоке, чей бакет к упавшему
+     * файберу отношения не имеет. Без этого терминальный дамп
+     * печатает отказ без throw-site и без `?`-трассы. */
+    if (site && site->file) {
+        _nova_throw_site  = *site;
+        if (trace) _nova_throw_trace = *trace;
+    }
     nova_str msg = nova_str_from_cstr(err_cstr);
     if (kind == NOVA_THROW_USER_TYPED) {
         nova_throw_typed_ex(msg, payload, tid, suppressed);
@@ -3460,6 +3484,16 @@ static inline void nova_rethrow_scope(const char* err_cstr, NovaThrowKind kind,
         return;  /* unreachable */
     }
     nova_throw_ex(msg, suppressed);
+}
+
+/* Same-fiber переброс (supervised-guard, эмитится codegen'ом): активный
+ * бакет принадлежит ЭТОМУ же файберу, throw-site и `?`-трасса в нём уже
+ * верные — снимок не передаётся и ничего не перетирает. Сигнатура
+ * сохранена ровно ради того, чтобы эмит codegen'а остался прежним. */
+static inline void nova_rethrow_scope(const char* err_cstr, NovaThrowKind kind,
+                                       void* payload, NovaTypeId tid,
+                                       NovaErrorChain* suppressed) {
+    nova_rethrow_scope_diag(err_cstr, kind, payload, tid, suppressed, NULL, NULL);
 }
 
 static inline void nova_supervised_run_impl(NovaFiberQueue* q,
@@ -3873,7 +3907,8 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             /* Cross-worker typed throw. */
             void* payload = q->first_error_atomic_payload;
             NovaTypeId tid = q->first_error_atomic_tid;
-            nova_rethrow_scope(err, NOVA_THROW_USER_TYPED, payload, tid, _nv_suppressed);
+            nova_rethrow_scope_diag(err, NOVA_THROW_USER_TYPED, payload, tid, _nv_suppressed,
+                               &q->first_error_site, &q->first_error_trace);
             /* unreachable */
         }
         /* Plan 173 Ф.6 (§4а, вскрыто panics-миграцией; D13/D414): PANIC
@@ -3886,12 +3921,14 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             NovaThrowKind _rk = q->first_error ? q->first_error_kind
                                                : q->first_error_atomic_kind;
             if (_rk == NOVA_THROW_PANIC) {
-                nova_rethrow_scope(err, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE, _nv_suppressed);
+                nova_rethrow_scope_diag(err, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE, _nv_suppressed,
+                                   &q->first_error_site, &q->first_error_trace);
                 /* unreachable */
             }
         }
         /* USER либо USER_TYPED (local — see note above): plain throw. */
-        nova_rethrow_scope(err, NOVA_THROW_USER, NULL, NOVA_TID_NONE, _nv_suppressed);
+        nova_rethrow_scope_diag(err, NOVA_THROW_USER, NULL, NOVA_TID_NONE, _nv_suppressed,
+                           &q->first_error_site, &q->first_error_trace);
     }
 }
 
