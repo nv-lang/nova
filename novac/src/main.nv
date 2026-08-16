@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none — the door is ours: effects handled here and nowhere else
+// Role: the door — effects handled here only (П15), CLI surface a subset of nova-cli (П26), Verdict to exit code.
+// Used by: the driver, the smoke, the fuzzer and diff-corpus (E1+); novac build replaces emit at E2-b2 (cli-divergences.allow).
+// Guarded by: check-novac-cli-surface.sh (commands are a subset of nova-cli, novac/cli-divergences.allow), check-novac-effects-at-door.sh (Fs/Os only here), novac-fuzz-mutations.sh (exit codes stay 0/1/2, silent door is red), the EXPECT_EXIT_CODE contract.
+// (П15), a Verdict sum instead of an int exit code, and a command surface that
+// is a subset of nova-cli's (П26); the shape follows Nova's own effect model.
 // EXPECT_EXIT_CODE 2
 // novac — the Nova compiler written in Nova. Plan 274, stage E1.
 // (Exit 2 = usage exit: the test runner invokes the binary with no args.

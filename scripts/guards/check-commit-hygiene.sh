@@ -106,5 +106,11 @@ fi
 # Строка с `ok:` и указанием ЧТО именно проверено — требование
 # check-gate-steps-assert.sh: «ok» без двоеточия и без предмета не отличается
 # от молчания (реестр 221.1 №645, №647).
+# П27 (novac): коммит, трогающий novac/src, называет донора решения или честно
+# говорит, что донора нет. Отдельный страж — правило novac-овское, общий свод
+# его не несёт; зовётся отсюда, потому что хук commit-msg один на репозиторий.
+if [ -f "$ROOT/scripts/guards/check-novac-commit-donor.sh" ] && [ -n "${MSGFILE:-}" ]; then
+    sh "$ROOT/scripts/guards/check-novac-commit-donor.sh" "$MSGFILE" "$ROOT" || exit 1
+fi
 echo "check-commit-hygiene ok: маркеры, авторство, запрет Co-Authored-By и язык сообщения проверены"
 exit 0

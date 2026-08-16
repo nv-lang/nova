@@ -1,4 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `Diagnostic`/`MultiSpan` reduced to the §7 schema; rustc
+// `--error-format=json` (`JsonEmitter`) for one JSON per line; rustc
+// `bug!`/`span_bug!` for the ONE ice door — Donor: none for hand-building its §7
+// line (the last-resort door must not depend on serde it may be reporting); NOT
+// taken: suggestions/children, LSP `Diagnostic` line/col (E3), `poisoned_by`
+// chains (always null today).
+// Role: the §7 diagnostic schema and its JSON door; the ice() door for compiler invariants (П12/П20).
+// Used by: check writes, main prints (E1+); the diag-schema guard; the LSP at E3 maps the same records to protocol.
+// Guarded by: check-novac-diag-schema.sh (§7 fields, one JSON per line), check-novac-ice-messages.sh (every ice text unique and module-prefixed), check-novac-no-naked-panic.sh (panic only through ice).
+// a severity, one primary span, a message; JSON one per line as rustc
+// `--error-format=json`; NOT taken: suggestions and children (a later wave).
 // novac/src/diag — the diagnostic form (architecture §2/§7).
 //
 // The schema of §7 is normative and machine-first: the JSON is the product,

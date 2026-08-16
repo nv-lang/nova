@@ -1,4 +1,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Nim `ccgexprs`/`ccgstmts` (C emitted as text from a typed tree, one
+// procedure per node kind, string builder per function) + Chicken Scheme's
+// C backend for "the runtime shell is a fixed template with slots"; the walk
+// hangs on one `Emitter` receiver as Go `*Checker` / Zig `*Sema` / Roslyn
+// `Binder` do (П15). NOT taken: Nim's `TLoc` value-location machinery (no
+// register/temp allocator here — arguments will hoist into temporaries per
+// F65), any GC-shape or dictionary path (full mono by D122). The CURRENT
+// record/sum/match/println shapes are a starting point held by the diff gate,
+// not an obligation (274 §7.0); the current compiler is NOT a donor (П25,
+// П27 2a) — matching its output is what the smoke measures, not where the
+// shape comes from.
+// Role: layer 11 — backend A, C text; renders decisions already made, decides nothing (architecture, checker/codegen boundary).
+// Used by: the smoke and diff-corpus (E1-E2); replaced below lower at E4 for a native backend, kept as the normative one.
+// Guarded by: novac-e1-smoke.sh (behaviour identical to the oracle binary), check-novac-shell-freshness.sh (the shell is the oracle's emission), check-novac-no-default-branch.sh, check-novac-no-alloc-in-lookup.sh (an emitter is not a door).
+// copying, and the oracle's shape is a fixed point of BEHAVIOUR only (П25,
+// plan 274 §7.0); the walk hangs on one `Emitter` receiver like Go's
+// `*Checker` and Zig's `*Sema` (П15).
 // novac/src/emit_c — backend A: C text (architecture §2/§9).
 //
 // E2 vertical: the runtime SHELL is a fixed, file-independent template

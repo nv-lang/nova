@@ -1,4 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go `types2` `*Checker` (one receiver holding pass state) + rustc `FnCtxt`
+// for the walk; rustc `TyKind::Error(ErrorGuaranteed)` / Roslyn `IsErrorType`
+// suppression for no-cascade (an Err branch is already reported, nothing looks
+// inside); rustc keeps `TyCtxt` explicit (`ty::tls` only for diagnostics) —
+// context is data, not an effect; Go `types2` `Checker.errorf` for the single
+// `refuse` reporter; Donor: none for the subset refusals (init_pos for ctor/match,
+// F65 ordered args, arrays rollback, statement-call = println only) — an honest
+// E_NOVAC_SUBSET instead of a silently wrong emission (П27 p.3 class); NOT taken:
+// rustc obligation solver (E2-b3), local typing in check (274.3 wave 3 / C9).
+// Role: layer 7 — the subset judge; publishes diagnostics, will publish the type channel (resolved_types) at E2-b1 tail.
+// Used by: pipeline (E1+); the LSP at E3 reads its channel instead of re-walking; emit_c reads its verdicts, never re-derives.
+// Guarded by: check-novac-no-cascade.sh, check-novac-diag-schema.sh, check-novac-differential.sh (verdicts match the oracle on the corpus), check-novac-no-default-branch.sh (kind dispatch is exhaustive), the pipeline tests (one cause, one diagnostic).
+// rustc `FnCtxt` for the walk shape; poisoning discipline from rustc
+// `TyKind::Error` — an already-reported node yields nothing further; NOT taken:
+// rustc's obligation solver (arrives with bounds, E2-b3).
 // novac/src/check — the E1 mini-checker (architecture §2: module `check`).
 //
 // The subset rule is ONE: everything the parser had to recover from is

@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `Res::Def(DefKind, DefId)` for Def{kind,payload} (ONE lookup
+// answers \"what is a name\"), rustc `IndexVec` for flat id-indexed value rows,
+// rustc `CommonTypes` for Prims, Go `types2.collectObjects`/`packageObjects` for
+// the two-pass collect, separate chaining (name -> first row + `next_row`, TAOCP
+// §6.4) for FieldTable/FnTable, Go `types2.lookupFieldOrMethod` / rustc
+// `FnCtxt::check_field` for \"fields only through a receiver\", rustc
+// `method::probe` + `AssocItem.fn_has_self_parameter` for \"receiver = first
+// parameter, resolve by receiver type\", rustc `report_method_error` / clang
+// `Sema::NoteAllOverloadCandidates` for printing the whole candidate set, Zig
+// `InternPool.OptionalIndex` for `-1 = absent`; Donor: none for the harvest rule
+// (a signature enters only when EVERY type is known — the type system filters std
+// overloads, not a name list) and for the tolerant/strict pair
+// `type_id_opt`/`type_id` (274.3/F-B4); NOT taken: a uniform DefId (payload is a
+// per-kind ROW), Go `Scope.Insert`→alt / rustc E0428 duplicate diagnostics
+// (DefTable.add is last-put-wins, collect_types first-owns — check's ground), a
+// per-node type table (Go `types2.Info.Types` / rustc `TypeckResults.node_types`)
+// — `type_of` recomputes on demand until check is the single writer at E4 (Go
+// `Checker`→`Info`, rustc typeck→`TypeckResults`), block-scoped ribs.
+// Role: layers 3-4 — the declaration registry (DeclId rows) and, since E2-b1, the owner of the type interner; the truth every pass below reads.
+// Used by: check and emit_c (E1-E2); mono and layout at E2-b2; becomes the checker's channel writer at E4.
+// Guarded by: check-novac-ctx-tables.sh (the set of Ctx tables is declared in plan 10.3b), check-novac-row-fields.sh (every row field justified in 10.3v, no derived field), check-novac-ref-field-names.sh (_id/_row suffixes), check-novac-resolve-discipline.sh (no silent int default), check-novac-no-alloc-in-lookup.sh (doors carry #realtime nogc).
+// `IndexVec<Idx, Row>` as flat id-indexed value rows, and the rule that
+// backends CONSUME the registry and none owns it; NOT taken: TyCtxt arenas and
+// the query system (a batch pass builds Ctx once per file).
 // novac/src/sem — the semantic layer of the E2 vertical (architecture §2:
 // the `sem` seat, grown early by the owner's 2026-08-15 review: the type
 // registry, the unified def table and expression typing are NOT backend

@@ -292,6 +292,14 @@ guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "ре
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма: невидимо реестру стражей целиком"
 guard "$ROOT/scripts/guards/check-novac-surface.sh" "$ROOT" || fail "публичная поверхность novac разошлась с novac-surface.baseline (274 §10.4): рост без обоснования или протухшая база"
 guard "$ROOT/scripts/guards/check-novac-temp-edges.sh" "$ROOT" || fail "временное ребро §3 без срока или истекло по этапу (274.1 §2в)"
+# П27: у каждого модуля novac донор назван указателем в заголовке (или честное none).
+# Вторая половина правила — коммит-страж check-novac-commit-donor.sh — живёт в хуке
+# commit-msg через check-commit-hygiene, в гейт не входит (судит сообщение, не дерево).
+guard "$ROOT/scripts/guards/check-novac-module-donor.sh" "$ROOT" || fail "модуль novac без донора-указателя в заголовке (П27)"
+# Коммит-страж судит СООБЩЕНИЕ, гейту его судить нечем — но механизм обязан быть
+# жив, поэтому гейт гоняет его самотест (он строит сообщения сам). Вызов стража
+# на пустом сообщении даст честное «судить нечего», а не проверку.
+guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 

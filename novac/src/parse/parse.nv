@@ -1,4 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn `LanguageParser` (hand-written recursive descent by token kind;
+// `MissingToken` zero-width leaves; `IsTerminator` stop set; `IsMakingProgress`
+// non-advancement guard; `PeekToken(1)` for `fn Recv @name`) + rustc
+// `Parser::expect_one_of`; Dragon Book (2nd ed.) §4.1.4 panic mode for the junk
+// buckets; Go spec \"Composite literals\" ambiguity rule (go/parser `exprLev`) for
+// no_ctor; rustc `AssocOp::DotDot` for `..` as a binary node; NOT taken: operator
+// precedence — E1 is a flat left-assoc chain, `1 + 2 * 3` = (1+2)*3, recorded as
+// 274.3/F18 and held by the diff gate; the fix is Pratt (1973) / rustc
+// `parse_expr_assoc_with` / Go `syntax.parser.binaryExpr(prec)`; NOT taken: Roslyn
+// incremental reparse.
+// Role: layer 2 — the syntax door with recovery; one seeded mistake yields one Err branch, never a cascade.
+// Used by: pipeline (E1+); the no-cascade and grammar-coverage guards; the LSP at E3 reads the same tree.
+// Guarded by: check-novac-no-cascade.sh (one seeded mistake, one diagnostic), check-novac-grammar-fixture-coverage.sh, novac-fuzz-mutations.sh (recovery never panics or hangs).
+// branch that KEEPS the tokens, so the tree stays byte-exact under any input;
+// operator precedence by table (Pratt / precedence climbing, Dragon Book §4.6);
+// NOT taken: Roslyn's incremental reparse (a batch compiler needs none).
 // novac/src/parse — tokens to green tree (architecture §2: module `parse`).
 //
 // E1 subset grammar: module declaration, fn declarations with empty parameter

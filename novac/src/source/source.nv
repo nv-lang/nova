@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn `GreenNode.FullWidth` (widths, not positions) for \"no node stores
+// a span\"; Donor: none for `offset_of` itself — pointer distance over the src
+// slice (owner's design 2026-08-14), no reference does this; NOT taken: rustc
+// `SourceMap`/`BytePos` line tables and Span interning — §7 speaks byte offsets
+// only, line/col arrive with the LSP (E3).
+// Role: the one position door — offsets are derived from the leaf's text slice, so no node stores a span.
+// Used by: check for diagnostic spans (E1+), the LSP for hover ranges (E3); unchanged by generics.
+// Guarded by: check-novac-frontend-shape.sh (positions derived, no stored span), check-novac-diag-schema.sh (every diagnostic carries a valid primary span), the position tests in lex_test.nv.
+// (`offset_of` over the leaf's text slice) so no node stores a span; NOT taken:
+// rustc's multi-file SourceMap and Span interning (one file per CU here).
 // novac/src/source — the source-text door (architecture §2: module `source`).
 //
 // One class of task: representing input text and positions in it. Everything
