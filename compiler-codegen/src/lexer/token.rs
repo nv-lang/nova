@@ -217,6 +217,9 @@ pub enum TokenKind {
     MinusEq,
     StarEq,
     SlashEq,
+    /// `%=` — D46-амендмент §D (2026-08-16): последний из одиннадцати
+    /// операторов уровня 1 таблицы приоритетов, которого не было в языке.
+    PercentEq,
     EqEq,
     BangEq,
     Lt,
@@ -358,6 +361,7 @@ impl TokenKind {
             TokenKind::MinusEq => "`-=`",
             TokenKind::StarEq => "`*=`",
             TokenKind::SlashEq => "`/=`",
+            TokenKind::PercentEq => "`%=`",
             TokenKind::EqEq => "`==`",
             TokenKind::BangEq => "`!=`",
             TokenKind::Lt => "`<`",

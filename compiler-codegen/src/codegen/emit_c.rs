@@ -33571,6 +33571,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // ABI) — тот же raw-C-CC-FAIL класс, что и `+=`/`-=` до №284,
                 // просто по op, а не по типу. Включены сюда же.
                 if matches!(op, AssignOp::Add | AssignOp::Sub | AssignOp::Mul | AssignOp::Div
+                    | AssignOp::Mod
                     | AssignOp::BitAnd | AssignOp::BitOr | AssignOp::BitXor)
                 {
                     let tgt_ty = self.infer_expr_c_type(target);
@@ -33599,6 +33600,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             AssignOp::Sub => BinOp::Sub,
                             AssignOp::Mul => BinOp::Mul,
                             AssignOp::Div => BinOp::Div,
+                            AssignOp::Mod => BinOp::Mod,
                             AssignOp::BitAnd => BinOp::BitAnd,
                             AssignOp::BitOr => BinOp::BitOr,
                             AssignOp::BitXor => BinOp::BitXor,
@@ -33676,6 +33678,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     AssignOp::Sub => Some("nova_int_checked_sub".to_string()),
                     AssignOp::Mul => Some("nova_int_checked_mul".to_string()),
                     AssignOp::Div => Some("nova_int_checked_div".to_string()),
+                    AssignOp::Mod => Some("nova_int_checked_rem".to_string()),
                     _ => None,
                 };
                 if let Some(helper) = checked_helper {
@@ -33693,6 +33696,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             AssignOp::Sub => BinOp::Sub,
                             AssignOp::Mul => BinOp::Mul,
                             AssignOp::Div => BinOp::Div,
+                            AssignOp::Mod => BinOp::Mod,
                             _ => unreachable!(),
                         }) {
                             let p = self.fresh_tmp_named("ca");
@@ -33711,6 +33715,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     AssignOp::Sub    => "-=",
                     AssignOp::Mul    => "*=",
                     AssignOp::Div    => "/=",
+                    AssignOp::Mod    => "%=",
                     AssignOp::BitAnd => "&=",
                     AssignOp::BitOr  => "|=",
                     AssignOp::BitXor => "^=",

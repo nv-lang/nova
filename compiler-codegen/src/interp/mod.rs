@@ -2239,6 +2239,7 @@ impl Interpreter {
             AssignOp::Sub => BinOp::Sub,
             AssignOp::Mul => BinOp::Mul,
             AssignOp::Div => BinOp::Div,
+            AssignOp::Mod => BinOp::Mod,
             // Plan 234 Ф.2а (D46-амендмент §C). Интерпретатор — `nova run`
             // не поддерживается (только C-codegen), но матч обязан быть
             // исчерпывающим для компиляции.

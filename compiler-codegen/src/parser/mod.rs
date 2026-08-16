@@ -12213,6 +12213,7 @@ impl Parser {
                     TokenKind::MinusEq => Some(AssignOp::Sub),
                     TokenKind::StarEq => Some(AssignOp::Mul),
                     TokenKind::SlashEq => Some(AssignOp::Div),
+                    TokenKind::PercentEq => Some(AssignOp::Mod),
                     // Plan 234 Ф.2а (D46-амендмент §C): compound bitwise-присваивания.
                     TokenKind::AmpEq => Some(AssignOp::BitAnd),
                     TokenKind::PipeEq => Some(AssignOp::BitOr),
