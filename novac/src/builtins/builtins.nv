@@ -21,9 +21,20 @@ module novac.builtins
 /// Lives here, not in sem, because the builtin seed rows carry it and sem
 /// imports builtins (no back edge).
 export type TypeKind enum
-    | TkPrim
-    | TkRecord
-    | TkSum
+    | TkPrim /// a primitive of the universe: int, str, bool, f64
+    | TkRecord /// a nominal record declaration, no type parameters applied
+    | TkSum /// a nominal sum declaration, no type parameters applied
+    | TkApp /// a type constructor applied to arguments: Vec[int] (E2-b1)
+    | TkParam /// a type parameter of the enclosing declaration, by index (E2-b1)
+    | TkInfer /// an inference variable, alive only inside one body (E2-b1)
+
+/// How many kinds there are. The interner's bucket arithmetic multiplies by
+/// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
+/// "what is that 6?" — a magic constant one file away from its source is the
+/// first thing to drift when a kind is added). Every dispatch on TypeKind is
+/// an exhaustive match, so a seventh kind is a compile error at each site —
+/// and this constant is the ONE place a match cannot reach, hence the note.
+export const TYPE_KIND_COUNT = 6
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"

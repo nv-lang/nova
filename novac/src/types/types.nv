@@ -28,17 +28,7 @@
 module novac.types
 
 import ../diag.{ice}
-
-/// What kind of term a type row is. Closed set; the dispatch on it is an
-/// exhaustive match everywhere (П21), so a new kind is a compile error at
-/// every place that must decide about it.
-export type TyKind enum
-    | TkPrim /// a primitive of the universe: int, str, bool, f64
-    | TkRecord /// a nominal record declaration, no type parameters applied
-    | TkSum /// a nominal sum declaration, no type parameters applied
-    | TkApp /// a type constructor applied to arguments: Vec[int]
-    | TkParam /// a type parameter of the enclosing declaration, by index
-    | TkInfer /// an inference variable, alive only inside one body
+import ../builtins.{TypeKind, TYPE_KIND_COUNT}
 
 /// One interned type term. VALUE record: rows sit inline in the vector.
 ///
@@ -47,7 +37,7 @@ export type TyKind enum
 /// to the declaration the head points at (П22: derived facts are functions
 /// of what is stored, never a second copy on the row).
 export type TyRow value {
-    kind TyKind /// which term this is; drives the meaning of head_id and the argument range
+    kind TypeKind /// which term this is; drives the meaning of head_id and the argument range
     head_id int /// TkPrim: prim ordinal · TkRecord/TkSum/TkApp: DeclId of the head · TkParam: parameter index · TkInfer: variable id
     arg_off int /// first argument in Interner.args (TkApp only; 0 otherwise)
     arg_cnt int /// how many arguments (TkApp only; 0 otherwise)
@@ -73,7 +63,7 @@ export type Interner {
 /// (This alias is documentation, not a distinct type yet.)
 
 /// Number of kinds — bucket arithmetic below needs it as a plain integer.
-fn kind_ordinal(k TyKind) -> int {
+fn kind_ordinal(k TypeKind) -> int {
     match k {
         TkPrim => 0
         TkRecord => 1
@@ -88,7 +78,7 @@ fn kind_ordinal(k TyKind) -> int {
 /// grows on demand, so a head_id we have not seen simply extends it. Heads
 /// are dense small integers (DeclIds, prim ordinals, param indexes, infer
 /// vids), which is what makes a flat bucket vector the right shape.
-fn bucket_of(k TyKind, head_id int) -> int => head_id * 6 + kind_ordinal(k)
+fn bucket_of(k TypeKind, head_id int) -> int => head_id * TYPE_KIND_COUNT + kind_ordinal(k)
 
 /// An empty interner: no rows, no arguments, no buckets.
 export fn Interner.new() -> Interner =>
@@ -118,7 +108,7 @@ fn Interner @args_equal(r int, want []int) -> bool {
 ///
 /// Arguments are copied into the pool ONLY when a new row is created — a
 /// lookup that hits allocates nothing beyond what the caller already built.
-export fn Interner mut @intern(kind TyKind, head_id int, args []int) -> int {
+export fn Interner mut @intern(kind TypeKind, head_id int, args []int) -> int {
     ro b = bucket_of(kind, head_id)
     mut r = @head_of_bucket(b)
     while r >= 0 {
@@ -141,33 +131,46 @@ export fn Interner mut @intern(kind TyKind, head_id int, args []int) -> int {
 }
 
 /// A primitive by its ordinal in the universe (int, str, bool, f64 …).
-export fn Interner mut @prim(ordinal int) -> int => @intern(TyKind.TkPrim, ordinal, []int.new())
+export fn Interner mut @prim(ordinal int) -> int => @intern(TypeKind.TkPrim, ordinal, []int.new())
 
 /// A nominal record declaration, no arguments applied.
-export fn Interner mut @record(decl_id int) -> int => @intern(TyKind.TkRecord, decl_id, []int.new())
+export fn Interner mut @record(decl_id int) -> int => @intern(TypeKind.TkRecord, decl_id, []int.new())
 
 /// A nominal sum declaration, no arguments applied.
-export fn Interner mut @sum(decl_id int) -> int => @intern(TyKind.TkSum, decl_id, []int.new())
+export fn Interner mut @sum(decl_id int) -> int => @intern(TypeKind.TkSum, decl_id, []int.new())
 
 /// A type constructor applied to arguments: Vec[int] is app(vec_decl, [int]).
 /// "No generics" is the empty-argument case of the same door (274.1 section 2b):
 /// there is no separate path for the non-generic world.
-export fn Interner mut @app(decl_id int, args []int) -> int => @intern(TyKind.TkApp, decl_id, args)
+export fn Interner mut @app(decl_id int, args []int) -> int => @intern(TypeKind.TkApp, decl_id, args)
 
 /// The i-th type parameter of the enclosing declaration.
-export fn Interner mut @param(index int) -> int => @intern(TyKind.TkParam, index, []int.new())
+export fn Interner mut @param(index int) -> int => @intern(TypeKind.TkParam, index, []int.new())
 
 /// A fresh inference variable. Distinct vids never merge here — union-find
 /// lives in `infer`, and it maps vids to types, it does not re-intern them.
-export fn Interner mut @infer(vid int) -> int => @intern(TyKind.TkInfer, vid, []int.new())
+export fn Interner mut @infer(vid int) -> int => @intern(TypeKind.TkInfer, vid, []int.new())
 
 // ---- reader doors: allocate nothing -----------------------------------------
 
 /// The kind of a type; an id outside the table is an ice, never a default.
+///
+/// [LEGACY-#TBD-exported-method-returning-sum] A FREE function, not a method,
+/// on purpose. Bisected 2026-08-16 (five probes, three of them minimal
+/// repros that did NOT reproduce, so the trigger needs the real novac CU):
+/// an EXPORTED METHOD whose return type is a sum (`export fn Interner
+/// @kind_of(...) -> TypeKind`), pulled transitively into the pipeline test
+/// CU, makes the oracle resolve `NodeKind.LeafNode` in ANOTHER module of
+/// that CU as `Nova_TypeKind*` — a variant looked up by bare name and
+/// attached to the wrong sum. The same body as a non-exported method passes;
+/// the same body as an exported FREE function passes; the same signature as
+/// an exported method fails. Reported to the compiler window with the
+/// bisection. The workaround costs nothing here (the door is one call
+/// either way) and goes when the registry number closes.
 #realtime nogc
-export fn Interner @kind_of(t int) -> TyKind {
-    if t < 0 || t >= @rows.len() { ice("types: kind_of asked for a type id outside the interner") }
-    @rows[t].kind
+export fn kind_of(it Interner, t int) -> TypeKind {
+    if t < 0 || t >= it.rows.len() { ice("types: kind_of asked for a type id outside the interner") }
+    it.rows[t].kind
 }
 
 /// The head of a type: DeclId for nominal kinds, ordinal for a primitive,
@@ -246,7 +249,7 @@ export fn Interner mut @subst(t int, args []int) -> int {
                 new_args.push(s)
             }
             if !changed { return t }
-            return @intern(TyKind.TkApp, row.head_id, new_args)
+            return @intern(TypeKind.TkApp, row.head_id, new_args)
         }
     }
 }

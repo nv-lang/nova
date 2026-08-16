@@ -27,9 +27,10 @@ import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 import ../builtins.{TypeKind, builtin_types}
+import ../types.{Interner}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
-/// a SUM, not int constants (owner_id 2026-08-14: the language's own type
+/// a SUM, not int constants (owner 2026-08-14: the language's own type
 /// safety judges kind dispatch, an arbitrary int cannot leak in).
 export type DefKind enum
     | DefType
@@ -42,6 +43,7 @@ export type DefKind enum
 /// row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
+    ty_id int /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     c_name str /// Runtime ABI spelling for TkPrim ONLY (nova_rt.h fact); "" otherwise — mangling is a door, never a stored string.
     row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum_id).
@@ -58,7 +60,7 @@ export type Def value {
 }
 
 /// THE unified name registry: the O(1) name door and the row it answers
-/// with — one record, because they only ever travel together (owner_id
+/// with — one record, because they only ever travel together (owner
 /// 2026-08-15: a pair that always walks in pairs belongs in one record).
 export type DefTable {
     names NameTable /// name -> row in `rows` (NsDefs namespace).
@@ -160,7 +162,7 @@ export type VariantDef value {
 }
 
 /// Type ids of the pre-seeded primitives — the rustc CommonTypes model
-/// (owner_id 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
+/// (owner 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
 /// out and everything compares against these fields).
 export type Prims value {
     int_id int /// Type id of `int`.
@@ -374,6 +376,7 @@ export fn candidates_from(fns FnTable, first int, recv_id int) -> []int {
 /// reference"); every name -> id step goes through a table door.
 export type Ctx {
     types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
+    tys Interner /// THE type interner (layer 4): every Ty of this file is a row here; identity is the id (E2-b1).
     prims Prims /// Type ids of the primitives (the CommonTypes model).
     defs DefTable /// THE unified top-level name registry (types, variants, fns).
     fields FieldTable /// Record fields, addressed through the owner type.
@@ -384,9 +387,10 @@ export type Ctx {
 
 /// Seed one pre-declared type: the registry row and the def row are born
 /// together; the ACTUAL id flows back to the caller (never hard-coded).
-fn seed(mut types []TypeDef, mut defs DefTable, name str, c_name str) -> int {
+fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, c_name str, ordinal int) -> int {
     ro id = types.len()
-    types.push(TypeDef { kind: TypeKind.TkPrim, name, c_name, row_off: 0, row_cnt: 0 })
+    ro ty_id = tys.prim(ordinal)
+    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, c_name, row_off: 0, row_cnt: 0 })
     defs.add(name, DefKind.DefType, id)
     id
 }
@@ -485,11 +489,15 @@ export fn collect(file Node, decls []Node) -> Ctx {
 export fn collect_types(file Node) -> Ctx {
     mut types = []TypeDef.new()
     mut defs = DefTable.new()
+    mut tys = Interner.new()
     // Pre-declared types come from the ONE builtins table (P5), in Prims
-    // order; the seed hands the ACTUAL ids back (CommonTypes model).
+    // order; the seed hands the ACTUAL ids back (CommonTypes model). The
+    // universe ordinal is the interner's head for a primitive.
     mut seeded = []int.new()
+    mut ordinal = 0
     for bt in builtin_types() {
-        seeded.push(seed(types, defs, bt.name, bt.c_name))
+        seeded.push(seed(types, defs, tys, bt.name, bt.c_name, ordinal))
+        ordinal += 1
     }
     ro prims = Prims { int_id: seeded[0], str_id: seeded[1], bool_id: seeded[2], f64_id: seeded[3] }
     mut fields = FieldTable.new()
@@ -535,7 +543,7 @@ export fn collect_types(file Node) -> Ctx {
                     }
                 }
             }
-            types.push(TypeDef { kind: TypeKind.TkRecord, name: tname, c_name: "", row_off: off, row_cnt: cnt })
+            types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(owner_id), name: tname, c_name: "", row_off: off, row_cnt: cnt })
         }
         if k == NodeKind.SumDecl {
             ro skids = branch_children(c)
@@ -581,7 +589,7 @@ export fn collect_types(file Node) -> Ctx {
                     vcnt += 1
                 }
             }
-            types.push(TypeDef { kind: TypeKind.TkSum, name: sname, c_name: "", row_off: off, row_cnt: vcnt })
+            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(sum_id), name: sname, c_name: "", row_off: off, row_cnt: vcnt })
         }
         if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
@@ -614,7 +622,7 @@ export fn collect_types(file Node) -> Ctx {
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
-    Ctx { types, prims, defs, fields, variant_rows, payload_types, fns }
+    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fns }
 }
 
 /// Children of a branch node; a leaf here is an invariant break.
