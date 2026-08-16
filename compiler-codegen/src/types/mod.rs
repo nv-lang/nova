@@ -11398,8 +11398,8 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(scrutinee, gs, scope, errors);
                 // Plan 124.2 (D221): each arm's pattern checked vs scrutinee type.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
-                // №703 (D65-амендмент 2026-08-16): match по сумме обязан быть
-                // ИСЧЕРПЫВАЮЩИМ [INV-PROPERTY: neg/d65_match_non_exhaustive_neg.nv
+                // №703 (D65) [INV-PROPERTY: match по сумме обязан быть исчерпывающим;
+                // проверка — neg/d65_match_non_exhaustive_neg.nv
                 // краснеет без покрытия; standalone/d65_match_exhaustive_pos.nv
                 // держит четыре законные формы от ложняка]. До этой волны
                 // непокрытый вариант проходил check и build и давал ТИХО
