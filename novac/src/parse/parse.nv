@@ -2,24 +2,22 @@
 // Donor: Roslyn `LanguageParser` (hand-written recursive descent by token kind;
 // `MissingToken` zero-width leaves; `IsTerminator` stop set; `IsMakingProgress`
 // non-advancement guard; `PeekToken(1)` for `fn Recv @name`) + rustc
-// `Parser::expect_one_of`; Dragon Book (2nd ed.) §4.1.4 panic mode for the junk
-// buckets; Go spec \"Composite literals\" ambiguity rule (go/parser `exprLev`) for
-// no_ctor; rustc `AssocOp::DotDot` for `..` as a binary node; NOT taken: operator
-// precedence — E1 is a flat left-assoc chain, `1 + 2 * 3` = (1+2)*3, recorded as
-// 274.3/F18 and held by the diff gate; the fix is Pratt (1973) / rustc
-// `parse_expr_assoc_with` / Go `syntax.parser.binaryExpr(prec)`; NOT taken: Roslyn
+// `Parser::expect_one_of`; Pratt (1973) precedence climbing for binary operators,
+// as rustc spells it in `parse_expr_assoc_with` and Go in `binaryExpr(prec)`, with
+// the powers taken verbatim from the spec's precedence table (03-syntax);
+// Dragon Book (2nd ed.) §4.1.4 panic mode for the junk buckets; Go spec \"Composite literals\" ambiguity rule (go/parser `exprLev`) for
+// no_ctor; rustc `AssocOp::DotDot` for `..` as a binary node; NOT taken: Roslyn
 // incremental reparse.
 // Role: layer 2 — the syntax door with recovery; one seeded mistake yields one Err branch, never a cascade.
 // Used by: pipeline (E1+); the no-cascade and grammar-coverage guards; the LSP at E3 reads the same tree.
 // Guarded by: check-novac-no-cascade.sh (one seeded mistake, one diagnostic), check-novac-grammar-fixture-coverage.sh, novac-fuzz-mutations.sh (recovery never panics or hangs).
 // branch that KEEPS the tokens, so the tree stays byte-exact under any input;
-// operator precedence by table (Pratt / precedence climbing, Dragon Book §4.6);
 // NOT taken: Roslyn's incremental reparse (a batch compiler needs none).
 // novac/src/parse — tokens to green tree (architecture §2: module `parse`).
 //
 // E1 subset grammar: module declaration, fn declarations with empty parameter
-// lists, blocks, call expressions, string/int literals, names, left-assoc
-// +-*/ binary chains. Everything else is RECOVERED, never fatal: an
+// lists, blocks, call expressions, string/int literals, names, binary
+// expressions with the spec's precedence (Pratt, see `expr_bp`). Everything else is RECOVERED, never fatal: an
 // unexpected token becomes an Err branch holding exactly that token, and
 // parsing continues with the next one. The parser can therefore never lose a
 // byte and never stop early — the lead invariant holds through the tree:
@@ -338,17 +336,62 @@ fn Cursor mut @stmt() -> Node {
     e
 }
 
-/// Token kinds that act as binary operators in the subset.
-fn is_binop(k TokenKind) -> bool =>
-    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash || k == TokenKind.Lt || k == TokenKind.Le || k == TokenKind.Gt || k == TokenKind.DotDot
+/// Binding power of a binary operator, or 0 when the token is not one.
+///
+/// The numbers ARE the spec's precedence table (03-syntax, the operator
+/// precedence hierarchy), levels 6, 11 and 12 of it, and the range level 2:
+///
+///     2  `..`            non-associative
+///     6  `<` `<=` `>`    left
+///     11 `+` `-`         left
+///     12 `*` `/`         left
+///
+/// Only the levels the subset can parse are here; the rest of the table
+/// (logical, bitwise, shifts, `as`) arrives with the operators themselves,
+/// and each one is a row added HERE rather than a new branch somewhere.
+fn binding_power(k TokenKind) -> int {
+    if k == TokenKind.Star || k == TokenKind.Slash { return 12 }
+    if k == TokenKind.Plus || k == TokenKind.Minus { return 11 }
+    if k == TokenKind.Lt || k == TokenKind.Le || k == TokenKind.Gt { return 6 }
+    if k == TokenKind.DotDot { return 2 }
+    0
+}
 
-/// Parse a flat left-associative binary chain over primaries.
-fn Cursor mut @expr() -> Node {
+/// Token kinds that act as binary operators in the subset.
+fn is_binop(k TokenKind) -> bool => binding_power(k) > 0
+
+/// Parse an expression -- precedence climbing (Pratt 1973; the shape rustc
+/// spells `parse_expr_assoc_with` and Go spells `binaryExpr(prec)`).
+///
+/// WHAT THIS REPLACED, and why it was a defect rather than a subset limit
+/// (owner asked 2026-08-16; recorded as 274.3/F18 when it was found). The
+/// first parser built a FLAT left-associative chain over every operator, so
+/// `1 + 2 * 3` parsed as `(1 + 2) * 3` and the emitted C computed 9 where
+/// the language says 7. Nothing above the parser could repair it: by the
+/// time check or the emitter sees the tree, the grouping is already wrong,
+/// and both faithfully emit the wrong answer. A wrong number is not a
+/// subset boundary -- the subset may REFUSE a form, never mis-compute it.
+///
+/// `..` is non-associative in the table: `a .. b .. c` is not a Nova
+/// expression, so after one range operator the loop stops rather than
+/// chaining, and the leftover `..` is refused by the caller's grammar.
+fn Cursor mut @expr() -> Node => @expr_bp(1)
+
+/// The climbing loop: consume operators whose binding power is at least
+/// `min_bp`, and parse their right side at `bp + 1` (left associativity).
+fn Cursor mut @expr_bp(min_bp int) -> Node {
     mut left = @primary()
     while is_binop(@peek()) {
+        ro bp = binding_power(@peek())
+        if bp < min_bp { return left }
         ro op = @take()
-        ro right = @primary()
+        // Non-associative range: its right side must not swallow another
+        // `..`, so it is parsed one level ABOVE its own power, like every
+        // left-associative operator -- and then the loop refuses to take a
+        // second `..` at the same level.
+        ro right = @expr_bp(bp + 1)
         left = @node(NodeKind.Bin, []Node.of(left, op, right))
+        if bp == 2 { return left }
     }
     left
 }
