@@ -96,8 +96,37 @@ export fn to_json(d Diagnostic, id int, file str) -> str {
 /// is pure and diag_test pins it to the schema field by field. `msg` is
 /// compiler-internal ASCII by convention (no quotes/backslashes), so no
 /// escaping pass -- the same test documents that assumption.
+/// Escape a text for a JSON string body. The hand-built line below cannot
+/// call `json_encode` (it may be reporting json_encode's own failure), so it
+/// needs its own escaper -- and it needs ONE, because an unescaped quote in a
+/// message makes the section 7 line unparsable exactly when the reader most
+/// needs it. Found 2026-08-16 while routing assert texts through this door:
+/// an assert message is arbitrary text and a contract quotes the condition.
+export fn json_escape(s str) -> str {
+    consume out = StringBuilder.new()
+    ro b = s.bytes()
+    for ch in b {
+        if ch == 34 {
+            out.append("\\\"")
+        } else if ch == 92 {
+            out.append("\\\\")
+        } else if ch == 10 {
+            out.append("\n")
+        } else if ch == 13 {
+            out.append("\r")
+        } else if ch == 9 {
+            out.append("\t")
+        } else {
+            out.append([]u8.of(ch))
+        }
+    }
+    out
+}
+
+/// The hand-built section 7 line for an ice; see the note above on why it
+/// does not go through `json_encode`.
 fn ice_json(msg str) -> str {
-    "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${msg}\",\"poisoned_by\":null}"
+    "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${json_escape(msg)}\",\"poisoned_by\":null}"
 }
 
 /// The ONE internal-error door: print a §7 E_NOVAC_ICE line, then die (P12).

@@ -24,7 +24,7 @@
 module novac
 
 import ./pipeline.{compile, compile_to_c}
-import ./diag.{to_json}
+import ./diag.{to_json, json_escape}
 import std.fs.{read, read_dir, real_fs}
 import std.os.{args, env, exit_process, real_os}
 
@@ -140,13 +140,94 @@ fn check_path(path str, decls []str) -> Verdict {
 /// file: its C on stdout). Effects are handled here only. Batch check exists
 /// for the cost of the loop (plan 274.2): the process start dominates a
 /// single check, so the fuzzer and the diff runner feed a LIST.
+/// The compiler runs in a CHILD FIBER under a supervisor, and this function
+/// is the boundary that renders what falls out of it.
+///
+/// WHY (owner's correction 2026-08-16). Saying "ice() is the only door of
+/// death in novac" was wrong: contracts and asserts are everywhere,
+/// including inside std, and a bounds check or a contract from three frames
+/// down does not know about novac's section 7 schema. The language already
+/// answers this — a fiber's panic is seen by its parent's supervisor (D13
+/// sanctions supervision at the fiber boundary; a fiber does not catch its
+/// own panic) — and convention P7 point 2 scheduled exactly this shape for
+/// E2: "the full Roslyn pattern — rendering a panic that ARRIVED (an assert
+/// or a contract from the depths included) at the boundary — switches on
+/// when compilation moves into a child fiber".
+///
+/// So: `ice()` stays the door for a deliberate invariant statement with a
+/// good message, and this boundary is the net under everything else. A
+/// machine reader gets a section 7 line and a defined exit code even when
+/// the compiler dies somewhere that never heard of novac.
 fn main() {
+    // The child's ONLY channel outward is an atomic: a handler may not
+    // capture mut state from a fiber (E_HANDLER_MUT_CAPTURE_IN_FIBER), and
+    // the compiler prints its own diagnostics anyway — what has to travel is
+    // the verdict, and whether the process died on the way.
+    mut exit_code = AtomicInt.new(Verdict.DoorError.code())
+    mut died = AtomicInt.new(0)
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            // A child failure here is a compiler crash: novac's own
+            // diagnostics never travel this path (they are printed and
+            // become an exit code). Stop keeps this scope alive so the exit
+            // code below is ours rather than the runtime's.
+            //
+            // The payload carries everything a reader needs, and that is the
+            // point of running under a supervisor at all (owner, 2026-08-16):
+            // `ice()` panics WITH the section 7 line, so it is printed as it
+            // stands; an assert or a contract panics with its own text, and
+            // that text already names the FILE AND LINE of the site plus the
+            // condition -- which `ice()` cannot do, because a wrapper reports
+            // its own body. Both end up as one section 7 line on stdout.
+            ro _ = died.fetch_add(1)
+            if err is str {
+                if err.starts_with("{") {
+                    println(err)
+                } else {
+                    println(ice_line(err))
+                }
+            } else {
+                println(ice_line("the compiler died with a payload that is not text"))
+            }
+            return Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                exit_code.store(run(compiler_argv()))
+            }
+        }
+    }
+    if died.load() > 0 {
+        // The line itself was printed by the handler, which is the only place
+        // that sees the payload.
+        exit_process(Verdict.DoorError.code())
+        return
+    }
+    exit_process(exit_code.load())
+}
+
+/// The section 7 line for a death that arrived without one of its own.
+/// Hand-built, exactly like `diag.ice` builds its: the last-resort door must
+/// not depend on machinery it may be reporting about. The message is escaped
+/// through the one door, because an assert text is arbitrary and a contract
+/// quotes its condition.
+fn ice_line(msg str) -> str =>
+    "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${json_escape(msg)}\",\"poisoned_by\":null}"
+
+/// The arguments, read once at the door.
+fn compiler_argv() -> []str {
+    with Os = real_os() {
+        return args()
+    }
+}
+
+/// Everything novac does, now the body of a supervised child fiber.
+fn run(a []str) -> int {
     with Fs = real_fs(), Os = real_os() {
-        ro a = args()
         if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")
-            exit_process(Verdict.DoorError.code())
-            return
+            return Verdict.DoorError.code()
         }
         // std is FOUND the way nova-cli finds it, never passed by a flag
         // (П26: the command surface is a subset of nova-cli's, flags
@@ -160,8 +241,7 @@ fn main() {
         ro argi = 2
         if argi >= a.len() {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")
-            exit_process(Verdict.DoorError.code())
-            return
+            return Verdict.DoorError.code()
         }
         if a[1] == "check" {
             mut worst = Verdict.Clean
@@ -170,24 +250,24 @@ fn main() {
                 worst = worse(worst, check_path(a[i], decls))
                 i += 1
             }
-            exit_process(worst.code())
-            return
+            return worst.code()
         }
         ro path = a[argi]
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
-                    Ok(text) => { exit_process(emit_one(text, path, decls).code()) }
+                    Ok(text) => { return emit_one(text, path, decls).code() }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
-                        exit_process(Verdict.DoorError.code())
+                        return Verdict.DoorError.code()
                     }
                 }
             }
             Err(_) => {
                 println("novac: cannot read ", path)
-                exit_process(Verdict.DoorError.code())
+                return Verdict.DoorError.code()
             }
         }
     }
+    Verdict.DoorError.code()
 }
