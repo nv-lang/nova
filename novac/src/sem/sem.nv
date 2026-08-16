@@ -173,6 +173,9 @@ export fn FieldTable @field_type(owner_id int, fname str) -> int {
         if fd.owner_id == owner_id { return fd.type_id }
         r = fd.next_row
     }
+    // [LEGACY-#TBD-user-error-as-ice until:E2b3] a typo in a field name is a
+    // USER error and must be a diagnostic, not an ice; check gets local typing
+    // at E2-b3 and takes this over. Integrator review 2026-08-16.
     ice("sem: unknown field past check (type checker is a later wave)")
 }
 
@@ -720,6 +723,7 @@ export fn Scope mut @bind(name str, t int) -> () {
 #realtime nogc
 export fn Scope @type_of_name(name str) -> int {
     ro row = @names.find(name)
+    // [LEGACY-#TBD-user-error-as-ice until:E2b3] an unbound name is a USER error.
     if row < 0 { ice("sem: unbound name — resolve is check's ground, no silent int default (#652 class)") }
     @types[row]
 }
@@ -750,7 +754,10 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro recv_t = type_of(kids[0], ctx, scope)
         match ctx.fns.lookup(recv_t, mname) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
+            // [LEGACY-#TBD-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
             FnUnknown => { ice("sem: method not in the read declarations past check") }
+            // [LEGACY-#TBD-user-error-as-ice until:E2b3] check judges the NAME only today;
+            // an overload the user hit is a USER situation, not an invariant.
             FnOverloaded(_) => { ice("sem: overload set not narrowed past check") }
         }
     }
@@ -783,6 +790,8 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // Both sides must be PROVEN int — arithmetic on str/bool/records is
         // not a silent int (#652 class), it is an invariant break here.
         if lt == ctx.prims.int_id && rt == ctx.prims.int_id { return ctx.prims.int_id }
+        // [LEGACY-#TBD-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
+        // has no operand typing yet, so today it reaches here.
         ice("sem: binary arithmetic on non-numeric operands past check (#652 class)")
     }
     if k == NodeKind.MatchExpr {
@@ -794,6 +803,8 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
                 return type_of(ak[ak.len() - 1], ctx, scope)
             }
         }
+        // [LEGACY-#TBD-user-error-as-ice until:E2b3] `match x { }` is a USER error;
+        // neither parse nor check refuses it today.
         ice("sem: match without arms past check")
     }
     if k == NodeKind.Call {

@@ -165,7 +165,7 @@ export fn Interner mut @infer(vid int) -> int => @intern(TypeKind.TkInfer, vid, 
 
 /// The kind of a type; an id outside the table is an ice, never a default.
 ///
-/// [LEGACY-#TBD-exported-method-returning-sum] A FREE function, not a method,
+/// [LEGACY-#696] A FREE function, not a method,
 /// on purpose. Bisected 2026-08-16 (five probes, three of them minimal
 /// repros that did NOT reproduce, so the trigger needs the real novac CU):
 /// an EXPORTED METHOD whose return type is a sum (`export fn Interner
