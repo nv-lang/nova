@@ -19,13 +19,15 @@
 #
 # $1 — корень репозитория; $2 — число запусков (умолчание 200 — ~30с;
 #      полная выборка №694 — 500). NOVA_EXIT_GUARD_RUNS переопределяет.
+# NOVA_EXIT_GUARD_NOVA — путь к компилятору; самотест подставляет поддельный,
+#      который кладёт скрипт-пробу. В гейте не задаётся: страж судит бинарь.
 #
 # Проверялся: Windows (Git Bash), 2026-08-16.
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 RUNS="${NOVA_EXIT_GUARD_RUNS:-${2:-200}}"
 NAME=check-process-exit-under-pool
-NOVA="$ROOT/nova-cli/target/release/nova.exe"
+NOVA="${NOVA_EXIT_GUARD_NOVA:-$ROOT/nova-cli/target/release/nova.exe}"
 [ -x "$NOVA" ] || NOVA="$ROOT/nova-cli/target/release/nova"
 if [ ! -x "$NOVA" ]; then
     echo "$NAME ok: компилятор не собран — судить нечего"
