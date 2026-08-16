@@ -33,15 +33,33 @@ export fn c_type(ctx Ctx, t int) -> str {
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
-    // [LEGACY-#677] never-in-tail: unreachable pacifier (see emit_c history).
+    // [LEGACY-#677] never-in-tail: `ice() -> never` as the tail of a `-> str`
+    // fn MIScompiles in the oracle, so the unreachable value stays. Removing
+    // it passes `check` (tried 2026-08-16) — and that proves nothing, because
+    // #677 is a codegen bug, not a checker one. It goes when #677 closes.
     ""
 }
 
 /// C name of a user type's struct (no pointer): `Nova_<name>`.
+///
+/// Same door discipline as `c_type`, and it was NOT the same until the
+/// owner's review 2026-08-16: an id outside the registry fell into a bounds
+/// panic instead of an honest `ice`, and the kind was tested by an if
+/// instead of an exhaustive match, so a fourth kind would have been spelled
+/// as a struct in silence (П21).
 export fn c_struct(ctx Ctx, t int) -> str {
+    if t < 0 || t >= ctx.types.len() {
+        ice("mangle: struct name asked for a type id outside the registry")
+    }
     ro td = ctx.types[t]
-    if td.kind == TypeKind.TkPrim { ice("mangle: a primitive has no struct name") }
-    "Nova_${td.name}"
+    match td.kind {
+        TkPrim => { ice("mangle: a primitive has no struct name") }
+        TkRecord => { return "Nova_${td.name}" }
+        TkSum => { return "Nova_${td.name}" }
+    }
+    // [LEGACY-#677] never-in-tail: same unreachable pacifier as in c_type —
+    // one arm ends in `ice() -> never`, which is the miscompiling shape.
+    ""
 }
 
 /// C name of a sum's tag constant for a variant: `NOVAC_TAG_<Sum>_<Variant>`
@@ -68,11 +86,17 @@ export fn c_method(ctx Ctx, recv_t int, name str) -> str {
         TkRecord => { return "Nova_${td.name}_method_${name}" }
         TkSum => { return "Nova_${td.name}_method_${name}" }
     }
-    ""
 }
 
-/// C name of a user function: main is the runtime's entry slot; others
-/// `novac_user_<name>`.
+/// C name of a user function. TWO prefixes on purpose (owner's question
+/// 2026-08-16), because they answer to two different owners:
+/// * `nova_fn_main_impl` is not ours to choose — it is the RUNTIME's entry
+///   slot, called by the shell, so it is spelled exactly as the oracle
+///   spells it. An ABI fixed point, held by the shell-freshness guard.
+/// * `novac_user_<name>` is novac's OWN namespace, deliberately unlike the
+///   oracle's `nova_fn_<mangled>`, so novac's output can never collide with
+///   a runtime or std symbol. Same reason `c_tag` says `NOVAC_TAG_` and
+///   `c_maker` says `novac_make_`.
 export fn c_fn(name str, is_entry bool) -> str {
     if is_entry { return "nova_fn_main_impl" }
     "novac_user_${name}"

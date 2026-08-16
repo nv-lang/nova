@@ -111,6 +111,52 @@ fn f(xs []int, i int) -> int {
 EOF
 run "$T/g7" && ok "булев else не судится" || bad "булев else покраснел: $(cat "$T/err")"
 
+# --- 5а. пустое значение ХВОСТОМ за исчерпывающим match — красное ---------
+mk g5a <<'EOF'
+module a
+fn c_method(td TypeDef, name str) -> str {
+    match td.kind {
+        TkPrim => { return "a" }
+        TkRecord => { return "b" }
+        TkSum => { return "c" }
+    }
+    ""
+}
+EOF
+if run "$T/g5a"; then
+    bad "мёртвое пустое значение хвостом прошло"
+else
+    grep -q "пустое значение хвостом" "$T/err" && ok "пустой хвост за match пойман" || bad "красный, но не про пустой хвост"
+fi
+
+# --- 5б. тот же хвост С маркером известного бага — зелёный ---------------
+mk g5b <<'EOF'
+module a
+fn c_type(td TypeDef) -> str {
+    match td.kind {
+        TkPrim => { return "a" }
+        TkRecord => { return "b" }
+        TkSum => { return "c" }
+    }
+    // [LEGACY-#677] never-in-tail: unreachable pacifier.
+    ""
+}
+EOF
+run "$T/g5b" && ok "успокоитель с маркером законен" || bad "маркированный успокоитель покраснел: $(cat "$T/err")"
+
+# --- 5в. "" как ОСМЫСЛЕННЫЙ сигнал после цепочки if — зелёный ------------
+# Живой ложняк 2026-08-16: checked_op/cmp_op/raw_op возвращают "" в значении
+# «не арифметика», и вызывающий это проверяет — хвост достижим.
+mk g5v <<'EOF'
+module a
+fn checked_op(op TokenKind) -> str {
+    if op == TokenKind.Plus { return "nova_int_checked_add" }
+    if op == TokenKind.Minus { return "nova_int_checked_sub" }
+    ""
+}
+EOF
+run "$T/g5v" && ok "осмысленный сигнал \"\" после цепочки if не судится" || bad "сигнальный хвост покраснел зря: $(cat "$T/err")"
+
 # --- 8. нет директории — судить нечего ------------------------------------
 run "$T/absent"
 grep -q "судить нечего" "$T/out" && ok "нет директории — судить нечего" || bad "ждали «судить нечего»"
