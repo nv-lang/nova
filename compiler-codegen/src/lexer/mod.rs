@@ -199,10 +199,16 @@ impl<'a> Lexer<'a> {
                     TokenKind::Slash
                 }
             },
-            b'%' => {
-                self.pos += 1;
-                TokenKind::Percent
-            }
+            b'%' => match self.peek_at(1) {
+                Some(b'=') => {
+                    self.pos += 2;
+                    TokenKind::PercentEq
+                }
+                _ => {
+                    self.pos += 1;
+                    TokenKind::Percent
+                }
+            },
             b'!' => match self.peek_at(1) {
                 Some(b'=') => {
                     self.pos += 2;

@@ -197,6 +197,8 @@ step "expect-markers (неизвестный EXPECT_* раннер молча и
 step "накопление несведённых веток (никогда не копи)"
 step "форма записей реестра (класс, приоритет, оговорка)"
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
+step "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
+guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
 
 guard "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 
