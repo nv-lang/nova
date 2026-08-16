@@ -73,6 +73,8 @@ export type TokenKind enum
     | Lt
     | Le
     | Gt
+    | Ge
+    | Percent
     | Pipe
     | FatArrow
     | Assign
@@ -254,11 +256,15 @@ export fn lex(src str) -> []Token {
         } else if c == ('<' as u8) {
             i += 1
             kind = TokenKind.Lt
+        } else if c == ('>' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.Ge
         } else if c == ('>' as u8) {
-            // Bare Gt only: `>=` is not a subset form yet, so its `=` will
-            // land as a stray Assign and parse recovers it honestly.
             i += 1
             kind = TokenKind.Gt
+        } else if c == ('%' as u8) {
+            i += 1
+            kind = TokenKind.Percent
         } else if c == ('=' as u8) && i + 1 < n && b[i + 1] == ('>' as u8) {
             i += 2
             kind = TokenKind.FatArrow

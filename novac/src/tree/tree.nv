@@ -24,7 +24,8 @@
 
 module novac.tree
 
-import ../lex.{Token}
+import ../lex.{Token, TokenKind}
+import ../diag.{ice}
 
 /// Every branch shape of the green tree (LeafNode is the leaf's own kind —
 /// a leaf is NOT an error; see kind_of below).
@@ -65,6 +66,74 @@ export type NodeKind enum
     | RetType
     | Name
     | Err
+
+/// WHICH binary operator a `Bin` node applies -- the DECISION, taken once.
+///
+/// Why a sum and not the operator token every consumer re-reads (owner's
+/// question 2026-08-16, "not all operators are parsed -- does that make
+/// sense?"). It did not: the token stayed raw in the tree and FIVE separate
+/// if-chains re-decided what it meant -- the parser (precedence), the type
+/// lattice (comparison yields bool), and three tables in the emitter
+/// (checked_op, cmp_op, raw_op). Each enumerated a DIFFERENT subset, and
+/// three of them returned "" on anything they did not know: the #652 class,
+/// a silent default on a closed set. Adding one operator meant editing five
+/// places and hoping. With the decision in a sum, every consumer matches
+/// exhaustively (P21), and a new operator becomes a COMPILE ERROR at each
+/// place that must decide -- which is the only mechanism that scales.
+///
+/// The operator TOKEN stays a child of the node: the green tree is lossless
+/// and must reserialize byte for byte. What is added is the answer, not a
+/// replacement of the question.
+///
+/// Donor: rustc `ast::BinOpKind` (the AST node carries the KIND; the token is
+/// not re-read downstream) and rust-analyzer `ast::BinExpr::op_kind()` (a
+/// classifier over an UNTYPED syntax tree, which is exactly novac's shape);
+/// Roslyn spells the same decision as the node kind itself
+/// (`AddExpression`...) with `OperatorToken` kept for fidelity -- NOT taken,
+/// because it would multiply `NodeKind` by the operator table.
+export type BinOp enum
+    | Add
+    | Sub
+    | Mul
+    | Div
+    | Less
+    | LessEq
+    | Greater
+    | GreaterEq
+    | Modulo
+    | Range
+
+/// Token -> operator, or nothing. THE table: one place lists which token
+/// means which operator, and both halves of the tolerant/strict pair below
+/// are derived from it.
+///
+/// The first shape had the tolerant half re-list the tokens as a `||`-chain
+/// next to this table -- two hand-written enumerations of one set, so adding
+/// an operator to the table while forgetting the chain would compile clean
+/// and the parser would silently never take it (P22: derived is a FUNCTION,
+/// not a second copy).
+export fn bin_op_opt(k TokenKind) -> Option[BinOp] {
+    if k == TokenKind.Plus { return Some(BinOp.Add) }
+    if k == TokenKind.Minus { return Some(BinOp.Sub) }
+    if k == TokenKind.Star { return Some(BinOp.Mul) }
+    if k == TokenKind.Slash { return Some(BinOp.Div) }
+    if k == TokenKind.Percent { return Some(BinOp.Modulo) }
+    if k == TokenKind.Lt { return Some(BinOp.Less) }
+    if k == TokenKind.Le { return Some(BinOp.LessEq) }
+    if k == TokenKind.Gt { return Some(BinOp.Greater) }
+    if k == TokenKind.Ge { return Some(BinOp.GreaterEq) }
+    if k == TokenKind.DotDot { return Some(BinOp.Range) }
+    None
+}
+
+/// Is this token a binary operator? The TOLERANT half -- the parser must ask
+/// before it commits, and peeking is not deciding.
+export fn is_binop(k TokenKind) -> bool => bin_op_opt(k).is_some()
+
+/// The decision. The STRICT half: a token that is not an operator is an
+/// invariant break, because the caller asked `is_binop` first.
+export fn bin_op(k TokenKind) -> BinOp =>
+    bin_op_opt(k) ?? ice("tree: bin_op asked about a token that is not a binary operator")
 
 /// A green node: a leaf carries one Token as DATA; a branch groups children
 /// under a kind. Immutable, lossless, position-free by construction.

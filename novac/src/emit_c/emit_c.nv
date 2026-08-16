@@ -59,7 +59,7 @@
 module novac.emit_c
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, BinOp, bin_op}
 import ../diag.{ice}
 import ../sem.{Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, c_method, c_fn}
 import ../builtins.{ENTRY_FN, PRINT_FN}
@@ -576,30 +576,61 @@ fn Emitter mut @emit_bind(st Node) -> () {
     }
 }
 
-/// Overflow-checked int helper for a binary operator, or "" if not arithmetic.
-fn checked_op(op TokenKind) -> str {
-    if op == TokenKind.Plus { return "nova_int_checked_add" }
-    if op == TokenKind.Minus { return "nova_int_checked_sub" }
-    if op == TokenKind.Star { return "nova_int_checked_mul" }
-    if op == TokenKind.Slash { return "nova_int_checked_div" }
-    ""
+/// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
+/// DECISION and the operand type -- one exhaustive match instead of the three
+/// token-keyed tables this replaced (`checked_op`, `cmp_op`, `raw_op`), each
+/// of which returned an empty string on anything it did not know and let the
+/// next one guess.
+///
+/// PRIMITIVE is the load-bearing word (owner's correction 2026-08-16). In
+/// Nova every operator is overloadable on user types through protocols
+/// (D46/D363: `@plus`, `@compare`, `@equal`), so the emitted form is a
+/// function of the operator AND the operand type. The subset emits only the
+/// primitive half; `check` refuses the rest at the operator's position rather
+/// than letting this table answer for a type it knows nothing about.
+///
+/// `is_float` comes from the checker's channel: float arithmetic is raw C
+/// (the oracle's shape, and floats have no overflow trap), int arithmetic
+/// goes through the runtime's checked helpers, comparisons are C operators
+/// either way.
+fn c_binary_form(op BinOp, is_float bool) -> str {
+    match op {
+        Add => {
+            if is_float { return "+" }
+            "nova_int_checked_add"
+        }
+        Sub => {
+            if is_float { return "-" }
+            "nova_int_checked_sub"
+        }
+        Mul => {
+            if is_float { return "*" }
+            "nova_int_checked_mul"
+        }
+        Div => {
+            if is_float { return "/" }
+            "nova_int_checked_div"
+        }
+        Less => "<"
+        LessEq => "<="
+        Greater => ">"
+        GreaterEq => ">="
+        Modulo => {
+            if is_float { ice("emit_c: the remainder operator has no float form in the subset") }
+            "nova_int_checked_rem"
+        }
+        Range => ice("emit_c: a range reached expression emission -- for-heads consume it")
+    }
 }
 
-/// C comparison operator for a comparison token, or "".
-fn cmp_op(op TokenKind) -> str {
-    if op == TokenKind.Lt { return "<" }
-    if op == TokenKind.Le { return "<=" }
-    if op == TokenKind.Gt { return ">" }
-    ""
-}
-
-/// Plain C operator for f64 arithmetic (no overflow checks on floats), or "".
-fn raw_op(op TokenKind) -> str {
-    if op == TokenKind.Plus { return "+" }
-    if op == TokenKind.Minus { return "-" }
-    if op == TokenKind.Star { return "*" }
-    if op == TokenKind.Slash { return "/" }
-    ""
+/// Is this operator a comparison? Derived from the decision (P22: derived is
+/// a function, not a second table), and exhaustive so a new operator must
+/// answer here too.
+fn is_comparison(op BinOp) -> bool {
+    match op {
+        Less | LessEq | Greater | GreaterEq => true
+        Add | Sub | Mul | Div | Modulo | Range => false
+    }
 }
 
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
@@ -684,41 +715,35 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(")")
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
-        ro op = leaf_kind(kids[1])
-        if @out.type_of(e.id_of()) == @ctx.prims.f64_id && raw_op(op) != "" {
-            // f64 arithmetic is RAW C with left-assoc parens — the oracle's
+        ro op = bin_op(leaf_kind(kids[1]))
+        ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
+        ro form = c_binary_form(op, is_float)
+        if is_comparison(op) {
+            @body.append("((nova_int)((")
+            @emit_expr(kids[0])
+            @body.append(") ")
+            @body.append(form)
+            @body.append(" (")
+            @emit_expr(kids[2])
+            @body.append(")))")
+        } else if is_float {
+            // f64 arithmetic is RAW C with left-assoc parens -- the oracle's
             // shape: ((((nova_f64)3.14) * r) * r). Never checked_*.
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(" ")
-            @body.append(raw_op(op))
+            @body.append(form)
             @body.append(" ")
             @emit_expr(kids[2])
             @body.append(")")
-            return
-        }
-        ro chk = checked_op(op)
-        if chk != "" {
-            @body.append(chk)
+        } else {
+            @body.append(form)
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(", ")
             @emit_expr(kids[2])
             @body.append(")")
-            return
         }
-        ro cmp = cmp_op(op)
-        if cmp != "" {
-            @body.append("((nova_int)((")
-            @emit_expr(kids[0])
-            @body.append(") ")
-            @body.append(cmp)
-            @body.append(" (")
-            @emit_expr(kids[2])
-            @body.append(")))")
-            return
-        }
-        ice("emit: binary operator outside the subset")
     } else {
         ice("emit: expression kind outside the subset")
     }

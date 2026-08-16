@@ -32,7 +32,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, BinOp, bin_op}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN}
 import ../sem.{Ctx, CheckOut, DefKind, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
@@ -135,6 +135,7 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
             if kind == NodeKind.MethodCall { @report_if_unknown_method(children) }
             if kind == NodeKind.Call || kind == NodeKind.MethodCall { @report_if_ordered_args(children) }
             if kind == NodeKind.FnDecl { @report_if_missing_ret(children) }
+            if kind == NodeKind.ForStmt { @report_if_bad_for_head(children) }
             if kind == NodeKind.Field { @report_if_missing_type(children, "outside the E1 subset: field must declare a type") }
             if kind == NodeKind.Param { @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type") }
             if kind == NodeKind.RecordCtor && !init_pos {
@@ -174,7 +175,11 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
 // shape with a missing type is refused HERE — the emitter's matching ice
 // is the second floor, never the first answer.
 
-/// [name, type-ident, ...] — the second child must be an Ident leaf.
+/// [name, type-ident, ...] — the second child must be an Ident leaf. Whether
+/// that identifier NAMES a type novac knows is judged in the typing walk, not
+/// here: this pass also runs over recovered junk, and `fn main junk here ()`
+/// would otherwise produce two diagnostics for one mistake (the Err branch's
+/// and this one) — a cascade, which the no-cascade rule forbids.
 fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     if kids.len() >= 2 {
         match kids[1] {
@@ -183,6 +188,32 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
         }
     }
     @report_first_leaf_of(kids, msg)
+}
+
+/// The head of a `for` must be a RANGE, and the subset says so out loud.
+///
+/// Found by the adversarial review of the operator wave, 2026-08-16: neither
+/// check nor the emitter ever looked at the head's operator. `for i in 0 < 3`
+/// and `for i in 1 + 3` were silently emitted as range loops (the emitter
+/// reads children [0] and [2] and never [1]), and `for i in n` reached an ice.
+/// The oracle refuses all three. This is the exact class P21 names -- a
+/// dispatch that never happened is weaker than a wrong `else` -- and it is
+/// the inverse of the ice that already guards `Range` in expression position.
+fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
+    if kids.len() < 4 { return }
+    ro head = kids[3]
+    if head.kind_of() != NodeKind.Bin {
+        @report_first_leaf_of(kids, "outside the subset: the head of a for must be a range `lo..hi`")
+        return
+    }
+    ro hk = branch_children(head)
+    if hk.len() < 3 { return }
+    match bin_op(leaf_kind(hk[1])) {
+        Range => {}
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq => {
+            @report_first_leaf_of(kids, "outside the subset: the head of a for must be a range `lo..hi`, not another binary operator")
+        }
+    }
 }
 
 /// Every fn except main must declare `-> T` in the subset.
@@ -367,7 +398,25 @@ fn Checker mut @type_fn(f Node) -> () {
                 ro pk = branch_children(c)
                 if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
                     if leaf_kind(pk[1]) == TokenKind.Ident {
-                        @scope.bind(leaf_text(pk[0]), @ctx.defs.type_id(leaf_text(pk[1])))
+                        // FIRST FLOOR for a type novac does not know (owner
+                        // 2026-08-16, "not all builtin types are parsed --
+                        // does that make sense?"). Its universe is four
+                        // primitives; the language has the integer family,
+                        // f32, char and byte besides. A `u8` parameter used
+                        // to pass the shape test, get silently dropped by the
+                        // collector, and then die as an ICE -- a compiler-bug
+                        // message on valid Nova the oracle accepts. A narrow
+                        // subset is legitimate; a subset whose boundary is an
+                        // ice is not.
+                        ro pt = @ctx.defs.type_id_opt(leaf_text(pk[1]))
+                        if pt < 0 {
+                            match pk[1] {
+                                Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
+                                Branch { .. } => {}
+                            }
+                            return
+                        }
+                        @scope.bind(leaf_text(pk[0]), pt)
                     }
                 }
             }
@@ -629,9 +678,45 @@ fn Checker mut @type_expr(e Node) -> () {
         // (f64 is raw C, int is the checked helper).
         @type_expr(kids[0])
         @type_expr(kids[2])
-        if @out.len() == 0 { @record(e, type_of(e, @ctx, @scope)) }
+        if @out.len() > 0 { return }
+        if @report_if_operator_needs_protocol(kids) { return }
+        @record(e, type_of(e, @ctx, @scope))
     }
 }
+
+/// In Nova EVERY operator dispatches through a protocol on a user type
+/// (D46/D363: `a + b` is `a.@plus(b)`, `a < b` is `a.@compare(b) < 0`,
+/// `a == b` is `a.@equal(b)`), and the subset does not do that dispatch yet.
+/// So the C form is a function of the operator AND the operand type, not of
+/// the operator alone -- owner's correction 2026-08-16.
+///
+/// Until the protocol path exists (it needs bounds, E2-b3), an operator whose
+/// operands are not the primitives the subset can emit is an honest refusal
+/// at the operator's own position -- not the ice the lattice would raise one
+/// level down, and not a silently wrong primitive emission.
+/// Returns whether it refused.
+fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
+    ro lt = type_of(kids[0], @ctx, @scope)
+    ro rt = type_of(kids[2], @ctx, @scope)
+    ro op = bin_op(leaf_kind(kids[1]))
+    ro numeric = @is_numeric(lt) && @is_numeric(rt)
+    match op {
+        Range => {
+            if numeric { return false }
+        }
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq => {
+            if numeric { return false }
+        }
+    }
+    match kids[1] {
+        Leaf(t) => @refuse(t, "outside the subset: this operator on these operands dispatches through a protocol (D46: @plus / @compare / @equal), and protocol dispatch arrives with bounds")
+        Branch { .. } => {}
+    }
+    true
+}
+
+/// The two types the subset can put on either side of an operator.
+fn Checker @is_numeric(t int) -> bool => t == @ctx.prims.int_id || t == @ctx.prims.f64_id
 
 /// Record a node's type through the channel's one writer door.
 fn Checker mut @record(n Node, t int) -> () {
@@ -741,8 +826,14 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     }
     if k == NodeKind.Bin {
         ro kids = branch_children(e)
-        ro op = leaf_kind(kids[1])
-        if op == TokenKind.Lt || op == TokenKind.Le || op == TokenKind.Gt { return ctx.prims.bool_id }
+        // The RESULT type is a property of the operator, so it is decided by
+        // an exhaustive match on the decision -- not by asking the token
+        // whether it happens to be one of three comparisons.
+        match bin_op(leaf_kind(kids[1])) {
+            Less | LessEq | Greater | GreaterEq => { return ctx.prims.bool_id }
+            Range => { ice("check: a range is not an expression outside a for-head") }
+            Add | Sub | Mul | Div | Modulo => {}
+        }
         ro lt = type_of(kids[0], ctx, scope)
         ro rt = type_of(kids[2], ctx, scope)
         if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }

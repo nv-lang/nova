@@ -30,7 +30,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, branch, leaf}
+import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
 type Cursor {
@@ -336,29 +336,21 @@ fn Cursor mut @stmt() -> Node {
     e
 }
 
-/// Binding power of a binary operator, or 0 when the token is not one.
+/// Binding power of a binary operator: the DECISION decides, not the token.
 ///
 /// The numbers ARE the spec's precedence table (03-syntax, the operator
-/// precedence hierarchy), levels 6, 11 and 12 of it, and the range level 2:
-///
-///     2  `..`            non-associative
-///     6  `<` `<=` `>`    left
-///     11 `+` `-`         left
-///     12 `*` `/`         left
-///
-/// Only the levels the subset can parse are here; the rest of the table
-/// (logical, bitwise, shifts, `as`) arrives with the operators themselves,
-/// and each one is a row added HERE rather than a new branch somewhere.
-fn binding_power(k TokenKind) -> int {
-    if k == TokenKind.Star || k == TokenKind.Slash { return 12 }
-    if k == TokenKind.Plus || k == TokenKind.Minus { return 11 }
-    if k == TokenKind.Lt || k == TokenKind.Le || k == TokenKind.Gt { return 6 }
-    if k == TokenKind.DotDot { return 2 }
-    0
+/// precedence hierarchy): levels 12, 11, 6 of it, and the range level 2.
+/// The match is exhaustive on purpose -- a new operator does not compile
+/// until this table says where it binds, which is the property the old
+/// token-keyed if-chain could not have.
+fn binding_power(op BinOp) -> int {
+    match op {
+        Mul | Div | Modulo => 12
+        Add | Sub => 11
+        Less | LessEq | Greater | GreaterEq => 6
+        Range => 2
+    }
 }
-
-/// Token kinds that act as binary operators in the subset.
-fn is_binop(k TokenKind) -> bool => binding_power(k) > 0
 
 /// Parse an expression -- precedence climbing (Pratt 1973; the shape rustc
 /// spells `parse_expr_assoc_with` and Go spells `binaryExpr(prec)`).
@@ -382,7 +374,7 @@ fn Cursor mut @expr() -> Node => @expr_bp(1)
 fn Cursor mut @expr_bp(min_bp int) -> Node {
     mut left = @primary()
     while is_binop(@peek()) {
-        ro bp = binding_power(@peek())
+        ro bp = binding_power(bin_op(@peek()))
         if bp < min_bp { return left }
         ro op = @take()
         // Non-associative range: its right side must not swallow another
