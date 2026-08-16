@@ -102,6 +102,14 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' ! -name 'mangle.nv' |
             if (line ~ /^[[:space:]]*$/) next
             if (fname == "") next
             if (line ~ /\.find\(/ || line ~ /\.lookup\(/) asks = 1
+            # Дверь по НАЗНАЧЕНИЮ, не только по вызову .find: функция, помеченная
+            # #realtime nogc, ОБЪЯВЛЕНА дверью — и судится как дверь, что бы она ни
+            # делала внутри (владелец 2026-08-16: builtin_types() строил вектор на
+            # каждый вызов prim_c_name — тот индексировал массив, .find в нём не было,
+            # и страж молчал). Отдельно: вызов функции-конструктора вектора
+            # (`.of(`, `.new()`) внутри двери — аллокация, красный.
+            if (has_rt) asks = 1
+            if (line ~ /\.of\(/ || line ~ /\]\.new\(\)/) alloc_call = 1
             attr = 0
             # «пишет» = буфер ДАЛИ снаружи (поле приёмника). Локальный
             # StringBuilder внутри двери — это аллокация, а не роль эмиттера:
@@ -110,7 +118,8 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' ! -name 'mangle.nv' |
             if (line ~ /@body\.append\(/) writes = 1
             if (line ~ /ice\(/) next
             why_s = ""
-            if (line ~ /\$\{/)             why_s = "строка собирается интерполяцией"
+            if (line ~ /\.of\(/ || line ~ /\]\.new\(\)/) why_s = "конструируется вектор (аллокация на каждый вызов)"
+            else if (line ~ /\$\{/)             why_s = "строка собирается интерполяцией"
             else if (line ~ /\.concat\(/)  why_s = "строка склеивается concat"
             else if (line ~ /StringBuilder/) why_s = "заводится StringBuilder"
             if (why_s != "") {

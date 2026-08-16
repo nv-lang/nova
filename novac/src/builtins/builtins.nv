@@ -63,7 +63,19 @@ export type BuiltinType value {
 
 /// The universe, in Prims order; the seed hands the ACTUAL ids back
 /// (CommonTypes model, no hard-coded indexes).
-export fn builtin_types() -> []BuiltinType => []BuiltinType.of(
+/// THE universe table, built ONCE at module load (owner's correction
+/// 2026-08-16: a function returning a fresh vector allocated on EVERY call —
+/// prim_c_name is a door and П18 says a door allocates nothing; the seed loop
+/// called it too. A module-level `ro` binding is initialized once and read
+/// forever; the type system keeps it read-only).
+///
+/// Module-private, not exported, and that is NOT the wanted shape: probed
+/// 2026-08-16 — `export ro` of a vector is not importable across a module
+/// boundary in the oracle (`undefined identifier` at the use site), and
+/// `export const` refuses `.of(...)` (E_CONST_NOT_CONSTEXPR: literals only).
+/// So the table stays private and the ONE reader door below hands it out.
+/// [LEGACY-#TBD-export-ro-vector] goes when the oracle exports `ro` values.
+ro universe = []BuiltinType.of(
     BuiltinType { name: "int", c_name: "nova_int" },
     BuiltinType { name: "str", c_name: "nova_str" },
     BuiltinType { name: "bool", c_name: "nova_bool" },
@@ -75,8 +87,13 @@ export fn builtin_types() -> []BuiltinType => []BuiltinType.of(
 /// C name is a FUNCTION of the term, never a stored string (П22, mangle
 /// door rule). The ordinal is what the interner keeps as the head of a
 /// TkPrim term, so the round trip is prim term -> ordinal -> ABI name.
+#realtime nogc
 export fn prim_c_name(ordinal int) -> str {
-    ro all = builtin_types()
-    if ordinal < 0 || ordinal >= all.len() { ice("builtins: primitive ordinal outside the universe") }
-    all[ordinal].c_name
+    if ordinal < 0 || ordinal >= universe.len() { ice("builtins: primitive ordinal outside the universe") }
+    universe[ordinal].c_name
 }
+
+/// The universe as a whole, for the seed loop in sem — the SAME vector, not a
+/// copy (a `[]T` is a header; the rows live once). Exists only because the
+/// oracle cannot export a `ro` vector yet (see `universe`).
+export fn builtin_types() -> []BuiltinType => universe
