@@ -164,6 +164,29 @@ grep -q "судить нечего" "$T/out" && ok "нет директории 
 # --- 9. настоящее дерево --------------------------------------------------
 sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
 
+# --- открытый домен: `_` обязателен, а не ленив (2026-08-16) --------------
+mkdir -p "$T/open/sem"
+{ echo 'module a'
+  echo 'fn esc(c char) -> str => match c {'
+  echo "    'q'  => "quote""
+  echo '    _   => "other"'
+  echo '}'
+} > "$T/open/sem/a.nv"
+run "$T/open" && ok "литеральные армы: подстановочник законен (открытый домен)" || bad "открытый домен покраснел: $(cat "$T/err")"
+
+mkdir -p "$T/closed/sem"
+{ echo 'module a'
+  echo 'fn name(k Kind) -> str => match k {'
+  echo '    Red => "r"'
+  echo '    _   => "x"'
+  echo '}'
+} > "$T/closed/sem/a.nv"
+if run "$T/closed"; then
+    bad "заглушка на ИМЕНОВАННЫХ вариантах прошла — главный случай ослаб"
+else
+    grep -q "заглушка" "$T/err" && ok "на закрытом множестве подстановочник по-прежнему красный" || bad "красный, но не про заглушку"
+fi
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-no-default-branch ok: все случаи, включая живой дефект и оба вида не-диспетчера"
