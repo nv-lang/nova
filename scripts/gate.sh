@@ -214,6 +214,8 @@ guard --deadline 300 "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT
 # НОВЫЕ ПРОВЕРКИ novac ДОБАВЛЯТЬ ТУДА, НЕ СЮДА.
 step "driver-channel-parity (три драйвера кормят одни каналы — №669)"
 guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
+step "fiber-migration-ordering (двери миграции RELEASE/ACQ_REL — №443)"
+guard "$ROOT/scripts/guards/check-fiber-migration-ordering.sh" "$ROOT" || fail "ослаблена дверь миграции файбера — обычные поля контекста стали гонкой (№443)"
 step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
 guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SIGPIPE) пропал из nova_driver_init (№664)"
 step "retracted-param-form (снятая форма параметра в доке — D445, №611)"

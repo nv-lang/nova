@@ -2151,8 +2151,22 @@ static inline int32_t nova_cancel_mask_active(void) {
 
 /* Plan 110.2.2.a: deadline accessors. _nova_cancel_deadline_ns не атомарен
  * (per-fiber single-writer: enter→leave; suspend сайт читает только когда
- * mask>0 значит этот же fiber выполняет тело consume{}). int64_t reads на
- * 64-битных платформах atomic by alignment. */
+ * mask>0 значит этот же fiber выполняет тело consume{}).
+ *
+ * ПОЧЕМУ ЭТО БЕЗОПАСНО ПРИ МИГРАЦИИ (реестр №443, разбор 2026-08-16). Прежняя
+ * формулировка «int64 на 64-битных atomic by alignment» — НЕ аргумент:
+ * выравнивание даёт неразорванность, но не порядок между потоками. Настоящий
+ * аргумент — переход файбера с воркера на воркер идёт через две двери:
+ *   уход:   nova_fiber_state_store(IDLE)        — RELEASE  (sync.h)
+ *   приход: nova_fiber_state_cas(IDLE→RUNNING)  — ACQ_REL  (sync.h)
+ * Всё, что файбер писал до ухода, happens-before всего, что он читает после
+ * прихода — для ЭТОГО поля и для остальных десяти обычных полей base
+ * (_nova_saved_fail_top, _nova_worker_slot, _nova_fiber_scope, ...) одинаково.
+ * Атомарность нужна только полям, которые трогает ЧУЖОЙ поток без перехода:
+ * _nova_cancel_mask_count (декремент после миграции — но и он читается чужим
+ * при cancel-check), _nova_fiber_state, _nova_park_state.
+ * Инвариант держит страж check-fiber-migration-ordering: ослабь любую дверь —
+ * покраснеет он, а не рассыплются одиннадцать полей молча. */
 static inline void nova_cancel_deadline_set(mco_coro* co, int64_t ns) {
     if (!co) return;
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);

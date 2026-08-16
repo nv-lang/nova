@@ -180,6 +180,13 @@
   `check-rt-sigpipe-ign.sh` — живой `signal(SIGPIPE, SIG_IGN)` в теле
   `nova_driver_init` (№664): без него любой сетевой бинарь на Linux умирает
   молча от гонки «peer закрылся → мы пишем».
+  `check-fiber-migration-ordering.sh` — обычные (неатомарные) поля контекста
+  файбера безопасны при миграции между воркерами ТОЛЬКО потому, что переход
+  идёт через две двери: `nova_fiber_state_store(IDLE)` = RELEASE и
+  `nova_fiber_state_cas(IDLE→RUNNING)` = ACQ_REL (№443). Страж держит порядок
+  на дверях и запрещает менять `_nova_fiber_state` мимо них — ослабь одну, и
+  одиннадцать полей станут гонкой разом; атомик на одном поле лгал бы о том,
+  где держится инвариант.
   `check-driver-channel-parity.sh` — каждый чекер-канал `emitter.set_*(&env.*)`,
   проведённый в test_runner, обязан быть и в `nova build`, и в standalone (№669: `nova build`
   трижды терял каналы молча при зелёном `nova test`).
