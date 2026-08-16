@@ -10,6 +10,11 @@ awk/grep уже однажды дал ложные числа (кириллиц�
 """
 import io, re, sys, os
 
+# «ЗАКРЫТ ЧАСТИЧНО» — НЕ закрыто: у записи жив остаток класса, и он обязан
+# остаться в счёте. Поймано 2026-08-16 на №703 (исчерпаемость закрыта для
+# именованной суммы, остаток — type-set / is T / generic-инстансы): пометка
+# «частично» прятала остаток от всех трёх чисел разом.
+PARTIAL = re.compile(u"ЧАСТИЧНО|ЧАСТИЧЕН|ЧАСТИЧНАЯ")
 CLOSED = re.compile(u"ЗАКРЫТ|ПОЧИНЕНО|СНЯТ")
 ROW = re.compile(u"^\\| [0-9]+ \\|")
 K1 = u"\U0001F534"
@@ -34,7 +39,8 @@ def main():
 
     open_k1, blockers = [], []
     for l in rows:
-        if CLOSED.search(status(l)):
+        st = status(l)
+        if CLOSED.search(st) and not PARTIAL.search(st):
             continue
         if K1 in l.split(u"|")[2]:
             open_k1.append(l)
