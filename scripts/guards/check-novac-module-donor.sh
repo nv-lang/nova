@@ -64,7 +64,22 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | while IFS= r
     [ "$nw" -ge 2 ] || echo "  $rel: 'Donor:' без сущности — одно имя не указатель: «$line»"
     # П27 п.2а: оракул донором быть не может (П25). Совпадение выхода — не донорство.
     # судим ВЕСЬ блок Donor (до строки Role), не только первую строку
-    dblock=$(head -n 40 "$f" | tr -d '' | awk '/^\/\/\/? *Donor *[:—-]/{p=1} /^\/\/\/? *Role *[:—-]/{p=0} p')
+    dblock=$(head -n 40 "$f" | tr -d '
+' | awk '/^\/\/\/? *Donor *[:—-]/{p=1} /^\/\/\/? *Role *[:—-]/{p=0} p')
+    # П27 п.2б — ИЕРАРХИЯ доноров, машинная половина: (а) антипример (Swift, C#)
+    # в Donor законен ТОЛЬКО в форме отказа «NOT taken ... Swift/C#»: если имя
+    # стоит без «NOT taken» / «not taken» / «anti-example» в том же блоке —
+    # красный: антипример выдан за донора; (б) точечный донор (Zig, Koka,
+    # Nim, Chicken) обязан стоять рядом со СВОЕЙ сущностью (InternPool,
+    # evidence, ccgexprs...) — голое «Zig» как донор слоя — красный.
+    if printf '%s' "$dblock" | grep -qiE "(^|[^a-z])swift([^a-z]|$)|C#|[.]NET"; then
+        if ! printf '%s' "$dblock" | grep -qiE "not taken|anti-example|not a donor|NOT from"; then
+            echo "  $rel: Donor называет Swift/C# без формы отказа «NOT taken ...» — антипример выдан за донора (П27 2б)"
+        fi
+    fi
+    if printf '%s' "$dblock" | grep -qiE "(^|[^a-z])zig([^a-z]|$)" && ! printf '%s' "$dblock" | grep -qE "InternPool|Sema|StaticStringMap|OptionalIndex|std[.]"; then
+        echo "  $rel: Donor называет Zig без его сущности (InternPool/Sema/...) — точечный донор без точки (П27 2б)"
+    fi
     if printf '%s' "$dblock" | grep -qiE "oracle|orakul|nova-cli|compiler-codegen|emit_c\.rs"; then
         echo "  $rel: 'Donor:' называет ОРАКУЛ (нынешний компилятор) донором — запрещено П25/П27: доноры формы это rustc/Go/Swift/Zig/Roslyn/clang, а совпадение выхода с оракулом держит дифф-гейт, не заголовок"
     fi

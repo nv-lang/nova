@@ -85,6 +85,42 @@ module a
 EOF
 run "$T/g6d" && ok "честная форма Guarded by: acceptance принимается" || bad "acceptance-форма покраснела: $(cat "$T/err")"
 
+# П27 2б: антипример как донор — красный; в форме отказа — зелёный
+mk g6e <<'EOF'
+// Donor: Swift ConstraintSystem — ranking overloads by score.
+// Role: layer 7 candidate choice.
+// Used by: check at E2-b3.
+// Guarded by: check-novac-no-default-branch.sh.
+module a
+EOF
+if run "$T/g6e"; then bad "Swift выдан за донора и прошёл"; else grep -q "антипример" "$T/err" && ok "Swift как донор без формы отказа пойман" || bad "красный, но не про антипример"; fi
+mk g6f <<'EOF'
+// Donor: rustc method::probe — ambiguity is an error; NOT taken: Swift score ranking (exponential).
+// Role: layer 7 candidate choice.
+// Used by: check at E2-b3.
+// Guarded by: check-novac-no-default-branch.sh.
+module a
+EOF
+run "$T/g6f" && ok "Swift в форме «NOT taken» законен" || bad "форма отказа покраснела: $(cat "$T/err")"
+# точечный донор без сущности
+mk g6g <<'EOF'
+// Donor: Zig — the way they do it.
+// Role: layer 4 interner.
+// Used by: sem at E2-b1.
+// Guarded by: check-novac-row-fields.sh.
+module a
+EOF
+if run "$T/g6g"; then bad "голый Zig как донор прошёл"; else grep -q "без его сущности" "$T/err" && ok "Zig без сущности пойман" || bad "красный, но не про сущность Zig"; fi
+# оракул как донор — красный
+mk g6h <<'EOF'
+// Donor: the oracle's emission on match_demo.nv.
+// Role: layer 11 backend.
+// Used by: the smoke.
+// Guarded by: check-novac-shell-freshness.sh.
+module a
+EOF
+if run "$T/g6h"; then bad "оракул как донор прошёл"; else grep -q "ОРАКУЛ" "$T/err" && ok "оракул как донор пойман (П25/П27 2а)" || bad "красный, но не про оракул"; fi
+
 # донор дальше 40-й строки — не считается заголовком
 { echo "// header"; i=0; while [ $i -lt 45 ]; do echo "// filler"; i=$((i+1)); done; echo "// Donor: rustc TyCtxt interned"; echo "module a"; } > "$T/g7m.nv"
 mkdir -p "$T/g7/m"; mv "$T/g7m.nv" "$T/g7/m/m.nv"
