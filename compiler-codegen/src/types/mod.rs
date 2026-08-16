@@ -11399,8 +11399,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 (D221): each arm's pattern checked vs scrutinee type.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 // №703 (D65-амендмент 2026-08-16): match по сумме обязан быть
-                // ИСЧЕРПЫВАЮЩИМ. До этой волны непокрытый вариант проходил
-                // check и build и давал ТИХО неверный результат (код 0).
+                // ИСЧЕРПЫВАЮЩИМ [INV-PROPERTY: neg/d65_match_non_exhaustive_neg.nv
+                // краснеет без покрытия; standalone/d65_match_exhaustive_pos.nv
+                // держит четыре законные формы от ложняка]. До этой волны
+                // непокрытый вариант проходил check и build и давал ТИХО
+                // неверный результат (код 0).
                 self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
                 // generic-match-scope-gap fix (2026-07-21, see
                 // `resolve_generic_bound_method_return` doc): when the general
