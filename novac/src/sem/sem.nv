@@ -170,19 +170,28 @@ export type Prims value {
 }
 
 /// How a callable lookup turned out. A sum, not an int code: "not found"
-/// and "overload" are different answers, and both must be representable
-/// (П13.5; a silent int default is the №652 class).
+/// and "more than one candidate" are different answers, and both must be
+/// representable (П13.5; a silent int default is the №652 class).
 ///
-/// `FnAmbiguous` carries the FIRST row of the ambiguous chain (owner's
-/// review 2026-08-16: "for the found case there is FnFound(int) — do you not
-/// want the candidates for the ambiguous one?"). It carries a row and not a
-/// list on purpose: `lookup` is a door, and П18 says a door allocates
-/// nothing — the caller walks `next_row` from that row when it builds a
-/// message, which is not a door and may allocate freely.
+/// EVERY variant carries a ROW, never a type id (owner's review 2026-08-16).
+/// Two reasons. First, the pair (receiver, name) does NOT determine a return
+/// type while the language overloads on PARAMETERS: two callables can share
+/// the pair and differ in their parameters, so a door that answered with a
+/// type would be claiming more than it can know. It answers with the
+/// candidate instead, and the caller reads `ret_id` off the row once the
+/// candidate is settled. Second, a row gives the caller the parameters too,
+/// which is exactly what choosing between overloads needs.
+///
+/// `FnOverloaded` is not "ambiguous": it means the set has more than one
+/// member and picking needs the ARGUMENT types, which `check` will have when
+/// it gets local typing (274.3 wave 3, finding C9). Today novac refuses such
+/// a call honestly rather than guessing. The payload is the FIRST row of the
+/// set — the whole set is `candidates_from`, which is not a door and may
+/// allocate; the door itself stays allocation-free (П18).
 export type FnLookup enum
     | FnFound(int)
     | FnUnknown
-    | FnAmbiguous(int)
+    | FnOverloaded(int)
 
 /// One callable — plan 273 form: a method IS a function whose first
 /// parameter is the receiver, so there is ONE row shape for both.
@@ -201,21 +210,28 @@ export type FnDef value {
     ret_id int /// return type id; -1 = none declared (legal for main only)
     param_off int /// first parameter of this callable in FnTable.params
     param_cnt int /// how many parameters, INCLUDING the receiver when there is one
+    has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
     next_row int /// next row carrying the SAME name, or -1; see FnTable
 }
 
-/// One parameter of a callable. The RECEIVER MARK LIVES HERE, on the
-/// parameter, not on the function (owner's check 2026-08-16: "does
-/// `rows[r].is_method` fit the ideology of plan 273?" — it did not). The
-/// compiler form of 273 is `fn job(mut @Type, a int)`: the `@` marks the
-/// FIRST PARAMETER, so receiver-ness is a property of a parameter. A flag on
-/// the function would be a privileged fact about one element stored on the
-/// container — the very class П22 names. With the mark here, "is a method"
-/// is DERIVED: the first parameter carries it.
-export type ParamDef value {
-    type_id int /// the parameter's type id
-    is_recv bool /// this parameter is the receiver (only ever the first one)
-}
+/// WHERE THE RECEIVER MARK LIVES, and why it is one bit on the callable
+/// rather than a flag on each parameter (owner, 2026-08-16, twice).
+///
+/// First reading: a bool on the function looked like a privileged fact about
+/// one element stored on the container, so the mark moved onto the parameter
+/// (`ParamDef.is_recv`). That was worse, and the owner said why: a per
+/// parameter flag ADMITS STATES THE LANGUAGE FORBIDS — "the third parameter
+/// is the receiver", "two receivers" — and the invariant then rests on
+/// discipline instead of on construction.
+///
+/// The resolution: the POSITION is not data. Plan 273 §4.4 fixes it — "the
+/// receiver is the first parameter, on the first step without exceptions" —
+/// so position is a rule of the language, not a fact of this file. The only
+/// datum left is WHETHER a receiver is there, which is a zero-or-one fact
+/// about the CALLABLE. One bool on FnDef expresses exactly that and nothing
+/// illegal: there is no way to say "the third one". Parameters go back to
+/// being plain type ids, and the receiver is `params[param_off]` when
+/// `has_recv` — read by the one function `FnTable.recv_of`.
 
 /// THE callable registry: file functions and the method signatures READ
 /// from std declarations live in the SAME rows (П5: std names are data,
@@ -241,13 +257,13 @@ export type ParamDef value {
 /// chain, not a flag on a row.
 export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
-    params []ParamDef /// parameters of every callable, addressed by FnDef.param_off/param_cnt
+    params []int /// parameter type ids of every callable, addressed by FnDef.param_off/param_cnt
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
 }
 
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
-    { rows: []FnDef.new(), params: []ParamDef.new(), heads: NameTable.new(NamespaceId.NsCallables) }
+    { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables) }
 
 /// The receiver's type id of a row, or -1 when the callable is a free
 /// function. This is the ONE place that knows the receiver is the first
@@ -256,10 +272,9 @@ export fn FnTable.new() -> FnTable =>
 #realtime nogc
 export fn FnTable @recv_of(row int) -> int {
     ro fd = @rows[row]
+    if !fd.has_recv { return -1 }
     if fd.param_cnt < 1 { return -1 }
-    ro first = @params[fd.param_off]
-    if !first.is_recv { return -1 }
-    first.type_id
+    @params[fd.param_off]
 }
 
 /// Row of this exact (receiver, name), or -1 — the FIRST one when a name is
@@ -284,17 +299,17 @@ export fn FnTable @row_of(recv_id int, name str) -> int {
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT
 /// dropped: it becomes its own row in the same chain, so the collision stays
 /// describable. Silent choosing between overloads is not allowed anywhere.
-/// `params` carries the receiver FIRST when there is one, marked on the
-/// parameter itself (`ParamDef.is_recv`) — the plan 273 order and the plan
-/// 273 place, so the caller can put it neither elsewhere nor on the row.
-export fn FnTable mut @add(name str, ret_id int, params []ParamDef) -> () {
+/// `param_ids` carries the receiver FIRST when `has_recv` — the plan 273
+/// order (§4.4 fixes the position, so the caller has no other place to put
+/// it, and no way to name a second one).
+export fn FnTable mut @add(name str, ret_id int, has_recv bool, param_ids []int) -> () {
     ro head = @heads.find(name)
     ro off = @params.len()
-    for pd in params {
-        @params.push(pd)
+    for t in param_ids {
+        @params.push(t)
     }
     @heads.put(name, @rows.len())
-    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: params.len(), next_row: head })
+    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, next_row: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
@@ -316,11 +331,11 @@ export fn FnTable @has_name(name str) -> bool {
     false
 }
 
-/// The callable's return type on this receiver — or the reason for
-/// rejection. A free function asks with recv_id = -1, through the same door.
-/// Counts the chain instead of trusting a flag: two rows for one pair mean
-/// an overload, and the first of them is handed back so the caller can name
-/// the candidates without searching again.
+/// The candidate row for this (receiver, name) — or why there is none to
+/// name. A free function asks with recv_id = -1, through the same door.
+/// Counts the chain instead of trusting a flag: more than one row for one
+/// pair is an overload SET, and its first row is handed back so the caller
+/// can enumerate the set without searching again.
 #realtime nogc
 export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
     mut first = -1
@@ -334,8 +349,24 @@ export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
         r = @rows[r].next_row
     }
     if found == 0 { return FnLookup.FnUnknown }
-    if found > 1 { return FnLookup.FnAmbiguous(first) }
-    FnLookup.FnFound(@rows[first].ret_id)
+    if found > 1 { return FnLookup.FnOverloaded(first) }
+    FnLookup.FnFound(first)
+}
+
+/// Every candidate of an overload set, starting from the row `lookup` handed
+/// back. NOT a door: it allocates, and it may — it runs once, when a
+/// diagnostic is being built, never in the hot path (П18 draws the line at
+/// functions that ASK the table; this one is given its starting row and only
+/// walks). Every reference prints the set rather than the first member:
+/// rustc lists the candidate impls, C++ prints the candidate functions.
+export fn candidates_from(fns FnTable, first int, recv_id int) -> []int {
+    mut out = []int.new()
+    mut r = first
+    while r >= 0 {
+        if fns.recv_of(r) == recv_id { out.push(r) }
+        r = fns.rows[r].next_row
+    }
+    out
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
@@ -428,8 +459,8 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     // Parameters are KEPT, receiver first: plan 273 order. They were merely
     // validated and dropped before (owner's check 2026-08-16), which left the
     // receiver as the only parameter novac remembered.
-    mut params = []ParamDef.new()
-    params.push(ParamDef { type_id: recv_t, is_recv: true })
+    mut param_ids = []int.new()
+    param_ids.push(recv_t)
     for c in kids {
         if c.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(c)
@@ -437,9 +468,9 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         if pk[1].kind_of() != NodeKind.LeafNode { return }
         ro pt = defs.type_id_opt(leaf_text(pk[1]))
         if pt < 0 { return }
-        params.push(ParamDef { type_id: pt, is_recv: false })
+        param_ids.push(pt)
     }
-    fns.add(mname, ret_t, params)
+    fns.add(mname, ret_t, true, param_ids)
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -569,7 +600,7 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            mut params = []ParamDef.new()
+            mut param_ids = []int.new()
             for pn in fk {
                 if pn.kind_of() != NodeKind.Param { continue }
                 ro pk = branch_children(pn)
@@ -577,9 +608,9 @@ export fn collect_types(file Node) -> Ctx {
                 if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
                     pt = defs.type_id_opt(leaf_text(pk[1]))
                 }
-                params.push(ParamDef { type_id: pt, is_recv: false })
+                param_ids.push(pt)
             }
-            fns.add(fname, ret, params)
+            fns.add(fname, ret, false, param_ids)
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
@@ -661,9 +692,9 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // here is an ice (a poisoning-discipline violation).
         ro recv_t = type_of(kids[0], ctx, scope)
         match ctx.fns.lookup(recv_t, mname) {
-            FnFound(r) => { return r }
+            FnFound(row) => { return ctx.fns.rows[row].ret_id }
             FnUnknown => { ice("sem: method not in the read declarations past check") }
-            FnAmbiguous(_) => { ice("sem: overloaded method past check") }
+            FnOverloaded(_) => { ice("sem: overload set not narrowed past check") }
         }
     }
     if k == NodeKind.FieldAccess {
