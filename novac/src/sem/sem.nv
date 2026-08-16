@@ -169,13 +169,20 @@ export type Prims value {
     f64_id int /// Type id of `f64`.
 }
 
-/// How a callable lookup turned out. A sum_id, not an int code: "not found"
+/// How a callable lookup turned out. A sum, not an int code: "not found"
 /// and "overload" are different answers, and both must be representable
 /// (П13.5; a silent int default is the №652 class).
+///
+/// `FnAmbiguous` carries the FIRST row of the ambiguous chain (owner's
+/// review 2026-08-16: "for the found case there is FnFound(int) — do you not
+/// want the candidates for the ambiguous one?"). It carries a row and not a
+/// list on purpose: `lookup` is a door, and П18 says a door allocates
+/// nothing — the caller walks `next_row` from that row when it builds a
+/// message, which is not a door and may allocate freely.
 export type FnLookup enum
     | FnFound(int)
     | FnUnknown
-    | FnAmbiguous
+    | FnAmbiguous(int)
 
 /// One callable — plan 273 form: a method IS a function whose first
 /// parameter is the receiver, so there is ONE row shape for both. A free
@@ -186,7 +193,6 @@ export type FnDef value {
     recv_id int /// receiver's type id, or -1 when this callable is a free function
     name str /// name as written in the declaration
     ret_id int /// return type id; -1 = none declared (legal for main only)
-    dup bool /// a second declaration with the same (recv, name) showed up — overload
     next_row int /// next row carrying the SAME name, or -1; see FnTable
 }
 
@@ -195,16 +201,23 @@ export type FnDef value {
 /// not compiler knowledge).
 ///
 /// The door takes the NAME only, and rows sharing a name form a chain
-/// through `next`; the receiver is compared as an INTEGER while walking it.
-/// The first shape built the key as text ("${recv}.${name}") — the owner's
-/// question 2026-08-16 ("what if there is no receiver?") holds, since a
-/// free function keys as -1 and type ids are never negative, but the shape
-/// was wrong for two better reasons: it allocated and formatted a string on
-/// EVERY lookup, in the hottest path there is (П14), and it encoded
-/// structure into text right after the architecture spent a whole rule on
-/// "identity is not a name" (§4а). A chain costs one integer compare per
-/// candidate and allocates nothing; chains are 1-3 long because they only
-/// hold callables that literally share a name.
+/// through `next_row`; the receiver is compared as an INTEGER while walking
+/// it. The first shape built the key as text ("${recv}.${name}") — the
+/// owner's question 2026-08-16 ("what if there is no receiver?") holds,
+/// since a free function keys as -1 and type ids are never negative, but the
+/// shape was wrong for two better reasons: it allocated and formatted a
+/// string on EVERY lookup, in the hottest path there is (П14), and it
+/// encoded structure into text right after the architecture spent a whole
+/// rule on "identity is not a name" (§4а). A chain costs one integer compare
+/// per candidate and allocates nothing; chains are 1-3 long because they
+/// only hold callables that literally share a name.
+///
+/// EVERY declaration gets its own row, including a second one for the same
+/// (receiver, name). The first shape kept a `dup` flag on the winner and
+/// DROPPED the loser — so the compiler knew an overload existed but could no
+/// longer say which signatures collided, and no diagnostic could ever name
+/// them (owner's review 2026-08-16). Ambiguity is now a property of the
+/// chain, not a flag on a row.
 export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
@@ -214,8 +227,10 @@ export type FnTable {
 export fn FnTable.new() -> FnTable =>
     { rows: []FnDef.new(), heads: NameTable.new(NamespaceId.NsCallables) }
 
-/// Row of this exact (receiver, name), or -1. The chain walk is the whole
-/// lookup mechanism — one place, used by add, lookup and has_name.
+/// Row of this exact (receiver, name), or -1 — the FIRST one when a name is
+/// declared more than once for one receiver. Ambiguity is judged by
+/// `@lookup`, which counts the chain; this door answers "is there one at
+/// all", which is what registration needs.
 #realtime nogc
 export fn FnTable @row_of(recv_id int, name str) -> int {
     mut r = @heads.find(name)
@@ -227,17 +242,13 @@ export fn FnTable @row_of(recv_id int, name str) -> int {
     -1
 }
 
-/// Register one callable; a repeat (receiver, name) marks an overload —
-/// silent choosing is not allowed.
+/// Register one callable. A repeat (receiver, name) is NOT merged and NOT
+/// dropped: it becomes its own row in the same chain, so the collision stays
+/// describable. Silent choosing between overloads is not allowed anywhere.
 export fn FnTable mut @add(fd FnDef) -> () {
-    ro row = @row_of(fd.recv_id, fd.name)
-    if row >= 0 {
-        @rows[row] = FnDef { recv_id: @rows[row].recv_id, name: @rows[row].name, ret_id: @rows[row].ret_id, dup: true, next_row: @rows[row].next_row }
-        return
-    }
     ro head = @heads.find(fd.name)
     @heads.put(fd.name, @rows.len())
-    @rows.push(FnDef { recv_id: fd.recv_id, name: fd.name, ret_id: fd.ret_id, dup: fd.dup, next_row: head })
+    @rows.push(FnDef { recv_id: fd.recv_id, name: fd.name, ret_id: fd.ret_id, next_row: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
@@ -261,14 +272,26 @@ export fn FnTable @has_name(name str) -> bool {
 }
 
 /// The callable's return type on this receiver — or the reason for
-/// rejection. A free function asks with recv = -1, through the same door.
+/// rejection. A free function asks with recv_id = -1, through the same door.
+/// Counts the chain instead of trusting a flag: two rows for one pair mean
+/// an overload, and the first of them is handed back so the caller can name
+/// the candidates without searching again.
 #realtime nogc
 export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
-    ro row = @row_of(recv_id, name)
-    if row < 0 { return FnLookup.FnUnknown }
-    ro fd = @rows[row]
-    if fd.dup { return FnLookup.FnAmbiguous }
-    FnLookup.FnFound(fd.ret_id)
+    mut first = -1
+    mut found = 0
+    mut r = @heads.find(name)
+    while r >= 0 {
+        ro fd = @rows[r]
+        if fd.recv_id == recv_id {
+            if first < 0 { first = r }
+            found += 1
+        }
+        r = fd.next_row
+    }
+    if found == 0 { return FnLookup.FnUnknown }
+    if found > 1 { return FnLookup.FnAmbiguous(first) }
+    FnLookup.FnFound(@rows[first].ret_id)
 }
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
@@ -365,7 +388,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         if pk[1].kind_of() != NodeKind.LeafNode { return }
         if defs.type_id_opt(leaf_text(pk[1])) < 0 { return }
     }
-    fns.add(FnDef { recv_id: recv_t, name: mname, ret_id: ret_t, dup: false, next_row: -1 })
+    fns.add(FnDef { recv_id: recv_t, name: mname, ret_id: ret_t, next_row: -1 })
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -495,7 +518,7 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            fns.add(FnDef { recv_id: -1, name: fname, ret_id: ret, dup: false, next_row: -1 })
+            fns.add(FnDef { recv_id: -1, name: fname, ret_id: ret, next_row: -1 })
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
@@ -579,7 +602,7 @@ export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         match ctx.fns.lookup(recv_t, mname) {
             FnFound(r) => { return r }
             FnUnknown => { ice("sem: method not in the read declarations past check") }
-            FnAmbiguous => { ice("sem: overloaded method past check") }
+            FnAmbiguous(_) => { ice("sem: overloaded method past check") }
         }
     }
     if k == NodeKind.FieldAccess {

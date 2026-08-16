@@ -219,8 +219,12 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro name = leaf_text(kids[1])
     ro d = @ctx.defs.find(name)
     if d < 0 { ice("emit: fn missing from the registry") }
-    if @ctx.defs.rows[d].kind != DefKind.DefFn { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
-    ro ret = @ctx.fns.rows[@ctx.defs.rows[d].payload].ret_id // -1 for main only; check refuses it elsewhere
+    // One row read, then its parts are named (owner's style note 2026-08-16:
+    // repeating `@ctx.defs.rows[d]` reads the same row three times and hides
+    // that it IS the same row).
+    ro { kind: def_kind, payload: fn_row } = @ctx.defs.rows[d]
+    if def_kind != DefKind.DefFn { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
+    ro ret = @ctx.fns.rows[fn_row].ret_id // -1 for main only; check refuses it elsewhere
     @scope = Scope.new() // every function body starts with its own locals
     mut has_expr_body = false
     if name == ENTRY_FN {
@@ -333,7 +337,10 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         // A bare `None` (no parens) is a variant too — resolve by name
         // regardless of arity; only a NON-variant ident is a binder.
         ro d = @ctx.defs.find(leaf_text(p0))
-        if d >= 0 && @ctx.defs.rows[d].kind == DefKind.DefVariant { vrow = @ctx.defs.rows[d].payload }
+        if d >= 0 {
+            ro { kind: def_kind, payload: def_payload } = @ctx.defs.rows[d]
+            if def_kind == DefKind.DefVariant { vrow = def_payload }
+        }
         if vrow >= 0 {
             @emit_tag_test(uniq, vrow)
         } else {
@@ -633,11 +640,12 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // ONE lookup, then the kind decides (owner's correction 2026-08-14).
         ro d = @ctx.defs.find(cname)
         if d < 0 { ice("emit: call target not in the registry (#652 class)") }
-        if @ctx.defs.rows[d].kind == DefKind.DefVariant {
+        ro { kind: def_kind, payload: def_payload } = @ctx.defs.rows[d]
+        if def_kind == DefKind.DefVariant {
             // Variant constructor call -> the maker.
-            ro vrow = @ctx.defs.rows[d].payload
+            ro vrow = def_payload
             @body.append("${c_maker(@ctx, vrow)}(")
-        } else if @ctx.defs.rows[d].kind == DefKind.DefFn {
+        } else if def_kind == DefKind.DefFn {
             @body.append("${c_fn(cname, false)}(")
         } else {
             ice("emit_c: call target is neither a variant nor a fn")
