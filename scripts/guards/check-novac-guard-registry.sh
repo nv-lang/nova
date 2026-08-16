@@ -40,12 +40,22 @@ export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 NAME=check-novac-guard-registry
 PLAN="$ROOT/docs/plans/274-novac-self-hosted-compiler.md"
+# Гейтов может быть ДВА: общий scripts/gate.sh и отдельный
+# scripts/gate-novac.sh (окно компилятора завело его 2026-08-16). Читаем ОБА,
+# какие есть, и берём объединение вызовов — тогда переезд стражей из одного
+# файла в другой не требует флаг-дня: пока строки в общем гейте, реестр видит
+# их там; как только переедут в отдельный — там же. Дня, когда «страж есть, а
+# вызова не видно», не возникает.
+GATES=""
+for _g in "$ROOT/scripts/gate.sh" "$ROOT/scripts/gate-novac.sh"; do
+    [ -f "$_g" ] && GATES="$GATES $_g"
+done
 GATE="$ROOT/scripts/gate.sh"
 GUARDS="$ROOT/scripts/guards"
 SELF="$GUARDS/selftest"
 
 [ -f "$PLAN" ] || { echo "$NAME: FAIL — нет плана $PLAN" >&2; exit 1; }
-[ -f "$GATE" ] || { echo "$NAME: FAIL — нет гейта $GATE" >&2; exit 1; }
+[ -n "$GATES" ] || { echo "$NAME: FAIL - не найдено ни одного гейта (ни scripts/gate.sh, ни scripts/gate-novac.sh): вызовы сверять не с чем" >&2; exit 1; }
 
 T="${TMPDIR:-/tmp}/novac-guard-registry.$$"
 mkdir -p "$T" || exit 1
@@ -105,7 +115,7 @@ sort -u "$T/b_raw" > "$T/b"
 # `guard [--deadline N] <путь>/check-novac-X.sh` (адверсарная проверка
 # 274.3/F12: упоминание в тексте fail-сообщения или в комментарии считалось
 # вызовом, и страж, вынутый из гейта, оставался зелёным).
-grep -v '^[[:space:]]*#' "$GATE" \
+cat $GATES | grep -v '^[[:space:]]*#'  \
     | grep -E '^[[:space:]]*guard[[:space:]]' \
     | sed 's/||.*$//' \
     | grep -oE 'check-novac-[a-z0-9-]+\.sh' \

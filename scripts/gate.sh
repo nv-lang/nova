@@ -286,6 +286,10 @@ guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух: не равен эмиссии оракула по probe (274.3/F6)"
 guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла novac вне бюджета (конвенция П14, план 274.2)"
 guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "реестр стражей novac разошёлся: план §10.3а ↔ файлы ↔ gate.sh ↔ самотесты (274.3/F12)"
+# Обратное направление: реестр выше идёт ОТ СТРАЖА и по построению не видит
+# правило без стража (мета-дыра аудита 2026-08-16, из-за неё П15 просидел без
+# механизма при зелёном реестре). Этот замыкает круг: идёт ОТ ПРАВИЛА.
+guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма: невидимо реестру стражей целиком"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
