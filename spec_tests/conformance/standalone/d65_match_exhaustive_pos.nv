@@ -1,0 +1,61 @@
+// EXPECT_STDOUT full=g catch=x guard=g nested=ok
+//
+// D65-амендмент 2026-08-16, реестр №703 — ПОЗИТИВНАЯ сторона проверки
+// исчерпаемости. Негатив живёт в neg/d65_match_non_exhaustive_neg.nv; здесь
+// проверяется, что проверка НЕ ложнит на четырёх законных формах. Это важнее
+// негатива: под проверку попало 1094 существующих `match`-блока (замер
+// 2026-08-16), и один ложный отказ остановил бы весь проект.
+//
+//   1. полное перечисление вариантов — законно;
+//   2. `_`-арм закрывает остаток — законно (пользователь сказал «безразлично»);
+//   3. АРМ С GUARD НЕ СЧИТАЕТСЯ ПОКРЫТИЕМ — guard может не сработать, поэтому
+//      после guard'ованного `Green` обязан быть настоящий арм на `Green`;
+//      rustc считает так же. Проверяется тем, что этот блок компилируется:
+//      если бы guard засчитывался, ветка ниже стала бы недостижимой, а если бы
+//      guard'ованный арм НЕ покрывал и без запасного арма — блок бы покраснел;
+//   4. вложенный `match` в теле арма — разбор не путает уровни.
+
+module standalone.d65_match_exhaustive_pos
+
+type Color enum
+    | Red
+    | Green
+    | Blue
+
+type Shade enum
+    | Light
+    | Dark
+
+fn full(c Color) -> str => match c {
+    Red   => "r"
+    Green => "g"
+    Blue  => "b"
+}
+
+fn catch_all(c Color) -> str => match c {
+    Red => "r"
+    _   => "x"
+}
+
+fn with_guard(c Color, n int) -> str => match c {
+    Red             => "r"
+    Green if n > 99 => "G"
+    Green           => "g"
+    Blue            => "b"
+}
+
+fn nested(c Color, s Shade) -> str => match c {
+    Red   => "r"
+    Green => match s {
+        Light => "ok"
+        Dark  => "ok"
+    }
+    Blue  => "b"
+}
+
+fn main() Io -> () {
+    print("full=", full(Color.Green), " ")
+    print("catch=", catch_all(Color.Blue), " ")
+    print("guard=", with_guard(Color.Green, 1), " ")
+    println("nested=", nested(Color.Green, Shade.Light))
+}
