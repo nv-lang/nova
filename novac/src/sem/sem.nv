@@ -185,14 +185,23 @@ export type FnLookup enum
     | FnAmbiguous(int)
 
 /// One callable — plan 273 form: a method IS a function whose first
-/// parameter is the receiver, so there is ONE row shape for both. A free
-/// function simply carries no receiver. Keeping two shapes is the root of
-/// the class plan 273 §2 names: every pass then needs two cases, and the
-/// two drift.
+/// parameter is the receiver, so there is ONE row shape for both.
+///
+/// The receiver is NOT a field of this row (owner's check 2026-08-16: "in
+/// plan 273 the receiver is a parameter like all the others — are you sure
+/// you should be matching on it?"). It is `params[param_off]` of a method,
+/// and the row says only WHETHER the first parameter is a receiver. The
+/// earlier shape kept `recv_id` and stored no other parameter at all:
+/// `harvest_fn` validated the parameter types and then threw them away, so
+/// the receiver was not "a parameter like the others" — it was the only
+/// parameter novac remembered. Keeping them all is also what overload
+/// resolution needs later; today it is what makes the form honest.
 export type FnDef value {
-    recv_id int /// receiver's type id, or -1 when this callable is a free function
     name str /// name as written in the declaration
     ret_id int /// return type id; -1 = none declared (legal for main only)
+    param_off int /// first parameter of this callable in FnTable.params
+    param_cnt int /// how many parameters, INCLUDING the receiver when this is a method
+    is_method bool /// the first parameter IS the receiver (plan 273 form)
     next_row int /// next row carrying the SAME name, or -1; see FnTable
 }
 
@@ -220,24 +229,41 @@ export type FnDef value {
 /// chain, not a flag on a row.
 export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
+    params []int /// parameter type ids of every callable, addressed by FnDef.param_off/param_cnt
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
 }
 
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
-    { rows: []FnDef.new(), heads: NameTable.new(NamespaceId.NsCallables) }
+    { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables) }
+
+/// The receiver's type id of a row, or -1 when the callable is a free
+/// function. This is the ONE place that knows the receiver is the first
+/// parameter — everything else asks here, so the plan 273 form stays a fact
+/// of the data and not a convention people must remember.
+#realtime nogc
+export fn FnTable @recv_of(row int) -> int {
+    ro fd = @rows[row]
+    if !fd.is_method { return -1 }
+    if fd.param_cnt < 1 { return -1 }
+    @params[fd.param_off]
+}
 
 /// Row of this exact (receiver, name), or -1 — the FIRST one when a name is
 /// declared more than once for one receiver. Ambiguity is judged by
-/// `@lookup`, which counts the chain; this door answers "is there one at
-/// all", which is what registration needs.
+/// `@lookup`, which counts the chain.
+///
+/// Resolution BY RECEIVER is not a violation of the plan 273 form, it is how
+/// a dot-call resolves in this language and in every reference: rustc lowers
+/// a method to a function whose first input is `self` and still probes by
+/// the type of the receiver expression. 273 unifies the representation and
+/// the passes; it does not change what `x.f()` means.
 #realtime nogc
 export fn FnTable @row_of(recv_id int, name str) -> int {
     mut r = @heads.find(name)
     while r >= 0 {
-        ro fd = @rows[r]
-        if fd.recv_id == recv_id { return r }
-        r = fd.next_row
+        if @recv_of(r) == recv_id { return r }
+        r = @rows[r].next_row
     }
     -1
 }
@@ -245,10 +271,16 @@ export fn FnTable @row_of(recv_id int, name str) -> int {
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT
 /// dropped: it becomes its own row in the same chain, so the collision stays
 /// describable. Silent choosing between overloads is not allowed anywhere.
-export fn FnTable mut @add(fd FnDef) -> () {
-    ro head = @heads.find(fd.name)
-    @heads.put(fd.name, @rows.len())
-    @rows.push(FnDef { recv_id: fd.recv_id, name: fd.name, ret_id: fd.ret_id, next_row: head })
+/// `param_ids` carries the receiver FIRST when `is_method` — the plan 273
+/// order, so the caller cannot put it anywhere else.
+export fn FnTable mut @add(name str, ret_id int, is_method bool, param_ids []int) -> () {
+    ro head = @heads.find(name)
+    ro off = @params.len()
+    for t in param_ids {
+        @params.push(t)
+    }
+    @heads.put(name, @rows.len())
+    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), is_method, next_row: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
@@ -264,9 +296,8 @@ export fn FnTable mut @add(fd FnDef) -> () {
 export fn FnTable @has_name(name str) -> bool {
     mut r = @heads.find(name)
     while r >= 0 {
-        ro fd = @rows[r]
-        if fd.recv_id >= 0 { return true }
-        r = fd.next_row
+        if @rows[r].is_method { return true }
+        r = @rows[r].next_row
     }
     false
 }
@@ -282,12 +313,11 @@ export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
     mut found = 0
     mut r = @heads.find(name)
     while r >= 0 {
-        ro fd = @rows[r]
-        if fd.recv_id == recv_id {
+        if @recv_of(r) == recv_id {
             if first < 0 { first = r }
             found += 1
         }
-        r = fd.next_row
+        r = @rows[r].next_row
     }
     if found == 0 { return FnLookup.FnUnknown }
     if found > 1 { return FnLookup.FnAmbiguous(first) }
@@ -381,14 +411,21 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     // not part of the subset, because `char` is unknown to the
     // registry. This way the TYPE system does the picking, not a list
     // of names.
+    // Parameters are KEPT, receiver first: plan 273 order. They were merely
+    // validated and dropped before (owner's check 2026-08-16), which left the
+    // receiver as the only parameter novac remembered.
+    mut param_ids = []int.new()
+    param_ids.push(recv_t)
     for c in kids {
         if c.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(c)
         if pk.len() < 2 { return }
         if pk[1].kind_of() != NodeKind.LeafNode { return }
-        if defs.type_id_opt(leaf_text(pk[1])) < 0 { return }
+        ro pt = defs.type_id_opt(leaf_text(pk[1]))
+        if pt < 0 { return }
+        param_ids.push(pt)
     }
-    fns.add(FnDef { recv_id: recv_t, name: mname, ret_id: ret_t, next_row: -1 })
+    fns.add(mname, ret_t, true, param_ids)
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -518,7 +555,17 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            fns.add(FnDef { recv_id: -1, name: fname, ret_id: ret, next_row: -1 })
+            mut param_ids = []int.new()
+            for pn in fk {
+                if pn.kind_of() != NodeKind.Param { continue }
+                ro pk = branch_children(pn)
+                mut pt = -1
+                if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
+                    pt = defs.type_id_opt(leaf_text(pk[1]))
+                }
+                param_ids.push(pt)
+            }
+            fns.add(fname, ret, false, param_ids)
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
