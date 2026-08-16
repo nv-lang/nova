@@ -715,7 +715,7 @@ export fn leaf_kind(n Node) -> TokenKind {
 }
 
 /// Node kinds that stand as expressions (argument/operand positions).
-export fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess || k == NodeKind.MatchExpr
+export fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess || k == NodeKind.MatchExpr
 
 /// First-leaf text of a Name-like node (its identifier).
 export fn expr_leaf_name(e Node) -> str {

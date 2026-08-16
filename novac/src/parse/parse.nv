@@ -30,7 +30,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op}
+import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
 type Cursor {
@@ -120,6 +120,12 @@ fn Cursor @peek2() -> TokenKind {
     if @i + 1 >= @toks.len() { return TokenKind.Eof }
     @toks[@i + 1].kind
 }
+
+/// Is the cursor at a minus that belongs to a numeric literal? `-1` stays one
+/// literal node (the older shape, and the emitted C constant stays one token);
+/// `-x` becomes a Unary node.
+fn Cursor @minus_before_literal() -> bool =>
+    @peek() == TokenKind.Minus && (@peek2() == TokenKind.IntLit || @peek2() == TokenKind.FloatLit)
 
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
 export fn parse(toks []Token) -> Node {
@@ -328,7 +334,7 @@ fn Cursor mut @stmt() -> Node {
         return @node(NodeKind.ForStmt, kids)
     }
     ro e = @expr()
-    if @peek() == TokenKind.PlusAssign || @peek() == TokenKind.Assign {
+    if is_assign_op(@peek()) {
         mut kids = []Node.of(e, @take())
         kids.push(@expr())
         return @node(NodeKind.AssignStmt, kids)
@@ -347,7 +353,14 @@ fn binding_power(op BinOp) -> int {
     match op {
         Mul | Div | Modulo => 12
         Add | Sub => 11
+        ShiftLeft | ShiftRight => 10
+        BitAnd => 9
+        BitXor => 8
+        BitOr => 7
         Less | LessEq | Greater | GreaterEq => 6
+        Equal | NotEqual => 5
+        AndAlso => 4
+        OrElse => 3
         Range => 2
     }
 }
@@ -389,7 +402,18 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
 }
 
 /// Parse an atom with its postfix chain: `.method(args)` and `.field`.
+///
+/// A PREFIX operator binds tighter than any binary one (spec level 14) and
+/// nests right-associatively: `!!b`, `-(-x)`, `~~n`. A minus in front of a
+/// numeric literal keeps its older, narrower shape (the literal carries it,
+/// so the emitted constant stays one token) -- everything else becomes a
+/// Unary node.
 fn Cursor mut @primary() -> Node {
+    if is_unop(@peek()) && !@minus_before_literal() {
+        mut kids = []Node.of(@take())
+        kids.push(@primary())
+        return @node(NodeKind.Unary, kids)
+    }
     mut e = @atom()
     // Postfix loop: `.name(args)` chains left-to-right — `s.trim().len()`
     // nests MethodCall inside MethodCall; a dot WITHOUT a call is field
@@ -515,6 +539,17 @@ fn Cursor mut @atom() -> Node {
             return @node(NodeKind.Lit, kids)
         }
         return @node(NodeKind.Err, kids)
+    }
+    if @peek() == TokenKind.LParen {
+        // A parenthesised expression: grouping is how a program overrides
+        // precedence, so a table of precedences without it is only half a
+        // grammar (found while adding the operator set, 2026-08-16). The
+        // parens stay in the tree as leaves -- the tree is lossless -- and
+        // every consumer sees through them to the one expression inside.
+        mut kids = []Node.of(@take())
+        kids.push(@expr())
+        if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+        return @node(NodeKind.Paren, kids)
     }
     if @peek() == TokenKind.KwMatch { return @match_expr() }
     if @peek() == TokenKind.LBracket {

@@ -32,7 +32,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, bin_op}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op, un_op}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN}
 import ../sem.{Ctx, CheckOut, DefKind, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
@@ -210,7 +210,7 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     if hk.len() < 3 { return }
     match bin_op(leaf_kind(hk[1])) {
         Range => {}
-        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq => {
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => {
             @report_first_leaf_of(kids, "outside the subset: the head of a for must be a range `lo..hi`, not another binary operator")
         }
     }
@@ -670,6 +670,18 @@ fn Checker mut @type_expr(e Node) -> () {
         for c in kids {
             if is_expr_kind(c.kind_of()) { @type_expr(c) }
         }
+    } else if k == NodeKind.Paren {
+        ro kids = branch_children(e)
+        if kids.len() < 2 { return }
+        @type_expr(kids[1])
+        if @out.len() == 0 { @record(e, type_of(e, @ctx, @scope)) }
+    } else if k == NodeKind.Unary {
+        ro kids = branch_children(e)
+        if kids.len() < 2 { return }
+        @type_expr(kids[1])
+        if @out.len() > 0 { return }
+        if @report_if_unary_needs_protocol(kids) { return }
+        @record(e, type_of(e, @ctx, @scope))
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
         if kids.len() < 3 { return }
@@ -680,6 +692,11 @@ fn Checker mut @type_expr(e Node) -> () {
         @type_expr(kids[2])
         if @out.len() > 0 { return }
         if @report_if_operator_needs_protocol(kids) { return }
+        // The OPERANDS' types are recorded too: equality on `str` is a method
+        // call, not a C operator, so the emitter must know what it compares —
+        // and it may only READ that, never work it out (the channel rule).
+        @record(kids[0], type_of(kids[0], @ctx, @scope))
+        @record(kids[2], type_of(kids[2], @ctx, @scope))
         @record(e, type_of(e, @ctx, @scope))
     }
 }
@@ -700,13 +717,19 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     ro rt = type_of(kids[2], @ctx, @scope)
     ro op = bin_op(leaf_kind(kids[1]))
     ro numeric = @is_numeric(lt) && @is_numeric(rt)
+    ro ints = lt == @ctx.prims.int_id && rt == @ctx.prims.int_id
+    ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
+    ro same_prim = lt == rt && @is_primitive(lt)
+    // Each operator states WHICH operands the subset can emit for it. The
+    // match is exhaustive, so a new operator cannot slip in without an
+    // answer -- and the answer is a refusal, never a guess.
     match op {
-        Range => {
-            if numeric { return false }
-        }
-        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq => {
-            if numeric { return false }
-        }
+        Add | Sub | Mul | Div | Modulo => { if numeric { return false } }
+        Less | LessEq | Greater | GreaterEq => { if numeric { return false } }
+        Equal | NotEqual => { if same_prim { return false } }
+        AndAlso | OrElse => { if bools { return false } }
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
+        Range => { if numeric { return false } }
     }
     match kids[1] {
         Leaf(t) => @refuse(t, "outside the subset: this operator on these operands dispatches through a protocol (D46: @plus / @compare / @equal), and protocol dispatch arrives with bounds")
@@ -715,8 +738,31 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     true
 }
 
-/// The two types the subset can put on either side of an operator.
+/// The two types arithmetic and ordering accept in the subset.
 fn Checker @is_numeric(t int) -> bool => t == @ctx.prims.int_id || t == @ctx.prims.f64_id
+
+/// Every primitive of novac's universe -- equality accepts any of them, as
+/// long as both sides are the SAME one (mixed-type equality is a conversion
+/// question the subset does not answer).
+fn Checker @is_primitive(t int) -> bool =>
+    t == @ctx.prims.int_id || t == @ctx.prims.f64_id || t == @ctx.prims.bool_id || t == @ctx.prims.str_id
+
+/// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
+/// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
+/// and is refused at the operator's own position. Returns whether it refused.
+fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
+    ro t = type_of(kids[1], @ctx, @scope)
+    match un_op(leaf_kind(kids[0])) {
+        Not => { if t == @ctx.prims.bool_id { return false } }
+        Negate => { if @is_numeric(t) { return false } }
+        BitNot => { if t == @ctx.prims.int_id { return false } }
+    }
+    match kids[0] {
+        Leaf(tk) => @refuse(tk, "outside the subset: this prefix operator on this operand dispatches through a protocol (D46: @neg / @bitnot), and protocol dispatch arrives with bounds")
+        Branch { .. } => {}
+    }
+    true
+}
 
 /// Record a node's type through the channel's one writer door.
 fn Checker mut @record(n Node, t int) -> () {
@@ -824,6 +870,25 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         }
         ice("check: anonymous constructor without a spread")
     }
+    if k == NodeKind.Paren {
+        // Parens carry no meaning of their own: the type is the inner
+        // expression's, and the emitter reprints them for grouping.
+        return type_of(branch_children(e)[1], ctx, scope)
+    }
+    if k == NodeKind.Unary {
+        ro kids = branch_children(e)
+        ro operand = type_of(kids[1], ctx, scope)
+        match un_op(leaf_kind(kids[0])) {
+            // `!` is strictly logical on bool and is NOT overloadable
+            // (D46 AMEND 2026-08-02, @not retracted), so its answer is bool
+            // and nothing else.
+            Not => { return ctx.prims.bool_id }
+            // `-` and `~` keep the operand's type (@neg / @bitnot on a user
+            // type return Self by convention; the subset only emits the
+            // primitive path and check refuses the rest).
+            Negate | BitNot => { return operand }
+        }
+    }
     if k == NodeKind.Bin {
         ro kids = branch_children(e)
         // The RESULT type is a property of the operator, so it is decided by
@@ -831,6 +896,9 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // whether it happens to be one of three comparisons.
         match bin_op(leaf_kind(kids[1])) {
             Less | LessEq | Greater | GreaterEq => { return ctx.prims.bool_id }
+            Equal | NotEqual => { return ctx.prims.bool_id }
+            AndAlso | OrElse => { return ctx.prims.bool_id }
+            BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { return ctx.prims.int_id }
             Range => { ice("check: a range is not an expression outside a for-head") }
             Add | Sub | Mul | Div | Modulo => {}
         }

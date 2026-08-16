@@ -59,7 +59,7 @@
 module novac.emit_c
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, bin_op}
+import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op, un_op, assign_op}
 import ../diag.{ice}
 import ../sem.{Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, c_method, c_fn}
 import ../builtins.{ENTRY_FN, PRINT_FN}
@@ -491,17 +491,32 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         ro target = expr_leaf_name(kids[0])
         @body.append("    ")
         @body.append(target)
-        if leaf_kind(kids[1]) == TokenKind.PlusAssign {
-            @body.append(" = nova_int_checked_add(")
-            @body.append(target)
-            @body.append(", ")
-            @emit_expr(kids[2])
-            @body.append(")")
-        } else if leaf_kind(kids[1]) == TokenKind.Assign {
-            @body.append(" = ")
-            @emit_expr(kids[2])
-        } else {
-            ice("emit_c: assignment operator outside the subset")
+        @body.append(" = ")
+        // A compound assignment IS its binary operator plus a store, so it
+        // reuses the ONE form table rather than repeating it (`a += b` is
+        // `a = a + b`, which is also how the protocol path will read on user
+        // types: `a = a.@plus(b)`, D46).
+        match assign_op(leaf_kind(kids[1])) {
+            Set => @emit_expr(kids[2])
+            Update(op) => {
+                ro form = c_binary_form(op, false)
+                if is_bit_infix(op) {
+                    @body.append("((")
+                    @body.append(target)
+                    @body.append(") ")
+                    @body.append(form)
+                    @body.append(" (")
+                    @emit_expr(kids[2])
+                    @body.append("))")
+                } else {
+                    @body.append(form)
+                    @body.append("(")
+                    @body.append(target)
+                    @body.append(", ")
+                    @emit_expr(kids[2])
+                    @body.append(")")
+                }
+            }
         }
         @body.append(";\n")
     } else if k == NodeKind.ForStmt {
@@ -611,28 +626,78 @@ fn c_binary_form(op BinOp, is_float bool) -> str {
             if is_float { return "/" }
             "nova_int_checked_div"
         }
-        Less => "<"
-        LessEq => "<="
-        Greater => ">"
-        GreaterEq => ">="
         Modulo => {
             if is_float { ice("emit_c: the remainder operator has no float form in the subset") }
             "nova_int_checked_rem"
         }
+        Less => "<"
+        LessEq => "<="
+        Greater => ">"
+        GreaterEq => ">="
+        Equal => "=="
+        NotEqual => "!="
+        AndAlso => "&&"
+        OrElse => "||"
+        BitAnd => "&"
+        BitOr => "|"
+        BitXor => "^"
+        ShiftLeft => "<<"
+        ShiftRight => ">>"
         Range => ice("emit_c: a range reached expression emission -- for-heads consume it")
+    }
+}
+
+/// Does this operator emit as a C INFIX operator inside a truth-value cast?
+/// Comparisons, equality and the logical pair all yield bool and share the
+/// same C shape; the bitwise family is infix too but keeps int width, so it
+/// is a third answer rather than a second.
+fn is_truth_infix(op BinOp) -> bool {
+    match op {
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse => true
+        Add | Sub | Mul | Div | Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// Is this the equality pair? They are the operators whose C form depends on
+/// the OPERAND type: scalars compare with `==`, `str` goes through `@equal`.
+fn is_equality(op BinOp) -> bool {
+    match op {
+        Equal | NotEqual => true
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// `!=` is not a second protocol method: the spec DERIVES it from `@equal`
+/// (D46 rule 3), so the emitter negates the same call.
+fn op_is_not_equal(op BinOp) -> bool {
+    match op {
+        NotEqual => true
+        Equal | Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// Plain C infix with no cast: the bitwise and shift family on int.
+fn is_bit_infix(op BinOp) -> bool {
+    match op {
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => true
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse | Range => false
+    }
+}
+
+/// The C form of a prefix operator. `!` is logical on bool, `-` negates,
+/// `~` complements -- all three are plain C on the primitives the subset
+/// admits (check refuses the protocol cases).
+fn c_unary_form(op UnOp) -> str {
+    match op {
+        Not => "!"
+        Negate => "-"
+        BitNot => "~"
     }
 }
 
 /// Is this operator a comparison? Derived from the decision (P22: derived is
 /// a function, not a second table), and exhaustive so a new operator must
 /// answer here too.
-fn is_comparison(op BinOp) -> bool {
-    match op {
-        Less | LessEq | Greater | GreaterEq => true
-        Add | Sub | Mul | Div | Modulo | Range => false
-    }
-}
-
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
 fn Emitter mut @emit_expr(e Node) -> () {
     ro k = e.kind_of()
@@ -713,12 +778,49 @@ fn Emitter mut @emit_expr(e Node) -> () {
             }
         }
         @body.append(")")
+    } else if k == NodeKind.Paren {
+        @body.append("(")
+        @emit_expr(branch_children(e)[1])
+        @body.append(")")
+    } else if k == NodeKind.Unary {
+        ro kids = branch_children(e)
+        @body.append("(")
+        @body.append(c_unary_form(un_op(leaf_kind(kids[0]))))
+        @body.append("(")
+        @emit_expr(kids[1])
+        @body.append("))")
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
         ro op = bin_op(leaf_kind(kids[1]))
+        // The RESULT of a comparison is bool, so the float test must look at
+        // the OPERAND, not at the expression: `a < b` on two f64 is still an
+        // f64 comparison. Arithmetic's result type equals its operands', so
+        // the two agree there.
         ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
         ro form = c_binary_form(op, is_float)
-        if is_comparison(op) {
+        // `str` equality is the protocol method, not a C operator (D46:
+        // `a == b` is `a.@equal(b)`), and `!=` is DERIVED from it — the spec
+        // states the derivation, so novac spells it the same way instead of
+        // inventing a second method name (owner's reminder 2026-08-16).
+        ro lhs_t = @out.type_of(kids[0].id_of())
+        if lhs_t == @ctx.prims.str_id && is_equality(op) {
+            @body.append("((nova_int)(")
+            if op_is_not_equal(op) { @body.append("!") }
+            @body.append(c_method(@ctx, lhs_t, "equal"))
+            @body.append("(")
+            @emit_expr(kids[0])
+            @body.append(", ")
+            @emit_expr(kids[2])
+            @body.append(")))")
+        } else if is_bit_infix(op) {
+            @body.append("((")
+            @emit_expr(kids[0])
+            @body.append(") ")
+            @body.append(form)
+            @body.append(" (")
+            @emit_expr(kids[2])
+            @body.append("))")
+        } else if is_truth_infix(op) {
             @body.append("((nova_int)((")
             @emit_expr(kids[0])
             @body.append(") ")

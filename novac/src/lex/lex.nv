@@ -75,10 +75,29 @@ export type TokenKind enum
     | Gt
     | Ge
     | Percent
+    | EqEq
+    | BangEq
+    | AmpAmp
+    | PipePipe
+    | Amp
+    | Caret
+    | Shl
+    | Shr
+    | Tilde
+    | Bang
     | Pipe
     | FatArrow
     | Assign
     | PlusAssign
+    | MinusAssign
+    | StarAssign
+    | SlashAssign
+    | PercentAssign
+    | AmpAssign
+    | PipeAssign
+    | CaretAssign
+    | ShlAssign
+    | ShrAssign
     | DotDot
     | Ellipsis
     | Colon
@@ -250,30 +269,87 @@ export fn lex(src str) -> []Token {
             // outside the E1 subset (context-dependent lexing is the E2
             // mode-stack step). Either way the bytes stay ours -- lossless.
             if has_interp || !closed { kind = TokenKind.ErrorTok }
+        } else if c == ('<' as u8) && i + 2 < n && b[i + 1] == ('<' as u8) && b[i + 2] == ('=' as u8) {
+            i += 3
+            kind = TokenKind.ShlAssign
+        } else if c == ('<' as u8) && i + 1 < n && b[i + 1] == ('<' as u8) {
+            i += 2
+            kind = TokenKind.Shl
         } else if c == ('<' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
             i += 2
             kind = TokenKind.Le
         } else if c == ('<' as u8) {
             i += 1
             kind = TokenKind.Lt
+        } else if c == ('>' as u8) && i + 2 < n && b[i + 1] == ('>' as u8) && b[i + 2] == ('=' as u8) {
+            i += 3
+            kind = TokenKind.ShrAssign
+        } else if c == ('>' as u8) && i + 1 < n && b[i + 1] == ('>' as u8) {
+            i += 2
+            kind = TokenKind.Shr
         } else if c == ('>' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
             i += 2
             kind = TokenKind.Ge
         } else if c == ('>' as u8) {
             i += 1
             kind = TokenKind.Gt
+        } else if c == ('%' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.PercentAssign
         } else if c == ('%' as u8) {
             i += 1
             kind = TokenKind.Percent
+        } else if c == ('*' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.StarAssign
+        } else if c == ('/' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.SlashAssign
+        } else if c == ('=' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.EqEq
+        } else if c == ('!' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.BangEq
+        } else if c == ('!' as u8) {
+            i += 1
+            kind = TokenKind.Bang
+        } else if c == ('&' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.AmpAssign
+        } else if c == ('&' as u8) && i + 1 < n && b[i + 1] == ('&' as u8) {
+            i += 2
+            kind = TokenKind.AmpAmp
+        } else if c == ('&' as u8) {
+            i += 1
+            kind = TokenKind.Amp
+        } else if c == ('^' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.CaretAssign
+        } else if c == ('^' as u8) {
+            i += 1
+            kind = TokenKind.Caret
+        } else if c == ('~' as u8) {
+            i += 1
+            kind = TokenKind.Tilde
         } else if c == ('=' as u8) && i + 1 < n && b[i + 1] == ('>' as u8) {
             i += 2
             kind = TokenKind.FatArrow
+        } else if c == ('|' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.PipeAssign
+        } else if c == ('|' as u8) && i + 1 < n && b[i + 1] == ('|' as u8) {
+            i += 2
+            kind = TokenKind.PipePipe
         } else if c == ('|' as u8) {
             i += 1
             kind = TokenKind.Pipe
         } else if c == ('+' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
             i += 2
             kind = TokenKind.PlusAssign
+        } else if c == ('-' as u8) && i + 1 < n && b[i + 1] == ('=' as u8) {
+            i += 2
+            kind = TokenKind.MinusAssign
         } else if c == ('-' as u8) && i + 1 < n && b[i + 1] == ('>' as u8) {
             i += 2
             kind = TokenKind.Arrow

@@ -64,6 +64,8 @@ export type NodeKind enum
     | Param
     | Recv
     | RetType
+    | Unary
+    | Paren
     | Name
     | Err
 
@@ -101,6 +103,15 @@ export type BinOp enum
     | Greater
     | GreaterEq
     | Modulo
+    | Equal
+    | NotEqual
+    | AndAlso
+    | OrElse
+    | BitAnd
+    | BitOr
+    | BitXor
+    | ShiftLeft
+    | ShiftRight
     | Range
 
 /// Token -> operator, or nothing. THE table: one place lists which token
@@ -122,6 +133,15 @@ export fn bin_op_opt(k TokenKind) -> Option[BinOp] {
     if k == TokenKind.Le { return Some(BinOp.LessEq) }
     if k == TokenKind.Gt { return Some(BinOp.Greater) }
     if k == TokenKind.Ge { return Some(BinOp.GreaterEq) }
+    if k == TokenKind.EqEq { return Some(BinOp.Equal) }
+    if k == TokenKind.BangEq { return Some(BinOp.NotEqual) }
+    if k == TokenKind.AmpAmp { return Some(BinOp.AndAlso) }
+    if k == TokenKind.PipePipe { return Some(BinOp.OrElse) }
+    if k == TokenKind.Amp { return Some(BinOp.BitAnd) }
+    if k == TokenKind.Pipe { return Some(BinOp.BitOr) }
+    if k == TokenKind.Caret { return Some(BinOp.BitXor) }
+    if k == TokenKind.Shl { return Some(BinOp.ShiftLeft) }
+    if k == TokenKind.Shr { return Some(BinOp.ShiftRight) }
     if k == TokenKind.DotDot { return Some(BinOp.Range) }
     None
 }
@@ -134,6 +154,64 @@ export fn is_binop(k TokenKind) -> bool => bin_op_opt(k).is_some()
 /// invariant break, because the caller asked `is_binop` first.
 export fn bin_op(k TokenKind) -> BinOp =>
     bin_op_opt(k) ?? ice("tree: bin_op asked about a token that is not a binary operator")
+
+/// WHICH assignment an `AssignStmt` performs -- the same decision shape once
+/// more. A compound assignment IS its binary operator plus a store, so the
+/// sum carries that operator rather than repeating the table: `Set` stores,
+/// and `Update(op)` stores the result of `op`.
+export type AssignOp enum
+    | Set
+    | Update(BinOp)
+
+/// Token -> assignment, or nothing. One table; both halves derived.
+export fn assign_op_opt(k TokenKind) -> Option[AssignOp] {
+    if k == TokenKind.Assign { return Some(AssignOp.Set) }
+    if k == TokenKind.PlusAssign { return Some(AssignOp.Update(BinOp.Add)) }
+    if k == TokenKind.MinusAssign { return Some(AssignOp.Update(BinOp.Sub)) }
+    if k == TokenKind.StarAssign { return Some(AssignOp.Update(BinOp.Mul)) }
+    if k == TokenKind.SlashAssign { return Some(AssignOp.Update(BinOp.Div)) }
+    if k == TokenKind.PercentAssign { return Some(AssignOp.Update(BinOp.Modulo)) }
+    if k == TokenKind.AmpAssign { return Some(AssignOp.Update(BinOp.BitAnd)) }
+    if k == TokenKind.PipeAssign { return Some(AssignOp.Update(BinOp.BitOr)) }
+    if k == TokenKind.CaretAssign { return Some(AssignOp.Update(BinOp.BitXor)) }
+    if k == TokenKind.ShlAssign { return Some(AssignOp.Update(BinOp.ShiftLeft)) }
+    if k == TokenKind.ShrAssign { return Some(AssignOp.Update(BinOp.ShiftRight)) }
+    None
+}
+
+/// Is this token an assignment operator?
+export fn is_assign_op(k TokenKind) -> bool => assign_op_opt(k).is_some()
+
+/// The decision; asking about a non-assignment is an invariant break.
+export fn assign_op(k TokenKind) -> AssignOp =>
+    assign_op_opt(k) ?? ice("tree: assign_op asked about a token that is not an assignment")
+
+/// WHICH unary operator a `Unary` node applies. Same reason as `BinOp`: the
+/// decision is taken once, and every consumer answers for every variant.
+///
+/// `!` is STRICTLY logical on `bool` and is NOT overloadable (D46 AMEND
+/// 2026-08-02: `@not` retracted); `~` IS overloadable through `@bitnot`, and
+/// `-` through `@neg` -- so on a user type both are protocol dispatch, which
+/// the subset refuses honestly until bounds arrive.
+export type UnOp enum
+    | Not
+    | Negate
+    | BitNot
+
+/// Token -> unary operator, or nothing. One table, both halves derived.
+export fn un_op_opt(k TokenKind) -> Option[UnOp] {
+    if k == TokenKind.Bang { return Some(UnOp.Not) }
+    if k == TokenKind.Minus { return Some(UnOp.Negate) }
+    if k == TokenKind.Tilde { return Some(UnOp.BitNot) }
+    None
+}
+
+/// Is this token a prefix operator?
+export fn is_unop(k TokenKind) -> bool => un_op_opt(k).is_some()
+
+/// The decision; asking about a non-operator is an invariant break.
+export fn un_op(k TokenKind) -> UnOp =>
+    un_op_opt(k) ?? ice("tree: un_op asked about a token that is not a unary operator")
 
 /// A green node: a leaf carries one Token as DATA; a branch groups children
 /// under a kind. Immutable, lossless, position-free by construction.
