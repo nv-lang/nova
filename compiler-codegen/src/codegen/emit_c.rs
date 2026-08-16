@@ -33709,6 +33709,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // План 234 Ф.2а: raw C compound-assign — byte-identical к
                 // `x = x <op> y` под C-promotion на ЛЮБОЙ ширине (в отличие
                 // от `~`, таблица не нужна, D46 §C).
+                // №707: `%=` на ПЛАВАЮЩИХ. Составной путь эмитит сырой C
+                // `%=`, невалидный для double так же, как бинарный `%`.
+                // Десугарим в `x = fmod(x, y)` — ровно то, что обещает
+                // D46 (E) («десугар в `a = a % b`»), только с правильным
+                // лоуэрингом самого `%`
+                // [INV-PROPERTY: standalone/d46_float_rem_pos.nv, ветка compound].
+                if matches!(op, AssignOp::Mod) {
+                    let tgt_ty = self.infer_expr_c_type(target);
+                    if matches!(tgt_ty.as_str(), "nova_f64" | "double") {
+                        self.line(&format!("{} = fmod({}, {});", tgt, tgt, val));
+                        return Ok(());
+                    }
+                    if matches!(tgt_ty.as_str(), "nova_f32" | "float") {
+                        self.line(&format!("{} = fmodf({}, {});", tgt, tgt, val));
+                        return Ok(());
+                    }
+                }
                 let op_str = match op {
                     AssignOp::Assign => "=",
                     AssignOp::Add    => "+=",
@@ -36268,6 +36285,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return Ok(format!("{}({}, {})", helper, l, r));
                             }
                         }
+                    }
+                }
+                // №707: `%` на ПЛАВАЮЩИХ — законная операция языка (таблица
+                // приоритетов не ограничивает `%` по типам; D46 даёт `@rem`
+                // перегружаемым, значит операция мыслится общей; C/Rust её
+                // имеют, запрещает только Go). В C оператор `%` определён
+                // ТОЛЬКО для целых, поэтому сырой `%` на double давал ошибку
+                // clang, утекавшую пользователю вместо диагностики Nova
+                // [INV-PROPERTY: standalone/d46_float_rem_pos.nv печатает 1.5].
+                if matches!(op, BinOp::Mod) {
+                    let f = |x: &str| matches!(x, "nova_f64" | "double");
+                    let f32t = |x: &str| matches!(x, "nova_f32" | "float");
+                    if f(&lty) || f(&rty) {
+                        return Ok(format!("fmod({}, {})", l, r));
+                    }
+                    if f32t(&lty) || f32t(&rty) {
+                        return Ok(format!("fmodf({}, {})", l, r));
                     }
                 }
                 let op_str = match op {
