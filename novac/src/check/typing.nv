@@ -143,7 +143,13 @@ fn Checker mut @type_stmt(st Node) -> () {
         @type_bind(st)
     } else if k == NodeKind.AssignStmt {
         ro kids = branch_children(st)
-        if kids.len() > 2 { @type_expr(kids[2]) }
+        if kids.len() > 2 {
+            @type_expr(kids[2])
+            // The emitter needs the value's type to pick the form of a
+            // compound assignment (int helper, raw C, or fmod), and it may
+            // only READ it.
+            if @out.len() == 0 { @record(kids[2], type_of(kids[2], @ctx, @scope)) }
+        }
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         if kids.len() > 4 {

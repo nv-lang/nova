@@ -499,8 +499,12 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         match assign_op(leaf_kind(kids[1])) {
             Set => @emit_expr(kids[2])
             Update(op) => {
-                ro form = c_binary_form(op, false)
-                if is_bit_infix(op) {
+                // The operand TYPE decides the form, and it is READ from the
+                // channel -- assuming int here is what made `f += 0.25` emit
+                // an integer helper on doubles.
+                ro is_float = @out.type_of(kids[2].id_of()) == @ctx.prims.f64_id
+                ro form = c_binary_form(op, is_float)
+                if !is_call_form(op, is_float) {
                     @body.append("((")
                     @body.append(target)
                     @body.append(") ")
@@ -627,7 +631,13 @@ fn c_binary_form(op BinOp, is_float bool) -> str {
             "nova_int_checked_div"
         }
         Modulo => {
-            assert(!is_float, "emit_c: the remainder operator has no float form in the subset")
+            // The float remainder is `fmod`, not a C operator -- and it IS
+            // part of the language (D46 F, registry No. 707: the precedence
+            // table never restricted `%` by type, and forbidding it would
+            // narrow the language to work around a codegen defect). Sign
+            // follows the DIVIDEND as in C and Rust; there is no
+            // divide-by-zero panic here, IEEE-754 gives NaN.
+            if is_float { return "fmod" }
             "nova_int_checked_rem"
         }
         Less => "<"
@@ -655,6 +665,26 @@ fn is_truth_infix(op BinOp) -> bool {
     match op {
         Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse => true
         Add | Sub | Mul | Div | Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// Is this form WRITTEN as a call `f(a, b)` rather than infix `a f b`?
+///
+/// One rule, two callers -- the binary expression and the compound
+/// assignment. They had drifted: the compound path passed `is_float: false`
+/// unconditionally, so `f += 0.25` on doubles emitted `nova_int_checked_add`,
+/// the C still compiled, and the ANSWER came out wrong (found 2026-08-17,
+/// prompted by the integrator's warning that a compound assignment has its
+/// own emission path -- they had been caught by the same shape the same day).
+fn is_call_form(op BinOp, is_float bool) -> bool {
+    match op {
+        // Integer arithmetic goes through the runtime's checked helpers;
+        // float arithmetic is raw C -- except the remainder, which is fmod.
+        Add | Sub | Mul | Div => !is_float
+        Modulo => true
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse => false
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => false
+        Range => ice("emit_c: a range has no binary form -- for-heads consume it")
     }
 }
 
@@ -830,9 +860,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(" (")
             @emit_expr(kids[2])
             @body.append(")))")
-        } else if is_float {
+        } else if !is_call_form(op, is_float) {
             // f64 arithmetic is RAW C with left-assoc parens -- the oracle's
-            // shape: ((((nova_f64)3.14) * r) * r). Never checked_*.
+            // shape: ((((nova_f64)3.14) * r) * r).
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(" ")
