@@ -20,7 +20,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{Diagnostic, Severity}
 import ../builtins.{ENTRY_FN, PRINT_FN}
-import ../sem.{Ctx, branch_children, call_callee_text}
+import ../sem.{Ctx, branch_children, call_callee_text, is_expr_kind}
 
 /// State of one check run: the source (for positions), the semantic context
 /// and the diagnostics collected so far. A receiver, not a triple of
@@ -96,6 +96,7 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
             }
             if kind == NodeKind.Block { @report_if_bad_call_stmt(children) }
             if kind == NodeKind.MethodCall { @report_if_unknown_method(children) }
+            if kind == NodeKind.Call || kind == NodeKind.MethodCall { @report_if_ordered_args(children) }
             if kind == NodeKind.FnDecl { @report_if_missing_ret(children) }
             if kind == NodeKind.Field { @report_if_missing_type(children, "outside the E1 subset: field must declare a type") }
             if kind == NodeKind.Param { @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type") }
@@ -179,6 +180,42 @@ fn Checker mut @report_first_leaf_of(children []Node, msg str) -> () {
                 if @out.len() > before { return }
             }
         }
+    }
+}
+
+/// Does this subtree call anything? An argument that calls something is an
+/// argument whose evaluation ORDER is observable.
+fn contains_call(n Node) -> bool {
+    match n {
+        Leaf(_) => false
+        Branch { kind, children } => {
+            if kind == NodeKind.Call || kind == NodeKind.MethodCall { return true }
+            for c in children {
+                if contains_call(c) { return true }
+            }
+            false
+        }
+    }
+}
+
+/// Two arguments that BOTH call something are two side effects whose order
+/// the emitter does not fix: it prints the call straight into C, and C
+/// leaves argument evaluation order unspecified at any calling convention.
+/// Probe 2026-08-16 (finding F65): the oracle evaluates such a call
+/// RIGHT-to-left, while the spec calls left-to-right normative and
+/// observable. Until the emitter hoists arguments into temporaries in source
+/// order, this is an honest subset refusal — the same choice the arrays
+/// rollback made, and the opposite of quietly emitting order-dependent code.
+/// One effectful argument is fine: a single effect has no order to get wrong.
+fn Checker mut @report_if_ordered_args(kids []Node) -> () {
+    mut effectful = 0
+    for c in kids {
+        if is_expr_kind(c.kind_of()) {
+            if contains_call(c) { effectful += 1 }
+        }
+    }
+    if effectful >= 2 {
+        @report_first_leaf_of(kids, "outside the E1 subset: two arguments that both call something, and the emitter does not fix their order yet (F65)")
     }
 }
 
