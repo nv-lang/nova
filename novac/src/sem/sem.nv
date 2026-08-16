@@ -514,8 +514,18 @@ export fn collect_types(file Node) -> Ctx {
         if k == NodeKind.TypeDecl || k == NodeKind.SumDecl {
             ro nk = branch_children(c)
             if nk.len() > 1 && nk[1].kind_of() == NodeKind.LeafNode {
-                defs.add(leaf_text(nk[1]), DefKind.DefType, next_id)
-                next_id += 1
+                // A DUPLICATE type name registers nothing: the first
+                // declaration owns the DeclId, the second gets no row and no
+                // id. Found by the fuzzer through the E2-b1 invariant assert
+                // (a doubled file used to grow TWO rows for one name with the
+                // second one orphaned under the first one's owner id — the
+                // silent "last put wins" of DefTable.add). Reporting the
+                // duplicate is check's job (a later wave); sem's job is to
+                // not build a second truth for one name.
+                if defs.type_id_opt(leaf_text(nk[1])) < 0 {
+                    defs.add(leaf_text(nk[1]), DefKind.DefType, next_id)
+                    next_id += 1
+                }
             }
         }
     }
@@ -528,6 +538,10 @@ export fn collect_types(file Node) -> Ctx {
             ro tname = leaf_text(tkids[1])
             ro owner_id = defs.type_id_opt(tname)
             if owner_id < 0 { continue }
+            // Only the declaration that OWNS the id builds the row: a later
+            // duplicate resolves to the same id and must not push a second
+            // row for it (that is what broke the ty_id == index invariant).
+            if owner_id != types.len() { continue }
             ro off = fields.rows.len()
             mut cnt = 0
             for f in branch_children(c) {
@@ -551,6 +565,7 @@ export fn collect_types(file Node) -> Ctx {
             ro sname = leaf_text(skids[1])
             ro sum_id = defs.type_id_opt(sname)
             if sum_id < 0 { continue }
+            if sum_id != types.len() { continue } // same rule as for records
             ro off = variant_rows.len()
             mut vcnt = 0
             for v in branch_children(c) {
@@ -620,6 +635,17 @@ export fn collect_types(file Node) -> Ctx {
             fns.add(fname, ret, false, param_ids)
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
+    }
+    // E2-b1 INVARIANT, asserted, not assumed: while every type of the file is a
+    // declaration with no arguments, the interner hands out ids in exactly the
+    // order the declaration rows are pushed, so ty_id == declaration index for
+    // every row. Everything downstream still speaks "type id = declaration
+    // index" and is therefore ALREADY speaking in interned terms; the two
+    // numbers part company the moment the first App is interned (E2-b2), and
+    // this assert is what turns that moment into a loud one instead of a
+    // silent skew. Costs one integer compare per row, once per file.
+    for i in 0..types.len() {
+        if types[i].ty_id != i { ice("sem: interned term id diverged from declaration index before E2-b2 — a type was interned out of declaration order") }
     }
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fns }
 }
