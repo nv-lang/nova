@@ -1,4 +1,11 @@
-// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): bang
+// EXPECT_RUNTIME_PANIC unhandled Fail: bang
+//
+// ОЖИДАНИЕ ИСПРАВЛЕНО 2026-08-16 (№445, план 173.4 Ф.2). Здесь стояло
+// `(D158 composite)`, но СОСТАВНОЙ ОШИБКИ В ЭТОМ ФАЙЛЕ НЕТ: `defer`
+// только печатает и не бросает, то есть второй ошибки не существует, и ярлык
+// «composite» был бы ложью. Настоящая составная ошибка проверяется отдельно —
+// `f2a_suppressed_reaches_record.nv`, где cleanup ДЕЙСТВИТЕЛЬНО бросает.
+// Предмет самой фикстуры — «`defer` срабатывает на пути броска» — не тронут.
 // EXPECT_STDOUT DEFER_FIRED
 
 module standalone.defer_throw_single

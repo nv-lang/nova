@@ -1,4 +1,11 @@
-// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): crash
+// EXPECT_RUNTIME_PANIC panic: crash
+//
+// ОЖИДАНИЕ ИСПРАВЛЕНО 2026-08-16 (№445, план 173.4 Ф.2). Стояло
+// `unhandled Fail (D158 composite): crash` — неверно ДВАЖДЫ: (1) здесь
+// `panic`, а не `Fail`, и по D13 он не деградирует до ловимого; (2) `defer`
+// только печатает, второй ошибки нет, составной тоже. Предмет фикстуры —
+// «`defer` срабатывает на main-flow при панике» — не тронут и проверяется
+// строкой DEFER_RUNS в stdout.
 // EXPECT_STDOUT DEFER_RUNS
 //
 // nv_panic fix: defer тоже срабатывает на panic() на

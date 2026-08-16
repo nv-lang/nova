@@ -344,6 +344,12 @@ typedef struct NovaFiberQueue {
      * `first_error`, восстанавливается перед `nova_rethrow_scope`. */
     NovaThrowSite  first_error_site;
     NovaThrowTrace first_error_trace;
+    /* 173.4 Ф.2(а): ЦЕПОЧКА ПОДАВЛЕННЫХ (D158 model B) — туда же и по той же
+     * причине, что site/trace выше: узлы цепочки собраны на умирающем
+     * файбере, а переброс наружу идёт на другом потоке. Без снимка
+     * запись отказа печатала `suppressed:[]` даже когда cleanup заведомо
+     * бросал (измерено 2026-08-15). */
+    NovaErrorChain* first_error_suppressed;
     /* Cancellation: set to true after the first fiber throws.
      * Other fibers see this on their next yield-point and throw "cancelled"
      * (cooperative cancellation — D50).
@@ -900,6 +906,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->fiber_error = NULL;
     q->fiber_did_throw = NULL;
     q->first_error = NULL;
+    q->first_error_suppressed = NULL;  /* 173.4 Ф.2(а) */
     nova_abool_init(&q->cancel_requested, false);  /* Plan 83.4.3/B5 */
     q->interrupt_pending = false;
     q->interrupt_via_ptr = false;
@@ -2536,9 +2543,10 @@ static inline int nova_throw_kind_precedence(NovaThrowKind kind) {
  * Это даёт: (1) реальная ошибка surface'ится наружу даже если отмена случилась
  * раньше (Go errgroup первый-wins ТЕРЯЕТ её — у нас нет); (2) **panic ребёнка
  * ВСЕГДА становится primary** (D13 — не глотается уже-записанным USER'ом). */
-static inline void nova_fiber_report_error_kinded(const char* msg,
-                                                  NovaThrowKind kind,
-                                                  void* reason_ptr) {
+static inline void nova_fiber_report_error_diag(const char* msg,
+                                                NovaThrowKind kind,
+                                                void* reason_ptr,
+                                                NovaErrorChain* suppressed) {
     if (!_nova_active_scope || _nova_active_slot < 0) return;
     _nova_active_scope->fiber_error[_nova_active_slot] = msg;
     NovaFiberQueue* q = _nova_active_scope;
@@ -2548,6 +2556,7 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
         q->first_error_reason = reason_ptr;
         q->first_error_site  = _nova_throw_site;   /* №445/D462 */
         q->first_error_trace = _nova_throw_trace;  /* №445/D462 */
+        q->first_error_suppressed = suppressed;   /* 173.4 Ф.2(а) */
     } else if (nova_throw_kind_precedence(kind) >
                nova_throw_kind_precedence(q->first_error_kind)) {
         /* incoming rank выше — overwrite primary. PANIC бьёт USER/CANCEL
@@ -2558,6 +2567,7 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
         q->first_error_reason = reason_ptr;
         q->first_error_site  = _nova_throw_site;   /* №445/D462 */
         q->first_error_trace = _nova_throw_trace;  /* №445/D462 */
+        q->first_error_suppressed = suppressed;   /* 173.4 Ф.2(а) */
     }
     /* USER errors також сигналят cancel_requested (peer fibers пробудятся
      * и выйдут через CANCEL); CANCEL errors не сбрасывают чужие USER'ы. */
@@ -2567,6 +2577,19 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
 /* Backward-compatible wrapper для existing codegen — старый report_error
  * без kind/reason считает throw USER (текущая семантика). Когда codegen
  * перейдёт на kinded-emit, эту обёртку можно будет удалить. */
+/* 173.4 Ф.2(а): СТАРАЯ ФОРМА СОХРАНЕНА ТРЁХАРГУМЕНТНОЙ. На неё ссылается
+ * ВКОМПИЛИРОВАННЫЙ шаблон оболочки novac (`shell.tpl.c`, перегенерируется
+ * отдельной волной в чужом репозитории). Добавление параметра К СУЩЕСТВУЮЩЕЙ
+ * функции — слом ABI для всего, что вшито снимком, и лечится он НЕ «просто
+ * запушить»: снимок живёт в другом дереве и обновляется своей волной.
+ * Расширенная форма живёт под НОВЫМ именем `_diag` — тот же приём, что у
+ * `nova_rethrow_scope_diag`. */
+static inline void nova_fiber_report_error_kinded(const char* msg,
+                                                  NovaThrowKind kind,
+                                                  void* reason_ptr) {
+    nova_fiber_report_error_diag(msg, kind, reason_ptr, NULL);
+}
+
 static inline void nova_fiber_report_error(const char* msg) {
     nova_fiber_report_error_kinded(msg, NOVA_THROW_USER, NULL);
 }
@@ -3868,7 +3891,11 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         NovaErrorChain* _nv_suppressed = NULL;
         {
             NovaFailFrame _nv_aggf;
-            _nv_aggf.error_suppressed = NULL;
+            /* 173.4 Ф.2(а): сеем агрегатор СОБСТВЕННОЙ цепочкой первичной
+             * ошибки. Порядок выходит верным сам собой: цепочка — LIFO-prepend,
+             * а cleanup-ошибки самой первичной СТАРШЕ собранного ниже
+             * scope-уровневого агрегата, то есть их место — хвост. */
+            _nv_aggf.error_suppressed = q->first_error_suppressed;
             if (q->child_error) {
                 nova_bool _nv_prim_local = (q->first_error != NULL);
                 for (int _nv_ai = 0; _nv_ai < q->child_count; _nv_ai++) {

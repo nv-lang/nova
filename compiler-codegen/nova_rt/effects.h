@@ -114,6 +114,12 @@ extern __thread NovaFailFrame* _nova_fail_top;
 
 static inline void nova_fail_push(NovaFailFrame* f) {
     f->is_cleanup = 0;  /* Plan 173 Ф.4 #6: default; codegen marks cleanup frames */
+    /* 173.4 Ф.2(а): ЦЕПОЧКА ОБЯЗАНА НАЧИНАТЬСЯ ПУСТОЙ. Кадр приходит со стека
+     * (кодоген эмитит голое `NovaFailFrame _ff;`), а читатели поля появились:
+     * сайт отчёта файбера передаёт `_ff.error_suppressed` наружу. Без этой
+     * строки туда уехал бы мусор со стека, по которому nv_compose_suppressed
+     * пошёл бы гулять — краш на пути ошибки, то есть самом непроверяемом. */
+    f->error_suppressed = NULL;
     f->prev = _nova_fail_top;
     _nova_fail_top = f;
 }
