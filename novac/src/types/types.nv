@@ -164,23 +164,14 @@ export fn Interner mut @infer(vid int) -> int => @intern(TypeKind.TkInfer, vid, 
 // ---- reader doors: allocate nothing -----------------------------------------
 
 /// The kind of a type; an id outside the table is an ice, never a default.
-///
-/// [LEGACY-#696] A FREE function, not a method,
-/// on purpose. Bisected 2026-08-16 (five probes, three of them minimal
-/// repros that did NOT reproduce, so the trigger needs the real novac CU):
-/// an EXPORTED METHOD whose return type is a sum (`export fn Interner
-/// @kind_of(...) -> TypeKind`), pulled transitively into the pipeline test
-/// CU, makes the oracle resolve `NodeKind.LeafNode` in ANOTHER module of
-/// that CU as `Nova_TypeKind*` — a variant looked up by bare name and
-/// attached to the wrong sum. The same body as a non-exported method passes;
-/// the same body as an exported FREE function passes; the same signature as
-/// an exported method fails. Reported to the compiler window with the
-/// bisection. The workaround costs nothing here (the door is one call
-/// either way) and goes when the registry number closes.
+/// (History: 2026-08-16 this was a FREE function under [LEGACY-#696] -- an
+/// exported method returning a sum made the oracle attach a variant of
+/// ANOTHER module's sum to the wrong table; fixed in c52350831, the method
+/// form is back the same day.)
 #realtime nogc
-export fn kind_of(it Interner, t int) -> TypeKind {
-    if t < 0 || t >= it.rows.len() { ice("types: kind_of asked for a type id outside the interner") }
-    it.rows[t].kind
+export fn Interner @kind_of(t int) -> TypeKind {
+    if t < 0 || t >= @rows.len() { ice("types: kind_of asked for a type id outside the interner") }
+    @rows[t].kind
 }
 
 /// The head of a type: DeclId for nominal kinds, ordinal for a primitive,

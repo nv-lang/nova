@@ -74,7 +74,7 @@ export type BuiltinType value {
 /// boundary in the oracle (`undefined identifier` at the use site), and
 /// `export const` refuses `.of(...)` (E_CONST_NOT_CONSTEXPR: literals only).
 /// So the table stays private and the ONE reader door below hands it out.
-/// [LEGACY-#TBD-export-ro-vector] goes when the oracle exports `ro` values.
+/// [LEGACY-#701-export-ro-vector] goes when the oracle exports `ro` values.
 ro universe = []BuiltinType.of(
     BuiltinType { name: "int", c_name: "nova_int" },
     BuiltinType { name: "str", c_name: "nova_str" },
