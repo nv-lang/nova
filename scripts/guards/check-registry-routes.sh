@@ -1,0 +1,68 @@
+#!/bin/sh
+# scripts/guards/check-registry-routes.sh — у открытой записи K1 есть МАРШРУТ
+# и оговорка о носителе; счётчик блокеров тега — храповик вниз.
+#
+# Реестр: docs/plans/221.1-bug-sweep.md. Основание — требование владельца
+# 2026-08-16: «для всех определи класс бага (группировать по общему корню),
+# выстави приоритет и добавь в описание — чтобы не было попыток фиксить
+# конкретный баг, т.к. фиксить надо класс дефекта через одно окно».
+#
+# ЗАЧЕМ ТРИ ЧИСЛА, А НЕ ОДНО «ПРОВЕРЕНО».
+#   1. `ЧИНИТСЯ` — МАРШРУТ записи: план/окно, которое возьмёт КЛАСС. Без него
+#      следующий читатель чинит носитель: запись есть, класс назван, а идти
+#      некуда. Замер 2026-08-16: 20 открытых K1 без маршрута.
+#   2. `приёмкой не считается` — оговорка о носителе. Без неё «починил один
+#      случай» выглядит закрытием. Замер: 33 открытых K1 без оговорки.
+#   3. `БЛОКИРУЕТ ТЕГ: ДА` среди открытых — ЕДИНСТВЕННОЕ честное число
+#      «сколько осталось до тега». 08-11: 43, 08-16: 56 — росло, и это было
+#      видно только вручную. Теперь видно гейту.
+#
+# ХРАПОВИК: все три числа только ВНИЗ. Рост блокеров — законное событие
+# (нашли новое), поэтому база правится с записью строки в baseline — как у
+# arch-ratchet. Смысл не «запретить рост», а «рост не проходит молча».
+#
+# $1 — корень. База — scripts/guards/registry-routes.baseline
+# Самотест — selftest/test-check-registry-routes.sh
+export LC_ALL=C
+ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+NAME=check-registry-routes
+CORE="$(dirname "$0")/registry-routes-scan.py"
+BASELINE="${NOVA_ROUTES_BASELINE:-$ROOT/scripts/guards/registry-routes.baseline}"
+[ -f "$CORE" ] || { echo "$NAME: FAIL — нет ядра $CORE" >&2; exit 1; }
+
+OUT=$(python "$CORE" "$ROOT" 2>&1) || { echo "$NAME: FAIL — ядро упало:" >&2; printf '%s\n' "$OUT" >&2; exit 1; }
+NO_ROUTE=$(printf '%s\n' "$OUT" | sed -n 's/^no_route=\([0-9][0-9]*\).*/\1/p' | head -1)
+NO_CAVEAT=$(printf '%s\n' "$OUT" | sed -n 's/^no_caveat=\([0-9][0-9]*\).*/\1/p' | head -1)
+BLOCKERS=$(printf '%s\n' "$OUT" | sed -n 's/^blockers=\([0-9][0-9]*\).*/\1/p' | head -1)
+[ -n "$NO_ROUTE" ] && [ -n "$NO_CAVEAT" ] && [ -n "$BLOCKERS" ] || {
+    echo "$NAME: FAIL — ядро не отдало трёх чисел:" >&2; printf '%s\n' "$OUT" >&2; exit 1; }
+
+base_of() {
+    v=""
+    [ -f "$BASELINE" ] && v=$(sed -n "s/^$1=\([0-9][0-9]*\).*/\1/p" "$BASELINE" | head -1)
+    echo "${v:-0}"
+}
+B_ROUTE=$(base_of no_route)
+B_CAVEAT=$(base_of no_caveat)
+B_BLOCK=$(base_of blockers)
+
+FAILED=0
+grew() {
+    echo "$NAME: FAIL — $1 ВЫРОСЛО: $2 > базы $3" >&2
+    printf '%s\n' "$OUT" | sed -n "/^$4:/,/^$/p" | head -12 | sed 's/^/    /' >&2
+    FAILED=1
+}
+[ "$NO_ROUTE"  -gt "$B_ROUTE"  ] && grew "открытых K1 без маршрута (ЧИНИТСЯ)" "$NO_ROUTE" "$B_ROUTE" "no_route_list"
+[ "$NO_CAVEAT" -gt "$B_CAVEAT" ] && grew "открытых K1 без оговорки о носителе" "$NO_CAVEAT" "$B_CAVEAT" "no_caveat_list"
+[ "$BLOCKERS"  -gt "$B_BLOCK"  ] && grew "ОТКРЫТЫХ БЛОКЕРОВ ТЕГА" "$BLOCKERS" "$B_BLOCK" "blockers_list"
+
+if [ "$FAILED" -ne 0 ]; then
+    echo "" >&2
+    echo "    Маршрут (`ЧИНИТСЯ: план N` / `одно окно на класс`) обязателен: без него" >&2
+    echo "    следующий чинит НОСИТЕЛЬ. Оговорка «фикс носителя приёмкой не считается»" >&2
+    echo "    обязательна по той же причине. Рост блокеров — законен, но не молча:" >&2
+    echo "    поправь базу в $BASELINE строкой-летописью." >&2
+    exit 1
+fi
+echo "$NAME ok: открытых блокеров тега $BLOCKERS (база $B_BLOCK), K1 без маршрута $NO_ROUTE (база $B_ROUTE), без оговорки $NO_CAVEAT (база $B_CAVEAT)"
+exit 0
