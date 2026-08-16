@@ -728,8 +728,17 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
                 @body.append("    nova_print_bool(")
             } else if at == @ctx.prims.f64_id {
                 @body.append("    nova_print_f64(")
-            } else {
+            } else if at == @ctx.prims.int_id {
                 @body.append("    nova_print_int(")
+            } else {
+                // Found by the generics scouting 2026-08-16: this used to be a
+                // bare `else` printing anything unknown AS AN INT — a record
+                // would have had its GC pointer printed as a number, in
+                // silence. The set of types is open, so there is no exhaustive
+                // match to write; the honest form is to name every case we
+                // handle and refuse the rest. The first floor (a check-level
+                // refusal) arrives with local typing, 274.3 wave 3 / C9.
+                ice("emit_c: println of a type with no printer in the subset")
             }
             @emit_expr(c)
             @body.append(");\n")
