@@ -14,7 +14,34 @@ trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" "$2" > "$T/out" 2> "$T/err"; }
+run() { sh "$G" "$ROOT" "$1" "$2" "${3:-}" > "$T/out" 2> "$T/err"; }
+
+mk_chan() { # $1 file, rest are CheckOut field names
+    f="$1"; shift
+    { echo "module novac.sem"
+      echo ""
+      echo "export type CheckOut {"
+      for n in "$@"; do echo "    $n []Row /// something"; done
+      echo "}"
+    } > "$f"
+}
+mk_plan2() { # $1 file, $2 Ctx fields (comma-separated), $3 channel fields
+    f="$1"
+    { echo "# Plan"
+      echo ""
+      echo "### 10.3б. Reestr tablic strok"
+      echo ""
+      echo "| pole | chto hranit | pochemu otdelnaya |"
+      echo "|---|---|---|"
+      for n in $(echo "$2" | tr ',' ' '); do echo "| \`$n\` | hranit | potomu |"; done
+      echo ""
+      echo "### 10.3б-канал. Tablicy kanala"
+      echo ""
+      echo "| pole | chto hranit | pochemu otdelnaya |"
+      echo "|---|---|---|"
+      for n in $(echo "$3" | tr ',' ' '); do echo "| \`$n\` | hranit | potomu |"; done
+    } > "$f"
+}
 
 mk_sem() {  # $1 файл, остальные — имена полей
     f="$1"; shift
@@ -104,9 +131,40 @@ else
     bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
 fi
 
+# --- kanal chekera: tot zhe sud dlya vtorogo konteynera --------------------
+mk_sem "$T/semc.nv" types defs
+mk_chan "$T/chan_ok.nv" types callees substs
+mk_plan2 "$T/planc.md" "types,defs" "types,callees,substs"
+if run "$T/semc.nv" "$T/planc.md" "$T/chan_ok.nv"; then
+    grep -q "в канале чекера: 3" "$T/out" && ok "таблицы канала сверены, счёт верный" || bad "зелёный, но счёт канала не тот [$(cat "$T/out")]"
+else
+    bad "совпадающий канал покраснел: $(cat "$T/err")"
+fi
+
+mk_chan "$T/chan_new.nv" types callees substs subst_args
+if run "$T/semc.nv" "$T/planc.md" "$T/chan_new.nv"; then
+    bad "новая таблица КАНАЛА прошла молча — главный случай второй половины не ловится"
+else
+    grep -q "subst_args" "$T/err" && ok "новая таблица канала поймана и названа" || bad "красный, но не про subst_args"
+fi
+
+mk_chan "$T/chan_less.nv" types callees
+if run "$T/semc.nv" "$T/planc.md" "$T/chan_less.nv"; then
+    bad "протухшая строка канала прошла"
+else
+    grep -q "substs" "$T/err" && ok "протухшая строка канала поймана" || bad "красный, но не про протухшую строку"
+fi
+
+# сосед не подмешивается в таблицу Ctx (регресс поймал себя 2026-08-16)
+if run "$T/semc.nv" "$T/planc.md" "$T/chan_ok.nv"; then
+    grep -q "таблиц строк в Ctx: 2" "$T/out" && ok "строки раздела 10.3б-канал НЕ считаются полями Ctx" || bad "счёт Ctx подмешал соседний раздел [$(cat "$T/out")]"
+else
+    bad "повтор совпадения покраснел"
+fi
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-ctx-tables ok: все случаи, включая новую таблицу и протухшую строку"
+    echo "test-check-novac-ctx-tables ok: все случаи, включая новую таблицу и протухшую строку в ОБОИХ контейнерах (Ctx и канал)"
     exit 0
 fi
 exit 1

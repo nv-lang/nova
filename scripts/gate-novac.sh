@@ -183,6 +183,7 @@ guard "$ROOT/scripts/guards/check-novac-temp-edges.sh" "$ROOT" || fail "врем
 guard "$ROOT/scripts/guards/check-novac-module-donor.sh" "$ROOT" || fail "модуль novac без донора-указателя в заголовке (П27)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён"
+guard "$ROOT/scripts/guards/check-novac-channel-one-writer.sh" "$ROOT" || fail "у канала чекера второй писатель или вывод типа ниже чекера"
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"

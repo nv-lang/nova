@@ -68,13 +68,39 @@ export type NodeKind enum
 
 /// A green node: a leaf carries one Token as DATA; a branch groups children
 /// under a kind. Immutable, lossless, position-free by construction.
+///
+/// A branch also carries an `id` — its IDENTITY, not its position. The
+/// checker's channel (`sem.CheckOut`, E2-b1) is a side table keyed by it: a
+/// pass that answers "what type does THIS node have" needs a name for the
+/// node, and in a language without pointer identity there is nothing else to
+/// say it with. Ids are dense and assigned by the parser in creation order
+/// (`parse.Cursor.next_id`); leaves get none, because nothing keys a leaf —
+/// every expression the channel speaks about is a branch.
+///
+/// Donor: Zig `Ast.Node.Index` and Carbon `Parse::Tree` — the PARSER numbers
+/// the nodes, and the id is the node's name everywhere above. NOT taken:
+/// rust-analyzer `AstIdMap` (an id derived from (kind, text range) — novac's
+/// tree deliberately stores no ranges, and deriving them per lookup costs a
+/// pointer walk in the hottest path); rustc `HirId` (assigned by a separate
+/// lowering pass — novac has no lowering until E4, so the parser is the only
+/// pass that sees every node exactly once).
 export type Node enum
     | Leaf(Token)
-    | Branch { kind NodeKind, children []Node }
+    | Branch { id int, kind NodeKind, children []Node }
 
-/// Build a branch node.
-export fn branch(kind NodeKind, children []Node) -> Node =>
-    Node.Branch { kind, children }
+/// Build a branch node with its identity.
+export fn branch(id int, kind NodeKind, children []Node) -> Node =>
+    Node.Branch { id, kind, children }
+
+/// The node's identity, or -1 for a leaf. THE one place that knows a leaf has
+/// none: readers ask here rather than matching the shape themselves.
+#realtime nogc
+export fn Node @id_of() -> int {
+    match @ {
+        Leaf(_) => -1
+        Branch { id, .. } => id
+    }
+}
 
 /// Build a leaf node from a token.
 export fn leaf(t Token) -> Node => Node.Leaf(t)

@@ -33,12 +33,15 @@
 # Проверялся: Windows (Git Bash), 2026-08-16.
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
-# Реестры живут в ДВУХ модулях с E2-b1: sem (декларации) и types (интернер).
+# Реестры живут в ТРЁХ файлах с E2-b1: sem/sem.nv (декларации), sem/channel.nv
+# (канал чекера: строки CalleeRef/SubstRef — владелец 2026-08-16 спросил, почему
+# 1:1-данные лежат параллельными векторами, и страж этого НЕ ловил: он читал
+# только два файла) и types/types.nv (интернер).
 # $2 — override ОДНОГО файла (шов самотеста); без него читаются оба.
 if [ -n "$2" ]; then
     SEM_FILES="$2"
 else
-    SEM_FILES="$ROOT/novac/src/sem/sem.nv $ROOT/novac/src/types/types.nv"
+    SEM_FILES="$ROOT/novac/src/sem/sem.nv $ROOT/novac/src/sem/channel.nv $ROOT/novac/src/types/types.nv"
 fi
 SEM="${2:-$ROOT/novac/src/sem/sem.nv}"
 PLAN="${3:-$ROOT/docs/plans/274-novac-self-hosted-compiler.md}"
@@ -155,7 +158,8 @@ fi
 # строка хранится СПИСКОМ, её булево поле обязано нести в §10.3в пометку
 # «[на элемент]» — то есть автор ответил вслух, почему бит может различаться
 # у разных элементов, а не является свойством всего списка.
-ELEMENT_ROWS=$(cat $SEM_FILES | tr -d '' | grep -oE '\[\][A-Z][A-Za-z0-9_]*' | sed 's/^\[\]//' | sort -u)
+ELEMENT_ROWS=$(cat $SEM_FILES | tr -d '
+' | grep -oE '\[\][A-Z][A-Za-z0-9_]*' | sed 's/^\[\]//' | sort -u)
 BOOLS=$(cat $SEM_FILES | tr -d '' | awk '
     /^export type [A-Z][A-Za-z0-9_]* value \{/ { rec = $3; next }
     rec != "" && /^\}/ { rec = "" }

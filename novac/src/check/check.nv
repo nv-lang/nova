@@ -33,9 +33,9 @@ module novac.check
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind}
-import ../diag.{Diagnostic, Severity}
+import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN}
-import ../sem.{Ctx, branch_children, call_callee_text, is_expr_kind}
+import ../sem.{Ctx, CheckOut, DefKind, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 /// State of one check run: the source (for positions), the semantic context
 /// and the diagnostics collected so far. A receiver, not a triple of
@@ -54,6 +54,8 @@ type Checker {
     src SourceText /// the file text: the one source of positions
     ctx Ctx /// type registry and callable table, read from the declarations
     out []Diagnostic /// diagnostics collected by this run
+    chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
+    scope Scope /// locals of the function body being typed; reset per function
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -71,10 +73,30 @@ type Checker {
 /// entry point IS, is a constructor plus a run — the same shape `emit_c`
 /// uses for `Emitter`: the module has one door, and the receiver lives
 /// behind it.
-export fn check(file Node, src SourceText, ctx Ctx) -> []Diagnostic {
-    mut c = Checker { src, ctx, out: []Diagnostic.new() }
+/// The channel comes back WITH the diagnostics, from ONE door: a second
+/// entry point ("check, and this time also record") would be two passes
+/// disagreeing about one file, which is the disease the channel cures.
+///
+/// The typing walk runs only on a CLEAN subset verdict. That is not a
+/// convenience: the emitter's contract is already "never called on broken
+/// input" (pipeline), the lattice remaining ices are user errors under
+/// [LEGACY-#700-user-error-as-ice until:E2b3], and typing a file that the
+/// subset already refused would turn a refusal into an ice. When #700 lands
+/// the walk becomes unconditional, because then its answer on bad input is a
+/// diagnostic and not a death.
+export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
+    mut c = Checker {
+        src, ctx,
+        out: []Diagnostic.new(),
+        chan: CheckOut.new(file.id_of() + 1),
+        scope: Scope.new(),
+    }
     c.walk(file)
-    c.out
+    if c.out.len() == 0 {
+        c.type_file(file)
+        c.chan.assert_disjoint()
+    }
+    (c.out, c.chan)
 }
 
 /// Record one subset refusal at the token's exact bytes. THE one place that
@@ -104,7 +126,7 @@ fn Checker mut @refuse(t Token, msg str) -> () {
 fn Checker mut @walk(n Node, init_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
-        Branch { kind, children } => {
+        Branch { kind, children, .. } => {
             if kind == NodeKind.Err {
                 @report_err_branch(children)
                 return
@@ -203,7 +225,7 @@ fn Checker mut @report_first_leaf_of(children []Node, msg str) -> () {
 fn contains_call(n Node) -> bool {
     match n {
         Leaf(_) => false
-        Branch { kind, children } => {
+        Branch { kind, children, .. } => {
             if kind == NodeKind.Call || kind == NodeKind.MethodCall { return true }
             for c in children {
                 if contains_call(c) { return true }
@@ -244,7 +266,7 @@ fn Checker mut @report_if_bad_call_stmt(stmts []Node) -> () {
     for st in stmts {
         match st {
             Leaf(_) => {}
-            Branch { kind, children } => {
+            Branch { kind, children, .. } => {
                 if kind == NodeKind.Call {
                     if call_callee_text(children) != PRINT_FN {
                         @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
@@ -302,3 +324,462 @@ fn Checker mut @report_err_branch(children []Node) -> () {
         }
     }
 }
+
+// ---- the type channel: what the checker decided ---------------------------
+//
+// The walk below MIRRORS the emitter's demand, node for node and in the same
+// order, and records the answer instead of letting the backend ask later.
+// Mirroring is deliberate and stated: at E2-b1 the channel's job is to move
+// the ANSWER, not to change it, so "the corpus behaves identically" is a
+// property of construction rather than of luck. The total walk over every
+// node (which the LSP needs) arrives with the real checker at E2-b3; until
+// then a node the emitter never asks about carries no entry, and the reader
+// doors are total so that a wrong assumption dies loudly instead of quietly
+// re-deriving.
+//
+// Scope discipline is the emitter's, exactly: one flat Scope per function
+// body, last bind wins, nothing is ever unbound. Block scoping arrives with
+// the real checker; copying today's rule is what keeps the recorded types
+// identical to the computed ones.
+
+/// Every function of the file, in source order.
+fn Checker mut @type_file(file Node) -> () {
+    match file {
+        Leaf(_) => {}
+        Branch { kind, children, .. } => {
+            if kind != NodeKind.File { return }
+            for c in children {
+                if c.kind_of() == NodeKind.FnDecl { @type_fn(c) }
+            }
+        }
+    }
+}
+
+/// One function: fresh scope, parameters bound, then the body.
+fn Checker mut @type_fn(f Node) -> () {
+    ro kids = branch_children(f)
+    if kids.len() < 2 { return }
+    ro name = leaf_text(kids[1])
+    @scope = Scope.new()
+    if name != ENTRY_FN {
+        for c in kids {
+            if c.kind_of() == NodeKind.Param {
+                ro pk = branch_children(c)
+                if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
+                    if leaf_kind(pk[1]) == TokenKind.Ident {
+                        @scope.bind(leaf_text(pk[0]), @ctx.defs.type_id(leaf_text(pk[1])))
+                    }
+                }
+            }
+        }
+    }
+    for c in kids {
+        if c.kind_of() == NodeKind.Block { @type_block(c) }
+        if c.kind_of() == NodeKind.FnExprBody {
+            ro ek = branch_children(c)
+            ro e = ek[ek.len() - 1]
+            if e.kind_of() == NodeKind.MatchExpr {
+                @type_match(e)
+            } else if is_expr_kind(e.kind_of()) {
+                @type_expr(e)
+            }
+        }
+    }
+}
+
+/// Statements of a block, in order.
+fn Checker mut @type_block(b Node) -> () {
+    for c in branch_children(b) {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => @type_stmt(c)
+        }
+    }
+}
+
+/// One statement. A kind the subset does not know is NOT typed and NOT iced:
+/// the emitter refuses it at its own door, and a second death here would only
+/// move the message.
+fn Checker mut @type_stmt(st Node) -> () {
+    ro k = st.kind_of()
+    if k == NodeKind.Call {
+        @type_call_stmt(st)
+    } else if k == NodeKind.IfStmt || k == NodeKind.WhileStmt {
+        ro kids = branch_children(st)
+        if kids.len() > 2 {
+            @type_expr(kids[1])
+            @type_block(kids[2])
+        }
+    } else if k == NodeKind.RetStmt {
+        ro kids = branch_children(st)
+        if kids.len() > 1 { @type_expr(kids[1]) }
+    } else if k == NodeKind.BindStmt {
+        @type_bind(st)
+    } else if k == NodeKind.AssignStmt {
+        ro kids = branch_children(st)
+        if kids.len() > 2 { @type_expr(kids[2]) }
+    } else if k == NodeKind.ForStmt {
+        ro kids = branch_children(st)
+        if kids.len() > 4 {
+            ro range = branch_children(kids[3])
+            if range.len() > 2 {
+                @type_expr(range[0])
+                @type_expr(range[2])
+            }
+            // The loop variable is bound AFTER the range is typed and BEFORE
+            // the body -- the emitter's order (a range expression cannot see
+            // the variable it defines).
+            @scope.bind(leaf_text(kids[1]), @ctx.prims.int_id)
+            @type_block(kids[4])
+        }
+    } else if is_expr_kind(k) {
+        @type_expr(st)
+    }
+}
+
+/// A println statement: each argument carries its own printer, so each
+/// argument's type is a recorded answer. The callee is not resolved --
+/// println is the subset's one builtin and lives in no registry.
+fn Checker mut @type_call_stmt(call Node) -> () {
+    ro kids = branch_children(call)
+    if call_callee_text(kids) != PRINT_FN { return }
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit {
+            // A string literal argument goes to the literal pool by SHAPE, not
+            // by type; the emitter never asks its type, and the channel holds
+            // answers, not decoration. A numeric literal does get asked, so
+            // the shape test below is on the literal's own token.
+            if leaf_kind(branch_children(c)[0]) != TokenKind.StrLit {
+                @record(c, type_of(c, @ctx, @scope))
+            }
+        } else if is_expr_kind(ck) {
+            // Children FIRST: the walk is what verifies that every name and
+            // field in this argument exists, and only a verified expression
+            // may be handed to the lattice (whose miss is an ice, not a
+            // diagnostic, until #700).
+            @type_expr(c)
+            if @out.len() == 0 { @record(c, type_of(c, @ctx, @scope)) }
+        }
+    }
+}
+
+/// A binding. The initializer's type is decided BEFORE the initializer's own
+/// binders exist -- the emitter's order, kept because changing it would change
+/// which programs compile (a match whose first arm uses its binders is
+/// refused today, and that refusal is a fact of the subset, not an accident
+/// of this walk).
+fn Checker mut @type_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 2 { return }
+    ro vname = leaf_text(kids[1])
+    ro init = kids[kids.len() - 1]
+    ro ik = init.kind_of()
+    // A plain expression initializer is verified before it is typed. A match
+    // initializer is NOT: the emitter decides its type before the arms bind
+    // their binders, and that order is what makes "a match whose first arm
+    // uses its binders" a refusal of the subset rather than a silent success.
+    if ik != NodeKind.MatchExpr && ik != NodeKind.RecordCtor && is_expr_kind(ik) {
+        @type_expr(init)
+        if @out.len() > 0 { return }
+    }
+    ro vtype = type_of(init, @ctx, @scope)
+    @record(init, vtype)
+    if ik == NodeKind.MatchExpr {
+        @type_match(init)
+    } else if ik == NodeKind.RecordCtor {
+        for c in branch_children(init) {
+            ro ck = c.kind_of()
+            if ck == NodeKind.CtorSpread {
+                ro sk = branch_children(c)
+                if sk.len() > 1 { @type_expr(sk[1]) }
+            } else if ck == NodeKind.CtorField {
+                ro fk = branch_children(c)
+                if fk.len() > 2 { @type_expr(fk[2]) }
+            }
+        }
+    }
+    @scope.bind(vname, vtype)
+}
+
+/// A match: the scrutinee's type is the answer the emitter needs (it declares
+/// the C temporary with it); the arms bind their binders and are typed after.
+fn Checker mut @type_match(m Node) -> () {
+    ro kids = branch_children(m)
+    if kids.len() < 2 { return }
+    ro scr = kids[1]
+    @type_expr(scr)
+    if @out.len() > 0 { return }
+    ro scr_t = type_of(scr, @ctx, @scope)
+    @record(scr, scr_t)
+    for c in kids {
+        if c.kind_of() == NodeKind.MatchArm { @type_arm(c, scr_t) }
+    }
+}
+
+/// One arm: binders first (payload fields of a variant pattern, or the whole
+/// scrutinee under a plain binder), then the guard and the arm's value --
+/// the emitter's order exactly.
+fn Checker mut @type_arm(arm Node, scr_t int) -> () {
+    ro ak = branch_children(arm)
+    if ak.len() < 1 { return }
+    ro pat = branch_children(ak[0])
+    if pat.len() < 1 { return }
+    ro p0 = pat[0]
+    mut vrow = -1
+    if leaf_kind(p0) == TokenKind.Ident {
+        ro d = @ctx.defs.find(leaf_text(p0))
+        if d >= 0 {
+            ro def = @ctx.defs.rows[d]
+            if def.kind == DefKind.DefVariant { vrow = def.payload }
+        }
+    }
+    if vrow >= 0 {
+        mut pi = 0
+        mut j = 2
+        while j < pat.len() {
+            ro pj = pat[j]
+            if pj.kind_of() == NodeKind.LeafNode {
+                if leaf_kind(pj) == TokenKind.Ident {
+                    @scope.bind(leaf_text(pj), @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi])
+                    pi += 1
+                }
+            }
+            j += 1
+        }
+    } else if leaf_kind(p0) == TokenKind.Ident && leaf_text(p0) != "_" {
+        @scope.bind(leaf_text(p0), scr_t)
+    }
+    for g in ak {
+        if g.kind_of() == NodeKind.Guard {
+            ro gk = branch_children(g)
+            if gk.len() > 1 { @type_expr(gk[1]) }
+        }
+    }
+    @type_expr(ak[ak.len() - 1])
+}
+
+/// One expression: record what the emitter asks about, walk what it emits.
+fn Checker mut @type_expr(e Node) -> () {
+    ro k = e.kind_of()
+    if k == NodeKind.Name {
+        // FIRST FLOOR. An unbound name is a USER mistake, and check is where a
+        // user mistake becomes a diagnostic with a position. Before this, the
+        // lattice met it and called it a compiler bug (an ice) -- caught by
+        // the mutation fuzzer on truncated files, three of 192.
+        ro nk = branch_children(e)
+        if nk.len() > 0 {
+            match nk[0] {
+                Leaf(t) => {
+                    if !@scope.is_bound(t.text) {
+                        @refuse(t, "unknown name: nothing with this name is bound at this point")
+                    }
+                }
+                Branch { .. } => {}
+            }
+        }
+    } else if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        if kids.len() < 3 { return }
+        @type_expr(kids[0])
+        if @out.len() > 0 { return }
+        // Same first floor for a field: the owner is known now, so "this type
+        // has no such field" is answerable here, at the field's own position.
+        ro owner = type_of(kids[0], @ctx, @scope)
+        match kids[2] {
+            Leaf(t) => {
+                if !@ctx.fields.has_field(owner, t.text) {
+                    @refuse(t, "unknown field: this type has no field with this name")
+                }
+            }
+            Branch { .. } => {}
+        }
+    } else if k == NodeKind.MethodCall {
+        ro kids = branch_children(e)
+        if kids.len() < 3 { return }
+        // The receiver's type is what the mangling door takes; the callee row
+        // itself is NOT recorded yet, because the door still mangles from the
+        // receiver type rather than from a declaration (that flip is the
+        // instance door of E2-b2).
+        @type_expr(kids[0])
+        if @out.len() == 0 { @record(kids[0], type_of(kids[0], @ctx, @scope)) }
+        mut i = 0
+        for c in kids {
+            if i > 2 && is_expr_kind(c.kind_of()) { @type_expr(c) }
+            i += 1
+        }
+    } else if k == NodeKind.Call {
+        ro kids = branch_children(e)
+        ro cname = call_callee_text(kids)
+        ro d = @ctx.defs.find(cname)
+        if d >= 0 {
+            ro def = @ctx.defs.rows[d]
+            if def.kind == DefKind.DefVariant || def.kind == DefKind.DefFn {
+                @chan.record_callee(e.id_of(), def.kind, def.payload)
+            }
+        }
+        for c in kids {
+            if is_expr_kind(c.kind_of()) { @type_expr(c) }
+        }
+    } else if k == NodeKind.Bin {
+        ro kids = branch_children(e)
+        if kids.len() < 3 { return }
+        // Operands first (they are what can be unknown), then the answer for
+        // THIS node: the whole expression's type decides the emitted shape
+        // (f64 is raw C, int is the checked helper).
+        @type_expr(kids[0])
+        @type_expr(kids[2])
+        if @out.len() == 0 { @record(e, type_of(e, @ctx, @scope)) }
+    }
+}
+
+/// Record a node's type through the channel's one writer door.
+fn Checker mut @record(n Node, t int) -> () {
+    @chan.record_type(n.id_of(), t)
+}
+
+// ---- the type lattice: the checker's own, not the registry's --------------
+//
+// Moved here from `sem` in the E2-b1 tail (2026-08-16). It never was registry
+// matter: a registry answers "what is declared", a lattice answers "what does
+// THIS expression mean here", and the second question is the checker's by
+// definition (rustc `FnCtxt`, Go `types2.Checker`). Keeping it in `sem` made
+// the backend able to ask it -- which it did, until the channel above took
+// that away. Nothing outside `check` may call it now, and nothing does: the
+// surface ratchet counts the names `sem` exports, and this move is what the
+// baseline note demanded of E2-b1 ("must NARROW it, not widen it").
+//
+// It is the E1 lattice, unchanged in behaviour: every kind judged positively,
+// no silent int default (the #652 class), the remaining ices on user mistakes
+// marked and dated under [LEGACY-#700-user-error-as-ice until:E2b3].
+/// Function-local scope: the NsLocals name door and the type of each
+/// binding — one record, they only travel together. Shadowing = last bind
+/// wins (the door's put overwrites).
+type Scope {
+    names NameTable /// name -> row in `types` (NsLocals namespace).
+    types []int /// Type id of each binding row.
+}
+
+/// Empty scope with the NsLocals namespace.
+fn Scope.new() -> Scope =>
+    { names: NameTable.new(NamespaceId.NsLocals), types: []int.new() }
+
+/// Bind `name` to type id `t` (shadowing allowed).
+fn Scope mut @bind(name str, t int) -> () {
+    @names.put(name, @types.len())
+    @types.push(t)
+}
+
+/// Is this name bound in the current scope? The TOLERANT half of the pair
+/// (the same shape as `type_id_opt`/`type_id`, 274.3/F-B4): `check` asks
+/// before it types, so an unbound name becomes a DIAGNOSTIC at the name's own
+/// position instead of an ice from inside the lattice. Without it the first
+/// floor is the second floor (the class the owner named #652).
+#realtime nogc
+fn Scope @is_bound(name str) -> bool => @names.find(name) >= 0
+
+/// Type id of a bound name; an unbound name past check is an ice.
+#realtime nogc
+fn Scope @type_of_name(name str) -> int {
+    ro row = @names.find(name)
+    // [LEGACY-#700-user-error-as-ice until:E2b3] an unbound name is a USER error.
+    if row < 0 { ice("check: unbound name — resolve is check's ground, no silent int default (#652 class)") }
+    @types[row]
+}
+
+/// Type of an expression over the tiny registry lattice. Every kind is
+/// judged positively; the residual is an ice, never an int (#652 class).
+#realtime nogc
+fn type_of(e Node, ctx Ctx, scope Scope) -> int {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit {
+        // A negated literal is [Minus, lit] — judge the LAST leaf.
+        ro lk_kids = branch_children(e)
+        ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
+        if lk == TokenKind.StrLit { return ctx.prims.str_id }
+        if lk == TokenKind.FloatLit { return ctx.prims.f64_id }
+        if lk == TokenKind.IntLit { return ctx.prims.int_id }
+        ice("check: literal token kind without a type rule (#652 class)")
+    }
+    if k == NodeKind.Name { return scope.type_of_name(expr_leaf_name(e)) }
+    if k == NodeKind.MethodCall {
+        ro kids = branch_children(e)
+        if kids.len() < 3 { ice("check: method call without a name") }
+        ro mname = leaf_text(kids[2])
+        // The return type — from the READ signature (П5): the
+        // compiler does not know std method names, it reads them. Only
+        // what check has already accepted reaches here, so a rejection
+        // here is an ice (a poisoning-discipline violation).
+        ro recv_t = type_of(kids[0], ctx, scope)
+        match ctx.fns.lookup(recv_t, mname) {
+            FnFound(row) => { return ctx.fns.rows[row].ret_id }
+            // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
+            FnUnknown => { ice("check: method not in the read declarations past check") }
+            // [LEGACY-#700-user-error-as-ice until:E2b3] check judges the NAME only today;
+            // an overload the user hit is a USER situation, not an invariant.
+            FnOverloaded(_) => { ice("check: overload set not narrowed past check") }
+        }
+    }
+    if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        if kids.len() < 3 { ice("check: field access without a name") }
+        ro recv_t = type_of(kids[0], ctx, scope)
+        return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
+    }
+    if k == NodeKind.RecordCtor {
+        ro kids = branch_children(e)
+        if kids[0].kind_of() == NodeKind.Name {
+            return ctx.defs.type_id(expr_leaf_name(kids[0]))
+        }
+        // Anonymous `{ ...src, ... }`: the record type is the spread's.
+        for c in kids {
+            if c.kind_of() == NodeKind.CtorSpread {
+                return type_of(branch_children(c)[1], ctx, scope)
+            }
+        }
+        ice("check: anonymous constructor without a spread")
+    }
+    if k == NodeKind.Bin {
+        ro kids = branch_children(e)
+        ro op = leaf_kind(kids[1])
+        if op == TokenKind.Lt || op == TokenKind.Le || op == TokenKind.Gt { return ctx.prims.bool_id }
+        ro lt = type_of(kids[0], ctx, scope)
+        ro rt = type_of(kids[2], ctx, scope)
+        if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }
+        // Both sides must be PROVEN int — arithmetic on str/bool/records is
+        // not a silent int (#652 class), it is an invariant break here.
+        if lt == ctx.prims.int_id && rt == ctx.prims.int_id { return ctx.prims.int_id }
+        // [LEGACY-#700-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
+        // has no operand typing yet, so today it reaches here.
+        ice("check: binary arithmetic on non-numeric operands past check (#652 class)")
+    }
+    if k == NodeKind.MatchExpr {
+        // The match's value type: its FIRST arm expression (the corpus arms
+        // agree by construction; the type checker wave will judge).
+        for c in branch_children(e) {
+            if c.kind_of() == NodeKind.MatchArm {
+                ro ak = branch_children(c)
+                return type_of(ak[ak.len() - 1], ctx, scope)
+            }
+        }
+        // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
+        // neither parse nor check refuses it today.
+        ice("check: match without arms past check")
+    }
+    if k == NodeKind.Call {
+        // ONE lookup answers "what is this name" (the rustc Res model),
+        // then the kind decides.
+        ro d = ctx.defs.find(call_callee_text(branch_children(e)))
+        if d < 0 { ice("check: call target not in the registry — no silent int default (#652 class)") }
+        ro def = ctx.defs.rows[d]
+        if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
+        if def.kind == DefKind.DefFn {
+            ro ret = ctx.fns.rows[def.payload].ret_id
+            if ret < 0 { ice("check: call of a fn without a declared return type (#652 class)") }
+            return ret
+        }
+        ice("check: call target is a type, not a callable (#652 class)")
+    }
+    ice("check: expression kind without a type rule — no silent int default (#652 class)")
+}
+

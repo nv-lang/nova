@@ -38,11 +38,25 @@ import ../tree.{Node, NodeKind, branch, leaf}
 type Cursor {
     toks []Token /// the lex output being parsed
     i int /// next-token index; take() is the only advancer
+    /// Next branch identity. The parser is the ONE pass that sees every node
+    /// exactly once, so it is the honest place to name them (Zig `Ast`,
+    /// Carbon `Parse::Tree`); ids are dense and per-parse, and the checker's
+    /// channel is sized from the last one handed out.
+    next_id int
     /// Go's composite-literal rule: inside an if/while/for HEAD a record
     /// constructor is not parsed — `if x {` must read the brace as the
     /// block, not as `x { ... }`. Set for the head expression only; block
     /// bodies parse with it clear.
     no_ctor bool
+}
+
+/// Build a branch node and give it its identity — the ONE place ids are
+/// handed out, so "dense and in creation order" is a fact of this function
+/// rather than a rule every builder has to remember.
+fn Cursor mut @node(kind NodeKind, children []Node) -> Node {
+    ro id = @next_id
+    @next_id += 1
+    branch(id, kind, children)
 }
 
 /// Safe past the end: peek answers Eof forever once the stream is exhausted.
@@ -111,7 +125,7 @@ fn Cursor @peek2() -> TokenKind {
 
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
 export fn parse(toks []Token) -> Node {
-    mut p = Cursor { toks, i: 0, no_ctor: false }
+    mut p = Cursor { toks, i: 0, no_ctor: false, next_id: 0 }
     mut items = []Node.new()
     if p.peek() == TokenKind.KwModule {
         items.push(p.module_decl())
@@ -128,7 +142,7 @@ export fn parse(toks []Token) -> Node {
             // a sync point, so a loop iteration that never eats it does not
             // advance (fuzzer catch 2026-08-14: a doubled file hung forever
             // pushing empty Err branches until the GC died).
-            items.push(branch(NodeKind.Err, []Node.of(p.module_decl())))
+            items.push(p.node(NodeKind.Err, []Node.of(p.module_decl())))
         } else {
             // Panic-mode bucket, same rule as inside fn_decl (E1 review p.1,
             // 2026-08-14): a RUN of stray top-level tokens is ONE seeded
@@ -141,7 +155,7 @@ export fn parse(toks []Token) -> Node {
                 && p.peek() != TokenKind.KwModule && p.peek() != TokenKind.KwType {
                 junk.push(p.take())
             }
-            items.push(branch(NodeKind.Err, junk))
+            items.push(p.node(NodeKind.Err, junk))
         }
     }
     // The Eof leaf carries the file's tail trivia -- emit it exactly ONCE.
@@ -151,7 +165,7 @@ export fn parse(toks []Token) -> Node {
     if p.i < p.toks.len() {
         items.push(p.take())
     }
-    branch(NodeKind.File, items)
+    p.node(NodeKind.File, items)
 }
 
 /// `type Name { field type ... }` — fields are newline-separated pairs of
@@ -174,20 +188,20 @@ fn Cursor mut @type_decl() -> Node {
                 }
                 if @peek() == TokenKind.RParen { vk.push(@take()) }
             }
-            kids.push(branch(NodeKind.Variant, vk))
+            kids.push(@node(NodeKind.Variant, vk))
         }
-        return branch(NodeKind.SumDecl, kids)
+        return @node(NodeKind.SumDecl, kids)
     }
     if @peek() == TokenKind.LBrace {
         kids.push(@take())
         while @peek() == TokenKind.Ident {
             mut fk = []Node.of(@take()) // field name
             if @peek() == TokenKind.Ident { fk.push(@take()) } // field type
-            kids.push(branch(NodeKind.Field, fk))
+            kids.push(@node(NodeKind.Field, fk))
         }
         if @peek() == TokenKind.RBrace { kids.push(@take()) }
     }
-    branch(NodeKind.TypeDecl, kids)
+    @node(NodeKind.TypeDecl, kids)
 }
 
 /// Parse `module a.b.c`.
@@ -200,7 +214,7 @@ fn Cursor mut @module_decl() -> Node {
             if @peek() == TokenKind.Ident { kids.push(@take()) } else { break }
         }
     }
-    branch(NodeKind.ModuleDecl, kids)
+    @node(NodeKind.ModuleDecl, kids)
 }
 
 /// Parse `fn name(params) -> T { body }` or `=> expr`, with junk recovery.
@@ -214,7 +228,7 @@ fn Cursor mut @fn_decl() -> Node {
     if @peek() == TokenKind.Ident && @peek2() == TokenKind.At {
         mut rk = []Node.of(@take()) // receiver type
         rk.push(@take())            // '@'
-        kids.push(branch(NodeKind.Recv, rk))
+        kids.push(@node(NodeKind.Recv, rk))
     }
     if @peek() == TokenKind.Ident { kids.push(@take()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
@@ -222,13 +236,13 @@ fn Cursor mut @fn_decl() -> Node {
         mut pk = []Node.of(@take()) // parameter name
         if @peek() == TokenKind.Ident { pk.push(@take()) } // type (E1: int)
         if @peek() == TokenKind.Comma { pk.push(@take()) }
-        kids.push(branch(NodeKind.Param, pk))
+        kids.push(@node(NodeKind.Param, pk))
     }
     if @peek() == TokenKind.RParen { kids.push(@take()) }
     if @peek() == TokenKind.Arrow {
         mut rt = []Node.of(@take())
         if @peek() == TokenKind.Ident { rt.push(@take()) }
-        kids.push(branch(NodeKind.RetType, rt))
+        kids.push(@node(NodeKind.RetType, rt))
     }
     if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {
         // Panic-mode bucket (no-cascade guard's catch, 2026-08-14): garbage
@@ -242,17 +256,17 @@ fn Cursor mut @fn_decl() -> Node {
             && @peek() != TokenKind.KwFn && @peek() != TokenKind.KwModule {
             junk.push(@take())
         }
-        if junk.len() > 0 { kids.push(branch(NodeKind.Err, junk)) }
+        if junk.len() > 0 { kids.push(@node(NodeKind.Err, junk)) }
     }
     if @peek() == TokenKind.FatArrow {
         // Expression-bodied fn: `fn area(...) -> f64 => match ...`
         mut ek = []Node.of(@take())
         ek.push(@expr())
-        kids.push(branch(NodeKind.FnExprBody, ek))
-        return branch(NodeKind.FnDecl, kids)
+        kids.push(@node(NodeKind.FnExprBody, ek))
+        return @node(NodeKind.FnDecl, kids)
     }
     if @peek() == TokenKind.LBrace { kids.push(@block()) }
-    branch(NodeKind.FnDecl, kids)
+    @node(NodeKind.FnDecl, kids)
 }
 
 /// Parse `{ stmt* }`.
@@ -268,7 +282,7 @@ fn Cursor mut @block() -> Node {
         if @i == before { break }
     }
     if @peek() == TokenKind.RBrace { kids.push(@take()) }
-    branch(NodeKind.Block, kids)
+    @node(NodeKind.Block, kids)
 }
 
 /// Head expression of if/while/for: record constructors OFF for its extent.
@@ -285,12 +299,12 @@ fn Cursor mut @stmt() -> Node {
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace { kids.push(@block()) }
-        return branch(NodeKind.IfStmt, kids)
+        return @node(NodeKind.IfStmt, kids)
     }
     if @peek() == TokenKind.KwReturn {
         mut kids = []Node.of(@take())
         if @peek() != TokenKind.RBrace { kids.push(@expr()) }
-        return branch(NodeKind.RetStmt, kids)
+        return @node(NodeKind.RetStmt, kids)
     }
     if @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo {
         // One BindStmt for both: the first leaf keeps KwMut/KwRo, C locals
@@ -299,13 +313,13 @@ fn Cursor mut @stmt() -> Node {
         if @peek() == TokenKind.Ident { kids.push(@take()) }
         if @peek() == TokenKind.Assign { kids.push(@take()) }
         kids.push(@expr())
-        return branch(NodeKind.BindStmt, kids)
+        return @node(NodeKind.BindStmt, kids)
     }
     if @peek() == TokenKind.KwWhile {
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace { kids.push(@block()) }
-        return branch(NodeKind.WhileStmt, kids)
+        return @node(NodeKind.WhileStmt, kids)
     }
     if @peek() == TokenKind.KwFor {
         mut kids = []Node.of(@take())
@@ -313,13 +327,13 @@ fn Cursor mut @stmt() -> Node {
         if @peek() == TokenKind.KwIn { kids.push(@take()) }
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace { kids.push(@block()) }
-        return branch(NodeKind.ForStmt, kids)
+        return @node(NodeKind.ForStmt, kids)
     }
     ro e = @expr()
     if @peek() == TokenKind.PlusAssign || @peek() == TokenKind.Assign {
         mut kids = []Node.of(e, @take())
         kids.push(@expr())
-        return branch(NodeKind.AssignStmt, kids)
+        return @node(NodeKind.AssignStmt, kids)
     }
     e
 }
@@ -334,7 +348,7 @@ fn Cursor mut @expr() -> Node {
     while is_binop(@peek()) {
         ro op = @take()
         ro right = @primary()
-        left = branch(NodeKind.Bin, []Node.of(left, op, right))
+        left = @node(NodeKind.Bin, []Node.of(left, op, right))
     }
     left
 }
@@ -358,9 +372,9 @@ fn Cursor mut @primary() -> Node {
                 if @i == before { break }
             }
             if @peek() == TokenKind.RParen { kids.push(@take()) }
-            e = branch(NodeKind.MethodCall, kids)
+            e = @node(NodeKind.MethodCall, kids)
         } else {
-            e = branch(NodeKind.FieldAccess, kids)
+            e = @node(NodeKind.FieldAccess, kids)
         }
     }
     e
@@ -380,7 +394,7 @@ fn Cursor mut @match_expr() -> Node {
         mut ak = []Node.new()
         // pattern
         if @peek() == TokenKind.IntLit {
-            ak.push(branch(NodeKind.Pattern, []Node.of(@take())))
+            ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
         } else if @peek() == TokenKind.LBracket {
             // Array pattern: `[]` (empty) or `[b1, b2, ..]` (prefix binders
             // + optional rest). Leaves in order; the emitter reads binders
@@ -390,12 +404,12 @@ fn Cursor mut @match_expr() -> Node {
                 if @peek() == TokenKind.Ident || @peek() == TokenKind.DotDot {
                     pk.push(@take())
                 } else {
-                    pk.push(branch(NodeKind.Err, []Node.of(@take())))
+                    pk.push(@node(NodeKind.Err, []Node.of(@take())))
                 }
                 if @peek() == TokenKind.Comma { pk.push(@take()) }
             }
             if @peek() == TokenKind.RBracket { pk.push(@take()) }
-            ak.push(branch(NodeKind.Pattern, pk))
+            ak.push(@node(NodeKind.Pattern, pk))
         } else if @peek() == TokenKind.Ident {
             mut pk = []Node.of(@take())
             if @peek() == TokenKind.LParen {
@@ -406,24 +420,24 @@ fn Cursor mut @match_expr() -> Node {
                 }
                 if @peek() == TokenKind.RParen { pk.push(@take()) }
             }
-            ak.push(branch(NodeKind.Pattern, pk))
+            ak.push(@node(NodeKind.Pattern, pk))
         } else {
             // Recovery: one Err, one token, keep the arm loop advancing.
-            kids.push(branch(NodeKind.Err, []Node.of(@take())))
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
             continue
         }
         if @peek() == TokenKind.KwIf {
             mut gk = []Node.of(@take())
             gk.push(@expr())
-            ak.push(branch(NodeKind.Guard, gk))
+            ak.push(@node(NodeKind.Guard, gk))
         }
         if @peek() == TokenKind.FatArrow { ak.push(@take()) }
         ak.push(@expr())
-        kids.push(branch(NodeKind.MatchArm, ak))
+        kids.push(@node(NodeKind.MatchArm, ak))
         if @i == before { break }
     }
     if @peek() == TokenKind.RBrace { kids.push(@take()) }
-    branch(NodeKind.MatchExpr, kids)
+    @node(NodeKind.MatchExpr, kids)
 }
 
 /// Constructor field list after the opening brace: `name: expr`, punning
@@ -434,17 +448,17 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
         if @peek() == TokenKind.Ellipsis {
             mut sk = []Node.of(@take())
             sk.push(@expr())
-            kids.push(branch(NodeKind.CtorSpread, sk))
+            kids.push(@node(NodeKind.CtorSpread, sk))
         } else if @peek() == TokenKind.Ident {
             mut fk = []Node.of(@take())
             if @peek() == TokenKind.Colon {
                 fk.push(@take())
                 fk.push(@expr())
             }
-            kids.push(branch(NodeKind.CtorField, fk))
+            kids.push(@node(NodeKind.CtorField, fk))
         } else {
             // Recovery inside a constructor: one Err, one token, advance.
-            kids.push(branch(NodeKind.Err, []Node.of(@take())))
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
         }
         if @peek() == TokenKind.Comma { kids.push(@take()) }
         if @i == before { break }
@@ -455,7 +469,7 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
 /// Parse a literal, match, array/record constructor, call or name; recover otherwise.
 fn Cursor mut @atom() -> Node {
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit {
-        return branch(NodeKind.Lit, []Node.of(@take()))
+        return @node(NodeKind.Lit, []Node.of(@take()))
     }
     if @peek() == TokenKind.Minus {
         // Unary minus on a numeric literal only (`describe(-3)`); anything
@@ -463,9 +477,9 @@ fn Cursor mut @atom() -> Node {
         mut kids = []Node.of(@take())
         if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit {
             kids.push(@take())
-            return branch(NodeKind.Lit, kids)
+            return @node(NodeKind.Lit, kids)
         }
-        return branch(NodeKind.Err, kids)
+        return @node(NodeKind.Err, kids)
     }
     if @peek() == TokenKind.KwMatch { return @match_expr() }
     if @peek() == TokenKind.LBracket {
@@ -477,7 +491,7 @@ fn Cursor mut @atom() -> Node {
             if @peek() == TokenKind.Ellipsis {
                 mut sk = []Node.of(@take())
                 sk.push(@expr())
-                kids.push(branch(NodeKind.ArraySpread, sk))
+                kids.push(@node(NodeKind.ArraySpread, sk))
             } else {
                 kids.push(@expr())
             }
@@ -485,7 +499,7 @@ fn Cursor mut @atom() -> Node {
             if @i == before { break }
         }
         if @peek() == TokenKind.RBracket { kids.push(@take()) }
-        return branch(NodeKind.ArrayLit, kids)
+        return @node(NodeKind.ArrayLit, kids)
     }
     if @peek() == TokenKind.LBrace && !@no_ctor {
         // Anonymous constructor `{ ...p, y: 10.0 }` — the record type comes
@@ -493,7 +507,7 @@ fn Cursor mut @atom() -> Node {
         // tiny lattice for now).
         mut kids = []Node.of(@take())
         @ctor_fields(kids)
-        return branch(NodeKind.RecordCtor, kids)
+        return @node(NodeKind.RecordCtor, kids)
     }
     if @peek() == TokenKind.Ident {
         ro name = @take()
@@ -506,14 +520,14 @@ fn Cursor mut @atom() -> Node {
                 if @i == before { break }
             }
             if @peek() == TokenKind.RParen { kids.push(@take()) }
-            return branch(NodeKind.Call, kids)
+            return @node(NodeKind.Call, kids)
         }
         if @peek() == TokenKind.LBrace && !@no_ctor {
-            mut kids = []Node.of(branch(NodeKind.Name, []Node.of(name)), @take())
+            mut kids = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take())
             @ctor_fields(kids)
-            return branch(NodeKind.RecordCtor, kids)
+            return @node(NodeKind.RecordCtor, kids)
         }
-        return branch(NodeKind.Name, []Node.of(name))
+        return @node(NodeKind.Name, []Node.of(name))
     }
     // Recovery: an unexpected token — one Err, one token, move on. But a
     // CLOSING token is not consumed: it belongs to the enclosing form
@@ -521,7 +535,7 @@ fn Cursor mut @atom() -> Node {
     // enclosing loop must notice this (see the non-advancement guard in
     // block/args).
     if is_terminator(@peek()) {
-        return branch(NodeKind.Err, []Node.of(@missing()))
+        return @node(NodeKind.Err, []Node.of(@missing()))
     }
-    branch(NodeKind.Err, []Node.of(@take()))
+    @node(NodeKind.Err, []Node.of(@take()))
 }

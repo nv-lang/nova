@@ -164,6 +164,19 @@ export fn FieldTable mut @add(owner_id int, name str, type_id int) -> () {
     @rows.push(FieldDef { name, type_id, owner_id, next_row: head })
 }
 
+/// Does `owner_id` have a field named `fname`? The tolerant half again:
+/// `check` asks first, so a misspelled field is a diagnostic, not an ice.
+#realtime nogc
+export fn FieldTable @has_field(owner_id int, fname str) -> bool {
+    mut r = @names.find(fname)
+    while r >= 0 {
+        ro fd = @rows[r]
+        if fd.owner_id == owner_id { return true }
+        r = fd.next_row
+    }
+    false
+}
+
 /// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
 #realtime nogc
 export fn FieldTable @field_type(owner_id int, fname str) -> int {
@@ -444,7 +457,7 @@ fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable) -> () {
 fn harvest_in(n Node, defs DefTable, mut fns FnTable) -> () {
     match n {
         Leaf(_) => {}
-        Branch { kind, children } => {
+        Branch { kind, children, .. } => {
             if kind == NodeKind.FnDecl {
                 harvest_fn(children, defs, fns)
                 return
@@ -699,129 +712,6 @@ export fn leaf_kind(n Node) -> TokenKind {
         Leaf(t) => t.kind
         Branch { .. } => ice("sem: leaf_kind on a branch node")
     }
-}
-
-/// Function-local scope: the NsLocals name door and the type of each
-/// binding — one record, they only travel together. Shadowing = last bind
-/// wins (the door's put overwrites).
-export type Scope {
-    names NameTable /// name -> row in `types` (NsLocals namespace).
-    types []int /// Type id of each binding row.
-}
-
-/// Empty scope with the NsLocals namespace.
-export fn Scope.new() -> Scope =>
-    { names: NameTable.new(NamespaceId.NsLocals), types: []int.new() }
-
-/// Bind `name` to type id `t` (shadowing allowed).
-export fn Scope mut @bind(name str, t int) -> () {
-    @names.put(name, @types.len())
-    @types.push(t)
-}
-
-/// Type id of a bound name; an unbound name past check is an ice.
-#realtime nogc
-export fn Scope @type_of_name(name str) -> int {
-    ro row = @names.find(name)
-    // [LEGACY-#700-user-error-as-ice until:E2b3] an unbound name is a USER error.
-    if row < 0 { ice("sem: unbound name — resolve is check's ground, no silent int default (#652 class)") }
-    @types[row]
-}
-
-/// Type of an expression over the tiny registry lattice. Every kind is
-/// judged positively; the residual is an ice, never an int (#652 class).
-#realtime nogc
-export fn type_of(e Node, ctx Ctx, scope Scope) -> int {
-    ro k = e.kind_of()
-    if k == NodeKind.Lit {
-        // A negated literal is [Minus, lit] — judge the LAST leaf.
-        ro lk_kids = branch_children(e)
-        ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
-        if lk == TokenKind.StrLit { return ctx.prims.str_id }
-        if lk == TokenKind.FloatLit { return ctx.prims.f64_id }
-        if lk == TokenKind.IntLit { return ctx.prims.int_id }
-        ice("sem: literal token kind without a type rule (#652 class)")
-    }
-    if k == NodeKind.Name { return scope.type_of_name(expr_leaf_name(e)) }
-    if k == NodeKind.MethodCall {
-        ro kids = branch_children(e)
-        if kids.len() < 3 { ice("sem: method call without a name") }
-        ro mname = leaf_text(kids[2])
-        // The return type — from the READ signature (П5): the
-        // compiler does not know std method names, it reads them. Only
-        // what check has already accepted reaches here, so a rejection
-        // here is an ice (a poisoning-discipline violation).
-        ro recv_t = type_of(kids[0], ctx, scope)
-        match ctx.fns.lookup(recv_t, mname) {
-            FnFound(row) => { return ctx.fns.rows[row].ret_id }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
-            FnUnknown => { ice("sem: method not in the read declarations past check") }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] check judges the NAME only today;
-            // an overload the user hit is a USER situation, not an invariant.
-            FnOverloaded(_) => { ice("sem: overload set not narrowed past check") }
-        }
-    }
-    if k == NodeKind.FieldAccess {
-        ro kids = branch_children(e)
-        if kids.len() < 3 { ice("sem: field access without a name") }
-        ro recv_t = type_of(kids[0], ctx, scope)
-        return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
-    }
-    if k == NodeKind.RecordCtor {
-        ro kids = branch_children(e)
-        if kids[0].kind_of() == NodeKind.Name {
-            return ctx.defs.type_id(expr_leaf_name(kids[0]))
-        }
-        // Anonymous `{ ...src, ... }`: the record type is the spread's.
-        for c in kids {
-            if c.kind_of() == NodeKind.CtorSpread {
-                return type_of(branch_children(c)[1], ctx, scope)
-            }
-        }
-        ice("sem: anonymous constructor without a spread")
-    }
-    if k == NodeKind.Bin {
-        ro kids = branch_children(e)
-        ro op = leaf_kind(kids[1])
-        if op == TokenKind.Lt || op == TokenKind.Le || op == TokenKind.Gt { return ctx.prims.bool_id }
-        ro lt = type_of(kids[0], ctx, scope)
-        ro rt = type_of(kids[2], ctx, scope)
-        if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }
-        // Both sides must be PROVEN int — arithmetic on str/bool/records is
-        // not a silent int (#652 class), it is an invariant break here.
-        if lt == ctx.prims.int_id && rt == ctx.prims.int_id { return ctx.prims.int_id }
-        // [LEGACY-#700-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
-        // has no operand typing yet, so today it reaches here.
-        ice("sem: binary arithmetic on non-numeric operands past check (#652 class)")
-    }
-    if k == NodeKind.MatchExpr {
-        // The match's value type: its FIRST arm expression (the corpus arms
-        // agree by construction; the type checker wave will judge).
-        for c in branch_children(e) {
-            if c.kind_of() == NodeKind.MatchArm {
-                ro ak = branch_children(c)
-                return type_of(ak[ak.len() - 1], ctx, scope)
-            }
-        }
-        // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
-        // neither parse nor check refuses it today.
-        ice("sem: match without arms past check")
-    }
-    if k == NodeKind.Call {
-        // ONE lookup answers "what is this name" (the rustc Res model),
-        // then the kind decides.
-        ro d = ctx.defs.find(call_callee_text(branch_children(e)))
-        if d < 0 { ice("sem: call target not in the registry — no silent int default (#652 class)") }
-        ro def = ctx.defs.rows[d]
-        if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
-        if def.kind == DefKind.DefFn {
-            ro ret = ctx.fns.rows[def.payload].ret_id
-            if ret < 0 { ice("sem: call of a fn without a declared return type (#652 class)") }
-            return ret
-        }
-        ice("sem: call target is a type, not a callable (#652 class)")
-    }
-    ice("sem: expression kind without a type rule — no silent int default (#652 class)")
 }
 
 /// Node kinds that stand as expressions (argument/operand positions).

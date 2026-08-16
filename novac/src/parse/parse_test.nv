@@ -28,7 +28,7 @@ test "tree reserialization: broken input survives -- recovery loses nothing" {
 test "shape: file holds module decl, fn decl, eof" {
     ro f = parse(lex("module a.b\nfn main() { }"))
     match f {
-        Branch { kind, children } => {
+        Branch { kind, children, .. } => {
             assert(kind == NodeKind.File)
             assert(children[0].kind_of() == NodeKind.ModuleDecl)
             assert(children[1].kind_of() == NodeKind.FnDecl)

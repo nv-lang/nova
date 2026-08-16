@@ -5967,7 +5967,11 @@ _e_any = nova_any_box(&NOVA_TYPEINFO_nova_str, &_m, sizeof(nova_str));
 NovaFailFrame _sf;
 nova_fail_push(&_sf);
 if (setjmp(_sf.jmp) == 0) {
+/* 173.4 Ph.2(v): child's pocket around the arm — see fibers.h. */
+NovaErrorChain* _sv_pocket = _nova_last_error.frame.error_suppressed;
+_nova_last_error.frame.error_suppressed = _err->suppressed;
 Nova_Decision* _d = _h->on_child_fail(_h->ctx, _idx, _e_any);
+_nova_last_error.frame.error_suppressed = _sv_pocket;
 nova_fail_pop();
 if (_d == NULL) return (nova_int)NOVA_SUPERVISE_ESCALATE;
 switch (_d->tag) {
