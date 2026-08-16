@@ -1,0 +1,26 @@
+// №696 regression probe — FIRST type with a method named `kind_of`,
+// returning the FIRST sum. The receiver is itself a SUM (as `Node` in novac):
+// that is the shape that reproduces — a method on a record went through the
+// per-type overload path and never reached the single-key table; a method on
+// a sum did, and there `Interner.kind_of` (registered later) overwrote it.
+module crossmod_samename_method_lastwins.csm_tree
+
+import ./csm_kinds.{NodeKind}
+
+export type Node enum
+    | Leaf(int)
+    | Branch { kind NodeKind, n int }
+
+export fn Node @kind_of() -> NodeKind {
+    match @ {
+        Leaf(_) => NodeKind.Leaf
+        Branch { kind, .. } => kind
+    }
+}
+
+// The call on `Node` sits in an IMPORTED module, not in the entry CU — this is
+// where the p274 repro actually failed (a compare against a bare variant of the
+// FIRST sum, emitted through a cast into the SECOND).
+export fn is_leaf(n Node) -> bool {
+    n.kind_of() == NodeKind.Leaf
+}

@@ -1,0 +1,14 @@
+// No. 696 regression probe: the TRIGGER. A second, unrelated `Node` in another
+// module of the same CU. Its mere presence makes `Node` a D381 collision, so
+// codegen qualifies csm_tree's Node C-name (`Nova_..._Node*`) while the method
+// tables still key on the bare `Node`; the per-type dispatch then misses and
+// the call falls into the single-key last-wins slot, where `Interner.kind_of`
+// (registered later) sits. In the p274 CU this role was played by
+// `encoding.serde.Node` (a peer file of a std folder-module pulled in
+// transitively) -- which is why three minimal repros without std did not
+// reproduce.
+module crossmod_samename_method_lastwins.csm_other
+
+export type Node { ro tag int }
+
+export fn make_other() -> Node => { tag: 1 }

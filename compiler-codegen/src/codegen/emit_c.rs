@@ -43784,7 +43784,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // strip that prefix so dispatch resolves under the
                             // "<Name>" multi-overload key (same-named methods on
                             // different types disambiguate by receiver type).
-                            let trimmed = Self::debt_strip_recv_c_prefix(&obj_ty);
+                            let trimmed = self.recv_key_from_c(&obj_ty);
                             if !trimmed.is_empty() && trimmed != "void" {
                                 Some(trimmed)
                             } else {
@@ -43793,7 +43793,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     } else {
                         // Не-Ident obj (expr) → всегда instance.
-                        let trimmed = Self::debt_strip_recv_c_prefix(&obj_ty);
+                        let trimmed = self.recv_key_from_c(&obj_ty);
                         if !trimmed.is_empty() && trimmed != "void" {
                             Some(trimmed)
                         } else {
@@ -45331,7 +45331,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     let recv_obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     // Extract base type name: "FilterIter____..." → "FilterIter"
-                    let recv_stripped = Self::debt_strip_recv_c_prefix(&recv_obj_ty);
+                    let recv_stripped = self.recv_key_from_c(&recv_obj_ty);
                     let recv_base: &str = recv_stripped
                         .find("____")
                         .map(|i| &recv_stripped[..i])
@@ -57109,6 +57109,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .to_string()
     }
 
+    /// №696: `debt_strip_recv_c_prefix` + D381 — коллидирующий тип зарегистрирован
+    /// под квалифицированной базой, таблицы методов под голой; сверка вперёд по
+    /// `qualify_type_base` (не разбор назад, D464). Некоридирующие — байт в байт.
+    fn recv_key_from_c(&self, obj_ty: &str) -> String {
+        let stripped = Self::debt_strip_recv_c_prefix(obj_ty);
+        if self.colliding_type_names.is_empty() { return stripped; }
+        for name in &self.colliding_type_names {
+            if let Some(fid) = self.current_emit_file_id {
+                if let Some(m) = self.file_type_module.get(&(fid, name.clone())) {
+                    if self.qualify_type_base(name, m) == stripped { return name.clone(); }
+                }
+            }
+            for ((_, n), m) in &self.file_type_module {
+                if n == name && self.qualify_type_base(name, m) == stripped { return name.clone(); }
+            }
+        }
+        stripped
+    }
+
     fn debt_nova_type_name_from_c(c_ty: &str) -> String {
         // Plan 134: `nova_ptr` typedef removed. `void*` = Nova `*()`.
         // cast-check table uses "*()"; но для as-cast источника void*
@@ -62492,10 +62511,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Detect and look up the sum type directly.
                     if name.len() == 2 {
                         let (sum_part, _var_part) = (&name[0], &name[1]);
-                        if self.sum_schemas.contains_key(sum_part.as_str())
+                        // №696: colliding sum is registered under `ref_type_base`.
+                        let sum_base = self.ref_type_base(sum_part, &[]);
+                        if self.sum_schemas.contains_key(sum_base.as_str())
+                            || self.sum_schemas.contains_key(sum_part.as_str())
+                            || self.sum_schema_registry.lookup_sum_schema(&sum_base).is_some()
                             || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
                         {
-                            return format!("Nova_{}*", sum_part);
+                            return format!("Nova_{}*", sum_base);
                         }
                     }
                     // Check if this is a sum-type record variant.
