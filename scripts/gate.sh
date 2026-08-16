@@ -290,6 +290,8 @@ guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "ре
 # правило без стража (мета-дыра аудита 2026-08-16, из-за неё П15 просидел без
 # механизма при зелёном реестре). Этот замыкает круг: идёт ОТ ПРАВИЛА.
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма: невидимо реестру стражей целиком"
+guard "$ROOT/scripts/guards/check-novac-surface.sh" "$ROOT" || fail "публичная поверхность novac разошлась с novac-surface.baseline (274 §10.4): рост без обоснования или протухшая база"
+guard "$ROOT/scripts/guards/check-novac-temp-edges.sh" "$ROOT" || fail "временное ребро §3 без срока или истекло по этапу (274.1 §2в)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
