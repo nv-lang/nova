@@ -1,0 +1,14 @@
+// No. 696 regression probe: SECOND type with a method of the SAME NAME
+// `kind_of`, DIFFERENT arity, returning the SECOND sum. This is the exported
+// method that, in the p274 CU, made `Node.kind_of()` in another module emit
+// `Nova_Interner_method_kind_of(node)`: wrong type, wrong arity, and the
+// variant compare downstream cast into the wrong sum.
+module crossmod_samename_method_lastwins.csm_types
+
+import ./csm_kinds.{TypeKind}
+
+export type Interner { ro n int }
+
+export fn Interner @kind_of(t int) -> TypeKind {
+    if t < @n { TypeKind.Prim } else { TypeKind.Record }
+}

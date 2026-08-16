@@ -13,9 +13,29 @@
 #   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
 set -u
 ROOT="$(pwd)"
-MAIN_REPO="d:/Sources/nv-lang/nova"
-export NOVA_GC_LIB_DIR="D:\\Sources\\nv-lang\\nova\\compiler-codegen\\vcpkg_installed\\x64-windows-static\\lib"
-export NOVA_INCLUDE_DIR="D:\\Sources\\nv-lang\\nova\\compiler-codegen\\vcpkg_installed\\x64-windows-static\\include"
+# Boehm GC для мега-CU (test_runner::detect_boehm читает NOVA_GC_LIB_DIR).
+# `vcpkg_installed` под .gitignore — у worktree его нет, он есть только в
+# ГЛАВНОМ дереве, общем для всех worktree через .git. Поэтому берём его не по
+# захардкоженному пути (с 2026-07-26 здесь стояло `D:\Sources\nv-lang\nova\...`
+# — путь к машине владельца в публичном скрипте, а worktree 274 через него
+# линковал чужой GC и не знал об этом; владелец увидел это в
+# nova-p274/scripts/gate.sh 2026-08-16), а ВЫВОДИМ от расположения: главное
+# дерево = родитель `git rev-parse --git-common-dir`. Из main это `.git` →
+# само дерево; из worktree — абсолютный путь к main. Явный NOVA_GC_LIB_DIR из
+# окружения побеждает (CI/другая раскладка). Если каталога нет — переменную
+# не ставим, раннер честно скажет «GC не найден», а не слинкует наугад.
+if [ -z "${NOVA_GC_LIB_DIR:-}" ]; then
+    _common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)"
+    case "$_common" in
+        .git) _main="$ROOT" ;;
+        *)    _main="$(dirname "$_common")" ;;
+    esac
+    _gc="$_main/compiler-codegen/vcpkg_installed/x64-windows-static/lib"
+    if [ -d "$_gc" ]; then
+        export NOVA_GC_LIB_DIR="$_gc"
+    fi
+    unset _common _main _gc
+fi
 unset NOVA_STD_PATH 2>/dev/null || true
 
 # КОПИМ отказы вместо выхода на первом (2026-08-09, требование владельца
@@ -400,6 +420,8 @@ guard "$ROOT/scripts/guards/check-no-control-chars.sh" "$ROOT" \
 step "в корне репозитория только предусмотренное (№607)"
 guard "$ROOT/scripts/guards/check-repo-root-clean.sh" "$ROOT" \
     || fail "в корне лежит непредусмотренное"
+step "no-machine-paths (путь к машине владельца не пишется, а выводится — №698)"
+guard "$ROOT/scripts/guards/check-no-machine-paths.sh" "$ROOT" || fail "абсолютный путь к машине в отслеживаемом скрипте (№698)"
 
 # №597: код возврата обёртки — не код возврата сборки.
 step "фоновая сборка проверяет результат, а не код обёртки (№597)"

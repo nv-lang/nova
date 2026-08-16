@@ -90,9 +90,16 @@ fi
 
 echo "[cdb] using: $CDB" >&2
 
-# Environment for Nova build
-: "${NOVA_GC_LIB_DIR:=D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib}"
-: "${NOVA_GC_INCLUDE_DIR:=D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include}"
+# Environment for Nova build. GC lives in the MAIN tree (vcpkg_installed is
+# gitignored); derive it from git-common-dir instead of hard-coding the
+# owner's machine path (class No. 698, 2026-08-16).
+if [ -z "${NOVA_GC_LIB_DIR:-}" ]; then
+    _c="$(git rev-parse --git-common-dir 2>/dev/null)"
+    case "$_c" in .git|"") _m="$(pwd)" ;; *) _m="$(dirname "$_c")" ;; esac
+    NOVA_GC_LIB_DIR="$_m/compiler-codegen/vcpkg_installed/x64-windows-static/lib"
+    NOVA_GC_INCLUDE_DIR="$_m/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+    unset _c _m
+fi
 export NOVA_GC_LIB_DIR NOVA_GC_INCLUDE_DIR
 
 echo "[cdb] building nova-cli..." >&2

@@ -1,0 +1,6 @@
+// No. 696 regression probe: owner of BOTH sums. Two unrelated sums whose
+// variant names do NOT collide; the collision under test is the METHOD name.
+module crossmod_samename_method_lastwins.csm_kinds
+
+export type NodeKind enum Leaf | Branch
+export type TypeKind enum Prim | Record

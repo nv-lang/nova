@@ -10,11 +10,19 @@
 #   source "$(git -C d:/Sources/nv-lang/nova rev-parse --show-toplevel)/scripts/dev-env.sh"
 #   cargo build --release --manifest-path nova-cli/Cargo.toml
 #
-# Значения сверены с scripts/gate.sh:16-17 (единственный авторитет).
+# Та же деривация, что в scripts/gate.sh (там — единственный авторитет).
 
-# Корень main-репы: у скрипта — от его собственного пути (worktree делят один
-# main-репозиторий с vcpkg_installed под compiler-codegen/).
-_NOVA_MAIN="d:/Sources/nv-lang/nova"
+# Корень main-репы — ВЫВОДИТСЯ, не пишется: worktree делят один .git, и
+# `git rev-parse --git-common-dir` из любого worktree указывает на main
+# (`.git` — если мы и есть main). До 2026-08-16 здесь стоял путь к машине
+# владельца, «сверенный с gate.sh» — то есть скопированный: класс №698.
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_common="$(git -C "$_here" rev-parse --git-common-dir 2>/dev/null)"
+case "$_common" in
+    .git|"") _NOVA_MAIN="$_here" ;;
+    *)        _NOVA_MAIN="$(dirname "$_common")" ;;
+esac
+unset _here _common
 
 export NOVA_GC_LIB_DIR="${_NOVA_MAIN}/compiler-codegen/vcpkg_installed/x64-windows-static/lib"
 export NOVA_INCLUDE_DIR="${_NOVA_MAIN}/compiler-codegen/vcpkg_installed/x64-windows-static/include"

@@ -1,0 +1,26 @@
+// №696 regression probe — entry CU that pulls in BOTH `kind_of` methods
+// transitively (via the two types) and calls the FIRST one on ITS receiver —
+// both here and inside an imported module. Before the fix the call on `Node`
+// (a sum) dispatched to `Interner`'s method (single-key last-wins in codegen's
+// `method_receivers`): wrong type, wrong arity, and the variant compare was
+// emitted through a cast into `TypeKind`.
+module crossmod_samename_method_lastwins.csm_entry
+
+import ./csm_kinds.{NodeKind, TypeKind}
+import ./csm_tree.{Node, is_leaf}
+import ./csm_types.{Interner}
+import ./csm_other.{make_other}
+
+test "same-named method on a sum and a record resolves by receiver type, not by whichever registered last (221.1 №696)" {
+    ro n = Node.Leaf(7)
+    assert(n.kind_of() == NodeKind.Leaf)
+    ro b = Node.Branch { kind: NodeKind.Branch, n: 2 }
+    assert(b.kind_of() == NodeKind.Branch)
+    assert(is_leaf(n))
+    assert(!is_leaf(b))
+    ro it = Interner { n: 3 }
+    assert(it.kind_of(1) == TypeKind.Prim)
+    assert(it.kind_of(9) == TypeKind.Record)
+    // the collision trigger must be LIVE in this CU, not just imported
+    assert(make_other().tag == 1)
+}
