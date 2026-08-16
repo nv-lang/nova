@@ -185,6 +185,7 @@ guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fa
 guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён"
 guard "$ROOT/scripts/guards/check-novac-channel-one-writer.sh" "$ROOT" || fail "у канала чекера второй писатель или вывод типа ниже чекера"
 guard "$ROOT/scripts/guards/check-novac-match-exhaustive.sh" "$ROOT" || fail "match по сумме novac не покрывает все варианты (оракул это не ловит)"
+guard "$ROOT/scripts/guards/check-novac-no-silent-skip.sh" "$ROOT" || fail "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"

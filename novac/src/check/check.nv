@@ -378,7 +378,7 @@ fn Checker mut @type_file(file Node) -> () {
     match file {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
-            if kind != NodeKind.File { return }
+            if kind != NodeKind.File { ice("check: the typing walk was handed a root that is not a File") }
             for c in children {
                 if c.kind_of() == NodeKind.FnDecl { @type_fn(c) }
             }
@@ -389,7 +389,10 @@ fn Checker mut @type_file(file Node) -> () {
 /// One function: fresh scope, parameters bound, then the body.
 fn Checker mut @type_fn(f Node) -> () {
     ro kids = branch_children(f)
-    if kids.len() < 2 { return }
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+        return
+    }
     ro name = leaf_text(kids[1])
     @scope = Scope.new()
     if name != ENTRY_FN {
@@ -491,6 +494,9 @@ fn Checker mut @type_stmt(st Node) -> () {
 /// println is the subset's one builtin and lives in no registry.
 fn Checker mut @type_call_stmt(call Node) -> () {
     ro kids = branch_children(call)
+    // SILENT-OK: a statement call that is not println was already refused by
+    // report_if_bad_call_stmt in the subset walk, so this walk has nothing
+    // left to decide about it.
     if call_callee_text(kids) != PRINT_FN { return }
     for c in kids {
         ro ck = c.kind_of()
@@ -520,7 +526,10 @@ fn Checker mut @type_call_stmt(call Node) -> () {
 /// of this walk).
 fn Checker mut @type_bind(st Node) -> () {
     ro kids = branch_children(st)
-    if kids.len() < 2 { return }
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer")
+        return
+    }
     ro vname = leaf_text(kids[1])
     ro init = kids[kids.len() - 1]
     ro ik = init.kind_of()
@@ -555,7 +564,10 @@ fn Checker mut @type_bind(st Node) -> () {
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
     ro kids = branch_children(m)
-    if kids.len() < 2 { return }
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
+        return
+    }
     ro scr = kids[1]
     @type_expr(scr)
     if @out.len() > 0 { return }
@@ -571,9 +583,15 @@ fn Checker mut @type_match(m Node) -> () {
 /// the emitter's order exactly.
 fn Checker mut @type_arm(arm Node, scr_t int) -> () {
     ro ak = branch_children(arm)
-    if ak.len() < 1 { return }
+    if ak.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        return
+    }
     ro pat = branch_children(ak[0])
-    if pat.len() < 1 { return }
+    if pat.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
+        return
+    }
     ro p0 = pat[0]
     mut vrow = -1
     if leaf_kind(p0) == TokenKind.Ident {
@@ -628,8 +646,14 @@ fn Checker mut @type_expr(e Node) -> () {
             }
         }
     } else if k == NodeKind.FieldAccess {
+        // REACHABLE, unlike the three above: `s.` with nothing after the dot
+        // gives two children (parse stops rather than inventing a name), and
+        // that is a USER mistake -- so it is a refusal, at the dot.
         ro kids = branch_children(e)
-        if kids.len() < 3 { return }
+        if kids.len() < 3 {
+            @report_first_leaf_of(kids, "outside the subset: a field access needs a name after the dot")
+            return
+        }
         @type_expr(kids[0])
         if @out.len() > 0 { return }
         // Same first floor for a field: the owner is known now, so "this type
@@ -645,7 +669,10 @@ fn Checker mut @type_expr(e Node) -> () {
         }
     } else if k == NodeKind.MethodCall {
         ro kids = branch_children(e)
-        if kids.len() < 3 { return }
+        if kids.len() < 3 {
+            @report_first_leaf_of(kids, "outside the subset: a method call needs a name after the dot")
+            return
+        }
         // The receiver's type is what the mangling door takes; the callee row
         // itself is NOT recorded yet, because the door still mangles from the
         // receiver type rather than from a declaration (that flip is the
@@ -661,6 +688,17 @@ fn Checker mut @type_expr(e Node) -> () {
         ro kids = branch_children(e)
         ro cname = call_callee_text(kids)
         ro d = @ctx.defs.find(cname)
+        // FIRST FLOOR, found by probing the guards above (2026-08-16): a
+        // trailing `1 +` or `!` swallows the NEXT statement as its operand,
+        // so `println(...)` lands in expression position -- and `println` is
+        // the subset's one builtin, present in no registry. The lattice then
+        // called that a compiler bug and panicked `novac check`. It is a user
+        // mistake: an unknown callee in a value position is refused here, at
+        // the call's own name.
+        if d < 0 {
+            @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows in an expression (println is a statement here, not a value)")
+            return
+        }
         if d >= 0 {
             ro def = @ctx.defs.rows[d]
             if def.kind == DefKind.DefVariant || def.kind == DefKind.DefFn {
@@ -671,20 +709,29 @@ fn Checker mut @type_expr(e Node) -> () {
             if is_expr_kind(c.kind_of()) { @type_expr(c) }
         }
     } else if k == NodeKind.Paren {
+        // The parser builds `( expr )` with three children ALWAYS (the
+        // closing paren is a zero-width MissingToken when absent), so a
+        // shorter one is a broken invariant, not a shape to skip. A silent
+        // `return` here used to leave the node untyped, and the hole then
+        // surfaced as "no type recorded" from the channel -- an ice about the
+        // wrong thing, in the wrong module, one pass later (owner's question
+        // 2026-08-16: "what does this return mean?" -- it meant nothing good).
         ro kids = branch_children(e)
-        if kids.len() < 2 { return }
+        if kids.len() < 3 { ice("check: a parenthesised expression without its three parts") }
         @type_expr(kids[1])
         if @out.len() == 0 { @record(e, type_of(e, @ctx, @scope)) }
     } else if k == NodeKind.Unary {
+        // Same reasoning: the parser builds `op operand`, two children, always.
         ro kids = branch_children(e)
-        if kids.len() < 2 { return }
+        if kids.len() < 2 { ice("check: a prefix operator without its operand") }
         @type_expr(kids[1])
         if @out.len() > 0 { return }
         if @report_if_unary_needs_protocol(kids) { return }
         @record(e, type_of(e, @ctx, @scope))
     } else if k == NodeKind.Bin {
+        // And again: `left op right`, three children, by construction.
         ro kids = branch_children(e)
-        if kids.len() < 3 { return }
+        if kids.len() < 3 { ice("check: a binary expression without its three parts") }
         // Operands first (they are what can be unknown), then the answer for
         // THIS node: the whole expression's type decides the emitted shape
         // (f64 is raw C, int is the checked helper).
