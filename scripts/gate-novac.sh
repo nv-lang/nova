@@ -185,7 +185,7 @@ guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fa
 guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён"
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
 step "novac-lint (свод nv-coding-style по novac/src)"
-guard --deadline 300 sh -c '"$1"/nova-cli/target/release/nova lint "$1"/novac/src 2>&1 | tail -1 | grep -q "0 finding"' _ "$ROOT" || fail "nova lint нашёл замечания в novac/src"
+guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
 step "novac-heavy (дедлайновые: мэнглинг, шаблон, цена, мутационная проверка самотестов)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух"
