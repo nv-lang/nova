@@ -97,3 +97,22 @@ export fn prim_c_name(ordinal int) -> str {
 /// copy (a `[]T` is a header; the rows live once). Exists only because the
 /// oracle cannot export a `ro` vector yet (see `universe`).
 export fn builtin_types() -> []BuiltinType => universe
+
+/// The two bool literals of the language, named ONCE.
+///
+/// They are not tokens of their own: the lexer sees identifiers, and the
+/// language spells them `true` / `false` (the oracle emits the C keywords,
+/// since `nova_bool` is C `bool`). Without them the subset had no way to
+/// WRITE a bool at all -- only to compute one from a comparison -- which the
+/// owner's question about the literal list exposed (2026-08-16).
+#realtime nogc
+export fn is_bool_literal(name str) -> bool => name == "true" || name == "false"
+
+/// The C spelling of a bool constant. `nova_bool` IS C `bool`, so the two
+/// spellings coincide -- but they are LANGUAGE names, and language names live
+/// here (P5), not as string literals in the backend.
+#realtime nogc
+export fn bool_c_literal(v bool) -> str {
+    if v { return "true" }
+    "false"
+}
