@@ -119,7 +119,16 @@ export fn prim_c_name(ordinal int) -> str
 /// The universe as a whole, for the seed loop in sem — the SAME vector, not a
 /// copy (a `[]T` is a header; the rows live once). Exists only because the
 /// oracle cannot export a `ro` vector yet (see `universe`).
-export fn builtin_types() -> []BuiltinType => universe
+///
+/// The return type carries `ro` (owner's review 2026-08-17). Handing a `ro`
+/// binding out as a plain `[]T` launders it: the caller gets a MUTABLE alias
+/// of read-only data. Probed the same day — the oracle accepts the laundered
+/// form silently AND the mutation lands: pushing through the alias grows the
+/// `ro` table itself (repro in docs/dev/novac-divergences.md). Until that is
+/// fixed the compiler cannot enforce this for us, so the signature states it:
+/// `-> ro []BuiltinType`, the same shape std uses for its own views
+/// (`str @bytes() -> ro []u8`, `IoCapture @out_bytes() -> ro []u8`).
+export fn builtin_types() -> ro []BuiltinType => universe
 
 /// The two bool literals of the language, named ONCE.
 ///

@@ -182,7 +182,7 @@ export fn CheckOut @has_subst(id int) -> bool
 
 /// The substitution of a node; asking about a node that has none is an ice
 /// (ask `has_subst` first).
-export fn CheckOut @subst_of(id int) -> []int
+export fn CheckOut @subst_of(id int) -> ro []int
     requires id >= 0 && id < @substs.len(), "sem: subst_of asked about a node outside this file's id space"
 {
     ro sr = @substs[id]
