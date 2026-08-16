@@ -19,6 +19,7 @@
 module novac.sem
 
 import ../diag.{ice}
+import ../builtins.{prim_c_name}
 
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
@@ -26,7 +27,7 @@ export fn c_type(ctx Ctx, t int) -> str {
     if t >= 0 && t < ctx.types.len() {
         ro td = ctx.types[t]
         match td.kind {
-            TkPrim => { return td.c_name }
+            TkPrim => { return prim_c_name(ctx.tys.head_of(td.ty_id)) } // universe fact by ordinal, read off the term
             TkRecord => { return "Nova_${td.name}*" }
             TkSum => { return "Nova_${td.name}*" }
             TkApp => { ice("mangle: c_type of an applied type — the instance door arrives with E2-b2") }

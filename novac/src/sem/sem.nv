@@ -45,7 +45,6 @@ export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
     ty_id int /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
-    c_name str /// Runtime ABI spelling for TkPrim ONLY (nova_rt.h fact); "" otherwise — mangling is a door, never a stored string.
     row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum_id).
     row_cnt int /// How many rows; 0 for primitives.
 }
@@ -387,10 +386,10 @@ export type Ctx {
 
 /// Seed one pre-declared type: the registry row and the def row are born
 /// together; the ACTUAL id flows back to the caller (never hard-coded).
-fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, c_name str, ordinal int) -> int {
+fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> int {
     ro id = types.len()
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, c_name, row_off: 0, row_cnt: 0 })
+    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, row_off: 0, row_cnt: 0 })
     defs.add(name, DefKind.DefType, id)
     id
 }
@@ -496,7 +495,7 @@ export fn collect_types(file Node) -> Ctx {
     mut seeded = []int.new()
     mut ordinal = 0
     for bt in builtin_types() {
-        seeded.push(seed(types, defs, tys, bt.name, bt.c_name, ordinal))
+        seeded.push(seed(types, defs, tys, bt.name, ordinal))
         ordinal += 1
     }
     ro prims = Prims { int_id: seeded[0], str_id: seeded[1], bool_id: seeded[2], f64_id: seeded[3] }
@@ -543,7 +542,7 @@ export fn collect_types(file Node) -> Ctx {
                     }
                 }
             }
-            types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(owner_id), name: tname, c_name: "", row_off: off, row_cnt: cnt })
+            types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(owner_id), name: tname, row_off: off, row_cnt: cnt })
         }
         if k == NodeKind.SumDecl {
             ro skids = branch_children(c)
@@ -589,7 +588,7 @@ export fn collect_types(file Node) -> Ctx {
                     vcnt += 1
                 }
             }
-            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(sum_id), name: sname, c_name: "", row_off: off, row_cnt: vcnt })
+            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(sum_id), name: sname, row_off: off, row_cnt: vcnt })
         }
         if k == NodeKind.FnDecl {
             ro fk = branch_children(c)

@@ -16,6 +16,8 @@
 
 module novac.builtins
 
+import ../diag.{ice}
+
 /// What a registry type IS — selects which row table the off/cnt range
 /// addresses (record -> fields, sum -> variants; primitives own no rows).
 /// Lives here, not in sem, because the builtin seed rows carry it and sem
@@ -59,3 +61,15 @@ export fn builtin_types() -> []BuiltinType => []BuiltinType.of(
     BuiltinType { name: "str", c_name: "nova_str" },
     BuiltinType { name: "bool", c_name: "nova_bool" },
     BuiltinType { name: "f64", c_name: "nova_f64" })
+
+/// The runtime ABI spelling of a primitive by its universe ordinal — THE
+/// door the mangler asks (E2-b1 step 3). It used to be a field copied onto
+/// every TypeDef row; a fact of nova_rt.h belongs to the universe, and a
+/// C name is a FUNCTION of the term, never a stored string (П22, mangle
+/// door rule). The ordinal is what the interner keeps as the head of a
+/// TkPrim term, so the round trip is prim term -> ordinal -> ABI name.
+export fn prim_c_name(ordinal int) -> str {
+    ro all = builtin_types()
+    if ordinal < 0 || ordinal >= all.len() { ice("builtins: primitive ordinal outside the universe") }
+    all[ordinal].c_name
+}
