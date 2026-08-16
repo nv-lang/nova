@@ -9311,11 +9311,8 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
     NovaFailFrame _sf;\n\
     nova_fail_push(&_sf);\n\
     if (setjmp(_sf.jmp) == 0) {{\n\
-        /* 173.4 Ф.2(в): карман ребёнка — в активный кадр на время руки,\n\
-         * чтобы `suppressed()` говорил правду. Герметично для Fail-пути;\n\
-         * `interrupt` едет отдельным стеком и прыгает мимо восстановления —\n\
-         * дыра структурная и уже существующая (тот же longjmp бросает\n\
-         * и сам drive-цикл), здесь не вносится. */\n\
+        /* 173.4 Ph.2(v): child's pocket around the arm — see fibers.h. */
+\
         NovaErrorChain* _sv_pocket = _nova_last_error.frame.error_suppressed;\n\
         _nova_last_error.frame.error_suppressed = _err->suppressed;\n\
         Nova_Decision* _d = _h->on_child_fail(_h->ctx, _idx, _e_any);\n\
