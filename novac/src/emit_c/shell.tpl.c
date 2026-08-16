@@ -6000,7 +6000,7 @@ static void _nova_main_fiber_entry(mco_coro* _co) {
         if (_ff.error_msg.ptr && _ff.error_msg.len == 18 && memcmp(_ff.error_msg.ptr, "__nova_interrupt__", 18) == 0) {
             /* interrupt: scope state already set, fiber dies cleanly (mirrors emit_spawn). */
         } else {
-            nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);
+            nova_fiber_report_error_diag(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_suppressed);
         }
     }
     _nova_main_fiber_co = NULL;
