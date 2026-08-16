@@ -377,10 +377,45 @@ static inline void nova_throw_trace_push(const char* file, int line) {
     _nova_throw_trace.count++;
 }
 
+/* 173.4 Ф.2(б) (реестр №445): бросок ВО ВРЕМЯ РАЗМОТКИ cleanup — это
+ * ПОДАВЛЕННАЯ ошибка (D158 model B), а не новая первопричина: первичная
+ * продолжает лететь, а cleanup-ошибка едет в кармане. Значит она не имеет
+ * права затирать throw-site первичной и обнулять её трассу.
+ *
+ * ЗАМЕР ДО ПОЧИНКИ (2026-08-15): `fn tx() Fail -> () { defer { throw
+ * "CLEANUP" }; throw "PRIMARY" }` печатал
+ *     nova: unhandled Fail: PRIMARY
+ *       at tx.nv:4 (throw site)      <- строка 4 это сам defer
+ * и `trace: []` — запись противоречила себе: сообщение от первичной,
+ * точка броска от cleanup'а.
+ *
+ * Почему в РАНТАЙМЕ, а не в кодогене: тело defer пере-эмитится на
+ * четырёх run-сайтах, и на Success-копиях бросок из cleanup И ЕСТЬ
+ * первопричина — его site штамповать надо (там кадр не is_cleanup, и ворота
+ * пропускают); кроме того, бросок часто не лежит в теле лексически
+ * (`defer { helper() }`) — только рантайм в момент броска видит размотку.
+ *
+ * Предикат берётся БЛИЖНИЙ и намеренно не обходит цепочку `->prev`:
+ * при interrupt-размотке fail-кадры не снимаются, и дальние звенья могут
+ * указывать на уже разрушенное стековое хранилище (см. шапку про interrupt
+ * выше) — обход превратил бы диагностический дефект в segfault.
+ * [INV-GUARD: check-panic-report-contract.sh] */
 static inline void nova_throw_site_set(const char* file, int line) {
+    if (nova_in_cleanup_unwind()) return;
     _nova_throw_site.file = file;
     _nova_throw_site.line = line;
     nova_throw_trace_reset();  /* [M-173-error-return-trace]: новая ошибка = новая трасса */
+}
+
+/* ДОМИНИРУЮЩИЙ штамп — для паники. Паника во время размотки НЕ
+ * подавляется: по nova_scope_exit она перебрасывается и становится первичной
+ * (D13: panic не деградирует до ловимого USER). Значит и site обязан стать её:
+ * если ворота поставить без этого входа, сообщение будет от паники, а точка
+ * броска от первичной — то же самопротиворечие, переехавшее на шаг. */
+static inline void nova_throw_site_set_dominant(const char* file, int line) {
+    _nova_throw_site.file = file;
+    _nova_throw_site.line = line;
+    nova_throw_trace_reset();
 }
 
 /* [M-173-error-return-trace]: обновить throw-site БЕЗ сброса трассы —

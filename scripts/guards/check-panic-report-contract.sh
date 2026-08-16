@@ -126,9 +126,41 @@ else
     echo "$NAME: NOTE — python недоступен, разбор JSON пропущен" >&2
 fi
 
+# ── 4. бросок из cleanup НЕ крадёт точку броска первопричины ────────
+# 173.4 Ф.2(б): бросок во время размотки — ПОДАВЛЕННАЯ ошибка, не новая
+# первопричина. До починки запись противоречила себе: сообщение от первичной
+# ошибки, точка броска от cleanup'а. Фикстура пришпилена к номеру строки,
+# поэтому снятие ворот в nova_throw_site_set покраснеет ЗДЕСЬ, а не через месяц.
+# Живёт в страже, а не только в фикстуре, потому что дорожка runtime-panic
+# в гейт не входит (№445 п.(а) открыт).
+FIX_B="$ROOT/spec_tests/conformance/neg/f2b_cleanup_does_not_steal_site.nv"
+if [ -f "$FIX_B" ]; then
+    EXE_B="$TMP/cleanup_site_probe.exe"
+    if "$NOVA" build "$FIX_B" -o "$EXE_B" >"$TMP/buildb.log" 2>&1; then
+        "$EXE_B" >"$TMP/b.out" 2>"$TMP/b.err"
+        BOUT=$(cat "$TMP/b.err")
+        # Ожидаемая строка берётся ИЗ САМОЙ ФИКСТУРЫ (её EXPECT-шапки), чтобы
+        # страж и фикстура не разошлись при сдвиге строк.
+        WANT=$(head -1 "$FIX_B" | sed 's/^\/\/ EXPECT_RUNTIME_PANIC //')
+        case "$BOUT" in
+            *"$WANT"*) ;;
+            *)
+                echo "$NAME: FAIL — бросок из cleanup украл точку броска первопричины (173.4 Ф.2б, №445)" >&2
+                echo "  ждали в stderr: $WANT" >&2
+                echo "  получили: $BOUT" >&2
+                FAILED=1
+                ;;
+        esac
+    else
+        echo "$NAME: FAIL — не собралась фикстура cleanup-site" >&2
+        tail -3 "$TMP/buildb.log" >&2
+        FAILED=1
+    fi
+fi
+
 rm -rf "$TMP"
 if [ "$FAILED" -ne 0 ]; then
     exit 1
 fi
-echo "$NAME ok: человеческий рендер даёт throw-site и propagation trace, JSON-рендер — одну валидную строку со всеми полями (D462)"
+echo "$NAME ok: человеческий рендер даёт throw-site и propagation trace, JSON-рендер — одну валидную строку со всеми полями (D462), cleanup не крадёт точку броска первопричины (Ф.2б)"
 exit 0

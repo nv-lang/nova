@@ -34465,6 +34465,48 @@ impl NameResCtx {
     ) {
         match &e.kind {
             ExprKind::Ident(name) => {
+                // D461 (A) (владелец 2026-08-15, реестр №674): имя с ведущим `_`
+                // объявлено НАМЕРЕННО НЕИСПОЛЬЗУЕМЫМ — ссылаться на него нельзя, и это
+                // правило ЛЮБОГО типа, не только линейного: соглашение, которое
+                // не подкреплено машиной, вводит читателя в заблуждение там, где он ему
+                // доверяет. Проверяем ТОЛЬКО известные имена (неизвестное `_x` — это
+                // обычная undefined-диагностика ниже, не эта) и только имена,
+                // начинающиеся с `_` + буква/цифра: голый `_` — wildcard, имени нет.
+                // СУЖЕНО до БИНДИНГОВ ЗНАЧЕНИЙ (локалы/параметры/паттерн-имена):
+                // у ИМЁН ФУНКЦИЙ `_`-префикс значит «частный помощник», а не
+                // «не используется» (живой носитель — `fn _open(...)` в
+                // std/src/net/neg/double_close_neg.nv). D461 §А говорит про значения.
+                // Пространства имён САМОГО КОМПИЛЯТОРА исключены: `_nova_*`
+                // синтезирует парсер (лоуэринг `decreases`: `_nova_decr_old`),
+                // `_at_*` — проход кэша полей (`_at_<F> = @<F>`), и оба ЗАТЕМ
+                // используются таким же сгенерированным кодом. D461 §А про
+                // ОБЕЩАНИЕ ПРОГРАММИСТА, а не про служебные имена.
+                if name.len() > 1
+                    && name.starts_with('_')
+                    && !name.starts_with("_nova_")
+                    && !name.starts_with("_at_")
+                    // Компиляторные имена: `__`-префикс зарезервирован за
+                    // генерацией (сериализация, derive, wire-таблицы) — правило
+                    // адресовано ЧЕЛОВЕЧЕСКОМУ соглашению об именовании, а не
+                    // внутренностям, которые пользователь не писал и не видит.
+                    && !name.starts_with("__")
+                    && scope.iter().any(|frame| frame.contains(name.as_str()))
+                {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_UNDERSCORE_NAME_USED] `{n}` объявлено с `_`-префиксом — это \
+                             обещание НЕ ИСПОЛЬЗОВАТЬ значение (D461 §А, решение владельца \
+                             2026-08-15). Ссылка на него противоречит собственному \
+                             объявлению. Убери `_` из имени (`{s}`), если значение нужно; \
+                             если не нужно — не ссылайся. Для линейного (consume) значения \
+                             `_`-имя невозможно по построению: потребить его было бы \
+                             нечем — свяжи настоящим именем и потреби явно.",
+                            n = name,
+                            s = name.trim_start_matches('_'),
+                        ),
+                        e.span,
+                    ));
+                }
                 if !self.is_known(name, file_id, scope) {
                     // Plan 170 (D307): if the name is file-private to ANOTHER
                     // peer of this module-group, emit the specific leak error.
@@ -42239,11 +42281,29 @@ fn consume_require_pattern_binding(
     ctx_desc: &str,
     errors: &mut Vec<Diagnostic>,
 ) {
-    if name == "_" { return; }
     let ty = payload_ty.map(|s| s.to_string());
     let must_consume = payload_ty
         .map(|t| ctx.lin_reg.is_must_consume_name(t))
         .unwrap_or(false);
+    // D461 (Б) (владелец 2026-08-15, реестр №674): линейное значение нельзя
+    // выбросить `_`-паттерном. До этого `match open() { Ok(_) => () }` был
+    // самой короткой записью тихой утечки: значение никуда не связано,
+    // авто-`@cleanup` для него не эмитится (D432 §2 — только bare-биндинги),
+    // и компилятор молчал — тот же класс, что №667, но без ключевых слов.
+    if name == "_" {
+        if must_consume {
+            let ty_name = payload_ty.unwrap_or("?");
+            errors.push(crate::diag::Diagnostic::new(
+                format!(
+                    "[E_LINEAR_PAYLOAD_DISCARDED] `_` выбрасывает линейное значение                      типа `{ty}` из `{ctx_desc}` — его некому освободить (D461 §Б,                      решение владельца 2026-08-15). Авто-`@cleanup` ставится только                      на bare-биндинг `consume X = e` (D432 §2), а здесь связывать нечего.                      Свяжи и потреби явно: `consume s` в паттерне, затем `s.close()`                      (или другой consume-метод типа / передача в consume-param).",
+                    ty = ty_name,
+                    ctx_desc = ctx_desc,
+                ),
+                span,
+            ));
+        }
+        return;
+    }
     if !must_consume {
         ctx.declare(name, ty);
         return;
@@ -42335,7 +42395,16 @@ fn consume_declare_arm_pattern(
                 let tuple_ty: Option<&[Option<String>]> =
                     if is_err { scrut.err_tuple.as_deref() } else { scrut.ok_tuple.as_deref() };
                 match &patterns[0] {
-                    Pattern::Ident { name, is_consume, span, .. } if name != "_" => {
+                    // D461 (Б): голый `_` в payload-позиции — отдельный `Pattern::Wildcard`,
+                    // а не `Ident("_")`; для линейного типа это выбрасывание значения
+                    // (некому освободить) — пропускаем через ту же дверь под именем `_`.
+                    Pattern::Wildcard(span) => {
+                        consume_require_pattern_binding(
+                            ctx, "_", false, *span, scalar_ty,
+                            &format!("{}(..)", variant), errors);
+                        return;
+                    }
+                    Pattern::Ident { name, is_consume, span, .. } => {
                         consume_require_pattern_binding(
                             ctx, name, *is_consume, *span, scalar_ty,
                             &format!("{}(..)", variant), errors);

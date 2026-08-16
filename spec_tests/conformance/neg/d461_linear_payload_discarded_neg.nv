@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_PAYLOAD_DISCARDED
+//
+// D461 rule (B) (owner's decision 2026-08-15, registry #674): a linear
+// (consume) payload may not be thrown away by a `_` pattern. This is the
+// SHORTEST way to leak a resource: nothing is bound, so D432 auto-cleanup does
+// not apply (section 2 covers bare `consume X = e;` only), the codegen emits
+// no cleanup, and before this rule the compiler said nothing at all. Same
+// class as #667, but without a single keyword -- and therefore worse: the leak
+// reads as "I explicitly said I do not need it".
+//
+// The only lawful spelling is `Ok(consume r) => r.close()`.
+module neg.d461_linear_payload_discarded_neg
+
+type D461Res consume { tag int }
+
+fn D461Res consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn D461Res consume @close() -> () { () }
+
+fn d461_open(tag int) -> Result[D461Res, ()] {
+    consume r = D461Res { tag }
+    Ok(r)
+}
+
+fn main() {
+    match d461_open(4) {
+        // nova:expect E_LINEAR_PAYLOAD_DISCARDED -- `_` discards a linear payload; nothing is bound and nothing cleans it up (D461 rule B)
+        Ok(_)  => ()
+        Err(_) => ()
+    }
+}

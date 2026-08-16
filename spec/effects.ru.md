@@ -407,13 +407,13 @@ fn server(ids []int) -> () =>
 приходится:
 
 ```
-$ ./app                              # никто не разбирает — читает человек
+$ ./app                              # nobody is parsing — a person reads it
 nova: unhandled Fail: leaf-error
   at app.nv:29 (throw site)
   propagation trace (`?`-chain, oldest first):
     via app.nv:19 (?)
 
-$ NOVA_PANIC_FORMAT=json ./app       # разбирает инструмент — одна строка
+$ NOVA_PANIC_FORMAT=json ./app       # a tool is parsing — one line, stable keys
 {"nova_failure":1,"kind":"fail","message":"leaf-error",
  "site":{"file":"app.nv","line":29},"trace":[{"file":"app.nv","line":19}],
  "trace_dropped":0,"suppressed":[]}
@@ -422,6 +422,33 @@ $ NOVA_PANIC_FORMAT=json ./app       # разбирает инструмент �
 По умолчанию — человеческий вывод: машинный формат инструмент просит явно, а
 человек не должен читать JSON, не попросив. Переменная окружения, а не флаг
 сборки — пересобирать программу ради машинного лога абсурдно.
+
+### Прочитать отказ из кода ([D463](decisions/08-runtime.md#d463))
+
+Та же запись, которую печатает рантайм, доступна программе, которая отказ
+обрабатывает — три свободных аксессора, без новых типов и без нового слова:
+
+```nova
+with Supervisor = effect Supervisor {
+    on_child_fail(idx, err) -> Decision {
+        Log.error(report())                                  // the whole record
+        for s in suppressed() { Log.warn(s) }                // cleanup failures
+        if Some(c) = cause() { Log.error("caused by: ", c) } // one step back
+        return if err is Panic { Decision.Stop } else { Decision.Restart }
+    }
+}
+```
+
+`report()` рендерится ТЕМ ЖЕ рендерером, что печатает терминальный отказ, поэтому
+`NOVA_PANIC_FORMAT` управляет обоими — второму формату неоткуда разойтись.
+`cause()` — один необязательный шаг назад, форма, которую Rust пишет `source()`,
+Java `getCause()`, а Go `errors.Unwrap`; цепочка получается ходьбой по ней.
+`suppressed()` — карман D158, он не меняется.
+
+Обработчик, бросающий ВМЕСТО пойманной ошибки, связывает её причиной сам — слово
+`from` не нужно, потому что место замены это ровно рука обработчика, где
+пойманная ошибка и есть параметр. Cleanup, бросивший РЯДОМ с ещё летящей
+ошибкой, уходит в `suppressed()`. Развод структурный, а не эвристический.
 
 ## Роли — `throw` / `Fail[E]` / handler
 

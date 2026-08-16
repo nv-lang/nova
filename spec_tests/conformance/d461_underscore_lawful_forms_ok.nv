@@ -1,0 +1,49 @@
+// D461 positive twin of the three negative fixtures: the forms that stay
+// lawful, so the rule cannot be "fixed" by making everything an error.
+//
+// (1) a `_`-prefixed binding that is NEVER read -- that is what the prefix is
+//     FOR;
+// (2) `_` on a NON-linear payload -- nothing owns anything, nothing leaks;
+// (3) `Ok(consume r) => r.close()` -- the one lawful spelling for a linear
+//     payload;
+// (4) compiler-reserved prefixes (`_nova_`, `_at_`, `__`) stay usable: they
+//     name machinery the user did not write, and rule (A) speaks about a HUMAN
+//     naming convention. Without this carve-out the rule would reject the
+//     compiler's own field caches and wire tables.
+module spec_tests.conformance
+
+type D461Ok consume { tag int }
+
+fn D461Ok consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn D461Ok consume @close() -> () { () }
+
+fn d461ok_open(tag int) -> Result[D461Ok, ()] {
+    consume r = D461Ok { tag }
+    Ok(r)
+}
+
+fn d461ok_nonlinear() -> Result[int, str] => Ok(7)
+
+test "a `_`-prefixed binding that is never read is lawful" {
+    ro _unused = 42
+    assert(true)
+}
+
+test "`_` on a non-linear payload is lawful" {
+    mut seen = 0
+    match d461ok_nonlinear() {
+        Ok(_)  => { seen = 1 }
+        Err(_) => { seen = 2 }
+    }
+    assert(seen == 1)
+}
+
+test "`Ok(consume r) => r.close()` is the lawful spelling for a linear payload" {
+    mut closed = 0
+    match d461ok_open(4) {
+        Ok(consume r) => { r.close(); closed = 1 }
+        Err(_)        => { closed = 2 }
+    }
+    assert(closed == 1)
+}

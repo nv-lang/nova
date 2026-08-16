@@ -212,6 +212,8 @@ step "driver-channel-parity (три драйвера кормят одни ка�
 guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
 step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
 guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SIGPIPE) пропал из nova_driver_init (№664)"
+step "retracted-param-form (снятая форма параметра в доке — D445, №611)"
+guard "$ROOT/scripts/guards/check-retracted-param-form.sh" "$ROOT" || fail "снятая постфиксная форма параметра в доке (D445 AMEND, №611)"
 step "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
 guard "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
 step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
@@ -920,12 +922,19 @@ if [ -n "${CI_VERDICT_LINE:-}" ]; then
         *RED*|*STALE*|*ОШИБКА*) CI_TAIL=" [ВНЕШНИЙ CI НЕ ЗЕЛЁНЫЙ — см. строку выше; пуш остановит pre-push]" ;;
     esac
 fi
+# ИТОГОВЫЙ РУБЕЖ ИДЁТ ПЕРВЫМ — и это не косметика (№690, 2026-08-16).
+# Раньше `gate_barrier` стоял ПОСЛЕ этого блока, а комментарий рядом
+# утверждал «сюда доходим, если мега-CU прошёл» — но шаги ПОСЛЕ рубежа на
+# строке 490 (включая мега-CU) только ИНКРЕМЕНТИРУЮТ счётчик. В итоге
+# красный гейт печатал «GATE OK (final)», а список отказов — НИЖЕ неё.
+# Всякий, кто грепает вердикт (человек, сторож, окно-интегратор), читал
+# зелёное на красном — тот же класс, что №445 («вердикт печатается как полный»)
+# и №645 («строка была, читать было некому»).
+gate_barrier
+
 if [ -n "$OVERRIDE_FILES" ]; then
     print_override_warning
     echo "GATE OK (final) [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]$CI_TAIL"
 else
     echo "GATE OK (final)$CI_TAIL"
 fi
-
-# Итоговый рубеж: сюда доходим, если мега-CU прошёл.
-gate_barrier

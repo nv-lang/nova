@@ -1,0 +1,30 @@
+// EXPECT_RUNTIME_PANIC f2b_cleanup_does_not_steal_site.nv:24 (throw site)
+//
+// План 173.4 Ф.2 (б), реестр 221.1 №445: бросок ИЗ CLEANUP во время размотки —
+// это ПОДАВЛЕННАЯ ошибка (D158 model B), а не новая первопричина. Он не имеет
+// права затирать throw-site первичной ошибки и обнулять её трассу.
+//
+// Замер до починки (2026-08-15): запись противоречила сама себе —
+//     nova: unhandled Fail: PRIMARY-FAILED
+//       at <file>:23 (throw site)        <- строка 23 это сам `defer`
+// то есть сообщение от первичной ошибки, а точка броска от cleanup'а.
+//
+// Ожидание пришпилено к СТРОКЕ 24 — к первичному `throw`. Если ворота в
+// `nova_throw_site_set` снимут, site снова уедет на строку 23 и фикстура
+// покраснеет по номеру строки, а не по тексту.
+//
+// Дорожка runtime-panic требует `--full` (см. №445 п.(а) — включение дорожки
+// в гейт ждёт закрытия оставшихся четырёх). До тех пор контракт держит
+// исполнением страж `check-panic-report-contract.sh`.
+
+module neg.f2b_cleanup_does_not_steal_site
+
+fn tx() Fail -> () {
+    defer { throw "CLEANUP-FAILED" }
+    throw "PRIMARY-FAILED"
+}
+
+fn main() Io -> () {
+    tx()
+    println("UNREACHABLE")
+}

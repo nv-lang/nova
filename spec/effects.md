@@ -405,6 +405,34 @@ person should never have to read JSON without asking. An environment variable
 rather than a build flag — rebuilding a program to get a machine-readable log
 would be absurd.
 
+### Reading a failure from code ([D463](decisions/08-runtime.md#d463))
+
+The same record the runtime prints is available to the program that handles the
+failure -- three free accessors, no new types and no new keyword:
+
+```nova
+with Supervisor = effect Supervisor {
+    on_child_fail(idx, err) -> Decision {
+        Log.error(report())                                  // the whole record
+        for s in suppressed() { Log.warn(s) }                // cleanup failures
+        if Some(c) = cause() { Log.error("caused by: ", c) } // one step back
+        return if err is Panic { Decision.Stop } else { Decision.Restart }
+    }
+}
+```
+
+`report()` renders through the SAME renderer that prints a terminal failure, so
+`NOVA_PANIC_FORMAT` governs both -- there is no second format to drift. `cause()`
+is one optional step back, the shape Rust spells `source()`, Java `getCause()` and
+Go `errors.Unwrap`; walk it to get a chain. `suppressed()` is the D158 pocket and
+does not change.
+
+A handler that throws INSTEAD of the error it caught binds that error as the cause
+automatically -- Nova needs no `from`, because the place where the replacement
+happens is exactly the handler arm, where the caught error is the parameter.
+A cleanup that throws BESIDE a still-propagating error goes to `suppressed()`
+instead. The split is structural, not a heuristic.
+
 ## Cross-fiber safety — a property of the type, a requirement at the boundary (D446)
 
 The rule in one sentence: **a value may be reachable from more than one fiber

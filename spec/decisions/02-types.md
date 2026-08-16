@@ -4435,7 +4435,7 @@ bounds через анонимный protocol).
 **никогда не эмитируются в C-код** (ни в debug, ни в release).
 
 ```nova
-fn fill(xs mut []int) -> ()
+fn fill(mut xs []int) -> ()
     ensures forall i in 0..xs.len() : xs[i] == 0
 {
     ghost ro n = xs.len()      // spec-only: виден в invariant

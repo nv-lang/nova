@@ -39954,7 +39954,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 173 Ф.5 п.7: throw-site стемп (comma-expr, error-path only).
                 let (file_lit, line) = self.loc_for_span(func.span.start);
                 return Ok(format!(
-                    "(nova_throw_site_set(\"{}\", {}), nv_panic({}), (nova_int)0LL)",
+                    "(nova_throw_site_set_dominant(\"{}\", {}), nv_panic({}), (nova_int)0LL)",
                     file_lit, line, msg_val));
             }
             // `unreachable(reason str) -> never` (std/prelude/runtime.nv, `extern "nova"`).
@@ -39977,7 +39977,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 173 Ф.5 п.7: throw-site стемп (см. panic выше).
                 let (file_lit, line) = self.loc_for_span(func.span.start);
                 return Ok(format!(
-                    "(nova_throw_site_set(\"{}\", {}), nv_panic(nova_str_concat(nova_str_from_cstr(\"unreachable: \"), {})), (nova_int)0LL)",
+                    "(nova_throw_site_set_dominant(\"{}\", {}), nv_panic(nova_str_concat(nova_str_from_cstr(\"unreachable: \"), {})), (nova_int)0LL)",
                     file_lit, line, reason_val
                 ));
             }

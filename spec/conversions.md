@@ -356,7 +356,7 @@ expects `[]u8` and a `str` is on hand:
 ```nova
 import std.runtime.write_buffer.{WriteBuffer}
 
-fn write_greeting(wb mut WriteBuffer, s str) -> () =>
+fn write_greeting(mut wb WriteBuffer, s str) -> () =>
     wb.write_bytes(s)   // s неявно .bytes() — не пишем это руками
 ```
 

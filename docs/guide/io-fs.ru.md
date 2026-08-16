@@ -14,8 +14,8 @@ source_date: 2026-08-02
 
 ```nova
 // byte-first protocols, one shared error, mockable effects
-type io.Read  protocol { @read(buf mut []u8) -> Result[int, IoError] }   // Ok(0) = EOF, only when buf is non-empty
-type io.Write protocol { @write(data []u8) -> Result[int, IoError]; @flush() -> Result[(), IoError] }
+type io.Read  protocol { mut @read(mut buf []u8) -> Result[int, IoError] }   // Ok(0) = EOF, only when buf is non-empty
+type io.Write protocol { mut @write(data []u8) -> Result[int, IoError]; mut @flush() -> Result[(), IoError] }
 
 with Fs = mem_fs() {                    // deterministic test, no disk
     consume f = File.create("out.txt".to_path())!!

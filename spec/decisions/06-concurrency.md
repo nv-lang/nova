@@ -5352,12 +5352,12 @@ type WaitResult { Notified | TimedOut }
 fn Condvar.new() -> Self
 
 /* Mutex overload (primary): */
-fn Condvar @wait(m mut Mutex)
-fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResult
-fn Condvar @wait_until(m mut Mutex, predicate fn() -> bool)
+fn Condvar @wait(mut m Mutex)
+fn Condvar @wait_for(mut m Mutex, timeout Duration) -> WaitResult
+fn Condvar @wait_until(mut m Mutex, predicate fn() -> bool)
 
 /* ReentrantMutex overload (Java-pitfall-aware): */
-fn Condvar @wait(m mut ReentrantMutex)
+fn Condvar @wait(mut m ReentrantMutex)
 
 fn Condvar mut @notify_one()        /* wake FIFO head */
 fn Condvar mut @notify_all()        /* wake all FIFO order */
