@@ -70,7 +70,7 @@ fn Cursor @missing() -> Node {
         return leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: last.text })
     }
     ro t = @toks[@i]
-    leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[0..0] })
+    leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[..0] })
 }
 
 /// Tokens that CLOSE the enclosing construct: recovery must not eat

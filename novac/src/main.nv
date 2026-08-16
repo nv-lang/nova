@@ -93,9 +93,11 @@ fn read_decls(dir str) Fs -> []str {
                     Ok(bytes) => {
                         match bytes.to_str() {
                             Ok(t) => { out.push(t) }
+                            // nova:allow W_RESULT_DISCARDED -- a declaration file that is not UTF-8 is simply not a declaration novac can read; skipping it leaves its methods unknown, and every use of them gets an honest subset refusal at the point of use
                             Err(_) => {}
                         }
                     }
+                    // nova:allow W_RESULT_DISCARDED -- same door rule: an unreadable file is skipped, never guessed at
                     Err(_) => {}
                 }
             }

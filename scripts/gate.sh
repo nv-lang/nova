@@ -262,6 +262,11 @@ guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "рус
 guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx заведена без строки плана §10.3б (П17: одно понятие — одна таблица)"
 guard "$ROOT/scripts/guards/check-novac-row-fields.sh" "$ROOT" || fail "поле строки реестра заведено без записи в §10.3в: производное держат полем, а не функцией (П22)"
 guard "$ROOT/scripts/guards/check-novac-mangling-one-way.sh" "$ROOT" || fail "C-имя разбирается обратно: идентичность течёт через ABI-слой (П24)"
+# П13 п.7 и весь свод nv-coding-style: линт существовал, но по novac/ НЕ гонялся
+# нигде — ни в гейте, ни в workflow (аудит стражей 2026-08-16, дыра №7).
+# Механизм был назван и не подключён; подключён этой волной, дерево чистое.
+step "novac-lint (свод nv-coding-style по novac/src)"
+guard --deadline 300 sh -c '"$1"/nova-cli/target/release/nova lint "$1"/novac/src 2>&1 | tail -1 | grep -q "0 finding"' _ "$ROOT" || fail "nova lint нашёл замечания в novac/src (свод nv-coding-style)"
 guard "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "$ROOT" || fail "дверь поиска novac аллоцирует: составной ключ собирается текстом на каждый поиск (П18)"
 guard "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "$ROOT" || fail "поле-ссылка novac без суффикса пространства (П19: _id / _row / _off+_cnt)"
 guard "$ROOT/scripts/guards/check-novac-ice-messages.sh" "$ROOT" || fail "сообщение ice() повторяется или без префикса модуля: место падения схлопнуто обёрткой (П20)"

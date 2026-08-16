@@ -24,11 +24,16 @@
 // Zig's `*Sema`). The data flow stays visible in the type; nothing became
 // ambient.
 //
-// Records and sums follow the oracle's shape exactly (fixed points on
-// records.nv and match_demo.nv): values are GC pointers; constructors are
-// alloc + stores; spread is a struct copy then overrides; field access is
-// (p->x); sums are tag enum + tagged union + a maker per variant; match is
-// scrutinee/result/matched-flag plus an if-chain, guards nest one more if.
+// Records and sums currently emit in the oracle's shape - values are GC
+// pointers, constructors alloc + store, spread copies then overrides, field
+// access is (p->x), sums are a tag enum plus a tagged union with a maker per
+// variant, match is scrutinee/result/matched-flag with an if-chain and guards
+// nesting one more if. That is a STARTING POINT, no longer an obligation
+// (plan 274 section 7.0, owner 2026-08-16): identity with the oracle is owed
+// on BEHAVIOUR and on the ABI boundary, never on the shape of the emission.
+// Where a different shape is better - argument temporaries in source order
+// (F65), tuples as stack values, one allocation fewer - novac is expected to
+// diverge, with a line in docs/dev/novac-divergences.md saying why.
 //
 // Edge note (table §3): E2-temporary rows `emit_c` -> `tree`/`lex`/`names`/
 // `sem` — the emitter walks the green tree until `lower` exists (E4);
@@ -56,6 +61,8 @@ type Emitter consume {
 }
 
 /// Finish the emission: the literal pool AND the accumulated code, together.
+/// Named `into_*` because it is a consume conversion into a different type
+/// (nv-coding-style §1a, caught by `nova lint` once it was pointed at novac).
 ///
 /// Returning both is not a convenience. The owner's review 2026-08-16 killed
 /// the previous shape, which read `e.lits` into a binding and then consumed
@@ -66,14 +73,14 @@ type Emitter consume {
 /// the C backend evaluating arguments RIGHT-TO-LEFT despite the spec calling
 /// left-to-right normative (reported to the compiler window). One move, one
 /// result: no aliasing question and no order to depend on.
-fn Emitter consume @finish() -> ([]str, str) => (@lits, @body.into_str())
+fn Emitter consume @into_parts() -> ([]str, str) => (@lits, @body.into_str())
 
 /// Emit the whole C translation unit for a checked subset file.
 export fn emit(file Node, ctx Ctx) -> str {
     consume e = Emitter { ctx, lits: []str.new(), scope: Scope.new(), body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_file(file)
-    ro (lits, code) = e.finish()
+    ro (lits, code) = e.into_parts()
     render(lits, code)
 }
 
