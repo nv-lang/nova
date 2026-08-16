@@ -1,4 +1,9 @@
-// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): done
+// EXPECT_RUNTIME_PANIC panic: done
+//
+// ОЖИДАНИЕ ИСПРАВЛЕНО 2026-08-16 (№445, план 173.4 Ф.2): стояло
+// `unhandled Fail (D158 composite): done` при том, что здесь `panic`, а три
+// `defer`'а только печатают. Предмет фикстуры — ПОРЯДОК LIFO (THIRD,
+// SECOND, FIRST) — не тронут и проверяется строками stdout ниже.
 // EXPECT_STDOUT FIRST
 // EXPECT_STDOUT SECOND
 // EXPECT_STDOUT THIRD

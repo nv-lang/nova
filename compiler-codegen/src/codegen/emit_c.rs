@@ -14400,7 +14400,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
+        self.line("nova_fiber_report_error_diag(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_suppressed);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -15591,7 +15591,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
+        self.line("nova_fiber_report_error_diag(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_suppressed);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -29689,7 +29689,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (`_c->_nova_parent_scope` is always NULL here, so the
         // `nova_fiber_report_child_kinded` remote-report branch `emit_spawn`
         // needs never applies to main).
-        self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
+        self.line("nova_fiber_report_error_diag(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_suppressed);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
