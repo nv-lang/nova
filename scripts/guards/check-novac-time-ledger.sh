@@ -60,6 +60,15 @@ if [ -n "${NOVA_TL_DATES:-}" ]; then
     echo "$NAME: ВНИМАНИЕ — покрытие дат ПОДМЕНЕНО через NOVA_TL_DATES (самотест): $NOVA_TL_DATES"
     DATES="$NOVA_TL_DATES"
 else
+    # Неглубокий клон (CI с fetch-depth 1) не имеет истории файлов: `git log --
+    # novac` приписывает ВСЁ граничному коммиту и даёт его дату — страж краснел
+    # на коммите, который novac не трогал (2026-08-16, первый прогон
+    # gate-novac в CI). Без истории судить нечего — и это красный, не зелёный:
+    # «нет данных» отличимо от «всё покрыто» только явным отказом.
+    if [ -f "$(git -C "$ROOT" rev-parse --git-dir 2>/dev/null)/shallow" ]; then
+        echo "$NAME: FAIL — неглубокий клон (shallow): истории novac/** нет, даты коммитов не восстановить; нужен fetch-depth 0" >&2
+        exit 1
+    fi
     DATES=$(git -C "$ROOT" log --format=%as -- novac 2>/dev/null | sort -u)
 fi
 

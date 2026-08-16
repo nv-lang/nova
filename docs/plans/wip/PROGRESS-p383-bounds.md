@@ -106,18 +106,18 @@ DefaultBodyProbe for BoundCtx` — сразу после `struct BoundCtx`
 
 | механизм / форма | где | вердикт ДО | вердикт ПОСЛЕ |
 |---|---|---|---|
-| Метод-own bound, номинальный receiver (`fn Box13 @combine[S Clone]`) | `probes-p383/p383_method_bound_neg` | ok/built (ложный, тихий identity) | **FAIL** (корректно) |
-| То же, аргумент УДОВЛЕТВОРЯЕТ бáунд | `probes-p383/p383_method_bound_pos` | — (не тестировалось) | **ok** (корректно, регресс не внесён) |
-| Метод-own bound, carrier-receiver (`Vec[T] @append[S AsSlice[T]]`, №381) | `probes-p383/p383_asslice_carrier_neg` | ok (ложный), build падает на C (расхождение) | **FAIL** (корректно, с явным списком отсутствующих методов) |
+| Метод-own bound, номинальный receiver (`fn Box13 @combine[S Clone]`) | `docs/plans/repro/p383/p383_method_bound_neg` | ok/built (ложный, тихий identity) | **FAIL** (корректно) |
+| То же, аргумент УДОВЛЕТВОРЯЕТ бáунд | `docs/plans/repro/p383/p383_method_bound_pos` | — (не тестировалось) | **ok** (корректно, регресс не внесён) |
+| Метод-own bound, carrier-receiver (`Vec[T] @append[S AsSlice[T]]`, №381) | `docs/plans/repro/p383/p383_asslice_carrier_neg` | ok (ложный), build падает на C (расхождение) | **FAIL** (корректно, с явным списком отсутствующих методов) |
 | Свободная функция `fn[T Bound] freeFunc` (Hash/Clone/Write/Next/Iter/Index/MutIndex) | пробы `p2,p3,p6,p7,p9,p10,p11,p12` (worktree nova-audit) | FAIL (корректно) | **FAIL** (без изменений — регресс не внесён) |
 | Plan 101 receiver-prefix (`fn[T Bound] []T @method`) | не отдельно пробовано — тот же `recv_binding`-путь, покрыт существующими vec.nv-методами в std-корпусе | работало | работает (std-корпус 148/26/61 без изменений) |
 | Receiver-carrier bound (№303, `fn Vec[T Printable] @method`) | смежный, отдельный механизм `check_receiver_carrier_bounds` | уже фикшено раньше | не тронуто этим окном |
-| `Equal` call-site (`fn[T Equal] use_equal(a,b) => a.equal(b)`) | `probes-p383/p384_equal_callsite_neg` | ok/built (UB — `Nova_HashMap_method_equal(a,(void*)(b))`, verified в сгенерированном C) | **FAIL** (корректно: «`NoEqual8` is missing: equal(...)») |
-| `#impl(Equal)` decl-site, поле без Equal-зависимостей (int) | `probes-p383/p384_equal_implsite_pos` | ok/built, рантайм печатает корректное structural-сравнение | **ok** (НЕ БАГ — см. ниже; оставлено как pos, не тронуто) |
-| `#impl(Equal)` decl-site, поле БЕЗ auto-derive (fn-типа) | `probes-p383/p384_equal_implsite_neg` | не пробовалось | **FAIL** (E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL + E_IMPL_MISSING_METHODS — decl-site реально энфорсит, когда синтез невозможен) |
-| `str` → `[]u8` через `#coerce`, бáунд `AsSlice` | `probes-p383/p383_coerce_asslice_pos` | — | **ok**, build+run корректны (см. вопрос про #coerce ниже) |
-| Тип-уровневый bound (`type IndexMap[K Equal + Hash, V]`) | `probes-p383/p384_typebound_gap` | не проверялось | **ok** (НЕ ИСПРАВЛЕНО — №TBD, см. ниже) |
-| `E_POINTER_RO_MUT_METHOD` (mut-метод через `*ro T`) | `probes-p383/p_ro_mut_method_gap` | по аудиту 231.1 — emission НЕТ | **ok** (НЕ ИСПРАВЛЕНО, подтверждено живо — №TBD, см. ниже) |
+| `Equal` call-site (`fn[T Equal] use_equal(a,b) => a.equal(b)`) | `docs/plans/repro/p383/p384_equal_callsite_neg` | ok/built (UB — `Nova_HashMap_method_equal(a,(void*)(b))`, verified в сгенерированном C) | **FAIL** (корректно: «`NoEqual8` is missing: equal(...)») |
+| `#impl(Equal)` decl-site, поле без Equal-зависимостей (int) | `docs/plans/repro/p383/p384_equal_implsite_pos` | ok/built, рантайм печатает корректное structural-сравнение | **ok** (НЕ БАГ — см. ниже; оставлено как pos, не тронуто) |
+| `#impl(Equal)` decl-site, поле БЕЗ auto-derive (fn-типа) | `docs/plans/repro/p383/p384_equal_implsite_neg` | не пробовалось | **FAIL** (E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL + E_IMPL_MISSING_METHODS — decl-site реально энфорсит, когда синтез невозможен) |
+| `str` → `[]u8` через `#coerce`, бáунд `AsSlice` | `docs/plans/repro/p383/p383_coerce_asslice_pos` | — | **ok**, build+run корректны (см. вопрос про #coerce ниже) |
+| Тип-уровневый bound (`type IndexMap[K Equal + Hash, V]`) | `docs/plans/repro/p383/p384_typebound_gap` | не проверялось | **ok** (НЕ ИСПРАВЛЕНО — №TBD, см. ниже) |
+| `E_POINTER_RO_MUT_METHOD` (mut-метод через `*ro T`) | `docs/plans/repro/p383/p_ro_mut_method_gap` | по аудиту 231.1 — emission НЕТ | **ok** (НЕ ИСПРАВЛЕНО, подтверждено живо — №TBD, см. ниже) |
 
 ### std-корпус ≥9 сигнатур method-own bound (реестр аудита)
 
@@ -141,7 +141,7 @@ DefaultBodyProbe for BoundCtx` — сразу после `struct BoundCtx`
 
 ## Ответ на вопрос владельца: удовлетворяет ли `#coerce` бáунд протокола?
 
-**Факт, эмпирически проверено (`probes-p383/p383_coerce_asslice_pos`,
+**Факт, эмпирически проверено (`docs/plans/repro/p383/p383_coerce_asslice_pos`,
 build+run):** `[]u8.new().append(some_str)` компилируется И работает
 корректно (напечатанная длина совпадает с длиной строки).
 
@@ -186,7 +186,7 @@ Hash, V] priv { ... }` (`std/src/collections/index_map/core.nv:56`) —
 receiver-prefix / receiver-carrier — все покрыты; тип-декларация — нет).
 Грепом подтверждено: НИ ОДНОГО места в `types/mod.rs`, проверяющего
 `TypeDecl.generics`-бáунды на instantiation-сайте. Проба
-(`probes-p383/p384_typebound_gap`): `IndexMap[NoEqualHash, int].new()` с
+(`docs/plans/repro/p383/p384_typebound_gap`): `IndexMap[NoEqualHash, int].new()` с
 типом БЕЗ `@equal`/`@hash` — `nova check` пропускает чисто.
 
 `nova build` НЕ производит тихий UB так же прямолинейно, как №384 —
@@ -215,7 +215,7 @@ V]` так и не был обновлён до `[K Hash + Equal]`; ключев
 По запросу координатора: спека (02-types.md:9700/10497) обещает mut-метод
 через `*ro T`(bare `*T`) обязан отлетать `E_POINTER_RO_MUT_METHOD`. Грепом
 (до и после правок этого окна) — 0 упоминаний кода нигде в компиляторе.
-Живая проба (`probes-p383/p_ro_mut_method_gap`):
+Живая проба (`docs/plans/repro/p383/p_ro_mut_method_gap`):
 
 ```nova
 type Counter { mut v int }

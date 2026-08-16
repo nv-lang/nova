@@ -9311,7 +9311,12 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
     NovaFailFrame _sf;\n\
     nova_fail_push(&_sf);\n\
     if (setjmp(_sf.jmp) == 0) {{\n\
+        /* 173.4 Ph.2(v): child's pocket around the arm — see fibers.h. */
+\
+        NovaErrorChain* _sv_pocket = _nova_last_error.frame.error_suppressed;\n\
+        _nova_last_error.frame.error_suppressed = _err->suppressed;\n\
         Nova_Decision* _d = _h->on_child_fail(_h->ctx, _idx, _e_any);\n\
+        _nova_last_error.frame.error_suppressed = _sv_pocket;\n\
         nova_fail_pop();\n\
         if (_d == NULL) return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
         switch (_d->tag) {{\n\
@@ -14396,7 +14401,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // — replaces N-simultaneous-failure collapse with genuine per-child
         // retention. Takes `_c` (not `_c->_nova_parent_scope`) since it
         // needs both the parent scope AND this child's own slot index.
-        self.line("nova_fiber_report_child_kinded(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
+        self.line("nova_fiber_report_child_diag(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id, _ff.error_suppressed);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
@@ -15587,7 +15592,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent += 1;
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
-        self.line("nova_fiber_report_child_kinded(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
+        self.line("nova_fiber_report_child_diag(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id, _ff.error_suppressed);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;

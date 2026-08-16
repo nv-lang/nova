@@ -202,104 +202,28 @@ step "invariant-discipline (норма об инвариантах — всео�
 # per-guard селфтестов ниже (:259/:463) и тот, в который страж после
 # переписи на awk укладывается за секунды на реальном дереве.
 guard --deadline 300 "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
-step "novac-arch-class-proofs (три доказательства у каждого класса — 274.1)"
-guard "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "$ROOT" || fail "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
-step "novac-arch-invariants (счётчик инвариантов у разделов карты)"
-guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
-step "novac-no-naked-panic (явный инвариант — через дверь ice(), П12)"
-guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+# НОВАЦ-СТРАЖИ ЗДЕСЬ БОЛЬШЕ НЕ ЖИВУТ (решение владельца 2026-08-16).
+# Шестнадцать проверок конвенций novac переехали в `scripts/gate-novac.sh`.
+# Причина не в секундах (замер: 7 шагов из 53, ~16с), а в СВЯЗАННОСТИ:
+# этот гейт защищает ПОСТАВЛЯЕМЫЙ компилятор, а novac в v0.1 не поставляется.
+# Худший случай был такой: `check-novac-legacy-workarounds` краснеет, когда
+# маркер `[LEGACY-#NNN]` указывает на ЗАКРЫТЫЙ баг — а баги закрывает
+# интегратор, то есть его собственный пуш блокировала чужая работа.
+# Обратно тоже: правка novac гоняла весь компиляторный гейт вместе с мега-CU.
+#
+# НОВЫЕ ПРОВЕРКИ novac ДОБАВЛЯТЬ ТУДА, НЕ СЮДА.
 step "driver-channel-parity (три драйвера кормят одни каналы — №669)"
 guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
+step "fiber-migration-ordering (двери миграции RELEASE/ACQ_REL — №443)"
+guard "$ROOT/scripts/guards/check-fiber-migration-ordering.sh" "$ROOT" || fail "ослаблена дверь миграции файбера — обычные поля контекста стали гонкой (№443)"
 step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
 guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SIGPIPE) пропал из nova_driver_init (№664)"
 step "retracted-param-form (снятая форма параметра в доке — D445, №611)"
 guard "$ROOT/scripts/guards/check-retracted-param-form.sh" "$ROOT" || fail "снятая постфиксная форма параметра в доке (D445 AMEND, №611)"
+step "process-exit-under-pool (процесс завершается при 16 воркерах, ×200 — №694)"
+guard --deadline 300 "$ROOT/scripts/guards/check-process-exit-under-pool.sh" "$ROOT" || fail "процесс не завершается при полном пуле воркеров (№694: потерянная побудка при остановке)"
 step "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
-guard "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
-step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
-guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.sh" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
-step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"
-guard "$ROOT/scripts/guards/check-novac-time-ledger.sh" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
-step "novac-deps (рёбра только из таблицы §3 архитектуры)"
-guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
-step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено»)"
-# Ревью трёх линз 2026-08-15 (274.3, класс К-A): все бинарь-зависимые стражи novac
-# начинались с «нет бинаря — ok, судить нечего», а гейт бинарь не строил; сутки
-# блокера std serde прошли для гейта зелёными. Теперь: если novac/src/main.nv
-# существует, гейт ОБЯЗАН собрать novac; провал сборки — красный (это регресс
-# оракула по подмножеству novac либо регресс novac — оба требуют глаз, не тишины).
-if [ -f "$ROOT/novac/src/main.nv" ]; then
-    NOVA_BIN="$ROOT/nova-cli/target/release/nova.exe"
-    [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
-    if [ -f "$NOVA_BIN" ]; then
-        mkdir -p "$ROOT/target" "$ROOT/novac/target"
-        bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1             || fail "novac не собирается текущим оракулом (274.3/F1) - см. target/novac-build.log; регресс оракула по подмножеству novac или регресс novac"
-    else
-        fail "оракул nova-cli/target/release/nova не собран — novac нечем строить (274.3/F1)"
-    fi
-fi
-step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"
-guard "$ROOT/scripts/guards/check-novac-file-size.sh" "$ROOT" || fail "файл novac длиннее 1000 строк (решение 12)"
-guard "$ROOT/scripts/guards/check-novac-atomics-door.sh" "$ROOT" || fail "атомики/TLS мимо одной двери (274 §8.1)"
-guard "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "$ROOT" || fail "строковый ключ таблицы вне names (архитектура §4а, К2)"
-guard "$ROOT/scripts/guards/check-novac-no-global-state.sh" "$ROOT" || fail "глобальное изменяемое состояние в novac (274 §4 п.5)"
-guard "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "$ROOT" || fail "Result в сигнатуре фронтенда novac (274 §4 п.1)"
-guard "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "$ROOT" || fail "форма грамматики без наблюдающих фикстур (К7)"
-guard "$ROOT/scripts/guards/check-novac-differential.sh" "$ROOT" || fail "расхождение novac с оракулом вне реестра (дифф-гейт)"
-guard "$ROOT/scripts/guards/check-novac-diag-schema.sh" "$ROOT" || fail "диагностика novac не по схеме §7"
-guard "$ROOT/scripts/guards/check-novac-no-cascade.sh" "$ROOT" || fail "каскад диагностик от одной причины (274 §6)"
-guard "$ROOT/scripts/guards/check-novac-no-panic.sh" "$ROOT" || fail "паника/крэш novac на фикстурах (решение 11: ноль паник)"
-# 274.3/F2: фикстуры — не фаззинг. Приёмка ЯДРА Э1 (решение 11) требует
-# «ноль паник на мутациях корпуса»; до сегодня мутационный фаззер гейтом не
-# звался вообще, а единственный его вызыватель (страж цены) выбрасывал код
-# возврата — механизм числился живым и не работал (класс №519).
-guard --deadline 300 "$ROOT/scripts/tools/novac-fuzz-mutations.sh" || fail "паника/зависание novac на мутациях корпуса (274 решение 11: ноль паник)"
-# 274.3/F12+F5: стражи, существовавшие ФАЙЛОМ, но не вызывавшиеся гейтом —
-# «страж вне гейта хуже отсутствия: даёт ложное чувство защиты» (мета-страж
-# check-novac-guard-registry.sh сверяет четыре множества и держит это правилом).
-guard "$ROOT/scripts/guards/check-novac-type-field-docs.sh" "$ROOT" || fail "тип/поле/функция novac без документации (конвенция П13, D104 rev-2)"
-guard "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "$ROOT" || fail "имя языка/std строкой вне novac/src/builtins (конвенция П5)"
-guard "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "$ROOT" || fail "novac объявил имя, которое экспортирует прелюдия: тень компилируется молча"
-guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "русский текст в .nv novac (конвенция П13: дока и сообщения по-английски)"
-guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx заведена без строки плана §10.3б (П17: одно понятие — одна таблица)"
-guard "$ROOT/scripts/guards/check-novac-row-fields.sh" "$ROOT" || fail "поле строки реестра заведено без записи в §10.3в: производное держат полем, а не функцией (П22)"
-guard "$ROOT/scripts/guards/check-novac-mangling-one-way.sh" "$ROOT" || fail "C-имя разбирается обратно: идентичность течёт через ABI-слой (П24)"
-guard "$ROOT/scripts/guards/check-novac-cli-surface.sh" "$ROOT" || fail "команда novac, которой нет у nova-cli (П26): выдуманная поверхность"
-guard "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "$ROOT" || fail "способность объявлена или установлена ниже двери (П15)"
-guard "$ROOT/scripts/guards/check-novac-one-door-export.sh" "$ROOT" || fail "одна операция экспортирована из двух модулей (274.1 §2в п.2)"
-guard "$ROOT/scripts/guards/check-novac-edge-payload.sh" "$ROOT" || fail "ребро таблицы §3 без объявленного «что течёт» (274.1 §2в п.3)"
-# П13 п.7 и весь свод nv-coding-style: линт существовал, но по novac/ НЕ гонялся
-# нигде — ни в гейте, ни в workflow (аудит стражей 2026-08-16, дыра №7).
-# Механизм был назван и не подключён; подключён этой волной, дерево чистое.
-step "novac-lint (свод nv-coding-style по novac/src)"
-guard --deadline 300 sh -c '"$1"/nova-cli/target/release/nova lint "$1"/novac/src 2>&1 | tail -1 | grep -q "0 finding"' _ "$ROOT" || fail "nova lint нашёл замечания в novac/src (свод nv-coding-style)"
-guard "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "$ROOT" || fail "дверь поиска novac аллоцирует: составной ключ собирается текстом на каждый поиск (П18)"
-guard "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "$ROOT" || fail "поле-ссылка novac без суффикса пространства (П19: _id / _row / _off+_cnt)"
-guard "$ROOT/scripts/guards/check-novac-ice-messages.sh" "$ROOT" || fail "сообщение ice() повторяется или без префикса модуля: место падения схлопнуто обёрткой (П20)"
-guard "$ROOT/scripts/guards/check-novac-no-default-branch.sh" "$ROOT" || fail "ветка «всё остальное» на закрытом множестве: новый вариант уедет молча (П21)"
-# П16 (владелец 2026-08-16): самотест обязан ДОКАЗАТЬ, что его страж ловит.
-# Проверка мутацией — каждый страж подменяется заглушкой exit 0, его самотест
-# обязан упасть. Держится последним в блоке: гоняет все самотесты novac разом.
-guard --deadline 600 "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "$ROOT" || fail "самотест стража novac проходит над заглушкой: он ничего не доказывает (П16)"
-guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён (П2/П4, класс №652)"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом (дверь sem/mangle, 274.3)"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух: не равен эмиссии оракула по probe (274.3/F6)"
-guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла novac вне бюджета (конвенция П14, план 274.2)"
-guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "реестр стражей novac разошёлся: план §10.3а ↔ файлы ↔ gate.sh ↔ самотесты (274.3/F12)"
-# Обратное направление: реестр выше идёт ОТ СТРАЖА и по построению не видит
-# правило без стража (мета-дыра аудита 2026-08-16, из-за неё П15 просидел без
-# механизма при зелёном реестре). Этот замыкает круг: идёт ОТ ПРАВИЛА.
-guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма: невидимо реестру стражей целиком"
-guard "$ROOT/scripts/guards/check-novac-surface.sh" "$ROOT" || fail "публичная поверхность novac разошлась с novac-surface.baseline (274 §10.4): рост без обоснования или протухшая база"
-guard "$ROOT/scripts/guards/check-novac-temp-edges.sh" "$ROOT" || fail "временное ребро §3 без срока или истекло по этапу (274.1 §2в)"
-# П27: у каждого модуля novac донор назван указателем в заголовке (или честное none).
-# Вторая половина правила — коммит-страж check-novac-commit-donor.sh — живёт в хуке
-# commit-msg через check-commit-hygiene, в гейт не входит (судит сообщение, не дерево).
-guard "$ROOT/scripts/guards/check-novac-module-donor.sh" "$ROOT" || fail "модуль novac без донора-указателя в заголовке (П27)"
-# Коммит-страж судит СООБЩЕНИЕ, гейту его судить нечем — но механизм обязан быть
-# жив, поэтому гейт гоняет его самотест (он строит сообщения сам). Вызов стража
-# на пустом сообщении даст честное «судить нечего», а не проверку.
-guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
+guard --deadline 120 "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 

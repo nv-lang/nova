@@ -8557,8 +8557,11 @@ auto-derive `str.from(@)` pattern).
 >
 > **Scope — deliberately narrow** (avoids overreach into adjacent, already-
 > handled or mono-time-only concerns):
-> - generic type-parameters in scope (`fn f[T](x T)`) — bound-satisfiability
->   is a mono-time concern, not decidable structurally pre-monomorphization;
+> - generic type-parameters in scope (`fn f[T](x T)`) — an UNBOUNDED `T`
+>   has no contract to check pre-monomorphization (D72: structural at use);
+>   a BOUNDED `[T Display]` is decided by the checker from the bound itself —
+>   see D464 (amended 2026-08-16: the earlier wording «bound-satisfiability
+>   is a mono-time concern» over-generalised the unbounded case);
 > - generic (parametrized) declared types — `Vec[T]`, builtin
 >   `Option`/`Result`, a user `Box[T]` — routed via
 >   `try_generic_mono_interp_dispatch` / the Option-Result `DeclaredBody`
@@ -13894,7 +13897,7 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
   `Newtype` — `consume`-передача (параметр, `return X`) — это **настоящий
   байтовый C-копирование** (A8.13: "param pass = value copy (C-native)").
   Подтверждено эмпирически чтением сгенерированного C
-  (`scratch465/probe1-3.nv`): `nova_fn_helper(NovaValue_Secret s)` получает
+  (`docs/plans/repro/p465/probe1-3.nv.txt`): `nova_fn_helper(NovaValue_Secret s)` получает
   НЕЗАВИСИМУЮ копию; `return s;` копирует значение в return-слот ДО того,
   как исходный стек-слот освобождается. Зануление ИСТОЧНИКА после того, как
   копия сделана, безопасно — новый владелец не видит эффекта.

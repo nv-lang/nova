@@ -246,6 +246,12 @@ typedef struct {
      * Для default-scope (нет супервизора) флаг не используется: там ВСЕ
      * retained не-CANCEL падения escalate-класса по определению. */
     nova_bool     escalated;
+    /* 173.4 Ф.2(в): ЦЕПОЧКА ПОДАВЛЕННЫХ ОШИБОК РЕБЁНКА (D158). Без неё
+     * `suppressed()` в руке супервизора возвращал пусто даже когда cleanup
+     * ребёнка заведомо бросал (измерено 2026-08-15): карман наполняется при
+     * ЛОВЛЕ, а рука — не ловля. Пишется ПОД ЗАМКОМ и СТРОГО ДО
+     * release-стора `published` — тогда едет по существующему happens-before. */
+    NovaErrorChain* suppressed;
 } NovaChildError;
 
 /* ─── Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
@@ -2145,8 +2151,22 @@ static inline int32_t nova_cancel_mask_active(void) {
 
 /* Plan 110.2.2.a: deadline accessors. _nova_cancel_deadline_ns не атомарен
  * (per-fiber single-writer: enter→leave; suspend сайт читает только когда
- * mask>0 значит этот же fiber выполняет тело consume{}). int64_t reads на
- * 64-битных платформах atomic by alignment. */
+ * mask>0 значит этот же fiber выполняет тело consume{}).
+ *
+ * ПОЧЕМУ ЭТО БЕЗОПАСНО ПРИ МИГРАЦИИ (реестр №443, разбор 2026-08-16). Прежняя
+ * формулировка «int64 на 64-битных atomic by alignment» — НЕ аргумент:
+ * выравнивание даёт неразорванность, но не порядок между потоками. Настоящий
+ * аргумент — переход файбера с воркера на воркер идёт через две двери:
+ *   уход:   nova_fiber_state_store(IDLE)        — RELEASE  (sync.h)
+ *   приход: nova_fiber_state_cas(IDLE→RUNNING)  — ACQ_REL  (sync.h)
+ * Всё, что файбер писал до ухода, happens-before всего, что он читает после
+ * прихода — для ЭТОГО поля и для остальных десяти обычных полей base
+ * (_nova_saved_fail_top, _nova_worker_slot, _nova_fiber_scope, ...) одинаково.
+ * Атомарность нужна только полям, которые трогает ЧУЖОЙ поток без перехода:
+ * _nova_cancel_mask_count (декремент после миграции — но и он читается чужим
+ * при cancel-check), _nova_fiber_state, _nova_park_state.
+ * Инвариант держит страж check-fiber-migration-ordering: ослабь любую дверь —
+ * покраснеет он, а не рассыплются одиннадцать полей молча. */
 static inline void nova_cancel_deadline_set(mco_coro* co, int64_t ns) {
     if (!co) return;
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
@@ -2682,12 +2702,13 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
  * ("read через nova_aptr_load(acquire) в main thread после
  * pending_remote == 0 — корректный happens-before", NovaFiberQueue comment
  * above); child_error[] rides the same established guarantee. */
-static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
-                                                   const char* msg,
-                                                   NovaThrowKind kind,
-                                                   void* reason_ptr,
-                                                   void* payload,
-                                                   NovaTypeId tid) {
+static inline void nova_fiber_report_child_diag(NovaSpawnCtxBase* base,
+                                                const char* msg,
+                                                NovaThrowKind kind,
+                                                void* reason_ptr,
+                                                void* payload,
+                                                NovaTypeId tid,
+                                                NovaErrorChain* suppressed) {
     if (!base || !base->_nova_parent_scope || !msg) return;
     NovaFiberQueue* parent = base->_nova_parent_scope;
     int slot = base->_nova_parent_slot;
@@ -2729,6 +2750,7 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
         parent->child_error[slot].reason  = reason_ptr;
         parent->child_error[slot].payload = payload;
         parent->child_error[slot].tid     = tid;
+        parent->child_error[slot].suppressed = suppressed;  /* 173.4 Ф.2(в) */
         nova_abool_store(&parent->child_error[slot].published, true);
         __atomic_store_n(&parent->child_lock, 0, __ATOMIC_RELEASE);
         return;
@@ -2748,9 +2770,22 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
         parent->child_error[slot].reason  = reason_ptr;
         parent->child_error[slot].payload = payload;
         parent->child_error[slot].tid     = tid;
+        parent->child_error[slot].suppressed = suppressed;  /* 173.4 Ф.2(в) */
         nova_abool_store(&parent->child_error[slot].published, true);
     }
     __atomic_store_n(&parent->child_lock, 0, __ATOMIC_RELEASE);
+}
+
+/* 173.4 Ф.2(в): СТАРАЯ ФОРМА СОХРАНЕНА ШЕСТИАРГУМЕНТНОЙ: сигнатуры
+ * рантайма не меняем — на них ссылается вкомпилированный шаблон оболочки
+ * novac, который живёт в другом дереве и обновляется своей волной. */
+static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
+                                                   const char* msg,
+                                                   NovaThrowKind kind,
+                                                   void* reason_ptr,
+                                                   void* payload,
+                                                   NovaTypeId tid) {
+    nova_fiber_report_child_diag(base, msg, kind, reason_ptr, payload, tid, NULL);
 }
 
 /* Plan 173.0 Ф.3 (A3.2/A3.3 — R1-guard): called by the worker loop right

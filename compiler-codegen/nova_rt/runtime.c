@@ -1372,8 +1372,37 @@ static void _worker_main(void* arg) {
 
         /* (4) Still nothing — block в libuv (own loop) до cross-worker wake.
          * UV_RUN_ONCE: wait for at least one event (timer fire, async send),
-         * then return — loop checks wake_pending at next iteration start. */
+         * then return — loop checks wake_pending at next iteration start.
+         *
+         * ПОТЕРЯННАЯ ПОБУДКА НА ОСТАНОВКЕ (№694, 2026-08-16). `w->stop`
+         * читается ТОЛЬКО в заголовке `while`, а между этой проверкой и
+         * блокировкой здесь стоит шаг (0) с `uv_run(NOWAIT)`. Гонка:
+         *
+         *   воркер: проверил !stop (ещё false) ─────┐
+         *   main:   store(stop,true); async_send    │
+         *   воркер: (0) uv_run(NOWAIT) СЪЕДАЕТ этот async
+         *   воркер: работы нет → (4) блокируется НАВСЕГДА
+         *
+         * Побудка потрачена на шаге (0), новой не будет: остановка шлёт
+         * async ровно один раз на воркера. `nova_runtime_shutdown` встаёт
+         * на `uv_thread_join` этого воркера, и процесс не завершается —
+         * при 16 воркерах ловилось 6 раз на 500 запусков ОБЫЧНОЙ программы
+         * (`println` без единого spawn), при 8 и меньше — ни разу на 400.
+         *
+         * ПОЧЕМУ ПЕРЕПРОВЕРКА ЗАКРЫВАЕТ ГОНКУ ПОЛНОСТЬЮ, а не сужает окно:
+         * `nova_abool_store` — RELEASE, `nova_abool_load` — ACQUIRE
+         * (`sync.h:192,196`). Если async съеден на шаге (0), то посылка
+         * произошла-до съедания, а запись `stop` — до посылки; acquire-
+         * загрузка здесь ОБЯЗАНА увидеть true. Если же async ещё не съеден,
+         * он висит готовым, и `uv_run(UV_RUN_ONCE)` вернётся немедленно.
+         * Третьего случая нет.
+         *
+         * Только `stop` и нуждается в перепроводке: остальные побудки
+         * (`wake_pending`, глобальная очередь) шлют async ПОСЛЕ того, как
+         * шаг (0) этой итерации уже отработал, поэтому их событие доживает
+         * до блокировки. */
         if (!co) {
+            if (nova_abool_load(&w->stop)) break;
             uv_run(&w->loop, UV_RUN_ONCE);
             continue;
         }

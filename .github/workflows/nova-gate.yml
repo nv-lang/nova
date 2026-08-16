@@ -143,6 +143,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # fetch-depth 0: gate-novac.sh's time-ledger guard walks `git log -- novac`;
+          # a depth-1 clone attributes every file to HEAD and the guard goes red on
+          # a commit that never touched novac (2026-08-16, first CI run of the split).
+          fetch-depth: 0
 
       - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
         uses: dtolnay/rust-toolchain@stable
@@ -165,6 +169,13 @@ jobs:
 
       - name: Build nova-cli (release — the oracle that compiles novac)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
+
+      # Conventions first: they are cheap and they fail with a legible line.
+      # They used to live in scripts/gate.sh and gated every compiler change;
+      # split out on the owner's decision 2026-08-16 so the two failure
+      # domains stop blocking each other.
+      - name: novac conventions gate (scripts/gate-novac.sh)
+        run: bash scripts/gate-novac.sh "$(pwd)"
 
       - name: Build novac (the self-hosted compiler itself)
         run: |
