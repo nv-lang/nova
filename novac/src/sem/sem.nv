@@ -200,9 +200,21 @@ export type FnDef value {
     name str /// name as written in the declaration
     ret_id int /// return type id; -1 = none declared (legal for main only)
     param_off int /// first parameter of this callable in FnTable.params
-    param_cnt int /// how many parameters, INCLUDING the receiver when this is a method
-    is_method bool /// the first parameter IS the receiver (plan 273 form)
+    param_cnt int /// how many parameters, INCLUDING the receiver when there is one
     next_row int /// next row carrying the SAME name, or -1; see FnTable
+}
+
+/// One parameter of a callable. The RECEIVER MARK LIVES HERE, on the
+/// parameter, not on the function (owner's check 2026-08-16: "does
+/// `rows[r].is_method` fit the ideology of plan 273?" — it did not). The
+/// compiler form of 273 is `fn job(mut @Type, a int)`: the `@` marks the
+/// FIRST PARAMETER, so receiver-ness is a property of a parameter. A flag on
+/// the function would be a privileged fact about one element stored on the
+/// container — the very class П22 names. With the mark here, "is a method"
+/// is DERIVED: the first parameter carries it.
+export type ParamDef value {
+    type_id int /// the parameter's type id
+    is_recv bool /// this parameter is the receiver (only ever the first one)
 }
 
 /// THE callable registry: file functions and the method signatures READ
@@ -229,13 +241,13 @@ export type FnDef value {
 /// chain, not a flag on a row.
 export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
-    params []int /// parameter type ids of every callable, addressed by FnDef.param_off/param_cnt
+    params []ParamDef /// parameters of every callable, addressed by FnDef.param_off/param_cnt
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
 }
 
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
-    { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables) }
+    { rows: []FnDef.new(), params: []ParamDef.new(), heads: NameTable.new(NamespaceId.NsCallables) }
 
 /// The receiver's type id of a row, or -1 when the callable is a free
 /// function. This is the ONE place that knows the receiver is the first
@@ -244,9 +256,10 @@ export fn FnTable.new() -> FnTable =>
 #realtime nogc
 export fn FnTable @recv_of(row int) -> int {
     ro fd = @rows[row]
-    if !fd.is_method { return -1 }
     if fd.param_cnt < 1 { return -1 }
-    @params[fd.param_off]
+    ro first = @params[fd.param_off]
+    if !first.is_recv { return -1 }
+    first.type_id
 }
 
 /// Row of this exact (receiver, name), or -1 — the FIRST one when a name is
@@ -271,16 +284,17 @@ export fn FnTable @row_of(recv_id int, name str) -> int {
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT
 /// dropped: it becomes its own row in the same chain, so the collision stays
 /// describable. Silent choosing between overloads is not allowed anywhere.
-/// `param_ids` carries the receiver FIRST when `is_method` — the plan 273
-/// order, so the caller cannot put it anywhere else.
-export fn FnTable mut @add(name str, ret_id int, is_method bool, param_ids []int) -> () {
+/// `params` carries the receiver FIRST when there is one, marked on the
+/// parameter itself (`ParamDef.is_recv`) — the plan 273 order and the plan
+/// 273 place, so the caller can put it neither elsewhere nor on the row.
+export fn FnTable mut @add(name str, ret_id int, params []ParamDef) -> () {
     ro head = @heads.find(name)
     ro off = @params.len()
-    for t in param_ids {
-        @params.push(t)
+    for pd in params {
+        @params.push(pd)
     }
     @heads.put(name, @rows.len())
-    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), is_method, next_row: head })
+    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: params.len(), next_row: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
@@ -296,7 +310,7 @@ export fn FnTable mut @add(name str, ret_id int, is_method bool, param_ids []int
 export fn FnTable @has_name(name str) -> bool {
     mut r = @heads.find(name)
     while r >= 0 {
-        if @rows[r].is_method { return true }
+        if @recv_of(r) >= 0 { return true }
         r = @rows[r].next_row
     }
     false
@@ -414,8 +428,8 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     // Parameters are KEPT, receiver first: plan 273 order. They were merely
     // validated and dropped before (owner's check 2026-08-16), which left the
     // receiver as the only parameter novac remembered.
-    mut param_ids = []int.new()
-    param_ids.push(recv_t)
+    mut params = []ParamDef.new()
+    params.push(ParamDef { type_id: recv_t, is_recv: true })
     for c in kids {
         if c.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(c)
@@ -423,9 +437,9 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         if pk[1].kind_of() != NodeKind.LeafNode { return }
         ro pt = defs.type_id_opt(leaf_text(pk[1]))
         if pt < 0 { return }
-        param_ids.push(pt)
+        params.push(ParamDef { type_id: pt, is_recv: false })
     }
-    fns.add(mname, ret_t, true, param_ids)
+    fns.add(mname, ret_t, params)
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -555,7 +569,7 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            mut param_ids = []int.new()
+            mut params = []ParamDef.new()
             for pn in fk {
                 if pn.kind_of() != NodeKind.Param { continue }
                 ro pk = branch_children(pn)
@@ -563,9 +577,9 @@ export fn collect_types(file Node) -> Ctx {
                 if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
                     pt = defs.type_id_opt(leaf_text(pk[1]))
                 }
-                param_ids.push(pt)
+                params.push(ParamDef { type_id: pt, is_recv: false })
             }
-            fns.add(fname, ret, false, param_ids)
+            fns.add(fname, ret, params)
             defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
         }
     }
