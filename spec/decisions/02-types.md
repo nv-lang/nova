@@ -13897,7 +13897,7 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
   `Newtype` — `consume`-передача (параметр, `return X`) — это **настоящий
   байтовый C-копирование** (A8.13: "param pass = value copy (C-native)").
   Подтверждено эмпирически чтением сгенерированного C
-  (`scratch465/probe1-3.nv`): `nova_fn_helper(NovaValue_Secret s)` получает
+  (`docs/plans/repro/p465/probe1-3.nv.txt`): `nova_fn_helper(NovaValue_Secret s)` получает
   НЕЗАВИСИМУЮ копию; `return s;` копирует значение в return-слот ДО того,
   как исходный стек-слот освобождается. Зануление ИСТОЧНИКА после того, как
   копия сделана, безопасно — новый владелец не видит эффекта.

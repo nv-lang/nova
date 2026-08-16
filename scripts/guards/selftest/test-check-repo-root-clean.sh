@@ -39,6 +39,21 @@ setup
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "тот же файл в docs/plans/wip/ не считается"; else bad "ложный отказ на wip: $out"; fi
 
+# №695: КАТАЛОГ-черновик в корне ловится (до 2026-08-16 каталоги были невидимы).
+mkdir -p "$TMP/scratch457"; : > "$TMP/scratch457/repro.nv"; git -C "$TMP" add scratch457/repro.nv 2>/dev/null
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'scratch457/'; then
+    ok "ловит каталог-черновик в корне и называет его"
+else
+    bad "пропустил scratch457/ в корне (rc=$rc): $out"
+fi
+git -C "$TMP" rm -q --cached scratch457/repro.nv 2>/dev/null; rm -rf "$TMP/scratch457"
+
+# Та же улика в docs/plans/repro/ — законна.
+mkdir -p "$TMP/docs/plans/repro/p457"; : > "$TMP/docs/plans/repro/p457/repro.nv.txt"; git -C "$TMP" add docs/plans/repro/p457/repro.nv.txt 2>/dev/null
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "та же улика в docs/plans/repro/ не считается"; else bad "ложный отказ на docs/plans/repro/: $out"; fi
+
 # 4. Неотслеживаемый файл в корне не считается: локальный черновик владельца —
 #    его дело, и страж в него не лезет.
 setup

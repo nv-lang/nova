@@ -12,9 +12,17 @@
 # остался. Владелец увидел их на первой странице публичного репозитория —
 # то есть первое, что видит пришедший на язык, это наши рабочие записки.
 #
-# ЧТО ПРОВЕРЯЕТСЯ: среди ОТСЛЕЖИВАЕМЫХ файлов корня нет ничего, кроме
-# перечисленного в белом списке ниже. Неотслеживаемое не трогаем: локальный
-# черновик владельца — его дело, и страж в него не лезет.
+# ЧТО ПРОВЕРЯЕТСЯ: среди ОТСЛЕЖИВАЕМЫХ файлов И КАТАЛОГОВ корня нет ничего,
+# кроме перечисленного в двух белых списках ниже. Неотслеживаемое не трогаем:
+# локальный черновик владельца — его дело, и страж в него не лезет.
+#
+# КАТАЛОГИ — с 2026-08-16 (реестр №695). До этого страж брал `ls-files | grep
+# -v '/'` — то есть видел только файлы, а каталоги были ему невидимы вовсе.
+# Через эту дыру в корень прошли и ПРОЖИЛИ там неделями пять черновиков окон:
+# scratch259/, scratch457/, scratch465/, probes-p383/, .p259/ — при том что
+# страж на каждом прогоне печатал «в корне только предусмотренное». Улики,
+# на которые ссылаются реестр/спека/план, живут в docs/plans/repro/ (README
+# там); черновики окна в репозиторий не попадают вовсе.
 #
 # КУДА ВМЕСТО КОРНЯ: чекпоинты окон — `docs/plans/wip/`. Там они уже лежат
 # десятками, и там их читает следующий, а не случайный гость.
@@ -51,7 +59,40 @@ bench.toml
 nova.toml
 '
 
+# Каталоги корня. Закрытый список — каждая строка отвечает на вопрос «что это
+# делает на первой странице репозитория». Расширять только осознанно.
+ALLOWED_DIRS='
+.githooks
+.github
+.sourcecraft
+.vscode
+bench
+compiler-codegen
+docker
+docs
+editors
+examples
+img
+nova-cli
+nova-lsp
+nova_tests
+nova_tests.old
+novac
+scratch-opencode
+scripts
+spec
+spec_tests
+std
+THIRD_PARTY
+'
+# nova_tests.old — отдельная открытая запись №542 (886 файлов, «что его собирает»),
+# в списке как факт, не как одобрение. scratch-opencode — штатное рабочее место
+# opencode (docs/dev/opencode-runbook.md), в индексе только его .gitignore.
+
 FOUND=$(git -C "$ROOT" ls-files --full-name 2>/dev/null | grep -v '/')
+# core.quotepath=off: иначе путь с не-ASCII внутри приходит в кавычках и
+# первый сегмент читается как `"spec_tests` — ложный красный на самом себе.
+FOUND_DIRS=$(git -C "$ROOT" -c core.quotepath=off ls-files --full-name 2>/dev/null | sed -n 's|^\([^/][^/]*\)/.*|\1|p' | sort -u)
 if [ -z "$FOUND" ]; then
     echo "check-repo-root-clean ok: git не отдал списка файлов ($ROOT) — проверять нечего"
     exit 0
@@ -61,6 +102,12 @@ BAD=""
 for f in $FOUND; do
     case "$(printf '%s' "$ALLOWED" | grep -Fx "$f")" in
         "") BAD="$BAD $f" ;;
+    esac
+done
+BAD_DIRS=""
+for d in $FOUND_DIRS; do
+    case "$(printf '%s' "$ALLOWED_DIRS" | grep -Fx "$d")" in
+        "") BAD_DIRS="$BAD_DIRS $d" ;;
     esac
 done
 
@@ -75,6 +122,18 @@ if [ -n "$BAD" ]; then
     echo "check-repo-root-clean: FAIL" >&2
     exit 1
 fi
+if [ -n "$BAD_DIRS" ]; then
+    echo "check-repo-root-clean: в корне лежит непредусмотренный КАТАЛОГ:" >&2
+    for d in $BAD_DIRS; do echo "    $d/" >&2; done
+    echo "" >&2
+    echo "    Черновики окна (scratch*/, probes-*/, .pNNN/) в репозиторий не" >&2
+    echo "    попадают; улика, на которую ссылается реестр/спека/план, живёт в" >&2
+    echo "    docs/plans/repro/ с суффиксом .nv.txt (README там, реестр №695)." >&2
+    echo "    Если каталог ДЕЙСТВИТЕЛЬНО должен встречать гостя — впиши его в" >&2
+    echo "    ALLOWED_DIRS этого стража и скажи в коммите, почему." >&2
+    echo "check-repo-root-clean: FAIL" >&2
+    exit 1
+fi
 
-echo "check-repo-root-clean ok: в корне только предусмотренное"
+echo "check-repo-root-clean ok: в корне только предусмотренное (файлов $(printf '%s\n' $FOUND | wc -l), каталогов $(printf '%s\n' $FOUND_DIRS | wc -l))"
 exit 0
