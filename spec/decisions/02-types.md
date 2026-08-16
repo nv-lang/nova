@@ -3617,6 +3617,8 @@ receiver — его access-mutability не может быть строже, ч�
   указателей модификатор всегда относится к pointee — postfix; prefix перед
   `*` = `E_POINTER_PREFIX_MODIFIER`, [D216 §1](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)).
   **`-> consume T` — префиксная форма, симметричная `-> ro T`/`-> mut T`**
+
+> ⚠️ **ПЕРЕКРЫТО [D445](02-types.md#d445) §616** (пометка 2026-08-17 по аудиту самосогласованности). Форма `-> consume T` в позиции ВОЗВРАТА снята ЦЕЛИКОМ — «не переопределена, а удалена»: `E_RETURN_CONSUME_PREFIX_RETRACTED` для префиксной и `E_RETURN_CONSUME_POSTFIX_RETRACTED` для постфиксной (№301). Пять носителей в `std/src/runtime/sync.nv` переписаны на голый `-> MutexGuard` тем же слиянием. Класс держится стражем `check-retracted-param-form` (храповик осадка по зонам). Текст выше сохранён как история.
   ([D445](#d445),
   №301/221.1, окно p-lang, 2026-08-04); старая постфиксная `-> T consume`
   (Plan 103.9) РЕТРАКТИРОВАНА.

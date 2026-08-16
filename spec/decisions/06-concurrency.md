@@ -6139,6 +6139,8 @@ V2 (D174) применяет **Plan 100 consume-type mechanism (D131–D166)** �
 | Метод | Сигнатура | Примечание |
 |---|---|---|
 | `lock()` | `Mutex @lock() -> MutexGuard consume` | Parks; returns guard (D174 amend 2026-08-01: ro receiver) |
+
+> ⚠️ **ПЕРЕКРЫТО [D445](02-types.md#d445) §616** (пометка 2026-08-17 по аудиту самосогласованности). Форма `-> consume T` в позиции ВОЗВРАТА снята ЦЕЛИКОМ — «не переопределена, а удалена»: `E_RETURN_CONSUME_PREFIX_RETRACTED` для префиксной и `E_RETURN_CONSUME_POSTFIX_RETRACTED` для постфиксной (№301). Пять носителей в `std/src/runtime/sync.nv` переписаны на голый `-> MutexGuard` тем же слиянием. Класс держится стражем `check-retracted-param-form` (храповик осадка по зонам). Текст выше сохранён как история.
 | `MutexGuard.unlock()` | `MutexGuard @unlock(consume self)` | Consumes guard; wakes next |
 | `unlock()` (bare) | `Mutex @unlock()` | Deprecated V1; `W_BARE_UNLOCK_DEPRECATED` (D174 amend: ro receiver) |
 | `with_lock(fn)` | `Mutex @with_lock[R](body fn() -> R) -> R` | Thin wrapper; backward compat (D174 amend: ro receiver) |

@@ -6993,7 +6993,7 @@ fn process() Fail[Err] -> () {
 fn process() Fail[Err] -> () {
     consume tx = begin()
     defer { tx.commit() }
-    do_work()?                                   // throws Err1
+    do_work()!!                                  // throws Err1 (D85: в Fail-fn — `!!`, не `?`)
     // defer fires during unwinding:
     //   tx.commit() fails CommitErr → composite
     //   { primary: Err1, suppressed: [CommitErr] }

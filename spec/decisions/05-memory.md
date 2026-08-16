@@ -486,6 +486,8 @@ instance. Без keyword'а → `E_CONSUME_KEYWORD_MISSING`.
 - Constructor consume-type'а (D133): `Token.new(...)`, `File.open(...)`,
   any `Type.new(...)` где Type помечен `type Type consume { … }`
 - Function returning consume-type: `fn open_file() -> File consume`
+
+> ⚠️ **ПЕРЕКРЫТО [D445](02-types.md#d445) §616** (пометка 2026-08-17 по аудиту самосогласованности). Форма `-> consume T` в позиции ВОЗВРАТА снята ЦЕЛИКОМ — «не переопределена, а удалена»: `E_RETURN_CONSUME_PREFIX_RETRACTED` для префиксной и `E_RETURN_CONSUME_POSTFIX_RETRACTED` для постфиксной (№301). Пять носителей в `std/src/runtime/sync.nv` переписаны на голый `-> MutexGuard` тем же слиянием. Класс держится стражем `check-retracted-param-form` (храповик осадка по зонам). Текст выше сохранён как история.
 - Generic propagation per D156: `Option[T]` / `Result[T,E]` где T —
   consume-type → результат consume-обязательный
 - Return-type consume-метода: TBD edge case
