@@ -102,8 +102,20 @@ export fn to_json(d Diagnostic, id int, file str) -> str {
 /// message makes the section 7 line unparsable exactly when the reader most
 /// needs it. Found 2026-08-16 while routing assert texts through this door:
 /// an assert message is arbitrary text and a contract quotes the condition.
-export fn json_escape(s str) -> str =>
-    s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+export fn json_escape(s str) -> str {
+    consume buf = StringBuilder.new(cap: s.byte_len())
+    for c in s.chars() {
+        match c {
+            '"'  => buf.append("\\\"")
+            '\\' => buf.append("\\\\")
+            '\n' => buf.append("\\n")
+            '\r' => buf.append("\\r")
+            '\t' => buf.append("\\t")
+            _    => buf.append(c)
+        }
+    }
+    buf
+}
 
 
 /// The hand-built section 7 line for an ice; see the note above on why it
