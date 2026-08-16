@@ -202,12 +202,16 @@ step "invariant-discipline (норма об инвариантах — всео�
 # per-guard селфтестов ниже (:259/:463) и тот, в который страж после
 # переписи на awk укладывается за секунды на реальном дереве.
 guard --deadline 300 "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
-step "novac-arch-class-proofs (три доказательства у каждого класса — 274.1)"
-guard "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "$ROOT" || fail "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
-step "novac-arch-invariants (счётчик инвариантов у разделов карты)"
-guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
-step "novac-no-naked-panic (явный инвариант — через дверь ice(), П12)"
-guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+# НОВАЦ-СТРАЖИ ЗДЕСЬ БОЛЬШЕ НЕ ЖИВУТ (решение владельца 2026-08-16).
+# Шестнадцать проверок конвенций novac переехали в `scripts/gate-novac.sh`.
+# Причина не в секундах (замер: 7 шагов из 53, ~16с), а в СВЯЗАННОСТИ:
+# этот гейт защищает ПОСТАВЛЯЕМЫЙ компилятор, а novac в v0.1 не поставляется.
+# Худший случай был такой: `check-novac-legacy-workarounds` краснеет, когда
+# маркер `[LEGACY-#NNN]` указывает на ЗАКРЫТЫЙ баг — а баги закрывает
+# интегратор, то есть его собственный пуш блокировала чужая работа.
+# Обратно тоже: правка novac гоняла весь компиляторный гейт вместе с мега-CU.
+#
+# НОВЫЕ ПРОВЕРКИ novac ДОБАВЛЯТЬ ТУДА, НЕ СЮДА.
 step "driver-channel-parity (три драйвера кормят одни каналы — №669)"
 guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
 step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
@@ -216,23 +220,6 @@ step "retracted-param-form (снятая форма параметра в док
 guard "$ROOT/scripts/guards/check-retracted-param-form.sh" "$ROOT" || fail "снятая постфиксная форма параметра в доке (D445 AMEND, №611)"
 step "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
 guard "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
-step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
-guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.sh" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
-step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"
-guard "$ROOT/scripts/guards/check-novac-time-ledger.sh" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
-step "novac-deps (рёбра только из таблицы §3 архитектуры)"
-guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
-step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"
-guard "$ROOT/scripts/guards/check-novac-file-size.sh" "$ROOT" || fail "файл novac длиннее 1000 строк (решение 12)"
-guard "$ROOT/scripts/guards/check-novac-atomics-door.sh" "$ROOT" || fail "атомики/TLS мимо одной двери (274 §8.1)"
-guard "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "$ROOT" || fail "строковый ключ таблицы вне names (архитектура §4а, К2)"
-guard "$ROOT/scripts/guards/check-novac-no-global-state.sh" "$ROOT" || fail "глобальное изменяемое состояние в novac (274 §4 п.5)"
-guard "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "$ROOT" || fail "Result в сигнатуре фронтенда novac (274 §4 п.1)"
-guard "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "$ROOT" || fail "форма грамматики без наблюдающих фикстур (К7)"
-guard "$ROOT/scripts/guards/check-novac-differential.sh" "$ROOT" || fail "расхождение novac с оракулом вне реестра (дифф-гейт)"
-guard "$ROOT/scripts/guards/check-novac-diag-schema.sh" "$ROOT" || fail "диагностика novac не по схеме §7"
-guard "$ROOT/scripts/guards/check-novac-no-cascade.sh" "$ROOT" || fail "каскад диагностик от одной причины (274 §6)"
-guard "$ROOT/scripts/guards/check-novac-no-panic.sh" "$ROOT" || fail "паника/крэш novac на фикстурах (решение 11: ноль паник)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
