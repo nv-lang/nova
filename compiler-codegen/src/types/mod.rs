@@ -11398,6 +11398,13 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(scrutinee, gs, scope, errors);
                 // Plan 124.2 (D221): each arm's pattern checked vs scrutinee type.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
+                // №703 (D65) [INV-PROPERTY: match по сумме обязан быть исчерпывающим;
+                // проверка — neg/d65_match_non_exhaustive_neg.nv
+                // краснеет без покрытия; standalone/d65_match_exhaustive_pos.nv
+                // держит четыре законные формы от ложняка]. До этой волны
+                // непокрытый вариант проходил check и build и давал ТИХО
+                // неверный результат (код 0).
+                self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
                 // generic-match-scope-gap fix (2026-07-21, see
                 // `resolve_generic_bound_method_return` doc): when the general
                 // inference above misses (a scrutinee that's a call to a method
@@ -13577,6 +13584,112 @@ impl<'a> TypeCheckCtx<'a> {
     /// `find_variant_compat` fallback chain is UNCHANGED for those cases
     /// (this pass only ADDS a higher-priority source of truth, never removes
     /// the fallback).
+    /// №703 (D65-амендмент 2026-08-16, решение владельца): `match` по сумме
+    /// обязан покрывать ВСЕ варианты — непокрытый даёт ошибку компиляции с их
+    /// перечислением (прецедент rustc E0004).
+    ///
+    /// ПОЧЕМУ ОШИБКА, А НЕ ПРЕДУПРЕЖДЕНИЕ: направление необратимо. «Ошибка →
+    /// предупреждение» ослабить позже можно, ни одна программа не сломается;
+    /// «предупреждение → ошибка» ломает чужой код и потому не делается никогда
+    /// — язык остался бы с тихой порчей навсегда (тот же довод, что в D464).
+    ///
+    /// ПРИНЦИП РЕАЛИЗАЦИИ — КОНСЕРВАТИВНОСТЬ: любая форма, которую разбор не
+    /// понимает ТОЧНО, снимает проверку со всего `match` целиком. Ложный
+    /// красный здесь дороже пропуска: под проверку попадает 1094 существующих
+    /// `match`-блока (замер 2026-08-16), и один неверный отказ останавливает
+    /// весь проект. Пропущенный случай ловится следующей волной; ложный —
+    /// ломает сборку у всех сразу.
+    ///
+    /// Что НЕ считается покрытием:
+    ///   * арм с `if`-guard — он может не сработать (rustc считает так же);
+    ///   * `Literal`/`Array`/`Tuple`/`Record`-паттерн на сумме — форма не из
+    ///     этого разбора, снимаем проверку.
+    fn check_match_exhaustive(
+        &self,
+        scrut_ty: Option<&TypeRef>,
+        arms: &[crate::ast::MatchArm],
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::ast::Pattern;
+        // 1. Тип скрутини — именованная сумма? Generic-инстанс (`Option[T]`)
+        //    и builtin'ы пока вне разбора: у них свои пути в кодогене.
+        let sum_name = match scrut_ty {
+            Some(TypeRef::Named { path, generics, .. }) if generics.is_empty() => {
+                match path.last() {
+                    Some(n) => n.clone(),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        let all: Vec<String> = match self.types.get(&sum_name) {
+            Some(td) => match &td.kind {
+                TypeDeclKind::Sum(variants) => variants.iter().map(|v| v.name.clone()).collect(),
+                _ => return,
+            },
+            None => return,
+        };
+        if all.is_empty() {
+            return;
+        }
+
+        // 2. Покрытие. Guard'ованный арм не покрывает НИЧЕГО.
+        let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for arm in arms {
+            if arm.guard.is_some() {
+                continue;
+            }
+            match &arm.pattern {
+                // catch-all: `_` и голое имя-биндинг
+                Pattern::Wildcard(_) => return,
+                Pattern::Ident { .. } => return,
+                Pattern::Variant { path, .. } => {
+                    match path.last() {
+                        Some(v) => {
+                            covered.insert(v.clone());
+                        }
+                        None => return,
+                    }
+                }
+                // форма вне разбора — снимаем проверку целиком (см. доктрину выше)
+                _ => return,
+            }
+        }
+
+        // САМОПРОВЕРКА РАЗРЕШЕНИЯ (№705): `self.types` ключуется ГОЛЫМ именем и
+        // коллидирует между модулями last-write-wins — та же болезнь, что у таблиц
+        // кодогена (№696), только на стороне чекера. Замер 2026-08-16: на
+        // `std/src/io/error.nv` разбор поднял ЧУЖОЙ `ErrorKind` (http/net) и
+        // потребовал варианты `Connect`/`Dns`/`Tls`, которых в io-шном нет.
+        // Признак промаха локален и надёжен: арм назвал вариант, которого в
+        // поднятой сумме НЕТ — значит поднята не та сумма. Снимаем проверку.
+        if covered.iter().any(|c| !all.iter().any(|v| v == c)) {
+            return;
+        }
+        let missing: Vec<&String> = all.iter().filter(|v| !covered.contains(*v)).collect();
+        if missing.is_empty() {
+            return;
+        }
+        let list = missing
+            .iter()
+            .map(|v| format!("`{}`", v))
+            .collect::<Vec<_>>()
+            .join(", ");
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_MATCH_NON_EXHAUSTIVE] `match` по сумме `{}` не покрывает {}: {}. \
+                 Непокрытый вариант дал бы ТИХО неверный результат во время исполнения \
+                 (D65-амендмент 2026-08-16, реестр №703). Добавь недостающие ветки — \
+                 либо `_ => …`, если остаток действительно безразличен.",
+                sum_name,
+                if missing.len() == 1 { "вариант" } else { "варианты" },
+                list
+            ),
+            span,
+        ));
+    }
+
     fn resolve_pattern_variant_types(&self, pattern: &Pattern, scrutinee_ty: Option<&TypeRef>) {
         match pattern {
             Pattern::Variant { path, kind, span } => {
