@@ -264,6 +264,10 @@ guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "рус
 guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx заведена без строки плана §10.3б (П17: одно понятие — одна таблица)"
 guard "$ROOT/scripts/guards/check-novac-row-fields.sh" "$ROOT" || fail "поле строки реестра заведено без записи в §10.3в: производное держат полем, а не функцией (П22)"
 guard "$ROOT/scripts/guards/check-novac-mangling-one-way.sh" "$ROOT" || fail "C-имя разбирается обратно: идентичность течёт через ABI-слой (П24)"
+guard "$ROOT/scripts/guards/check-novac-cli-surface.sh" "$ROOT" || fail "команда novac, которой нет у nova-cli (П26): выдуманная поверхность"
+guard "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "$ROOT" || fail "способность объявлена или установлена ниже двери (П15)"
+guard "$ROOT/scripts/guards/check-novac-one-door-export.sh" "$ROOT" || fail "одна операция экспортирована из двух модулей (274.1 §2в п.2)"
+guard "$ROOT/scripts/guards/check-novac-edge-payload.sh" "$ROOT" || fail "ребро таблицы §3 без объявленного «что течёт» (274.1 §2в п.3)"
 # П13 п.7 и весь свод nv-coding-style: линт существовал, но по novac/ НЕ гонялся
 # нигде — ни в гейте, ни в workflow (аудит стражей 2026-08-16, дыра №7).
 # Механизм был назван и не подключён; подключён этой волной, дерево чистое.
