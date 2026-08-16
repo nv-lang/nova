@@ -84,12 +84,49 @@ wall0=$(date +%s%N)
 # the OLDEST date per path (files listed under several commits keep the
 # first-seen = most recent in log order, so process reversed).
 git -C "$ROOT" log --diff-filter=A --format='%as' --name-only -- "$CORPUS" 2>/dev/null     | awk 'NF==0{next} /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/{d=$0; next} {print $0"	"d}'     | tac | awk -F'	' '!seen[$1]++' > "$T/added_dates" 2>/dev/null || : > "$T/added_dates"
+# --- ПАЧКА: один процесс novac на весь корпус -----------------------------
+# Замер 2026-08-17: чистый старт novac 149 мс против ~50 мс работы на файле,
+# то есть три четверти цены пофайлового прохода — это запуск. Шестьдесят один
+# файл = девять секунд стартов. Пачкой платится один.
+#
+# Вердикт по файлу берётся из диагностик: каждая несёт своё поле `file`
+# (схема §7), поэтому файл с диагностикой = отвергнут, без неё = принят.
+# Если пачка УМЕРЛА (код вне 0/1/2 или слово panic в выводе), вердикты по ней
+# недостоверны — откатываемся на пофайловый проход и ничего не выдумываем.
+NOVAC_BATCH=1
+: > "$T/novac_rejected"
+s=$(date +%s%N)
+# OTNOSITELNYE puti: MSYS converts an absolute /d/... into D:\... at the
+# exec boundary, and novac prints in its diagnostic the path it RECEIVED, so
+# the strings stop matching our list (caught 2026-08-17: the batch counted 56
+# refusals and the loop found none). A relative path crosses the boundary
+# unchanged, so the verdict matches the same `rel` string the loop computes.
+sed "s|^$ROOT/||" "$T/list" > "$T/list.rel"
+eval "cd \"$ROOT\" && timeout 300 \"$NOVAC\" check $(sed 's/^/"/;s/$/"/' "$T/list.rel" | tr '\n' ' ')" \
+    > "$T/batch.out" 2> "$T/batch.err" </dev/null
+brc=$?
+t_novac=$(( ( $(date +%s%N) - s ) / 1000000 ))
+if [ "$brc" -gt 2 ] || grep -qi "panic" "$T/batch.out" "$T/batch.err" 2>/dev/null; then
+    NOVAC_BATCH=0
+    t_novac=0
+else
+    cat "$T/batch.out" "$T/batch.err" 2>/dev/null \
+        | grep -o '"file":"[^"]*"' | sed 's/.*:"//;s/"$//' | sort -u > "$T/novac_rejected"
+    echo "DEBUG batch rc=$brc rejected=$(wc -l < "$T/novac_rejected") out=$(wc -c < "$T/batch.out")" >&2
+fi
+
 while IFS= read -r f; do
     rel=${f#"$ROOT"/}
-    s=$(date +%s%N)
-    timeout 10 "$NOVAC" check "$f" >/dev/null 2>"$T/err" </dev/null
-    rn=$?
-    t_novac=$(( t_novac + ( $(date +%s%N) - s ) / 1000000 ))
+    if [ "$NOVAC_BATCH" = "1" ]; then
+        # вердикт из пачки: путь в списке отвергнутых => отверг
+        if grep -Fxq "$rel" "$T/novac_rejected" 2>/dev/null; then rn=1; else rn=0; fi
+        : > "$T/err"
+    else
+        s=$(date +%s%N)
+        timeout 10 "$NOVAC" check "$f" >/dev/null 2>"$T/err" </dev/null
+        rn=$?
+        t_novac=$(( t_novac + ( $(date +%s%N) - s ) / 1000000 ))
+    fi
     s=$(date +%s%N)
     "$ORACLE" check "$f" >/dev/null 2>&1 </dev/null
     ro=$?
@@ -141,12 +178,38 @@ if [ -f "$T/acc" ]; then
 fi
 
 # Расстояние до самосборки: собственный исходник через novac check.
-self_total=0; self_rej=0
+#
+# ОДНИМ процессом на все файлы (владелец 2026-08-17: «пусть делают пачкой»).
+# Замер: чистый старт novac 149 мс против 50 мс работы на файле, то есть
+# три четверти цены — это запуск. Двадцать один файл по вызову = три секунды
+# стартов; пачкой — один.
+#
+# Вердикт по файлу берётся из ДИАГНОСТИК: каждая несёт своё поле `file`
+# (схема §7), поэтому «файл с хотя бы одной диагностикой» = отвергнут, а
+# остальные приняты. Если пачка УМЕРЛА (паника — код вне 0/1/2), вердикты
+# по ней недостоверны, и мы честно откатываемся на пофайловый проход, а не
+# гадаем.
+self_files=""
+self_total=0
 for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
     [ -f "$f" ] || continue
     self_total=$((self_total+1))
-    timeout 10 "$NOVAC" check "$f" >/dev/null 2>&1 </dev/null || self_rej=$((self_rej+1))
+    self_files="$self_files \"$f\""
 done
+self_rej=0
+if [ "$self_total" -gt 0 ]; then
+    eval "timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+    src=$?
+    if [ "$src" -le 2 ]; then
+        self_rej=$(cat "$T/self.out" "$T/self.err" 2>/dev/null \
+            | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')
+    else
+        for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
+            [ -f "$f" ] || continue
+            timeout 10 "$NOVAC" check "$f" >/dev/null 2>&1 </dev/null || self_rej=$((self_rej+1))
+        done
+    fi
+fi
 wall=$(( ( $(date +%s%N) - wall0 ) / 1000000 ))
 
 echo "novac-diff-corpus: файлов $N — совпали-приняли $acc · совпали-отвергли $rej · отставание $subset · вне-точки $outpoint · заблокировано-оракулом $blocked · DANGER $danger · PANIC $panic · allow $allowed"
