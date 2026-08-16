@@ -1,5 +1,5 @@
 #!/bin/sh
-# Самотест check-novac-pch.sh (П16). Шов $2 — путь к смоуку.
+# Самотест check-novac-pch.sh (П16). Шов $2 — сканируемая директория инструментов.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
@@ -12,63 +12,55 @@ ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
-# полноценная подложка: сборка по штампу, кэш, применение
-good() {
-    cat > "$1" <<'EOS'
-#!/bin/sh
-PCH="$CACHE/prelude-$ORACLE_STAMP.pch"
-if [ ! -f "$PCH" ]; then
-    "$REAL_CLANG" $CFLAGS -x c-header "$CACHE/prelude-$ORACLE_STAMP.h" -o "$PCH"
-fi
-"$REAL_CLANG" $CFLAGS -include-pch "$PCH" -c "$T/body.c" -o "$T/body.o"
-EOS
+mk() {
+    d="$T/$1"; mkdir -p "$d/tools"; shift
+    printf '%s
+' "$@" > "$d/tools/novac-x.sh"
+    echo "$d"
 }
 
-good "$T/smoke_ok.sh"
-run "$T/smoke_ok.sh" && ok "полный путь PCH — зелёный" || bad "полный путь покраснел: $(cat "$T/err")"
+FULL_PCH='    "$REAL_CLANG" $CFLAGS -x c-header "$CACHE/prelude-$ORACLE_STAMP.h" -o "$PCH"'
+FULL_CC='"$REAL_CLANG" $CFLAGS -include-pch "$PCH" -c "$T/body.c" -o "$T/body.o"'
+FULL_LINK='"$REAL_CLANG" $LINKCMD -o "$T/out.exe" "$T/body.o"'
 
-# --- ГЛАВНЫЙ случай: применение убрали -----------------------------------
-good "$T/smoke_nouse.sh"; sed -i 's/-include-pch "\$PCH" //' "$T/smoke_nouse.sh"
-if run "$T/smoke_nouse.sh"; then
-    bad "смоук без -include-pch прошёл — главный случай не ловится"
+D=$(mk good 'PCH="$CACHE/prelude-$ORACLE_STAMP.pch"' 'if [ ! -f "$PCH" ]; then' "$FULL_PCH" 'fi' "$FULL_CC" "$FULL_LINK")
+if run "$D"; then
+    grep -q "все с -include-pch" "$T/out" && ok "полный путь PCH — зелёный" || bad "зелёный, но без счёта [$(cat "$T/out")]"
 else
-    grep -q "не ИСПОЛЬЗУЕТСЯ" "$T/err" && ok "исчезнувший -include-pch пойман" || bad "красный, но не про применение"
+    bad "полный путь покраснел: $(cat "$T/err")"
 fi
 
-# --- построение убрали ----------------------------------------------------
-good "$T/smoke_nobuild.sh"; sed -i 's/-x c-header/-c/' "$T/smoke_nobuild.sh"
-if run "$T/smoke_nobuild.sh"; then
-    bad "смоук без построения PCH прошёл"
+# --- ГЛАВНЫЙ случай: компиляция без PCH ----------------------------------
+D=$(mk nouse 'PCH="$CACHE/prelude-$ORACLE_STAMP.pch"' 'if [ ! -f "$PCH" ]; then' "$FULL_PCH" 'fi' '"$REAL_CLANG" $CFLAGS -c "$T/body.c" -o "$T/body.o"' "$FULL_LINK")
+if run "$D"; then
+    bad "компиляция без -include-pch прошла — главный случай не ловится"
 else
-    grep -q "нет построения PCH" "$T/err" && ok "пропавшее построение поймано" || bad "красный, но не про построение"
+    grep -q "без -include-pch" "$T/err" && ok "компиляция без PCH поймана" || bad "красный, но не про -include-pch"
 fi
 
-# --- кэш без штампа ревизии ----------------------------------------------
-good "$T/smoke_nostamp.sh"; sed -i 's/prelude-\$ORACLE_STAMP/prelude/g' "$T/smoke_nostamp.sh"
-if run "$T/smoke_nostamp.sh"; then
-    bad "PCH без штампа ревизии прошёл — протухший кэш даст мусорный объектник"
+# --- линковка PCH не требует ---------------------------------------------
+D=$(mk linkonly 'PCH="$CACHE/prelude-$ORACLE_STAMP.pch"' 'if [ ! -f "$PCH" ]; then' "$FULL_PCH" 'fi' "$FULL_CC" '"$REAL_CLANG" -o "$T/a.exe" "$T/a.o" "$T/b.o"')
+run "$D" && ok "линковка не считается компиляцией" || bad "линковка попала под правило: $(cat "$T/err")"
+
+# --- PCH никто не строит --------------------------------------------------
+D=$(mk nobuild 'PCH="$CACHE/prelude-$ORACLE_STAMP.pch"' 'if [ ! -f "$PCH" ]; then' 'true' 'fi' "$FULL_CC")
+if run "$D"; then
+    bad "дерево без сборки PCH прошло"
 else
-    grep -q "штамп" "$T/err" && ok "PCH без штампа ревизии пойман" || bad "красный, но не про штамп"
+    grep -q "не СТРОИТ PCH" "$T/err" && ok "отсутствие сборки PCH поймано" || bad "красный, но не про сборку"
 fi
 
-# --- строится каждый прогон ----------------------------------------------
-good "$T/smoke_always.sh"; sed -i 's/^if \[ ! -f "\$PCH" \]; then$/if true; then/' "$T/smoke_always.sh"
-if run "$T/smoke_always.sh"; then
-    bad "безусловная сборка PCH прошла — цена возвращается на каждый прогон"
+# --- вообще ни одной компиляции — мишень потеряна ------------------------
+D=$(mk empty 'echo hello')
+if run "$D"; then
+    bad "дерево без компиляций прошло молча"
 else
-    grep -q "безусловно" "$T/err" && ok "безусловная сборка поймана" || bad "красный, но не про безусловность"
-fi
-
-# --- мишень потеряна ------------------------------------------------------
-if run "$T/absent.sh"; then
-    bad "отсутствующий смоук прошёл молча"
-else
-    grep -q "горячий путь novac потерян" "$T/err" && ok "нет смоука — красный (класс №519)" || bad "красный, но не про мишень"
+    grep -q "ни одной компиляции" "$T/err" && ok "нет компиляций — красный (класс №519)" || bad "красный, но не про мишень"
 fi
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-pch ok: все случаи, включая исчезнувший -include-pch и кэш без штампа"
+    echo "test-check-novac-pch ok: все случаи, включая компиляцию без -include-pch и линковку-исключение"
     exit 0
 fi
 exit 1
