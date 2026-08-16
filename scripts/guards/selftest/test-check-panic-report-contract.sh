@@ -17,6 +17,10 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (ждал '$3', полу
 FIX="$TMP/root"
 mkdir -p "$FIX/spec_tests/conformance/neg"
 echo "module x" > "$FIX/spec_tests/conformance/neg/f5_propagation_trace_full.nv"
+# Фикстура проверки 4: страж берёт ожидаемую строку ИЗ ЕЁ EXPECT-шапки,
+# поэтому здесь можно задать любой пин.
+printf '// EXPECT_RUNTIME_PANIC probe.nv:24 (throw site)\nmodule y\n' \
+    > "$FIX/spec_tests/conformance/neg/f2b_cleanup_does_not_steal_site.nv"
 
 # $1 — человеческий stderr, $2 — json stderr. Пишет поддельный nova в $TMP/nova.
 make_nova() {
@@ -50,7 +54,13 @@ EOS
 }
 
 GOOD_HUMAN='nova: unhandled Fail: leaf-error
-  at app.nv:29 (throw site)
+  at probe.nv:24 (throw site)
+  propagation trace (`?`-chain, oldest first):
+    via app.nv:19 (?)
+'
+# то же, но точка броска уехала на строку defer’а — ровно дефект Ф.2(б)
+STOLEN_HUMAN='nova: unhandled Fail: leaf-error
+  at probe.nv:23 (throw site)
   propagation trace (`?`-chain, oldest first):
     via app.nv:19 (?)
 '
@@ -93,6 +103,14 @@ check "JSON не разбирается парсером — красный" "$?
 make_nova "$GOOD_JSON" "$GOOD_JSON"
 sh "$G" "$FIX" "$TMP/nova" >/dev/null 2>&1
 check "умолчание печатает JSON вместо человеческого — красный" "$?" "1"
+
+make_nova "$GOOD_HUMAN" "$GOOD_JSON"
+sh "$G" "$FIX" "$TMP/nova" >/dev/null 2>&1
+check "точка броска на первопричине — зелёный" "$?" "0"
+
+make_nova "$STOLEN_HUMAN" "$GOOD_JSON"
+sh "$G" "$FIX" "$TMP/nova" >/dev/null 2>&1
+check "cleanup украл точку броска (строка defer’а) — красный (Ф.2б)" "$?" "1"
 
 echo "== настоящее дерево =="
 sh "$G" "$ROOT" >/dev/null 2>&1
