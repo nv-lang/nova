@@ -84,7 +84,33 @@ if [ -n "$EXTRA" ]; then
     exit 1
 fi
 
+# --- флаги (П26 п.5, ужесточение 2026-08-16: владелец про `--std <dir>`) ---
+# Флаги, которые novac разбирает в main.nv (сравнения a[i] == "--x"), обязаны
+# быть флагами ТОЙ ЖЕ команды у nova-cli (из `nova <cmd> --help`), либо стоять
+# в allow. `--std` был novac-only формой: nova-cli находит std сам
+# (NOVA_STD_PATH / <repo>/std/src), и novac теперь делает так же.
+tr -d '' < "$MAIN" | grep -oE 'a\[[0-9]+\][[:space:]]*[!=]=[[:space:]]*"--[a-z][a-z-]*"'     | grep -oE '"--[a-z][a-z-]*"' | tr -d '"' | sort -u > "$T/nflags"
+if [ -s "$T/nflags" ]; then
+    if [ -n "$3" ] && [ -f "$3" ]; then
+        : > "$T/cflags"   # шов самотеста: список флагов задаётся тем же файлом с префиксом
+        grep -E '^--' "$3" >> "$T/cflags" 2>/dev/null || true
+    else
+        : > "$T/cflags"
+        for c in $(cat "$T/novac"); do
+            "$CLI" "$c" --help 2>&1 | grep -oE '^\s+(-[a-z], )?--[a-z][a-z-]*' | grep -oE -- '--[a-z][a-z-]*' >> "$T/cflags"
+        done
+    fi
+    sort -u "$T/cflags" -o "$T/cflags"
+    XF=$(comm -23 "$T/nflags" "$T/cflags" | comm -23 - "$T/allow")
+    if [ -n "$XF" ]; then
+        echo "$NAME: FAIL — флаг novac, которого нет у nova-cli для той же команды (П26):" >&2
+        for f in $XF; do echo "  $f — nova-cli такого флага не знает" >&2; done
+        echo "  Форма nova-cli первична: как он находит вход (std, пути) — так и novac. Либо строка allow с причиной." >&2
+        exit 1
+    fi
+fi
+NF=$(wc -l < "$T/nflags" | tr -d '[:space:]')
 NN=$(wc -l < "$T/novac" | tr -d '[:space:]')
 NA=$(wc -l < "$T/allow" | tr -d '[:space:]')
-echo "$NAME ok: команд novac: $NN, команд nova-cli: $NCLI, осознанных расхождений: $NA"
+echo "$NAME ok: команд novac: $NN, команд nova-cli: $NCLI, флагов novac: $NF (все у nova-cli), осознанных расхождений: $NA"
 exit 0

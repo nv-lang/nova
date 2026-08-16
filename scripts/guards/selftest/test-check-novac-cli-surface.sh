@@ -54,6 +54,21 @@ R=$(mkroot g4 check emit)
 printf '%s\n' "run # другое расхождение" > "$R/novac/cli-divergences.allow"
 run "$R" "$R/novac/src/main.nv" "$R/cli.txt" && bad "чужая запись в allow покрыла emit" || ok "allow покрывает только названную команду"
 
+# --- 4а. флаг novac, которого нет у nova-cli, — красный (П26 п.5) ---------
+R=$(mkroot g4a check)
+printf '    if a[2] == "--std" { work() }
+' >> "$R/novac/src/main.nv"
+printf '%s
+' "check" "build" "--verbose" "--quiet" > "$R/cli.txt"
+if run "$R" "$R/novac/src/main.nv" "$R/cli.txt"; then bad "флаг --std, которого нет у nova-cli, прошёл"; else grep -q -- "--std" "$T/err" && ok "novac-only флаг пойман" || bad "красный, но не про флаг"; fi
+# флаг, который у nova-cli есть, — зелёный
+R=$(mkroot g4b check)
+printf '    if a[2] == "--verbose" { work() }
+' >> "$R/novac/src/main.nv"
+printf '%s
+' "check" "build" "--verbose" "--quiet" > "$R/cli.txt"
+run "$R" "$R/novac/src/main.nv" "$R/cli.txt" && ok "флаг nova-cli проходит" || bad "законный флаг покраснел: $(cat "$T/err")"
+
 # --- 5. пустой список команд nova-cli — КРАСНЫЙ, не зелёный -------------
 R=$(mkroot g5 check)
 : > "$R/cli-empty.txt"

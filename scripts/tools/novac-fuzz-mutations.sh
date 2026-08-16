@@ -52,7 +52,7 @@ ls "$T/cases" | sort > "$T/list"
 # ---- 2. one batch check; a panic/hang/crash of the process is red ---------
 judge() {   # $1 = list file; prints nothing on green, case ids on red
     # shellcheck disable=SC2046
-    ( cd "$T/cases" && timeout 120 "$NOVAC" check --std "$ROOT/std/src/runtime/string" $(cat "$1") ) > "$T/out" 2> "$T/err"
+    ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 120 "$NOVAC" check $(cat "$1") ) > "$T/out" 2> "$T/err"
     rc=$?
     if novac_is_panic_rc "$rc" || grep -qi "panic" "$T/err"; then
         return 1

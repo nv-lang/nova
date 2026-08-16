@@ -77,7 +77,7 @@ if [ ! -f "$PCH" ]; then
 fi
 
 # ---- 3. novac emit -> compile against PCH -> link with the oracle's argv --
-"$NOVAC" emit --std "$ROOT/std/src/runtime/string" "$FILE" > "$T/novac.c" 2>"$T/emit.err" || fail "novac emit упал: $(cat "$T/emit.err")"
+"$NOVAC" emit "$FILE" > "$T/novac.c" 2>"$T/emit.err" || fail "novac emit упал: $(cat "$T/emit.err")"
 # the emission's first include IS the PCH prelude; drop that one line
 sed '0,/^#include "nova_rt\/nova_rt.h"$/{//d}' "$T/novac.c" > "$T/body.c"
 eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -include-pch \"$PCH\" -c \"$T/body.c\" -o \"$T/body.o\"" > "$T/cc.out" 2>&1 \

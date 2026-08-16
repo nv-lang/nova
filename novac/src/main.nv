@@ -26,7 +26,7 @@ module novac
 import ./pipeline.{compile, compile_to_c}
 import ./diag.{to_json}
 import std.fs.{read, read_dir, real_fs}
-import std.os.{args, exit_process, real_os}
+import std.os.{args, env, exit_process, real_os}
 
 /// How one file ended. The process exit code is a VIEW of this outcome
 /// (see @code), never the value passed around: §7 fixes the legal set at
@@ -144,23 +144,22 @@ fn main() {
     with Fs = real_fs(), Os = real_os() {
         ro a = args()
         if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
-            println("usage: novac check [--std <dir>] <file.nv>... | novac emit [--std <dir>] <file.nv>")
+            println("usage: novac check <file.nv>... | novac emit <file.nv>")
             exit_process(Verdict.DoorError.code())
             return
         }
-        // `--std <dir>` is the std interface novac READS (method signatures)
-        // instead of knowing it by heart (convention П5). Without the flag
-        // the method table is empty and every method call is an honest
-        // subset refusal.
-        mut argi = 2
-        mut std_dir = ""
-        if a.len() > 3 && a[2] == "--std" {
-            std_dir = a[3]
-            argi = 4
-        }
-        ro decls = read_decls(std_dir)
+        // std is FOUND the way nova-cli finds it, never passed by a flag
+        // (П26: the command surface is a subset of nova-cli's, flags
+        // included; owner 2026-08-16 — `--std <dir>` was a novac-only form).
+        // The oracle's rule (`manifest::resolve_std_path`): NOVA_STD_PATH if
+        // set, else <repo>/std/src. Reading the declarations from it is the
+        // std interface novac READS instead of knowing by heart (П5); an
+        // unreadable dir gives an empty table and honest subset refusals.
+        ro std_dir = env("NOVA_STD_PATH") ?? "std/src"
+        ro decls = read_decls("${std_dir}/runtime/string")
+        ro argi = 2
         if argi >= a.len() {
-            println("usage: novac check [--std <dir>] <file.nv>... | novac emit [--std <dir>] <file.nv>")
+            println("usage: novac check <file.nv>... | novac emit <file.nv>")
             exit_process(Verdict.DoorError.code())
             return
         }

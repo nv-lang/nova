@@ -16,7 +16,7 @@ module novac.pipeline
 
 // The std signatures these tests need, handed in the way the driver hands
 // them: as TEXT through the one door. Inline and tiny on purpose — the
-// tests stay hermetic (no filesystem, no path, no --std) and still exercise
+// tests stay hermetic (no filesystem, no path, no std dir) and still exercise
 // the real declaration-reading path instead of a special case.
 //
 // History (2026-08-15): this used to hand an EMPTY list, which was right
