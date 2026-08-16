@@ -4,15 +4,15 @@
 > Метод: 8 тематических чтецов по spec/decisions/*.md (415 D-блоков, ~67k строк),
 > каждая находка — два дословных цитирования с file:line; затем три независимых
 > скептика на находку (линзы: амендменты / два-механизма / минимальная программа).
-> Прогон: workflow wf_d42e662d-740, 63 агента отработали, 7.26M токенов.
-> **Прогон ОБОРВАН лимитом сессии** (сброс 17:20 МСК): 1 тема из 8 не прочитана,
-> верификация 5 тем не завершена, синтез не выполнен. Ниже — что добыто, с
+> Прогон: workflow wf_d42e662d-740, два захода (63 + 132 агента), ~14.9M токенов.
+> **Прогон ДВАЖДЫ оборван лимитом сессии** (второй сброс 21:30 МСК): все 8 тем
+> прочитаны, верификация ~60% кандидатов завершена, синтез не выполнен. Ниже — что добыто, с
 > честными пометками статуса. Возобновление: Workflow resumeFromRunId=wf_d42e662d-740
 > (завершённые агенты вернутся из кэша, доработают только упавшие).
 
 ## Вердикт (предварительный)
 
-Спека НЕ самосогласована в буквальном чтении: 93 кандидатов-расхождений на 7 тем, из них к моменту обрыва 3 подтверждены как настоящие противоречия (>=2 скептиков из 3), 4 сняты как «два механизма», 15 — как «старый текст, перекрытый амендментом». Главный класс — НЕ ошибки замысла, а **рост амендментами без сводных блоков**: старый D-блок остаётся нормативным по букве после того, как поздний блок его перекрыл (ровно класс, который сегодня закрыл D464 для бáундов).
+Спека НЕ самосогласована в буквальном чтении: 98 кандидатов-расхождений на 7 тем, из них к моменту обрыва 3 подтверждены как настоящие противоречия (>=2 скептиков из 3), 14 сняты как «два механизма», 31 — как «старый текст, перекрытый амендментом». Главный класс — НЕ ошибки замысла, а **рост амендментами без сводных блоков**: старый D-блок остаётся нормативным по букве после того, как поздний блок его перекрыл (ровно класс, который сегодня закрыл D464 для бáундов).
 
 ## 1. ПОДТВЕРЖДЁННЫЕ противоречия — чинить (3)
 
@@ -28,8 +28,8 @@
   > fn[T From[K], K] T @construct_from(v K) -> T => T.from(v)   // parametric protocol
 * **Почему конфликт:** D72 §«Порядок объявления параметров» (02-types.md:4182-4184) requires a name used in a bound to be declared earlier in the same `[...]` list and shows `[T From[K], K]` as an error. D145 §«Bound syntax (через D72)» presents the same ordering `fn[T From[K], K]` as a valid bound example. Both are normative; a program using this order compiles under one text and not the other.
 
-  * скептик: Both blocks talk about the same mechanism — declaration-site ordering of typevars inside one generic list `[...]` when a bound references a sibling typevar — so the mechanism lens does not split them. D72 §«Порядок объявления параметров» (02-types.md:4182-4198) states a general rule for generic-параметры: name in a bound must be declared earlier «в том же списке `[...]`» or in type-context (top-level type / receiver type), and gives `fn func[T From[K], K](v K) -> T // ОШИБКА` (line 4191). D145 §«Bound syntax (через D72)» (02-types.md:7414-7419) lists `fn[T From[K], K] T @construct_from(v K) ->
-  * скептик: Both blocks are normative and neither amends the other. D72 §«Порядок объявления параметров» (spec/decisions/02-types.md:4182-4198, blame 2026-05-07) states a general rule for generic-param lists — a name used in a bound must already be declared earlier in the same `[...]` list or come from the enclosing type-context — and marks `fn func[T From[K], K](v K) -> T` as «ОШИБКА: K используется до объявления», adding «Forward-references запрещены». D72's own `fn[T]`-prefix subsection (02-types.md:4163-4168) and D145 §«Bound syntax (через D72)» (02-types.md:7413-7418) both say bound syntax in the `fn
+  * скептик: Both texts govern the same mechanism and assign opposite validity to the same code. D72's ordering rule (02-types.md:4182-4184) is position-agnostic («Имя в bound'е должно быть уже объявлено — либо ранее в том же списке [...], либо в type-контексте») and marks `fn func[T From[K], K]` as ОШИБКА (4191). D145's example `fn[T From[K], K] T @construct_from(v K)` (7418) sits in a section literally titled «Bound syntax (через D72)», and D72's own fn[T]-prefix subsection (4168) says «Bound syntax из D72 применим в этой позиции» — so the two-mechanisms escape is foreclosed by both texts explicitly unif
+  * скептик: The parameter list `[T From[K], K]` is byte-identical in both places. D72's normative ordering rule (02-types.md:4182-4184) requires a name used in a bound to be declared earlier in the same `[...]` list or in a type-context, and line 4191 explicitly marks `fn func[T From[K], K]` as ОШИБКА. D145's normative section «Bound syntax (через D72)» (02-types.md:7412-7419) presents `fn[T From[K], K] T @construct_from(v K) -> T` as a valid parametric-protocol example; the receiver is bare T, so no carrier or enclosing type declares K — the type-context escape does not apply. D145 explicitly imports D72
 
 ### D463 example returns `Decision.Restart`; D416 §4 retracted the Restart family (unknown variant)
 
@@ -40,8 +40,8 @@
   > Решением владельца 2026-07-10 семейство УДАЛЕНО из словаря целиком (мотив — §1): гейт-диагностика ретрактирована вместе с вариантами, ссылка на `Decision.Restart` — обычный unknown-variant
 * **Почему конфликт:** D463 (accepted 2026-08-16, spec-first) shows the Supervisor handler idiom with `Decision.Restart`. D416 §1 (06-concurrency.md:7749 `type Decision enum Escalate | Stop`) and §4 say the vocabulary is exactly Escalate|Stop and `Decision.Restart` is a compile error. A user copying D463's canonical example gets an unknown-variant error.
 
-  * скептик: Mechanism lens finds no boundary. D463's example (08-runtime.md:9127-9134) is `with Supervisor = effect Supervisor { on_child_fail(idx, err) -> Decision { ... return if err is Panic { Decision.Stop } else { Decision.Restart } } }` — the very same `Supervisor` effect, handler position and `Decision` return type that D416 §1 declares (06-concurrency.md:7749 `type Decision enum Escalate | Stop`), and the only `Decision` in spec or std (std/src/prelude/effects.nv:277 `export type Decision enum Escalate | Stop`). D416 §4 (06-concurrency.md:7820-7826) says a *reference* to `Decision.Restart` is an o
-  * скептик: Cannot refute. Program lens: the D463 example itself is the minimal program. `with Supervisor = effect Supervisor { on_child_fail(idx, err) -> Decision { return if err is Panic { Decision.Stop } else { Decision.Restart } } } { supervised { ... } }`. Under D416 (06-concurrency.md:7749 `type Decision enum Escalate | Stop`; §1 amendment 2026-07-10 lines 7762-7772 "Словарь `Escalate | Stop` — ПОЛНЫЙ"; §4 lines 7819-7827 "ссылка на `Decision.Restart` — обычный unknown-variant"; confirmed by std/src/prelude/effects.nv:277 `export type Decision enum Escalate | Stop` and 08-runtime.md:215 "Словарь Esc
+  * скептик: The amendment sweep confirms the clash and finds nothing that resolves it. D416 §1 amendment (06-concurrency.md:7762) and §4 (06-concurrency.md:7819-7827, owner decision 2026-07-10) remove the Restart family entirely: 'type Decision enum Escalate | Stop' (06-concurrency.md:7749) is declared COMPLETE, 'ссылка на `Decision.Restart` — обычный unknown-variant', and even E_SUPERVISOR_RESTART_GATED plus the restart_gated_neg fixture were retracted with it. No later text reinstates Restart anywhere in spec/decisions (grep over all files), and 08-runtime.md ends at line 9213 so no amendment follows D4
+  * скептик: Cannot refute. There is exactly one Decision type (std/src/prelude/effects.nv:277 `export type Decision enum Escalate | Stop`), and D463's example (08-runtime.md:9133 `return if err is Panic { Decision.Stop } else { Decision.Restart }`) is a handler of the exact D416 Supervisor effect — same enum, same use-site — so no two-mechanisms boundary exists. The runtime bridge's "any non-Stop tag maps to Escalate (defensive)" (06-concurrency.md:7825-7826) is not a rescuing second mechanism: the same sentence declares `Decision.Restart` an ordinary unknown-variant, i.e. a compile error that never reach
 
 ### D463: a child panic reaches `on_child_fail` as type `Panic` (`err is Panic`); D416: panic arrives as a `str` message
 
@@ -52,11 +52,11 @@
   > `err` — ошибка как `any`: typed-throw payload (сужается `err is T`), string-throw / panic — `str`-сообщение.
 * **Почему конфликт:** D416 §1 fixes the runtime→handler payload for a panicked child as a plain `str` (so `err is Panic` is false / meaningless — `Panic` exists only as a variant of `ScopeOutcome`, 03-syntax.md:9658, and D65 says a sum variant is not a type for `is`). D463 builds its 'no new API needed' argument on `err is Panic` distinguishing panics. Which narrowing works in a Supervisor handler is user-visible.
 
-  * скептик: Amendment lens finds nothing that supersedes either side. D416's only amendments (06-concurrency.md:7762 Restart-family retraction 2026-07-10; 06-concurrency.md:8759 §2 serialization guarantee revoked 2026-07-31) do not touch the `err` payload; §1 (06-concurrency.md:7756-7757) still says "string-throw / panic — `str`-сообщение", mirrored verbatim in std/src/prelude/effects.nv:286 and implemented in codegen (compiler-codegen/src/codegen/emit_c.rs:9294-9302: "string throws / panics box the message as `str`"). D463 (08-runtime.md:9106, dated 2026-08-16, status accepted, "Реализация ждёт №680") do
-  * скептик: Both texts describe the SAME value in the SAME position — the `err any` parameter of `Supervisor.on_child_fail` as delivered by the runtime bridge — so the mechanism lens does not split them. D416 §1 (06-concurrency.md:7756-7757) fixes the payload contract: "typed-throw payload (сужается `err is T`), string-throw / panic — `str`-сообщение", and §2 (:7799-7803) describes the bridge boxing `NovaChildError` into `any`. That is exactly what the runtime does today: fibers.h:3427-3428 "boxes the NovaChildError into a Nova `any` (typed payload via nova_any_from_boxed, string throws/panics as `str`)" 
-  * скептик: Program lens gives a concrete divergence. Smallest program: `with Supervisor = effect Supervisor { on_child_fail(idx int, err any) -> Decision { return if err is Panic { Decision.Stop } else { Decision.Escalate } } } { supervised { spawn { panic("boom") } } }`. Under D416 §1 (06-concurrency.md:7756-7757, landed 2026-07-10, and confirmed by the runtime bridge in compiler-codegen/src/codegen/emit_c.rs:9294-9302, which boxes a panicked child's error as `str` and only keeps a type for typed-throw payloads) the panic arrives as a `str`; `Panic` is not a nominal type anywhere in the spec or std (onl
+  * скептик: Amendment sweep finds no supersession in either direction. D416 §1's panic payload contract (06-concurrency.md:7756-7757 "string-throw / panic — `str`-сообщение") has no amendment touching it — the only D416 amendments (2026-07-10, §1/§4) retract the Restart family, not the payload. D463 (2026-08-16) is later but is NOT an amendment of D416: this spec marks supersession explicitly when intended (D462: "Амендмент [D437] ... это он"; D416 §4: "superseded §3b-гейт"), while D463's header says only "Продолжение [D462]" and — decisively — its own text claims NO change: "Вид отказа нового API не треб
+  * скептик: Both texts fix the SAME value in the SAME position — the `err any` parameter of Supervisor.on_child_fail, filled by one runtime bridge (D416 §2 boxes NovaChildError into `any`) — so no two-mechanisms split exists. D416 §1 (06-concurrency.md:7756, landed 2026-07-10, restated normatively in std/src/prelude/effects.nv: "for string-throw / panic — a `str` message") says a child panic arrives as a plain `str`. D463 (08-runtime.md:9143, accepted 2026-08-16, implementation pending №680) claims the panic arrives "типом `Panic`" and that `if err is Panic` decides via existing D54 narrowing. No amendmen
+  * скептик: The program lens produces a concrete divergence, so refutation fails. Minimal program: a Supervisor handler `on_child_fail(idx int, err any)` returning `if err is Panic { Decision.Stop } else { Decision.Escalate }` over `supervised { spawn { panic("boom") } }`. Under D416 §1 (spec/decisions/06-concurrency.md:7756 — «string-throw / panic — `str`-сообщение», mirrored in std/src/prelude/effects.nv:286-287 and implemented in compiler-codegen/src/codegen/emit_c.rs `_nova_supervisor_decide_impl`, which boxes panics as `str`), `Panic` names no type — no `type Panic` exists anywhere in spec/ or std/ (
 
-## 2. «Два механизма» — спека права, формулировка смазывает границу (4)
+## 2. «Два механизма» — спека права, формулировка смазывает границу (14)
 
 Не чинить поведение; добавить по одной фразе, называющей границу (как D464 для #impl).
 
@@ -64,12 +64,21 @@
 * **Cross-module overloading: forbidden by D84 locality rule vs explicitly permitted by D267** — A `spec/decisions/10-overloading.md:392` / B `spec/decisions/10-overloading.md:485`. Граница: 
 * **Content of «structural conformance» check: name+arity only (D53 amend) vs also receiver_mut (D72 amend / D209)** — A `spec/decisions/02-types.md:1218` / B `spec/decisions/02-types.md:4418`. Граница: 
 * **D122 acceptance criteria still say bound must be a protocol type; D72/D310 allow type-set bounds** — A `spec/decisions/02-types.md:4517` / B `spec/decisions/02-types.md:4122`. Граница: 
+* **D65 Rule 4: missing handler THROWS `RuntimeError.NoHandler` (Fail); D61/D62/D65 Rule 2: missing handler is a runtime PANIC** — A `spec/decisions/04-effects.md:3517` / B `spec/decisions/04-effects.md:2332`. Граница: 
+* **D118 'Правило' prescribes a codegen dispatch order (catch-all TLS slot checked first) that differs from D65 Rule 2's semantic lookup (exact Fail[E] first, then catch-all)** — A `spec/decisions/04-effects.md:5647` / B `spec/decisions/04-effects.md:3425`. Граница: 
+* **Closure consuming a captured value: D131 says consume does not leak out, D157 says it does** — A `05-memory.md:356` / B `05-memory.md:960`. Граница: 
+* **View-peek `Some(f)` on must-consume payload: D133 legal, D157 amendment requires `Some(consume f)`** — A `02-types.md:5876` / B `05-memory.md:1093`. Граница: 
+* **Destructuring a consume record into per-field linear bindings: rejected in D133, implemented by D180 amendment №378** — A `02-types.md:5979` / B `05-memory.md:831`. Граница: 
+* **`consume` in if-conditions: D184 blanket ban vs D157 amendment requiring `Some(consume x)` in `if let`** — A `03-syntax.md:7604` / B `05-memory.md:1097`. Граница: 
+* **D180 amendment defines a «нормативное» rule by the best-effort behaviour of `infer_value_type`** — A `05-memory.md:708` / B `05-memory.md:480`. Граница: 
+* **Fn-value call: checker heuristic treats view-style argument as consumed, contrary to D133 view-param semantics** — A `05-memory.md:1315` / B `02-types.md:5654`. Граница: 
+* **D133 says value-consume zeroes fields after consume; #465 amendment makes zeroing opt-in and partial** — A `02-types.md:5949` / B `02-types.md:13922`. Граница: 
+* **D78 layout principle and Plan-195 amendment still prescribe rev-1 full-path declaration `module std.encoding.base64`, which D29 rev-3 strict-removal makes a hard error** — A `spec/decisions/07-modules.md:302` / B `spec/decisions/07-modules.md:1395`. Граница: 
 
-## 3. Перекрыто амендментом — старый текст пометить, не удалять (15)
+## 3. Перекрыто амендментом — старый текст пометить, не удалять (31)
 
 Форма: блок-цитата «ПЕРЕКРЫТО DNNN» на старом месте (образец — сегодняшняя правка D285 §3).
 
-* **Blanket-receiver bound: satisfied by #impl registration (D285 §2.2/§4) vs #impl unrelated to bound selection (D464, D268, D186)** — A `spec/decisions/10-overloading.md:726` / B `spec/decisions/10-overloading.md:833`. Что перекрывает: 
 * **Cross-module overloading: forbidden by D84 locality rule vs explicitly permitted by D267** — A `spec/decisions/10-overloading.md:392` / B `spec/decisions/10-overloading.md:485`. Что перекрывает: 
 * **Protocol instance-method `@` prefix: optional/equivalent (D53) vs mandatory with parse error (D209)** — A `spec/decisions/02-types.md:1116` / B `spec/decisions/04-effects.md:6090`. Что перекрывает: 
 * **Default-body synthesis on bare method call: never (D183 amend part 2) vs gated by #impl (D186)** — A `spec/decisions/02-types.md:8341` / B `spec/decisions/02-types.md:8411`. Что перекрывает: 
@@ -81,29 +90,42 @@
 * **D158 model-B normative example uses `do_work()?` in a Fail[WorkErr] fn — rejected by D85's E_TRY_IN_FAIL_FN** — A `spec/decisions/03-syntax.md:6995` / B `spec/decisions/04-effects.md:4649`. Что перекрывает: 
 * **D65 Rule 4: `a/b` and `arr[i]` THROW RuntimeError via Fail (D28 infers Fail[RuntimeError]); D427/D13/D325 R0: they PANIC and never appear in the signature** — A `spec/decisions/04-effects.md:3509` / B `spec/decisions/04-effects.md:7749`. Что перекрывает: 
 * **D12 Level 1: a fn with an EXTRA effect is rejected by a typed queue; D448: fn-type compatibility is by inclusion, extra effects are fine** — A `spec/decisions/04-effects.md:604` / B `spec/decisions/04-effects.md:8025`. Что перекрывает: 
+* **D31/D61: a Fail handler-lambda MUST `interrupt` (final expression invalid); D449 example (and D65 §1) uses `with Fail[..] = |_e| Err(ReadFailed)` with no interrupt** — A `spec/decisions/04-effects.md:1544` / B `spec/decisions/06-concurrency.md:7067`. Что перекрывает: 
 * **D61 §9 canonical example returns `Effect[Fail[Error]]` from a handler that `interrupt`s; D87 makes `Effect[E]` ≡ `Effect[E, never]` and interrupt in it a compile error** — A `spec/decisions/04-effects.md:2209` / B `spec/decisions/04-effects.md:5265`. Что перекрывает: 
 * **D61 §1/§2 (and D67/D85 handler examples) present generic effect ops `in_transaction[T]` as valid declarations; D456 makes the checker reject them by name** — A `spec/decisions/04-effects.md:1771` / B `spec/decisions/04-effects.md:8226`. Что перекрывает: 
 * **D31 grammar (and D85/D90 examples) still use the `handler` keyword for handler literals; D61 Plan-97 amendment (D142) retired it in favour of `effect X { }`** — A `spec/decisions/04-effects.md:1621` / B `spec/decisions/04-effects.md:2544`. Что перекрывает: 
+* **In-body view/mut alias of a consume binding: D133 allows, D180 Rule 2 forbids** — A `02-types.md:5909` / B `05-memory.md:501`. Что перекрывает: 
+* **Closure consuming a captured value: D131 says consume does not leak out, D157 says it does** — A `05-memory.md:356` / B `05-memory.md:960`. Что перекрывает: 
+* **View-peek `Some(f)` on must-consume payload: D133 legal, D157 amendment requires `Some(consume f)`** — A `02-types.md:5876` / B `05-memory.md:1093`. Что перекрывает: 
+* **Destructuring a consume record into per-field linear bindings: rejected in D133, implemented by D180 amendment №378** — A `02-types.md:5979` / B `05-memory.md:831`. Что перекрывает: 
+* **D180 Rule 5 uses a `view` parameter keyword that D157 declares non-existent (parse error)** — A `05-memory.md:539` / B `05-memory.md:893`. Что перекрывает: 
+* **`-> consume T` return form: D176 lists it as valid prefix form, D445 №616 retracts it entirely** — A `02-types.md:3619` / B `02-types.md:3730`. Что перекрывает: 
+* **D180/D133 examples still use retracted postfix `-> T consume` return syntax** — A `05-memory.md:488` / B `02-types.md:3730`. Что перекрывает: 
+* **D174 guard API tables keep `-> MutexGuard consume` signatures retracted by D445** — A `06-concurrency.md:6141` / B `02-types.md:3733`. Что перекрывает: 
+* **Overload mode axis: rvalue argument selects only ro-version (rule 1) yet consume-version for owned rvalue (rule 3)** — A `10-overloading.md:293` / B `10-overloading.md:297`. Что перекрывает: 
+* **Module declaration depth: D29 rev-3 says always 2 segments (parent.target); D78 rev-6 says nested folders get full root prefix (3+ segments)** — A `spec/decisions/07-modules.md:246` / B `spec/decisions/07-modules.md:1320`. Что перекрывает: 
+* **D78 layout principle and Plan-195 amendment still prescribe rev-1 full-path declaration `module std.encoding.base64`, which D29 rev-3 strict-removal makes a hard error** — A `spec/decisions/07-modules.md:302` / B `spec/decisions/07-modules.md:1395`. Что перекрывает: 
+* **nova_tests layout example: 'Module path = filesystem path. Первая компонента — package name' contradicts D29 rev-3 parent.target** — A `spec/decisions/07-modules.md:1955` / B `spec/decisions/07-modules.md:229`. Что перекрывает: 
+* **D29 still forbids cyclic imports (compile error); D291 allows cross-module cycles** — A `spec/decisions/07-modules.md:549` / B `spec/decisions/07-modules.md:708`. Что перекрывает: 
+* **Bare module import namespace: D29 says `import std.collections` → `std.collections.HashMap`; D289 says last segment only (`collections.HashMap`)** — A `spec/decisions/07-modules.md:480` / B `spec/decisions/07-modules.md:776`. Что перекрывает: 
+* **Same syntax `import a.b.C` means 'import single item C' in D29 but 'import module a.b.C as namespace C' in D289** — A `spec/decisions/07-modules.md:472` / B `spec/decisions/07-modules.md:776`. Что перекрывает: 
+* **D47 example re-exports a whole module (`export import std.duration`); D288 makes whole-module `export import` an error (E_REEXPORT_GLOB)** — A `spec/decisions/07-modules.md:974` / B `spec/decisions/07-modules.md:759`. Что перекрывает: 
 
-## 4. НЕ ВЕРИФИЦИРОВАНО — кандидаты, оставшиеся без трёх скептиков (74)
+## 4. НЕ ВЕРИФИЦИРОВАНО — кандидаты, оставшиеся без трёх скептиков (56)
 
 Найдены чтецами с цитатами, но верификация оборвана лимитом. НЕ считать
 подтверждёнными: по опыту этого же прогона больше половины кандидатов снимается
 (амендмент/два-механизма). Разбирать при возобновлении.
 
-### ambiguity (8)
+### ambiguity (6)
 * D61 §8 types a with-block as the least common supertype of body and interrupt types; D87 (and D61 §10) make mismatched body/interrupt types a compile error — `spec/decisions/04-effects.md:2143` vs `spec/decisions/04-effects.md:5319`
 * When is a unit-typed trailing expression of `supervised {}` evaluated — post-join (D71) or eager/pre-join (D414 §4)? — `spec/decisions/06-concurrency.md:784-785` vs `spec/decisions/06-concurrency.md:7244-7246`
 * Unsigned negation: binary `0 - x` traps (D423 R3) but unary `-x` on unsigned wraps silently (D427 R2), while `checked_neg` reports it as overflow — `spec/decisions/04-effects.md:7712` vs `spec/decisions/04-effects.md:7755`
-* `consume` in if-conditions: D184 blanket ban vs D157 amendment requiring `Some(consume x)` in `if let` — `03-syntax.md:7604` vs `05-memory.md:1097`
 * Non-exhaustive match on a sum: compile error (surface spec, D59) vs «non-exhaustive match warning» (D65) — `spec/syntax.ru.md:869-871` vs `spec/decisions/04-effects.md:3658-3659`
 * D54 destructures a record-form variant positionally (`Circle(r)`) although it declared `Circle { radius f64 }` — `spec/decisions/03-syntax.md:3587` vs `spec/decisions/03-syntax.md:3707-3712`
-* Same syntax `import a.b.C` means 'import single item C' in D29 but 'import module a.b.C as namespace C' in D289 — `spec/decisions/07-modules.md:472` vs `spec/decisions/07-modules.md:776`
 * Intra-package import path: D29 example omits the package segment (`import admin.billing.{Invoice}`), while D369/D78 say the first segment is the package name — `spec/decisions/07-modules.md:182` vs `spec/decisions/07-modules.md:2565`
 
-### contradiction (28)
-* D65 Rule 4: missing handler THROWS `RuntimeError.NoHandler` (Fail); D61/D62/D65 Rule 2: missing handler is a runtime PANIC — `spec/decisions/04-effects.md:3517` vs `spec/decisions/04-effects.md:2332`
-* D31/D61: a Fail handler-lambda MUST `interrupt` (final expression invalid); D449 example (and D65 §1) uses `with Fail[..] = |_e| Err(ReadFailed)` with no interrupt — `spec/decisions/04-effects.md:1544` vs `spec/decisions/06-concurrency.md:7067`
+### contradiction (21)
 * D415 §2: `#share` vouch is trusted 'без проверки'; D446 §1: the declaration 'становится проверяемым: компилятор обязан убедиться' — `spec/decisions/06-concurrency.md:7354-7356` vs `spec/decisions/06-concurrency.md:8563-8566`
 * D416 §5: top-level `detach` stays on 'дефолтном Escalate-all'; D414 §2 / D92 rule 3: detach default is LogAndDrop, never escalates — `spec/decisions/06-concurrency.md:7834-7836` vs `spec/decisions/06-concurrency.md:7197-7198`
 * D191 lists `await fut` for `Future[T]` as a permitted suspend operation; D50 §5 / D14 say there is no `await` marker or Future type in the language — `spec/decisions/03-syntax.md:9705-9710` vs `spec/decisions/06-concurrency.md:616-618`
@@ -115,31 +137,23 @@
 * Auto-derive on demand (D422 §3.3/3.4) vs `#impl(Display)` gate on interpolation (D186 amend / E_INTERP_NO_DISPLAY) — `spec/decisions/02-types.md:17427` vs `spec/decisions/02-types.md:8549`
 * `@to_str` blanket bound: D410 amend says bare-T `fn[T] T @to_str()`, D422 says `fn[T Display] T @to_str()` — `spec/decisions/03-syntax.md:11841` vs `spec/decisions/02-types.md:17424`
 * D430 canonical example uses type-suffix literals (`300u32`) that D44/D227 Rule 4 declare a syntax error — `spec/decisions/03-syntax.md:10525` vs `spec/decisions/04-effects.md:7783`
-* In-body view/mut alias of a consume binding: D133 allows, D180 Rule 2 forbids — `02-types.md:5909` vs `05-memory.md:501`
-* Closure consuming a captured value: D131 says consume does not leak out, D157 says it does — `05-memory.md:356` vs `05-memory.md:960`
-* View-peek `Some(f)` on must-consume payload: D133 legal, D157 amendment requires `Some(consume f)` — `02-types.md:5876` vs `05-memory.md:1093`
-* Destructuring a consume record into per-field linear bindings: rejected in D133, implemented by D180 amendment №378 — `02-types.md:5979` vs `05-memory.md:831`
-* Overload mode axis: rvalue argument selects only ro-version (rule 1) yet consume-version for owned rvalue (rule 3) — `10-overloading.md:293` vs `10-overloading.md:297`
 * Single-variant sum: D52 forbids it, D406 allows it ("minimum one variant") — `spec/decisions/02-types.md:527` vs `spec/decisions/02-types.md:786-788`
 * Variant namespace: per-type with qualified fallback (D30/D65) vs flat namespace where qualified value ICEs (D321/D358/D340) — `spec/decisions/03-syntax.md:1169-1176` vs `spec/decisions/04-effects.md:6979`
-* Module declaration depth: D29 rev-3 says always 2 segments (parent.target); D78 rev-6 says nested folders get full root prefix (3+ segments) — `spec/decisions/07-modules.md:246` vs `spec/decisions/07-modules.md:1320`
-* Bare module import namespace: D29 says `import std.collections` → `std.collections.HashMap`; D289 says last segment only (`collections.HashMap`) — `spec/decisions/07-modules.md:480` vs `spec/decisions/07-modules.md:776`
 * D5 says exactly two visibility levels and 'no package-private'; D457 introduces `priv(package)` (package-private) on top of D307 `priv(file)` — `spec/decisions/07-modules.md:65` vs `spec/decisions/02-types.md:18423`
 * Field-level explicit `priv`: D47 (07-modules) says own-type-methods only; D281 §1 says module-private — `spec/decisions/07-modules.md:922` vs `spec/decisions/02-types.md:15577`
 * D220's own amendment note says field-level explicit `priv` stays type-private; D281 (the amending block) says explicit `priv` field is module-private — `spec/decisions/02-types.md:11480` vs `spec/decisions/02-types.md:15563`
 * Module identity: D281 keys module-private access by declaration `[P,Q]`; D29 Plan-202 amendment says declaration is never identity and duplicate declarations from different physical modules are distinct, legal modules — `spec/decisions/02-types.md:15589` vs `spec/decisions/07-modules.md:273`
 * Import/local name collision: D29 says compile error; D371 says user re-declaration of an explicitly imported name wins (full shadow) — `spec/decisions/07-modules.md:579` vs `spec/decisions/07-modules.md:2289`
 * Header says package name = its directory name; Plan-192 amendment mandates repository `nova-tls` with package name `tls` — `spec/decisions/07-modules.md:21` vs `spec/decisions/07-modules.md:1436`
+* Pointer-stability model: D6 fixes non-moving GC with stable (interior) pointers; D216 normatively asserts addresses change under GC compaction/relocation — `spec/decisions/05-memory.md:130` vs `spec/decisions/02-types.md:10158`
+* Escape analysis: D6 promises non-escaping values stay on the stack without managed-heap allocation; the allocation contract makes plain records unconditionally heap-allocated — `spec/decisions/05-memory.md:114` vs `spec/decisions/06-concurrency.md:5700`
 
-### implementation-as-norm (6)
-* D118 'Правило' prescribes a codegen dispatch order (catch-all TLS slot checked first) that differs from D65 Rule 2's semantic lookup (exact Fail[E] first, then catch-all) — `spec/decisions/04-effects.md:5647` vs `spec/decisions/04-effects.md:3425`
-* D180 amendment defines a «нормативное» rule by the best-effort behaviour of `infer_value_type` — `05-memory.md:708` vs `05-memory.md:480`
-* Fn-value call: checker heuristic treats view-style argument as consumed, contrary to D133 view-param semantics — `05-memory.md:1315` vs `02-types.md:5654`
+### implementation-as-norm (3)
 * D381 describes a codegen heuristic (arity → enclosing return type → registry) as the rule for resolving an ambiguous bare variant constructor — `spec/decisions/08-runtime.md:8878-8882` vs `spec/decisions/03-syntax.md:1175-1176`
 * D100 states `_module.nv` attributes are inherited by all peers, then describes the resolver algorithm under which the entry peer does NOT inherit them (and importers DO inherit imported modules' attrs) — `spec/decisions/07-modules.md:2089` vs `spec/decisions/07-modules.md:2120`
 * D287 extension-method import rule is stated universally but 'implemented' only for the entry module (stdlib peers exempt) — implementation limitation stated as part of the decision — `spec/decisions/07-modules.md:742` vs `spec/decisions/07-modules.md:742`
 
-### stale-amendment (32)
+### stale-amendment (26)
 * runtime.init(n>0) 'wins' worker-count resolution (D136/D138 rule 2) vs D451: init(n) is a diagnosed no-op in every reachable user-code case — `spec/decisions/06-concurrency.md:4115-4118` vs `spec/decisions/06-concurrency.md:4286-4290`
 * D138 rule 5 obliges FFI/syscalls to sit inside `blocking { … }`, a block-form D64/D172 say the parser rejects — `spec/decisions/06-concurrency.md:4136-4138` vs `spec/decisions/04-effects.md:4034-4035`
 * D50 §1 / D14 still route the no-suspend guarantee through the `realtime { }` block that D64/D172 retracted — `spec/decisions/06-concurrency.md:307-308` vs `spec/decisions/04-effects.md:4034-4036`
@@ -158,28 +172,22 @@
 * Interpolation gate: D44 says `${expr}` requires `Into[str]` (sugar over `str.from`), D422 says the gate is `Display.@display(mut f Fmt)` — `spec/decisions/03-syntax.md:2597` vs `spec/decisions/02-types.md:17429`
 * Display default body: D183 amendment ships `Display` with a `str.from(@)` default; D422 makes `@display` REQUIRED with no default — `spec/decisions/02-types.md:8290` vs `spec/decisions/02-types.md:17416`
 * Sized-int overflow: D272 still describes sized types as wrapping; D423 makes trap the default for all `Ints` — `spec/decisions/09-tooling.md:2777` vs `spec/decisions/04-effects.md:7712`
-* D180 Rule 5 uses a `view` parameter keyword that D157 declares non-existent (parse error) — `05-memory.md:539` vs `05-memory.md:893`
-* `-> consume T` return form: D176 lists it as valid prefix form, D445 №616 retracts it entirely — `02-types.md:3619` vs `02-types.md:3730`
-* D180/D133 examples still use retracted postfix `-> T consume` return syntax — `05-memory.md:488` vs `02-types.md:3730`
-* D174 guard API tables keep `-> MutexGuard consume` signatures retracted by D445 — `06-concurrency.md:6141` vs `02-types.md:3733`
-* D133 says value-consume zeroes fields after consume; #465 amendment makes zeroing opt-in and partial — `02-types.md:5949` vs `02-types.md:13922`
 * Leading-`|` sum syntax (retired by D406) still used as live examples/tables in active blocks — `spec/decisions/02-types.md:525-526` vs `spec/decisions/03-syntax.md:4155-4159`
-* D78 layout principle and Plan-195 amendment still prescribe rev-1 full-path declaration `module std.encoding.base64`, which D29 rev-3 strict-removal makes a hard error — `spec/decisions/07-modules.md:302` vs `spec/decisions/07-modules.md:1395`
-* nova_tests layout example: 'Module path = filesystem path. Первая компонента — package name' contradicts D29 rev-3 parent.target — `spec/decisions/07-modules.md:1955` vs `spec/decisions/07-modules.md:229`
-* D29 still forbids cyclic imports (compile error); D291 allows cross-module cycles — `spec/decisions/07-modules.md:549` vs `spec/decisions/07-modules.md:708`
-* D47 example re-exports a whole module (`export import std.duration`); D288 makes whole-module `export import` an error (E_REEXPORT_GLOB) — `spec/decisions/07-modules.md:974` vs `spec/decisions/07-modules.md:759`
 * D47: function visibility is two-level, 'третьего «совсем-приватного» уровня нет'; D307 defines a third narrower level `priv(file) fn` — `spec/decisions/07-modules.md:944` vs `spec/decisions/02-types.md:15668`
 * D307 error table makes `priv(<other>)` on a top-level item E_PRIV_QUALIFIER; D457 makes `priv(package)` on top-level fn/type legal — `spec/decisions/02-types.md:15701` vs `spec/decisions/02-types.md:18412`
 * Location/mechanism of char Unicode methods: D286/D287 say moved into prelude core as inherent (injection removed); D308 says moved back to std.unicode with resolver-injection restored — `spec/decisions/07-modules.md:727` vs `spec/decisions/07-modules.md:2412`
 * D125 still specifies the inline `module X allow_prelude_shadow` clause; D371 says inline clauses were removed and are a hard error — `spec/decisions/08-runtime.md:3802` vs `spec/decisions/07-modules.md:2352`
+* D6 (active) still prescribes the retracted `realtime nogc { }` block and explicitly denies the fn-signature mechanism that D172 made the only one — `spec/decisions/05-memory.md:71` vs `spec/decisions/06-concurrency.md:5749`
+* D32 example uses the retired `Realtime` effect in a function signature — `spec/decisions/02-types.md:3141` vs `spec/decisions/05-memory.md:69`
+* D63's capability-sandbox composition example prescribes the retracted `realtime nogc { }` block as current syntax — `spec/decisions/04-effects.md:3835` vs `spec/decisions/06-concurrency.md:5749`
 
 ## 5. Что аудит НЕ покрыл
 
-* Тема **memory-abi-layout** (value/heap records, ABI, указатели, GC) — чтец упал
-  на обрыве соединения, тема не прочитана вовсе.
-* Верификация тем ownership-consume-ro, modules-visibility, concurrency-runtime,
-  sums-match-variants, numbers-conversions — частично или полностью не выполнена
-  (лимит сессии); их кандидаты — в разделе 4.
+* Все 8 тем прочитаны (memory-abi-layout — со второго захода).
+* Верификация тем modules-visibility, concurrency-runtime, sums-match-variants,
+  numbers-conversions, memory-abi-layout — частично не выполнена (лимит сессии,
+  дважды); их кандидаты — в разделе 4. bounds-protocols, effects-fail,
+  ownership-consume-ro — доверифицированы полностью.
 * Обзорные файлы spec/*.md (кроме одного попадания в sums) и D-блоки вне
   тематических списков — не входили в периметр.
 * Синтез-агент не отработал — этот файл собран интегратором из сырых результатов.
