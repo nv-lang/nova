@@ -169,23 +169,26 @@ export fn Interner mut @infer(vid int) -> int => @intern(TypeKind.TkInfer, vid, 
 /// ANOTHER module's sum to the wrong table; fixed in c52350831, the method
 /// form is back the same day.)
 #realtime nogc
-export fn Interner @kind_of(t int) -> TypeKind {
-    assert(t >= 0 && t < @rows.len(), "types: kind_of asked for a type id outside the interner")
+export fn Interner @kind_of(t int) -> TypeKind
+    requires t >= 0 && t < @rows.len(), "types: arg_count asked for a type id outside the interner"
+{
     @rows[t].kind
 }
 
 /// The head of a type: DeclId for nominal kinds, ordinal for a primitive,
 /// index for a parameter, vid for an inference variable.
 #realtime nogc
-export fn Interner @head_of(t int) -> int {
-    assert(t >= 0 && t < @rows.len(), "types: head_of asked for a type id outside the interner")
+export fn Interner @head_of(t int) -> int
+    requires t >= 0 && t < @rows.len(), "types: arg_count asked for a type id outside the interner"
+{
     @rows[t].head_id
 }
 
 /// How many arguments an application carries (0 for every other kind).
 #realtime nogc
-export fn Interner @arg_count(t int) -> int {
-    assert(t >= 0 && t < @rows.len(), "types: arg_count asked for a type id outside the interner")
+export fn Interner @arg_count(t int) -> int
+    requires t >= 0 && t < @rows.len(), "types: arg_count asked for a type id outside the interner"
+{
     @rows[t].arg_cnt
 }
 

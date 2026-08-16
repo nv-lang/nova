@@ -63,7 +63,18 @@ export type BuiltinType value {
 
 /// The universe, in Prims order; the seed hands the ACTUAL ids back
 /// (CommonTypes model, no hard-coded indexes).
-/// THE universe table, built ONCE at module load (owner's correction
+/// THE universe table, built ONCE at module load. It is the WHOLE primitive
+/// set of the language, not a convenient corner of it (owner's question
+/// 2026-08-16: "you still have not added all the builtin types -- does that
+/// make sense?"). It did not: a type novac does not know cannot even be
+/// NAMED in a signature, and novac's own lexer is written in `u8`. The C
+/// names are an ABI fact, read from the oracle's own map
+/// (compiler-codegen/src/codegen/emit_c.rs, the primitive table) rather than
+/// invented -- getting one wrong is a silent layout bug, not a compile error.
+///
+/// What the subset does WITH them is a separate and narrower question:
+/// arithmetic and printing still cover int and f64 only, and `check` refuses
+/// the rest honestly at the operator or the argument. (owner's correction
 /// 2026-08-16: a function returning a fresh vector allocated on EVERY call —
 /// prim_c_name is a door and П18 says a door allocates nothing; the seed loop
 /// called it too. A module-level `ro` binding is initialized once and read
@@ -79,7 +90,18 @@ ro universe = []BuiltinType.of(
     BuiltinType { name: "int", c_name: "nova_int" },
     BuiltinType { name: "str", c_name: "nova_str" },
     BuiltinType { name: "bool", c_name: "nova_bool" },
-    BuiltinType { name: "f64", c_name: "nova_f64" })
+    BuiltinType { name: "f64", c_name: "nova_f64" },
+    BuiltinType { name: "uint", c_name: "nova_uint" },
+    BuiltinType { name: "i8", c_name: "int8_t" },
+    BuiltinType { name: "i16", c_name: "int16_t" },
+    BuiltinType { name: "i32", c_name: "int32_t" },
+    BuiltinType { name: "i64", c_name: "int64_t" },
+    BuiltinType { name: "u8", c_name: "nova_byte" },
+    BuiltinType { name: "u16", c_name: "uint16_t" },
+    BuiltinType { name: "u32", c_name: "uint32_t" },
+    BuiltinType { name: "u64", c_name: "uint64_t" },
+    BuiltinType { name: "f32", c_name: "nova_f32" },
+    BuiltinType { name: "char", c_name: "nova_char" })
 
 /// The runtime ABI spelling of a primitive by its universe ordinal — THE
 /// door the mangler asks (E2-b1 step 3). It used to be a field copied onto
@@ -88,8 +110,9 @@ ro universe = []BuiltinType.of(
 /// door rule). The ordinal is what the interner keeps as the head of a
 /// TkPrim term, so the round trip is prim term -> ordinal -> ABI name.
 #realtime nogc
-export fn prim_c_name(ordinal int) -> str {
-    assert(ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe")
+export fn prim_c_name(ordinal int) -> str
+    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+{
     universe[ordinal].c_name
 }
 

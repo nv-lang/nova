@@ -26,7 +26,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op, un_op}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{Ctx, CheckOut, DefKind, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, DefKind, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -190,7 +190,17 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // may be handed to the lattice (whose miss is an ice, not a
             // diagnostic, until #700).
             @type_expr(c)
-            if @out.len() == 0 { @record(c, type_of(c, @ctx, @scope)) }
+            if @out.len() > 0 { return }
+            ro at = type_of(c, @ctx, @scope)
+            // The printer set is int/str/bool/f64. Every other primitive is
+            // NAMEABLE (the universe holds all fifteen) but not yet
+            // printable, and that boundary belongs here -- the emitter's ice
+            // for a missing printer must never be the first answer.
+            if !@has_printer(at) {
+                @report_first_leaf_of(branch_children(c), "outside the subset: println covers int, str, bool and f64 today")
+                return
+            }
+            @record(c, at)
         }
     }
 }
@@ -464,6 +474,12 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     true
 }
 
+/// Does the subset know how to print this type? The emitter has one printer
+/// per type and no generic path; a type outside the set is a refusal here,
+/// never an ice there.
+fn Checker @has_printer(t int) -> bool =>
+    t == @ctx.prims.int_id || t == @ctx.prims.str_id || t == @ctx.prims.bool_id || t == @ctx.prims.f64_id
+
 /// The two types arithmetic and ordering accept in the subset.
 fn Checker @is_numeric(t int) -> bool => t == @ctx.prims.int_id || t == @ctx.prims.f64_id
 
@@ -614,11 +630,23 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro recv_t = type_of(kids[0], ctx, scope)
         match ctx.fns.lookup(recv_t, mname) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
+            // The set narrows BY ARGUMENT TYPES -- the language overloads on
+            // parameters, so the pair (receiver, name) was never enough, and
+            // now that check types the arguments it can finish the job
+            // (274.3/C9, brought forward because the full primitive set let a
+            // second std signature into the table: `str.contains` has both
+            // `(needle str)` and `(c char)`, and until `char` existed the
+            // type system filtered the second one out by accident).
+            FnOverloaded(first) => {
+                ro chosen = narrow_overload(kids, ctx, scope, first, recv_t)
+                if chosen >= 0 { return ctx.fns.rows[chosen].ret_id }
+                // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user
+                // wrote that matches none or several candidates is a USER
+                // situation; check reports it once it owns the candidate set.
+                ice("check: overload set not narrowed past check")
+            }
             // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
             FnUnknown => { ice("check: method not in the read declarations past check") }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] check judges the NAME only today;
-            // an overload the user hit is a USER situation, not an invariant.
-            FnOverloaded(_) => { ice("check: overload set not narrowed past check") }
         }
     }
     if k == NodeKind.FieldAccess {
@@ -712,3 +740,41 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     ice("check: expression kind without a type rule — no silent int default (#652 class)")
 }
 
+/// The one candidate whose parameters match the call's arguments, or -1.
+///
+/// Overloading in Nova is by parameters (D84), so a set is narrowed by the
+/// ARGUMENT TYPES and by nothing else here: no ranking, no "most specific"
+/// -- either exactly one candidate takes these arguments or the caller
+/// reports the situation. That is the same shape D464 gives bounds (a filter,
+/// not an ordering).
+fn narrow_overload(kids []Node, ctx Ctx, scope Scope, first int, recv_t int) -> int {
+    mut chosen = -1
+    mut hits = 0
+    for row in candidates_from(ctx.fns, first, recv_t) {
+        if candidate_takes(kids, ctx, scope, row) {
+            chosen = row
+            hits += 1
+        }
+    }
+    if hits == 1 { return chosen }
+    -1
+}
+
+/// Does this candidate take exactly the arguments written at the call site?
+/// The receiver is `params[param_off]` (plan 273), so the arguments start one
+/// past it.
+fn candidate_takes(kids []Node, ctx Ctx, scope Scope, row int) -> bool {
+    ro fd = ctx.fns.rows[row]
+    mut i = 0
+    mut argn = 0
+    for c in kids {
+        if i > 2 && is_expr_kind(c.kind_of()) {
+            ro slot = fd.param_off + 1 + argn
+            if argn + 1 >= fd.param_cnt { return false }
+            if ctx.fns.params[slot] != type_of(c, ctx, scope) { return false }
+            argn += 1
+        }
+        i += 1
+    }
+    argn + 1 == fd.param_cnt
+}
