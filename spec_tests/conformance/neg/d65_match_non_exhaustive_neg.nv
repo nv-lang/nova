@@ -24,6 +24,7 @@ type Color enum
     | Blue
 
 fn name(c Color) -> str {
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `Blue` is not covered and there is no `_` arm; before this wave the same code compiled clean and returned an empty value from a `-> str` function with exit 0 (D65 amendment 2026-08-16, registry No. 703)
     match c {
         Red   => "r"
         Green => "g"
