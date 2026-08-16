@@ -180,6 +180,19 @@ fn main() {
             // condition -- which `ice()` cannot do, because a wrapper reports
             // its own body. Both end up as one section 7 line on stdout.
             ro _ = died.fetch_add(1)
+            // [LEGACY-#708-panic-payload-text] The TEXT is a temporary input.
+            // The integrator confirmed 2026-08-17 that the format itself is
+            // normative (`<file>:<line>: assert failed: <text> (<cond>)`,
+            // Plan 140.1 amendment in 08-runtime.md), so this is not an
+            // accident -- but D462 declares two renderers of one record (text
+            // for humans, JSON for machines), and reading the human one means
+            // depending on the half the spec calls replaceable. The better
+            // discriminator already exists as a FIELD: an assert sets
+            // error_kind = NOVA_THROW_PANIC (Plan 140.3 amendment), exactly
+            // like nv_panic. It is not reachable from a handler yet --
+            // report()/cause() (D463) wait on registry No. 680 -- so the text
+            // stays the input path until No. 708 lands, and then the branch
+            // below is rebuilt on the kind, not on parsing.
             if err is str {
                 if err.starts_with("{") {
                     println(err)
