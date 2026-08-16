@@ -206,7 +206,7 @@ fn render(lits []str, body str) -> str {
             out.append("\n")
         }
     }
-    if !emitted_lits || !emitted_body { ice("emit: template slots missing") }
+    assert(emitted_lits && emitted_body, "emit: template slots missing")
     out
 }
 
@@ -231,7 +231,7 @@ fn Emitter mut @emit_file(file Node) -> () {
     match file {
         Leaf(_) => ice("emit: file node must be a branch")
         Branch { kind, children, .. } => {
-            if kind != NodeKind.File { ice("emit: root is not File") }
+            assert(kind == NodeKind.File, "emit: root is not File")
             for c in children {
                 if c.kind_of() == NodeKind.FnDecl {
                     @emit_fn(c)
@@ -248,12 +248,12 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro kids = branch_children(f)
     ro name = leaf_text(kids[1])
     ro d = @ctx.defs.find(name)
-    if d < 0 { ice("emit: fn missing from the registry") }
+    assert(d >= 0, "emit: fn missing from the registry")
     // One row read, then its parts are named (owner's style note 2026-08-16:
     // repeating `@ctx.defs.rows[d]` reads the same row three times and hides
     // that it IS the same row).
     ro { kind: def_kind, payload: fn_row } = @ctx.defs.rows[d]
-    if def_kind != DefKind.DefFn { ice("emit: fn name shadowed by a non-fn def (check's ground, later wave)") }
+    assert(def_kind == DefKind.DefFn, "emit: fn name shadowed by a non-fn def (check's ground, later wave)")
     ro ret = @ctx.fns.rows[fn_row].ret_id // -1 for main only; check refuses it elsewhere
     mut has_expr_body = false
     if name == ENTRY_FN {
@@ -273,7 +273,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
                         ptype = @ctx.defs.type_id(leaf_text(pk[1]))
                     }
                 }
-                if ptype < 0 { ice("emit: param without a type past check — no silent int default (#652 class)") }
+                assert(ptype >= 0, "emit: param without a type past check — no silent int default (#652 class)")
                 if !first { @body.append(", ") }
                 @body.append(c_type(@ctx, ptype))
                 @body.append(" ")
@@ -627,7 +627,7 @@ fn c_binary_form(op BinOp, is_float bool) -> str {
             "nova_int_checked_div"
         }
         Modulo => {
-            if is_float { ice("emit_c: the remainder operator has no float form in the subset") }
+            assert(!is_float, "emit_c: the remainder operator has no float form in the subset")
             "nova_int_checked_rem"
         }
         Less => "<"
@@ -760,7 +760,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro cname = call_callee_text(kids)
         // ONE lookup, then the kind decides (owner's correction 2026-08-14).
         ro d = @ctx.defs.find(cname)
-        if d < 0 { ice("emit: call target not in the registry (#652 class)") }
+        assert(d >= 0, "emit: call target not in the registry (#652 class)")
         ro { kind: def_kind, payload: def_payload } = @ctx.defs.rows[d]
         if def_kind == DefKind.DefVariant {
             // Variant constructor call -> the maker.

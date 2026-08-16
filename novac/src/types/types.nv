@@ -170,7 +170,7 @@ export fn Interner mut @infer(vid int) -> int => @intern(TypeKind.TkInfer, vid, 
 /// form is back the same day.)
 #realtime nogc
 export fn Interner @kind_of(t int) -> TypeKind {
-    if t < 0 || t >= @rows.len() { ice("types: kind_of asked for a type id outside the interner") }
+    assert(t >= 0 && t < @rows.len(), "types: kind_of asked for a type id outside the interner")
     @rows[t].kind
 }
 
@@ -178,14 +178,14 @@ export fn Interner @kind_of(t int) -> TypeKind {
 /// index for a parameter, vid for an inference variable.
 #realtime nogc
 export fn Interner @head_of(t int) -> int {
-    if t < 0 || t >= @rows.len() { ice("types: head_of asked for a type id outside the interner") }
+    assert(t >= 0 && t < @rows.len(), "types: head_of asked for a type id outside the interner")
     @rows[t].head_id
 }
 
 /// How many arguments an application carries (0 for every other kind).
 #realtime nogc
 export fn Interner @arg_count(t int) -> int {
-    if t < 0 || t >= @rows.len() { ice("types: arg_count asked for a type id outside the interner") }
+    assert(t >= 0 && t < @rows.len(), "types: arg_count asked for a type id outside the interner")
     @rows[t].arg_cnt
 }
 
@@ -193,7 +193,7 @@ export fn Interner @arg_count(t int) -> int {
 #realtime nogc
 export fn Interner @arg(t int, i int) -> int {
     ro row = @rows[t]
-    if i < 0 || i >= row.arg_cnt { ice("types: application argument index out of range") }
+    assert(i >= 0 && i < row.arg_cnt, "types: application argument index out of range")
     @args[row.arg_off + i]
 }
 

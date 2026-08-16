@@ -70,6 +70,40 @@ grep -q "судить нечего" "$T/out" && ok "нет вызовов ice �
 # --- 8. настоящее дерево --------------------------------------------------
 sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
 
+# --- условный ice обязан быть assert (2026-08-16) -------------------------
+mkdir -p "$T/cond/sem"
+printf 'module a
+fn f(t int) -> int {
+    if t < 0 { ice("sem: t is negative") }
+    t
+}
+' > "$T/cond/sem/a.nv"
+if run "$T/cond"; then
+    bad "условный ice прошёл — вторая половина стража не ловит"
+else
+    grep -q "условный ice" "$T/err" && ok "условный ice пойман (у него есть условие — значит есть assert)" || bad "красный, но не про условный ice"
+fi
+
+mkdir -p "$T/asrt/sem"
+printf 'module a
+fn f(t int) -> int {
+    assert(t >= 0, "sem: t is negative")
+    t
+}
+' > "$T/asrt/sem/a.nv"
+run "$T/asrt" && ok "assert вместо условного ice — зелёный" || bad "assert покраснел: $(cat "$T/err")"
+
+mkdir -p "$T/val/sem"
+printf 'module a
+fn f(t int) -> str {
+    match t {
+        0 => "zero"
+        _ => ice("sem: only zero is in the subset")
+    }
+}
+' > "$T/val/sem/a.nv"
+run "$T/val" && ok "ice в позиции значения остаётся законным" || bad "значение-ice покраснел: $(cat "$T/err")"
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-ice-messages ok: все случаи, включая дубль в одном файле и между файлами"

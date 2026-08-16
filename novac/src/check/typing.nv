@@ -50,7 +50,7 @@ fn Checker mut @type_file(file Node) -> () {
     match file {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
-            if kind != NodeKind.File { ice("check: the typing walk was handed a root that is not a File") }
+            assert(kind == NodeKind.File, "check: the typing walk was handed a root that is not a File")
             for c in children {
                 if c.kind_of() == NodeKind.FnDecl { @type_fn(c) }
             }
@@ -396,13 +396,13 @@ fn Checker mut @type_expr(e Node) -> () {
         // wrong thing, in the wrong module, one pass later (owner's question
         // 2026-08-16: "what does this return mean?" -- it meant nothing good).
         ro kids = branch_children(e)
-        if kids.len() < 3 { ice("check: a parenthesised expression without its three parts") }
+        assert(kids.len() >= 3, "check: a parenthesised expression without its three parts")
         @type_expr(kids[1])
         if @out.len() == 0 { @record(e, type_of(e, @ctx, @scope)) }
     } else if k == NodeKind.Unary {
         // Same reasoning: the parser builds `op operand`, two children, always.
         ro kids = branch_children(e)
-        if kids.len() < 2 { ice("check: a prefix operator without its operand") }
+        assert(kids.len() >= 2, "check: a prefix operator without its operand")
         @type_expr(kids[1])
         if @out.len() > 0 { return }
         if @report_if_unary_needs_protocol(kids) { return }
@@ -410,7 +410,7 @@ fn Checker mut @type_expr(e Node) -> () {
     } else if k == NodeKind.Bin {
         // And again: `left op right`, three children, by construction.
         ro kids = branch_children(e)
-        if kids.len() < 3 { ice("check: a binary expression without its three parts") }
+        assert(kids.len() >= 3, "check: a binary expression without its three parts")
         // Operands first (they are what can be unknown), then the answer for
         // THIS node: the whole expression's type decides the emitted shape
         // (f64 is raw C, int is the checked helper).
@@ -580,7 +580,7 @@ fn Scope @is_bound(name str) -> bool => @names.find(name) >= 0
 fn Scope @type_of_name(name str) -> int {
     ro row = @names.find(name)
     // [LEGACY-#700-user-error-as-ice until:E2b3] an unbound name is a USER error.
-    if row < 0 { ice("check: unbound name — resolve is check's ground, no silent int default (#652 class)") }
+    assert(row >= 0, "check: unbound name — resolve is check's ground, no silent int default (#652 class)")
     @types[row]
 }
 
@@ -605,7 +605,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     }
     if k == NodeKind.MethodCall {
         ro kids = branch_children(e)
-        if kids.len() < 3 { ice("check: method call without a name") }
+        assert(kids.len() >= 3, "check: method call without a name")
         ro mname = leaf_text(kids[2])
         // The return type — from the READ signature (П5): the
         // compiler does not know std method names, it reads them. Only
@@ -623,7 +623,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     }
     if k == NodeKind.FieldAccess {
         ro kids = branch_children(e)
-        if kids.len() < 3 { ice("check: field access without a name") }
+        assert(kids.len() >= 3, "check: field access without a name")
         ro recv_t = type_of(kids[0], ctx, scope)
         return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
     }
@@ -699,12 +699,12 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro d = ctx.defs.find(call_callee_text(branch_children(e)))
-        if d < 0 { ice("check: call target not in the registry — no silent int default (#652 class)") }
+        assert(d >= 0, "check: call target not in the registry — no silent int default (#652 class)")
         ro def = ctx.defs.rows[d]
         if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
         if def.kind == DefKind.DefFn {
             ro ret = ctx.fns.rows[def.payload].ret_id
-            if ret < 0 { ice("check: call of a fn without a declared return type (#652 class)") }
+            assert(ret >= 0, "check: call of a fn without a declared return type (#652 class)")
             return ret
         }
         ice("check: call target is a type, not a callable (#652 class)")

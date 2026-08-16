@@ -125,9 +125,9 @@ export fn DefTable @type_id_opt(name str) -> int {
 #realtime nogc
 export fn DefTable @type_id(name str) -> int {
     ro d = @names.find(name)
-    if d < 0 { ice("sem: type name not in the registry — no silent int default (#652 class)") }
+    assert(d >= 0, "sem: type name not in the registry — no silent int default (#652 class)")
     ro def = @rows[d]
-    if def.kind != DefKind.DefType { ice("sem: name in type position is not a type (#652 class)") }
+    assert(def.kind == DefKind.DefType, "sem: name in type position is not a type (#652 class)")
     def.payload
 }
 
@@ -685,7 +685,7 @@ export fn collect_types(file Node) -> Ctx {
     // this assert is what turns that moment into a loud one instead of a
     // silent skew. Costs one integer compare per row, once per file.
     for i in 0..types.len() {
-        if types[i].ty_id != i { ice("sem: interned term id diverged from declaration index before E2-b2 — a type was interned out of declaration order") }
+        assert(types[i].ty_id == i, "sem: interned term id diverged from declaration index before E2-b2 — a type was interned out of declaration order")
     }
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fns }
 }

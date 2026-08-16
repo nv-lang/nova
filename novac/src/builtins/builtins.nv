@@ -89,7 +89,7 @@ ro universe = []BuiltinType.of(
 /// TkPrim term, so the round trip is prim term -> ordinal -> ABI name.
 #realtime nogc
 export fn prim_c_name(ordinal int) -> str {
-    if ordinal < 0 || ordinal >= universe.len() { ice("builtins: primitive ordinal outside the universe") }
+    assert(ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe")
     universe[ordinal].c_name
 }
 

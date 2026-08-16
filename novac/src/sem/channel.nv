@@ -113,18 +113,18 @@ export fn CheckOut.new(node_count int) -> CheckOut {
 /// answer twice is legal -- the emitter asks for a binding's initializer type
 /// and then emits that same expression, and both paths mean one fact.
 export fn CheckOut mut @record_type(id int, t int) -> () {
-    if id < 0 || id >= @types.len() { ice("sem: channel write for a node outside this file's id space") }
+    assert(id >= 0 && id < @types.len(), "sem: channel write for a node outside this file's id space")
     ro prev = @types[id]
-    if prev >= 0 && prev != t { ice("sem: a node was typed twice with different answers") }
+    assert(prev < 0 || prev == t, "sem: a node was typed twice with different answers")
     @types[id] = t
 }
 
 /// Record the decided target of a call.
 export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> () {
-    if id < 0 || id >= @callees.len() { ice("sem: channel callee write for a node outside this file's id space") }
-    if target_row < 0 { ice("sem: channel callee write with no row — absence is not a decision") }
+    assert(id >= 0 && id < @callees.len(), "sem: channel callee write for a node outside this file's id space")
+    assert(target_row >= 0, "sem: channel callee write with no row — absence is not a decision")
     ro prev = @callees[id]
-    if prev.target_row >= 0 && (prev.target_row != target_row || prev.kind != kind) { ice("sem: a call was resolved twice to different targets") }
+    assert(prev.target_row < 0 || (prev.target_row == target_row && prev.kind == kind), "sem: a call was resolved twice to different targets")
     @callees[id] = CalleeRef { kind, target_row }
 }
 
@@ -134,9 +134,9 @@ export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> (
 /// disjointness invariant exist now, because the invariant is what makes the
 /// two tables two rather than one habit.
 export fn CheckOut mut @record_subst(id int, args []int) -> () {
-    if id < 0 || id >= @substs.len() { ice("sem: channel subst write for a node outside this file's id space") }
-    if @callees[id].target_row >= 0 { ice("sem: a node cannot be both a resolved call and a standalone instantiation") }
-    if @substs[id].arg_off >= 0 { ice("sem: a node was instantiated twice") }
+    assert(id >= 0 && id < @substs.len(), "sem: channel subst write for a node outside this file's id space")
+    assert(@callees[id].target_row < 0, "sem: a node cannot be both a resolved call and a standalone instantiation")
+    assert(@substs[id].arg_off < 0, "sem: a node was instantiated twice")
     ro arg_off = @subst_args.len()
     for a in args {
         @subst_args.push(a)
@@ -150,18 +150,18 @@ export fn CheckOut mut @record_subst(id int, args []int) -> () {
 /// place (plan 196's lesson).
 #realtime nogc
 export fn CheckOut @type_of(id int) -> int {
-    if id < 0 || id >= @types.len() { ice("sem: channel asked about a node outside this file's id space") }
+    assert(id >= 0 && id < @types.len(), "sem: channel asked about a node outside this file's id space")
     ro t = @types[id]
-    if t < 0 { ice("sem: no type recorded for this node — a hole in the checker's channel") }
+    assert(t >= 0, "sem: no type recorded for this node — a hole in the checker's channel")
     t
 }
 
 /// The decided target of a call. TOTAL, for the same reason.
 #realtime nogc
 export fn CheckOut @callee_of(id int) -> CalleeRef {
-    if id < 0 || id >= @callees.len() { ice("sem: channel asked about a call outside this file's id space") }
+    assert(id >= 0 && id < @callees.len(), "sem: channel asked about a call outside this file's id space")
     ro c = @callees[id]
-    if c.target_row < 0 { ice("sem: no callee recorded for this call — a hole in the checker's channel") }
+    assert(c.target_row >= 0, "sem: no callee recorded for this call — a hole in the checker's channel")
     c
 }
 
@@ -170,16 +170,16 @@ export fn CheckOut @callee_of(id int) -> CalleeRef {
 /// here, not a hole: most nodes instantiate nothing.
 #realtime nogc
 export fn CheckOut @has_subst(id int) -> bool {
-    if id < 0 || id >= @substs.len() { ice("sem: has_subst asked about a node outside this file's id space") }
+    assert(id >= 0 && id < @substs.len(), "sem: has_subst asked about a node outside this file's id space")
     @substs[id].arg_off >= 0
 }
 
 /// The substitution of a node; asking about a node that has none is an ice
 /// (ask `has_subst` first).
 export fn CheckOut @subst_of(id int) -> []int {
-    if id < 0 || id >= @substs.len() { ice("sem: subst_of asked about a node outside this file's id space") }
+    assert(id >= 0 && id < @substs.len(), "sem: subst_of asked about a node outside this file's id space")
     ro sr = @substs[id]
-    if sr.arg_off < 0 { ice("sem: no substitution recorded for this node — a hole in the checker's channel") }
+    assert(sr.arg_off >= 0, "sem: no substitution recorded for this node — a hole in the checker's channel")
     // A VIEW into the pool, not a copy: the arguments live once (nv-coding-style
     // section 18a; a counted push loop here would allocate per question).
     @subst_args[sr.arg_off..sr.arg_off + sr.arg_cnt]
