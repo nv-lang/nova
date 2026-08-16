@@ -33,6 +33,13 @@
 # Проверялся: Windows (Git Bash), 2026-08-16.
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# Реестры живут в ДВУХ модулях с E2-b1: sem (декларации) и types (интернер).
+# $2 — override ОДНОГО файла (шов самотеста); без него читаются оба.
+if [ -n "$2" ]; then
+    SEM_FILES="$2"
+else
+    SEM_FILES="$ROOT/novac/src/sem/sem.nv $ROOT/novac/src/types/types.nv"
+fi
 SEM="${2:-$ROOT/novac/src/sem/sem.nv}"
 PLAN="${3:-$ROOT/docs/plans/274-novac-self-hosted-compiler.md}"
 NAME=check-novac-row-fields
@@ -48,7 +55,7 @@ mkdir -p "$T" || exit 1
 trap 'rm -rf "$T"' 0
 
 # --- поля записей из исходника: строки вида "Запись поле" -------------------
-tr -d '\r' < "$SEM" | awk '
+cat $SEM_FILES | tr -d '' | awk '
     # СТРОКИ реестра — это `value`-записи (так документировано у TypeDef);
     # контейнеры (Ctx, *Table, Scope) — обычные записи, их состав судит
     # §10.3б, а не эта таблица.
@@ -119,7 +126,14 @@ SMELL=$(awk '{ rec[$1] = rec[$1] " " $2 } END {
         if (!has_range) continue
         n = split(rec[r], f, " ")
         for (i = 1; i <= n; i++) {
-            if (f[i] ~ /^(recv|self|first|head)/) {
+            # Признак: имя поля указывает на ОДИН элемент списка, который строка
+            # хранит парой *_off/*_cnt. Список назван первой частью пары
+            # (params_off -> params, arg_off -> arg); поле-подозреваемый должно
+            # именовать выделенный элемент ЭТОГО списка: recv_id рядом с
+            # param_off/param_cnt — да; head_id рядом с arg_off/arg_cnt — НЕТ,
+            # голова терма не элемент его аргументов (ложняк 2026-08-16 на
+            # TyRow интернера, поймано при заведении слоя типов).
+            if (f[i] ~ /^(recv|self|first)/) {
                 printf "  %s.%s — выделенный элемент общего списка рядом с парой *_off/*_cnt\n", r, f[i]
             }
         }
@@ -141,8 +155,8 @@ fi
 # строка хранится СПИСКОМ, её булево поле обязано нести в §10.3в пометку
 # «[на элемент]» — то есть автор ответил вслух, почему бит может различаться
 # у разных элементов, а не является свойством всего списка.
-ELEMENT_ROWS=$(tr -d '' < "$SEM" | grep -oE '\[\][A-Z][A-Za-z0-9_]*' | sed 's/^\[\]//' | sort -u)
-BOOLS=$(tr -d '' < "$SEM" | awk '
+ELEMENT_ROWS=$(cat $SEM_FILES | tr -d '' | grep -oE '\[\][A-Z][A-Za-z0-9_]*' | sed 's/^\[\]//' | sort -u)
+BOOLS=$(cat $SEM_FILES | tr -d '' | awk '
     /^export type [A-Z][A-Za-z0-9_]* value \{/ { rec = $3; next }
     rec != "" && /^\}/ { rec = "" }
     rec != "" && /^[[:space:]]+[a-z_][A-Za-z0-9_]*[[:space:]]+bool([[:space:]]|$)/ {
@@ -155,7 +169,8 @@ for pair in $(printf '%s
     [ -n "$pair" ] || continue
     rec=${pair%@*}; fld=${pair#*@}
     echo "$ELEMENT_ROWS" | grep -qx "$rec" || continue
-    row=$(tr -d '' < "$PLAN" | grep -F "\`$rec\`" | grep -F "\`$fld\`" | head -1)
+    row=$(tr -d '
+' < "$PLAN" | grep -F "\`$rec\`" | grep -F "\`$fld\`" | head -1)
     case "$row" in
         *"[на элемент]"*) ;;
         *) UNTAGGED="$UNTAGGED $rec.$fld" ;;

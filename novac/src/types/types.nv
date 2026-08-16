@@ -1,0 +1,252 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/types — the type interner: THE one door where a type comes into
+// being (architecture, layer map: layer 4; plan 274 section 9.1, stage E2-b1).
+//
+// Donor: rustc `TyCtxt` — every `Ty` is an interned term and equality of
+// types is equality of ids; Zig `InternPool` for the flat-vector shape.
+// Nothing here is a copy of the oracle: the oracle has three parallel type
+// representations and none of them is a key (П25).
+//
+// What a type IS here: a term over a small closed set of kinds. `Ty` is an
+// index into the interner's row vector; two structurally equal terms get ONE
+// index by construction, so `a == b` on ids is type equality — the property
+// the whole checker rests on. `Param{index}` and `Infer{vid}` are ordinary
+// rows of the same table (architecture, where real types appear): the
+// case "the real type is known later" is served by substitution, never by a
+// deferred id.
+//
+// Doors, in the П18 sense: `intern` is the ONLY writer; `subst` is the ONLY
+// way a `Param` leaves a type; `is_concrete` is the ONLY question layout is
+// allowed to ask before it starts. The reader doors (`kind_of`, `head_of`,
+// `arg`) allocate nothing.
+//
+// This wave (E2-b1) is ADDITIVE: the interner appears beside the old registry
+// and the old registry becomes its consumer, with the emitted C held
+// byte-identical against the pre-wave snapshot at every step. The registry
+// rows in `sem` will shrink to declarations only in the same wave's tail.
+
+module novac.types
+
+import ../diag.{ice}
+
+/// What kind of term a type row is. Closed set; the dispatch on it is an
+/// exhaustive match everywhere (П21), so a new kind is a compile error at
+/// every place that must decide about it.
+export type TyKind enum
+    | TkPrim /// a primitive of the universe: int, str, bool, f64
+    | TkRecord /// a nominal record declaration, no type parameters applied
+    | TkSum /// a nominal sum declaration, no type parameters applied
+    | TkApp /// a type constructor applied to arguments: Vec[int]
+    | TkParam /// a type parameter of the enclosing declaration, by index
+    | TkInfer /// an inference variable, alive only inside one body
+
+/// One interned type term. VALUE record: rows sit inline in the vector.
+///
+/// The row is a TERM, not a declaration: it knows its head and its
+/// arguments, and nothing about fields, variants or names — those belong
+/// to the declaration the head points at (П22: derived facts are functions
+/// of what is stored, never a second copy on the row).
+export type TyRow value {
+    kind TyKind /// which term this is; drives the meaning of head_id and the argument range
+    head_id int /// TkPrim: prim ordinal · TkRecord/TkSum/TkApp: DeclId of the head · TkParam: parameter index · TkInfer: variable id
+    arg_off int /// first argument in Interner.args (TkApp only; 0 otherwise)
+    arg_cnt int /// how many arguments (TkApp only; 0 otherwise)
+    next_row int /// next row with the SAME kind and head_id, or -1 — the lookup chain
+}
+
+/// The interner. Row storage is a flat id-indexed vector of value rows
+/// (IndexVec camp); the argument vectors of all applications live in one
+/// flat pool addressed by off/cnt (same shape as payload_types in sem).
+///
+/// The lookup key is (kind, head_id) → chain of rows; the argument vector is
+/// compared as INTEGERS while walking the chain (П18: a door builds no
+/// strings). Chains are short by nature: they only hold applications of one
+/// head, e.g. Vec[int], Vec[str], Vec[Vec[int]].
+export type Interner {
+    rows []TyRow /// every interned type; a Ty is an index into this vector
+    args []int /// argument pool for TkApp rows: Ty ids, addressed by TyRow.arg_off/arg_cnt
+    heads []int /// FIRST row for each (kind, head_id) bucket; see bucket_of
+}
+
+/// A Ty is an index into Interner.rows. Kept as `int` until typed indexes
+/// land (274.3 wave 3); the П19 suffix says which space it points into.
+/// (This alias is documentation, not a distinct type yet.)
+
+/// Number of kinds — bucket arithmetic below needs it as a plain integer.
+fn kind_ordinal(k TyKind) -> int {
+    match k {
+        TkPrim => 0
+        TkRecord => 1
+        TkSum => 2
+        TkApp => 3
+        TkParam => 4
+        TkInfer => 5
+    }
+}
+
+/// Buckets are (kind, head_id) pairs flattened into one vector: the pool
+/// grows on demand, so a head_id we have not seen simply extends it. Heads
+/// are dense small integers (DeclIds, prim ordinals, param indexes, infer
+/// vids), which is what makes a flat bucket vector the right shape.
+fn bucket_of(k TyKind, head_id int) -> int => head_id * 6 + kind_ordinal(k)
+
+/// An empty interner: no rows, no arguments, no buckets.
+export fn Interner.new() -> Interner =>
+    { rows: []TyRow.new(), args: []int.new(), heads: []int.new() }
+
+/// The head row of a bucket, or -1. Read-only door; grows nothing.
+#realtime nogc
+fn Interner @head_of_bucket(b int) -> int {
+    if b >= @heads.len() { return -1 }
+    @heads[b]
+}
+
+/// Do the arguments of row `r` equal `want`? Integer compares, no allocation.
+#realtime nogc
+fn Interner @args_equal(r int, want []int) -> bool {
+    ro row = @rows[r]
+    if row.arg_cnt != want.len() { return false }
+    for i in 0..want.len() {
+        if @args[row.arg_off + i] != want[i] { return false }
+    }
+    true
+}
+
+/// THE ONE WRITER. Intern a term: return the existing row for a
+/// structurally equal term, or push a new one. Every other constructor
+/// below is a thin wrapper that fixes the kind.
+///
+/// Arguments are copied into the pool ONLY when a new row is created — a
+/// lookup that hits allocates nothing beyond what the caller already built.
+export fn Interner mut @intern(kind TyKind, head_id int, args []int) -> int {
+    ro b = bucket_of(kind, head_id)
+    mut r = @head_of_bucket(b)
+    while r >= 0 {
+        if @args_equal(r, args) { return r }
+        r = @rows[r].next_row
+    }
+    // not found: push the row and link it at the head of its bucket
+    ro off = @args.len()
+    for a in args {
+        @args.push(a)
+    }
+    ro id = @rows.len()
+    while @heads.len() <= b {
+        @heads.push(-1)
+    }
+    ro prev = @heads[b]
+    @heads[b] = id
+    @rows.push(TyRow { kind, head_id, arg_off: off, arg_cnt: args.len(), next_row: prev })
+    id
+}
+
+/// A primitive by its ordinal in the universe (int, str, bool, f64 …).
+export fn Interner mut @prim(ordinal int) -> int => @intern(TyKind.TkPrim, ordinal, []int.new())
+
+/// A nominal record declaration, no arguments applied.
+export fn Interner mut @record(decl_id int) -> int => @intern(TyKind.TkRecord, decl_id, []int.new())
+
+/// A nominal sum declaration, no arguments applied.
+export fn Interner mut @sum(decl_id int) -> int => @intern(TyKind.TkSum, decl_id, []int.new())
+
+/// A type constructor applied to arguments: Vec[int] is app(vec_decl, [int]).
+/// "No generics" is the empty-argument case of the same door (274.1 section 2b):
+/// there is no separate path for the non-generic world.
+export fn Interner mut @app(decl_id int, args []int) -> int => @intern(TyKind.TkApp, decl_id, args)
+
+/// The i-th type parameter of the enclosing declaration.
+export fn Interner mut @param(index int) -> int => @intern(TyKind.TkParam, index, []int.new())
+
+/// A fresh inference variable. Distinct vids never merge here — union-find
+/// lives in `infer`, and it maps vids to types, it does not re-intern them.
+export fn Interner mut @infer(vid int) -> int => @intern(TyKind.TkInfer, vid, []int.new())
+
+// ---- reader doors: allocate nothing -----------------------------------------
+
+/// The kind of a type; an id outside the table is an ice, never a default.
+#realtime nogc
+export fn Interner @kind_of(t int) -> TyKind {
+    if t < 0 || t >= @rows.len() { ice("types: kind_of asked for a type id outside the interner") }
+    @rows[t].kind
+}
+
+/// The head of a type: DeclId for nominal kinds, ordinal for a primitive,
+/// index for a parameter, vid for an inference variable.
+#realtime nogc
+export fn Interner @head_of(t int) -> int {
+    if t < 0 || t >= @rows.len() { ice("types: head_of asked for a type id outside the interner") }
+    @rows[t].head_id
+}
+
+/// How many arguments an application carries (0 for every other kind).
+#realtime nogc
+export fn Interner @arg_count(t int) -> int {
+    if t < 0 || t >= @rows.len() { ice("types: arg_count asked for a type id outside the interner") }
+    @rows[t].arg_cnt
+}
+
+/// The i-th argument of an application. Out of range is an ice.
+#realtime nogc
+export fn Interner @arg(t int, i int) -> int {
+    ro row = @rows[t]
+    if i < 0 || i >= row.arg_cnt { ice("types: application argument index out of range") }
+    @args[row.arg_off + i]
+}
+
+/// Does the type contain no Param and no Infer anywhere? This is THE
+/// question layout and the C-name door ask before they start
+/// (architecture, layout): a type that fails it has no size and no name
+/// yet, and asking anyway is the bug the assert exists to catch.
+#realtime nogc
+export fn Interner @is_concrete(t int) -> bool {
+    ro row = @rows[t]
+    match row.kind {
+        TkPrim => { return true }
+        TkRecord => { return true }
+        TkSum => { return true }
+        TkParam => { return false }
+        TkInfer => { return false }
+        TkApp => {
+            for i in 0..row.arg_cnt {
+                if !@is_concrete(@args[row.arg_off + i]) { return false }
+            }
+            return true
+        }
+    }
+}
+
+/// THE ONE WAY A PARAM LEAVES A TYPE. Replace Param{i} by args[i], recurse
+/// through applications, and re-intern the result. Total by index: a Param
+/// whose index has no argument is an ice — the caller promised a full
+/// vector, and a partial substitution is exactly the C++-template model of
+/// generics that this project rejects (architecture, substitution).
+///
+/// Who may call: `check` and `mono`. Who may not: the emitter — by the time
+/// it runs, every type it sees is concrete or the layout assert has fired.
+export fn Interner mut @subst(t int, args []int) -> int {
+    ro row = @rows[t]
+    match row.kind {
+        TkPrim => { return t }
+        TkRecord => { return t }
+        TkSum => { return t }
+        TkInfer => { return t }
+        TkParam => {
+            if row.head_id < 0 || row.head_id >= args.len() {
+                ice("types: subst with a partial argument vector — a Param has no argument")
+            }
+            return args[row.head_id]
+        }
+        TkApp => {
+            mut new_args = []int.new()
+            mut changed = false
+            for i in 0..row.arg_cnt {
+                ro a = @args[row.arg_off + i]
+                ro s = @subst(a, args)
+                if s != a { changed = true }
+                new_args.push(s)
+            }
+            if !changed { return t }
+            return @intern(TyKind.TkApp, row.head_id, new_args)
+        }
+    }
+}
