@@ -59,15 +59,27 @@ fn Cursor mut @node(kind NodeKind, children []Node) -> Node {
     branch(id, kind, children)
 }
 
+/// Look ahead `skip` tokens without moving. ONE door, not a family: the
+/// second one (`peek2`) existed only to add 1 to the index, and a third would
+/// have been needed the moment a form is told apart by three tokens --
+/// `recv_ahead` below already needed an arbitrary distance and was scanning
+/// `@toks` by hand, duplicating the bounds check this door owns (owner's
+/// suggestion 2026-08-17).
+///
+/// A defaulted parameter in Nova is passed BY NAME (`@peek(skip: 1)`) --
+/// measured, not assumed: `@peek(1)` is refused outright, the language says a
+/// defaulted parameter travels by name only. That reads better at the call
+/// site than `peek2()` ever did, because the number now says what it counts.
+///
 /// Safe past the end: peek answers Eof forever once the stream is exhausted.
 /// Together with the advancing take below this kills two latent doors at
 /// once (E1 review p.2, 2026-08-14): an unguarded loop can no longer hang on
 /// a non-advancing cursor, and recovery that consumes the Eof leaf (its
 /// leading carries the file's TAIL trivia) can no longer lead to that trivia
 /// being emitted twice -- the final push in parse() is conditional now.
-fn Cursor @peek() -> TokenKind {
-    if @i >= @toks.len() { return TokenKind.Eof }
-    @toks[@i].kind
+fn Cursor @peek(skip int = 0) -> TokenKind {
+    if @i + skip >= @toks.len() { return TokenKind.Eof }
+    @toks[@i + skip].kind
 }
 
 /// The type-parameter list `[T]` / `[K, V]` after a fn or a type name.
@@ -92,25 +104,6 @@ fn Cursor mut @generics() -> Node {
     @node(NodeKind.Generics, kids)
 }
 
-/// Is a METHOD receiver ahead -- `Vec @push` or the generic `Vec[T] @push`?
-///
-/// peek2 alone cannot answer it: between the receiver name and the `@` there
-/// may be a bracket run of any length, so the lookahead scans to the matching
-/// bracket and asks what follows. Without this, `fn Vec[T] @push` reads as a
-/// FUNCTION named Vec and std's generic methods enter harvest misshapen.
-fn Cursor @recv_ahead() -> bool {
-    if @peek() != TokenKind.Ident { return false }
-    if @peek2() == TokenKind.At { return true }
-    if @peek2() != TokenKind.LBracket { return false }
-    mut j = @i + 2
-    mut depth = 1
-    while j < @toks.len() && depth > 0 {
-        if @toks[j].kind == TokenKind.LBracket { depth += 1 }
-        if @toks[j].kind == TokenKind.RBracket { depth -= 1 }
-        j += 1
-    }
-    j < @toks.len() && @toks[j].kind == TokenKind.At
-}
 
 /// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
@@ -175,20 +168,12 @@ fn is_terminator(k TokenKind) -> bool => TERMINATORS.contains(k)
 /// True once the stream is exhausted.
 fn Cursor @at_eof() -> bool => @peek() == TokenKind.Eof
 
-/// The kind of the token one AHEAD — needed exactly where the form is
-/// told apart by a pair: `fn <Recv> @<name>` (method) versus
-/// `fn <name>` (function). Like peek(), safe past the end of the
-/// stream.
-fn Cursor @peek2() -> TokenKind {
-    if @i + 1 >= @toks.len() { return TokenKind.Eof }
-    @toks[@i + 1].kind
-}
 
 /// Is the cursor at a minus that belongs to a numeric literal? `-1` stays one
 /// literal node (the older shape, and the emitted C constant stays one token);
 /// `-x` becomes a Unary node.
 fn Cursor @minus_before_literal() -> bool =>
-    @peek() == TokenKind.Minus && (@peek2() == TokenKind.IntLit || @peek2() == TokenKind.FloatLit)
+    @peek() == TokenKind.Minus && (@peek(skip: 1) == TokenKind.IntLit || @peek(skip: 1) == TokenKind.FloatLit)
 
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
 export fn parse(toks []Token) -> Node
@@ -300,14 +285,30 @@ fn Cursor mut @fn_decl() -> Node {
     // subset (novac does not declare methods), but for READING std
     // signatures: the subset method table is built from declarations, not
     // from a list of names in the compiler (П5).
-    if @recv_ahead() {
-        mut rk = []Node.of(@take()) // receiver type
-        if @peek() == TokenKind.LBracket { rk.push(@generics()) }
-        rk.push(@take())            // '@'
-        kids.push(@node(NodeKind.Recv, rk))
+    // Receiver or free function? The two forms differ only AFTER the name and
+    // its optional `[...]`: `fn Vec[T] @push` versus `fn id[T](x T)`. The
+    // parser used to answer with a lookahead that scanned to the matching
+    // bracket and asked what followed -- a second walk over tokens the parser
+    // was about to read anyway, and a second place that had to know what a
+    // bracket run is.
+    //
+    // It reads them ONCE and decides after (owner's question 2026-08-17: is
+    // the lookahead needed at all -- no). The pieces are held aside; if `@`
+    // turns up, they were a receiver and get wrapped as one; otherwise they
+    // were the name and its own generics. Nothing is re-parsed and the cursor
+    // never moves backwards -- the difference from the lookahead is that the
+    // knowledge lives in one place instead of two.
+    mut head = []Node.new()
+    if @peek() == TokenKind.Ident { head.push(@take()) }
+    if @peek() == TokenKind.LBracket { head.push(@generics()) }
+    if @peek() == TokenKind.At {
+        head.push(@take()) // '@'
+        kids.push(@node(NodeKind.Recv, head))
+        if @peek() == TokenKind.Ident { kids.push(@take()) }
+        if @peek() == TokenKind.LBracket { kids.push(@generics()) }
+    } else {
+        for h in head { kids.push(h) }
     }
-    if @peek() == TokenKind.Ident { kids.push(@take()) }
-    if @peek() == TokenKind.LBracket { kids.push(@generics()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
     while @peek() == TokenKind.Ident {
         mut pk = []Node.of(@take()) // parameter name
