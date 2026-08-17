@@ -729,14 +729,18 @@ export fn leaf_kind(n Node) -> TokenKind {
 
 /// Node kinds that stand as expressions (argument/operand positions).
 export fn is_expr_kind(k NodeKind) -> bool {
-    if k == NodeKind.Paren { return true }
-    if k == NodeKind.Unary { return true }
-    if k == NodeKind.Bin { return true }
-    if k == NodeKind.Lit { return true }
-    if k == NodeKind.Name { return true }
-    if k == NodeKind.Call { return true }
-    if k == NodeKind.MethodCall { return true }
-    if k == NodeKind.FieldAccess { return true }
+    // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
+    // `||` on the next line is parsed as something else entirely (the oracle
+    // answered E_CLOSURE_SCALAR_RETURN), and parentheses around a multi-line
+    // chain are refused outright.
+    k == NodeKind.Paren ||
+    k == NodeKind.Unary ||
+    k == NodeKind.Bin ||
+    k == NodeKind.Lit ||
+    k == NodeKind.Name ||
+    k == NodeKind.Call ||
+    k == NodeKind.MethodCall ||
+    k == NodeKind.FieldAccess ||
     k == NodeKind.MatchExpr
 }
 
