@@ -105,6 +105,16 @@ fn Cursor mut @generics() -> Node {
 }
 
 
+/// The TEXT of the token `skip` ahead, empty past the end. Same contract as
+/// @peek, and it exists for the one place where a form is told apart by a
+/// word rather than a token kind: `enum` is not a keyword in this lexer, so
+/// the sum marker arrives as an identifier and has to be recognised by
+/// spelling.
+fn Cursor @peek_text(skip int = 0) -> str {
+    if @i + skip >= @toks.len() { return "" }
+    @toks[@i + skip].text
+}
+
 /// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
     // Past the end of the stream, take() returns an EMPTY leaf and does
@@ -236,6 +246,32 @@ fn Cursor mut @type_decl() -> Node {
     mut kids = []Node.of(@take()) // KwType
     if @peek() == TokenKind.Ident { kids.push(@take()) }
     if @peek() == TokenKind.LBracket { kids.push(@generics()) }
+    // The CANONICAL sum carries the `enum` marker -- `type Color enum` -- and
+    // novac refused it until 2026-08-17: it parsed ONLY the older
+    // pipes-without-marker shape, that is, the spelling the project moved away
+    // from, while rejecting the one the convention requires. Every probe
+    // written the canonical way fell into the junk bucket before reaching any
+    // rule about sums, which is how the missing exhaustiveness check stayed
+    // invisible. The marker is kept in the tree -- the tree is lossless.
+    ro is_sum_marker = @peek() == TokenKind.Ident && @peek_text() == "enum"
+    if is_sum_marker {
+        kids.push(@take())
+        // The first variant may follow the marker directly:
+        // `type Color enum Red(int) | Green(int)`. The pipe loop below cannot
+        // start on it, so it is read here and the loop takes the rest.
+        if @peek() == TokenKind.Ident {
+            mut vk = []Node.of(@take())
+            if @peek() == TokenKind.LParen {
+                vk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    vk.push(@take())
+                    if @peek() == TokenKind.Comma { vk.push(@take()) }
+                }
+                if @peek() == TokenKind.RParen { vk.push(@take()) }
+            }
+            kids.push(@node(NodeKind.Variant, vk))
+        }
+    }
     if @peek() == TokenKind.Pipe {
         while @peek() == TokenKind.Pipe {
             mut vk = []Node.of(@take()) // '|'
@@ -252,6 +288,8 @@ fn Cursor mut @type_decl() -> Node {
         }
         return @node(NodeKind.SumDecl, kids)
     }
+    // `type Color enum Red(int)` -- marker present, no pipe followed.
+    if is_sum_marker { return @node(NodeKind.SumDecl, kids) }
     if @peek() == TokenKind.LBrace {
         kids.push(@take())
         while @peek() == TokenKind.Ident {

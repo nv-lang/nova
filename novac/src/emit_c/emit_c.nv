@@ -333,8 +333,18 @@ fn Emitter mut @emit_match(m Node, uniq str, res_t int) -> () {
     @body.append(" _novac_scr_${uniq} = ")
     @emit_expr(scr)
     @body.append(";\n    ")
+    // The temporary is declared with its type AND zero-initialised
+    // (274.3/F29). The checker demands exhaustiveness for SUMS now, but a
+    // match on `int` may legally leave values uncovered -- both compilers
+    // accept `match n { 1 => 10  2 => 20 }` -- and the oracle answers 0
+    // there. An uninitialised temporary answered whatever the stack held:
+    // valid C, a different number per run, no diagnostic anywhere. The
+    // compound literal `(T){0}` is C99 and works for scalars and structs
+    // alike, so the emitter needs no per-type knowledge here.
     @body.append(c_type(@ctx, res_t))
-    @body.append(" _novac_match_${uniq};\n")
+    @body.append(" _novac_match_${uniq} = (")
+    @body.append(c_type(@ctx, res_t))
+    @body.append("){0};\n")
     @body.append("    int _novac_matched_${uniq} = 0;\n")
     for c in kids {
         if c.kind_of() == NodeKind.MatchArm {

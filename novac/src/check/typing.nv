@@ -302,6 +302,10 @@ fn Checker @init_reads_self(n Node) -> bool {
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
+/// One text for the exhaustiveness rule; the oracle's own code is named so a
+/// reader can find the other half of the story.
+const NOT_EXHAUSTIVE_MSG = "outside the subset: match on a sum leaves a variant uncovered (oracle: E_MATCH_NON_EXHAUSTIVE, registry 703)"
+
 /// One text for the rule: the reader must not guess whether two wordings
 /// mean two limits.
 const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
@@ -329,6 +333,57 @@ fn Checker mut @type_match(m Node) -> () {
         } else if at != first_t && @out.len() == 0 {
             @report_first_leaf_of([]Node.of(c), ARMS_DISAGREE_MSG)
         }
+    }
+    if @out.len() > 0 { return }
+    @report_if_not_exhaustive(kids, scr_t)
+}
+
+/// A match on a sum must cover every variant -- the rule novac did not have
+/// AT ALL until 2026-08-17, which made it WIDER than the language in the one
+/// direction a subset must never be wide.
+///
+/// Measured: `match c { Red(x) => x + 1  Green(x) => x + 2 }` on a three-variant
+/// sum is refused by the oracle (E_MATCH_NON_EXHAUSTIVE, registry #703) and
+/// was accepted by novac with rc=0. The emitted C declares the result
+/// temporary UNINITIALISED, walks the arm chain, and returns it: a program the
+/// oracle refuses to compile became, through novac, a read of uninitialised
+/// automatic storage. Two defects in one -- a divergence from the language and
+/// a silent miscompilation (class K-C).
+///
+/// A wildcard or a plain binder arm covers everything by construction, so the
+/// scan stops there; a guard does NOT count as coverage, because a guard can
+/// be false (the oracle judges it the same way).
+fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
+    if scr_t < 0 || scr_t >= @ctx.types.len() { return }
+    ro td = @ctx.types[scr_t]
+    if td.kind != TypeKind.TkSum { return }
+    if td.row_cnt < 1 { return }
+    mut covered = 0
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        ro ak = branch_children(c)
+        if ak.len() < 1 { continue }
+        mut has_guard = false
+        for g in ak {
+            if g.kind_of() == NodeKind.Guard { has_guard = true }
+        }
+        if has_guard { continue }
+        ro pat = branch_children(ak[0])
+        if pat.len() < 1 { continue }
+        ro p0 = pat[0]
+        if leaf_kind(p0) != TokenKind.Ident { continue }
+        ro d = @ctx.defs.find(leaf_text(p0))
+        if d < 0 {
+            // `_` or a plain binder: it matches anything, so the match is
+            // exhaustive whatever the variants are.
+            return
+        }
+        ro def = @ctx.defs.rows[d]
+        if def.kind != DefKind.DefVariant { return }
+        if @ctx.variant_rows[def.payload].sum_id == scr_t { covered += 1 }
+    }
+    if covered < td.row_cnt {
+        @report_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
     }
 }
 

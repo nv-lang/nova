@@ -619,14 +619,29 @@ export fn collect_types(file Node) -> Ctx {
                     ro vk = branch_children(v)
                     // A variant with no name (recovery after a broken sum_id):
                     // skipped — check is the judge, sem does not fail (274.3/F-B4).
-                    if vk.len() < 2 { continue }
-                    if vk[1].kind_of() != NodeKind.LeafNode { continue }
-                    ro vname = leaf_text(vk[1])
+                    if vk.len() < 1 { continue }
+                    // The name is the FIRST identifier leaf, not a fixed index.
+                    // Both shapes exist: `| Red(int)` puts a pipe leaf ahead of
+                    // it, `type Color enum Red(int)` does not -- the first
+                    // variant of the inline form follows the marker directly.
+                    // A fixed index 1 read the payload's `(` there and the sum
+                    // came out with a nameless variant (2026-08-17).
+                    mut name_at = -1
+                    mut vi = 0
+                    for vn in vk {
+                        if name_at < 0 && vn.kind_of() == NodeKind.LeafNode
+                            && leaf_kind(vn) == TokenKind.Ident {
+                            name_at = vi
+                        }
+                        vi += 1
+                    }
+                    if name_at < 0 { continue }
+                    ro vname = leaf_text(vk[name_at])
                     defs.add(vname, DefKind.DefVariant, variant_rows.len())
                     ro poff = payload_types.len()
                     mut pcnt = 0
                     // payload type names sit between '(' and ')'
-                    mut j = 2
+                    mut j = name_at + 1
                     while j < vk.len() {
                         // [LEGACY-#676] var-index-method: `vk[j].kind_of()`
                         // with a VARIABLE index miscompiles in the oracle
