@@ -14,12 +14,109 @@
 
 Спека НЕ самосогласована в буквальном чтении: 98 кандидатов-расхождений на 7 тем, из них к моменту обрыва 3 подтверждены как настоящие противоречия (>=2 скептиков из 3), 14 сняты как «два механизма», 31 — как «старый текст, перекрытый амендментом». Главный класс — НЕ ошибки замысла, а **рост амендментами без сводных блоков**: старый D-блок остаётся нормативным по букве после того, как поздний блок его перекрыл (ровно класс, который сегодня закрыл D464 для бáундов).
 
+## 0. ЧТО УЖЕ ЗАКРЫТО ПО ЭТОМУ АУДИТУ (обновление 2026-08-17)
+
+**Три подтверждённых противоречия (раздел 1) — разобраны все три.**
+
+* **D463 против D416** (два из трёх) — были МОИ, в блоке, написанном накануне:
+  пример возвращал `Decision.Restart`, ретрактированный владельцем 2026-07-10,
+  и проза утверждала, что паника приходит типом `Panic`, тогда как D416 говорит
+  `str`-сообщение и типа `Panic` в прелюдии нет. Исправлено в тексте: пример
+  ветвится по `report().kind == "panic"` — тому самому полю, что печатает
+  JSON-рендерер D462, то есть источник истины о виде отказа один.
+* **D72 против D145** (forward-ref в generic-списке) — решение владельца:
+  правило D72 СНЯТО. Три факта против него: чекер его никогда не проверял,
+  std сам его нарушает и компилируется, D145 даёт нарушение как валидный
+  пример. Реестр №702.
+
+**Семь мест из раздела 3 помечены (2026-08-17).** Отобраны по критерию
+«перекрытие датировано, подтверждено скептиками, решений владельца не
+требует» — то есть закрываются пометкой, а не выбором:
+
+* **Группа «семантика `?`» → перекрыта D85** (3 пометки + 1 исправленный
+  пример). D85 определяет `?` как return-стиль БЕЗ эффектов и энфорсит это
+  диагностикой `E_TRY_IN_FAIL_FN`; четыре места описывали снятую семантику
+  «`?` ⇒ throw, требует `Fail[E]`»: `04-effects.md` (D62 Rule 2, D61 §8,
+  строка про `expr? ⇒ throw`) и нормативный пример D158 в `03-syntax.md:6995`,
+  который под D85 просто НЕ СКОМПИЛИРУЕТСЯ — там `do_work()?` в функции с
+  `Fail[Err]`. Пример исправлен на `!!`, три текста получили блок-цитату
+  «ПЕРЕКРЫТО D85» и сохранены как история.
+* **Группа «снятая форма `-> consume T`» → перекрыта D445 §616** (3 пометки).
+  D445 говорит: return-позиция для `consume` не существует НИ В КАКОЙ форме,
+  с двумя кодами ошибок. Помечены `02-types.md:3619`, `05-memory.md:488`,
+  `06-concurrency.md:6141`. На класс уже есть страж
+  `check-retracted-param-form` с храповиком осадка по зонам — то есть
+  закрытие измеримо, а не на слово.
+
+**ЧТО ЗНАЧИТ ГАЛОЧКА (вопрос владельца 2026-08-17: «ПОМЕЧЕНО — закрыто или
+нет?»).** Не везде одно и то же, и это важно:
+
+* ✅ **Группа B (`-> consume T`) — ЗАКРЫТА.** Не потому, что текст поправлен, а
+  потому, что класс держит МАШИНА: `check-retracted-param-form` считает осадок
+  снятой формы по зонам с храповиком вниз. Восьмое вхождение покраснеет само.
+* ✅ **Группа A (семантика `?`) — ЗАКРЫТА 2026-08-17.** Держит
+  `check-retracted-try-semantics` (реестр №713): ядро на питоне считает по
+  зонам ДВА семейства — лексическое (проза «`?` — сахар над `throw`», СНЯТАЯ трактовка) и
+  структурное (`?` внутри функции, объявившей `Fail`; grep такое не видит в
+  принципе, признак разнесён между строкой подписи и строкой тела).
+  Публикуемое руководство держится на НУЛЕ без храповика — и ноль там
+  достигнут, а не объявлен: волной того же дня 14 мест в
+  `tutorial-cleanup.{md,ru.md}` переведены на `!!`. Исторические зоны под
+  храповиком вниз: spec 35, docs/plans 12, docs/dev 60. Самотест 12/12
+  проверяет ОБЕ стороны, включая то, что страж НЕ ловит законную форму D196
+  `consume X = expr? { body }`, оператор `??`, слово `desugar` и строки,
+  которые сами помечают форму снятой.
+
+**ПРОВЕРКА СОБСТВЕННОЙ РАЗМЕТКИ 2026-08-17 (инвентаризация к стражу).** Разметку
+проверил отдельный агент-инвентаризатор, и она НЕ выдержала проверки на двух
+местах из четырёх. Пишу здесь, а не молча правлю, потому что это ровно тот
+класс, за который отчёт и заведён:
+
+* **D86, таблица сравнения `?`/`!!`/`??` (`04-effects.md`).** Отчёт утверждал
+  «ПОМЕЧЕНО 2026-08-17» — **маркера в файле не было вовсе.** Ячейка «Эффект» у
+  `expr?` продолжала читаться «требует `Fail[E]` если `expr` это `Result`».
+  Исправлено 2026-08-17: ячейка ПЕРЕПИСАНА по D85 (эффекта нет; требуется,
+  чтобы enclosing fn возвращала `Result`/`Option`), под таблицей — врезка о
+  том, что именно поменялось. Здесь текст правится, а не помечается: таблица
+  нормативна и читается как справка, а пометка рядом с неверной ячейкой
+  оставляет неверную ячейку.
+* **D158 model-B (`03-syntax.md`).** Помечен ОДИН носитель из ВОСЬМИ: форма
+  `do_work()?` в Fail-функции встречается в файле восемь раз (строки 5111,
+  5305, 7031, 7219, 7466, 7484, 9565, 9569). Семь остаются. Пометка одного
+  экземпляра и была тем самым «фиксом носителя», против которого написан
+  весь этот отчёт.
+
+**Вывод, который дороже обеих правок:** разметка руками не считается закрытием
+даже для носителя — потому что руками же и промахивается. Поэтому группа A
+закрывается не пометками, а стражем `check-retracted-try-semantics`
+(реестр №713): он МЕРЯЕТ осадок по зонам, и его число, а не моё слово,
+становится содержанием галочки.
+
+**Сделано в тот же день.** Страж стоит в гейте (`gate.sh`, шаг
+`retracted-try-semantics`), база заведена с летописью, самотест 12/12.
+Дальше числа опускаются волнами по зонам — первый кандидат `docs/dev`
+(60 мест, почти всё в `idioms/`: их читают как образец).
+
+**Почему не все 31.** Остальные 24 «перекрытых» требуют либо чтения на месте
+(какая сторона победила — не всегда очевидно из дат), либо решения владельца.
+Отбирать их «пачкой» значило бы повторить ту же ошибку, от которой аудит и
+лечит: объявить нормой то, что не проверено.
+
+**56 недоверифицированных (раздел 4) — трогать нельзя по построению:** в этом
+же прогоне больше половины проверенных кандидатов растворялись под линзами
+(амендмент / два механизма). Их разбор — возобновление воркфлоу.
+
+---
+
 ## 1. ПОДТВЕРЖДЁННЫЕ противоречия — чинить (3)
 
 Каждое подтверждено минимум двумя независимыми скептиками с построением
 минимальной программы, чей смысл/компилируемость зависит от того, какому тексту верить.
 
-### Generic-param forward reference in bound: error per D72, valid example per D145
+### ✅ ЗАКРЫТО — Generic-param forward reference in bound: error per D72, valid example per D145
+
+> **Решение владельца 2026-08-16: правило D72 СНЯТО** (реестр №702). Имена одного
+> generic-списка видны друг другу целиком (прецедент rustc). Пометка стоит в D72.
 
 * **Род:** contradiction — подтверждено 2/3 скептиками
 * **A** `spec/decisions/02-types.md:4191`:
@@ -31,7 +128,10 @@
   * скептик: Both texts govern the same mechanism and assign opposite validity to the same code. D72's ordering rule (02-types.md:4182-4184) is position-agnostic («Имя в bound'е должно быть уже объявлено — либо ранее в том же списке [...], либо в type-контексте») and marks `fn func[T From[K], K]` as ОШИБКА (4191). D145's example `fn[T From[K], K] T @construct_from(v K)` (7418) sits in a section literally titled «Bound syntax (через D72)», and D72's own fn[T]-prefix subsection (4168) says «Bound syntax из D72 применим в этой позиции» — so the two-mechanisms escape is foreclosed by both texts explicitly unif
   * скептик: The parameter list `[T From[K], K]` is byte-identical in both places. D72's normative ordering rule (02-types.md:4182-4184) requires a name used in a bound to be declared earlier in the same `[...]` list or in a type-context, and line 4191 explicitly marks `fn func[T From[K], K]` as ОШИБКА. D145's normative section «Bound syntax (через D72)» (02-types.md:7412-7419) presents `fn[T From[K], K] T @construct_from(v K) -> T` as a valid parametric-protocol example; the receiver is bare T, so no carrier or enclosing type declares K — the type-context escape does not apply. D145 explicitly imports D72
 
-### D463 example returns `Decision.Restart`; D416 §4 retracted the Restart family (unknown variant)
+### ✅ ЗАКРЫТО — D463 example returns `Decision.Restart`; D416 §4 retracted the Restart family
+
+> **Исправлено в D463 2026-08-16** (блок мой, написан накануне): пример возвращает
+> `Decision.Escalate`/`Stop` — словарь D416 §4 полный.
 
 * **Род:** stale-amendment — подтверждено 2/3 скептиками
 * **A** `spec/decisions/08-runtime.md:9133`:
@@ -43,7 +143,10 @@
   * скептик: The amendment sweep confirms the clash and finds nothing that resolves it. D416 §1 amendment (06-concurrency.md:7762) and §4 (06-concurrency.md:7819-7827, owner decision 2026-07-10) remove the Restart family entirely: 'type Decision enum Escalate | Stop' (06-concurrency.md:7749) is declared COMPLETE, 'ссылка на `Decision.Restart` — обычный unknown-variant', and even E_SUPERVISOR_RESTART_GATED plus the restart_gated_neg fixture were retracted with it. No later text reinstates Restart anywhere in spec/decisions (grep over all files), and 08-runtime.md ends at line 9213 so no amendment follows D4
   * скептик: Cannot refute. There is exactly one Decision type (std/src/prelude/effects.nv:277 `export type Decision enum Escalate | Stop`), and D463's example (08-runtime.md:9133 `return if err is Panic { Decision.Stop } else { Decision.Restart }`) is a handler of the exact D416 Supervisor effect — same enum, same use-site — so no two-mechanisms boundary exists. The runtime bridge's "any non-Stop tag maps to Escalate (defensive)" (06-concurrency.md:7825-7826) is not a rescuing second mechanism: the same sentence declares `Decision.Restart` an ordinary unknown-variant, i.e. a compile error that never reach
 
-### D463: a child panic reaches `on_child_fail` as type `Panic` (`err is Panic`); D416: panic arrives as a `str` message
+### ✅ ЗАКРЫТО — D463: panic as type `Panic` vs D416: panic arrives as `str`
+
+> **Исправлено в D463 2026-08-16**: вид отказа читается `report().kind` — тем самым
+> полем, что печатает JSON-рендерер D462; типа `Panic` в прелюдии нет, норма — D416.
 
 * **Род:** contradiction — подтверждено 3/3 скептиками
 * **A** `spec/decisions/08-runtime.md:9143`:
@@ -84,10 +187,10 @@
 * **Default-body synthesis on bare method call: never (D183 amend part 2) vs gated by #impl (D186)** — A `spec/decisions/02-types.md:8341` / B `spec/decisions/02-types.md:8411`. Что перекрывает: 
 * **Type-set signedness: no mixing at all (D310) vs full SignedInt∪UnsignedInt union allowed (D423 R1) — D310 not amended in place** — A `spec/decisions/02-types.md:16486` / B `spec/decisions/04-effects.md:7706`. Что перекрывает: 
 * **D122 acceptance criteria still say bound must be a protocol type; D72/D310 allow type-set bounds** — A `spec/decisions/02-types.md:4517` / B `spec/decisions/02-types.md:4122`. Что перекрывает: 
-* **D62 Rule 2 still makes `expr?` a throw that requires Fail[E]; D85 makes `?` return-only and forbids it in Fail-fns** — A `spec/decisions/04-effects.md:2668` / B `spec/decisions/04-effects.md:4641`. Что перекрывает: 
-* **D86 operator comparison table says `expr?` on Result requires Fail[E]; D85 says `?` no longer involves Fail** — A `spec/decisions/04-effects.md:5196` / B `spec/decisions/04-effects.md:4700`. Что перекрывает: 
-* **D61 §8 'Связь с ?' still defines `?` as sugar over throw; D85 defines it as `return Err(e)`** — A `spec/decisions/04-effects.md:2110` / B `spec/decisions/04-effects.md:4707`. Что перекрывает: 
-* **D158 model-B normative example uses `do_work()?` in a Fail[WorkErr] fn — rejected by D85's E_TRY_IN_FAIL_FN** — A `spec/decisions/03-syntax.md:6995` / B `spec/decisions/04-effects.md:4649`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D62 Rule 2 still makes `expr?` a throw that requires Fail[E]; D85 makes `?` return-only and forbids it in Fail-fns** — A `spec/decisions/04-effects.md:2668` / B `spec/decisions/04-effects.md:4641`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D86 operator comparison table says `expr?` on Result requires Fail[E]; D85 says `?` no longer involves Fail** — A `spec/decisions/04-effects.md:5196` / B `spec/decisions/04-effects.md:4700`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D61 §8 'Связь с ?' still defines `?` as sugar over throw; D85 defines it as `return Err(e)`** — A `spec/decisions/04-effects.md:2110` / B `spec/decisions/04-effects.md:4707`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D158 model-B normative example uses `do_work()?` in a Fail[WorkErr] fn — rejected by D85's E_TRY_IN_FAIL_FN** — A `spec/decisions/03-syntax.md:6995` / B `spec/decisions/04-effects.md:4649`. Что перекрывает: 
 * **D65 Rule 4: `a/b` and `arr[i]` THROW RuntimeError via Fail (D28 infers Fail[RuntimeError]); D427/D13/D325 R0: they PANIC and never appear in the signature** — A `spec/decisions/04-effects.md:3509` / B `spec/decisions/04-effects.md:7749`. Что перекрывает: 
 * **D12 Level 1: a fn with an EXTRA effect is rejected by a typed queue; D448: fn-type compatibility is by inclusion, extra effects are fine** — A `spec/decisions/04-effects.md:604` / B `spec/decisions/04-effects.md:8025`. Что перекрывает: 
 * **D31/D61: a Fail handler-lambda MUST `interrupt` (final expression invalid); D449 example (and D65 §1) uses `with Fail[..] = |_e| Err(ReadFailed)` with no interrupt** — A `spec/decisions/04-effects.md:1544` / B `spec/decisions/06-concurrency.md:7067`. Что перекрывает: 
@@ -99,9 +202,9 @@
 * **View-peek `Some(f)` on must-consume payload: D133 legal, D157 amendment requires `Some(consume f)`** — A `02-types.md:5876` / B `05-memory.md:1093`. Что перекрывает: 
 * **Destructuring a consume record into per-field linear bindings: rejected in D133, implemented by D180 amendment №378** — A `02-types.md:5979` / B `05-memory.md:831`. Что перекрывает: 
 * **D180 Rule 5 uses a `view` parameter keyword that D157 declares non-existent (parse error)** — A `05-memory.md:539` / B `05-memory.md:893`. Что перекрывает: 
-* **`-> consume T` return form: D176 lists it as valid prefix form, D445 №616 retracts it entirely** — A `02-types.md:3619` / B `02-types.md:3730`. Что перекрывает: 
-* **D180/D133 examples still use retracted postfix `-> T consume` return syntax** — A `05-memory.md:488` / B `02-types.md:3730`. Что перекрывает: 
-* **D174 guard API tables keep `-> MutexGuard consume` signatures retracted by D445** — A `06-concurrency.md:6141` / B `02-types.md:3733`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **`-> consume T` return form: D176 lists it as valid prefix form, D445 №616 retracts it entirely** — A `02-types.md:3619` / B `02-types.md:3730`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D180/D133 examples still use retracted postfix `-> T consume` return syntax** — A `05-memory.md:488` / B `02-types.md:3730`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D174 guard API tables keep `-> MutexGuard consume` signatures retracted by D445** — A `06-concurrency.md:6141` / B `02-types.md:3733`. Что перекрывает: 
 * **Overload mode axis: rvalue argument selects only ro-version (rule 1) yet consume-version for owned rvalue (rule 3)** — A `10-overloading.md:293` / B `10-overloading.md:297`. Что перекрывает: 
 * **Module declaration depth: D29 rev-3 says always 2 segments (parent.target); D78 rev-6 says nested folders get full root prefix (3+ segments)** — A `spec/decisions/07-modules.md:246` / B `spec/decisions/07-modules.md:1320`. Что перекрывает: 
 * **D78 layout principle and Plan-195 amendment still prescribe rev-1 full-path declaration `module std.encoding.base64`, which D29 rev-3 strict-removal makes a hard error** — A `spec/decisions/07-modules.md:302` / B `spec/decisions/07-modules.md:1395`. Что перекрывает: 

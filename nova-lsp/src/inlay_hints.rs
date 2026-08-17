@@ -52,7 +52,7 @@ use tower_lsp::lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Position, R
 
 use nova_codegen::ast::{
     ArrayElem, Block, CallArg, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl, Item,
-    LetDecl, MatchArmBody, Pattern, Stmt,
+    LetDecl, MatchArmBody, Pattern, Stmt, TypeRef,
 };
 use nova_codegen::diag::{Span, MAIN_FILE_ID};
 use nova_codegen::types::ModuleEnv;
@@ -421,7 +421,23 @@ impl<'a> Ctx<'a> {
         // Nova type syntax is space-separated (`consume s TcpStream`), not
         // colon-separated — the hint must read as insertable Nova code
         // (owner 2026-07-23; was Rust/TS-style ": T").
-        let label = format!(" {}", format_type_ref(tr));
+        //
+        // The binding keyword already carries the qualifier, so it must not be
+        // repeated in the hint: `ro nk = branch_children(...)` where the callee
+        // returns `ro []Node` used to render as `ro nk ro []Node`, which is not
+        // Nova and does not read as anything (owner report 2026-08-17 on
+        // `novac/src/sem/sem.nv`, registry №709). Peel top-level `ro`/`mut`
+        // wrappers — and only those: `consume` is part of the type's identity
+        // (D131), not a binding mode, and a nested `ro` inside a generic argument
+        // (`Vec[ro Node]`) is genuine type information the reader needs.
+        let mut shown = tr;
+        loop {
+            match shown {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => shown = inner,
+                _ => break,
+            }
+        }
+        let label = format!(" {}", format_type_ref(shown));
         self.out.push(mk_hint(pos, label, InlayHintKind::TYPE, false, false));
     }
 
@@ -832,6 +848,76 @@ mod tests {
             count_hint.position.character as usize + 1,
             byte_col_of_2,
             "hint uses UTF-16 column, not byte offset"
+        );
+    }
+
+    #[test]
+    fn edge_cyrillic_comments_above_do_not_shift_param_hints() {
+        // Registry #709, reported by the owner 2026-08-17 on
+        // `novac/src/parse/parse.nv`: in a file whose comments are Cyrillic,
+        // parameter hints landed INSIDE words (`Recovery ins` + `v: ` + `ide`).
+        // Cyrillic is 2 UTF-8 bytes per 1 UTF-16 unit, so any stage that treats
+        // a byte offset as a char index -- or a char index as a byte offset --
+        // drifts by the count of such characters BEFORE the hint. The comments
+        // here sit on lines the hints are not on, which is exactly the reported
+        // shape: the drift must not accumulate across preceding lines.
+        let src = concat!(
+            "module basics.lsp\n",
+            "// \u{0412}\u{043E}\u{0441}\u{0441}\u{0442}\u{0430}\u{043D}\u{043E}\u{0432}\u{043B}\u{0435}\u{043D}\u{0438}\u{0435} \u{043F}\u{043E}\u{0441}\u{043B}\u{0435} \u{043E}\u{0448}\u{0438}\u{0431}\u{043A}\u{0438} \u{0440}\u{0430}\u{0437}\u{0431}\u{043E}\u{0440}\u{0430}: \u{043F}\u{0440}\u{043E}\u{043F}\u{0443}\u{0441}\u{043A}\u{0430}\u{0435}\u{043C} \u{0434}\u{043E} \u{0442}\u{043E}\u{0447}\u{043A}\u{0438} \u{0441}\u{0438}\u{043D}\u{0445}\u{0440}\u{043E}\u{043D}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{0438}.\n",
+            "// \u{041F}\u{0440}\u{0430}\u{0432}\u{0438}\u{043B}\u{043E} \u{0437}\u{0430}\u{043F}\u{0438}\u{0441}\u{0430}\u{043D}\u{043E} \u{0432} D-\u{0431}\u{043B}\u{043E}\u{043A}\u{0435}; \u{0437}\u{0434}\u{0435}\u{0441}\u{044C} \u{0442}\u{043E}\u{043B}\u{044C}\u{043A}\u{043E} \u{0440}\u{0435}\u{0430}\u{043B}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{044F} \u{043E}\u{0431}\u{0445}\u{043E}\u{0434}\u{0430}.\n",
+            "fn add(a int, b int) -> int => a + b\n",
+            "fn main() -> () {\n",
+            "    ro _ = add(1, 2)\n",
+            "}\n",
+        );
+        let hs = hints("edge_cyr_comments", src, InlayHintConfig::default());
+        let params: Vec<_> = hs
+            .iter()
+            .filter(|h| h.kind == Some(InlayHintKind::PARAMETER))
+            .collect();
+        assert_eq!(params.len(), 2, "both param hints present");
+
+        // The call is on line 5 (0-based). Columns are the columns of `1` and `2`
+        // on that line -- the line is pure ASCII, so UTF-16 column == byte column.
+        let line = "    ro _ = add(1, 2)";
+        let col1 = line.find('1').expect("has `1`");
+        let col2 = line.rfind('2').expect("has `2`");
+        assert_eq!(
+            (params[0].position.line, params[0].position.character as usize),
+            (5, col1),
+            "`a:` anchors at the first argument, not shifted by Cyrillic above"
+        );
+        assert_eq!(
+            (params[1].position.line, params[1].position.character as usize),
+            (5, col2),
+            "`b:` anchors at the second argument, not shifted by Cyrillic above"
+        );
+    }
+
+    #[test]
+    fn edge_ro_return_type_hint_drops_binding_qualifier() {
+        // Registry №709 carrier, reported by the owner 2026-08-17 on
+        // `novac/src/sem/sem.nv`: the callee returns `ro []Node`, the binding is
+        // already `ro`, and the hint rendered the qualifier a second time --
+        // `ro nk ro []Node`. The hint must stay insertable after `ro nk`.
+        let src = concat!(
+            "module basics.lsp\n",
+            "type Node { id int }\n",
+            "fn branch_children() -> ro []Node => []Node.new()\n",
+            "fn main() -> () {\n",
+            "    ro nk = branch_children()\n",
+            "}\n",
+        );
+        let hs = hints("edge_ro_hint", src, InlayHintConfig::default());
+        let tys: Vec<String> = hs
+            .iter()
+            .filter(|h| h.kind == Some(InlayHintKind::TYPE))
+            .map(label_str)
+            .collect();
+        assert_eq!(
+            tys,
+            vec![" []Node".to_string()],
+            "the binding's `ro` must not be repeated by the hint"
         );
     }
 

@@ -24,8 +24,8 @@ cleanup **automatic and reliable**.
 ```nova
 fn read_config(path str) Fail[IoError] -> Config {
     consume f = File.open(path)? {
-        ro raw = f.read_all()?
-        Config.parse(raw)?
+        ro raw = f.read_all()!!
+        return Config.parse(raw)!!
     }
     // f.@cleanup (File.close) automatically called here.
 }
@@ -38,6 +38,20 @@ What happens:
 3. After body completes (success OR error), `f.@cleanup(outcome)`
    is called automatically — closes the file.
 4. If body errors, error re-propagates AFTER cleanup.
+
+> **Why `!!` and not `?` inside the body.** Both operators unwrap, but they
+> propagate differently ([D85](../../spec/decisions/03-syntax.md#d85)): `?` is
+> return-style and is legal only in a function that returns `Result`/`Option`
+> — inside a function that declares `Fail[E]` it is `E_TRY_IN_FAIL_FN`. `!!` is
+> throw-style: it throws through the `Fail` effect, which is exactly what these
+> functions declare. The `?` on the initializer line stays, and is a different
+> thing: `consume X = expr? { body }` is the D196 unwrap-init form.
+>
+> **Why `return` rather than a bare tail expression.** The binding form
+> `consume X = expr { body }` is a STATEMENT — its value is unit
+> ([D188](../../spec/decisions/03-syntax.md#d188) desugaring). Only the
+> re-consume form `consume X { body }` is an expression. Returning from inside
+> the body still runs `@cleanup` first.
 
 ## The `Cleanup[E]` Protocol
 
@@ -70,8 +84,8 @@ type Transaction { conn DbConn, id int }
 
 fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
-        Success      => @conn.commit(@id)?
-        Failure(_)   => @conn.rollback(@id)?
+        Success      => @conn.commit(@id)!!
+        Failure(_)   => @conn.rollback(@id)!!
         Panic(_)     => @conn.rollback_emergency()
     }
 }
@@ -81,8 +95,8 @@ Usage:
 ```nova
 fn process_order(db Db, order Order) Fail[DbError] -> () {
     consume tx = db.begin() {
-        db.insert_order(order)?
-        db.notify_warehouse(order.id)?
+        db.insert_order(order)!!
+        db.notify_warehouse(order.id)!!
     }
     // Success → commit; failure → rollback (automatic).
 }
@@ -136,7 +150,7 @@ fn deep_work(addr str) Fail[NetError] -> () {
     consume conn = pool.acquire()? {
         consume tx = conn.begin()? {
             consume stmt = tx.prepare(sql)? {
-                stmt.execute(args)?
+                stmt.execute(args)!!
             }
             // stmt.@cleanup fires first.
         }
