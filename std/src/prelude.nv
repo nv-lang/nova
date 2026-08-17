@@ -65,7 +65,7 @@ import std.runtime.char
 // `int.abs()` — ИСКЛЮЧЕНИЕ из этого правила: `int @abs()` ретрактирован
 // (был extern "nova" -> C `llabs`, UB на `T.MIN`) — `abs` для `int`
 // (и узких signed) теперь настоящий `.nv`-бланкет
-// (std/prelude/protocols.nv, `fn[T SignedInt] T @abs()`), без
+// (std/prelude/protocols.nv, `fn[T SignedInts] T @abs()`), без
 // C-function-name хардкода.
 import std.runtime.math
 

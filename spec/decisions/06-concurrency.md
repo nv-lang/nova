@@ -3351,7 +3351,7 @@ deadline `close_at(Instant)`, observability counters — добавляются
 > слот (`slot == high_water` на момент аллокации — слоты выдаются в
 > порядке возрастания при первом использовании, переиспользование НЕ
 > пробивает guard повторно). Число VMA процесса теперь следует за
-> числом РЕАЛЬНО живших файберов, а не за `NOVA_MAX_FIBERS`; зажим
+> числом РЕАЛЬНО живших файберов, а не за `NOVA_FIBERS_PER_WORKER`; зажим
 > `NOVA_ARENA_VMA_RESERVE`/`NOVA_ARENA_VMA_SAFETY_PCT` (Plan
 > `[M-187-docker-linux-runtime-hang]`, лечил VMA-шторм следствием) снят
 > как более не нужный. Guard-page-per-slot ИНВАРИАНТ (описанный ниже)
@@ -3381,7 +3381,22 @@ OS-примитивами по платформам:
 **Linux/macOS — per-thread mmap arena с lazy commit:**
 
 - На первое использование thread'a резервируется **8 GB virtual** через
-  `mmap(MAP_NORESERVE)` — `4096 слотов × 2 MB`.
+  `mmap(MAP_NORESERVE)` — `16384 слота × 4 MB` **НА КАЖДЫЙ ВОРКЕР**.
+
+> **АМЕНДМЕНТ 2026-08-17 (аудит самосогласованности, раздел 4, пункт 40).**
+> Здесь стояло «4096 слотов × 2 MB» со стражем 4 КБ, а [D233](#d233) называет
+> 16384 фибера на воркер, 4 МБ стека и 16 КБ стража. Два места спеки называли
+> РАЗНЫЕ размеры одной и той же памяти, и это не вопрос трактовки — это факт,
+> у которого есть один верный ответ. Ответ взят не из спора, а из рантайма:
+> `compiler-codegen/nova_rt/fiber_arena.h` — `NOVA_FIBER_STACK_SIZE`
+> `(4 * 1024 * 1024)`, `NOVA_FIBER_GUARD_SIZE` `(16 * 1024)`,
+> `NOVA_FIBERS_PER_WORKER_DEFAULT` = `NOVA_FIBERS_PER_WORKER_BUILTIN` (16384,
+> и комментарий рядом говорит `per-worker runtime default` — это число НА
+> ВОРКЕР, а не на процесс; потерять уточнение значит завести новую ошибку
+> вместо исправленной). Значит
+> устарел D97, а D233 верен. Урок записи: когда спека расходится в ЧИСЛАХ,
+> спрашивать владельца не о чем — надо смотреть в код, который эти числа
+> исполняет.
 - Lazy commit: physical pages приходят только при touch'е (lazy COW).
 - 4 KB **guard page** в начале каждого слота — stack overflow ловится
   через `SIGSEGV` (не silent corruption).
@@ -4206,7 +4221,18 @@ for/detach автоматически распределяется на дост
   fiber-нагрузке.
 - Hello-world без spawn — 0 worker threads.
 - `NOVA_MAXPROCS=N` env var корректно clamp'ит worker count.
-- `NOVA_NO_AUTOARM=1` env var полностью отключает auto-arm (bootstrap
+- `NOVA_AUTOARM=0` env var полностью отключает auto-arm (bootstrap
+
+> **АМЕНДМЕНТ 2026-08-17 (аудит самосогласованности, раздел 4, пункт 38).**
+> Здесь и ниже стояло снятое имя `NOVA_NO_AUTOARM=1`. Действующее —
+> `NOVA_AUTOARM=0`, и спрашивать было не о чем: в `test_runner.rs` (2883,
+> 2889, 3980, 8334) живёт именно оно, а старое осталось лишь в комментарии
+> `emit_c.rs:29750` как ссылка на план 83.4.5.5. Отдельно поучительно, что
+> само переименование спека фиксирует строкой выше («renamed из legacy
+> `NOVA_NO_AUTOARM=1`», Plan 83.4.5.9) — а три соседние строки продолжали
+> пользоваться старым именем как действующим. Правку внесли в одно место из
+> четырёх; ровно этот класс отчёт и ловит.
+
   mode).
 - 24 NEW regressions из Plan 83.4.5 Ф.0 enumeration все PASS под
   default-on M:N (после Plan 83.4.5.7 race fix).
@@ -7833,7 +7859,7 @@ type Supervisor effect {
 Политика применяется к remote-детям armed M:N runtime — дефолтный путь
 исполнения (auto-arm в main; источник `(idx, err)` = per-slot
 `child_error[]` 173.0, который заполняет только remote-путь).
-Bootstrap/single-thread (`NOVA_NO_AUTOARM=1`) и implicit main-scope
+Bootstrap/single-thread (`NOVA_AUTOARM=0`) и implicit main-scope
 (top-level `detach`) остаются на дефолтном Escalate-all — честно
 задокументированное ограничение субстрата, не тихий пропуск политики.
 

@@ -62,7 +62,7 @@
  *   - NOVA_FIBER_STACK  env / nova.toml [runtime].fiber_stack — per-fiber
  *     stack slot size (human-friendly "4MB"/"4194304"; [256KB,256MB],
  *     round-UP to page). Default 4MB.
- *   - NOVA_MAX_FIBERS   env / nova.toml [runtime].max_fibers — max concurrent
+ *   - NOVA_FIBERS_PER_WORKER   env / nova.toml [runtime].fibers_per_worker — max concurrent
  *     fibers PER WORKER ([64, SLOT_COUNT_MAX], round-UP to ×64). Default
  *     16384. Total process capacity = slot_count × NOVA_MAXPROCS.
  * Precedence: env > nova.toml(-D) > builtin #define. Read fresh in
@@ -94,28 +94,28 @@
  * настраиваемый (NOVA_FIBER_STACK env / nova.toml [runtime].fiber_stack /
  * -DNOVA_FIBER_STACK_DEFAULT). Этот #define — **build-time builtin
  * default**, кормит NOVA_FIBER_STACK_DEFAULT через #ifndef ниже. */
-#define NOVA_FIBER_STACK_SIZE     (4 * 1024 * 1024)  /* 4MB per slot builtin default (demand-paged via MAP_NORESERVE) */
+#define NOVA_FIBER_STACK_BUILTIN     (4 * 1024 * 1024)  /* 4MB per slot builtin default (demand-paged via MAP_NORESERVE) */
 /* Plan 149 Ф.1: runtime clamp bounds для NOVA_FIBER_STACK. Любое
  * пользовательское значение округляется ВВЕРХ до page-align затем
  * зажимается в [MIN, MAX]. usable = slot_size − guard (16KB); с floor
  * 256KB usable = 240KB > 0 — гарантия инварианта. */
-#define NOVA_FIBER_STACK_MIN      (256 * 1024)        /* 256KB floor */
-#define NOVA_FIBER_STACK_MAX      (256 * 1024 * 1024) /* 256MB ceil */
+#define NOVA_FIBER_STACK_FLOOR      (256 * 1024)        /* 256KB floor */
+#define NOVA_FIBER_STACK_LIMIT      (256 * 1024 * 1024) /* 256MB ceil */
 /* Plan 149 Ф.1/Ф.2: split compile-time bitmap MAX from runtime DEFAULT.
  *
- *  - NOVA_FIBER_SLOT_COUNT_DEFAULT — runtime builtin default for
- *    a->slot_count when neither NOVA_MAX_FIBERS env nor
- *    -DNOVA_MAX_FIBERS_DEFAULT (toml) is present. Per-worker.
- *  - NOVA_FIBER_SLOT_COUNT_MAX — COMPILE-TIME ceiling. Sizes the
+ *  - NOVA_FIBERS_PER_WORKER_BUILTIN — runtime builtin default for
+ *    a->slot_count when neither NOVA_FIBERS_PER_WORKER env nor
+ *    -DNOVA_FIBERS_PER_WORKER_DEFAULT (toml) is present. Per-worker.
+ *  - NOVA_FIBERS_PER_WORKER_LIMIT — COMPILE-TIME ceiling. Sizes the
  *    free_bits/used_bits/dirty_bits bitmaps so env may RAISE slot_count
  *    above the default. 262144 slots ⇒ ceil(262144/64)=4096 uint64_t =
  *    32KB bitmap per arena (× workers — копейки). On 32-bit keep tiny
  *    (address space tight).
- *  - NOVA_FIBER_SLOT_COUNT_MIN — runtime floor (one bitmap word = 64).
+ *  - NOVA_FIBERS_PER_WORKER_FLOOR — runtime floor (one bitmap word = 64).
  *
  * Plan 149 must_fix #4: the per-platform branch sets BOTH _DEFAULT and
  * _MAX inside the SAME #if/#elif/#else cascade (как старый
- * NOVA_FIBER_SLOT_COUNT), BEFORE any generic #ifndef. Иначе 32-bit
+ * NOVA_FIBERS_PER_WORKER), BEFORE any generic #ifndef. Иначе 32-bit
  * target получил бы bitmap на 262144 слов через generic-fallback.
  *
  * Runtime DEFAULT unified to 16384 на всех 64-bit/Windows платформах
@@ -124,28 +124,28 @@
  * задаёт _MAX, не _DEFAULT). */
 #if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ < 8
   /* 32-bit: address space tight — small default + small MAX. */
-  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  64            /* 64 × 4MB = 256MB virtual — 32-bit tight VA budget; MUST be >= MIN(64) and a multiple of 64, else _nova_round_clamp_slots() silently bumps it (old value 16 rounded UP to 64). */
-  #ifndef NOVA_FIBER_SLOT_COUNT_MAX
-    #define NOVA_FIBER_SLOT_COUNT_MAX    1024          /* ceil(1024/64)=16 words = 128B bitmap */
+  #define NOVA_FIBERS_PER_WORKER_BUILTIN  64            /* 64 × 4MB = 256MB virtual — 32-bit tight VA budget; MUST be >= MIN(64) and a multiple of 64, else _nova_round_clamp_slots() silently bumps it (old value 16 rounded UP to 64). */
+  #ifndef NOVA_FIBERS_PER_WORKER_LIMIT
+    #define NOVA_FIBERS_PER_WORKER_LIMIT    1024          /* ceil(1024/64)=16 words = 128B bitmap */
   #endif
 #elif defined(_WIN32)
-  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  16384         /* per-worker runtime default */
-  #ifndef NOVA_FIBER_SLOT_COUNT_MAX
-    #define NOVA_FIBER_SLOT_COUNT_MAX    262144        /* 4096 words = 32KB bitmap/arena */
+  #define NOVA_FIBERS_PER_WORKER_BUILTIN  16384         /* per-worker runtime default */
+  #ifndef NOVA_FIBERS_PER_WORKER_LIMIT
+    #define NOVA_FIBERS_PER_WORKER_LIMIT    262144        /* 4096 words = 32KB bitmap/arena */
   #endif
 #else
-  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  16384         /* per-worker runtime default (64-bit) */
-  #ifndef NOVA_FIBER_SLOT_COUNT_MAX
-    #define NOVA_FIBER_SLOT_COUNT_MAX    262144        /* 4096 words = 32KB bitmap/arena */
+  #define NOVA_FIBERS_PER_WORKER_BUILTIN  16384         /* per-worker runtime default (64-bit) */
+  #ifndef NOVA_FIBERS_PER_WORKER_LIMIT
+    #define NOVA_FIBERS_PER_WORKER_LIMIT    262144        /* 4096 words = 32KB bitmap/arena */
   #endif
 #endif
-#define NOVA_FIBER_SLOT_COUNT_MIN      64             /* one bitmap word */
+#define NOVA_FIBERS_PER_WORKER_FLOOR      64             /* one bitmap word */
 /* Plan 149 fu #3: lock the invariant the 32-bit DEFAULT comment now documents
  * — DEFAULT must be a multiple of 64 and >= MIN, so _nova_round_clamp_slots()
  * is a no-op on the builtin default (no silent runtime bump). */
-_Static_assert((NOVA_FIBER_SLOT_COUNT_DEFAULT % 64) == 0
-               && NOVA_FIBER_SLOT_COUNT_DEFAULT >= NOVA_FIBER_SLOT_COUNT_MIN,
-               "NOVA_FIBER_SLOT_COUNT_DEFAULT must be a multiple of 64 and >= NOVA_FIBER_SLOT_COUNT_MIN");
+_Static_assert((NOVA_FIBERS_PER_WORKER_BUILTIN % 64) == 0
+               && NOVA_FIBERS_PER_WORKER_BUILTIN >= NOVA_FIBERS_PER_WORKER_FLOOR,
+               "NOVA_FIBERS_PER_WORKER_BUILTIN must be a multiple of 64 and >= NOVA_FIBERS_PER_WORKER_FLOOR");
 /* Plan 44.2 audit R8 (2026-05-13): 16 KB guard (было 4 KB) для CVE-2017-1000366
  * stack-clash protection. Single 4 KB guard может быть skipped одним
  * SP-subtract если функция аллоцирует >4 KB local array. 16 KB существенно
@@ -156,17 +156,17 @@ _Static_assert((NOVA_FIBER_SLOT_COUNT_DEFAULT % 64) == 0
 
 /* Plan 149 Ф.3: defaults-resolution chain (precedence env > toml(-D) >
  * builtin). nova.toml [runtime] bakes -DNOVA_FIBER_STACK_DEFAULT /
- * -DNOVA_MAX_FIBERS_DEFAULT (raw integers — bytes / count) at build time;
+ * -DNOVA_FIBERS_PER_WORKER_DEFAULT (raw integers — bytes / count) at build time;
  * absent → these #ifndef fallbacks pick the builtin #define. At runtime the
  * env vars (read in nova_fiber_arena_init) override either of these
  * compile-time defaults. BOTH the env value AND the -D/builtin default go
  * through round-UP + clamp, so a garbage toml -D is also clamped, never
  * trusted blindly. */
 #ifndef NOVA_FIBER_STACK_DEFAULT
-  #define NOVA_FIBER_STACK_DEFAULT   NOVA_FIBER_STACK_SIZE          /* 4MB builtin */
+  #define NOVA_FIBER_STACK_DEFAULT   NOVA_FIBER_STACK_BUILTIN          /* 4MB builtin */
 #endif
-#ifndef NOVA_MAX_FIBERS_DEFAULT
-  #define NOVA_MAX_FIBERS_DEFAULT    NOVA_FIBER_SLOT_COUNT_DEFAULT  /* 16384 builtin */
+#ifndef NOVA_FIBERS_PER_WORKER_DEFAULT
+  #define NOVA_FIBERS_PER_WORKER_DEFAULT    NOVA_FIBERS_PER_WORKER_BUILTIN  /* 16384 builtin */
 #endif
 
 #if NOVA_FIBER_ARENA_ENABLED
@@ -211,7 +211,7 @@ bool nova_fiber_arena_contains(const void* ptr);
  * Lazily inits this thread's arena (idempotent) and returns the FINAL,
  * resolved a->slot_size (env ∨ -D ∨ builtin, after round-UP + clamp). The
  * minicoro desc-init (fibers.h::_nova_mco_desc_init_arena) MUST derive its
- * stack_size from THIS value, NOT from the compile-time NOVA_FIBER_STACK_SIZE
+ * stack_size from THIS value, NOT from the compile-time NOVA_FIBER_STACK_BUILTIN
  * macro — otherwise minicoro's coro_size stays fixed at the compile-time
  * default and (a) a LARGER env stack is wasted reservation (fiber still
  * overflows at compile-time depth) and (b) a SMALLER env stack makes

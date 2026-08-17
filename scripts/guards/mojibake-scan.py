@@ -29,7 +29,14 @@ EXTS = (".md", ".sh", ".py", ".awk", ".baseline", ".yml", ".yaml", ".toml", ".nv
 # описание проверки неотличимо от нарушения.
 SKIP_FILES = ("demojibake.py", "mojibake-scan.py",
               "test-check-no-mojibake.sh", "mojibake.baseline",
-              "check-no-mojibake.sh")
+              "check-no-mojibake.sh",
+              # 2026-08-17: перехватчик, НЕ ДАЮЩИЙ порче случиться
+              # (guard-shell-nonascii.py, PreToolUse на Bash/PowerShell).
+              # В его объяснении стоит образец того, во что превращается
+              # русский текст, прошедший через оболочку в cp1251 —
+              # без образца объяснение не объясняет. Тот же случай, что
+              # с mojibake.baseline выше.
+              "guard-shell-nonascii.py")
 SKIP_DIRS = ("target", ".git", "node_modules", "vcpkg_installed", ".claude")
 
 

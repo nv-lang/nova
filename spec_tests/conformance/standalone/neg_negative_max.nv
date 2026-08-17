@@ -1,20 +1,20 @@
-// neg_negative_max.nv — Plan 149 D233 AC5: negative NOVA_MAX_FIBERS → warn +
+// neg_negative_max.nv — Plan 149 D233 AC5: negative NOVA_FIBERS_PER_WORKER → warn +
 // default, NEVER crash.
 //
-// NOVA_MAX_FIBERS="-5" parses to a non-positive integer (raw <= 0), which the
+// NOVA_FIBERS_PER_WORKER="-5" parses to a non-positive integer (raw <= 0), which the
 // parser flags invalid. The arena prints ONE stderr diagnostic
-// ("invalid NOVA_MAX_FIBERS ... using default 16384") and falls back to the
+// ("invalid NOVA_FIBERS_PER_WORKER ... using default 16384") and falls back to the
 // builtin default — the program runs normally. EXPECT_STDERR asserts the
 // warning; the test passing asserts no crash.
 //
 // NOVA_MAXPROCS=1 keeps it to one worker arena.
 //
-// ENV NOVA_MAX_FIBERS=-5
+// ENV NOVA_FIBERS_PER_WORKER=-5
 // ENV NOVA_MAXPROCS=1
-// EXPECT_STDERR invalid NOVA_MAX_FIBERS
+// EXPECT_STDERR invalid NOVA_FIBERS_PER_WORKER
 
 module standalone.neg_negative_max
-test "negative NOVA_MAX_FIBERS: warn + default, program still runs" {
+test "negative NOVA_FIBERS_PER_WORKER: warn + default, program still runs" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)
     supervised {

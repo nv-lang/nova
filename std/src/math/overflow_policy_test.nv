@@ -312,12 +312,12 @@ test "Числовой паритет: f32 @clamp — зеркало f64, в д�
     assert(d.clamp(10.0, 0.0) == 10.0)     // lo>hi: @ < lo=10 -> lo
 }
 
-// ── [Числовой паритет, 2026-07-19] SignedInt @signum/@is_negative/
+// ── [Числовой паритет, 2026-07-19] SignedInts @signum/@is_negative/
 // @is_positive — были concrete-только-на-`int` (D74), теперь бланкет над
-// `SignedInt` (i8/i16/i32/i64/int). Тела — чистые сравнения, никакого
+// `SignedInts` (i8/i16/i32/i64/int). Тела — чистые сравнения, никакого
 // overflow-риска (в отличие от `abs`, который НЕ добирался — см. отчёт).
 
-test "Числовой паритет: signum — знак значения на всех SignedInt-ширинах" {
+test "Числовой паритет: signum — знак значения на всех SignedInts-ширинах" {
     ro a int = 5
     assert(a.signum() == 1)
     ro b int = -5
@@ -343,7 +343,7 @@ test "Числовой паритет: signum — знак значения на
     assert(h.signum() == one_i32)
 }
 
-test "Числовой паритет: is_negative/is_positive — строгие проверки знака на всех SignedInt-ширинах" {
+test "Числовой паритет: is_negative/is_positive — строгие проверки знака на всех SignedInts-ширинах" {
     ro a int = -1
     assert(a.is_negative())
     assert(!a.is_positive())
@@ -380,7 +380,7 @@ test "Числовой паритет: f64.MIN/f32.MIN — most-negative-finite,
 }
 
 // ── [Числовой паритет-2, 2026-07-20] `abs`/`checked_abs`/`saturating_abs`/
-// `wrapping_abs` над `SignedInt` — `int @abs()` retracted от старого extern
+// `wrapping_abs` над `SignedInts` — `int @abs()` retracted от старого extern
 // "nova" -> C `llabs` (UB на `T.MIN`), заменён `.nv`-бланкетом, который
 // трапит на `T.MIN` через УЖЕ существующий unary-negate trap guard (D427
 // §R2, "negation overflow") — не новая overflow-политика. Узкие signed
@@ -435,7 +435,7 @@ test "Числовой паритет-2: checked_abs/saturating_abs/wrapping_abs
     assert(d.wrapping_abs() == d)
 }
 
-// ── [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInt` —
+// ── [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInts` —
 // Rust даёт её ТОЛЬКО signed-типам (в отличие от `checked_neg`/
 // `wrapping_neg`, которые остаются `Ints`-бланкетами выше).
 

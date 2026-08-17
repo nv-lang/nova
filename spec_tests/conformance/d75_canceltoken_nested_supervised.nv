@@ -28,7 +28,7 @@
 // Verification on this branch (main tip + 454a78117 applied): the exact two
 // quarantined fixtures (nova-198 `fixtures/ice_blocked/
 // nested_supervised_cancel.nv` — reproduced below — and `standalone/
-// pos_max_fibers_concurrent.nv`) both pass standalone AND merged into this
+// pos_fibers_per_worker_concurrent.nv`) both pass standalone AND merged into this
 // folder-module's real single-CU gate (`nova test --positive
 // --compile-error spec_tests/conformance`, entry `b11x_novaarray_user_ext_
 // methods`) alongside `WriteBuffer`/`Conn10`-shaped types — no ICE, no

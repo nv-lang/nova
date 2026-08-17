@@ -1,19 +1,19 @@
-// neg_garbage_max.nv — Plan 149 D233 AC5: garbage NOVA_MAX_FIBERS → warn +
+// neg_garbage_max.nv — Plan 149 D233 AC5: garbage NOVA_FIBERS_PER_WORKER → warn +
 // default, NEVER crash.
 //
-// NOVA_MAX_FIBERS="abc" is unparseable. The arena prints ONE stderr diagnostic
-// ("invalid NOVA_MAX_FIBERS ... using default 16384") and falls back to the
+// NOVA_FIBERS_PER_WORKER="abc" is unparseable. The arena prints ONE stderr diagnostic
+// ("invalid NOVA_FIBERS_PER_WORKER ... using default 16384") and falls back to the
 // builtin 16384 default — the program runs normally and exits 0. EXPECT_STDERR
 // asserts the warning; the test passing asserts no crash.
 //
 // NOVA_MAXPROCS=1 keeps it to one worker arena.
 //
-// ENV NOVA_MAX_FIBERS=abc
+// ENV NOVA_FIBERS_PER_WORKER=abc
 // ENV NOVA_MAXPROCS=1
-// EXPECT_STDERR invalid NOVA_MAX_FIBERS
+// EXPECT_STDERR invalid NOVA_FIBERS_PER_WORKER
 
 module standalone.neg_garbage_max
-test "garbage NOVA_MAX_FIBERS: warn + default, program still runs" {
+test "garbage NOVA_FIBERS_PER_WORKER: warn + default, program still runs" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)
     supervised {

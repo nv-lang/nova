@@ -1542,7 +1542,7 @@ fn[T Num] sum_two(a T, b T) -> T => a + b
 Диспетч по первому токену после `type Name` (как `enum`/`alias`) — `set`
 контекстный, не глобальный keyword. Bound из type-set ведёт себя как
 protocol-bound: `[T Num]`. Композиция с протоколами — через `+`: `[T
-SignedInt + Hash]` (T ∈ set И реализует Hash). **Не больше одного
+SignedInts + Hash]` (T ∈ set И реализует Hash). **Не больше одного
 type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — протоколов
 можно сколько угодно.
 
@@ -1550,7 +1550,7 @@ type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — проток�
 newtype `type MyI8 i8` не входит в `{i8}` автоматически — нужен явный
 листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
 type-set как члена). **Один set не смешивает signed/unsigned целые**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInt`/`UnsignedInt` в
+(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInts`/`UnsignedInts` в
 prelude (`std/prelude/protocols.nv`) разделены по этой оси.
 
 Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).

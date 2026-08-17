@@ -233,10 +233,23 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 
 ## Contribution rules
 
-- **DCO sign-off required** on every commit — CI enforces this:
+- **DCO sign-off required on every commit that arrives through a pull request** —
+  CI enforces it there, and only there:
   ```sh
   git commit -s -m "your message"
   ```
+  **Correction 2026-08-17 (found by window 274, verified by the integrator).**
+  This line used to read "on every commit — CI enforces this", and both halves
+  were false. The workflow triggers on `push: [main]` and `pull_request`; the
+  project works by direct pushes to `main`, so the DCO check never ran once —
+  and **none of the last twenty commits on `main` carries a sign-off**. The
+  first thing that ever asked was window 274's PR #4, which went red on it.
+  A rule that announces an enforcement it does not have is worse than no rule:
+  it buys the feeling of a guarantee at the price of the guarantee.
+  History is NOT rewritten (122 commits on the 274 branch alone, and `main`
+  predates the rule wholesale); pull requests are squash-merged with a
+  sign-off, which is where the DCO actually protects anything — external
+  contribution.
 - **`git add` specific files only** — never `git add .` or `git add -A`. Multiple agents may work in parallel worktrees.
 - **One commit per logical task.** Multiple tasks → multiple commits.
 - **No `Co-Authored-By: <AI tool>` trailers** in commit messages. A repo hook strips them automatically — do **not** add the trailer by hand (and no need to check for it manually; the hook removes it on commit).
