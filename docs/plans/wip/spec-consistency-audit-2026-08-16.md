@@ -54,13 +54,18 @@
 * ✅ **Группа B (`-> consume T`) — ЗАКРЫТА.** Не потому, что текст поправлен, а
   потому, что класс держит МАШИНА: `check-retracted-param-form` считает осадок
   снятой формы по зонам с храповиком вниз. Восьмое вхождение покраснеет само.
-* 🟡 **Группа A (семантика `?`) — НОСИТЕЛЬ ПОМЕЧЕН, КЛАСС ОТКРЫТ.** Четыре
-  текста больше не лгут, но НИЧТО не мешает появиться пятому: механизма,
-  который ловил бы «старый текст описывает снятую семантику», нет. Особенно
-  показателен пример D158 — он НЕ КОМПИЛИРОВАЛСЯ под действующей нормой, и
-  поймал это человек, а не гейт. Это ровно реестр **№442 «ПРИМЕРЫ СПЕКИ НЕ
-  ПРОВЕРЯЮТСЯ КОМПИЛЯТОРОМ»** — открыт, плана нет. Пока он открыт, галочка
-  над группой A была бы тем самым «фикс носителя приёмкой не считается».
+* ✅ **Группа A (семантика `?`) — ЗАКРЫТА 2026-08-17.** Держит
+  `check-retracted-try-semantics` (реестр №713): ядро на питоне считает по
+  зонам ДВА семейства — лексическое (проза «`?` — сахар над `throw`», СНЯТАЯ трактовка) и
+  структурное (`?` внутри функции, объявившей `Fail`; grep такое не видит в
+  принципе, признак разнесён между строкой подписи и строкой тела).
+  Публикуемое руководство держится на НУЛЕ без храповика — и ноль там
+  достигнут, а не объявлен: волной того же дня 14 мест в
+  `tutorial-cleanup.{md,ru.md}` переведены на `!!`. Исторические зоны под
+  храповиком вниз: spec 35, docs/plans 12, docs/dev 60. Самотест 12/12
+  проверяет ОБЕ стороны, включая то, что страж НЕ ловит законную форму D196
+  `consume X = expr? { body }`, оператор `??`, слово `desugar` и строки,
+  которые сами помечают форму снятой.
 
 **ПРОВЕРКА СОБСТВЕННОЙ РАЗМЕТКИ 2026-08-17 (инвентаризация к стражу).** Разметку
 проверил отдельный агент-инвентаризатор, и она НЕ выдержала проверки на двух
@@ -86,6 +91,11 @@
 закрывается не пометками, а стражем `check-retracted-try-semantics`
 (реестр №713): он МЕРЯЕТ осадок по зонам, и его число, а не моё слово,
 становится содержанием галочки.
+
+**Сделано в тот же день.** Страж стоит в гейте (`gate.sh`, шаг
+`retracted-try-semantics`), база заведена с летописью, самотест 12/12.
+Дальше числа опускаются волнами по зонам — первый кандидат `docs/dev`
+(60 мест, почти всё в `idioms/`: их читают как образец).
 
 **Почему не все 31.** Остальные 24 «перекрытых» требуют либо чтения на месте
 (какая сторона победила — не всегда очевидно из дат), либо решения владельца.
@@ -177,10 +187,10 @@
 * **Default-body synthesis on bare method call: never (D183 amend part 2) vs gated by #impl (D186)** — A `spec/decisions/02-types.md:8341` / B `spec/decisions/02-types.md:8411`. Что перекрывает: 
 * **Type-set signedness: no mixing at all (D310) vs full SignedInt∪UnsignedInt union allowed (D423 R1) — D310 not amended in place** — A `spec/decisions/02-types.md:16486` / B `spec/decisions/04-effects.md:7706`. Что перекрывает: 
 * **D122 acceptance criteria still say bound must be a protocol type; D72/D310 allow type-set bounds** — A `spec/decisions/02-types.md:4517` / B `spec/decisions/02-types.md:4122`. Что перекрывает: 
-* 🟡 **НОСИТЕЛЬ ПОМЕЧЕН 2026-08-17, КЛАСС ОТКРЫТ (№442)** — **D62 Rule 2 still makes `expr?` a throw that requires Fail[E]; D85 makes `?` return-only and forbids it in Fail-fns** — A `spec/decisions/04-effects.md:2668` / B `spec/decisions/04-effects.md:4641`. Что перекрывает: 
-* 🟡 **НОСИТЕЛЬ ПОМЕЧЕН 2026-08-17, КЛАСС ОТКРЫТ (№442)** — **D86 operator comparison table says `expr?` on Result requires Fail[E]; D85 says `?` no longer involves Fail** — A `spec/decisions/04-effects.md:5196` / B `spec/decisions/04-effects.md:4700`. Что перекрывает: 
-* 🟡 **НОСИТЕЛЬ ПОМЕЧЕН 2026-08-17, КЛАСС ОТКРЫТ (№442)** — **D61 §8 'Связь с ?' still defines `?` as sugar over throw; D85 defines it as `return Err(e)`** — A `spec/decisions/04-effects.md:2110` / B `spec/decisions/04-effects.md:4707`. Что перекрывает: 
-* 🟡 **НОСИТЕЛЬ ПОМЕЧЕН 2026-08-17, КЛАСС ОТКРЫТ (№442)** — **D158 model-B normative example uses `do_work()?` in a Fail[WorkErr] fn — rejected by D85's E_TRY_IN_FAIL_FN** — A `spec/decisions/03-syntax.md:6995` / B `spec/decisions/04-effects.md:4649`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D62 Rule 2 still makes `expr?` a throw that requires Fail[E]; D85 makes `?` return-only and forbids it in Fail-fns** — A `spec/decisions/04-effects.md:2668` / B `spec/decisions/04-effects.md:4641`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D86 operator comparison table says `expr?` on Result requires Fail[E]; D85 says `?` no longer involves Fail** — A `spec/decisions/04-effects.md:5196` / B `spec/decisions/04-effects.md:4700`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D61 §8 'Связь с ?' still defines `?` as sugar over throw; D85 defines it as `return Err(e)`** — A `spec/decisions/04-effects.md:2110` / B `spec/decisions/04-effects.md:4707`. Что перекрывает: 
+* ✅ **ЗАКРЫТО 2026-08-17 (класс держит страж)** — **D158 model-B normative example uses `do_work()?` in a Fail[WorkErr] fn — rejected by D85's E_TRY_IN_FAIL_FN** — A `spec/decisions/03-syntax.md:6995` / B `spec/decisions/04-effects.md:4649`. Что перекрывает: 
 * **D65 Rule 4: `a/b` and `arr[i]` THROW RuntimeError via Fail (D28 infers Fail[RuntimeError]); D427/D13/D325 R0: they PANIC and never appear in the signature** — A `spec/decisions/04-effects.md:3509` / B `spec/decisions/04-effects.md:7749`. Что перекрывает: 
 * **D12 Level 1: a fn with an EXTRA effect is rejected by a typed queue; D448: fn-type compatibility is by inclusion, extra effects are fine** — A `spec/decisions/04-effects.md:604` / B `spec/decisions/04-effects.md:8025`. Что перекрывает: 
 * **D31/D61: a Fail handler-lambda MUST `interrupt` (final expression invalid); D449 example (and D65 §1) uses `with Fail[..] = |_e| Err(ReadFailed)` with no interrupt** — A `spec/decisions/04-effects.md:1544` / B `spec/decisions/06-concurrency.md:7067`. Что перекрывает: 
