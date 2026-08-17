@@ -52,7 +52,7 @@ use tower_lsp::lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Position, R
 
 use nova_codegen::ast::{
     ArrayElem, Block, CallArg, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl, Item,
-    LetDecl, MatchArmBody, Pattern, Stmt,
+    LetDecl, MatchArmBody, Pattern, Stmt, TypeRef,
 };
 use nova_codegen::diag::{Span, MAIN_FILE_ID};
 use nova_codegen::types::ModuleEnv;
@@ -421,7 +421,23 @@ impl<'a> Ctx<'a> {
         // Nova type syntax is space-separated (`consume s TcpStream`), not
         // colon-separated — the hint must read as insertable Nova code
         // (owner 2026-07-23; was Rust/TS-style ": T").
-        let label = format!(" {}", format_type_ref(tr));
+        //
+        // The binding keyword already carries the qualifier, so it must not be
+        // repeated in the hint: `ro nk = branch_children(...)` where the callee
+        // returns `ro []Node` used to render as `ro nk ro []Node`, which is not
+        // Nova and does not read as anything (owner report 2026-08-17 on
+        // `novac/src/sem/sem.nv`, registry №709). Peel top-level `ro`/`mut`
+        // wrappers — and only those: `consume` is part of the type's identity
+        // (D131), not a binding mode, and a nested `ro` inside a generic argument
+        // (`Vec[ro Node]`) is genuine type information the reader needs.
+        let mut shown = tr;
+        loop {
+            match shown {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => shown = inner,
+                _ => break,
+            }
+        }
+        let label = format!(" {}", format_type_ref(shown));
         self.out.push(mk_hint(pos, label, InlayHintKind::TYPE, false, false));
     }
 
@@ -875,6 +891,33 @@ mod tests {
             (params[1].position.line, params[1].position.character as usize),
             (5, col2),
             "`b:` anchors at the second argument, not shifted by Cyrillic above"
+        );
+    }
+
+    #[test]
+    fn edge_ro_return_type_hint_drops_binding_qualifier() {
+        // Registry №709 carrier, reported by the owner 2026-08-17 on
+        // `novac/src/sem/sem.nv`: the callee returns `ro []Node`, the binding is
+        // already `ro`, and the hint rendered the qualifier a second time --
+        // `ro nk ro []Node`. The hint must stay insertable after `ro nk`.
+        let src = concat!(
+            "module basics.lsp\n",
+            "type Node { id int }\n",
+            "fn branch_children() -> ro []Node => []Node.new()\n",
+            "fn main() -> () {\n",
+            "    ro nk = branch_children()\n",
+            "}\n",
+        );
+        let hs = hints("edge_ro_hint", src, InlayHintConfig::default());
+        let tys: Vec<String> = hs
+            .iter()
+            .filter(|h| h.kind == Some(InlayHintKind::TYPE))
+            .map(label_str)
+            .collect();
+        assert_eq!(
+            tys,
+            vec![" []Node".to_string()],
+            "the binding's `ro` must not be repeated by the hint"
         );
     }
 
