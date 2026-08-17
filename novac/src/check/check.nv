@@ -188,6 +188,13 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
             if kind == NodeKind.Field {
                 @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
             }
+            if kind == NodeKind.RetType {
+                // The return type is a type reference too, and it was judged
+                // by nobody: `fn make() -> []int => 1` was ACCEPTED while the
+                // body returns an int literal (2026-08-17). Silence is the
+                // worst answer of the three -- worse than a wrong message.
+                @report_if_return_form(children)
+            }
             if kind == NodeKind.Param {
                 @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
             }
@@ -234,14 +241,70 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
 /// would otherwise produce two diagnostics for one mistake (the Err branch's
 /// and this one) — a cascade, which the no-cascade rule forbids.
 fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
+    for c in kids {
+        if c.kind_of() == NodeKind.Generics {
+            @report_first_leaf_of(kids, TYPE_FORM_MSG)
+            return
+        }
+    }
     if kids.len() >= 2 {
         match kids[1] {
-            Leaf(t) => { if t.kind == TokenKind.Ident { return } }
+            Leaf(t) => {
+                if t.kind == TokenKind.Ident { return }
+                // The parser reads the whole type reference now (owner
+                // 2026-08-17: "a type can be more complex, generics for
+                // instance"), so a slice, a qualifier or a function type
+                // arrives here as its FIRST token instead of an identifier.
+                // Saying "must declare a type" about `xs []int` is a lie --
+                // the type is right there, it is the SHAPE that is not
+                // compiled yet, and the message must say which.
+                ro is_form = t.kind == TokenKind.LBracket ||
+                    t.kind == TokenKind.KwRo ||
+                    t.kind == TokenKind.KwMut ||
+                    t.kind == TokenKind.KwFn ||
+                    t.kind == TokenKind.LParen
+                if is_form {
+                    @report_first_leaf_of(kids, TYPE_FORM_MSG)
+                    return
+                }
+            }
             Branch { .. } => {}
         }
     }
     @report_first_leaf_of(kids, msg)
 }
+
+/// The SHAPE of a declared return type: `-> []int`, `-> Vec[T]`, `-> (a, b)`,
+/// `-> fn(int) -> str` are read by the parser and refused by name here.
+fn Checker mut @report_if_return_form(kids []Node) -> () {
+    if kids.len() < 2 { return }
+    // `-> Vec[int]`: the head is an identifier and the application arrives as
+    // a Generics branch after it, so the leaf test below never sees it.
+    for c in kids {
+        if c.kind_of() == NodeKind.Generics {
+            @report_first_leaf_of(kids, TYPE_FORM_MSG)
+            return
+        }
+    }
+    match kids[1] {
+        Leaf(t) => {
+            ro is_form = t.kind == TokenKind.LBracket ||
+                t.kind == TokenKind.KwRo ||
+                t.kind == TokenKind.KwMut ||
+                t.kind == TokenKind.KwFn ||
+                t.kind == TokenKind.LParen
+            if is_form { @report_first_leaf_of(kids, TYPE_FORM_MSG) }
+        }
+        Branch { .. } => {}
+    }
+}
+
+/// A declared type whose SHAPE the subset does not compile yet -- a slice, a
+/// tuple, a function type, a qualified type. The parser reads them all (plan
+/// 9.4: the grammar is the language's, the subset is the checker's), so the
+/// refusal names the shape instead of pretending the type is missing.
+const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
+
 
 /// The head of a `for` must be a RANGE, and the subset says so out loud.
 ///

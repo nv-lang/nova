@@ -328,9 +328,43 @@ fn Cursor mut @module_decl() -> Node {
 /// refusal that names the wrong cause.
 fn Cursor mut @type_ref() -> []Node {
     mut out = []Node.new()
+    // A qualifier belongs to the type: `ro []int`, `mut Vec[T]`.
+    if @peek() == TokenKind.KwRo || @peek() == TokenKind.KwMut { out.push(@take()) }
+    // Slice prefixes, possibly stacked: `[][]int`.
     while @peek() == TokenKind.LBracket && @peek(skip: 1) == TokenKind.RBracket {
         out.push(@take()) // '['
         out.push(@take()) // ']'
+    }
+    // A function type: `fn(int, str) -> bool`. The parameter list is a
+    // balanced paren run -- the types inside are read by the same door when
+    // the checker walks them, so nothing is lost by taking the run whole.
+    if @peek() == TokenKind.KwFn {
+        out.push(@take())
+        if @peek() == TokenKind.LParen {
+            mut depth = 0
+            while !@at_eof() {
+                if @peek() == TokenKind.LParen { depth += 1 }
+                if @peek() == TokenKind.RParen { depth -= 1 }
+                out.push(@take())
+                if depth == 0 { break }
+            }
+        }
+        if @peek() == TokenKind.Arrow {
+            out.push(@take())
+            for n in @type_ref() { out.push(n) }
+        }
+        return out
+    }
+    // A tuple type: `(int, str)`. Same balanced-run reasoning.
+    if @peek() == TokenKind.LParen {
+        mut depth = 0
+        while !@at_eof() {
+            if @peek() == TokenKind.LParen { depth += 1 }
+            if @peek() == TokenKind.RParen { depth -= 1 }
+            out.push(@take())
+            if depth == 0 { break }
+        }
+        return out
     }
     if @peek() == TokenKind.Ident {
         out.push(@take())
@@ -377,14 +411,18 @@ fn Cursor mut @fn_decl() -> Node {
     if @peek() == TokenKind.LParen { kids.push(@take()) }
     while @peek() == TokenKind.Ident {
         mut pk = []Node.of(@take()) // parameter name
-        if @peek() == TokenKind.Ident { pk.push(@take()) } // type (E1: int)
+        // The TYPE is a type reference, not one identifier (owner 2026-08-17).
+        // `Vec[T]`, `[]int`, `fn(int) -> str`, `ro []Vec[T]` all used to break
+        // the parameter list apart here and take the rest of the signature
+        // into the junk bucket with them.
+        for n in @type_ref() { pk.push(n) }
         if @peek() == TokenKind.Comma { pk.push(@take()) }
         kids.push(@node(NodeKind.Param, pk))
     }
     if @peek() == TokenKind.RParen { kids.push(@take()) }
     if @peek() == TokenKind.Arrow {
         mut rt = []Node.of(@take())
-        if @peek() == TokenKind.Ident { rt.push(@take()) }
+        for n in @type_ref() { rt.push(n) }
         kids.push(@node(NodeKind.RetType, rt))
     }
     if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {
