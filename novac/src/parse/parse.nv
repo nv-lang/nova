@@ -420,8 +420,12 @@ fn Cursor mut @fn_decl() -> Node {
     // the loop only on Ident tore the list apart at the first `mut v int`
     // and blamed a missing return type on a signature that declares one.
     while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
-        @peek() == TokenKind.KwRo {
+        @peek() == TokenKind.KwRo || @peek() == TokenKind.Ellipsis {
         mut pk = []Node.new()
+        // A VARIADIC parameter is written `...args []T`, and D69 makes it the
+        // last of the list. The marker is kept as a leaf: WHERE it may stand
+        // is a position rule, and position rules belong to the checker.
+        @push_if(pk, TokenKind.Ellipsis)
         // A parameter MODE stands before the name: `fn take(consume v int)`.
         // It is not a keyword in this lexer, so it is recognised by spelling
         // and kept as a leaf -- the tree is lossless and check judges it.
@@ -444,6 +448,15 @@ fn Cursor mut @fn_decl() -> Node {
         // the parameter list apart here and take the rest of the signature
         // into the junk bucket with them.
         for n in @type_ref() { pk.push(n) }
+        // A DEFAULT value: `fn bump(v int, by int = 1)`. D102 orders defaulted
+        // parameters after the required ones -- again a position rule -- and
+        // the value itself is an ordinary expression.
+        if @peek() == TokenKind.Assign {
+            pk.push(@take())
+            pk.push(@expr())
+        } else {
+            // No default: an ordinary required parameter.
+        }
         @push_if(pk, TokenKind.Comma)
         kids.push(@node(NodeKind.Param, pk))
     }
@@ -497,6 +510,36 @@ fn Cursor mut @fn_decl() -> Node {
 }
 
 /// Parse `{ stmt* }`.
+/// The argument list of a call, from the token after `(` to the `)`.
+///
+/// ONE door for BOTH call forms -- the free call in @atom and the method call
+/// in @primary. The two loops were copies of each other, and a copy is a place
+/// where the next form lands in only one of the halves: the named argument
+/// would have arrived for `f(x: 1)` and not for `o.m(x: 1)`.
+fn Cursor mut @call_args(mut kids []Node) -> () {
+    // Inside the parens the head restriction lifts (274.3/F23): the brace the
+    // rule protects is the BODY brace, and it is not in here.
+    ro saved = @no_ctor
+    @no_ctor = false
+    while !@at_eof() && @peek() != TokenKind.RParen {
+        ro before = @i
+        // A NAMED argument is `name: expr`.
+        if @peek() == TokenKind.Ident && @peek(skip: 1) == TokenKind.Colon {
+            mut ak = []Node.of(@take(), @take()) // name, ':'
+            ak.push(@expr())
+            kids.push(@node(NodeKind.NamedArg, ak))
+        } else {
+            // A positional argument: an ordinary expression.
+            kids.push(@expr())
+        }
+        @push_if(kids, TokenKind.Comma)
+        // Non-advancement guard: an Err of zero width would spin here forever.
+        if @i == before { break }
+    }
+    @no_ctor = saved
+    @push_if(kids, TokenKind.RParen)
+}
+
 fn Cursor mut @block() -> Node {
     mut kids = []Node.of(@take()) // LBrace
     while !@at_eof() && @peek() != TokenKind.RBrace {
@@ -642,6 +685,14 @@ fn Cursor mut @expr() -> Node => @expr_bp(1)
 /// `min_bp`, and parse their right side at `bp + 1` (left associativity).
 fn Cursor mut @expr_bp(min_bp int) -> Node {
     mut left = @primary()
+    // A CAST binds looser than the postfix chain and tighter than every binary
+    // operator: `s.len() as u8 + 1` is `((s.len() as u8) + 1)`. Its right side
+    // is a TYPE, so it goes through the type door and not through @expr.
+    while @peek() == TokenKind.KwAs {
+        mut ck = []Node.of(left, @take())
+        for n in @type_ref() { ck.push(n) }
+        left = @node(NodeKind.Cast, ck)
+    }
     while is_binop(@peek()) {
         ro bp = binding_power(bin_op_of(@peek()))
         if bp < min_bp { return left }
@@ -680,17 +731,7 @@ fn Cursor mut @primary() -> Node {
         @push_if(kids, TokenKind.Ident)
         if @peek() == TokenKind.LParen {
             kids.push(@take())
-            // Inside the parens the head restriction lifts (274.3/F23).
-            ro saved = @no_ctor
-            @no_ctor = false
-            while !@at_eof() && @peek() != TokenKind.RParen {
-                ro before = @i
-                kids.push(@expr())
-                @push_if(kids, TokenKind.Comma)
-                if @i == before { break }
-            }
-            @no_ctor = saved
-            @push_if(kids, TokenKind.RParen)
+            @call_args(kids)
             e = @node(NodeKind.MethodCall, kids)
         } else {
             e = @node(NodeKind.FieldAccess, kids)
@@ -873,19 +914,7 @@ fn Cursor mut @atom() -> Node {
         ro name = @take()
         if @peek() == TokenKind.LParen {
             mut kids = []Node.of(name, @take())
-            // Inside the parens the head restriction lifts (274.3/F23):
-            // `if take(P { x: 1 }) > 0 {` is unambiguous -- the brace that
-            // the rule protects is the BODY brace, and it is not in here.
-            ro saved = @no_ctor
-            @no_ctor = false
-            while !@at_eof() && @peek() != TokenKind.RParen {
-                ro before = @i
-                kids.push(@expr())
-                @push_if(kids, TokenKind.Comma)
-                if @i == before { break }
-            }
-            @no_ctor = saved
-            @push_if(kids, TokenKind.RParen)
+            @call_args(kids)
             return @node(NodeKind.Call, kids)
         }
         if @peek() == TokenKind.LBrace && !@no_ctor {

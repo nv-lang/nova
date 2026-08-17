@@ -64,6 +64,12 @@ export type NodeKind enum
     | Guard
     | FnExprBody
     | Param
+    // `name: expr` at a call site. Nova passes defaulted parameters BY
+    // NAME, so this form arrives together with every default value.
+    | NamedArg
+    // `expr as Type`. The right side is a TYPE, which is why the cast is
+    // a node of its own and not a binary operator over two expressions.
+    | Cast
     | Recv
     | Generics
     | RetType

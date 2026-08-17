@@ -216,7 +216,31 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_qualifier_misplaced(children, "result")
                     @report_if_return_form(children)
                 }
+                NamedArg => {
+                    @report_first_leaf_of(children, NAMED_ARG_MSG)
+                    return
+                }
+                Cast => {
+                    @report_first_leaf_of(children, CAST_MSG)
+                    return
+                }
                 Param => {
+                    // The two forms below are refused whole, and the rules
+                    // after them are skipped on purpose: a variadic already
+                    // carries a slice type, so the type-form rule would add a
+                    // second diagnostic about the same parameter.
+                    if has_variadic_mark(children) {
+                        @report_first_leaf_of(children, VARIADIC_MSG)
+                        return
+                    } else {
+                        // Not a variadic: judged as an ordinary parameter.
+                    }
+                    if has_default_value(children) {
+                        @report_first_leaf_of(children, DEFAULT_PARAM_MSG)
+                        return
+                    } else {
+                        // No default value written: nothing to refuse here.
+                    }
                     @report_if_qualifier_misplaced(children, "parameter")
                     @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
                 }
@@ -428,6 +452,44 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
 
+/// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
+/// the grammar is the language's), and D69 -- it must be last -- is a position
+/// rule the checker owns. Until 2026-08-18 the `...` broke the parameter list
+/// apart and the refusal read "fn requires a declared return type", about a
+/// signature that declares one.
+const VARIADIC_MSG = "outside the subset: a variadic parameter `...args []T` arrives with generics (E2-b)"
+
+/// A DEFAULT parameter value, `fn bump(v int, by int = 1)`. Same history as the
+/// variadic above: the `=` tore the list apart and the blame landed on the
+/// return type.
+const DEFAULT_PARAM_MSG = "outside the subset: a default parameter value is not compiled yet (E2-b)"
+
+/// A NAMED argument, `bump(1, by: 2)`. Nova passes defaulted parameters BY
+/// NAME, so this form is not exotic -- it arrives with every default.
+const NAMED_ARG_MSG = "outside the subset: a named argument `name: value` is not compiled yet (E2-b)"
+
+/// A CAST, `1 as u8`. `as` was not a keyword of this lexer until 2026-08-18, so
+/// the cast lexed as two names and the refusal read "unknown name" -- the
+/// reader was sent looking for a binding that was never meant to exist.
+const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2-b, with the numeric family)"
+
+/// `...args []T`: the variadic marker stands before the parameter's name.
+fn has_variadic_mark(kids []Node) -> bool {
+    if kids.len() == 0 { return false }
+    ro first = kids[0]
+    if first.kind_of() != NodeKind.LeafNode { return false }
+    leaf_kind(first) == TokenKind.Ellipsis
+}
+
+/// `by int = 1`: a default value shows up as an `=` among the leaves.
+fn has_default_value(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) == TokenKind.Assign { return true }
+    }
+    false
+}
+
 /// The head of a `for` must be a RANGE, and the subset says so out loud.
 ///
 /// Found by the adversarial review of the operator wave, 2026-08-16: neither
@@ -437,11 +499,17 @@ const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (s
 /// The oracle refuses all three. This is the exact class P21 names -- a
 /// dispatch that never happened is weaker than a wrong `else` -- and it is
 /// the inverse of the ice that already guards `Range` in expression position.
+const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
+
 fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     if kids.len() < 4 { return }
     ro head = kids[3]
     if head.kind_of() != NodeKind.Bin {
-        @report_first_leaf_of(kids, "outside the subset: the head of a for must be a range `lo..hi`")
+        // A head that is not a binary operator is EITHER a collection --
+        // legal Nova, and it arrives with generics -- or a scalar, which the
+        // oracle refuses too. The message names both instead of implying the
+        // language itself requires a range.
+        @report_first_leaf_of(kids, FOR_HEAD_MSG)
         return
     }
     ro hk = branch_children(head)
@@ -479,12 +547,30 @@ const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a
 /// (`if c { return 1 }` then a binding is E_MISSING_RETURN for the oracle
 /// too), which is why the scan looks at top-level statements only and does
 /// not walk into branches.
+/// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
+/// do not.
+fn declares_a_value(rk []Node) -> bool {
+    if rk.len() <= 1 { return false }
+    if rk.len() != 3 { return true }
+    ro l = rk[1]
+    ro r = rk[2]
+    if l.kind_of() != NodeKind.LeafNode { return true }
+    if r.kind_of() != NodeKind.LeafNode { return true }
+    ro is_unit = leaf_kind(l) == TokenKind.LParen && leaf_kind(r) == TokenKind.RParen
+    !is_unit
+}
+
 fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
     mut declares_value = false
     for c in kids {
         if c.kind_of() != NodeKind.RetType { continue }
-        // `-> ()` parses as the arrow alone: the unit return declares no value.
-        declares_value = declares_value || branch_children(c).len() > 1
+        // `-> ()` is the UNIT return, and unit is not a value. It used to
+        // parse as the arrow ALONE, and the length test below was enough;
+        // since type_ref reads `()` as a balanced run (the tuple form), the
+        // pair reaches the tree and the old test called it a value. The result
+        // was a refusal that told `fn nothing() -> () { }` its body ends
+        // without a value -- a body that is not supposed to produce one.
+        declares_value = declares_value || declares_a_value(branch_children(c))
     }
     if !declares_value { return }
     for c in kids {

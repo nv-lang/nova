@@ -838,7 +838,8 @@ export fn is_expr_kind(k NodeKind) -> bool {
     k == NodeKind.Call ||
     k == NodeKind.MethodCall ||
     k == NodeKind.FieldAccess ||
-    k == NodeKind.MatchExpr
+    k == NodeKind.MatchExpr ||
+    k == NodeKind.Cast
 }
 
 /// First-leaf text of a Name-like node (its identifier).

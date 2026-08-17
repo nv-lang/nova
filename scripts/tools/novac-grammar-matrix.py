@@ -33,7 +33,9 @@ FORMS = [
                       'fn main() { println(total(1, 2)) }\n'),
     ("default_param", "A", 'fn bump(v int, by int = 1) -> int => v + by\n\n'
                            'fn main() { println(bump(1)) }\n'),
-    ("named_arg", "A", 'fn bump(v int, by int = 1) -> int => v + by\n\n'
+    # без значения по умолчанию: иначе форму заслоняет отказ про дефолт,
+    # и колонка меряет не то, что названа мерить
+    ("named_arg", "A", 'fn bump(v int, by int) -> int => v + by\n\n'
                        'fn main() { println(bump(1, by: 2)) }\n'),
     ("unit_return", "A", 'fn nothing() -> () { }\n\nfn main() { nothing() }\n'),
     ("for_over_vec", "A", 'fn main() {\n    mut s = 0\n'
@@ -73,6 +75,18 @@ FORMS = [
     ("while_loop", "-", 'fn main() {\n    mut i = 0\n    while i < 3 { i += 1 }\n    println(i)\n}\n'),
     ("range_for", "-", 'fn main() {\n    mut s = 0\n    for x in 0..3 { s += x }\n    println(s)\n}\n'),
 ]
+
+# Ложь, которую каждая форма класса A выдавала до 2026-08-18. Счётчик ищет
+# именно эти строки: «отказано» и «отказано не по той причине» — разные вещи,
+# и мерить надо вторую.
+LIES = {
+    "variadic": "requires a declared return type",
+    "default_param": "requires a declared return type",
+    "named_arg": "requires a declared return type",
+    "unit_return": "ends without a value",
+    "for_over_vec": "the head of a for must be a range",
+    "as_cast": "unknown name",
+}
 
 env = dict(os.environ)
 env.setdefault("NOVA_GC_INCLUDE_DIR",
@@ -125,7 +139,9 @@ def main():
 
         if oracle == "ok" and "not in the MVP grammar" in novac:
             unnamed += 1
-        if cls == "A" and oracle == "ok" and novac != "ok":
+        # Класс A закрыт не тогда, когда форма ПРИНЯТА, а когда ушла ЛОЖНАЯ
+        # причина: отказ по имени формы — это и есть цель §9.4.
+        if cls == "A" and oracle == "ok" and LIES.get(name, "@@") in novac:
             lies += 1
         print("%-16s %s | %-52s | %s" % (name, cls, oracle, novac))
 
