@@ -326,7 +326,16 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // goes when #676 closes.
         ro tail_node = bk[last_stmt]
         ro k = tail_node.kind_of()
-        if k == NodeKind.BindStmt || k == NodeKind.AssignStmt {
+        // ALLOW-list, and it mirrors the emitter's condition exactly
+        // (emit_c.nv:454 `is_expr_kind(kind) && kind != Call`): the tail
+        // produces a value iff the emitter writes `return` for it. The first
+        // version asked the opposite question -- "is the tail a binding or an
+        // assignment?" -- and four shapes walked past it: a tail `if` without
+        // `else`, a tail `while`, a tail `for`, and a tail unit call like
+        // `println(...)`. The oracle refuses all four; novac emitted a
+        // function that falls off its end. Asking a deny-list about an open
+        // set is how a rule looks complete while covering two cases of six.
+        if k != NodeKind.RetStmt && !(is_expr_kind(k) && k != NodeKind.Call) {
             @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         }
         return
