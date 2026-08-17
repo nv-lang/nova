@@ -20,7 +20,7 @@ fn FailingResource3 consume @cleanup(_outcome ScopeOutcome) Fail[str] -> () {
 // Caller must declare Fail[str] чтобы accept cleanup's throw.
 fn use_failing_cleanup() Fail[str] -> int {
     consume r = FailingResource3.new(42) {
-        r.id
+        return r.id                      // No. 714: the block is a statement
     }
 }
 

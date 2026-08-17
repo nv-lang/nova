@@ -31,7 +31,7 @@ fn checked_pos(x int) -> int
 fn use_asserting() -> int {
     consume r = ResZ.new(1) {
         assert(false, "boom")
-        r.id
+        return r.id                      // No. 714: the block is a statement
     }
 }
 
@@ -39,7 +39,7 @@ fn use_asserting() -> int {
 fn use_contract_violation() -> int {
     consume r = ResZ.new(1) {
         ro _ = checked_pos(-1)
-        r.id
+        return r.id                      // No. 714: the block is a statement
     }
 }
 

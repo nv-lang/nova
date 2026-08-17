@@ -24,7 +24,7 @@ fn FailableInit3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 // Helper to verify partial construction routing.
 fn use_failable() Fail[str] -> int {
     consume r = FailableInit3.try_make() {
-        r.id
+        return r.id                      // No. 714: the block is a statement
     }
 }
 

@@ -1,0 +1,35 @@
+// EXPECT_STDOUT gret=42 rethrow=6 twice=42 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №711. Мономорфизованная СВОБОДНАЯ функция с не-unit возвратом,
+// чей блок кончается ТЕРМИНАТОРОМ (`return` или `throw`), получала
+// фабрикованный второй `return NOVA_UNIT;` под не-unit тип: `nova check`
+// зелёный, `nova build` падал ошибкой СИ-компилятора в лицо пользователю
+// (`returning 'nova_unit' from a function with incompatible result type`).
+//
+// ДЕФЕКТ БЫЛ НЕ ПРО `throw`, И ЭТО ГЛАВНОЕ В ЭТОЙ ФИКСТУРЕ. Первый диагноз
+// звучал как «generic + хвостовой throw»; бисекция показала другое: падает и
+// `fn gret[T](x T) -> int { return 42 }` — без throw, без Fail, без эффектов
+// вообще. Корень — одна незеркальная ветка эмиттера моно-функций: близнец для
+// МЕТОДОВ уже был загорожен `if ret_c == "nova_unit"`, а для свободных функций
+// зеркало не довели. Поэтому первым здесь стоит именно `gret`: он ловит класс,
+// а `rethrow` — лишь ту дверь, через которую его заметили.
+//
+// Две инстанциации `gret` — намеренно: одна ошибка на инстанциацию значит, что
+// одноинстанциационная фикстура прошла бы и при половинчатом фиксе.
+module standalone.d711_generic_tail_terminator_pos
+
+fn gret[T](x T) -> int { return 42 }
+
+fn rethrow[E](e E) Fail[E] -> int { throw e }
+
+fn main() {
+    ro a = gret(7)
+    ro twice = gret("seven")
+    ro b = with Fail[str] = effect Fail[str] {
+        fail(m str) -> never { interrupt m.byte_len() }
+    } {
+        rethrow("boomer")
+    }
+    println("gret=${a} rethrow=${b} twice=${twice} ok")
+}
