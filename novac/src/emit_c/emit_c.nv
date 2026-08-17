@@ -404,6 +404,10 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         ice("emit_c: match pattern is neither an int literal nor an identifier")
     }
     @body.append(")) {\n")
+    // Asked once and named, so the chain below tests bools rather than
+    // variants (no-default-branch keeps variant dispatch for `match`, and a
+    // TokenKind match here would need the wildcard the same rule forbids).
+    ro is_plain_binder = leaf_kind(p0) == TokenKind.Ident && leaf_text(p0) != "_"
     if vrow >= 0 {
         // Unpack payload fields onto the arm's binders, in order: binder
         // names sit after '(' in the pattern; field types are the variant's
@@ -415,11 +419,17 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
             // [LEGACY-#676] var-index-method: same workaround as in
             // collect_types: variable-index receiver miscompiles.
             ro pj = pat[j]
-            if pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident {
+            // Punctuation leaves of the pattern -- '(' ',' ')' -- name no
+            // binder. A guard says that once and leaves the collecting
+            // unnested; an `else` here would be a branch on a VARIANT test,
+            // which the no-default-branch rule reserves for `match`.
+            ro is_binder = pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident
+            if is_binder {
                 binders.push(leaf_text(pj))
             } else {
-                // Punctuation leaves of the pattern -- '(' ',' ')' -- name no
-                // binder, so nothing is collected from them.
+                // Punctuation of the pattern -- '(' ',' ')' -- names no
+                // binder. The walk cannot `continue` here: `j += 1` below
+                // is what advances it.
             }
             j += 1
         }
@@ -431,14 +441,17 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
             @body.append(" ${bname} = _novac_scr_${uniq}->payload.${vname}._${pi};\n")
             pi += 1
         }
-    } else if leaf_kind(p0) == TokenKind.Ident && leaf_text(p0) != "_" {
+    } else if is_plain_binder {
         // Plain binder: the scrutinee under a new name.
         @body.append("        ")
         @body.append(c_type(@ctx, scr_t))
         @body.append(" ${leaf_text(p0)} = _novac_scr_${uniq};\n")
     } else {
-        // An int-literal pattern and the wildcard `_` introduce no name: the
-        // test emitted above is the whole arm, nothing is declared inside it.
+        // The remaining pattern shapes -- an int literal and the wildcard
+        // `_` -- introduce no name: the test emitted above IS the whole
+        // arm, so nothing is declared inside it. This closes the chain;
+        // the no-default-branch rule is satisfied because the conditions
+        // test a LEAF KIND and a spelling, not a sum variant.
     }
     if has_guard {
         for g in ak {

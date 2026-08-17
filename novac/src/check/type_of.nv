@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::check_expr` -- the half that answers "what type does
+// this expression have" positively, kind by kind, with no default: an unknown
+// shape is an ICE, never a silent int (the #652 class this project paid for).
+//
+// Role: the lattice. The walk decides WHERE to look; this file answers WHAT a
+// node's type is.
+// Used by: check/typing.nv (every record into the channel goes through it).
+// Guarded by: check-novac-resolve-discipline.sh (no linear name resolution,
+// no silent int default), check-novac-file-size.sh.
+//
+// Split out of typing.nv on 2026-08-17 when that file crossed the
+// thousand-line line (decision 12 / P13). The two questions are read
+// separately often enough that the cut is along meaning, not size.
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
+import ../diag.{ice}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{Ctx, CheckOut, DefKind, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+
+/// Type of an expression over the tiny registry lattice. Every kind is
+/// judged positively; the residual is an ice, never an int (#652 class).
+#realtime nogc
+fn type_of(e Node, ctx Ctx, scope Scope) -> int {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit {
+        // A negated literal is [Minus, lit] — judge the LAST leaf.
+        ro lk_kids = branch_children(e)
+        ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
+        // A table maps, so it is a match -- and its leftover branch is a
+        // REFUSAL, not a guess (P21: the wildcard may only carry `None` where
+        // the type declares partiality; here it carries an ice).
+        match lk {
+            StrLit => { return ctx.prims.str_id }
+            FloatLit => { return ctx.prims.f64_id }
+            IntLit => { return ctx.prims.int_id }
+            _ => { ice("check: literal token kind without a type rule (#652 class)") }
+        }
+    }
+    if k == NodeKind.Name {
+        ro nm = expr_leaf_name(e)
+        if is_bool_literal(nm) { return ctx.prims.bool_id }
+        return scope.type_of_name(nm)
+    }
+    if k == NodeKind.MethodCall {
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: method call without a name")
+        ro mname = leaf_text(kids[2])
+        // The return type — from the READ signature (П5): the
+        // compiler does not know std method names, it reads them. Only
+        // what check has already accepted reaches here, so a rejection
+        // here is an ice (a poisoning-discipline violation).
+        ro recv_t = type_of(kids[0], ctx, scope)
+        match ctx.fns.lookup(recv_t, mname) {
+            FnFound(row) => { return ctx.fns.rows[row].ret_id }
+            // The set narrows BY ARGUMENT TYPES -- the language overloads on
+            // parameters, so the pair (receiver, name) was never enough, and
+            // now that check types the arguments it can finish the job
+            // (274.3/C9, brought forward because the full primitive set let a
+            // second std signature into the table: `str.contains` has both
+            // `(needle str)` and `(c char)`, and until `char` existed the
+            // type system filtered the second one out by accident).
+            FnOverloaded(first) => {
+                ro chosen = narrow_overload(kids, ctx, scope, first, recv_t)
+                if chosen >= 0 { return ctx.fns.rows[chosen].ret_id }
+                // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user
+                // wrote that matches none or several candidates is a USER
+                // situation; check reports it once it owns the candidate set.
+                ice("check: overload set not narrowed past check")
+            }
+            // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
+            FnUnknown => { ice("check: method not in the read declarations past check") }
+        }
+    }
+    if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: field access without a name")
+        ro recv_t = type_of(kids[0], ctx, scope)
+        return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
+    }
+    if k == NodeKind.RecordCtor {
+        ro kids = branch_children(e)
+        if kids[0].kind_of() == NodeKind.Name {
+            return ctx.defs.type_id_of(expr_leaf_name(kids[0]))
+        }
+        // Anonymous `{ ...src, ... }`: the record type is the spread's.
+        for c in kids {
+            if c.kind_of() == NodeKind.CtorSpread {
+                return type_of(branch_children(c)[1], ctx, scope)
+            }
+        }
+        ice("check: anonymous constructor without a spread")
+    }
+    if k == NodeKind.Paren {
+        // Parens carry no meaning of their own: the type is the inner
+        // expression's, and the emitter reprints them for grouping.
+        return type_of(branch_children(e)[1], ctx, scope)
+    }
+    if k == NodeKind.Unary {
+        ro kids = branch_children(e)
+        ro operand = type_of(kids[1], ctx, scope)
+        // `!` is strictly logical on bool and is NOT overloadable
+        // (D46 AMEND 2026-08-02, @not retracted), so its answer is bool and
+        // nothing else. `-` and `~` keep the operand's type (@neg / @bitnot
+        // on a user type return Self by convention; the subset only emits the
+        // primitive path and check refuses the rest).
+        ro answer = match un_op_of(leaf_kind(kids[0])) {
+            Not => ctx.prims.bool_id
+            Negate | BitNot => operand
+        }
+        return answer
+    }
+    if k == NodeKind.Bin {
+        ro kids = branch_children(e)
+        // The RESULT type is a property of the operator, so it is decided by
+        // an exhaustive match on the decision -- not by asking the token
+        // whether it happens to be one of three comparisons.
+        match bin_op_of(leaf_kind(kids[1])) {
+            Less | LessEq | Greater | GreaterEq => { return ctx.prims.bool_id }
+            Equal | NotEqual => { return ctx.prims.bool_id }
+            AndAlso | OrElse => { return ctx.prims.bool_id }
+            BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { return ctx.prims.int_id }
+            Range => { ice("check: a range is not an expression outside a for-head") }
+            Add | Sub | Mul | Div | Modulo => {}
+        }
+        ro lt = type_of(kids[0], ctx, scope)
+        ro rt = type_of(kids[2], ctx, scope)
+        if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }
+        // Both sides must be PROVEN int — arithmetic on str/bool/records is
+        // not a silent int (#652 class), it is an invariant break here.
+        if lt == ctx.prims.int_id && rt == ctx.prims.int_id { return ctx.prims.int_id }
+        // [LEGACY-#700-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
+        // has no operand typing yet, so today it reaches here.
+        ice("check: binary arithmetic on non-numeric operands past check (#652 class)")
+    }
+    if k == NodeKind.MatchExpr {
+        // The match's value type: its FIRST arm expression (the corpus arms
+        // agree by construction; the type checker wave will judge).
+        for c in branch_children(e) {
+            if c.kind_of() == NodeKind.MatchArm {
+                ro ak = branch_children(c)
+                return type_of(ak[ak.len() - 1], ctx, scope)
+            }
+        }
+        // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
+        // neither parse nor check refuses it today.
+        ice("check: match without arms past check")
+    }
+    if k == NodeKind.Call {
+        // ONE lookup answers "what is this name" (the rustc Res model),
+        // then the kind decides.
+        ro d = ctx.defs.find(call_callee_text(branch_children(e)))
+        assert(d >= 0, "check: call target not in the registry — no silent int default (#652 class)")
+        ro def = ctx.defs.rows[d]
+        if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
+        if def.kind == DefKind.DefFn {
+            ro ret = ctx.fns.rows[def.payload].ret_id
+            assert(ret >= 0, "check: call of a fn without a declared return type (#652 class)")
+            return ret
+        }
+        ice("check: call target is a type, not a callable (#652 class)")
+    }
+    ice("check: expression kind without a type rule — no silent int default (#652 class)")
+}

@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `Rib` (a scope is a frame you push and pop) taken as an UNDO
+// TRAIL rather than a stack of maps: one name table plus a list of what each
+// name meant before, so leaving a block is a rewind, not a rebuild.
+//
+// Role: the locals of the function body being typed -- the only mutable table
+// of the typing pass, reset per function.
+// Used by: check/typing.nv (the walk) and check/type_of.nv (the lattice reads
+// a binding's type); nothing outside the module touches its fields.
+// Guarded by: check-novac-file-size.sh (the split that created this file),
+// check-novac-no-string-keys.sh (the name table is the one string door).
+//
+// Split out of typing.nv on 2026-08-17 when that file crossed the
+// thousand-line line (decision 12 / P13): a file is cut along MEANING into
+// co-equal files of the same module, and the scope is a self-contained thing.
+module novac.check
+
+import ../names.{NameTable, NamespaceId}
+
+// ---- the type lattice: the checker's own, not the registry's --------------
+//
+// Moved here from `sem` in the E2-b1 tail (2026-08-16). It never was registry
+// matter: a registry answers "what is declared", a lattice answers "what does
+// THIS expression mean here", and the second question is the checker's by
+// definition (rustc `FnCtxt`, Go `types2.Checker`). Keeping it in `sem` made
+// the backend able to ask it -- which it did, until the channel above took
+// that away. Nothing outside `check` may call it now, and nothing does: the
+// surface ratchet counts the names `sem` exports, and this move is what the
+// baseline note demanded of E2-b1 ("must NARROW it, not widen it").
+//
+// It is the E1 lattice, unchanged in behaviour: every kind judged positively,
+// no silent int default (the #652 class), the remaining ices on user mistakes
+// marked and dated under [LEGACY-#700-user-error-as-ice until:E2b3].
+/// Function-local scope: the NsLocals name door and the type of each
+/// binding — one record, they only travel together. Shadowing = last bind
+/// wins (the door's put overwrites).
+type Scope {
+    names NameTable /// name -> row in `types` (NsLocals namespace).
+    types []int /// Type id of each binding row.
+    /// The undo trail: for every binding made, the row its name pointed at
+    /// BEFORE. Leaving a block restores them, which is what makes a block a
+    /// scope. Donor: rustc `Rib` (a scope is a frame you push and pop) and
+    /// Go `types2.Scope` parent chains -- taken as an undo trail rather than
+    /// a chain of tables, because the door must stay one integer lookup
+    /// (P18) and novac's blocks are shallow.
+    shadowed []int
+    /// The name whose previous row each trail entry belongs to, in the same
+    /// order -- names and rows travel together, so the pair is two vectors
+    /// addressed by one index, not a second table.
+    shadowed_names []str
+}
+
+/// Empty scope with the NsLocals namespace.
+fn Scope.new() -> Scope =>
+    {
+        names: NameTable.new(NamespaceId.NsLocals),
+        types: []int.new(),
+        shadowed: []int.new(),
+        shadowed_names: []str.new(),
+    }
+
+/// Bind `name` to type id `t` (shadowing allowed).
+fn Scope mut @bind(name str, t int) -> () {
+    // Remember what this name meant before, so leaving the block can put it
+    // back. A name bound for the first time remembers -1, which the door
+    // reads as "unbound" -- the same sentinel `find` already returns.
+    @shadowed_names.push(name)
+    @shadowed.push(@names.find(name))
+    @names.put(name, @types.len())
+    @types.push(t)
+}
+
+/// Where the scope is right now. Entering a block takes a mark; leaving it
+/// gives the mark back and every binding made in between disappears.
+///
+/// WHY THIS EXISTS (owner's question 2026-08-16: "a bound by name? does that
+/// actually work?"). It did not. The scope was FLAT and never released, so
+/// a binding made inside an `if` block stayed visible after it: novac
+/// ACCEPTED `if c { ro x = 5 } println(x)` while the oracle rejects it --
+/// novac accepting what the oracle refuses is the K7 half-capability class,
+/// the most dangerous cell of the differential table.
+fn Scope @mark() -> int => @shadowed.len()
+
+/// Leave a block: undo every binding made since the mark, in reverse order,
+/// restoring what each name meant before.
+fn Scope mut @release(mark int) -> () {
+    while @shadowed.len() > mark {
+        ro i = @shadowed.len() - 1
+        ro name = @shadowed_names[i]
+        ro prev = @shadowed[i]
+        @names.put(name, prev)
+        ro _ = @shadowed.pop()
+        ro _n = @shadowed_names.pop()
+    }
+}
+
+/// Is this name bound in the current scope? The TOLERANT half of the pair
+/// (the same shape as `type_id`/`type_id_of`, 274.3/F-B4): `check` asks
+/// before it types, so an unbound name becomes a DIAGNOSTIC at the name's own
+/// position instead of an ice from inside the lattice. Without it the first
+/// floor is the second floor (the class the owner named #652).
+#realtime nogc
+fn Scope @is_bound(name str) -> bool => @names.find(name) >= 0
+
+/// Type id of a bound name; an unbound name past check is an ice.
+#realtime nogc
+fn Scope @type_of_name(name str) -> int {
+    ro row = @names.find(name)
+    // [LEGACY-#700-user-error-as-ice until:E2b3] an unbound name is a USER error.
+    assert(row >= 0, "check: unbound name — resolve is check's ground, no silent int default (#652 class)")
+    @types[row]
+}

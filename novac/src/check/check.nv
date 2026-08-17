@@ -106,7 +106,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         c.chan.assert_disjoint()
     } else {
         // A refused file is not typed: the walk's answer on broken input is an
-        // ice today ([LEGACY-#700-user-error-as-ice]), so the refusals already
+        // ice today ([LEGACY-#700-user-error-as-ice until:E2b3]), so the refusals already
         // collected ARE the verdict, and the channel goes back as the walk left it.
     }
     (c.out, c.chan)
@@ -213,9 +213,11 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     // The return type is a type reference too, and it was
                     // judged by nobody: `fn make() -> []int => 1` was ACCEPTED
                     // while the body returns an int literal (2026-08-17).
+                    @report_if_qualifier_misplaced(children, "result")
                     @report_if_return_form(children)
                 }
                 Param => {
+                    @report_if_qualifier_misplaced(children, "parameter")
                     @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
                 }
                 RecordCtor => {
@@ -298,6 +300,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 // compiled yet, and the message must say which.
                 ro is_form = t.kind == TokenKind.LBracket ||
                 t.kind == TokenKind.EmptyBrackets ||
+                t.kind == TokenKind.Star ||
                     t.kind == TokenKind.KwRo ||
                     t.kind == TokenKind.KwMut ||
                     t.kind == TokenKind.KwFn ||
@@ -333,6 +336,7 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
         Leaf(t) => {
             ro is_form = t.kind == TokenKind.LBracket ||
                 t.kind == TokenKind.EmptyBrackets ||
+                t.kind == TokenKind.Star ||
                 t.kind == TokenKind.KwRo ||
                 t.kind == TokenKind.KwMut ||
                 t.kind == TokenKind.KwFn ||
@@ -343,6 +347,42 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
         Branch { .. } => {}
     }
 }
+
+/// Which leading qualifier is legal in WHICH position -- MEASURED against the
+/// oracle 2026-08-17, not guessed:
+///
+///     v ro int        E_REDUNDANT_PARAM_RO         `ro` is the default
+///     v mut int       E_PARAM_TYPE_POS_MUT_RETRACTED
+///     v consume int   accepted
+///     v uninit int    accepted
+///     -> ro int       accepted
+///     -> mut int      E_REDUNDANT_RETURN_MUT
+///
+/// The parser reads every qualifier in every position (plan 9.4), so this is
+/// where a misplaced one is named -- as a POSITION mistake, not as a form the
+/// subset cannot compile yet, because those are different sentences to a
+/// reader who has to fix the code.
+fn Checker mut @report_if_qualifier_misplaced(kids []Node, pos str) -> () {
+    if kids.len() < 2 { return }
+    match kids[1] {
+        Leaf(t) => {
+            ro is_ro = t.kind == TokenKind.KwRo
+            ro is_mut = t.kind == TokenKind.KwMut
+            ro bad = (pos == "parameter" && is_ro) || (pos == "result" && is_mut)
+            if bad {
+                @report_first_leaf_of(kids, QUALIFIER_POSITION_MSG)
+            } else {
+                // The qualifier belongs in this position, or there is none.
+            }
+        }
+        Branch { .. } => {
+            // A branch in type position is a generics node, judged elsewhere.
+        }
+    }
+}
+
+/// One text for the position rule.
+const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the default and redundant on a parameter; type-position `mut` is retracted there and redundant on a result)"
 
 /// A declared type whose SHAPE the subset does not compile yet -- a slice, a
 /// tuple, a function type, a qualified type. The parser reads them all (plan
@@ -459,6 +499,33 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
 /// sends the reader to fix code that is correct. E2-b2 replaces this refusal
 /// with monomorphisation; the node it needs is already parsed.
 fn Checker mut @report_if_generic(kids []Node) -> () {
+    // Type parameters BEFORE the name of a FREE function are not a subset
+    // limit, they are a misplaced form. `fn[T]` binds the RECEIVER -- the
+    // spec's own examples show `fn[T] []T @map[U]`, T for the receiver and U
+    // for the method -- while a free function declares them after its name,
+    // `fn box_iter[T](...)`. std proves the split by usage: 55 receiver-form
+    // declarations against 18 free ones, and the mixed shape never (measured
+    // 2026-08-17, owner's observation). Reported first so the reader learns
+    // the POSITION is wrong, not that generics are unsupported.
+    mut has_recv = false
+    for c in kids {
+        has_recv = has_recv || c.kind_of() == NodeKind.Recv
+    }
+    mut seen_name = false
+    mut i = 0
+    for c in kids {
+        ro ck = c.kind_of()
+        ro misplaced = !has_recv && ck == NodeKind.Generics && !seen_name && i > 0
+        if misplaced {
+            @report_first_leaf_of([]Node.of(c), GENERIC_POSITION_MSG)
+            return
+        } else {
+            // A receiver is present (the position is then correct), or this
+            // child is not a generics node standing before the name.
+        }
+        seen_name = seen_name || (i > 0 && ck == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident)
+        i += 1
+    }
     for c in kids {
         if c.kind_of() == NodeKind.Generics {
             @report_first_leaf_of([]Node.of(c), GENERIC_MSG)
@@ -491,6 +558,10 @@ fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
         Branch { .. } => {}
     }
 }
+
+/// Type parameters in the wrong PLACE -- a different mistake from type
+/// parameters not being compiled yet, and the message must not confuse them.
+const GENERIC_POSITION_MSG = "type parameters before the name belong to a method receiver; a free function declares them after its name"
 
 /// One text for both doors (fn and type): the reader must not have to
 /// wonder whether two wordings mean two different limits.

@@ -622,8 +622,14 @@ export fn collect_types(file Node) -> Ctx {
             ro off = variant_rows.len()
             mut vcnt = 0
             for v in branch_children(c) {
-                if v.kind_of() == NodeKind.Variant {
-                    ro vk = branch_children(v)
+                // Only Variant children carry a row. The `enum` marker, the
+                // sum's own name leaf and the `|` separators share this list,
+                // and recovery debris is check's to report -- sem registers
+                // only what it understood (274.3/F-B4). A guard says that once;
+                // an `else` here would be a branch on a VARIANT test, which the
+                // no-default-branch rule reserves for `match`.
+                if v.kind_of() != NodeKind.Variant { continue }
+                ro vk = branch_children(v)
                     // A variant with no name (recovery after a broken sum_id):
                     // skipped — check is the judge, sem does not fail (274.3/F-B4).
                     if vk.len() < 1 { continue }
@@ -664,14 +670,8 @@ export fn collect_types(file Node) -> Ctx {
                         payload_types.push(pt)
                         pcnt += 1
                     }
-                    variant_rows.push(VariantDef { sum_id, name: vname, payload_off: poff, payload_cnt: pcnt })
-                    vcnt += 1
-                } else {
-                    // Not a variant: the `enum` marker, the sum's own name leaf
-                    // and the `|` separators share this child list. They carry
-                    // no row, and recovery debris is check's to report -- sem
-                    // registers only what it understood (274.3/F-B4).
-                }
+                variant_rows.push(VariantDef { sum_id, name: vname, payload_off: poff, payload_cnt: pcnt })
+                vcnt += 1
             }
             ro sum_ty = tys.sum(sum_id)
             types.push(TypeDef { kind: TypeKind.TkSum, ty_id: sum_ty, name: sname, row_off: off, row_cnt: vcnt })
