@@ -18,7 +18,7 @@
 // directives below for a single run.
 //
 // ENV NOVA_MAXPROCS=8
-// ENV NOVA_MAX_FIBERS=4000
+// ENV NOVA_FIBERS_PER_WORKER=4000
 
 module standalone.presume_446_stress
 

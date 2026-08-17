@@ -8091,6 +8091,38 @@ retirement требовало бы СОВМЕСТНОЙ миграции + perf-
 
 ## D233 (NEW) — Configurable fiber arena (env + nova.toml runtime tuning) (Plan 149)
 
+> **АМЕНДМЕНТ 2026-08-17 (решение владельца) — ПЕРЕИМЕНОВАНИЕ СЕМЕЙСТВА.**
+>
+> Имена этой настройки читались неверно, и это не вкусовщина: `NOVA_MAX_FIBERS`
+> звучит как ПОТОЛОК, а означал он значение ПО УМОЛЧАНИЮ — тогда как настоящий
+> потолок назывался `NOVA_FIBER_SLOT_COUNT_MAX`. Рядом стояли два почти
+> одинаковых имени с суффиксом `_DEFAULT`: одно платформенное, другое сборочное.
+> Цена путаницы измерена в тот же день: разбирая расхождение D97 и D233,
+> интегратор прочитал `16384` как «на процесс» и едва не записал это в спеку —
+> поймал владелец вопросом «а это что?».
+>
+> **Пять ролей, одинаковые суффиксы в обоих семействах** (счётчик фиберов и
+> размер стека):
+>
+> | роль | кто ставит | имя |
+> |---|---|---|
+> | `…_BUILTIN` | платформа, литерал в коде под `_Static_assert` | `NOVA_FIBERS_PER_WORKER_BUILTIN`, `NOVA_FIBER_STACK_BUILTIN` |
+> | `…_DEFAULT` | сборка, `-D` из `nova.toml` | `NOVA_FIBERS_PER_WORKER_DEFAULT`, `NOVA_FIBER_STACK_DEFAULT` |
+> | без суффикса | окружение, при запуске | `NOVA_FIBERS_PER_WORKER`, `NOVA_FIBER_STACK` |
+> | `…_FLOOR` / `…_LIMIT` | границы, в которые зажимается любое из трёх | `NOVA_FIBERS_PER_WORKER_FLOOR` / `_LIMIT` |
+>
+> Ключ `nova.toml`: `[runtime] max_fibers` → **`fibers_per_worker`**. Имя теперь
+> само говорит «на воркер», и потерять это уточнение при чтении больше нельзя.
+>
+> **Слоя совместимости НЕТ, и это осознанно.** Старый ключ встречался ровно в
+> одном настоящем `nova.toml` (`nova_tests.old/`) и ни в одном из шести внешних
+> пакетов; v0.1 не выпущен. Слой совместимости, который никому не нужен, сам
+> становится вторым источником правды — ровно тем, против чего написан этот
+> D-блок.
+>
+> **`docs/plans/**` не переименовывались**: планы — исторические записи, и
+> править в них имена значит подделывать историю. Старые имена там остаются.
+
 **Status:** ACTIVE (Plan 149, 2026-06-12). Supersedes marker `[M-fiber-arena-raise-cap]`.
 
 **Contract.** Per-fiber stack slot size and max-concurrent-fibers-per-worker are
@@ -8102,7 +8134,7 @@ compiler parameters.
 | Knob | Env | nova.toml `[runtime]` | Builtin default | Range | Round |
 |------|-----|-----------------------|-----------------|-------|-------|
 | fiber stack | `NOVA_FIBER_STACK` | `fiber_stack` | 4MB | [256KB, 256MB] | UP to page-align |
-| max fibers/worker | `NOVA_MAX_FIBERS` | `max_fibers` | 16384 | [64, `SLOT_COUNT_MAX`] | UP to ×64 |
+| max fibers/worker | `NOVA_FIBERS_PER_WORKER` | `fibers_per_worker` | 16384 | [64, `SLOT_COUNT_MAX`] | UP to ×64 |
 
 Human-friendly sizes accepted (`"4MB"` | `"4194304"`; KB/MB/GB binary — KB=1024,
 MB=1024², GB=1024³). The builtin stack default was lowered 8MB→4MB (2× fiber
@@ -8111,7 +8143,7 @@ density out of the box).
 ### 2. Precedence
 
 `env > nova.toml (compile-time -D default) > builtin #define`. nova.toml bakes
-`-DNOVA_FIBER_STACK_DEFAULT=<bytes>` / `-DNOVA_MAX_FIBERS_DEFAULT=<count>` (raw
+`-DNOVA_FIBER_STACK_DEFAULT=<bytes>` / `-DNOVA_FIBERS_PER_WORKER_DEFAULT=<count>` (raw
 integers, human-size parsed in Rust); the env var is read in
 `nova_fiber_arena_init` and overrides the compile-time default at runtime.
 
@@ -8138,7 +8170,7 @@ emergent property.
 ### 5. Compile-time MAX vs runtime active split
 
 The bitmap (`free_bits` POSIX / `used_bits`+`dirty_bits` Windows) is sized by the
-compile-time `NOVA_FIBER_SLOT_COUNT_MAX` (default 262144 ⇒ 4096 uint64_t = 32KB
+compile-time `NOVA_FIBERS_PER_WORKER_LIMIT` (default 262144 ⇒ 4096 uint64_t = 32KB
 per arena, ×workers — копейки) so env may raise `slot_count` above the runtime
 default. Runtime `a->slot_count = clamp(round64(resolved), 64,
 SLOT_COUNT_MAX)`. Because round-UP makes `slot_count` a multiple of 64, the
@@ -8150,11 +8182,11 @@ allocator never returns a phantom slot beyond `slot_count`.
 
 The minicoro stack size is derived from the RUNTIME `a->slot_size` via
 `nova_fiber_arena_slot_size()` in `fibers.h::_nova_mco_desc_init_arena`, NOT the
-compile-time `NOVA_FIBER_STACK_SIZE` macro. This makes `NOVA_FIBER_STACK` env
+compile-time `NOVA_FIBER_STACK_BUILTIN` macro. This makes `NOVA_FIBER_STACK` env
 actually change the usable per-fiber stack (a larger env stack deepens the
 stack; the 256KB floor stays usable because minicoro's `coro_size` ≤
 `slot_usable`, so `nova_fiber_alloc`'s `size > usable` guard passes).
-`NOVA_FIBER_STACK_SIZE` remains the build-time builtin feeding
+`NOVA_FIBER_STACK_BUILTIN` remains the build-time builtin feeding
 `NOVA_FIBER_STACK_DEFAULT`.
 
 ### 7. Guard page preserved
@@ -8169,7 +8201,7 @@ Arena config (set once at `nova_fiber_arena_init`, before the arena is published
 touches only `slot_size`/`slot_count`/`virtual_size`/bitmap-size + tail bits — no
 scheduler or GC invariant (grow-vs-wake, iso-cancel, active-range roots remain
 as-is). 32-bit branch kept tiny (`SLOT_COUNT_MAX`=1024, runtime default 64 =
-256MB; the source `NOVA_FIBER_SLOT_COUNT_DEFAULT` literal was corrected 16→64
+256MB; the source `NOVA_FIBERS_PER_WORKER_BUILTIN` literal was corrected 16→64
 since round-UP-to-×64 + `MIN`=64 already forced 64 at runtime — the old 16 was
 dead and its '64MB' comment false; a `_Static_assert` now pins the
 ×64 ∧ ≥MIN invariant. Plan 149 followup, 2026-06-13).
@@ -8182,7 +8214,7 @@ honor an identical contract; Windows VirtualAlloc downsize-retry may yield
 
 ### 10. Virtual-reservation budget note
 
-Worst case `NOVA_MAX_FIBERS=262144 × NOVA_FIBER_STACK=256MB × NOVA_MAXPROCS`
+Worst case `NOVA_FIBERS_PER_WORKER=262144 × NOVA_FIBER_STACK=256MB × NOVA_MAXPROCS`
 reserves an absurd virtual range. MAP_NORESERVE / MEM_RESERVE keep physical
 commit lazy, but this can exhaust user VA or hit a commit limit. POSIX aborts on
 mmap failure; Windows downsize-retries. Operators tuning to extremes should size

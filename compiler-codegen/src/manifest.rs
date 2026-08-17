@@ -145,7 +145,7 @@ pub struct Manifest {
     /// Пусто (None), если секция отсутствует.
     pub ffi: Option<FfiConfig>,
     /// Plan 149 D233: `[runtime]` section — fiber arena tuning baked as
-    /// compile-time defaults (-DNOVA_FIBER_STACK_DEFAULT / -DNOVA_MAX_FIBERS_DEFAULT).
+    /// compile-time defaults (-DNOVA_FIBER_STACK_DEFAULT / -DNOVA_FIBERS_PER_WORKER_DEFAULT).
     /// Precedence env > nova.toml(-D) > builtin #define. None если секция
     /// отсутствует.
     pub runtime: Option<RuntimeConfig>,
@@ -196,9 +196,9 @@ pub struct Manifest {
 /// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
 ///
 /// `fiber_stack` — per-fiber stack slot size (human-friendly `"4MB"` или bare
-/// bytes `"4194304"`). `max_fibers` — max concurrent fibers per worker
+/// bytes `"4194304"`). `fibers_per_worker` — max concurrent fibers per worker
 /// (`"16384"`). Both baked as compile-time `-D...DEFAULT` flags; the
-/// corresponding env var (NOVA_FIBER_STACK / NOVA_MAX_FIBERS) overrides at
+/// corresponding env var (NOVA_FIBER_STACK / NOVA_FIBERS_PER_WORKER) overrides at
 /// runtime. Stored as raw strings; `parse_size_to_bytes` converts to the raw
 /// integer the C `#define` consumes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -206,7 +206,7 @@ pub struct RuntimeConfig {
     /// "4MB" | "4194304" — per-fiber stack slot size.
     pub fiber_stack: Option<String>,
     /// "16384" — max concurrent fibers per worker.
-    pub max_fibers: Option<String>,
+    pub fibers_per_worker: Option<String>,
 }
 
 /// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section config.
@@ -536,7 +536,7 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut ffi_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
     let mut runtime_fiber_stack: Option<String> = None;
-    let mut runtime_max_fibers: Option<String> = None;
+    let mut runtime_fibers_per_worker: Option<String> = None;
     let mut runtime_section_seen: bool = false;
     // Section tracking: use String to support "exports.consume_types".
     let mut section = String::new();
@@ -606,7 +606,7 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             if section == "runtime" {
                 match key {
                     "fiber_stack" => runtime_fiber_stack = Some(str_val),
-                    "max_fibers"  => runtime_max_fibers = Some(str_val),
+                    "fibers_per_worker"  => runtime_fibers_per_worker = Some(str_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -659,7 +659,7 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let runtime = if runtime_section_seen {
         Some(RuntimeConfig {
             fiber_stack: runtime_fiber_stack,
-            max_fibers: runtime_max_fibers,
+            fibers_per_worker: runtime_fibers_per_worker,
         })
     } else {
         None

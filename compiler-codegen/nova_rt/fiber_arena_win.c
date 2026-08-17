@@ -73,7 +73,7 @@
 /* Plan 149 Ф.1: bitmap sized by COMPILE-TIME MAX (not runtime default) so env
  * may RAISE slot_count above the default. 262144 slots = 4096 words = 32KB
  * (used_bits) + 32KB (dirty_bits) per arena. */
-#define NOVA_FW_BITMAP_WORDS    ((NOVA_FIBER_SLOT_COUNT_MAX + 63) / 64)
+#define NOVA_FW_BITMAP_WORDS    ((NOVA_FIBERS_PER_WORKER_LIMIT + 63) / 64)
 
 /* ── Состояние арены — heap-структура, узел append-only списка ──────── */
 
@@ -364,13 +364,13 @@ static size_t _nova_fw_round_clamp_stack(size_t v) {
     size_t pg = NOVA_FW_PAGE;
     if (v > SIZE_MAX - (pg - 1)) v = SIZE_MAX;
     else v = (v + pg - 1) / pg * pg;
-    if (v < (size_t)NOVA_FIBER_STACK_MIN) {
+    if (v < (size_t)NOVA_FIBER_STACK_FLOOR) {
         _nova_fw_warn("nova: NOVA_FIBER_STACK ", 1, v, " below floor — using 256KB\n");
-        return (size_t)NOVA_FIBER_STACK_MIN;
+        return (size_t)NOVA_FIBER_STACK_FLOOR;
     }
-    if (v > (size_t)NOVA_FIBER_STACK_MAX) {
+    if (v > (size_t)NOVA_FIBER_STACK_LIMIT) {
         _nova_fw_warn("nova: NOVA_FIBER_STACK ", 1, v, " exceeds max — clamped to 256MB\n");
-        return (size_t)NOVA_FIBER_STACK_MAX;
+        return (size_t)NOVA_FIBER_STACK_LIMIT;
     }
     return v;
 }
@@ -379,10 +379,10 @@ static size_t _nova_fw_round_clamp_stack(size_t v) {
 static size_t _nova_fw_round_clamp_slots(size_t v) {
     if (v > SIZE_MAX - 63) v = SIZE_MAX;
     else v = (v + 63) / 64 * 64;
-    if (v < (size_t)NOVA_FIBER_SLOT_COUNT_MIN) return (size_t)NOVA_FIBER_SLOT_COUNT_MIN;
-    if (v > (size_t)NOVA_FIBER_SLOT_COUNT_MAX) {
-        _nova_fw_warn("nova: NOVA_MAX_FIBERS ", 1, v, " exceeds max — clamped\n");
-        return (size_t)NOVA_FIBER_SLOT_COUNT_MAX;
+    if (v < (size_t)NOVA_FIBERS_PER_WORKER_FLOOR) return (size_t)NOVA_FIBERS_PER_WORKER_FLOOR;
+    if (v > (size_t)NOVA_FIBERS_PER_WORKER_LIMIT) {
+        _nova_fw_warn("nova: NOVA_FIBERS_PER_WORKER ", 1, v, " exceeds max — clamped\n");
+        return (size_t)NOVA_FIBERS_PER_WORKER_LIMIT;
     }
     return v;
 }
@@ -400,12 +400,12 @@ static size_t _nova_fw_resolve_slot_size(void) {
 
 static size_t _nova_fw_resolve_slot_count(void) {
     int invalid = 0;
-    size_t parsed = _nova_fw_parse_size_env("NOVA_MAX_FIBERS", &invalid);
+    size_t parsed = _nova_fw_parse_size_env("NOVA_FIBERS_PER_WORKER", &invalid);
     if (invalid) {
-        _nova_fw_warn("nova: invalid NOVA_MAX_FIBERS — using default 16384\n", 0, 0, "");
+        _nova_fw_warn("nova: invalid NOVA_FIBERS_PER_WORKER — using default 16384\n", 0, 0, "");
         parsed = 0;
     }
-    size_t v = parsed ? parsed : (size_t)NOVA_MAX_FIBERS_DEFAULT;
+    size_t v = parsed ? parsed : (size_t)NOVA_FIBERS_PER_WORKER_DEFAULT;
     return _nova_fw_round_clamp_slots(v);
 }
 

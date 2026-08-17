@@ -104,7 +104,7 @@ static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
     static inline mco_desc _nova_mco_desc_init_arena(void (*entry)(mco_coro*)) {
         /* Plan 149 (review must_fix #1/#2): derive minicoro stack_size from
          * the RUNTIME arena slot_size (env ∨ -D ∨ builtin, post round+clamp),
-         * NOT the compile-time NOVA_FIBER_STACK_SIZE macro. nova_fiber_arena_slot_size
+         * NOT the compile-time NOVA_FIBER_STACK_BUILTIN macro. nova_fiber_arena_slot_size
          * lazily inits the arena (idempotent) and returns the resolved size, so
          * minicoro's coro_size (== the `size` later requested from
          * nova_fiber_alloc) scales with the slot. This makes NOVA_FIBER_STACK
@@ -1336,7 +1336,7 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
  * nova_free_uncollectable (= GC_free), handing that exact 128-byte block
  * back to Boehm's internal free list for the SAME size-class SpawnCtx draws
  * fresh allocations from during a spawn storm (2000 concurrent spawns,
- * pos_max_fibers_concurrent.nv) — gdb confirmed SIGSEGV inside
+ * pos_fibers_per_worker_concurrent.nv) — gdb confirmed SIGSEGV inside
  * GC_generic_malloc_uncollectable dereferencing a corrupted free-list link
  * on a FRESH (never-before-Nova-recycled) 128-byte allocation, and a
  * separately-observed garbage `_nova_fiber_scope` surfacing later at

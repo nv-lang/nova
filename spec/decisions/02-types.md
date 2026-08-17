@@ -39,7 +39,7 @@
 | [D290](#d290--value-record-iterator-types-plan-165-2026-06-16) | Iterator value-records: `VecIter[T] value` (GC-pointer fields covered by fiber arena) + `Range`/`RangeIter`/`StepRangeIter`/`ReverseRangeIter value` (int-only, pure stack) — zero malloc in adapter chain (Plan 165) | active |
 | [D307](#d307-file-private-visibility--privfile-plan-170) | File-private visibility `priv(file) fn`/`type`/`const` — лесенка `priv(file)` ⊂ module ⊂ export; `E_FILE_PRIV_LEAK`; file-discriminated codegen; dedup одноимённых в peer-файлах (Plan 170) | active |
 | [D315](#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21) | `ResolvedType` — единый канонический носитель типа; проверки/совместимость/конверсии/перевод-в-C выводятся из него; `type_ref_to_c` ретайрится; сахар нормализуется; ABI выводится, не хранится (Plan 172.1, D315) | active |
-| [D310](#d310-type-set-bounds-plan-1723) | Type-set bounds: `type Name set T1 \| T2 \| …` — именованное множество конкретных типов как generic-bound; `SignedInt`/`UnsignedInt`; Go-style type-constraint (Plan 172.3) | active |
+| [D310](#d310-type-set-bounds-plan-1723) | Type-set bounds: `type Name set T1 \| T2 \| …` — именованное множество конкретных типов как generic-bound; `SignedInts`/`UnsignedInts`; Go-style type-constraint (Plan 172.3) | active |
 | [D429](#d429-coerce--декларативные-неявные-zero-cost-конверсии-view--finalize-plan-214-2026-07-18) | `#coerce` — декларативные неявные zero-cost конверсии (view + finalize) | active |
 
 ---
@@ -4121,7 +4121,7 @@ type-arg внутри **multi-param** адаптера (`MapIter[Self, T, U]`),
 Без bound — `[T]` — параметр без ограничений (структурное соответствие
 проверяется при использовании, как было до D72).
 
-Bound — это **protocol-тип** (D53) **ИЛИ type-set** ([D310](#d310-type-set-bounds-plan-1723), Plan 172.3: именованное множество конкретных типов, `[T SignedInt]`). Тот же `Hash` стоит и в
+Bound — это **protocol-тип** (D53) **ИЛИ type-set** ([D310](#d310-type-set-bounds-plan-1723), Plan 172.3: именованное множество конкретных типов, `[T SignedInts]`). Тот же `Hash` стоит и в
 позиции типа значения (`fn f(x Hash)` — existential), и в позиции
 bound'а (`fn f[T Hash](x T)` — universal). Одна сущность —
 тип со структурным контрактом — в трёх позициях:
@@ -7437,9 +7437,9 @@ fn[T From[K], K] T @construct_from(v K) -> T => T.from(v)   // parametric protoc
 ```
 
 **Bound = protocol-тип (D72) ИЛИ type-set ([D310](#d310-type-set-bounds-plan-1723), Plan 172.3).** Type-set — именованное
-множество конкретных типов (`type SignedInt set i8 | i16 | …`), используемое как bound:
-`fn[T SignedInt] T.parse(...)`. Композиция type-set ∧ protocol — через тот же `+`
-(`[T SignedInt + Hash]`): T ∈ set И реализует protocol, проверки независимы per-member;
+множество конкретных типов (`type SignedInts set i8 | i16 | …`), используемое как bound:
+`fn[T SignedInts] T.parse(...)`. Композиция type-set ∧ protocol — через тот же `+`
+(`[T SignedInts + Hash]`): T ∈ set И реализует protocol, проверки независимы per-member;
 не более одного type-set в одном bound-листе (`E_MULTIPLE_TYPE_SETS`). Произвольные
 **representation/underlying** bounds (`~int`, structural) — по-прежнему **open question**
 [Q-representation-bound](../open-questions.md#q-representation-bound), Plan 102 (future);
@@ -16498,15 +16498,24 @@ D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity)
 
 ```nova
 // inline
-type SignedInt   set i8 | i16 | i32 | i64 | int
-type UnsignedInt set u8 | u16 | u32 | u64 | uint
+type SignedInts   set i8 | i16 | i32 | i64 | int
+type UnsignedInts set u8 | u16 | u32 | u64 | uint
+
+> **АМЕНДМЕНТ 2026-08-17 (решение владельца; аудит самосогласованности,
+> раздел 4, пункт 11).** Здесь стояло единственное число — `SignedInt` /
+> `UnsignedInt`, — тогда как [D430](#d430) и весь `std` пишут множественное
+> (`[T Ints]`, `SignedInts`). Имя одного и того же множества расходилось между
+> двумя D-блоками и реализацией, то есть читатель D310 писал bound, которого
+> нет. Верное — МНОЖЕСТВЕННОЕ: множество типов, а не один тип; так же
+> называется семейство `Ints`/`Floats`. Переименовано 16 вхождений в этом
+> файле.
 
 // многострочный — | обязателен у каждого члена включая первый
 type AnyNumber set
     | i8 | i16 | i32 | i64 | int
     | u8 | u16 | u32 | u64 | uint
 
-fn[T UnsignedInt] T.parse(s str, radix int) -> Result[T, ParseUIntError] => ...
+fn[T UnsignedInts] T.parse(s str, radix int) -> Result[T, ParseUIntError] => ...
 ```
 
 > **Амендмент (R3, 2026-07-07, я):** примеры этого блока были `T.try_parse(...)` (Option-контракт,
@@ -16519,9 +16528,9 @@ fn[T UnsignedInt] T.parse(s str, radix int) -> Result[T, ParseUIntError] => ...
 
 - **Синтаксис.** Очередная kind-форма под `type` ([D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)/D53/D406): `type Name set Member1 | Member2 | …`. Диспетчеризация по **первому токену после имени** — контекстный kind-токен `set` однозначно отличает type-set от sum-type (`type X enum A | B`, D406) и остальных форм. Backtracking нет (один токен lookahead). `set` — контекстное слово (только в позиции после `type Name`), НЕ глобально-зарезервированное. Члены — TypeRef через `|`. **Многострочная форма:** если первый член на новой строке — `|` обязателен у каждого члена включая первый (аналогично D406 `enum` и D310 `set`); несколько членов в одной строке допускаются.
 - **Члены — по ИДЕНТИЧНОСТИ.** Примитивы и любые объявленные конкретные типы (newtype / named-tuple / record), каждый перечислен ЯВНО. Newtype `type MyI8 i8` **не** член set'а `{i8}` — нужен явный листинг. `~underlying` НЕТ (в Nova нет implicit-coercion; D52/D215).
-- **Bound = membership-предикат.** В `[...]`-позиции type-set ведёт себя как protocol-bound (D72): `[T SignedInt]`. Композиция с протоколами через `+` (D145, conjunction): `[T SignedInt + Hash]` ⇒ T ∈ set И реализует Hash; проверки независимы, per-member. **Не более одного type-set** в bound-листе (`E_MULTIPLE_TYPE_SETS`); протоколов — сколько угодно.
+- **Bound = membership-предикат.** В `[...]`-позиции type-set ведёт себя как protocol-bound (D72): `[T SignedInts]`. Композиция с протоколами через `+` (D145, conjunction): `[T SignedInts + Hash]` ⇒ T ∈ set И реализует Hash; проверки независимы, per-member. **Не более одного type-set** в bound-листе (`E_MULTIPLE_TYPE_SETS`); протоколов — сколько угодно.
 - **Семантика тела.** Мономорфизация per член (как обычный `fn[T]`, Plan 48 worklist). `T.MAX`/`T.MIN`/`T.new`/литералы резолвятся per-instance через `numeric_type_constant_mapping` по **Nova-имени** подставленного члена (нужен Nova-name subst-канал T→"i8" ПЕРЕД lookup, отдельный от C-name subst T→"int8_t"). Операторы в теле — **пересечение** легальных для ВСЕХ членов; чекер материализует resolved-тип каждого T-выражения в per-ExprId канал (codegen лоуэрит, не ре-резолвит). Без `nova_int`-fallback (§1): неразрешённый член = диагностика чекера, не угадывание.
-- **Знаковость.** Один set НЕ смешивает signed/unsigned целые (`u64.MAX = 2^64−1 ∉ i64` → несовместимые value-domains; единое тело несоундно для обеих групп). Чекер: `E_TYPE_SET_MIXED_SIGNEDNESS` на объявлении. Stdlib даёт два готовых: `SignedInt`, `UnsignedInt`. Без рантайм-ветки по `T.MIN==0` (§2: не платим рантаймом за статически известное).
+- **Знаковость.** Один set НЕ смешивает signed/unsigned целые (`u64.MAX = 2^64−1 ∉ i64` → несовместимые value-domains; единое тело несоундно для обеих групп). Чекер: `E_TYPE_SET_MIXED_SIGNEDNESS` на объявлении. Stdlib даёт два готовых: `SignedInts`, `UnsignedInts`. Без рантайм-ветки по `T.MIN==0` (§2: не платим рантаймом за статически известное).
 
 ### Проверки / диагностика (чекер, §1/§6; новые коды в [09-tooling](09-tooling.md))
 - `E_TYPE_NOT_IN_SET` — конкретный T не член set'а (фиксируется на **инстанцировании**, не на use-site внутри тела; сообщение перечисляет членов + fix).
@@ -16530,7 +16539,7 @@ fn[T UnsignedInt] T.parse(s str, radix int) -> Result[T, ParseUIntError] => ...
 - `E_MULTIPLE_TYPE_SETS` — >1 type-set в одном bound-листе.
 
 ### Почему
-- **Reuse через семейства примитивов** — один `fn[T SignedInt] T.parse` вместо ×10 обёрток (разблокирует Plan 174.1, вариант B).
+- **Reuse через семейства примитивов** — один `fn[T SignedInts] T.parse` вместо ×10 обёрток (разблокирует Plan 174.1, вариант B).
 - **Zero-ambiguity синтаксис** через существующий D52-диспетч (kind-токен, как `alias`/`protocol` под D53) — без нового top-level keyword, без backtracking, без конфликта с sum-`|`.
 - **Звучность в чекере, лоуэринг в codegen** (§0/§1): membership и легальность операторов — чекер; `T.MAX` — лоуэринг подставленного имени, без `nova_int`-fallback.
 - **Знаковость разрешена на уровне декларации** (§2/§5), не рантайм-веткой.
@@ -16574,7 +16583,7 @@ Nova не имеет implicit numeric coercion нигде (D54 — `as` для �
 
 ### Связь
 
-[D54](#d54-as-cast) (`as` явный cast) · [D55](#d55) (literal coercion — исключение для нетипизированных литералов) · [D315](#d315) (ResolvedType несёт ширину/знак — необходим для этой проверки) · [D310](#d310-type-set-bounds-plan-1723) (`SignedInt`/`UnsignedInt` type-sets — generic-альтернатива per-width обёрткам).
+[D54](#d54-as-cast) (`as` явный cast) · [D55](#d55) (literal coercion — исключение для нетипизированных литералов) · [D315](#d315) (ResolvedType несёт ширину/знак — необходим для этой проверки) · [D310](#d310-type-set-bounds-plan-1723) (`SignedInts`/`UnsignedInts` type-sets — generic-альтернатива per-width обёрткам).
 
 ---
 

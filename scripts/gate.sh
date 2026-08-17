@@ -472,6 +472,18 @@ step "самотесты стражей (все из каталога, пара�
 # копит отказы, а не выходит на первом.
 SELFTEST_JOBS="${NOVA_GATE_SELFTEST_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
 [ "$SELFTEST_JOBS" -ge 1 ] || SELFTEST_JOBS=1
+# КАЛИБРОВКА СРОКОВ (реестр 221.1 №558/№475, замер 2026-08-17).
+# Пределы самотестов стояли константами, а пропускная способность машины
+# меняется в разы от посторонней нагрузки: один и тот же набор под `-P 8`
+# завершил 37 штук за 120с на свободной машине и 22 за те же 120с при
+# работающем рядом воркфлоу. Прогон 18 покраснел ровно так — самотест на 46с
+# был убит пределом 300с. Здесь машина измеряет свою занятость сама, ОДИН раз
+# на весь цикл, и число печатается: молчаливая калибровка ничем не лучше
+# молчаливой константы.
+NOVA_CAL_FACTOR=$(bash "$ROOT/scripts/tools/cal-factor.sh" "$ROOT" 2>/dev/null)
+case "$NOVA_CAL_FACTOR" in ''|*[!0-9]*) NOVA_CAL_FACTOR=1 ;; esac
+export NOVA_CAL_FACTOR
+echo "selftest :: множитель сроков ${NOVA_CAL_FACTOR}x (калибровка машины, cal-factor.baseline)"
 SELFTEST_FAILDIR="${TMPDIR:-/tmp}/gate_selftest_fails_$$"
 rm -rf "$SELFTEST_FAILDIR"
 mkdir -p "$SELFTEST_FAILDIR"

@@ -1,21 +1,21 @@
-// pos_max_fibers_roundup.nv — Plan 149 D233 AC3: NOVA_MAX_FIBERS auto-round-UP.
+// pos_fibers_per_worker_roundup.nv — Plan 149 D233 AC3: NOVA_FIBERS_PER_WORKER auto-round-UP.
 //
-// NOVA_MAX_FIBERS=20000 is NOT a multiple of 64. The arena rounds it UP to
+// NOVA_FIBERS_PER_WORKER=20000 is NOT a multiple of 64. The arena rounds it UP to
 // 20032 (the next multiple of 64) and clamps into [64, SLOT_COUNT_MAX]; the
 // user never has to know about the ×64 internal constraint. This is a positive
 // smoke that a non-multiple-of-64 value initializes the arena successfully and
 // fibers spawn under it (the rounded count 20032 is well above the spawn
 // counts here, so no exhaustion). The exact rounded value (20032) was verified
 // at the runtime level during Plan 149 closure; the Nova-level evidence is that
-// the program runs cleanly with a non-×64 NOVA_MAX_FIBERS.
+// the program runs cleanly with a non-×64 NOVA_FIBERS_PER_WORKER.
 //
 // NOVA_MAXPROCS=1 → single worker arena, deterministic config resolution.
 //
-// ENV NOVA_MAX_FIBERS=20000
+// ENV NOVA_FIBERS_PER_WORKER=20000
 // ENV NOVA_MAXPROCS=1
 
 module spec_tests.conformance
-test "NOVA_MAX_FIBERS=20000 (rounds to 20032): 400 fibers spawn + sum" {
+test "NOVA_FIBERS_PER_WORKER=20000 (rounds to 20032): 400 fibers spawn + sum" {
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut total = AtomicInt.new(0)
     supervised {

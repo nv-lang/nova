@@ -64,10 +64,10 @@
 
 /* Plan 149 Ф.1: bitmap word count sized by COMPILE-TIME MAX (not the runtime
  * default) so env may RAISE a->slot_count above the default.
- * ceil(NOVA_FIBER_SLOT_COUNT_MAX / 64). 262144 slots = 4096 uint64_t words =
+ * ceil(NOVA_FIBERS_PER_WORKER_LIMIT / 64). 262144 slots = 4096 uint64_t words =
  * 32KB bitmap per arena (× workers — копейки). Runtime a->slot_count iterates
  * only to its own value / high_water, so oversizing is transparent. */
-#define NOVA_FIBER_BITMAP_WORDS ((NOVA_FIBER_SLOT_COUNT_MAX + 63) / 64)
+#define NOVA_FIBER_BITMAP_WORDS ((NOVA_FIBERS_PER_WORKER_LIMIT + 63) / 64)
 
 /* Plan 82.2: arena struct — heap-allocated (раньше __thread embedded).
  *
@@ -323,7 +323,7 @@ static void _arena_install_sigsegv_handler(void) {
  * `_nova_fiber_scope`/ASCII в SpawnCtx к моменту wake) и рваный
  * `_nova_saved_fail_top` («cancel-throw outside any supervised scope»).
  *
- * Доказательная матрица (изолированный pos_max_fibers_concurrent, WSL):
+ * Доказательная матрица (изолированный pos_fibers_per_worker_concurrent, WSL):
  * базлайн 0/30 PASS; PIN2-бисекция (дубль-достижимость live-массивов
  * через uncollectable-цепь) 10/10 PASS; mmap-вынос массивов из GC-кучи
  * 10/10 PASS; poison/карантин ручных free — эффекта нет (порча не от
@@ -566,14 +566,14 @@ static size_t _nova_round_clamp_stack(size_t v) {
     /* round up (overflow-safe: v already ≤ SIZE_MAX; pg small) */
     if (v > SIZE_MAX - (pg - 1)) v = SIZE_MAX;
     else v = (v + pg - 1) / pg * pg;
-    if (v < (size_t)NOVA_FIBER_STACK_MIN) {
+    if (v < (size_t)NOVA_FIBER_STACK_FLOOR) {
         fprintf(stderr, "nova: NOVA_FIBER_STACK %zu below floor — using 256KB\n", v);
-        return (size_t)NOVA_FIBER_STACK_MIN;
+        return (size_t)NOVA_FIBER_STACK_FLOOR;
     }
-    if (v > (size_t)NOVA_FIBER_STACK_MAX) {
+    if (v > (size_t)NOVA_FIBER_STACK_LIMIT) {
         fprintf(stderr, "nova: NOVA_FIBER_STACK %zu exceeds max %zu — clamped to 256MB\n",
-                v, (size_t)NOVA_FIBER_STACK_MAX);
-        return (size_t)NOVA_FIBER_STACK_MAX;
+                v, (size_t)NOVA_FIBER_STACK_LIMIT);
+        return (size_t)NOVA_FIBER_STACK_LIMIT;
     }
     return v;
 }
@@ -583,13 +583,13 @@ static size_t _nova_round_clamp_slots(size_t v) {
     /* round up to ×64 (overflow-safe) */
     if (v > SIZE_MAX - 63) v = SIZE_MAX;
     else v = (v + 63) / 64 * 64;
-    if (v < (size_t)NOVA_FIBER_SLOT_COUNT_MIN) {
-        return (size_t)NOVA_FIBER_SLOT_COUNT_MIN;  /* 64 floor — no warn needed */
+    if (v < (size_t)NOVA_FIBERS_PER_WORKER_FLOOR) {
+        return (size_t)NOVA_FIBERS_PER_WORKER_FLOOR;  /* 64 floor — no warn needed */
     }
-    if (v > (size_t)NOVA_FIBER_SLOT_COUNT_MAX) {
-        fprintf(stderr, "nova: NOVA_MAX_FIBERS %zu exceeds max %zu — clamped\n",
-                v, (size_t)NOVA_FIBER_SLOT_COUNT_MAX);
-        return (size_t)NOVA_FIBER_SLOT_COUNT_MAX;  /* MAX is a multiple of 64 */
+    if (v > (size_t)NOVA_FIBERS_PER_WORKER_LIMIT) {
+        fprintf(stderr, "nova: NOVA_FIBERS_PER_WORKER %zu exceeds max %zu — clamped\n",
+                v, (size_t)NOVA_FIBERS_PER_WORKER_LIMIT);
+        return (size_t)NOVA_FIBERS_PER_WORKER_LIMIT;  /* MAX is a multiple of 64 */
     }
     return v;
 }
@@ -608,17 +608,17 @@ static size_t _nova_resolve_slot_size(void) {
     return _nova_round_clamp_stack(v);
 }
 
-/* Resolve final slot_count: env(NOVA_MAX_FIBERS) ∨ -D/builtin DEFAULT, then
+/* Resolve final slot_count: env(NOVA_FIBERS_PER_WORKER) ∨ -D/builtin DEFAULT, then
  * round+clamp. */
 static size_t _nova_resolve_slot_count(void) {
     int invalid = 0;
-    size_t parsed = _nova_parse_size_env("NOVA_MAX_FIBERS", &invalid);
+    size_t parsed = _nova_parse_size_env("NOVA_FIBERS_PER_WORKER", &invalid);
     if (invalid) {
-        fprintf(stderr, "nova: invalid NOVA_MAX_FIBERS \"%s\" — using default 16384\n",
-                getenv("NOVA_MAX_FIBERS"));
+        fprintf(stderr, "nova: invalid NOVA_FIBERS_PER_WORKER \"%s\" — using default 16384\n",
+                getenv("NOVA_FIBERS_PER_WORKER"));
         parsed = 0;
     }
-    size_t v = parsed ? parsed : (size_t)NOVA_MAX_FIBERS_DEFAULT;
+    size_t v = parsed ? parsed : (size_t)NOVA_FIBERS_PER_WORKER_DEFAULT;
     return _nova_round_clamp_slots(v);
 }
 
@@ -645,7 +645,7 @@ static void _nova_mark_tail_used(struct NovaFiberArena* a, size_t from) {
  * kernel's VMA limit. Plan 259 Слой 1 removes the CAUSE instead: guard
  * pages are now punched lazily, one mprotect() per slot the first time
  * (and only the first time — see nova_fiber_alloc below) that slot
- * index is ever handed out, not all NOVA_MAX_FIBERS of them upfront.
+ * index is ever handed out, not all NOVA_FIBERS_PER_WORKER of them upfront.
  * VMA count now tracks live fiber count, not the configured ceiling, so
  * the clamp has nothing left to protect against. See D97 Ред.3 / D451
  * (spec/decisions/06-concurrency.md) for the full rationale and the
@@ -730,7 +730,7 @@ void nova_fiber_arena_init(void) {
      * `slot >= a->high_water` branch below); a REUSED slot already has
      * its guard from the first time, so reuse costs zero extra
      * mprotect() calls. VMA count now tracks the number of fibers that
-     * actually LIVED, not NOVA_MAX_FIBERS. See D97 Ред.3 / D451
+     * actually LIVED, not NOVA_FIBERS_PER_WORKER. See D97 Ред.3 / D451
      * (spec/decisions/06-concurrency.md) for the full writeup. */
 
     /* Plan 82.2: heap-allocate arena struct. calloc zero-инициализирует;
@@ -852,7 +852,7 @@ void* nova_fiber_alloc(size_t size, void* allocator_data) {
      * zero extra mprotect() calls — the guard from its first use still
      * stands, `nova_fiber_dealloc`'s MADV_DONTNEED never touches the
      * guard range). This is what makes VMA count track live fiber
-     * count instead of NOVA_MAX_FIBERS — see the big comment in
+     * count instead of NOVA_FIBERS_PER_WORKER — see the big comment in
      * nova_fiber_arena_init above and D451. */
     if (slot >= a->high_water) {
         char* slot_base = a->base + slot * a->slot_size;

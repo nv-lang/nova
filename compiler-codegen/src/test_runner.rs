@@ -1036,7 +1036,7 @@ pub struct BuildOpts<'a> {
     /// для test_file's package; пустой Some(...) — секция есть но пуста.
     pub ffi: Option<&'a ResolvedFfiConfig>,
     /// Plan 149 D233: `[runtime]` fiber arena tuning from package nova.toml.
-    /// Baked as -DNOVA_FIBER_STACK_DEFAULT / -DNOVA_MAX_FIBERS_DEFAULT (raw
+    /// Baked as -DNOVA_FIBER_STACK_DEFAULT / -DNOVA_FIBERS_PER_WORKER_DEFAULT (raw
     /// integers). None — нет [runtime] секции → builtin #define defaults.
     pub runtime: Option<&'a crate::manifest::RuntimeConfig>,
 }
@@ -1058,7 +1058,7 @@ const LIBUV_UNIX_SYSLIBS: &[&str] = &["-lpthread", "-ldl", "-lm"];
 
 /// Plan 149 D233: build the `-D...DEFAULT` flags for the `[runtime]` section.
 /// `prefix` is `-D` (clang/gcc) or `/D` (MSVC). fiber_stack → bytes,
-/// max_fibers → count, via parse_size_to_bytes (mirrors the C parser). The
+/// fibers_per_worker → count, via parse_size_to_bytes (mirrors the C parser). The
 /// value MUST be a raw integer (it feeds a C `#define X <int>` consumed by
 /// `#ifndef`). Unparseable toml value → build warning + SKIP the -D (fall back
 /// to builtin #define) — never pass garbage to the compiler.
@@ -1074,11 +1074,11 @@ fn runtime_define_args(runtime: Option<&crate::manifest::RuntimeConfig>,
                 fs),
         }
     }
-    if let Some(mf) = &rc.max_fibers {
+    if let Some(mf) = &rc.fibers_per_worker {
         match crate::manifest::parse_size_to_bytes(mf) {
-            Some(count) => args.push(format!("{}NOVA_MAX_FIBERS_DEFAULT={}", prefix, count)),
+            Some(count) => args.push(format!("{}NOVA_FIBERS_PER_WORKER_DEFAULT={}", prefix, count)),
             None => eprintln!(
-                "nova: warning: [runtime] max_fibers = \"{}\" unparseable — ignoring (using builtin 16384 default)",
+                "nova: warning: [runtime] fibers_per_worker = \"{}\" unparseable — ignoring (using builtin 16384 default)",
                 mf),
         }
     }
@@ -1308,7 +1308,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 flags.push("-DGC_THREADS".to_string());
             }
             // Plan 149 D233: nova.toml [runtime] → -DNOVA_FIBER_STACK_DEFAULT /
-            // -DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
+            // -DNOVA_FIBERS_PER_WORKER_DEFAULT (raw ints). After GC, before libuv.
             for da in runtime_define_args(opts.runtime, "-D") {
                 flags.push(da);
             }
@@ -1559,7 +1559,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(format!("/I{}", vcpkg_include.display()));
             }
             // Plan 149 D233: nova.toml [runtime] → /DNOVA_FIBER_STACK_DEFAULT /
-            // /DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
+            // /DNOVA_FIBERS_PER_WORKER_DEFAULT (raw ints). After GC, before libuv.
             for da in runtime_define_args(opts.runtime, "/D") {
                 c.arg(da);
             }
@@ -1714,7 +1714,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-DGC_THREADS");
             }
             // Plan 149 D233: nova.toml [runtime] → -DNOVA_FIBER_STACK_DEFAULT /
-            // -DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
+            // -DNOVA_FIBERS_PER_WORKER_DEFAULT (raw ints). After GC, before libuv.
             for da in runtime_define_args(opts.runtime, "-D") {
                 c.arg(da);
             }
@@ -5775,7 +5775,7 @@ pub(crate) fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>, recursive: boo
 // `NovaEffectRegistry.count`'s byte offset shifts with N, and
 // `NovaEffectSnapshot`-sized heap allocations could be undersized — a
 // classic silent memory-corruption bug, not a link error. Same reasoning
-// applies to `[runtime]` `fiber_stack`/`max_fibers` overrides
+// applies to `[runtime]` `fiber_stack`/`fibers_per_worker` overrides
 // (`runtime_define_args`) baked into `fiber_arena.c`/`fiber_arena_win.c` —
 // not memory-unsafe, but a behavior difference (wrong default stack/fiber
 // count), which would violate the byte-identical-behavior gate.

@@ -9,13 +9,13 @@
 // large virtual reservation but lazily committed — only touched pages back
 // physical memory, so this stays cheap.)
 //
-// NOVA_MAXPROCS=1 keeps it to one worker arena. NOVA_MAX_FIBERS=64 (floor)
+// NOVA_MAXPROCS=1 keeps it to one worker arena. NOVA_FIBERS_PER_WORKER=64 (floor)
 // keeps the virtual reservation bounded (256MB × 64 = 16GB reserved, lazily
 // committed) so the 256MB-per-slot arena reserves quickly without a downsize
 // retry from a huge slot_count.
 //
 // ENV NOVA_FIBER_STACK=1GB
-// ENV NOVA_MAX_FIBERS=64
+// ENV NOVA_FIBERS_PER_WORKER=64
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR exceeds max
 

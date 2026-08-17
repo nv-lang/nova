@@ -1,28 +1,28 @@
-// pos_max_fibers_concurrent.nv — Plan 149 D233 AC3: NOVA_MAX_FIBERS raises the
+// pos_fibers_per_worker_concurrent.nv — Plan 149 D233 AC3: NOVA_FIBERS_PER_WORKER raises the
 // per-worker concurrent fiber capacity.
 //
-// NOVA_MAX_FIBERS=20000 sets the per-worker slot count (auto-rounded UP to
+// NOVA_FIBERS_PER_WORKER=20000 sets the per-worker slot count (auto-rounded UP to
 // 20032, a multiple of 64, then clamped into [64, SLOT_COUNT_MAX]). This
 // fixture spawns 2000 CONCURRENT fibers — all parked on a sleep at once, so
 // the arena must hold 2000 live slots simultaneously — then a single cancel
 // wakes them all. 2000 concurrent slots fit easily under the raised 20032
 // capacity. (Even the 16384 default would hold 2000; the point here is that a
-// raised NOVA_MAX_FIBERS initializes a larger arena and concurrent spawning
+// raised NOVA_FIBERS_PER_WORKER initializes a larger arena and concurrent spawning
 // works under it — the per-worker semantics, AC3/AC6.)
 //
 // NOVA_MAXPROCS=1 → single worker arena.
 //
-// ENV NOVA_MAX_FIBERS=20000
+// ENV NOVA_FIBERS_PER_WORKER=20000
 // ENV NOVA_MAXPROCS=1
 
-module standalone.pos_max_fibers_concurrent
+module standalone.pos_fibers_per_worker_concurrent
 // Plan 175.2 Ф.2-v4 (П6): (5).to_millis() used to resolve without an
 // explicit import — an accidental side effect of Time (and its
 // Duration/Timestamp/Monotonic import) living in std.prelude.effects
 // (auto-imported into every CU). Now that Time moved to std.time.duration,
 // this file needs its own explicit import for the to_millis() blanket.
 import std.time.duration
-test "NOVA_MAX_FIBERS=20000: 2000 concurrent fibers all woken by cancel" {
+test "NOVA_FIBERS_PER_WORKER=20000: 2000 concurrent fibers all woken by cancel" {
     ro tok = CancelToken.new()
     supervised(cancel: tok) {
         for _ in 0..2000 {
