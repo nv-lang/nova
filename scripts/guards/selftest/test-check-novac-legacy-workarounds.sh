@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Самотест check-novac-legacy-workarounds.sh — обе стороны, на фикстурном корне.
-# Покрывает обе живые формы маркера ([LEGACY-#123] и [LEGACY-#TBD-<slug>]),
+# Покрывает ЧЕТЫРЕ живые формы маркера ([LEGACY-#123], [LEGACY-#123-slug],
+# [LEGACY-#123-slug until:<этап>] и [LEGACY-#TBD-<slug>]) — четвёртой и
+# третьей тут не было до 2026-08-17, и страж их не судил: из пятнадцати
+# живых носителей в суд попадали пять.
 # все три формы закрытия записи реестра («Статус: ЗАКРЫТ», «✅ ЗАКРЫТ дата»,
 # «✅ ЗАКРЫТО дата»), протухший #TBD и живость самой строки-счётчика.
 # Возраст #TBD на подложке моделируется через env NOVA_LEGACY_TBD_TIME
@@ -96,6 +99,43 @@ check "novac проекта чист" "$RC" "0"
 # может законно не быть (2026-08-16 их не осталось — все маркеры получили
 # номера), и тогда тест утверждал бы свойство репозитория, а не стража.
 has   "счёт #TBD печатается" "$OUT" '#TBD:'
+
+
+echo "== формы носителя, которых судья не видел до 2026-08-17 =="
+
+printf '| 901 | K1 | slug form demo. Статус: ОТКРЫТ |\n' > "$REG"
+printf '// [LEGACY-#901-some-slug] site\nfn f() -> int => 1\n' > "$SITE"
+OUT=$(sh "$G" "$FIX" 2>/dev/null); RC=$?
+check "слаговая форма открытого бага — зелёная" "$RC" "0"
+has   "слаговая форма ПОПАЛА в счётчик" "$OUT" 'носителей 1 в 1 файлах'
+
+printf '| 902 | K1 | slug form closed. ✅ ЗАКРЫТ 2026-08-01 |\n' > "$REG"
+printf '// [LEGACY-#902-some-slug] site\nfn f() -> int => 1\n' > "$SITE"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "слаговая форма ЗАКРЫТОГО бага — красный (правило A видит номер сквозь слаг)" "$?" "1"
+
+echo "== срок until:<этап> =="
+mkdir -p "$FIX/novac"
+printf '#   stage: E2\n' > "$FIX/novac/nova.toml"
+
+printf '| 903 | K1 | expiring demo. Статус: ОТКРЫТ |\n' > "$REG"
+printf '// [LEGACY-#903-user-error-as-ice until:E2b3] site\nfn f() -> int => 1\n' > "$SITE"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "срок ещё не наступил (E2 < E2b3) — зелёный" "$?" "0"
+
+printf '// [LEGACY-#903-user-error-as-ice until:E1] site\nfn f() -> int => 1\n' > "$SITE"
+OUT=$(sh "$G" "$FIX" 2>&1); RC=$?
+check "срок ИСТЁК (E2 >= E1) — красный" "$RC" "1"
+has   "красный называет причину" "$OUT" 'дожил до своего этапа'
+
+printf '// [LEGACY-#903-user-error-as-ice until:E99] site\nfn f() -> int => 1\n' > "$SITE"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "этап вне порядка — красный" "$?" "1"
+
+printf '// [LEGACY-#903-user-error-as-ice until:E2b3] site\nfn f() -> int => 1\n' > "$SITE"
+rm -f "$FIX/novac/nova.toml"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "есть срочный носитель, а этапа не прочесть — красный, а не 'нечего судить'" "$?" "1"
 
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
