@@ -348,7 +348,7 @@ fn math_runtime() -> Vec<RuntimeFn> {
     // [Числовой паритет-2, 2026-07-20] `int @abs()` RETRACTED from this
     // hardcoded extern-registry entry (was `c_name: "llabs"` — C `llabs` is
     // UB on `LLONG_MIN`, `-LLONG_MIN` not representable). Replaced by a real
-    // `.nv` `fn[T SignedInt] T @abs() -> T` blanket (std/prelude/
+    // `.nv` `fn[T SignedInts] T @abs() -> T` blanket (std/prelude/
     // protocols.nv) covering `int` AND the narrow signed widths
     // (i8/i16/i32/i64) that never had `abs` at all — same "retract the
     // concrete hardcode, cover with a blanket" precedent as Plan 200 Step 0

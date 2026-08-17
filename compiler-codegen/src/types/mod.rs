@@ -26277,8 +26277,8 @@ fn check_generic_bound_declarations(
             // Signedness uniformity (Q6, D310) — amended by Plan 206 (D423):
             // a PARTIAL signed/unsigned mix stays incompatible-value-domains
             // unsound (`u64.MAX = 2^64-1 ∉ i64`). A FULL union (every signed
-            // member ∧ every unsigned member, no gaps — exactly `SignedInt ∪
-            // UnsignedInt`) is exempted: per-member monomorphization already
+            // member ∧ every unsigned member, no gaps — exactly `SignedInts ∪
+            // UnsignedInts`) is exempted: per-member monomorphization already
             // resolves `T.MAX`/`T.MIN` per-instance (D310 §«Семантика тела»),
             // and sign-agnostic comparisons (`rhs < 0`) are well-defined
             // (constant-false) for every unsigned member — no cross-domain
@@ -26294,7 +26294,7 @@ fn check_generic_bound_declarations(
                         "[E_TYPE_SET_MIXED_SIGNEDNESS] type-set `{}` mixes signed and unsigned \
                          integer members PARTIALLY — a single body cannot be sound for a partial mix \
                          (u64.MAX = 2^64-1 ∉ i64). Split into separate signed/unsigned sets (e.g. \
-                         SignedInt / UnsignedInt), or list the FULL union (all of i8/i16/i32/i64/int \
+                         SignedInts / UnsignedInts), or list the FULL union (all of i8/i16/i32/i64/int \
                          + all of u8/u16/u32/u64/uint — exempted, D310 amend D423).",
                         t.name
                     ),
@@ -26719,7 +26719,7 @@ impl<'a> BoundCtx<'a> {
         // Plan 172.3 (D310): type-set name → member type-refs (membership at instantiation).
         let mut type_sets: HashMap<String, Vec<TypeRef>> = HashMap::new();
         // Scan local items + peer files (so cross-module/stdlib type-sets like
-        // SignedInt resolve when the generic fn lives in another file of the package).
+        // SignedInts resolve when the generic fn lives in another file of the package).
         let type_set_scan = |items: &[Item], type_sets: &mut HashMap<String, Vec<TypeRef>>| {
             for item in items {
                 if let Item::Type(t) = item {

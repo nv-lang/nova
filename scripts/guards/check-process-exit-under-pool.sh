@@ -33,6 +33,22 @@ if [ ! -x "$NOVA" ]; then
     echo "$NAME ok: компилятор не собран — судить нечего"
     exit 0
 fi
+# ПРЕДЕЛ НА ЗАПУСК — калиброванный, а не константа.
+# Проба завершается за доли секунды; восьми секунд хватало с огромным
+# запасом, пока машину не загрузил сам гейт: 2026-08-17 один запуск из 200
+# не уложился, при том что 600 запусков подряд на свободной машине чисты.
+# «Завис» и «медленно» здесь неразличимы по определению, поэтому предел
+# умножается на занятость машины (`cal-factor.sh`, тот же множитель, что у
+# самотестов гейта). Смысл проверки не страдает: потерянная побудка — это
+# НАВСЕГДА, она не уложится ни в 8 секунд, ни в 64.
+CAL="${NOVA_CAL_FACTOR:-}"
+if [ -z "$CAL" ] && [ -f "$ROOT/scripts/tools/cal-factor.sh" ]; then
+    CAL=$(bash "$ROOT/scripts/tools/cal-factor.sh" "$ROOT" 2>/dev/null)
+fi
+case "$CAL" in ''|*[!0-9]*) CAL=1 ;; esac
+[ "$CAL" -ge 1 ] || CAL=1
+PER_RUN=$(( 8 * CAL ))
+
 if ! command -v timeout >/dev/null 2>&1; then
     echo "$NAME: FAIL — нет утилиты timeout, зависание не отличить от медленного выхода" >&2
     exit 1
@@ -60,11 +76,11 @@ HANGS=0
 i=0
 while [ "$i" -lt "$RUNS" ]; do
     i=$((i + 1))
-    NOVA_MAXPROCS=16 timeout 8 "$TMP/exit_probe.exe" >/dev/null 2>&1
+    NOVA_MAXPROCS=16 timeout "$PER_RUN" "$TMP/exit_probe.exe" >/dev/null 2>&1
     rc=$?
     if [ "$rc" -eq 124 ]; then
         HANGS=$((HANGS + 1))
-        echo "$NAME: процесс не завершился за 8с (запуск $i из $RUNS)" >&2
+        echo "$NAME: процесс не завершился за ${PER_RUN}с (запуск $i из $RUNS, множитель ${CAL}x)" >&2
     fi
 done
 rm -rf "$TMP"
