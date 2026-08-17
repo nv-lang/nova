@@ -173,7 +173,8 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
             if kind == NodeKind.Call || kind == NodeKind.MethodCall { @report_if_ordered_args(children) }
             if kind == NodeKind.FnDecl {
                 @report_if_generic(children)
-                @report_if_missing_ret(children)
+                @report_if_tail_has_no_value(children)
+                @report_if_return_type_undeclared(children)
             }
             if kind == NodeKind.TypeDecl || kind == NodeKind.SumDecl {
                 @report_if_generic(children)
@@ -263,6 +264,59 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     }
 }
 
+/// One text for the two doors of the rule (an empty body and a statement
+/// tail): the reader must not have to wonder whether they are two limits.
+const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a value"
+
+/// A fn that declares a value must END with one -- the same judgement the
+/// oracle started making on 2026-08-17 as `E_MISSING_RETURN`, and until this
+/// wave novac accepted what the oracle rejects (class K7, the dangerous
+/// direction: the subset is supposed to be NARROWER than the language, never
+/// wider). Probe before the fix: `fn f() -> int { ro x = 1 }` -- oracle
+/// E_MISSING_RETURN, novac rc=0 with zero diagnostics.
+///
+/// The boundary is taken from the oracle by measurement, not by guesswork
+/// (nine shapes, 2026-08-17). Refused: a body whose last statement is a
+/// BINDING or an ASSIGNMENT, and an EMPTY body. Accepted: a tail expression,
+/// a `return`, an `if` whose branches return, and -- deliberately -- a tail
+/// `while`/`for`, which the oracle accepts too. Where the oracle draws a line
+/// I mirror it exactly; guessing a stricter line would be a divergence of my
+/// own making, and §7.0 wants divergences recorded, not invented.
+fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
+    mut declares_value = false
+    for c in kids {
+        if c.kind_of() != NodeKind.RetType { continue }
+        // `-> ()` parses as the arrow alone: the unit return declares no value.
+        if branch_children(c).len() > 1 { declares_value = true }
+    }
+    if !declares_value { return }
+    for c in kids {
+        if c.kind_of() != NodeKind.Block { continue }
+        ro bk = branch_children(c)
+        mut last_stmt = -1
+        mut i = 0
+        for b in bk {
+            if b.kind_of() != NodeKind.LeafNode { last_stmt = i }
+            i += 1
+        }
+        if last_stmt < 0 {
+            @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
+            return
+        }
+        // [LEGACY-#676] var-index-method: `bk[i].kind_of()` with a VARIABLE
+        // index miscompiles -- the emitter takes the Vec itself for the
+        // receiver (E_RECV_METHOD_MISMATCH). The binding walks around it and
+        // goes when #676 closes.
+        ro tail_node = bk[last_stmt]
+        ro k = tail_node.kind_of()
+        if k == NodeKind.BindStmt || k == NodeKind.AssignStmt {
+            @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
+        }
+        return
+    }
+}
+
+
 /// Generic parameters are outside the subset -- and the refusal says so.
 ///
 /// Until this wave the parser could not see `[T]`, so the signature derailed
@@ -288,7 +342,7 @@ fn Checker mut @report_if_generic(kids []Node) -> () {
 }
 
 /// Every fn except main must declare `-> T` in the subset.
-fn Checker mut @report_if_missing_ret(kids []Node) -> () {
+fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
     if kids.len() < 2 { return }
     match kids[1] {
         Leaf(t) => {
