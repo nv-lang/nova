@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Donor: rustc `rustc_symbol_mangling` — a symbol name is a deterministic
 // Role: the mangling door — every C identifier is a function of the entity, one-way (П24).
-// Used by: emit_c only (E1+); mono at E2-b2 makes it a function of (decl, args); the shell-freshness guard holds primitives to the ABI.
-// Guarded by: check-novac-mangling-one-way.sh (no C name is ever parsed back), check-novac-mangle-fixed-point.sh (primitive spellings match the oracle ABI), check-novac-no-name-hardcode.sh.
+// Used by: emit_c only (E1+); mono at E2-b2 makes it a function of (decl, args); the shell-freshness guard holds
+// primitives to the ABI.
+// Guarded by: check-novac-mangling-one-way.sh (no C name is ever parsed back), check-novac-mangle-fixed-point.sh
+// (primitive spellings match the oracle ABI), check-novac-no-name-hardcode.sh.
 // FUNCTION of the entity, computed at the door, never stored and never parsed
 // back; NOT taken: the v0 grammar itself (our names must match nova_rt.h ABI
 // for primitives, so the spelling is the oracle's fixed point, П25).

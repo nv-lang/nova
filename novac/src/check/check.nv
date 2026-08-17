@@ -8,9 +8,13 @@
 // F65 ordered args, arrays rollback, statement-call = println only) — an honest
 // E_NOVAC_SUBSET instead of a silently wrong emission (П27 p.3 class); NOT taken:
 // rustc obligation solver (E2-b3), local typing in check (274.3 wave 3 / C9).
-// Role: layer 7 — the subset judge; publishes diagnostics, will publish the type channel (resolved_types) at E2-b1 tail.
-// Used by: pipeline (E1+); the LSP at E3 reads its channel instead of re-walking; emit_c reads its verdicts, never re-derives.
-// Guarded by: check-novac-no-cascade.sh, check-novac-diag-schema.sh, check-novac-differential.sh (verdicts match the oracle on the corpus), check-novac-no-default-branch.sh (kind dispatch is exhaustive), the pipeline tests (one cause, one diagnostic).
+// Role: layer 7 — the subset judge; publishes diagnostics, will publish the type channel (resolved_types) at E2-b1
+// tail.
+// Used by: pipeline (E1+); the LSP at E3 reads its channel instead of re-walking; emit_c reads its verdicts, never
+// re-derives.
+// Guarded by: check-novac-no-cascade.sh, check-novac-diag-schema.sh, check-novac-differential.sh (verdicts match the
+// oracle on the corpus), check-novac-no-default-branch.sh (kind dispatch is exhaustive), the pipeline tests (one cause,
+// one diagnostic).
 // rustc `FnCtxt` for the walk shape; poisoning discipline from rustc
 // `TyKind::Error` — an already-reported node yields nothing further; NOT taken:
 // rustc's obligation solver (arrives with bounds, E2-b3).
@@ -136,8 +140,12 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
             if kind == NodeKind.Call || kind == NodeKind.MethodCall { @report_if_ordered_args(children) }
             if kind == NodeKind.FnDecl { @report_if_missing_ret(children) }
             if kind == NodeKind.ForStmt { @report_if_bad_for_head(children) }
-            if kind == NodeKind.Field { @report_if_missing_type(children, "outside the E1 subset: field must declare a type") }
-            if kind == NodeKind.Param { @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type") }
+            if kind == NodeKind.Field {
+                @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
+            }
+            if kind == NodeKind.Param {
+                @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
+            }
             if kind == NodeKind.RecordCtor && !init_pos {
                 @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer")
                 return

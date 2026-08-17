@@ -10,9 +10,13 @@
 // not an obligation (274 §7.0); the current compiler is NOT a donor (П25,
 // П27 2a) — matching its output is what the smoke measures, not where the
 // shape comes from.
-// Role: layer 11 — backend A, C text; renders decisions already made, decides nothing (architecture, checker/codegen boundary).
-// Used by: the smoke and diff-corpus (E1-E2); replaced below lower at E4 for a native backend, kept as the normative one.
-// Guarded by: novac-e1-smoke.sh (behaviour identical to the oracle binary), check-novac-shell-freshness.sh (the shell is the oracle's emission), check-novac-no-default-branch.sh, check-novac-no-alloc-in-lookup.sh (an emitter is not a door).
+// Role: layer 11 — backend A, C text; renders decisions already made, decides nothing (architecture, checker/codegen
+// boundary).
+// Used by: the smoke and diff-corpus (E1-E2); replaced below lower at E4 for a native backend, kept as the normative
+// one.
+// Guarded by: novac-e1-smoke.sh (behaviour identical to the oracle binary), check-novac-shell-freshness.sh (the shell
+// is the oracle's emission), check-novac-no-default-branch.sh, check-novac-no-alloc-in-lookup.sh (an emitter is not a
+// door).
 // copying, and the oracle's shape is a fixed point of BEHAVIOUR only (П25,
 // plan 274 §7.0); the walk hangs on one `Emitter` receiver like Go's
 // `*Checker` and Zig's `*Sema` (П15).

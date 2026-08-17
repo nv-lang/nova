@@ -9,8 +9,11 @@
 // construction rather than of luck; NOT taken: rustc `InferCtxt` and its
 // unification (E2-b3), Go `types2` block-scoped Scope objects.
 // Role: layer 7's writing half — the pass that types a clean file and publishes the channel.
-// Used by: check (the subset walk calls it once the verdict is clean); nothing else may call it — the channel is the interface.
-// Guarded by: check-novac-no-silent-skip.sh (no branch decides nothing), check-novac-channel-one-writer.sh (only this module writes the channel), check-novac-match-exhaustive.sh (every sum answered), check-novac-file-size.sh (this file exists because check.nv crossed 1000 lines).
+// Used by: check (the subset walk calls it once the verdict is clean); nothing else may call it — the channel is the
+// interface.
+// Guarded by: check-novac-no-silent-skip.sh (no branch decides nothing), check-novac-channel-one-writer.sh (only this
+// module writes the channel), check-novac-match-exhaustive.sh (every sum answered), check-novac-file-size.sh (this file
+// exists because check.nv crossed 1000 lines).
 // novac/src/check/typing.nv — the typing walk and the lattice it uses.
 //
 // Split out of check.nv when that file crossed the thousand-line limit
@@ -552,7 +555,12 @@ type Scope {
 
 /// Empty scope with the NsLocals namespace.
 fn Scope.new() -> Scope =>
-    { names: NameTable.new(NamespaceId.NsLocals), types: []int.new(), shadowed: []int.new(), shadowed_names: []str.new() }
+    {
+        names: NameTable.new(NamespaceId.NsLocals),
+        types: []int.new(),
+        shadowed: []int.new(),
+        shadowed_names: []str.new(),
+    }
 
 /// Bind `name` to type id `t` (shadowing allowed).
 fn Scope mut @bind(name str, t int) -> () {

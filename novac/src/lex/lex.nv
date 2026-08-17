@@ -10,7 +10,8 @@
 // keywords; revisit when the set grows).
 // Role: layer 1 of the map — bytes to tokens with trivia; the ONLY thing that knows the character stream.
 // Used by: parse (E1+), and the reserialize guard: byte-exact round trip; unchanged through E4.
-// Guarded by: check-novac-grammar-fixture-coverage.sh (every token form has a fixture), the reserialize property in lex_test.nv (leaves == tokens, byte-exact), novac-fuzz-mutations.sh (no panic on any input).
+// Guarded by: check-novac-grammar-fixture-coverage.sh (every token form has a fixture), the reserialize property in
+// lex_test.nv (leaves == tokens, byte-exact), novac-fuzz-mutations.sh (no panic on any input).
 // token owns its trivia and positions are prefix sums, never stored spans; taken:
 // full-fidelity tokens; NOT taken: Roslyn's trailing trivia (one side is enough
 // for byte-exact reserialization and halves the bookkeeping).

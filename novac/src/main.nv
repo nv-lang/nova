@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Donor: none — the door is ours: effects handled here and nowhere else
 // Role: the door — effects handled here only (П15), CLI surface a subset of nova-cli (П26), Verdict to exit code.
-// Used by: the driver, the smoke, the fuzzer and diff-corpus (E1+); novac build replaces emit at E2-b2 (cli-divergences.allow).
-// Guarded by: check-novac-cli-surface.sh (commands are a subset of nova-cli, novac/cli-divergences.allow), check-novac-effects-at-door.sh (Fs/Os only here), novac-fuzz-mutations.sh (exit codes stay 0/1/2, silent door is red), the EXPECT_EXIT_CODE contract.
+// Used by: the driver, the smoke, the fuzzer and diff-corpus (E1+); novac build replaces emit at E2-b2
+// (cli-divergences.allow).
+// Guarded by: check-novac-cli-surface.sh (commands are a subset of nova-cli, novac/cli-divergences.allow),
+// check-novac-effects-at-door.sh (Fs/Os only here), novac-fuzz-mutations.sh (exit codes stay 0/1/2, silent door is
+// red), the EXPECT_EXIT_CODE contract.
 // (П15), a Verdict sum instead of an int exit code, and a command surface that
 // is a subset of nova-cli's (П26); the shape follows Nova's own effect model.
 // EXPECT_EXIT_CODE 2
@@ -99,7 +102,15 @@ fn read_decls(dir str) Fs -> []str {
                     Ok(bytes) => {
                         match bytes.to_str() {
                             Ok(t) => { out.push(t) }
-                            // nova:allow W_RESULT_DISCARDED -- a declaration file that is not UTF-8 is simply not a declaration novac can read; skipping it leaves its methods unknown, and every use of them gets an honest subset refusal at the point of use
+                            // A declaration file that is not UTF-8 is simply
+                            // not a declaration novac can read; skipping it
+                            // leaves its methods unknown, and every use of
+                            // them gets an honest subset refusal at the point
+                            // of use. The marker below must stay on the line
+                            // DIRECTLY above the arm -- the linter matches it
+                            // per line, and wrapping the prose into it once
+                            // broke the suppression (2026-08-17).
+                            // nova:allow W_RESULT_DISCARDED -- unreadable declaration, skipped
                             Err(_) => {}
                         }
                     }

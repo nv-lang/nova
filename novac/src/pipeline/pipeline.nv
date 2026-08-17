@@ -7,7 +7,8 @@
 // re-parsed on every compile (E2-temporary, until an interface cache).
 // Role: layer glue — phases in order, one function per boundary; the seam the driver calls (274 §6).
 // Used by: main (E1+); the module tests judge no-cascade THROUGH it; the daemon/LSP call the same seam at E3.
-// Guarded by: the pipeline module tests (no-cascade judged THROUGH compile()), check-novac-deps.sh (edges only from the section 3 table), check-novac-effects-at-door.sh (no capability below main).
+// Guarded by: the pipeline module tests (no-cascade judged THROUGH compile()), check-novac-deps.sh (edges only from the
+// section 3 table), check-novac-effects-at-door.sh (no capability below main).
 // boundary, no phase reaches around another; NOT taken: the query graph and
 // incremental compilation (a batch pipeline, plan 274 §6).
 // novac/src/pipeline — the ONE owner_id of pass order (architecture §2).

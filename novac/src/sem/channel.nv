@@ -9,7 +9,8 @@
 // rustc `hir::OwnerNodes.nodes` (`IndexVec<ItemLocalId, ParentedNode>`, whose
 // density `hir_id_validator` asserts) for "an id-indexed vector IS the map";
 // Zig `InternPool` optional indices for a sentinel instead of an option (novac
-// spells it -1, Zig spells it maxInt -- same idea, different spelling); Donor: none for the disjointness rule between `callees` and
+// spells it -1, Zig spells it maxInt -- same idea, different spelling); Donor: none for the disjointness rule between
+// `callees` and
 // `substs` (novac's own invariant: a node is a call or an instantiation, never
 // both); NOT taken: rustc `ItemLocalMap` hashing and the owner/`HirId` two-level
 // key (novac has one body space per file) and its `ItemLocalMap` hashing --
@@ -17,9 +18,13 @@
 // deliberately does not take; Go `Info.Selections` (method
 // selection is still mangled from the receiver type until the mangling door
 // takes a DeclId, E2-b2), rustc `InferCtxt` canonicalization.
-// Role: layer 7's OUTPUT -- the checker's channel: what the checker decided, read by everyone below, re-derived by no one.
-// Used by: check writes it (the ONE writer), emit_c reads it; mono and layout read it at E2-b2; the LSP reads it at E3 instead of re-walking.
-// Guarded by: check-novac-ctx-tables.sh (channel tables declared in plan 10.3b), check-novac-row-fields.sh (CalleeRef fields justified in 10.3v), check-novac-no-alloc-in-lookup.sh (the readers are doors and allocate nothing), check-novac-differential.sh (a wrong recorded type shows up as different C or a different verdict).
+// Role: layer 7's OUTPUT -- the checker's channel: what the checker decided, read by everyone below, re-derived by no
+// one.
+// Used by: check writes it (the ONE writer), emit_c reads it; mono and layout read it at E2-b2; the LSP reads it at E3
+// instead of re-walking.
+// Guarded by: check-novac-ctx-tables.sh (channel tables declared in plan 10.3b), check-novac-row-fields.sh (CalleeRef
+// fields justified in 10.3v), check-novac-no-alloc-in-lookup.sh (the readers are doors and allocate nothing),
+// check-novac-differential.sh (a wrong recorded type shows up as different C or a different verdict).
 // novac/src/sem/channel.nv -- the checker's channel (architecture section 1,
 // "the checker's channel"; plan 274 section 9.1, E2-b1).
 //
@@ -126,7 +131,8 @@ export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> (
 {
     assert(target_row >= 0, "sem: channel callee write with no row — absence is not a decision")
     ro prev = @callees[id]
-    assert(prev.target_row < 0 || (prev.target_row == target_row && prev.kind == kind), "sem: a call was resolved twice to different targets")
+    ro same = prev.target_row == target_row && prev.kind == kind
+    assert(prev.target_row < 0 || same, "sem: a call was resolved twice to different targets")
     @callees[id] = CalleeRef { kind, target_row }
 }
 

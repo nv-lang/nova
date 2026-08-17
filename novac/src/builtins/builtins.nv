@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Donor: rustc `rustc_span::sym` + Go `types.Universe` — the universe of
 // Role: the universe — the ONE table of pre-declared names and primitive ABI facts the compiler reads (П5).
-// Used by: sem seeds the registry from it, mangle asks prim_c_name (E1+); grows only when the language's universe grows.
-// Guarded by: check-novac-no-name-hardcode.sh (std names only here), check-novac-no-prelude-shadow.sh, check-novac-mangle-fixed-point.sh (prim_c_name matches nova_rt.h).
+// Used by: sem seeds the registry from it, mangle asks prim_c_name (E1+); grows only when the language's universe
+// grows.
+// Guarded by: check-novac-no-name-hardcode.sh (std names only here), check-novac-no-prelude-shadow.sh,
+// check-novac-mangle-fixed-point.sh (prim_c_name matches nova_rt.h).
 // pre-declared names lives in ONE table the compiler reads, never a scattering
 // of string literals (П5); NOT taken: rustc's symbol interning (names here are
 // four).

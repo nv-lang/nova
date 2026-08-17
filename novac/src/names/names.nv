@@ -7,7 +7,8 @@
 // call; revisit under П14).
 // Role: layer 3 — the str->id door per namespace; identity is an id after this door, never a name (П2).
 // Used by: sem/DefTable, FieldTable, FnTable, Scope (E1+); the interner keys by structure and does NOT use it (П18).
-// Guarded by: check-novac-no-string-keys.sh (no Map[str] outside this module; a NameTable carries its NamespaceId), check-novac-no-alloc-in-lookup.sh (the find door allocates nothing).
+// Guarded by: check-novac-no-string-keys.sh (no Map[str] outside this module; a NameTable carries its NamespaceId),
+// check-novac-no-alloc-in-lookup.sh (the find door allocates nothing).
 // globally) reduced to one str -> id door per namespace; NOT taken: rib/scope
 // chains and macro hygiene — the subset has no shadowing rules yet.
 // novac/src/names — the ONE name door (architecture §2/§4a: identity is an

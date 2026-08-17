@@ -17,9 +17,14 @@
 // per-node type table (Go `types2.Info.Types` / rustc `TypeckResults.node_types`)
 // — `type_of` recomputes on demand until check is the single writer at E4 (Go
 // `Checker`→`Info`, rustc typeck→`TypeckResults`), block-scoped ribs.
-// Role: layers 3-4 — the declaration registry (DeclId rows) and, since E2-b1, the owner of the type interner; the truth every pass below reads.
+// Role: layers 3-4 — the declaration registry (DeclId rows) and, since
+//   E2-b1, the owner of the type interner; the truth
+// every pass below reads.
 // Used by: check and emit_c (E1-E2); mono and layout at E2-b2; becomes the checker's channel writer at E4.
-// Guarded by: check-novac-ctx-tables.sh (the set of Ctx tables is declared in plan 10.3b), check-novac-row-fields.sh (every row field justified in 10.3v, no derived field), check-novac-ref-field-names.sh (_id/_row suffixes), check-novac-resolve-discipline.sh (no silent int default), check-novac-no-alloc-in-lookup.sh (doors carry #realtime nogc).
+// Guarded by: check-novac-ctx-tables.sh (the set of Ctx tables is declared in plan 10.3b), check-novac-row-fields.sh
+// (every row field justified in 10.3v, no derived field), check-novac-ref-field-names.sh (_id/_row suffixes),
+// check-novac-resolve-discipline.sh (no silent int default), check-novac-no-alloc-in-lookup.sh (doors carry #realtime
+// nogc).
 // `IndexVec<Idx, Row>` as flat id-indexed value rows, and the rule that
 // backends CONSUME the registry and none owns it; NOT taken: TyCtxt arenas and
 // the query system (a batch pass builds Ctx once per file).
@@ -596,7 +601,8 @@ export fn collect_types(file Node) -> Ctx {
                     }
                 }
             }
-            types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(owner_id), name: tname, row_off: off, row_cnt: cnt })
+            ro rec_ty = tys.record(owner_id)
+            types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: rec_ty, name: tname, row_off: off, row_cnt: cnt })
         }
         if k == NodeKind.SumDecl {
             ro skids = branch_children(c)
@@ -643,7 +649,8 @@ export fn collect_types(file Node) -> Ctx {
                     vcnt += 1
                 }
             }
-            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(sum_id), name: sname, row_off: off, row_cnt: vcnt })
+            ro sum_ty = tys.sum(sum_id)
+            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: sum_ty, name: sname, row_off: off, row_cnt: vcnt })
         }
         if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
@@ -721,7 +728,17 @@ export fn leaf_kind(n Node) -> TokenKind {
 }
 
 /// Node kinds that stand as expressions (argument/operand positions).
-export fn is_expr_kind(k NodeKind) -> bool => k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin || k == NodeKind.Lit || k == NodeKind.Name || k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.FieldAccess || k == NodeKind.MatchExpr
+export fn is_expr_kind(k NodeKind) -> bool {
+    if k == NodeKind.Paren { return true }
+    if k == NodeKind.Unary { return true }
+    if k == NodeKind.Bin { return true }
+    if k == NodeKind.Lit { return true }
+    if k == NodeKind.Name { return true }
+    if k == NodeKind.Call { return true }
+    if k == NodeKind.MethodCall { return true }
+    if k == NodeKind.FieldAccess { return true }
+    k == NodeKind.MatchExpr
+}
 
 /// First-leaf text of a Name-like node (its identifier).
 export fn expr_leaf_name(e Node) -> str {
