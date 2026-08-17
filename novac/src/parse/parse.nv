@@ -277,6 +277,30 @@ fn Cursor mut @module_decl() -> Node {
     @node(NodeKind.ModuleDecl, kids)
 }
 
+/// A type REFERENCE as it appears in a signature: `int`, `Vec[T]`, `[]T`,
+/// `[]Vec[T]`. Returns the leaves and bracket runs it consumed, or an empty
+/// list if the cursor is not on a type.
+///
+/// It exists because the receiver of a method is not always an identifier.
+/// Measured on std 2026-08-17: NINETY declarations use `fn[T] ...`, sixteen of
+/// them with a slice receiver (`export fn[T] []T @map[U]`), across ten files.
+/// The parser read `fn` and demanded an identifier, so every one of those
+/// signatures fell into the junk bucket and harvest never saw it -- the
+/// method table was missing them and calls got "no such method", which is a
+/// refusal that names the wrong cause.
+fn Cursor mut @type_ref() -> []Node {
+    mut out = []Node.new()
+    while @peek() == TokenKind.LBracket && @peek(skip: 1) == TokenKind.RBracket {
+        out.push(@take()) // '['
+        out.push(@take()) // ']'
+    }
+    if @peek() == TokenKind.Ident {
+        out.push(@take())
+        if @peek() == TokenKind.LBracket { out.push(@generics()) }
+    }
+    out
+}
+
 /// Parse `fn name(params) -> T { body }` or `=> expr`, with junk recovery.
 fn Cursor mut @fn_decl() -> Node {
     mut kids = []Node.of(@take()) // KwFn
@@ -285,22 +309,21 @@ fn Cursor mut @fn_decl() -> Node {
     // subset (novac does not declare methods), but for READING std
     // signatures: the subset method table is built from declarations, not
     // from a list of names in the compiler (П5).
-    // Receiver or free function? The two forms differ only AFTER the name and
-    // its optional `[...]`: `fn Vec[T] @push` versus `fn id[T](x T)`. The
-    // parser used to answer with a lookahead that scanned to the matching
-    // bracket and asked what followed -- a second walk over tokens the parser
-    // was about to read anyway, and a second place that had to know what a
-    // bracket run is.
-    //
-    // It reads them ONCE and decides after (owner's question 2026-08-17: is
-    // the lookahead needed at all -- no). The pieces are held aside; if `@`
-    // turns up, they were a receiver and get wrapped as one; otherwise they
-    // were the name and its own generics. Nothing is re-parsed and the cursor
-    // never moves backwards -- the difference from the lookahead is that the
-    // knowledge lives in one place instead of two.
-    mut head = []Node.new()
-    if @peek() == TokenKind.Ident { head.push(@take()) }
-    if @peek() == TokenKind.LBracket { head.push(@generics()) }
+    // Read once, classify after (owner's question 2026-08-17: is a lookahead
+    // needed here -- no). A lookahead does not move the cursor, so nothing was
+    // ever re-read; what it cost was a SECOND place that had to know what a
+    // bracket run is. Now that knowledge lives only in @generics/@type_ref.
+    // Type parameters can stand in THREE places, and std uses all three:
+    //   fn[T] []T @map[U](f fn(T) -> U) -> []U
+    //   ^^^^^ on the fn   ^^^ on the method name
+    //         ^^^ and the receiver is a type reference, not an identifier
+    // The `fn[...]` position is read first because it comes before the
+    // receiver; an empty bracket run right after `fn` is not a thing, so
+    // there is nothing to tell apart here.
+    if @peek() == TokenKind.LBracket { kids.push(@generics()) }
+    // Receiver or free function? The two only differ AFTER the name and its
+    // brackets, so the pieces are held aside and the `@` decides.
+    mut head = @type_ref()
     if @peek() == TokenKind.At {
         head.push(@take()) // '@'
         kids.push(@node(NodeKind.Recv, head))
