@@ -109,13 +109,46 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
 /// five chances to be applied four times (owner's review 2026-08-16).
 fn Checker mut @refuse(t Token, msg str) -> () {
     ro lo = @src.offset_of(t.text)
+    @refuse_span(lo, lo + t.text.byte_len(), msg)
+}
+
+/// The same door with an EXPLICIT span, for a refusal whose subject is a run
+/// of tokens rather than one (274.3/F24). A junk run of five tokens used to be
+/// underlined at its first byte: the editor squiggle covered `%` and left the
+/// other four looking accepted, which is a lie about what was rejected. The
+/// span rule stays in ONE place -- the reason @refuse exists at all.
+fn Checker mut @refuse_span(lo int, hi int, msg str) -> ()
+    requires lo >= 0, "check: refusal span starts before the file"
+    requires hi >= lo, "check: refusal span ends before it starts" {
     @out.push(Diagnostic {
         code: "E_NOVAC_SUBSET",
         severity: Severity.ErrorSev,
         lo,
-        hi: lo + t.text.byte_len(),
+        hi,
         message: msg,
     })
+}
+
+/// Extends `best` to the end of the LAST leaf under `children` -- the right
+/// edge of a run, in source offsets.
+///
+/// It takes the current best and returns a bigger one instead of answering
+/// "the last leaf, if any": a run always has at least the leaf its caller
+/// already found, so absence is not a case here, and the monotone form needs
+/// neither an Option nor an int sentinel. (The Option form was written first
+/// and did not survive: `Option[Token]` -- a record inside an Option -- and a
+/// mut local of `Option[int]` reassigned in a match arm BOTH miscompile under
+/// the current oracle, the second one emitting Nova source text verbatim into
+/// the C. Escalated separately; this shape does not need the feature at all.)
+fn Checker @run_end_of(children []Node, best int) -> int {
+    mut e = best
+    for c in children {
+        match c {
+            Leaf(t) => { e = e.max(@src.offset_of(t.text) + t.text.byte_len()) }
+            Branch { children: inner, .. } => { e = @run_end_of(inner, e) }
+        }
+    }
+    e
 }
 
 /// Walk the tree and collect subset diagnostics.
@@ -390,7 +423,10 @@ fn Checker mut @report_err_branch(children []Node) -> () {
         if @out.len() > before { return } // the one diagnostic is out already
         match c {
             Leaf(t) => {
-                @refuse(t, "outside the E1 subset: construct not in the MVP grammar")
+                // The whole run is the subject, so the whole run is underlined.
+                ro lo = @src.offset_of(t.text)
+                ro hi = @run_end_of(children, lo + t.text.byte_len())
+                @refuse_span(lo, hi, "outside the E1 subset: construct not in the MVP grammar")
                 return
             }
             Branch { children: inner, .. } => @report_err_branch(inner)

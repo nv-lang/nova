@@ -361,10 +361,18 @@ fn Cursor mut @block() -> Node {
 }
 
 /// Head expression of if/while/for: record constructors OFF for its extent.
+///
+/// SAVE and restore, not set-and-clear (274.3/F23). The old pair wrote `true`
+/// then `false` unconditionally, so a head nested inside another head came
+/// back with the flag already cleared and the outer head started accepting
+/// `{` as a constructor again. Go's composite-literal rule -- which this
+/// implements -- is a STACK discipline in every implementation of it (go/parser
+/// exprLev, rustc restrictions bitflags), for the same reason.
 fn Cursor mut @head_expr() -> Node {
+    ro saved = @no_ctor
     @no_ctor = true
     ro e = @expr()
-    @no_ctor = false
+    @no_ctor = saved
     e
 }
 
@@ -495,12 +503,16 @@ fn Cursor mut @primary() -> Node {
         if @peek() == TokenKind.Ident { kids.push(@take()) }
         if @peek() == TokenKind.LParen {
             kids.push(@take())
+            // Inside the parens the head restriction lifts (274.3/F23).
+            ro saved = @no_ctor
+            @no_ctor = false
             while !@at_eof() && @peek() != TokenKind.RParen {
                 ro before = @i
                 kids.push(@expr())
                 if @peek() == TokenKind.Comma { kids.push(@take()) }
                 if @i == before { break }
             }
+            @no_ctor = saved
             if @peek() == TokenKind.RParen { kids.push(@take()) }
             e = @node(NodeKind.MethodCall, kids)
         } else {
@@ -617,9 +629,18 @@ fn Cursor mut @atom() -> Node {
         // grammar (found while adding the operator set, 2026-08-16). The
         // parens stay in the tree as leaves -- the tree is lossless -- and
         // every consumer sees through them to the one expression inside.
+        //
+        // Inside the parens the head restriction is LIFTED (274.3/F23): the
+        // rule exists because `if x {` must read `{` as the body, and inside
+        // brackets there is no such ambiguity -- `if take(P { x: 1 }) > 0 {`
+        // is unambiguous and used to cost four diagnostics. Go does exactly
+        // this (exprLev is restored inside parentheses).
+        ro saved = @no_ctor
+        @no_ctor = false
         mut kids = []Node.of(@take())
         kids.push(@expr())
         if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+        @no_ctor = saved
         return @node(NodeKind.Paren, kids)
     }
     if @peek() == TokenKind.KwMatch { return @match_expr() }
@@ -654,12 +675,18 @@ fn Cursor mut @atom() -> Node {
         ro name = @take()
         if @peek() == TokenKind.LParen {
             mut kids = []Node.of(name, @take())
+            // Inside the parens the head restriction lifts (274.3/F23):
+            // `if take(P { x: 1 }) > 0 {` is unambiguous -- the brace that
+            // the rule protects is the BODY brace, and it is not in here.
+            ro saved = @no_ctor
+            @no_ctor = false
             while !@at_eof() && @peek() != TokenKind.RParen {
                 ro before = @i
                 kids.push(@expr())
                 if @peek() == TokenKind.Comma { kids.push(@take()) }
                 if @i == before { break }
             }
+            @no_ctor = saved
             if @peek() == TokenKind.RParen { kids.push(@take()) }
             return @node(NodeKind.Call, kids)
         }
