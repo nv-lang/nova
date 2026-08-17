@@ -252,10 +252,12 @@ mod tests {
         assert!(top.contains(&"collections".to_string()), "collections exists: {top:?}");
         assert!(top.contains(&"encoding".to_string()), "encoding exists");
         assert!(top.contains(&"net".to_string()), "net exists");
-        // Stale entries the old hardcoded list advertised must be ABSENT.
+        // Written since this test was: the index follows the filesystem, so a
+        // module that appears must start being advertised without an edit here.
+        assert!(top.contains(&"io".to_string()), "io exists (std/src/io)");
+        assert!(top.contains(&"math".to_string()), "math exists (std/src/math)");
+        // Stale entries the old hardcoded list advertised must stay ABSENT.
         assert!(!top.contains(&"sync".to_string()), "std.sync does not exist");
-        assert!(!top.contains(&"io".to_string()), "std.io does not exist");
-        assert!(!top.contains(&"math".to_string()), "std.math does not exist");
         // Private (_experimental) is never surfaced.
         assert!(!top.contains(&"_experimental".to_string()), "_experimental hidden");
     }
@@ -266,9 +268,11 @@ mod tests {
         let idx = index();
         let subs = idx.child_segments(&["std".to_string(), "collections".to_string()]);
         assert!(subs.contains(&"vec".to_string()), "vec: {subs:?}");
-        assert!(subs.contains(&"hashmap".to_string()), "hashmap");
+        assert!(subs.contains(&"hash_map".to_string()), "hash_map");
         assert!(subs.contains(&"set".to_string()), "set");
         assert!(!subs.contains(&"map".to_string()), "collections.map never existed");
+        // The pre-rename spelling must not come back through a stale list.
+        assert!(!subs.contains(&"hashmap".to_string()), "hashmap was renamed to hash_map");
     }
 
     /// POS: empty prefix yields the package root only.

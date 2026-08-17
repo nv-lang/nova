@@ -19,7 +19,7 @@ path = "src/main.rs"
 #     cargo build --release --features agent-bin --bin nova-lsp-agent
 [[bin]]
 name = "nova-lsp-agent"
-path = "src/main.rs"
+path = "src/agent_main.rs"
 required-features = ["agent-bin"]
 
 [features]
