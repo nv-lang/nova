@@ -28020,8 +28020,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line(&format!("return {};", val));
                     }
                 } else {
+                    // №711 [M-196-mono-block-notrailing-ret-ignored]: `trailing == None`
+                    // значит блок кончился ТЕРМИНАТОРОМ (`Stmt::Return` / `Stmt::Throw`),
+                    // и настоящий `return` уже выпущен. Фабриковать второй, да ещё
+                    // unit-типа, можно только когда функция и правда возвращает unit —
+                    // иначе СИ-компилятор получает `return <значение>; return NOVA_UNIT;`
+                    // под не-unit тип и падает в лицо пользователю при зелёном `check`.
+                    // Близнец для МЕТОДОВ (тот же файл, ~26640) загорожен так же; здесь
+                    // зеркало просто не довели. Дефект не про `throw`: репро без него —
+                    // `fn gret[T](x T) -> int { return 42 }`.
                     self.leave_defer_scope(block_id);
-                    self.line("return NOVA_UNIT;");
+                    if ret_c == "nova_unit" {
+                        self.line("return NOVA_UNIT;");
+                    }
                 }
             }
             FnBody::External => {}

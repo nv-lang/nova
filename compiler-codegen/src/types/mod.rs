@@ -8107,6 +8107,45 @@ impl<'a> TypeCheckCtx<'a> {
                         // arrow-body site above.
                         self.record_bare_variant_ctor(trailing, ret, &scope);
                     }
+                    // №714, K1. Зеркальная проверка (`E_MISSING_RETURN_TYPE`:
+                    // тело есть, аннотации нет) жила здесь давно — а этой половины
+                    // не было вовсе: `-> T` объявлен, а тело кончается STATEMENT'ом.
+                    // Тогда кодоген доходит до последней ветки `emit_block_stmts` и
+                    // выпускает СИ-функцию БЕЗ `return`: вызывающий читает
+                    // неинициализированный регистр. Три запуска носителя печатали три
+                    // разных числа вместо 41, и `check`, и `build` были зелёными.
+                    //
+                    // Правило ОБЩЕЕ, а не «про consume»: биндинг-форма consume-блока —
+                    // лишь одна из statement-форм; `ro x = 1`, присваивание и пустое
+                    // тело приводят ровно туда же. Расходящееся тело (`return`/`throw`
+                    // в хвосте) законно и исключено через `block_diverges`.
+                    //
+                    // `returns_receiver` (`-> @`, D409) исключён обязательно: выход по
+                    // получателю синтезирует `self_return_lower`, и он работает ПОСЛЕ
+                    // `check_module` — без этого условия отказ получили бы 51 живой
+                    // метод корпуса, из них 15 в `std`.
+                    if b.trailing.is_none()
+                        && !matches!(ret, TypeRef::Unit(_))
+                        && !fd.returns_receiver
+                        && !block_diverges(b)
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_MISSING_RETURN] функция `{}` объявляет `-> {}`, но её \
+                                 блочное тело заканчивается STATEMENT'ом и не даёт значения. \
+                                 Биндинг-форма `consume X = expr {{ body }}` (D188), биндинг \
+                                 `ro`/`mut`/`consume`, присваивание и пустое тело — всё это \
+                                 statement'ы типа `()`; выражением объявлена только \
+                                 re-consume форма `consume X {{ body }}`. Добавь `return \
+                                 <expr>` (в том числе изнутри блока — очистка при этом \
+                                 отрабатывает), либо хвостовое выражение, либо убери `-> {}`.",
+                                fd.name,
+                                render_type_ref(ret),
+                                render_type_ref(ret),
+                            ),
+                            b.span,
+                        ));
+                    }
                     // … and every explicit `return <expr>` anywhere in the body.
                     self.materialize_returns_in_block(b, ret);
                     self.check_closure_scalar_return_in_block(b, ret, errors);
@@ -37458,6 +37497,13 @@ fn stmt_diverges(s: &Stmt) -> bool {
     match s {
         Stmt::Return { .. } | Stmt::Throw { .. } => true,
         Stmt::Expr(e) => expr_diverges(e),
+        // №714: `return X` / `throw X` ВНУТРИ consume-блока возвращает из
+        // ОБЪЕМЛЮЩЕЙ функции — разворачивание D188 оставляет тело обычным
+        // блоком. Значит блок с безусловно расходящимся телом расходится сам,
+        // и управление сквозь него не проваливается. Без этой ветки проверка
+        // E_MISSING_RETURN ниже ложно срабатывает на живых фикстурах, где
+        // значение законно уходит через `return` изнутри блока.
+        Stmt::ConsumeScope { body, .. } => block_diverges(body),
         // Break/Continue exit'ят loop, не handler-fn — не diverge для
         // handler-purposes (handler body должен иметь exit к caller'у
         // операции, не к outer loop).

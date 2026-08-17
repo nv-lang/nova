@@ -18,6 +18,6 @@ fn bad_wrapped() -> int {
     // ❌ Option[WrappedResource] не Cleanup — required unwrap через
     // `!!` или `?` (если Result), или `if Some(r) = ... {}`.
     consume r = WrappedResource.maybe_new(3) {
-        r.id
+        return r.id                  // No. 714: the block is a statement
     }
 }

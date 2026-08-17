@@ -11,7 +11,7 @@ fn NotConsumable.new(value int) -> NotConsumable => { value }
 
 fn bad_use() -> int {
     consume r = NotConsumable.new(5) {
-        r.value
+        return r.value               // No. 714: the block is a statement
     }
 }
 

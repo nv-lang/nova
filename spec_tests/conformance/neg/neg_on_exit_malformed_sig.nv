@@ -18,6 +18,6 @@ fn BadResource consume @cleanup(wrong_param int) -> () => ()
 
 fn use_bad() -> int {
     consume r = BadResource.new(1) {
-        r.id
+        return r.id                  // No. 714: the block is a statement
     }
 }

@@ -1,0 +1,61 @@
+// EXPECT_STDOUT ret=41 outer=41 diverge=7 tail=41 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Позитивная половина реестра 221.1 №714: формы, которые ЗАКОННЫ и обязаны
+// проходить после введения `E_MISSING_RETURN`. Без этой половины отказ мог бы
+// оказаться слишком широким, и никто бы не заметил — neg-фикстура на такое
+// молчит по устройству.
+//
+// Каждая форма не просто компилируется, а ИСПОЛНЯЕТСЯ и сверяется по значению:
+// молчаливый возврат мусора именно тем и был опасен, что сборка была зелёной.
+//
+// ЧТО ЭТА ФИКСТУРА НЕ ПРОВЕРЯЕТ И ПОЧЕМУ. Что `return` изнутри тела блока не
+// пропускает `@cleanup` — проверено отдельной пробой при посадке фикса
+// (очистка напечаталась ПЕРЕД значением) и держится семейством
+// `codegen_on_exit_throws_*`, которое той же волной переведено на `return`.
+// Считать вызовы очистки прямо здесь было бы честнее, но требует module-level
+// счётчика: `mut` там запрещён (D184), а `ro CLEANUPS = AtomicInt.new(0)`
+// упирается в отдельный кодоген-гэп (`[INTERNAL-PANIC] Path call return type
+// unknown for method=load`). Тащить чужой дефект в фикстуру про свой — значит
+// сделать её хрупкой; фикстура остаётся про свою границу.
+module standalone.d188_missing_return_pos
+
+type ResP consume { id int }
+
+fn ResP consume @cleanup(_o ScopeOutcome) -> () => ()
+
+fn mk_p() -> ResP => { id: 1 }
+
+// (1) `return` изнутри тела блока — блок statement, но выход законный.
+fn via_return() -> int {
+    consume h = mk_p() {
+        return 40 + h.id
+    }
+}
+
+// (2) значение после блока: биндинг снаружи, присваивание внутри.
+fn via_outer_binding() -> int {
+    mut out = 0
+    consume h = mk_p() {
+        out = 40 + h.id
+    }
+    out
+}
+
+// (3) расходящееся тело: возвращать нечего, и это законно.
+fn via_divergence(flag bool) Fail[str] -> int {
+    if flag {
+        return 7
+    }
+    throw "no value here"
+}
+
+// (4) обычное хвостовое выражение — контроль, что проверка не задевает канон.
+fn plain_tail() -> int {
+    ro x = 41
+    x
+}
+
+fn main() {
+    println("ret=${via_return()} outer=${via_outer_binding()} diverge=${via_divergence(true)} tail=${plain_tail()} ok")
+}
