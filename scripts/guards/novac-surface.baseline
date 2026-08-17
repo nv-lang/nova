@@ -20,7 +20,7 @@ diag 6
 emit_c 1
 lex 4
 main 0
-names 5
+names 6
 parse 1
 pipeline 2
 sem 54

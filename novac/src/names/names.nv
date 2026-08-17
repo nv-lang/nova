@@ -48,6 +48,16 @@ export type NameTable {
 export fn NameTable.new(ns NamespaceId) -> NameTable =>
     { ns, map: HashMap[str, int].new() } // ns is the NamespaceId key component
 
+/// Empty the table without building a new one.
+///
+/// The one-entry probe of the self-initializer check (274.3/F28) reuses a
+/// single table for every binding in a file: the lookup door must not
+/// allocate (P18/P14), and `NameTable.new()` per binding would put an
+/// allocation on the hot path of every `ro`/`mut`.
+export fn NameTable mut @clear() -> () {
+    @map.clear()
+}
+
 /// Bind name -> id (a later put overwrites: shadowing).
 export fn NameTable mut @put(name str, id int) -> () {
     @map.insert(name, id)

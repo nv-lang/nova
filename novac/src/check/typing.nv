@@ -236,6 +236,24 @@ fn Checker mut @type_bind(st Node) -> () {
         @type_expr(init)
         if @out.len() > 0 { return }
     }
+    // A binding whose initializer mentions the name it binds is REFUSED
+    // (274.3/F28). Measured 2026-08-17, and the measurement is why this is a
+    // refusal and not a fix: `ro x = 7` then, inside a block,
+    // `ro x = x < 3` prints `true` for x = 7 AND for x = 1, while
+    // `ro x = x + 100` prints exactly 100. The inner name is visible in its
+    // own initializer and reads as ZERO -- in the ORACLE, not only here. Both
+    // compilers agree, so the differential gate is green while the answer is
+    // wrong; that is the shape a silent miscompilation takes.
+    //
+    // Until the spec says what the form means (escalated with the probe), the
+    // subset refuses it. Rust reads the OUTER binding here (`let x = x + 1`),
+    // which is the reading I expect to win, but expecting is not knowing.
+    @self_probe.clear()
+    @self_probe.put(vname, 0)
+    if @init_reads_self(init) {
+        @report_first_leaf_of([]Node.of(init), SELF_INIT_MSG)
+        return
+    }
     ro vtype = type_of(init, @ctx, @scope)
     @record(init, vtype)
     if ik == NodeKind.MatchExpr {
@@ -255,6 +273,39 @@ fn Checker mut @type_bind(st Node) -> () {
     @scope.bind(vname, vtype)
 }
 
+/// One text for the rule.
+const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the name it binds"
+
+/// Does the initializer read the binding that is being declared?
+///
+/// The question is asked through the NAME DOOR, not by comparing identifier
+/// text: `names.NameTable` is the one place where a name becomes an id
+/// (rule 1 of the resolve discipline, and its guard is right to insist --
+/// my first version compared identifier TEXT against the declared name in
+/// a walk, which is the linear resolve the rule bans). The declared name
+/// goes into a one-entry table owned by the Checker, every identifier leaf
+/// is asked for its id, and the comparison is on integers.
+#realtime nogc
+fn Checker @init_reads_self(n Node) -> bool {
+    match n {
+        Leaf(t) => leaf_kind(n) == TokenKind.Ident && @self_probe.find(t.text) >= 0
+        Branch { children, .. } => {
+            mut found = false
+            for c in children {
+                if @init_reads_self(c) { found = true }
+            }
+            found
+        }
+    }
+}
+
+
+/// A match: the scrutinee's type is the answer the emitter needs (it declares
+/// the C temporary with it); the arms bind their binders and are typed after.
+/// One text for the rule: the reader must not guess whether two wordings
+/// mean two limits.
+const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
+
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
@@ -268,26 +319,57 @@ fn Checker mut @type_match(m Node) -> () {
     if @out.len() > 0 { return }
     ro scr_t = type_of(scr, @ctx, @scope)
     @record(scr, scr_t)
+    mut first_t = -1
     for c in kids {
-        if c.kind_of() == NodeKind.MatchArm { @type_arm(c, scr_t) }
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        ro at = @type_arm(c, scr_t)
+        if at < 0 { continue }
+        if first_t < 0 {
+            first_t = at
+        } else if at != first_t && @out.len() == 0 {
+            @report_first_leaf_of([]Node.of(c), ARMS_DISAGREE_MSG)
+        }
     }
 }
+
+/// (rule lives in @type_match now) Every arm of a match must produce the SAME type -- and until 2026-08-17
+/// nobody checked, because `type_of` took the FIRST arm's type and the
+/// comment beside it said the arms "agree by construction".
+///
+/// They do not. Probe: `match n { 1 => 10  _ => 2.5 }` in a `-> f64` fn.
+/// The emitted C declared `nova_int _novac_match_r`, then assigned
+/// `((nova_f64)2.5)` into it, so the program returned 2 where the oracle
+/// returns 2.5 -- valid C, wrong answer, no diagnostic anywhere. That is the
+/// worst shape a defect can take (class K-C), and it survived because a
+/// comment stood where a check belongs.
+///
+/// The subset REFUSES disagreement rather than unifying it. Unification here
+/// would mean an expected type flowing down into the arms (the oracle has
+/// it: the `-> f64` return coerces the integer literal), and that is
+/// bidirectional inference -- E2-b3 work, not a patch. Refusing is the safe
+/// direction: narrower than the language, never wider.
 
 /// One arm: binders first (payload fields of a variant pattern, or the whole
 /// scrutinee under a plain binder), then the guard and the arm's value --
 /// the emitter's order exactly.
-fn Checker mut @type_arm(arm Node, scr_t int) -> () {
+/// Returns the arm BODY's type, and the return value is the whole point:
+/// the binders of a pattern live only until `release(mark)` below, so the
+/// body's type can be computed HERE and nowhere later. The first version of
+/// the arm-agreement rule (F36) asked for it after the walk, outside the
+/// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
+/// diagnostic -- the binders were gone by then.
+fn Checker mut @type_arm(arm Node, scr_t int) -> int {
     // An arm's binders live in the arm and nowhere else.
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
     if ak.len() < 1 {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
-        return
+        return -1
     }
     ro pat = branch_children(ak[0])
     if pat.len() < 1 {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
-        return
+        return -1
     }
     ro p0 = pat[0]
     mut vrow = -1
@@ -320,8 +402,12 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> () {
             if gk.len() > 1 { @type_expr(gk[1]) }
         }
     }
-    @type_expr(ak[ak.len() - 1])
+    ro body = ak[ak.len() - 1]
+    @type_expr(body)
+    mut body_t = -1
+    if @out.len() == 0 { body_t = type_of(body, @ctx, @scope) }
     @scope.release(mark)
+    body_t
 }
 
 /// One expression: record what the emitter asks about, walk what it emits.

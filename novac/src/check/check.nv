@@ -60,6 +60,11 @@ type Checker {
     out []Diagnostic /// diagnostics collected by this run
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
     scope Scope /// locals of the function body being typed; reset per function
+    /// One-entry table reused by the self-initializer check (274.3/F28). It is
+    /// a FIELD and not a local because the lookup door must not build anything
+    /// (P18/P14): a table allocated per binding turns an O(1) question into an
+    /// allocation on the hot path of every `ro`/`mut` in the file.
+    self_probe NameTable
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -93,7 +98,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         src, ctx,
         out: []Diagnostic.new(),
         chan: CheckOut.new(file.id_of() + 1),
-        scope: Scope.new(),
+        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
     }
     c.walk(file)
     if c.out.len() == 0 {
