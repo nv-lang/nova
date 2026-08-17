@@ -104,6 +104,10 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     if c.out.len() == 0 {
         c.type_file(file)
         c.chan.assert_disjoint()
+    } else {
+        // A refused file is not typed: the walk's answer on broken input is an
+        // ice today ([LEGACY-#700-user-error-as-ice]), so the refusals already
+        // collected ARE the verdict, and the channel goes back as the walk left it.
     }
     (c.out, c.chan)
 }
@@ -305,6 +309,10 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
             }
             Branch { .. } => {}
         }
+    } else {
+        // Fewer than two children means there is no type slot to look at, so this
+        // branch has nothing of its own to judge: the refusal just below is the
+        // one answer for that shape, exactly as it is for a leaf of any other kind.
     }
     @report_first_leaf_of(kids, msg)
 }
@@ -329,7 +337,8 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
                 t.kind == TokenKind.KwMut ||
                 t.kind == TokenKind.KwFn ||
                 t.kind == TokenKind.LParen
-            if is_form { @report_first_leaf_of(kids, TYPE_FORM_MSG) }
+            if !is_form { return }
+            @report_first_leaf_of(kids, TYPE_FORM_MSG)
         }
         Branch { .. } => {}
     }
@@ -398,7 +407,7 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
     for c in kids {
         if c.kind_of() != NodeKind.RetType { continue }
         // `-> ()` parses as the arrow alone: the unit return declares no value.
-        if branch_children(c).len() > 1 { declares_value = true }
+        declares_value = declares_value || branch_children(c).len() > 1
     }
     if !declares_value { return }
     for c in kids {
@@ -408,8 +417,8 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         mut i = 0
         mut terminates = false
         for b in bk {
-            if b.kind_of() == NodeKind.RetStmt { terminates = true }
-            if b.kind_of() != NodeKind.LeafNode { last_stmt = i }
+            terminates = terminates || b.kind_of() == NodeKind.RetStmt
+            last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
             i += 1
         }
         // The end is unreachable: whatever stands last, it is dead code and
@@ -434,9 +443,8 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // `println(...)`. The oracle refuses all four; novac emitted a
         // function that falls off its end. Asking a deny-list about an open
         // set is how a rule looks complete while covering two cases of six.
-        if k != NodeKind.RetStmt && !(is_expr_kind(k) && k != NodeKind.Call) {
-            @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
-        }
+        if k == NodeKind.RetStmt || (is_expr_kind(k) && k != NodeKind.Call) { return }
+        @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }
 }
@@ -532,13 +540,12 @@ fn contains_call(n Node) -> bool {
 fn Checker mut @report_if_ordered_args(kids []Node) -> () {
     mut effectful = 0
     for c in kids {
-        if is_expr_kind(c.kind_of()) {
-            if contains_call(c) { effectful += 1 }
-        }
+        if !is_expr_kind(c.kind_of()) { continue }
+        if !contains_call(c) { continue }
+        effectful += 1
     }
-    if effectful >= 2 {
-        @report_first_leaf_of(kids, "outside the E1 subset: two arguments that both call something, and the emitter does not fix their order yet (F65)")
-    }
+    if effectful < 2 { return }
+    @report_first_leaf_of(kids, "outside the E1 subset: two arguments that both call something, and the emitter does not fix their order yet (F65)")
 }
 
 /// A CALL in statement position is `println` and nothing else in the subset.
@@ -552,11 +559,9 @@ fn Checker mut @report_if_bad_call_stmt(stmts []Node) -> () {
         match st {
             Leaf(_) => {}
             Branch { kind, children, .. } => {
-                if kind == NodeKind.Call {
-                    if call_callee_text(children) != PRINT_FN {
-                        @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
-                    }
-                }
+                if kind != NodeKind.Call { continue }
+                if call_callee_text(children) == PRINT_FN { continue }
+                @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
             }
         }
     }
@@ -576,9 +581,8 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // no locals yet, so the receiver's type is unknown and only
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
-            if !@ctx.fns.has_name(t.text) {
-                @refuse(t, "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)")
-            }
+            if @ctx.fns.has_name(t.text) { return }
+            @refuse(t, "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)")
         }
         Branch { .. } => {}
     }
@@ -586,9 +590,8 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
 
 /// An ErrorTok leaf is a lexer refusal: report it at its position.
 fn Checker mut @report_if_error_token(t Token) -> () {
-    if t.kind == TokenKind.ErrorTok {
-        @refuse(t, "outside the E1 subset: unrecognized or context-dependent token")
-    }
+    if t.kind != TokenKind.ErrorTok { return }
+    @refuse(t, "outside the E1 subset: unrecognized or context-dependent token")
 }
 
 /// An Err branch is ONE recovered mistake: one diagnostic at its first leaf.

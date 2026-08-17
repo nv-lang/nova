@@ -125,8 +125,10 @@ test "F19: a string literal does not cross a line" {
     mut saw_error = false
     mut saw_ident_after = false
     for t in toks {
-        if t.kind == TokenKind.ErrorTok { saw_error = true }
-        if saw_error && t.kind == TokenKind.Ident { saw_ident_after = true }
+        // Accumulating a flag is an EXPRESSION, not a branching: `||` says
+        // "once true, stays true" without a second branch to explain (P31).
+        saw_error = saw_error || t.kind == TokenKind.ErrorTok
+        saw_ident_after = saw_ident_after || (saw_error && t.kind == TokenKind.Ident)
     }
     assert(saw_error, "an unterminated string must produce an error token")
     assert(saw_ident_after, "the next line must lex as code, not as literal text")
@@ -139,8 +141,10 @@ test "F21: a digit run touching an identifier byte is one refusal" {
     mut ints = 0
     mut errors = 0
     for t in toks {
-        if t.kind == TokenKind.IntLit { ints += 1 }
-        if t.kind == TokenKind.ErrorTok { errors += 1 }
+        // Counting is an expression too: add one when it matches, zero when
+        // it does not -- the absent branch has nothing to say.
+        ints += if t.kind == TokenKind.IntLit { 1 } else { 0 }
+        errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
     }
     assert(errors == 1, "1_000 must be refused as one run")
     assert(ints == 0, "1_000 must not leave an IntLit behind")
@@ -151,7 +155,7 @@ test "F22: a non-ASCII run is ONE error token, not one per letter" {
     ro toks = lex("ro \u{43f}\u{440}\u{438}\u{432}\u{435}\u{442} = 1")
     mut errors = 0
     for t in toks {
-        if t.kind == TokenKind.ErrorTok { errors += 1 }
+        errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
     }
     assert(errors == 1, "one non-ASCII run must be one error token")
 }

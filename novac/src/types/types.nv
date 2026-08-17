@@ -250,7 +250,9 @@ export fn Interner mut @subst(t int, args []int) -> int {
             for i in 0..row.arg_cnt {
                 ro a = @args[row.arg_off + i]
                 ro s = @subst(a, args)
-                if s != a { changed = true }
+                // A flag that only ever turns on is an expression (P31): the branch
+        // that would say "still equal, nothing changes" carries no work.
+        changed = changed || s != a
                 new_args.push(s)
             }
             if !changed { return t }

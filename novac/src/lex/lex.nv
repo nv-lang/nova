@@ -260,17 +260,26 @@ export fn lex(src str) -> []Token {
             // the three outcomes; the honest one is a refusal that names the
             // whole run. The bytes stay ours -- lossless -- so E2 turns this
             // branch into real lexing without moving the boundary.
+            // A digit run touching an identifier byte is a refusal; a run
+            // that ends cleanly is the IntLit already decided above -- the
+            // second branch has nothing to add, and says so (P31).
             if i < n && is_ident_byte(b[i]) {
                 while i < n && (is_ident_byte(b[i]) || is_digit(b[i])) { i += 1 }
                 kind = TokenKind.ErrorTok
+            } else {
+                // Clean digit run: `kind` is already IntLit from above.
             }
             // FloatLit: digits '.' digit+ — but `0..3` must stay
             // IntLit DotDot IntLit, so the dot is taken ONLY when the very
             // next byte is a digit (a second dot never is).
+            // FloatLit only when a digit follows the dot; otherwise the dot
+            // belongs to the next token (`0..3` stays IntLit DotDot IntLit).
             if i + 1 < n && b[i] == ('.' as u8) && is_digit(b[i + 1]) {
                 i += 1
                 while i < n && is_digit(b[i]) { i += 1 }
                 kind = TokenKind.FloatLit
+            } else {
+                // Not a fraction: the token ends here as the IntLit it is.
             }
         } else if c == ('"' as u8) {
             // String literal: raw bytes between quotes, escapes kept verbatim
@@ -308,7 +317,9 @@ export fn lex(src str) -> []Token {
                     // loop inspected the already-escaped byte).
                     i += 2
                 } else {
-                    if b[i] == ('$' as u8) && i + 1 < n && b[i + 1] == ('{' as u8) { has_interp = true }
+                    // Interpolation is detected, not consumed: the refusal is
+                    // decided after the literal closes.
+                    has_interp = has_interp || (b[i] == ('$' as u8) && i + 1 < n && b[i + 1] == ('{' as u8))
                     i += 1
                 }
             }
@@ -317,7 +328,11 @@ export fn lex(src str) -> []Token {
             // never closed is not a plausible StrLit, and interpolation is
             // outside the E1 subset (context-dependent lexing is the E2
             // mode-stack step). Either way the bytes stay ours -- lossless.
-            if has_interp || !closed { kind = TokenKind.ErrorTok }
+            if has_interp || !closed {
+                kind = TokenKind.ErrorTok
+            } else {
+                // A closed literal with no interpolation: StrLit stands.
+            }
         } else {
             // TWO dispatches, both by `match`, and neither byte is read twice
             // (owner 2026-08-17: "the same first characters are tested many

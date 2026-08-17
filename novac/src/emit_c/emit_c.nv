@@ -176,12 +176,15 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
     for v in td.row_off..vend {
         ro vd = @ctx.variant_rows[v]
         @body.append("static ${sn}* ${c_maker(@ctx, v)}(")
-        for p in 0..vd.payload_cnt {
-            if p > 0 { @body.append(", ") }
-            @body.append(c_type(@ctx, @ctx.payload_types[vd.payload_off + p]))
-            @body.append(" _${p}")
+        if vd.payload_cnt == 0 {
+            @body.append("void")
+        } else {
+            for p in 0..vd.payload_cnt {
+                @body.append(if p > 0 { ", " } else { "" })
+                @body.append(c_type(@ctx, @ctx.payload_types[vd.payload_off + p]))
+                @body.append(" _${p}")
+            }
         }
-        if vd.payload_cnt == 0 { @body.append("void") }
         @body.append(") {\n    ${sn}* _r = (${sn}*)nova_alloc(sizeof(${sn}));\n")
         @body.append("    _r->tag = ${c_tag(@ctx, v)};\n")
         for q in 0..vd.payload_cnt {
@@ -237,9 +240,8 @@ fn Emitter mut @emit_file(file Node) -> () {
         Branch { kind, children, .. } => {
             assert(kind == NodeKind.File, "emit: root is not File")
             for c in children {
-                if c.kind_of() == NodeKind.FnDecl {
-                    @emit_fn(c)
-                }
+                if c.kind_of() != NodeKind.FnDecl { continue }
+                @emit_fn(c)
             }
         }
     }
@@ -268,31 +270,27 @@ fn Emitter mut @emit_fn(f Node) -> () {
         @body.append(" ${c_fn(name, false)}(")
         mut first = true
         for c in kids {
-            if c.kind_of() == NodeKind.Param {
-                ro pk = branch_children(c)
-                ro pname = leaf_text(pk[0])
-                mut ptype = -1
-                if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
-                    if leaf_kind(pk[1]) == TokenKind.Ident {
-                        ptype = @ctx.defs.type_id_of(leaf_text(pk[1]))
-                    }
-                }
-                assert(ptype >= 0, "emit: param without a type past check — no silent int default (#652 class)")
-                if !first { @body.append(", ") }
-                @body.append(c_type(@ctx, ptype))
-                @body.append(" ")
-                @body.append(pname)
-                first = false
-            }
+            if c.kind_of() != NodeKind.Param { continue }
+            ro pk = branch_children(c)
+            ro pname = leaf_text(pk[0])
+            ro has_type_leaf = pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode
+            ro is_named_type = has_type_leaf && leaf_kind(pk[1]) == TokenKind.Ident
+            ro ptype = if is_named_type { @ctx.defs.type_id_of(leaf_text(pk[1])) } else { -1 }
+            assert(ptype >= 0, "emit: param without a type past check — no silent int default (#652 class)")
+            @body.append(if first { "" } else { ", " })
+            @body.append(c_type(@ctx, ptype))
+            @body.append(" ")
+            @body.append(pname)
+            first = false
         }
-        if first { @body.append("void") }
+        @body.append(if first { "void" } else { "" })
         @body.append(") {\n")
     }
     for c in kids {
-        if c.kind_of() == NodeKind.Block {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Block {
             @emit_block_stmts_fn(c, name != ENTRY_FN)
-        }
-        if c.kind_of() == NodeKind.FnExprBody {
+        } else if ck == NodeKind.FnExprBody {
             has_expr_body = true
             ro ek = branch_children(c)
             ro e = ek[ek.len() - 1]
@@ -306,6 +304,9 @@ fn Emitter mut @emit_fn(f Node) -> () {
             } else {
                 ice("emit_c: fn expression body is neither a match nor an expression")
             }
+        } else {
+            // Any other child -- the name leaf, the parameter list, the return
+            // type -- is read above by position, never by walking this loop.
         }
     }
     if name == ENTRY_FN {
@@ -314,7 +315,12 @@ fn Emitter mut @emit_fn(f Node) -> () {
         // Trailing safety return only for block bodies of int fns (the E1
         // shape); an expression body IS the return, and non-int returns
         // never fall through in the subset.
-        if !has_expr_body && ret == @ctx.prims.int_id { @body.append("    return (nova_int)0LL;\n") }
+        if !has_expr_body && ret == @ctx.prims.int_id {
+            @body.append("    return (nova_int)0LL;\n")
+        } else {
+            // An expression body already emitted its return, and a non-int
+            // block body cannot reach the closing brace in the subset.
+        }
         @body.append("}\n")
     }
 }
@@ -347,9 +353,8 @@ fn Emitter mut @emit_match(m Node, uniq str, res_t int) -> () {
     @body.append("){0};\n")
     @body.append("    int _novac_matched_${uniq} = 0;\n")
     for c in kids {
-        if c.kind_of() == NodeKind.MatchArm {
-            @emit_arm(c, uniq, scr_t)
-        }
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        @emit_arm(c, uniq, scr_t)
     }
 }
 
@@ -366,7 +371,7 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
     ro arm_e = ak[ak.len() - 1]
     mut has_guard = false
     for g in ak {
-        if g.kind_of() == NodeKind.Guard { has_guard = true }
+        has_guard = has_guard || g.kind_of() == NodeKind.Guard
     }
     @body.append("    if (!_novac_matched_${uniq} && (")
     ro p0 = pat[0]
@@ -381,7 +386,14 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         ro d = @ctx.defs.find(leaf_text(p0))
         if d >= 0 {
             ro { kind: def_kind, payload: def_payload } = @ctx.defs.rows[d]
-            if def_kind == DefKind.DefVariant { vrow = def_payload }
+            vrow = match def_kind {
+                DefVariant => def_payload
+                DefType => -1
+                DefFn => -1
+            }
+        } else {
+            // A name the registry never saw is a fresh binder, and -1 is what
+            // the binder path below reads: no tag test, an always-true arm.
         }
         if vrow >= 0 {
             @emit_tag_test(uniq, vrow)
@@ -403,8 +415,11 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
             // [LEGACY-#676] var-index-method: same workaround as in
             // collect_types: variable-index receiver miscompiles.
             ro pj = pat[j]
-            if pj.kind_of() == NodeKind.LeafNode {
-                if leaf_kind(pj) == TokenKind.Ident { binders.push(leaf_text(pj)) }
+            if pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident {
+                binders.push(leaf_text(pj))
+            } else {
+                // Punctuation leaves of the pattern -- '(' ',' ')' -- name no
+                // binder, so nothing is collected from them.
             }
             j += 1
         }
@@ -421,14 +436,16 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
         @body.append("        ")
         @body.append(c_type(@ctx, scr_t))
         @body.append(" ${leaf_text(p0)} = _novac_scr_${uniq};\n")
+    } else {
+        // An int-literal pattern and the wildcard `_` introduce no name: the
+        // test emitted above is the whole arm, nothing is declared inside it.
     }
     if has_guard {
         for g in ak {
-            if g.kind_of() == NodeKind.Guard {
-                @body.append("        if (")
-                @emit_expr(branch_children(g)[1])
-                @body.append(") {\n")
-            }
+            if g.kind_of() != NodeKind.Guard { continue }
+            @body.append("        if (")
+            @emit_expr(branch_children(g)[1])
+            @body.append(") {\n")
         }
         @body.append("            _novac_match_${uniq} = ")
         @emit_expr(arm_e)
@@ -455,6 +472,9 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
             }
             j += 1
         }
+    } else {
+        // No tail duty: no statement of this block is a return value, and -1
+        // is an index no child can equal, so the test below never fires.
     }
     mut j = 0
     for c in kids {
@@ -593,6 +613,9 @@ fn Emitter mut @emit_bind(st Node) -> () {
                     @body.append(fname)
                 }
                 @body.append(";\n")
+            } else {
+                // The '{' ',' '}' leaves of the constructor: punctuation
+                // stores no field, so the temporary is left as it is.
             }
         }
         @body.append("    ${rec}* ${vname} = ${tmp};\n")
@@ -752,12 +775,12 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro lk = leaf_kind(t)
         if lk == TokenKind.IntLit {
             @body.append("((nova_int)")
-            if neg { @body.append("-") }
+            @body.append(if neg { "-" } else { "" })
             @body.append(leaf_text(t))
             @body.append("LL)")
         } else if lk == TokenKind.FloatLit {
             @body.append("((nova_f64)")
-            if neg { @body.append("-") }
+            @body.append(if neg { "-" } else { "" })
             @body.append(leaf_text(t))
             @body.append(")")
         } else if lk == TokenKind.StrLit {
@@ -792,11 +815,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @emit_expr(kids[0])
         mut i = 0
         for c in kids {
-            if i > 2 && is_expr_kind(c.kind_of()) {
-                @body.append(", ")
-                @emit_expr(c)
-            }
-            i += 1
+            i += 1 // 1-based position: recv, '.', name occupy 1..3
+            if i <= 3 || !is_expr_kind(c.kind_of()) { continue }
+            @body.append(", ")
+            @emit_expr(c)
         }
         @body.append(")")
     } else if k == NodeKind.Call {
@@ -817,11 +839,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         mut first = true
         for c in kids {
-            if is_expr_kind(c.kind_of()) {
-                if !first { @body.append(", ") }
-                @emit_expr(c)
-                first = false
-            }
+            if !is_expr_kind(c.kind_of()) { continue }
+            @body.append(if first { "" } else { ", " })
+            @emit_expr(c)
+            first = false
         }
         @body.append(")")
     } else if k == NodeKind.Paren {
@@ -851,7 +872,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro lhs_t = @out.type_of(kids[0].id_of())
         if lhs_t == @ctx.prims.str_id && is_equality(op) {
             @body.append("((nova_int)(")
-            if op_is_not_equal(op) { @body.append("!") }
+            @body.append(if op_is_not_equal(op) { "!" } else { "" })
             @body.append(c_method(@ctx, lhs_t, "equal"))
             @body.append("(")
             @emit_expr(kids[0])
@@ -938,6 +959,9 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
             }
             @emit_expr(c)
             @body.append(");\n")
+        } else {
+            // The callee leaf and the parenthesis leaves are not arguments;
+            // the callee itself was already refused or accepted by name above.
         }
     }
     @body.append("    nova_print_newline();\n")
