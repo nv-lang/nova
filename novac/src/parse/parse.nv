@@ -383,7 +383,7 @@ fn Cursor mut @fn_decl() -> Node {
     }
     // Receiver or free function? The two only differ AFTER the name and its
     // brackets, so the pieces are held aside and the `@` (or `.`) decides.
-    for t in @type_ref() { head.push(t) }
+    head.append(@type_ref())
     // `fn Account mut @bump()` -- the receiver may be qualified. Without this
     // the `mut` broke the form apart and the refusal blamed a missing return
     // type on a signature that declares one (2026-08-17).
@@ -412,7 +412,7 @@ fn Cursor mut @fn_decl() -> Node {
             // list read above, and the two must not be conflated.
         }
     } else {
-        for h in head { kids.push(h) }
+        kids.append(head)
     }
     @push_if(kids, TokenKind.LParen)
     // A parameter starts with its NAME or with a MODE, and two of the four
@@ -447,7 +447,7 @@ fn Cursor mut @fn_decl() -> Node {
         // `Vec[T]`, `[]int`, `fn(int) -> str`, `ro []Vec[T]` all used to break
         // the parameter list apart here and take the rest of the signature
         // into the junk bucket with them.
-        for n in @type_ref() { pk.push(n) }
+        pk.append(@type_ref())
         // A DEFAULT value: `fn bump(v int, by int = 1)`. D102 orders defaulted
         // parameters after the required ones -- again a position rule -- and
         // the value itself is an ordinary expression.
@@ -463,7 +463,7 @@ fn Cursor mut @fn_decl() -> Node {
     @push_if(kids, TokenKind.RParen)
     if @peek() == TokenKind.Arrow {
         mut rt = []Node.of(@take())
-        for n in @type_ref() { rt.push(n) }
+        rt.append(@type_ref())
         kids.push(@node(NodeKind.RetType, rt))
     } else {
         // No arrow: the signature declares no return type. The RetType node
@@ -690,7 +690,7 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
     // is a TYPE, so it goes through the type door and not through @expr.
     while @peek() == TokenKind.KwAs {
         mut ck = []Node.of(left, @take())
-        for n in @type_ref() { ck.push(n) }
+        ck.append(@type_ref())
         left = @node(NodeKind.Cast, ck)
     }
     while is_binop(@peek()) {
