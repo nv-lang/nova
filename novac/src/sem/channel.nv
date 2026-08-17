@@ -128,8 +128,8 @@ export fn CheckOut mut @record_type(id int, t int) -> ()
 /// Record the decided target of a call.
 export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> ()
     requires id >= 0 && id < @callees.len(), "sem: channel asked about a call outside this file's id space"
+    requires target_row >= 0, "sem: channel callee write with no row — absence is not a decision"
 {
-    assert(target_row >= 0, "sem: channel callee write with no row — absence is not a decision")
     ro prev = @callees[id]
     ro same = prev.target_row == target_row && prev.kind == kind
     assert(prev.target_row < 0 || same, "sem: a call was resolved twice to different targets")
@@ -143,9 +143,9 @@ export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> (
 /// two tables two rather than one habit.
 export fn CheckOut mut @record_subst(id int, args []int) -> ()
     requires id >= 0 && id < @substs.len(), "sem: subst_of asked about a node outside this file's id space"
+    requires @callees[id].target_row < 0, "sem: a node cannot be both a resolved call and a standalone instantiation"
+    requires @substs[id].arg_off < 0, "sem: a node was instantiated twice"
 {
-    assert(@callees[id].target_row < 0, "sem: a node cannot be both a resolved call and a standalone instantiation")
-    assert(@substs[id].arg_off < 0, "sem: a node was instantiated twice")
     ro arg_off = @subst_args.len()
     for a in args {
         @subst_args.push(a)
