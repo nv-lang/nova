@@ -56,6 +56,26 @@ export LC_ALL=C
 set -u
 
 STRICT=0
+
+# Наружный факт рядом с внутренним (см. шапку). Печатает строку про инцидент
+# GitHub, если он есть; молчит, если всё в порядке или спросить не вышло.
+# Короткий таймаут обязателен: страж не имеет права виснуть из-за того, что
+# сама страница статуса недоступна.
+github_incident_note() {
+    command -v curl >/dev/null 2>&1 || return 0
+    _st=$(timeout 10 curl -s https://www.githubstatus.com/api/v2/status.json 2>/dev/null \
+          | grep -o '"indicator":"[a-z]*"' | head -1 | cut -d'"' -f4)
+    case "$_st" in
+        ''|none) return 0 ;;
+    esac
+    _desc=$(timeout 10 curl -s https://www.githubstatus.com/api/v2/status.json 2>/dev/null \
+            | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)
+    say "ВНИМАНИЕ: у GitHub СЕЙЧАС инцидент — indicator=$_st ($_desc)."
+    say "  Прежде чем искать причину у себя: молчащие прогоны и висящие пуши"
+    say "  выглядят точно так же, как поломка своего дерева, и отличаются"
+    say "  только этой строкой. https://www.githubstatus.com"
+}
+
 SHA_ARG=""
 for arg in "$@"; do
     case "$arg" in
@@ -192,11 +212,13 @@ case "$KIND" in
         # никогда не срабатывает на свежем коммите — самотест на Linux падал именно
         # так (клон --depth 1, возраст HEAD = 0 мин, порог 0 → 0 > 0 = false).
         if [ "$AGE_MIN" -ge "$STALE_MIN" ] && [ "$STALE_MIN" -ge 0 ]; then
+            github_incident_note
             say "STALE — на $SHORT НЕТ НИ ОДНОГО ПРОГОНА, коммиту $AGE_MIN мин"
             say "  пуш прошёл, CI не отреагировал — молчащий гейт опаснее красного"
             [ "$STRICT" -eq 1 ] && exit 1
             exit 0
         fi
+        github_incident_note
         say "прогонов на $SHORT пока нет (коммиту $AGE_MIN мин, порог $STALE_MIN)"
         exit 0
         ;;
