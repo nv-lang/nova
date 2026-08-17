@@ -232,7 +232,20 @@
 чтецов, а против того, чтобы считать находку дефектом до верификации: цена
 ложного «подтверждено» — окно чужой работы.
 
-**Что осталось — двенадцать.** Они и есть содержание раздела теперь; остальное
+**ЗАКРЫТО ПО ФАКТУ ИЗ КОДА, 2026-08-17 — четыре из двенадцати.** Пункты 11
+(имена type-set), 16 (`@to_str` — bare-T, а не bounded `Display`), 38
+(переменная окружения auto-arm) и 40 (числа фиберной арены) закрыты не
+обсуждением, а чтением кода, который эти правила исполняет: `std`,
+`test_runner.rs`, `fiber_arena.h`. Обобщение стоит записи: **когда спека
+расходится сама с собой в ИМЕНАХ или ЧИСЛАХ, спрашивать некого — ответ у
+реализации.** Решение владельца нужно там, где расходятся НАМЕРЕНИЯ, а не
+факты; из четырёх такое было одно (множественное число у type-set).
+
+Пункт 5 (позиционный разбор record-варианта) ушёл в реестр как **№719** —
+это уже не расхождение текстов, а дефект компилятора: чекер принимает,
+кодоген падает.
+
+**Что осталось — семь.** Они и есть содержание раздела теперь; остальное
 помечено с указанием, ЧЕМ снято, потому что «снято» без причины через месяц
 читается как «пропущено». Часть двенадцати требует РЕШЕНИЯ ВЛАДЕЛЬЦА, а не
 правки текста: например, имена type-set (`SignedInt` против `SignedInts`) или
@@ -249,7 +262,7 @@
 * ✅ **СНЯТО: два механизма, не противоречие** — When is a unit-typed trailing expression of `supervised {}` evaluated — post-join (D71) or eager/pre-join (D414 §4)? — `spec/decisions/06-concurrency.md:784-785` vs `spec/decisions/06-concurrency.md:7244-7246`
 * ✅ **СНЯТО: два механизма, не противоречие** — Unsigned negation: binary `0 - x` traps (D423 R3) but unary `-x` on unsigned wraps silently (D427 R2), while `checked_neg` reports it as overflow — `spec/decisions/04-effects.md:7712` vs `spec/decisions/04-effects.md:7755`
 * ✅ **СНЯТО: перекрыто амендментом** — Non-exhaustive match on a sum: compile error (surface spec, D59) vs «non-exhaustive match warning» (D65) — `spec/syntax.ru.md:869-871` vs `spec/decisions/04-effects.md:3658-3659`
-* 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — D54 destructures a record-form variant positionally (`Circle(r)`) although it declared `Circle { radius f64 }` — `spec/decisions/03-syntax.md:3587` vs `spec/decisions/03-syntax.md:3707-3712`
+* 🔵 **В РЕЕСТРЕ как №719 2026-08-17 (чекер принимает, кодоген падает)** — D54 destructures a record-form variant positionally (`Circle(r)`) although it declared `Circle { radius f64 }` — `spec/decisions/03-syntax.md:3587` vs `spec/decisions/03-syntax.md:3707-3712`
 * ✅ **СНЯТО: два механизма, не противоречие** — Intra-package import path: D29 example omits the package segment (`import admin.billing.{Invoice}`), while D369/D78 say the first segment is the package name — `spec/decisions/07-modules.md:182` vs `spec/decisions/07-modules.md:2565`
 
 ### contradiction (21)
@@ -257,12 +270,12 @@
 * ✅ **СНЯТО: два механизма, не противоречие** — D416 §5: top-level `detach` stays on 'дефолтном Escalate-all'; D414 §2 / D92 rule 3: detach default is LogAndDrop, never escalates — `spec/decisions/06-concurrency.md:7834-7836` vs `spec/decisions/06-concurrency.md:7197-7198`
 * 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — D191 lists `await fut` for `Future[T]` as a permitted suspend operation; D50 §5 / D14 say there is no `await` marker or Future type in the language — `spec/decisions/03-syntax.md:9705-9710` vs `spec/decisions/06-concurrency.md:616-618`
 * ✅ **СНЯТО: два механизма, не противоречие** — `int as uint` — D54 table says bit-pattern (wrap), D130 says saturate neg→0 — `spec/decisions/03-syntax.md:3381` vs `spec/decisions/02-types.md:5517`
-* 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — Type-set names: D310 declares `SignedInt`/`UnsignedInt`, D430 and std use `SignedInts`/`UnsignedInts` — `spec/decisions/02-types.md:16486` vs `spec/decisions/04-effects.md:7795`
+* ✅ **ЗАКРЫТО 2026-08-17 (решение владельца: множественное число)** — Type-set names: D310 declares `SignedInt`/`UnsignedInt`, D430 and std use `SignedInts`/`UnsignedInts` — `spec/decisions/02-types.md:16486` vs `spec/decisions/04-effects.md:7795`
 * 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — `try_` prefix rule: D325 R3 forbids `try_` without a same-named infallible sibling; D430 names checked narrowing `try_to_<T>` with no `to_<T>` sibling — `spec/decisions/04-effects.md:6705` vs `spec/decisions/04-effects.md:7783`
 * 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — int→char checked conversion: D54 (reaffirmed 2026-08-01) prescribes `char.try_from(n)?`, D325-amend/std prescribe `(cp int).to_char()` — `spec/decisions/03-syntax.md:3469` vs `spec/decisions/04-effects.md:6756`
 * ✅ **СНЯТО: два механизма, не противоречие** — `T.to_str()` as an interpolation escape: D186 amend allows bare `${x}` via a user `@to_str()`; D422 makes `@to_str` Display-bounded and forbids a to_str route into Display — `spec/decisions/02-types.md:8554` vs `spec/decisions/02-types.md:17424`
 * ✅ **СНЯТО скептиком при перепроверке** — Auto-derive on demand (D422 §3.3/3.4) vs `#impl(Display)` gate on interpolation (D186 amend / E_INTERP_NO_DISPLAY) — `spec/decisions/02-types.md:17427` vs `spec/decisions/02-types.md:8549`
-* 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — `@to_str` blanket bound: D410 amend says bare-T `fn[T] T @to_str()`, D422 says `fn[T Display] T @to_str()` — `spec/decisions/03-syntax.md:11841` vs `spec/decisions/02-types.md:17424`
+* ✅ **ЗАКРЫТО 2026-08-17 (факт из std: bare-T, не bounded)** — `@to_str` blanket bound: D410 amend says bare-T `fn[T] T @to_str()`, D422 says `fn[T Display] T @to_str()` — `spec/decisions/03-syntax.md:11841` vs `spec/decisions/02-types.md:17424`
 * ✅ **СНЯТО скептиком при перепроверке** — D430 canonical example uses type-suffix literals (`300u32`) that D44/D227 Rule 4 declare a syntax error — `spec/decisions/03-syntax.md:10525` vs `spec/decisions/04-effects.md:7783`
 * ✅ **СНЯТО: перекрыто амендментом** — Single-variant sum: D52 forbids it, D406 allows it ("minimum one variant") — `spec/decisions/02-types.md:527` vs `spec/decisions/02-types.md:786-788`
 * ✅ **СНЯТО скептиком при перепроверке** — Variant namespace: per-type with qualified fallback (D30/D65) vs flat namespace where qualified value ICEs (D321/D358/D340) — `spec/decisions/03-syntax.md:1169-1176` vs `spec/decisions/04-effects.md:6979`
@@ -288,9 +301,9 @@
 * ✅ **СНЯТО: перекрыто амендментом** — D50 §2 idiom table recommends `mut`-captures inside `supervised` for heterogeneous results; D415 §2 forbids naked mut-capture — `spec/decisions/06-concurrency.md:332` vs `spec/decisions/06-concurrency.md:7348`
 * 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — D75 headline example (`mut results []Response` pushed from `spawn`) is rejected by D415 §2 — `spec/decisions/06-concurrency.md:1237-1240` vs `spec/decisions/06-concurrency.md:7348`
 * ✅ **СНЯТО: два механизма, не противоречие** — D415 §2: `ro`-binding capture 'всегда ок'; D441 §2: ro-captured closure values are the exception — `spec/decisions/06-concurrency.md:7347` vs `spec/decisions/06-concurrency.md:8722-8725`
-* 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — D416 §5 names the retired env var `NOVA_NO_AUTOARM=1`; D138 rule 4 renamed it to `NOVA_AUTOARM=0` — `spec/decisions/06-concurrency.md:7834-7835` vs `spec/decisions/06-concurrency.md:4127-4131`
+* ✅ **ЗАКРЫТО 2026-08-17 (факт из test_runner.rs: `NOVA_AUTOARM=0`)** — D416 §5 names the retired env var `NOVA_NO_AUTOARM=1`; D138 rule 4 renamed it to `NOVA_AUTOARM=0` — `spec/decisions/06-concurrency.md:7834-7835` vs `spec/decisions/06-concurrency.md:4127-4131`
 * 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — D98 'Ограничение': fiber is pinned to the worker it parked on, migration deferred; D138 rule 9 / D173 §6: fibers migrate between workers — `spec/decisions/06-concurrency.md:3591-3594` vs `spec/decisions/08-runtime.md:4236-4237`
-* 🔴 **ПОДТВЕРЖДЕНО (двумя проходами)** — D97 body: 4096 slots × 2 MB, 4 KB guard (Linux/macOS); D233: 16384 fibers/worker, 4MB stack, 16KB guard as builtin defaults — `spec/decisions/06-concurrency.md:3383-3386` vs `spec/decisions/08-runtime.md:8104-8105`
+* ✅ **ЗАКРЫТО 2026-08-17 (факт из fiber_arena.h: 4 МБ / 16 КБ / 16384 на воркер)** — D97 body: 4096 slots × 2 MB, 4 KB guard (Linux/macOS); D233: 16384 fibers/worker, 4MB stack, 16KB guard as builtin defaults — `spec/decisions/06-concurrency.md:3383-3386` vs `spec/decisions/08-runtime.md:8104-8105`
 * ✅ **СНЯТО: перекрыто амендментом** — D62 effect table still lists `Blocking` as a mockable effect; D50 header says the Blocking effect is gone from the compiler entirely — `spec/decisions/04-effects.md:2812` vs `spec/decisions/06-concurrency.md:243-246`
 * ✅ **СНЯТО: перекрыто амендментом** — `int` ≡ `i64` type identity: D129 AMEND says distinct types, D227 (and D315) say alias — `spec/decisions/02-types.md:5431` vs `spec/decisions/03-syntax.md:10481`
 * ✅ **СНЯТО: перекрыто амендментом** — Checked numeric narrowing form: D54 says `T.try_from(x)?` throwing `Fail[OutOfRangeError]`; D430 says `x.try_to_<T>() -> Result[T, RangeError]` and rejects the static form — `spec/decisions/03-syntax.md:3399` vs `spec/decisions/04-effects.md:7783`

@@ -1513,7 +1513,7 @@ fn[T Num] sum_two(a T, b T) -> T => a + b
 Dispatch by the first token after `type Name` (like `enum`/`alias`) — `set`
 is contextual, not a global keyword. A bound from a type-set behaves like a
 protocol-bound: `[T Num]`. Composition with protocols — via `+`: `[T
-SignedInt + Hash]` (T ∈ set AND implements Hash). **No more than one
+SignedInts + Hash]` (T ∈ set AND implements Hash). **No more than one
 type-set** in the bounds list (`E_MULTIPLE_TYPE_SETS`) — protocols
 are allowed in any amount.
 
@@ -1521,7 +1521,7 @@ are allowed in any amount.
 a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
 listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
 type-set as a member). **One set does not mix signed/unsigned integers**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInt`/`UnsignedInt`
+(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInts`/`UnsignedInts`
 in the prelude (`std/prelude/protocols.nv`) are split along this axis.
 
 Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).

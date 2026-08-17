@@ -248,6 +248,6 @@ export fn f32 @clamp(lo f32, hi f32) -> f32 =>
 // `.nv`-declared method, no Rust hardcode (§3).
 //
 // `int @signum`/`@is_negative`/`@is_positive` concrete-on-int-only bodies are
-// covered by the `fn[T SignedInt] ...` blanket (std/prelude/protocols.nv,
+// covered by the `fn[T SignedInts] ...` blanket (std/prelude/protocols.nv,
 // рядом с `@clamp`-бланкетом) — one body for i8/i16/i32/i64/int instead of
 // ×N concrete methods.

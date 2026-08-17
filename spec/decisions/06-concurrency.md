@@ -4221,7 +4221,18 @@ for/detach автоматически распределяется на дост
   fiber-нагрузке.
 - Hello-world без spawn — 0 worker threads.
 - `NOVA_MAXPROCS=N` env var корректно clamp'ит worker count.
-- `NOVA_NO_AUTOARM=1` env var полностью отключает auto-arm (bootstrap
+- `NOVA_AUTOARM=0` env var полностью отключает auto-arm (bootstrap
+
+> **АМЕНДМЕНТ 2026-08-17 (аудит самосогласованности, раздел 4, пункт 38).**
+> Здесь и ниже стояло снятое имя `NOVA_NO_AUTOARM=1`. Действующее —
+> `NOVA_AUTOARM=0`, и спрашивать было не о чем: в `test_runner.rs` (2883,
+> 2889, 3980, 8334) живёт именно оно, а старое осталось лишь в комментарии
+> `emit_c.rs:29750` как ссылка на план 83.4.5.5. Отдельно поучительно, что
+> само переименование спека фиксирует строкой выше («renamed из legacy
+> `NOVA_NO_AUTOARM=1`», Plan 83.4.5.9) — а три соседние строки продолжали
+> пользоваться старым именем как действующим. Правку внесли в одно место из
+> четырёх; ровно этот класс отчёт и ловит.
+
   mode).
 - 24 NEW regressions из Plan 83.4.5 Ф.0 enumeration все PASS под
   default-on M:N (после Plan 83.4.5.7 race fix).
@@ -7848,7 +7859,7 @@ type Supervisor effect {
 Политика применяется к remote-детям armed M:N runtime — дефолтный путь
 исполнения (auto-arm в main; источник `(idx, err)` = per-slot
 `child_error[]` 173.0, который заполняет только remote-путь).
-Bootstrap/single-thread (`NOVA_NO_AUTOARM=1`) и implicit main-scope
+Bootstrap/single-thread (`NOVA_AUTOARM=0`) и implicit main-scope
 (top-level `detach`) остаются на дефолтном Escalate-all — честно
 задокументированное ограничение субстрата, не тихий пропуск политики.
 
