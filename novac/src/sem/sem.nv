@@ -351,9 +351,9 @@ export fn FnTable @row_of(recv_id int, name str) -> int {
 export fn FnTable mut @add(name str, ret_id int, has_recv bool, param_ids []int) -> () {
     ro head = @heads.find(name)
     ro off = @params.len()
-    for t in param_ids {
-        @params.push(t)
-    }
+    // Whole slice at once: std does the copy (nv-coding-style section 18a --
+    // a counted push loop is the red flag it names).
+    @params.append(param_ids)
     @heads.put(name, @rows.len())
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, next_row: head })
 }

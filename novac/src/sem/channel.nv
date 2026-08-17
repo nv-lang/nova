@@ -147,9 +147,7 @@ export fn CheckOut mut @record_subst(id int, args []int) -> ()
     requires @substs[id].arg_off < 0, "sem: a node was instantiated twice"
 {
     ro arg_off = @subst_args.len()
-    for a in args {
-        @subst_args.push(a)
-    }
+    @subst_args.append(args)
     @substs[id] = SubstRef { arg_off, arg_cnt: args.len() }
 }
 

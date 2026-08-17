@@ -130,9 +130,7 @@ export fn Interner mut @intern(kind TypeKind, head_id int, args []int) -> int {
     }
     // not found: push the row and link it at the head of its bucket
     ro off = @args.len()
-    for a in args {
-        @args.push(a)
-    }
+    @args.append(args)
     ro id = @rows.len()
     while @heads.len() <= b {
         @heads.push(-1)
