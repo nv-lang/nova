@@ -31380,9 +31380,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `emit_expr_with_target_type`'s `TupleLit` arm already decodes
             // `_NovaTuple_` elem types and recurses correctly; it just wasn't
             // reached from here. See docs/plans/wip/closure-megacu-fix-notes.md.
+            // №720: РАСХОДЯЩИЙСЯ трейлинг (`panic(...)`, `throw`, вызов
+            // `-> never`) обязан идти по ТИПИЗИРОВАННОМУ пути при ЛЮБОМ типе
+            // возврата, а не только при типах из списка выше. `never` не имеет
+            // представления, и до этой правки его лоуэрили заглушкой
+            // int-семейства (`(nova_int)0LL`, `emit_c.rs:4394/40012`), которая
+            // становилась ИНИЦИАЛИЗАТОРОМ возвращаемого временного. При
+            // `-> int`/`-> bool` типы C случайно совпадали и программа
+            // работала; при `-> str` не совпадали, и пользователь получал
+            // ошибку чужого компилятора при зелёном `nova check`. То есть
+            // громкий отказ был везением, а не проверкой.
+            //
+            // Новой логики эмиссии не добавляется: типизированная заглушка
+            // (`emit_divergent_with_target_125` + `typed_zero_value_125`, дающая
+            // `((T){0})` для структур) уже написана, до неё просто не доходил
+            // маршрут — `emit_expr_with_target_type` сам переадресует на неё.
             let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_")
                 || ret_ty.starts_with("_NovaTuple_")
-                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty) {
+                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty)
+                || self.expr_diverges_125(trailing) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
