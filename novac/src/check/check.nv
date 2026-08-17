@@ -36,7 +36,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op, un_op}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, DefKind, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
@@ -138,7 +138,13 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
             if kind == NodeKind.Block { @report_if_bad_call_stmt(children) }
             if kind == NodeKind.MethodCall { @report_if_unknown_method(children) }
             if kind == NodeKind.Call || kind == NodeKind.MethodCall { @report_if_ordered_args(children) }
-            if kind == NodeKind.FnDecl { @report_if_missing_ret(children) }
+            if kind == NodeKind.FnDecl {
+                @report_if_generic(children)
+                @report_if_missing_ret(children)
+            }
+            if kind == NodeKind.TypeDecl || kind == NodeKind.SumDecl {
+                @report_if_generic(children)
+            }
             if kind == NodeKind.ForStmt { @report_if_bad_for_head(children) }
             if kind == NodeKind.Field {
                 @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
@@ -216,10 +222,34 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     }
     ro hk = branch_children(head)
     if hk.len() < 3 { return }
-    match bin_op(leaf_kind(hk[1])) {
+    match bin_op_of(leaf_kind(hk[1])) {
         Range => {}
         Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => {
             @report_first_leaf_of(kids, "outside the subset: the head of a for must be a range `lo..hi`, not another binary operator")
+        }
+    }
+}
+
+/// Generic parameters are outside the subset -- and the refusal says so.
+///
+/// Until this wave the parser could not see `[T]`, so the signature derailed
+/// and the user was told the return type was missing while it was written
+/// right there. Class recorded in the divergence registry as "the refusal
+/// names the consequence, not the cause": a diagnostic that misattributes
+/// sends the reader to fix code that is correct. E2-b2 replaces this refusal
+/// with monomorphisation; the node it needs is already parsed.
+fn Checker mut @report_if_generic(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() == NodeKind.Generics {
+            @report_first_leaf_of([]Node.of(c), GENERIC_MSG)
+            return
+        }
+        if c.kind_of() != NodeKind.Recv { continue }
+        for r in branch_children(c) {
+            if r.kind_of() == NodeKind.Generics {
+                @report_first_leaf_of([]Node.of(r), GENERIC_MSG)
+                return
+            }
         }
     }
 }
@@ -241,6 +271,10 @@ fn Checker mut @report_if_missing_ret(kids []Node) -> () {
         Branch { .. } => {}
     }
 }
+
+/// One text for both doors (fn and type): the reader must not have to
+/// wonder whether two wordings mean two different limits.
+const GENERIC_MSG = "outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)"
 
 /// Report `msg` at the first leaf found under `children` (depth-first).
 fn Checker mut @report_first_leaf_of(children []Node, msg str) -> () {

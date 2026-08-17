@@ -65,6 +65,7 @@ export type NodeKind enum
     | FnExprBody
     | Param
     | Recv
+    | Generics
     | RetType
     | Unary
     | Paren
@@ -125,37 +126,46 @@ export type BinOp enum
 /// an operator to the table while forgetting the chain would compile clean
 /// and the parser would silently never take it (P22: derived is a FUNCTION,
 /// not a second copy).
-export fn bin_op_opt(k TokenKind) -> Option[BinOp] {
-    if k == TokenKind.Plus { return Some(BinOp.Add) }
-    if k == TokenKind.Minus { return Some(BinOp.Sub) }
-    if k == TokenKind.Star { return Some(BinOp.Mul) }
-    if k == TokenKind.Slash { return Some(BinOp.Div) }
-    if k == TokenKind.Percent { return Some(BinOp.Modulo) }
-    if k == TokenKind.Lt { return Some(BinOp.Less) }
-    if k == TokenKind.Le { return Some(BinOp.LessEq) }
-    if k == TokenKind.Gt { return Some(BinOp.Greater) }
-    if k == TokenKind.Ge { return Some(BinOp.GreaterEq) }
-    if k == TokenKind.EqEq { return Some(BinOp.Equal) }
-    if k == TokenKind.BangEq { return Some(BinOp.NotEqual) }
-    if k == TokenKind.AmpAmp { return Some(BinOp.AndAlso) }
-    if k == TokenKind.PipePipe { return Some(BinOp.OrElse) }
-    if k == TokenKind.Amp { return Some(BinOp.BitAnd) }
-    if k == TokenKind.Pipe { return Some(BinOp.BitOr) }
-    if k == TokenKind.Caret { return Some(BinOp.BitXor) }
-    if k == TokenKind.Shl { return Some(BinOp.ShiftLeft) }
-    if k == TokenKind.Shr { return Some(BinOp.ShiftRight) }
-    if k == TokenKind.DotDot { return Some(BinOp.Range) }
-    None
+export fn bin_op(k TokenKind) -> Option[BinOp] {
+    match k {
+        Plus => Some(BinOp.Add)
+        Minus => Some(BinOp.Sub)
+        Star => Some(BinOp.Mul)
+        Slash => Some(BinOp.Div)
+        Percent => Some(BinOp.Modulo)
+        Lt => Some(BinOp.Less)
+        Le => Some(BinOp.LessEq)
+        Gt => Some(BinOp.Greater)
+        Ge => Some(BinOp.GreaterEq)
+        EqEq => Some(BinOp.Equal)
+        BangEq => Some(BinOp.NotEqual)
+        AmpAmp => Some(BinOp.AndAlso)
+        PipePipe => Some(BinOp.OrElse)
+        Amp => Some(BinOp.BitAnd)
+        Pipe => Some(BinOp.BitOr)
+        Caret => Some(BinOp.BitXor)
+        Shl => Some(BinOp.ShiftLeft)
+        Shr => Some(BinOp.ShiftRight)
+        DotDot => Some(BinOp.Range)
+        // `_ => None` here is NOT the swallowing default P21 forbids: the
+        // RETURN TYPE already declares this map partial, and "this token is
+        // not a binary operator" is the answer for forty-three of the sixty-two
+        // token kinds. A dispatch that must DECIDE for every variant is the
+        // other thing, and it stays exhaustive (owner's question 2026-08-17:
+        // "is a match not nicer here?" -- it is, and the distinction is what
+        // makes it legal).
+        _ => None
+    }
 }
 
 /// Is this token a binary operator? The TOLERANT half -- the parser must ask
 /// before it commits, and peeking is not deciding.
-export fn is_binop(k TokenKind) -> bool => bin_op_opt(k).is_some()
+export fn is_binop(k TokenKind) -> bool => bin_op(k).is_some()
 
 /// The decision. The STRICT half: a token that is not an operator is an
 /// invariant break, because the caller asked `is_binop` first.
-export fn bin_op(k TokenKind) -> BinOp =>
-    bin_op_opt(k) ?? ice("tree: bin_op asked about a token that is not a binary operator")
+export fn bin_op_of(k TokenKind) -> BinOp =>
+    bin_op(k) ?? ice("tree: bin_op asked about a token that is not a binary operator")
 
 /// WHICH assignment an `AssignStmt` performs -- the same decision shape once
 /// more. A compound assignment IS its binary operator plus a store, so the
@@ -166,27 +176,29 @@ export type AssignOp enum
     | Update(BinOp)
 
 /// Token -> assignment, or nothing. One table; both halves derived.
-export fn assign_op_opt(k TokenKind) -> Option[AssignOp] {
-    if k == TokenKind.Assign { return Some(AssignOp.Set) }
-    if k == TokenKind.PlusAssign { return Some(AssignOp.Update(BinOp.Add)) }
-    if k == TokenKind.MinusAssign { return Some(AssignOp.Update(BinOp.Sub)) }
-    if k == TokenKind.StarAssign { return Some(AssignOp.Update(BinOp.Mul)) }
-    if k == TokenKind.SlashAssign { return Some(AssignOp.Update(BinOp.Div)) }
-    if k == TokenKind.PercentAssign { return Some(AssignOp.Update(BinOp.Modulo)) }
-    if k == TokenKind.AmpAssign { return Some(AssignOp.Update(BinOp.BitAnd)) }
-    if k == TokenKind.PipeAssign { return Some(AssignOp.Update(BinOp.BitOr)) }
-    if k == TokenKind.CaretAssign { return Some(AssignOp.Update(BinOp.BitXor)) }
-    if k == TokenKind.ShlAssign { return Some(AssignOp.Update(BinOp.ShiftLeft)) }
-    if k == TokenKind.ShrAssign { return Some(AssignOp.Update(BinOp.ShiftRight)) }
-    None
+export fn assign_op(k TokenKind) -> Option[AssignOp] {
+    match k {
+        Assign => Some(AssignOp.Set)
+        PlusAssign => Some(AssignOp.Update(BinOp.Add))
+        MinusAssign => Some(AssignOp.Update(BinOp.Sub))
+        StarAssign => Some(AssignOp.Update(BinOp.Mul))
+        SlashAssign => Some(AssignOp.Update(BinOp.Div))
+        PercentAssign => Some(AssignOp.Update(BinOp.Modulo))
+        AmpAssign => Some(AssignOp.Update(BinOp.BitAnd))
+        PipeAssign => Some(AssignOp.Update(BinOp.BitOr))
+        CaretAssign => Some(AssignOp.Update(BinOp.BitXor))
+        ShlAssign => Some(AssignOp.Update(BinOp.ShiftLeft))
+        ShrAssign => Some(AssignOp.Update(BinOp.ShiftRight))
+        _ => None
+    }
 }
 
 /// Is this token an assignment operator?
-export fn is_assign_op(k TokenKind) -> bool => assign_op_opt(k).is_some()
+export fn is_assign_op(k TokenKind) -> bool => assign_op(k).is_some()
 
 /// The decision; asking about a non-assignment is an invariant break.
-export fn assign_op(k TokenKind) -> AssignOp =>
-    assign_op_opt(k) ?? ice("tree: assign_op asked about a token that is not an assignment")
+export fn assign_op_of(k TokenKind) -> AssignOp =>
+    assign_op(k) ?? ice("tree: assign_op asked about a token that is not an assignment")
 
 /// WHICH unary operator a `Unary` node applies. Same reason as `BinOp`: the
 /// decision is taken once, and every consumer answers for every variant.
@@ -201,19 +213,21 @@ export type UnOp enum
     | BitNot
 
 /// Token -> unary operator, or nothing. One table, both halves derived.
-export fn un_op_opt(k TokenKind) -> Option[UnOp] {
-    if k == TokenKind.Bang { return Some(UnOp.Not) }
-    if k == TokenKind.Minus { return Some(UnOp.Negate) }
-    if k == TokenKind.Tilde { return Some(UnOp.BitNot) }
-    None
+export fn un_op(k TokenKind) -> Option[UnOp] {
+    match k {
+        Bang => Some(UnOp.Not)
+        Minus => Some(UnOp.Negate)
+        Tilde => Some(UnOp.BitNot)
+        _ => None
+    }
 }
 
 /// Is this token a prefix operator?
-export fn is_unop(k TokenKind) -> bool => un_op_opt(k).is_some()
+export fn is_unop(k TokenKind) -> bool => un_op(k).is_some()
 
 /// The decision; asking about a non-operator is an invariant break.
-export fn un_op(k TokenKind) -> UnOp =>
-    un_op_opt(k) ?? ice("tree: un_op asked about a token that is not a unary operator")
+export fn un_op_of(k TokenKind) -> UnOp =>
+    un_op(k) ?? ice("tree: un_op asked about a token that is not a unary operator")
 
 /// A green node: a leaf carries one Token as DATA; a branch groups children
 /// under a kind. Immutable, lossless, position-free by construction.

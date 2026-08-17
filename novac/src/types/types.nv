@@ -109,10 +109,10 @@ fn Interner @head_of_bucket(b int) -> int {
 fn Interner @args_equal(r int, want []int) -> bool {
     ro row = @rows[r]
     if row.arg_cnt != want.len() { return false }
-    for i in 0..want.len() {
-        if @args[row.arg_off + i] != want[i] { return false }
-    }
-    true
+    // Slices compare as values -- std does the walk, and a view costs nothing
+    // (owner 2026-08-17). The hand-written loop said the same thing in four
+    // lines and hid that this is one comparison.
+    @args[row.arg_off..row.arg_off + want.len()] == want
 }
 
 /// THE ONE WRITER. Intern a term: return the existing row for a

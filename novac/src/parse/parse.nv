@@ -32,7 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op, is_unop, is_assign_op}
+import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
 type Cursor {
@@ -70,6 +70,48 @@ fn Cursor @peek() -> TokenKind {
     @toks[@i].kind
 }
 
+/// The type-parameter list `[T]` / `[K, V]` after a fn or a type name.
+///
+/// The subset does not COMPILE generics yet (E2-b2), but the parser must
+/// still see them, and the reason is a lie it told until this wave: `[` was
+/// not a signature token, so all of `[T](x T) -> T` fell into the junk
+/// bucket, the RetType node was never built, and the refusal read "fn
+/// requires a declared return type" -- about a signature that declares one.
+/// A parser that cannot NAME a construct forces every later pass to guess,
+/// and the guess is reported to the user as the cause. Reading the list is a
+/// balanced-bracket walk; refusing it by name is honest; and E2-b2 finds the
+/// node already in the tree instead of starting with a grammar change.
+fn Cursor mut @generics() -> Node {
+    mut kids = []Node.of(@take()) // '['
+    mut depth = 1
+    while depth > 0 && !@at_eof() {
+        if @peek() == TokenKind.LBracket { depth += 1 }
+        if @peek() == TokenKind.RBracket { depth -= 1 }
+        kids.push(@take())
+    }
+    @node(NodeKind.Generics, kids)
+}
+
+/// Is a METHOD receiver ahead -- `Vec @push` or the generic `Vec[T] @push`?
+///
+/// peek2 alone cannot answer it: between the receiver name and the `@` there
+/// may be a bracket run of any length, so the lookahead scans to the matching
+/// bracket and asks what follows. Without this, `fn Vec[T] @push` reads as a
+/// FUNCTION named Vec and std's generic methods enter harvest misshapen.
+fn Cursor @recv_ahead() -> bool {
+    if @peek() != TokenKind.Ident { return false }
+    if @peek2() == TokenKind.At { return true }
+    if @peek2() != TokenKind.LBracket { return false }
+    mut j = @i + 2
+    mut depth = 1
+    while j < @toks.len() && depth > 0 {
+        if @toks[j].kind == TokenKind.LBracket { depth += 1 }
+        if @toks[j].kind == TokenKind.RBracket { depth -= 1 }
+        j += 1
+    }
+    j < @toks.len() && @toks[j].kind == TokenKind.At
+}
+
 /// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
     // Past the end of the stream, take() returns an EMPTY leaf and does
@@ -103,27 +145,27 @@ fn Cursor @missing() -> Node {
     leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[..0] })
 }
 
-/// The three stop sets of recovery, named ONCE each.
-///
-/// Reviewer's point 2026-08-17, and the measurement behind it: a junk bucket
-/// used to spell its stops as a chain of `peek() != X`, which called the
-/// door three or four times PER TOKEN and left the set itself anonymous --
-/// while there are three different sets in this parser and each is a
-/// decision about where recovery resynchronises. A module-level `ro` is
-/// built once at load (the shape `builtins.universe` already uses), and the
-/// loop asks `peek()` once.
-///
-/// TERMINATORS closes a construct: recovery must NOT eat these, or a stray
-/// bracket drags the rest of the file away (274.3/F15).
+// The three stop sets of recovery, named ONCE each.
+//
+// Reviewer's point 2026-08-17, and the measurement behind it: a junk bucket
+// used to spell its stops as a chain of `peek() != X`, which called the
+// door three or four times PER TOKEN and left the set itself anonymous --
+// while there are three different sets in this parser and each is a
+// decision about where recovery resynchronises. A module-level `ro` is
+// built once at load (the shape `builtins.universe` already uses), and the
+// loop asks `peek()` once.
+//
+// TERMINATORS closes a construct: recovery must NOT eat these, or a stray
+// bracket drags the rest of the file away (274.3/F15).
 ro TERMINATORS = []TokenKind.of(
     TokenKind.RParen, TokenKind.RBrace, TokenKind.RBracket,
     TokenKind.KwFn, TokenKind.KwType, TokenKind.KwModule, TokenKind.Eof)
 
-/// Where a TOP-LEVEL junk run stops: the next declaration of the file.
+// Where a TOP-LEVEL junk run stops: the next declaration of the file.
 ro TOP_LEVEL_STOPS = []TokenKind.of(TokenKind.KwFn, TokenKind.KwModule, TokenKind.KwType)
 
-/// Where junk INSIDE a fn signature stops: the body, the expression arrow,
-/// or the next declaration.
+// Where junk INSIDE a fn signature stops: the body, the expression arrow,
+// or the next declaration.
 ro SIGNATURE_STOPS = []TokenKind.of(
     TokenKind.LBrace, TokenKind.FatArrow, TokenKind.KwFn, TokenKind.KwModule)
 
@@ -208,6 +250,7 @@ export fn parse(toks []Token) -> Node
 fn Cursor mut @type_decl() -> Node {
     mut kids = []Node.of(@take()) // KwType
     if @peek() == TokenKind.Ident { kids.push(@take()) }
+    if @peek() == TokenKind.LBracket { kids.push(@generics()) }
     if @peek() == TokenKind.Pipe {
         while @peek() == TokenKind.Pipe {
             mut vk = []Node.of(@take()) // '|'
@@ -257,12 +300,14 @@ fn Cursor mut @fn_decl() -> Node {
     // subset (novac does not declare methods), but for READING std
     // signatures: the subset method table is built from declarations, not
     // from a list of names in the compiler (П5).
-    if @peek() == TokenKind.Ident && @peek2() == TokenKind.At {
+    if @recv_ahead() {
         mut rk = []Node.of(@take()) // receiver type
+        if @peek() == TokenKind.LBracket { rk.push(@generics()) }
         rk.push(@take())            // '@'
         kids.push(@node(NodeKind.Recv, rk))
     }
     if @peek() == TokenKind.Ident { kids.push(@take()) }
+    if @peek() == TokenKind.LBracket { kids.push(@generics()) }
     if @peek() == TokenKind.LParen { kids.push(@take()) }
     while @peek() == TokenKind.Ident {
         mut pk = []Node.of(@take()) // parameter name
@@ -413,7 +458,7 @@ fn Cursor mut @expr() -> Node => @expr_bp(1)
 fn Cursor mut @expr_bp(min_bp int) -> Node {
     mut left = @primary()
     while is_binop(@peek()) {
-        ro bp = binding_power(bin_op(@peek()))
+        ro bp = binding_power(bin_op_of(@peek()))
         if bp < min_bp { return left }
         ro op = @take()
         // Non-associative range: its right side must not swallow another

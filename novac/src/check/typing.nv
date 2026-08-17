@@ -25,7 +25,7 @@
 module novac.check
 
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op, un_op}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
@@ -86,7 +86,7 @@ fn Checker mut @type_fn(f Node) -> () {
                         // message on valid Nova the oracle accepts. A narrow
                         // subset is legitimate; a subset whose boundary is an
                         // ice is not.
-                        ro pt = @ctx.defs.type_id_opt(leaf_text(pk[1]))
+                        ro pt = @ctx.defs.type_id(leaf_text(pk[1]))
                         if pt < 0 {
                             match pk[1] {
                                 Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
@@ -460,7 +460,7 @@ fn Checker mut @type_expr(e Node) -> () {
 fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     ro lt = type_of(kids[0], @ctx, @scope)
     ro rt = type_of(kids[2], @ctx, @scope)
-    ro op = bin_op(leaf_kind(kids[1]))
+    ro op = bin_op_of(leaf_kind(kids[1]))
     ro numeric = @is_numeric(lt) && @is_numeric(rt)
     ro ints = lt == @ctx.prims.int_id && rt == @ctx.prims.int_id
     ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
@@ -503,7 +503,7 @@ fn Checker @is_primitive(t int) -> bool =>
 /// and is refused at the operator's own position. Returns whether it refused.
 fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
     ro t = type_of(kids[1], @ctx, @scope)
-    match un_op(leaf_kind(kids[0])) {
+    match un_op_of(leaf_kind(kids[0])) {
         Not => { if t == @ctx.prims.bool_id { return false } }
         Negate => { if @is_numeric(t) { return false } }
         BitNot => { if t == @ctx.prims.int_id { return false } }
@@ -598,7 +598,7 @@ fn Scope mut @release(mark int) -> () {
 }
 
 /// Is this name bound in the current scope? The TOLERANT half of the pair
-/// (the same shape as `type_id_opt`/`type_id`, 274.3/F-B4): `check` asks
+/// (the same shape as `type_id`/`type_id`, 274.3/F-B4): `check` asks
 /// before it types, so an unbound name becomes a DIAGNOSTIC at the name's own
 /// position instead of an ice from inside the lattice. Without it the first
 /// floor is the second floor (the class the owner named #652).
@@ -623,10 +623,15 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // A negated literal is [Minus, lit] — judge the LAST leaf.
         ro lk_kids = branch_children(e)
         ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
-        if lk == TokenKind.StrLit { return ctx.prims.str_id }
-        if lk == TokenKind.FloatLit { return ctx.prims.f64_id }
-        if lk == TokenKind.IntLit { return ctx.prims.int_id }
-        ice("check: literal token kind without a type rule (#652 class)")
+        // A table maps, so it is a match -- and its leftover branch is a
+        // REFUSAL, not a guess (P21: the wildcard may only carry `None` where
+        // the type declares partiality; here it carries an ice).
+        match lk {
+            StrLit => { return ctx.prims.str_id }
+            FloatLit => { return ctx.prims.f64_id }
+            IntLit => { return ctx.prims.int_id }
+            _ => { ice("check: literal token kind without a type rule (#652 class)") }
+        }
     }
     if k == NodeKind.Name {
         ro nm = expr_leaf_name(e)
@@ -672,7 +677,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
         if kids[0].kind_of() == NodeKind.Name {
-            return ctx.defs.type_id(expr_leaf_name(kids[0]))
+            return ctx.defs.type_id_of(expr_leaf_name(kids[0]))
         }
         // Anonymous `{ ...src, ... }`: the record type is the spread's.
         for c in kids {
@@ -690,7 +695,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     if k == NodeKind.Unary {
         ro kids = branch_children(e)
         ro operand = type_of(kids[1], ctx, scope)
-        match un_op(leaf_kind(kids[0])) {
+        match un_op_of(leaf_kind(kids[0])) {
             // `!` is strictly logical on bool and is NOT overloadable
             // (D46 AMEND 2026-08-02, @not retracted), so its answer is bool
             // and nothing else.
@@ -706,7 +711,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // The RESULT type is a property of the operator, so it is decided by
         // an exhaustive match on the decision -- not by asking the token
         // whether it happens to be one of three comparisons.
-        match bin_op(leaf_kind(kids[1])) {
+        match bin_op_of(leaf_kind(kids[1])) {
             Less | LessEq | Greater | GreaterEq => { return ctx.prims.bool_id }
             Equal | NotEqual => { return ctx.prims.bool_id }
             AndAlso | OrElse => { return ctx.prims.bool_id }
@@ -777,6 +782,17 @@ fn narrow_overload(kids []Node, ctx Ctx, scope Scope, first int, recv_t int) -> 
 /// Does this candidate take exactly the arguments written at the call site?
 /// The receiver is `params[param_off]` (plan 273), so the arguments start one
 /// past it.
+///
+/// EXACT arity is correct only while the table holds no DEFAULTED parameter
+/// (owner's note 2026-08-17: "we do have parameters with default values").
+/// std has them -- `str @to_int(radix int = 10)` -- and a call that omits a
+/// defaulted argument passes FEWER arguments than the row has parameters, so
+/// this test would reject a valid candidate. It does not bite today because
+/// the parser refuses a default in the subset, so such a signature never
+/// enters the table; the moment defaults are parsed, this comparison must
+/// become "at least the required count, at most the declared one", and the
+/// row must carry how many parameters are required. Recorded in the plan for
+/// E2-b3 rather than left as a surprise.
 fn candidate_takes(kids []Node, ctx Ctx, scope Scope, row int) -> bool {
     ro fd = ctx.fns.rows[row]
     mut i = 0

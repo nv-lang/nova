@@ -11,7 +11,7 @@
 // `InternPool.OptionalIndex` for `-1 = absent`; Donor: none for the harvest rule
 // (a signature enters only when EVERY type is known — the type system filters std
 // overloads, not a name list) and for the tolerant/strict pair
-// `type_id_opt`/`type_id` (274.3/F-B4); NOT taken: a uniform DefId (payload is a
+// `type_id`/`type_id` (274.3/F-B4); NOT taken: a uniform DefId (payload is a
 // per-kind ROW), Go `Scope.Insert`→alt / rustc E0428 duplicate diagnostics
 // (DefTable.add is last-put-wins, collect_types first-owns — check's ground), a
 // per-node type table (Go `types2.Info.Types` / rustc `TypeckResults.node_types`)
@@ -117,7 +117,7 @@ export fn DefTable @find(name str) -> int => @names.find(name)
 /// rule "a type in type position must be declared"); sem invents
 /// nothing — it just does not register what it did not understand.
 #realtime nogc
-export fn DefTable @type_id_opt(name str) -> int {
+export fn DefTable @type_id(name str) -> int {
     ro d = @names.find(name)
     if d < 0 { return -1 }
     ro def = @rows[d]
@@ -128,7 +128,7 @@ export fn DefTable @type_id_opt(name str) -> int {
 /// Resolve `name` in TYPE POSITION (params, fields, returns, constructor
 /// heads): ONE lookup, then the kind must be a type. NO SILENT DEFAULT.
 #realtime nogc
-export fn DefTable @type_id(name str) -> int {
+export fn DefTable @type_id_of(name str) -> int {
     ro d = @names.find(name)
     assert(d >= 0, "sem: type name not in the registry — no silent int default (#652 class)")
     ro def = @rows[d]
@@ -494,8 +494,8 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         }
     }
     if recv_name == "" || mname == "" || ret_name == "" { return }
-    ro recv_t = defs.type_id_opt(recv_name)
-    ro ret_t = defs.type_id_opt(ret_name)
+    ro recv_t = defs.type_id(recv_name)
+    ro ret_t = defs.type_id(ret_name)
     if recv_t < 0 || ret_t < 0 { return }
     // A signature is valid only if ALL its types are known, including
     // its parameters. Otherwise std overloads would land in the table
@@ -514,7 +514,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         ro pk = branch_children(c)
         if pk.len() < 2 { return }
         if pk[1].kind_of() != NodeKind.LeafNode { return }
-        ro pt = defs.type_id_opt(leaf_text(pk[1]))
+        ro pt = defs.type_id(leaf_text(pk[1]))
         if pt < 0 { return }
         param_ids.push(pt)
     }
@@ -567,7 +567,7 @@ export fn collect_types(file Node) -> Ctx {
                 // silent "last put wins" of DefTable.add). Reporting the
                 // duplicate is check's job (a later wave); sem's job is to
                 // not build a second truth for one name.
-                if defs.type_id_opt(leaf_text(nk[1])) < 0 {
+                if defs.type_id(leaf_text(nk[1])) < 0 {
                     defs.add(leaf_text(nk[1]), DefKind.DefType, next_id)
                     next_id += 1
                 }
@@ -581,7 +581,7 @@ export fn collect_types(file Node) -> Ctx {
             if tkids.len() < 2 { continue }
             if tkids[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(tkids[1])
-            ro owner_id = defs.type_id_opt(tname)
+            ro owner_id = defs.type_id(tname)
             if owner_id < 0 { continue }
             // Only the declaration that OWNS the id builds the row: a later
             // duplicate resolves to the same id and must not push a second
@@ -593,7 +593,7 @@ export fn collect_types(file Node) -> Ctx {
                 if f.kind_of() == NodeKind.Field {
                     ro fk = branch_children(f)
                     if fk.len() > 1 && fk[0].kind_of() == NodeKind.LeafNode && fk[1].kind_of() == NodeKind.LeafNode {
-                        ro ft = defs.type_id_opt(leaf_text(fk[1]))
+                        ro ft = defs.type_id(leaf_text(fk[1]))
                         if ft >= 0 {
                             fields.add(owner_id, leaf_text(fk[0]), ft)
                             cnt += 1
@@ -609,7 +609,7 @@ export fn collect_types(file Node) -> Ctx {
             if skids.len() < 2 { continue }
             if skids[1].kind_of() != NodeKind.LeafNode { continue }
             ro sname = leaf_text(skids[1])
-            ro sum_id = defs.type_id_opt(sname)
+            ro sum_id = defs.type_id(sname)
             if sum_id < 0 { continue }
             if sum_id != types.len() { continue } // same rule as for records
             ro off = variant_rows.len()
@@ -636,7 +636,7 @@ export fn collect_types(file Node) -> Ctx {
                         ro pj = vk[j]
                         if pj.kind_of() == NodeKind.LeafNode {
                             if leaf_kind(pj) == TokenKind.Ident {
-                                ro pt = defs.type_id_opt(leaf_text(pj))
+                                ro pt = defs.type_id(leaf_text(pj))
                                 if pt >= 0 {
                                     payload_types.push(pt)
                                     pcnt += 1
@@ -663,7 +663,7 @@ export fn collect_types(file Node) -> Ctx {
             for r in fk {
                 if r.kind_of() == NodeKind.RetType {
                     ro rk = branch_children(r)
-                    if rk.len() > 1 && rk[1].kind_of() == NodeKind.LeafNode { ret = defs.type_id_opt(leaf_text(rk[1])) }
+                    if rk.len() > 1 && rk[1].kind_of() == NodeKind.LeafNode { ret = defs.type_id(leaf_text(rk[1])) }
                 }
             }
             // A file function is a callable with no receiver (plan 273):
@@ -675,7 +675,7 @@ export fn collect_types(file Node) -> Ctx {
                 ro pk = branch_children(pn)
                 mut pt = -1
                 if pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode {
-                    pt = defs.type_id_opt(leaf_text(pk[1]))
+                    pt = defs.type_id(leaf_text(pk[1]))
                 }
                 param_ids.push(pt)
             }
