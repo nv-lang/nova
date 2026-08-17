@@ -598,7 +598,7 @@ fn Scope mut @release(mark int) -> () {
 }
 
 /// Is this name bound in the current scope? The TOLERANT half of the pair
-/// (the same shape as `type_id`/`type_id`, 274.3/F-B4): `check` asks
+/// (the same shape as `type_id`/`type_id_of`, 274.3/F-B4): `check` asks
 /// before it types, so an unbound name becomes a DIAGNOSTIC at the name's own
 /// position instead of an ice from inside the lattice. Without it the first
 /// floor is the second floor (the class the owner named #652).

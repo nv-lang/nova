@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check — tests beside the module (project convention).
+//
+// The checker had no test file at all until 2026-08-17, which the adversarial
+// conformance pass found the same day it found what these tests pin: the
+// mirror of the oracle's E_MISSING_RETURN. The rule is easy to get wrong in
+// BOTH directions -- too wide lets uninitialised memory through, too narrow
+// refuses correct code -- so both directions are pinned here.
+
+module novac.check
+
+import ../source.{SourceText}
+import ../lex.{lex}
+import ../parse.{parse}
+import ../sem.{collect}
+import ../tree.{Node}
+
+/// One door for every case below: text in, number of diagnostics out. The
+/// std declaration list is empty on purpose -- these tests judge the SHAPE
+/// rule, and an empty method table cannot influence it.
+fn diagnose(text str) -> int {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new()))
+    diags.len()
+}
+
+test "tail rule: a binding tail in a value-returning fn is refused" {
+    ro src = "module m\n\nfn f() -> int {\n    ro x = 1\n}\n"
+    assert(diagnose(src) > 0, "a body that ends without a value must be refused")
+}
+
+test "tail rule: an assignment tail is refused" {
+    ro src = "module m\n\nfn f() -> int {\n    mut x = 1\n    x = 2\n}\n"
+    assert(diagnose(src) > 0, "an assignment tail leaves no value")
+}
+
+test "tail rule: an empty body is refused" {
+    ro src = "module m\n\nfn f() -> int {\n}\n"
+    assert(diagnose(src) > 0, "an empty body of a value-returning fn is refused")
+}
+
+test "tail rule: a tail expression is accepted" {
+    ro src = "module m\n\nfn f() -> int {\n    7\n}\n"
+    assert(diagnose(src) == 0, "a tail expression IS the value")
+}
+
+test "tail rule: dead code after an unconditional return is accepted" {
+    // The first mirror refused this and the oracle accepts it: the tail IS a
+    // binding, and it is also unreachable. A refusal that fires on correct
+    // code is a defect even when it errs towards strictness.
+    ro src = "module m\n\nfn f() -> int {\n    return 1\n    ro x = 2\n}\n"
+    assert(diagnose(src) == 0, "an unconditional return makes the tail dead")
+}
+
+test "tail rule: a CONDITIONAL return does not save the tail" {
+    // The oracle answers E_MISSING_RETURN here too -- the branch may not run.
+    ro src = "module m\n\nfn f() -> int {\n    if 1 == 1 { return 1 }\n    ro x = 2\n}\n"
+    assert(diagnose(src) > 0, "a conditional return leaves the end reachable")
+}
+
+test "tail rule: a fn that declares no value is exempt" {
+    // In the E1 subset every fn but `main` must declare `-> T`, and `-> ()`
+    // is not in the grammar at all -- probed 2026-08-17, it comes back as
+    // "construct not in the MVP grammar". So the only shape that declares no
+    // value is main itself, and the rule must not touch it: a binding tail
+    // there is ordinary code, not a missing return.
+    ro src = "module m\n\nfn main() {\n    ro x = 1\n}\n"
+    assert(diagnose(src) == 0, "main declares no value, so nothing is missing")
+}

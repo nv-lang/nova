@@ -135,7 +135,6 @@ const B_BACKSLASH u8 = 0x5C
 // validates via to_str before the pipeline), so "next byte is not a
 // continuation byte" is exactly "codepoint boundary".
 const B_UTF8_TAIL_LO u8 = 0x80
-const B_UTF8_TAIL_HI u8 = 0xBF
 
 /// Whitespace byte: space, tab, CR, LF.
 fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF

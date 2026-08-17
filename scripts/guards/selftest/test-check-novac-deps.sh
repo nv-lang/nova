@@ -46,6 +46,16 @@ printf '  import ../parse.{p}
 sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && bad "импорт с отступом вне таблицы прошёл" || ok "импорт с отступом судится"
 rm -f "$T/src/lex/lex.nv"
 
+# 7. Форма `use` — ровно такой же ввоз имён, как import (проба 2026-08-17:
+#    `use ../lex.{TokenKind}` в diag.nv собралась оракулом и типизировалась,
+#    то есть ребро рабочее). Страж видел только `import`, и единственное
+#    архитектурное правило обходилось сменой ключевого слова.
+printf 'use ../parse.{p}\n' > "$T/src/lex/lex.nv"
+sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && bad "use-форма вне таблицы прошла" || ok "use судится наравне с import"
+printf 'export import ../parse.{p}\n' > "$T/src/lex/lex.nv"
+sh "$G" "$ROOT" "$T/src" "$T/arch.md" >/dev/null 2>&1 && bad "export import вне таблицы прошёл" || ok "export import судится"
+rm -f "$T/src/lex/lex.nv"
+
 # 6. Нарушение: ЦИКЛ в самой таблице. До 2026-08-17 ацикличность считалась
 #    «следствием таблицы» и не проверялась ничем: цикл добавлялся строкой
 #    ровно так же, как честное ребро.
@@ -63,7 +73,7 @@ sh "$G" "$ROOT" "$T/absent" "$T/arch.md" >/dev/null 2>&1 && ok "отсутств
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-deps ok: 7/7"
+    echo "test-check-novac-deps ok: 9/9"
     exit 0
 fi
 echo "test-check-novac-deps: FAIL ($fails)" >&2

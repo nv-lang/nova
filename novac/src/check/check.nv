@@ -268,20 +268,27 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
 /// tail): the reader must not have to wonder whether they are two limits.
 const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a value"
 
-/// A fn that declares a value must END with one -- the same judgement the
-/// oracle started making on 2026-08-17 as `E_MISSING_RETURN`, and until this
-/// wave novac accepted what the oracle rejects (class K7, the dangerous
-/// direction: the subset is supposed to be NARROWER than the language, never
-/// wider). Probe before the fix: `fn f() -> int { ro x = 1 }` -- oracle
-/// E_MISSING_RETURN, novac rc=0 with zero diagnostics.
+/// A fn that declares a value must END with one -- unless the end is
+/// UNREACHABLE. The oracle started judging this on 2026-08-17 as
+/// `E_MISSING_RETURN`, and novac accepted what it rejects (class K7).
 ///
-/// The boundary is taken from the oracle by measurement, not by guesswork
-/// (nine shapes, 2026-08-17). Refused: a body whose last statement is a
-/// BINDING or an ASSIGNMENT, and an EMPTY body. Accepted: a tail expression,
-/// a `return`, an `if` whose branches return, and -- deliberately -- a tail
-/// `while`/`for`, which the oracle accepts too. Where the oracle draws a line
-/// I mirror it exactly; guessing a stricter line would be a divergence of my
-/// own making, and §7.0 wants divergences recorded, not invented.
+/// The rule was mirrored crudely at first and the adversarial pass caught it
+/// the same day: `fn f() -> int { return 1  <NL>  ro x = 2 }` was refused by
+/// novac and accepted by the oracle. Both are right about their halves --
+/// the tail IS a binding, and it is also DEAD, because an unconditional
+/// `return` stands before it. A refusal that fires on correct code is a
+/// defect even when it errs "towards strictness": it sends the reader to fix
+/// what is not broken.
+///
+/// Boundary re-measured across fourteen shapes (2026-08-17). Refused: a
+/// binding or assignment tail, and an empty body, WHEN no unconditional
+/// terminator stands at the top level of the body. Accepted: a tail
+/// expression, a `return`, an `if` whose branches return, a tail `while`/
+/// `for`, and anything at all after an unconditional `return` -- the oracle
+/// accepts each of these. A CONDITIONAL return does not save the tail
+/// (`if c { return 1 }` then a binding is E_MISSING_RETURN for the oracle
+/// too), which is why the scan looks at top-level statements only and does
+/// not walk into branches.
 fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
     mut declares_value = false
     for c in kids {
@@ -295,10 +302,15 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         ro bk = branch_children(c)
         mut last_stmt = -1
         mut i = 0
+        mut terminates = false
         for b in bk {
+            if b.kind_of() == NodeKind.RetStmt { terminates = true }
             if b.kind_of() != NodeKind.LeafNode { last_stmt = i }
             i += 1
         }
+        // The end is unreachable: whatever stands last, it is dead code and
+        // the oracle says nothing about it. Neither do we.
+        if terminates { return }
         if last_stmt < 0 {
             @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
             return

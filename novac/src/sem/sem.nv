@@ -11,7 +11,7 @@
 // `InternPool.OptionalIndex` for `-1 = absent`; Donor: none for the harvest rule
 // (a signature enters only when EVERY type is known — the type system filters std
 // overloads, not a name list) and for the tolerant/strict pair
-// `type_id`/`type_id` (274.3/F-B4); NOT taken: a uniform DefId (payload is a
+// `type_id`/`type_id_of` (274.3/F-B4); NOT taken: a uniform DefId (payload is a
 // per-kind ROW), Go `Scope.Insert`→alt / rustc E0428 duplicate diagnostics
 // (DefTable.add is last-put-wins, collect_types first-owns — check's ground), a
 // per-node type table (Go `types2.Info.Types` / rustc `TypeckResults.node_types`)

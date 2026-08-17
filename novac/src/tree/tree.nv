@@ -165,7 +165,7 @@ export fn is_binop(k TokenKind) -> bool => bin_op(k).is_some()
 /// The decision. The STRICT half: a token that is not an operator is an
 /// invariant break, because the caller asked `is_binop` first.
 export fn bin_op_of(k TokenKind) -> BinOp =>
-    bin_op(k) ?? ice("tree: bin_op asked about a token that is not a binary operator")
+    bin_op(k) ?? ice("tree: bin_op_of asked about a token that is not a binary operator")
 
 /// WHICH assignment an `AssignStmt` performs -- the same decision shape once
 /// more. A compound assignment IS its binary operator plus a store, so the
@@ -198,7 +198,7 @@ export fn is_assign_op(k TokenKind) -> bool => assign_op(k).is_some()
 
 /// The decision; asking about a non-assignment is an invariant break.
 export fn assign_op_of(k TokenKind) -> AssignOp =>
-    assign_op(k) ?? ice("tree: assign_op asked about a token that is not an assignment")
+    assign_op(k) ?? ice("tree: assign_op_of asked about a token that is not an assignment")
 
 /// WHICH unary operator a `Unary` node applies. Same reason as `BinOp`: the
 /// decision is taken once, and every consumer answers for every variant.
@@ -227,7 +227,7 @@ export fn is_unop(k TokenKind) -> bool => un_op(k).is_some()
 
 /// The decision; asking about a non-operator is an invariant break.
 export fn un_op_of(k TokenKind) -> UnOp =>
-    un_op(k) ?? ice("tree: un_op asked about a token that is not a unary operator")
+    un_op(k) ?? ice("tree: un_op_of asked about a token that is not a unary operator")
 
 /// A green node: a leaf carries one Token as DATA; a branch groups children
 /// under a kind. Immutable, lossless, position-free by construction.
