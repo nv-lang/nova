@@ -336,7 +336,16 @@ fn Checker mut @type_match(m Node) -> () {
 /// nobody checked, because `type_of` took the FIRST arm's type and the
 /// comment beside it said the arms "agree by construction".
 ///
-/// They do not. Probe: `match n { 1 => 10  _ => 2.5 }` in a `-> f64` fn.
+/// They do not. Probe -- and it must be written MULTI-LINE, because the
+/// one-line form (arms separated by `,`, spec syntax.ru.md:115) is legal Nova
+/// that this subset does not parse yet:
+///
+///     ro r = match n {
+///         1 => 10
+///         _ => 2.5
+///     }
+///
+/// in a `-> f64` fn.
 /// The emitted C declared `nova_int _novac_match_r`, then assigned
 /// `((nova_f64)2.5)` into it, so the program returned 2 where the oracle
 /// returns 2.5 -- valid C, wrong answer, no diagnostic anywhere. That is the
