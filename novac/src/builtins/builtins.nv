@@ -63,31 +63,31 @@ export type BuiltinType value {
     c_name str /// runtime ABI spelling (nova_rt.h)
 }
 
-/// The universe, in Prims order; the seed hands the ACTUAL ids back
-/// (CommonTypes model, no hard-coded indexes).
-/// THE universe table, built ONCE at module load. It is the WHOLE primitive
-/// set of the language, not a convenient corner of it (owner's question
-/// 2026-08-16: "you still have not added all the builtin types -- does that
-/// make sense?"). It did not: a type novac does not know cannot even be
-/// NAMED in a signature, and novac's own lexer is written in `u8`. The C
-/// names are an ABI fact, read from the oracle's own map
-/// (compiler-codegen/src/codegen/emit_c.rs, the primitive table) rather than
-/// invented -- getting one wrong is a silent layout bug, not a compile error.
-///
-/// What the subset does WITH them is a separate and narrower question:
-/// arithmetic and printing still cover int and f64 only, and `check` refuses
-/// the rest honestly at the operator or the argument. (owner's correction
-/// 2026-08-16: a function returning a fresh vector allocated on EVERY call —
-/// prim_c_name is a door and П18 says a door allocates nothing; the seed loop
-/// called it too. A module-level `ro` binding is initialized once and read
-/// forever; the type system keeps it read-only).
-///
-/// Module-private, not exported, and that is NOT the wanted shape: probed
-/// 2026-08-16 — `export ro` of a vector is not importable across a module
-/// boundary in the oracle (`undefined identifier` at the use site), and
-/// `export const` refuses `.of(...)` (E_CONST_NOT_CONSTEXPR: literals only).
-/// So the table stays private and the ONE reader door below hands it out.
-/// [LEGACY-#701-export-ro-vector] goes when the oracle exports `ro` values.
+// The universe, in Prims order; the seed hands the ACTUAL ids back
+// (CommonTypes model, no hard-coded indexes).
+// THE universe table, built ONCE at module load. It is the WHOLE primitive
+// set of the language, not a convenient corner of it (owner's question
+// 2026-08-16: "you still have not added all the builtin types -- does that
+// make sense?"). It did not: a type novac does not know cannot even be
+// NAMED in a signature, and novac's own lexer is written in `u8`. The C
+// names are an ABI fact, read from the oracle's own map
+// (compiler-codegen/src/codegen/emit_c.rs, the primitive table) rather than
+// invented -- getting one wrong is a silent layout bug, not a compile error.
+//
+// What the subset does WITH them is a separate and narrower question:
+// arithmetic and printing still cover int and f64 only, and `check` refuses
+// the rest honestly at the operator or the argument. (owner's correction
+// 2026-08-16: a function returning a fresh vector allocated on EVERY call —
+// prim_c_name is a door and П18 says a door allocates nothing; the seed loop
+// called it too. A module-level `ro` binding is initialized once and read
+// forever; the type system keeps it read-only).
+//
+// Module-private, not exported, and that is NOT the wanted shape: probed
+// 2026-08-16 — `export ro` of a vector is not importable across a module
+// boundary in the oracle (`undefined identifier` at the use site), and
+// `export const` refuses `.of(...)` (E_CONST_NOT_CONSTEXPR: literals only).
+// So the table stays private and the ONE reader door below hands it out.
+// [LEGACY-#701-export-ro-vector] goes when the oracle exports `ro` values.
 ro universe = []BuiltinType.of(
     BuiltinType { name: "int", c_name: "nova_int" },
     BuiltinType { name: "str", c_name: "nova_str" },
