@@ -198,6 +198,8 @@ guard "$ROOT/scripts/guards/check-novac-match-exhaustive.sh" "$ROOT" || fail "ma
 guard "$ROOT/scripts/guards/check-novac-no-silent-skip.sh" "$ROOT" || fail "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
 guard "$ROOT/scripts/guards/check-novac-pch.sh" "$ROOT" || fail "PCH исчез из горячего пути (274.2 §1а)"
 guard "$ROOT/scripts/guards/check-novac-line-length.sh" "$ROOT" || fail "строка длиннее 120 символов вне исключений (П29)"
+guard "$ROOT/scripts/guards/check-novac-batch.sh" "$ROOT" || fail "пачечный проход раннера разобран (274.2 §1б.1)"
+guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
