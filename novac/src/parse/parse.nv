@@ -331,10 +331,7 @@ fn Cursor mut @type_ref() -> []Node {
     // A qualifier belongs to the type: `ro []int`, `mut Vec[T]`.
     if @peek() == TokenKind.KwRo || @peek() == TokenKind.KwMut { out.push(@take()) }
     // Slice prefixes, possibly stacked: `[][]int`.
-    while @peek() == TokenKind.LBracket && @peek(skip: 1) == TokenKind.RBracket {
-        out.push(@take()) // '['
-        out.push(@take()) // ']'
-    }
+    while @peek() == TokenKind.EmptyBrackets { out.push(@take()) }
     // A function type: `fn(int, str) -> bool`. The parameter list is a
     // balanced paren run -- the types inside are read by the same door when
     // the checker walks them, so nothing is lost by taking the run whole.
@@ -641,6 +638,9 @@ fn Cursor mut @match_expr() -> Node {
         // pattern
         if @peek() == TokenKind.IntLit {
             ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
+        } else if @peek() == TokenKind.EmptyBrackets {
+            // The empty array pattern is one token now.
+            ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
         } else if @peek() == TokenKind.LBracket {
             // Array pattern: `[]` (empty) or `[b1, b2, ..]` (prefix binders
             // + optional rest). Leaves in order; the emitter reads binders
@@ -748,6 +748,12 @@ fn Cursor mut @atom() -> Node {
         return @node(NodeKind.Paren, kids)
     }
     if @peek() == TokenKind.KwMatch { return @match_expr() }
+    // `[]int.of(1, 2)` starts with the ONE-token `[]` since 2026-08-17; the
+    // non-empty literal still opens with a bare `[`. Both are array literals
+    // and both enter here.
+    if @peek() == TokenKind.EmptyBrackets {
+        return @node(NodeKind.ArrayLit, []Node.of(@take()))
+    }
     if @peek() == TokenKind.LBracket {
         // Array literal `[e, ...spread, e]` — comma-separated; a spread
         // element is ArraySpread [Ellipsis, expr].

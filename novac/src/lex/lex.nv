@@ -63,6 +63,12 @@ export type TokenKind enum
     | RParen
     | LBrace
     | RBrace
+    /// `[]` as ONE lexeme: the slice marker of `[]T` and the array
+    /// literal `[]int.of(...)`. It was a PAIR the parser glued back
+    /// together at every type position with a two-token lookahead
+    /// (owner 2026-08-17). The language spells it as one thing, and a
+    /// lexeme the reader treats as one is a token.
+    | EmptyBrackets
     | LBracket
     | RBracket
     | Dot
@@ -302,6 +308,16 @@ export fn lex(src str) -> []Token {
             // outside the E1 subset (context-dependent lexing is the E2
             // mode-stack step). Either way the bytes stay ours -- lossless.
             if has_interp || !closed { kind = TokenKind.ErrorTok }
+        } else if c == ('[' as u8) && i + 1 < n && b[i + 1] == (']' as u8) {
+            // `[]` is ONE lexeme -- the slice marker of `[]T` and the array
+            // literal `[]int.of(...)`. It belongs in this chain, with the
+            // other multi-byte forms, and not bolted onto the single-byte
+            // fallback below: a two-character token read where one-character
+            // tokens live is a token the next reader does not find (owner
+            // 2026-08-17). Only an IMMEDIATE `]` glues: `[ ]` stays two, and
+            // so does `[i]`, because an index expression must see them apart.
+            i += 2
+            kind = TokenKind.EmptyBrackets
         } else if c == ('<' as u8) && i + 2 < n && b[i + 1] == ('<' as u8) && b[i + 2] == ('=' as u8) {
             i += 3
             kind = TokenKind.ShlAssign

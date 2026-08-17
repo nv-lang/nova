@@ -293,6 +293,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 // the type is right there, it is the SHAPE that is not
                 // compiled yet, and the message must say which.
                 ro is_form = t.kind == TokenKind.LBracket ||
+                t.kind == TokenKind.EmptyBrackets ||
                     t.kind == TokenKind.KwRo ||
                     t.kind == TokenKind.KwMut ||
                     t.kind == TokenKind.KwFn ||
@@ -323,6 +324,7 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
     match kids[1] {
         Leaf(t) => {
             ro is_form = t.kind == TokenKind.LBracket ||
+                t.kind == TokenKind.EmptyBrackets ||
                 t.kind == TokenKind.KwRo ||
                 t.kind == TokenKind.KwMut ||
                 t.kind == TokenKind.KwFn ||
