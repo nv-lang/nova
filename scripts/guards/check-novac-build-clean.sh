@@ -26,6 +26,18 @@ ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 LOG="${2:-$ROOT/target/novac-build.log}"
 NAME=check-novac-build-clean
 
+# СВЕЖЕСТЬ ЛОГА — не украшение. Первый же прогон этого стража покраснел на
+# логе, которому было пять часов: восемь предупреждений в нём давно починены,
+# а девять исходников новее его. Страж, судящий вчерашний артефакт, — тот же
+# класс, что 274.3/F1 и F2: механизм есть, но проверяет не то, что думает.
+# Поэтому лог старше любого исходника считается ОТСУТСТВУЮЩИМ.
+if [ -f "$LOG" ] && [ -d "$ROOT/novac/src" ]; then
+    if [ -n "$(find "$ROOT/novac/src" -name '*.nv' -newer "$LOG" 2>/dev/null | head -n 1)" ]; then
+        echo "$NAME: лог сборки старше исходников — пересобираю, судить историю нельзя"
+        rm -f "$LOG"
+    fi
+fi
+
 if [ ! -f "$LOG" ]; then
     NOVA_BIN="$ROOT/nova-cli/target/release/nova.exe"
     [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
