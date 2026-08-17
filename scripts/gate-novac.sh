@@ -200,6 +200,7 @@ guard "$ROOT/scripts/guards/check-novac-pch.sh" "$ROOT" || fail "PCH исчез 
 guard "$ROOT/scripts/guards/check-novac-line-length.sh" "$ROOT" || fail "строка длиннее 120 символов вне исключений (П29)"
 guard "$ROOT/scripts/guards/check-novac-batch.sh" "$ROOT" || fail "пачечный проход раннера разобран (274.2 §1б.1)"
 guard "$ROOT/scripts/guards/check-novac-precondition.sh" "$ROOT" || fail "предусловие двери спрятано в теле (П20 п.5)"
+guard "$ROOT/scripts/guards/check-novac-emitted-names.sh" "$ROOT" || fail "печатаемое C-имя вне объявленных пространств (П24)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
 step "novac-lint (свод nv-coding-style по novac/src)"
