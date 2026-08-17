@@ -1,0 +1,16 @@
+module m
+
+type Box { v int }
+
+fn Box @weight() -> int => @v()
+
+fn main() {
+    ro xs = []Box.of(Box { v: 3 }, Box { v: 4 })
+    mut i = 0
+    mut total = 0
+    while i < xs.len() {
+        total += xs[i].weight()
+        i += 1
+    }
+    println(total)
+}

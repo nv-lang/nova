@@ -1,0 +1,11 @@
+module m
+
+// The same body with `-> int` and with `-> bool` COMPILES AND RUNS:
+// `never` is lowered as nova_int, so the mismatch is invisible when
+// the enclosing C type is integer-compatible. Only `-> str` objects.
+fn kind(k int) -> str {
+    if k == 0 { return "zero" }
+    panic("no such kind")
+}
+
+fn main() => println(kind(0))

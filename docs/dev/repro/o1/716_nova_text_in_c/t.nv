@@ -1,0 +1,12 @@
+module m
+
+fn pick(n int) -> int {
+    mut found = Option[int].None
+    if n == 0 { found = Option[int].Some(10) }
+    match found {
+        Some(v) => v
+        None => -1
+    }
+}
+
+fn main() => println(pick(0))

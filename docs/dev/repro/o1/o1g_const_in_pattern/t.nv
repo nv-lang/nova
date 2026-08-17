@@ -1,0 +1,12 @@
+module m
+
+const B_LP u8 = 0x28
+const B_RP u8 = 0x29
+
+fn kind(b u8) -> int => match b {
+    B_LP => 1
+    B_RP => 2
+    _ => 0
+}
+
+fn main() => println(kind(0x29))
