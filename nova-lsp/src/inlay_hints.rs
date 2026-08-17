@@ -835,6 +835,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn edge_cyrillic_comments_above_do_not_shift_param_hints() {
+        // Registry #709, reported by the owner 2026-08-17 on
+        // `novac/src/parse/parse.nv`: in a file whose comments are Cyrillic,
+        // parameter hints landed INSIDE words (`Recovery ins` + `v: ` + `ide`).
+        // Cyrillic is 2 UTF-8 bytes per 1 UTF-16 unit, so any stage that treats
+        // a byte offset as a char index -- or a char index as a byte offset --
+        // drifts by the count of such characters BEFORE the hint. The comments
+        // here sit on lines the hints are not on, which is exactly the reported
+        // shape: the drift must not accumulate across preceding lines.
+        let src = concat!(
+            "module basics.lsp\n",
+            "// \u{0412}\u{043E}\u{0441}\u{0441}\u{0442}\u{0430}\u{043D}\u{043E}\u{0432}\u{043B}\u{0435}\u{043D}\u{0438}\u{0435} \u{043F}\u{043E}\u{0441}\u{043B}\u{0435} \u{043E}\u{0448}\u{0438}\u{0431}\u{043A}\u{0438} \u{0440}\u{0430}\u{0437}\u{0431}\u{043E}\u{0440}\u{0430}: \u{043F}\u{0440}\u{043E}\u{043F}\u{0443}\u{0441}\u{043A}\u{0430}\u{0435}\u{043C} \u{0434}\u{043E} \u{0442}\u{043E}\u{0447}\u{043A}\u{0438} \u{0441}\u{0438}\u{043D}\u{0445}\u{0440}\u{043E}\u{043D}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{0438}.\n",
+            "// \u{041F}\u{0440}\u{0430}\u{0432}\u{0438}\u{043B}\u{043E} \u{0437}\u{0430}\u{043F}\u{0438}\u{0441}\u{0430}\u{043D}\u{043E} \u{0432} D-\u{0431}\u{043B}\u{043E}\u{043A}\u{0435}; \u{0437}\u{0434}\u{0435}\u{0441}\u{044C} \u{0442}\u{043E}\u{043B}\u{044C}\u{043A}\u{043E} \u{0440}\u{0435}\u{0430}\u{043B}\u{0438}\u{0437}\u{0430}\u{0446}\u{0438}\u{044F} \u{043E}\u{0431}\u{0445}\u{043E}\u{0434}\u{0430}.\n",
+            "fn add(a int, b int) -> int => a + b\n",
+            "fn main() -> () {\n",
+            "    ro _ = add(1, 2)\n",
+            "}\n",
+        );
+        let hs = hints("edge_cyr_comments", src, InlayHintConfig::default());
+        let params: Vec<_> = hs
+            .iter()
+            .filter(|h| h.kind == Some(InlayHintKind::PARAMETER))
+            .collect();
+        assert_eq!(params.len(), 2, "both param hints present");
+
+        // The call is on line 5 (0-based). Columns are the columns of `1` and `2`
+        // on that line -- the line is pure ASCII, so UTF-16 column == byte column.
+        let line = "    ro _ = add(1, 2)";
+        let col1 = line.find('1').expect("has `1`");
+        let col2 = line.rfind('2').expect("has `2`");
+        assert_eq!(
+            (params[0].position.line, params[0].position.character as usize),
+            (5, col1),
+            "`a:` anchors at the first argument, not shifted by Cyrillic above"
+        );
+        assert_eq!(
+            (params[1].position.line, params[1].position.character as usize),
+            (5, col2),
+            "`b:` anchors at the second argument, not shifted by Cyrillic above"
+        );
+    }
+
     // ── EDGE: range filtering ──────────────────────────────────────────────────
 
     #[test]
