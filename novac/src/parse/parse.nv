@@ -509,7 +509,6 @@ fn Cursor mut @fn_decl() -> Node {
     @node(NodeKind.FnDecl, kids)
 }
 
-/// Parse `{ stmt* }`.
 /// The argument list of a call, from the token after `(` to the `)`.
 ///
 /// ONE door for BOTH call forms -- the free call in @atom and the method call
@@ -540,6 +539,7 @@ fn Cursor mut @call_args(mut kids []Node) -> () {
     @push_if(kids, TokenKind.RParen)
 }
 
+/// Parse `{ stmt* }`.
 fn Cursor mut @block() -> Node {
     mut kids = []Node.of(@take()) // LBrace
     while !@at_eof() && @peek() != TokenKind.RBrace {

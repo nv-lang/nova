@@ -490,6 +490,9 @@ fn has_default_value(kids []Node) -> bool {
     false
 }
 
+/// The ONE text of the rule, so that the two doors cannot drift apart.
+const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
+
 /// The head of a `for` must be a RANGE, and the subset says so out loud.
 ///
 /// Found by the adversarial review of the operator wave, 2026-08-16: neither
@@ -499,8 +502,6 @@ fn has_default_value(kids []Node) -> bool {
 /// The oracle refuses all three. This is the exact class P21 names -- a
 /// dispatch that never happened is weaker than a wrong `else` -- and it is
 /// the inverse of the ice that already guards `Range` in expression position.
-const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
-
 fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     if kids.len() < 4 { return }
     ro head = kids[3]
@@ -520,6 +521,19 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: the head of a for must be a range `lo..hi`, not another binary operator")
         }
     }
+}
+
+/// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
+/// do not.
+fn declares_a_value(rk []Node) -> bool {
+    if rk.len() <= 1 { return false }
+    if rk.len() != 3 { return true }
+    ro l = rk[1]
+    ro r = rk[2]
+    if l.kind_of() != NodeKind.LeafNode { return true }
+    if r.kind_of() != NodeKind.LeafNode { return true }
+    ro is_unit = leaf_kind(l) == TokenKind.LParen && leaf_kind(r) == TokenKind.RParen
+    !is_unit
 }
 
 /// One text for the two doors of the rule (an empty body and a statement
@@ -547,19 +561,6 @@ const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a
 /// (`if c { return 1 }` then a binding is E_MISSING_RETURN for the oracle
 /// too), which is why the scan looks at top-level statements only and does
 /// not walk into branches.
-/// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
-/// do not.
-fn declares_a_value(rk []Node) -> bool {
-    if rk.len() <= 1 { return false }
-    if rk.len() != 3 { return true }
-    ro l = rk[1]
-    ro r = rk[2]
-    if l.kind_of() != NodeKind.LeafNode { return true }
-    if r.kind_of() != NodeKind.LeafNode { return true }
-    ro is_unit = leaf_kind(l) == TokenKind.LParen && leaf_kind(r) == TokenKind.RParen
-    !is_unit
-}
-
 fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
     mut declares_value = false
     for c in kids {

@@ -34,7 +34,14 @@
 # $1 — корень репозитория; $2 — override сканируемой директории (шов самотеста).
 # Проверялся: Windows (Git Bash), 2026-08-16.
 export LC_ALL=C
-ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# Корень приводится к АБСОЛЮТНОМУ пути: относительный `.` уводил поиск
+# бинаря мимо цели, и страж писал «сломан раннер» о здоровом дереве
+# (2026-08-18). Ложная краснота стоит дороже отсутствующей проверки:
+# по ней идут искать поломку, которой нет, и в стража перестают верить.
+# Если cd не удался — значение СОХРАНЯЕТСЯ как было: пустой ROOT судил бы
+# корень файловой системы, а это хуже исходной болезни.
+ROOT="${1:-$(dirname "$0")/../..}"
+ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 SRC="${2:-$ROOT/novac/src}"
 NAME=check-novac-match-exhaustive
 
@@ -68,6 +75,13 @@ done < "$T/files" | awk '
         if (match(line, /^[A-Za-z0-9_]+/)) print sum " " substr(line, RSTART, RLENGTH)
         next
     }
+    # Комментарий ВНУТРИ перечисления его не заканчивает. Без этой строки
+    # `///`-док у варианта обрывал сбор: у TokenKind собиралось 26 имён из
+    # 64, после чего ни один match по нему не опознавался как match по этой
+    # сумме, и все они уходили «вне суда» — молча, числом в ЗЕЛЁНОЙ строке
+    # (2026-08-18). Оракул их тоже не судит: арм с OR-группой отключает у
+    # него E_MATCH_NON_EXHAUSTIVE. Значит не проверял никто.
+    sum != "" && /^[[:space:]]*\/\// { next }
     sum != "" && /^[[:space:]]*$/ { next }
     sum != "" { sum = "" }
 ' | sort -u > "$T/variants"
@@ -94,11 +108,22 @@ while IFS= read -r f; do
                 depth--
             }
             if (body ~ /^match .*\{[[:space:]]*$/ || body ~ /^match .*\{$/) {
-                depth++; starts[depth] = ind; lines[depth] = NR; arms[depth] = ""
+                depth++; starts[depth] = ind; lines[depth] = NR; arms[depth] = ""; pend[depth] = ""
+                next
+            }
+            # ПЕРЕНЕСЁННЫЙ арм: `A | B |` и продолжение ниже. Собирался
+            # только до первой строки, и match с длинной OR-группой уходил
+            # «вне суда» молча (2026-08-18). Оракул его тоже не судит --
+            # арм с OR-группой отключает у него E_MATCH_NON_EXHAUSTIVE, --
+            # так что пропуск здесь означал, что не проверяет НИКТО.
+            if (depth > 0 && ind == starts[depth] + 4 && body !~ /=>/ &&
+                body ~ /\|[[:space:]]*$/) {
+                pend[depth] = pend[depth] " " body
                 next
             }
             if (depth > 0 && ind == starts[depth] + 4 && body ~ /=>/) {
-                head = body; sub(/=>.*$/, "", head)
+                head = pend[depth] " " body; pend[depth] = ""
+                sub(/=>.*$/, "", head)
                 # or-образцы: A | B | C
                 n = split(head, parts, /\|/)
                 for (i = 1; i <= n; i++) {

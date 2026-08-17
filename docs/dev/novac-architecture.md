@@ -1075,7 +1075,7 @@ type ObligationSet
 ##### Цикл разрешения
 
 ```nova
-fn drain(cx Checker, obs mut ObligationSet) []Diag
+fn drain(cx Checker, mut obs ObligationSet) []Diag
 ```
 
 Шаг: снять `ObId` с `pending`; довести `subject` по подстановкам вывода; если в

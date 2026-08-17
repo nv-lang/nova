@@ -166,6 +166,55 @@ fn byte_at(b []u8, n int, k int) -> u8 {
     }
 }
 
+/// How this token moves a PARENTHESIS depth: `+1` opens, `-1` closes, `0`
+/// otherwise -- and every kind is NAMED rather than swept into a `_` arm.
+///
+/// Three decisions met on this one function (2026-08-18). The owner asked why
+/// it was a chain of `if` and not a match; then why the result was `Option[int]`
+/// and not `int`; and the P21 guard refuses a `_ =>` arm on a closed set.
+///
+/// All three land in the same place. `bin_op` is partial BY NATURE -- "not a
+/// binary operator" cannot be said with a `BinOp`, there is no neutral one --
+/// so it declares partiality in its type and its `_ => None` is an answer. A
+/// depth HAS a neutral element, so `int` is the honest result and `Option`
+/// would only make every call site write `?? 0`. But `_ => 0` would then be
+/// the swallowing default: a NEW token that ought to nest would quietly get
+/// zero, and the run would end with an unbalanced count and no diagnostic.
+/// Naming every kind costs four lines and buys a compile error at exactly this
+/// spot the day a nesting token is added.
+///
+/// The chain this replaces stood in THREE places over the same two kinds, and
+/// the third of them counted `[`/`]` instead -- the divergence three copies
+/// breed.
+export fn paren_delta(k TokenKind) -> int {
+    match k {
+        LParen => 1
+        RParen => -1
+        EmptyBrackets | KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | Ident | IntLit | FloatLit | StrLit | LBrace | RBrace | LBracket |
+        RBracket | Dot | Comma | Plus | Minus | Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq |
+        BangEq | AmpAmp | PipePipe | Amp | Caret | Shl | Shr | Tilde | Bang | Pipe | FatArrow |
+        Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
+        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis | Colon | At | Arrow |
+        ErrorTok | Eof => 0
+    }
+}
+
+/// The same for `[` and `]`, and exhaustive for the same reason.
+export fn bracket_delta(k TokenKind) -> int {
+    match k {
+        LBracket => 1
+        RBracket => -1
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | Ident | IntLit | FloatLit | StrLit | LParen | RParen | LBrace | RBrace |
+        EmptyBrackets | Dot | Comma | Plus | Minus | Star | Slash | Lt | Le | Gt | Ge | Percent |
+        EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl | Shr | Tilde | Bang | Pipe | FatArrow |
+        Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
+        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis | Colon | At | Arrow |
+        ErrorTok | Eof => 0
+    }
+}
+
 /// Keyword kind for an identifier text, or Ident when it is not a keyword.
 fn keyword_kind(t str) -> TokenKind => match t {
     "module" => TokenKind.KwModule

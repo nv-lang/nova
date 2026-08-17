@@ -18,7 +18,7 @@
 module novac.parse
 
 
-import ../lex.{Token, TokenKind}
+import ../lex.{Token, TokenKind, paren_delta, bracket_delta}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// A type REFERENCE as it appears in a signature: `int`, `Vec[T]`, `[]T`,
@@ -83,7 +83,7 @@ fn Cursor mut @type_ref() -> []Node {
             while !@at_eof() {
                 // ONE peek, ONE decision about the depth (as in @generics).
                 ro k = @peek()
-                ro delta = if k == TokenKind.LParen { 1 } else if k == TokenKind.RParen { -1 } else { 0 }
+                ro delta = paren_delta(k)
                 depth += delta
                 out.push(@take())
                 if depth == 0 { break }
@@ -108,7 +108,7 @@ fn Cursor mut @type_ref() -> []Node {
         while !@at_eof() {
             // ONE peek, ONE decision about the depth (as in @generics).
             ro k = @peek()
-            ro delta = if k == TokenKind.LParen { 1 } else if k == TokenKind.RParen { -1 } else { 0 }
+            ro delta = paren_delta(k)
             depth += delta
             out.push(@take())
             if depth == 0 { break }
@@ -151,7 +151,7 @@ fn Cursor mut @generics() -> Node {
         // (fifty variants, and a wildcard on a closed sum is refused), so the
         // decision is an expression over the value peeked once.
         ro k = @peek()
-        ro delta = if k == TokenKind.LBracket { 1 } else if k == TokenKind.RBracket { -1 } else { 0 }
+        ro delta = bracket_delta(k)
         depth += delta
         kids.push(@take())
     }
