@@ -1,0 +1,22 @@
+module m
+
+// #676, the SILENT half: a method called on `xs[i]` with a VARIABLE index
+// takes the CONTAINER as its receiver. Where the container owns a method of
+// the same name -- and `len` is on every Vec -- nothing is refused and the
+// program answers with the container's number.
+//
+// expected: 3   (the length of "abc")
+// actual:   1   (the length of the vector)
+//
+// The boundary, measured 2026-08-18:
+//   xs[0].len()          literal index            -> 3, correct
+//   xs[i].len()          local container          -> 1, WRONG
+//   f(xs []str, i int)   parameter container      -> 1, WRONG
+//   @datas[idx].len()    field container          -> 3, correct
+//   ro s = xs[i]; s.len()  intermediate binding   -> 3, correct
+
+fn main() {
+    ro xs = []str.of("abc")
+    ro i = 0
+    println(xs[i].len())
+}

@@ -492,7 +492,21 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     for c in kids {
         ro ck = c.kind_of()
         if ck == NodeKind.Recv {
-            recv_name = leaf_text(branch_children(c)[0])
+            // The receiver's NAME is the first identifier LEAF, not child 0:
+            // since 2026-08-17 the group may open with a Generics branch
+            // (`fn[T] []T @map`) or with slice brackets, and `leaf_text` on a
+            // branch is an ice -- which is exactly what it became, on EVERY
+            // file, because std declarations go through this door.
+            for rc in branch_children(c) {
+                ro is_name = rc.kind_of() == NodeKind.LeafNode && leaf_kind(rc) == TokenKind.Ident
+                if is_name && recv_name == "" {
+            recv_name = leaf_text(rc)
+        } else {
+            // Either the name is already found, or this leaf is not one: the
+            // FIRST identifier under the receiver group is the name, and what
+            // follows belongs to its type arguments.
+        }
+            }
         } else if ck == NodeKind.RetType {
             ro rk = branch_children(c)
             if rk.len() < 2 { continue }
@@ -727,6 +741,57 @@ export fn collect_types(file Node) -> Ctx {
         assert(types[i].ty_id == i, "sem: interned term id diverged from declaration index before E2-b2 — a type was interned out of declaration order")
     }
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fns }
+}
+
+/// Where the NAME of a parameter sits among its children, and where its TYPE
+/// begins.
+///
+/// A parameter is `[name, type...]` -- and since 2026-08-17 it may carry a
+/// leading MODE leaf (`fn take(consume v int)`), which shifts both. Every
+/// consumer used to index `pk[0]` and `pk[1]` directly, and the moment the
+/// shape grew those indexes started reading the mode as the name and the name
+/// as the type. That is the same defect the checker hit this morning with
+/// `kids[1]` on a method declaration: a fixed index into a tree whose shape
+/// just grew is a bug waiting for the next form.
+export fn param_name_at(pk []Node) -> int {
+    mut i = 0
+    for c in pk {
+        ro is_ident = c.kind_of() == NodeKind.LeafNode &&
+            leaf_kind(c) == TokenKind.Ident
+        if is_ident && !is_param_mode(leaf_text(c)) { return i }
+        i += 1
+    }
+    -1
+}
+
+/// The parameter MODES, and the set is measured rather than assumed
+/// (2026-08-17, after the owner asked why only `consume` was skipped):
+///
+///     mut v int       legal -- and the one std actually uses, 131 times
+///     consume v int   legal -- 4 times in std
+///     ro v int        parses, then E_REDUNDANT_PARAM_RO (`ro` is default)
+///     uninit v int    parses
+///     own v int       "expected `,`, got identifier" -- NOT a mode
+///     zzz v int       the same, so the set is closed, not open
+///
+/// The `own`/`borrow`/`inout` rows came back "accepted" in an earlier probe of
+/// mine, and they were wrong the same way twice in one shift: the grep behind
+/// the measurement matched only BRACKETED error codes, and this diagnostic
+/// carries none. A measurement is only as good as what it agrees to see.
+fn is_param_mode(word str) -> bool =>
+    word == "mut" || word == "ro" || word == "consume" || word == "uninit"
+
+/// The first node of the parameter's TYPE, or -1 when it declares none.
+export fn param_type_at(pk []Node) -> int {
+    ro n = param_name_at(pk)
+    if n < 0 { return -1 }
+    if n + 1 >= pk.len() { return -1 }
+    ro t = n + 1
+    ro c = pk[t]
+    ro no_type = c.kind_of() == NodeKind.LeafNode &&
+        leaf_kind(c) == TokenKind.Comma
+    if no_type { return -1 }
+    t
 }
 
 /// Children of a branch node; a leaf here is an invariant break.

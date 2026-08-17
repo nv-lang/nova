@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{Ctx, CheckOut, DefKind, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -102,8 +102,25 @@ fn Checker mut @type_fn(f Node) -> () {
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
             ro pk = branch_children(c)
-            if pk.len() < 2 || pk[1].kind_of() != NodeKind.LeafNode ||
-                leaf_kind(pk[1]) != TokenKind.Ident { continue }
+            // NAME and TYPE are located by the shared doors, never by index.
+            // `pk[0]`/`pk[1]` read the MODE as the name and the name as the
+            // type the moment a parameter is written `fn take(mut v int)`,
+            // and the failure wore a lie for a face: `int` refused as a type
+            // novac does not know. Third instance of the fixed-index class
+            // today (method-declaration ice, check's kids[1], this).
+            ro nat = param_name_at(pk)
+            ro tat = param_type_at(pk)
+            if nat < 0 || tat < 0 { continue }
+            // [LEGACY-#676] var-index-method (until:E3): a method called on
+            // `pk[tat]` with a VARIABLE index takes the CONTAINER as its
+            // receiver. Where the container happens to own a method of the
+            // same name the program simply returns the wrong number and says
+            // nothing -- measured 2026-08-18, `xs[i].len()` answering 1 for
+            // `["abc"]`. The intermediate binding is the whole workaround.
+            ro tnode = pk[tat]
+            ro nnode = pk[nat]
+            if tnode.kind_of() != NodeKind.LeafNode ||
+                leaf_kind(tnode) != TokenKind.Ident { continue }
             // FIRST FLOOR for a type novac does not know (owner
             // 2026-08-16, "not all builtin types are parsed --
             // does that make sense?"). Its universe is four
@@ -114,15 +131,15 @@ fn Checker mut @type_fn(f Node) -> () {
             // message on valid Nova the oracle accepts. A narrow
             // subset is legitimate; a subset whose boundary is an
             // ice is not.
-            ro pt = @ctx.defs.type_id(leaf_text(pk[1]))
+            ro pt = @ctx.defs.type_id(leaf_text(tnode))
             if pt < 0 {
-                match pk[1] {
+                match tnode {
                     Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
                     Branch { .. } => {}
                 }
                 return
             }
-            @scope.bind(leaf_text(pk[0]), pt)
+            @scope.bind(leaf_text(nnode), pt)
         }
     } else {
         // ENTRY_FN takes no parameters in the subset, so there is nothing to

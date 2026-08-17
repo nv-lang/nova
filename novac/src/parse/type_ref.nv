@@ -43,10 +43,17 @@ fn Cursor mut @type_ref() -> []Node {
     //
     // The positions, for the judge: a RECEIVER takes no leading qualifier, a
     // PARAMETER may take `mut` or `consume`, a RESULT may take `ro`.
+    // Only `ro` and `mut` stand in TYPE position. `consume` is a parameter
+    // MODE and goes before the NAME (`fn take(consume v int)`); `uninit` is
+    // not a type qualifier either. Measured 2026-08-17 after the owner
+    // challenged an earlier table of mine that said otherwise: with the
+    // parameter actually USED, `v consume int` is "expected type, got
+    // `consume`" and `v uninit int` is E_UNSAFE_T_READ_REQUIRES_WRAP. My
+    // first measurement had the parameter unused and a grep that swallowed
+    // the error -- a probe that does not use what it declares proves less
+    // than it looks.
     ro q = @peek()
-    ro qt = @peek_text()
-    ro is_qual = q == TokenKind.KwRo || q == TokenKind.KwMut ||
-        qt == "consume" || qt == "uninit"
+    ro is_qual = q == TokenKind.KwRo || q == TokenKind.KwMut
     if is_qual {
         out.push(@take())
     } else {

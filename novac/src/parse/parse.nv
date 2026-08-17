@@ -362,19 +362,28 @@ fn Cursor mut @fn_decl() -> Node {
     //   fn[T] []T @map[U](f fn(T) -> U) -> []U
     //   ^^^^^ on the fn   ^^^ on the method name
     //         ^^^ and the receiver is a type reference, not an identifier
-    // The `fn[...]` position is read first because it comes before the
-    // receiver; an empty bracket run right after `fn` is not a thing, so
-    // there is nothing to tell apart here.
+    // Type parameters written straight after `fn` BELONG TO THE RECEIVER, so
+    // they are held aside and become part of the receiver group -- not pushed
+    // into the declaration's children (owner 2026-08-17). The spec spells the
+    // ownership out: `fn[T] []T @map[U]` binds T for the receiver `[]T` and U
+    // for the method, and std splits the same way -- 55 receiver-form
+    // declarations against 18 free ones written `fn name[T](...)`, and the
+    // mixed shape never.
+    //
+    // Where there is NO receiver, this position is simply wrong, and check
+    // says so by name: the node still reaches the tree (losslessness), it
+    // just reaches it as the free function's own child, where the position
+    // rule finds it.
+    mut head = []Node.new()
     if @peek() == TokenKind.LBracket {
-        kids.push(@generics())
+        head.push(@generics())
     } else {
-        // The fn declares no type parameters. Genericity is read off the
-        // PRESENCE of the node, so an empty Generics node would make every
-        // plain fn look generic to check.
+        // No type parameters before the receiver -- the ordinary case for a
+        // plain fn and for a method on a non-generic type.
     }
     // Receiver or free function? The two only differ AFTER the name and its
-    // brackets, so the pieces are held aside and the `@` decides.
-    mut head = @type_ref()
+    // brackets, so the pieces are held aside and the `@` (or `.`) decides.
+    for t in @type_ref() { head.push(t) }
     // `fn Account mut @bump()` -- the receiver may be qualified. Without this
     // the `mut` broke the form apart and the refusal blamed a missing return
     // type on a signature that declares one (2026-08-17).
@@ -406,8 +415,30 @@ fn Cursor mut @fn_decl() -> Node {
         for h in head { kids.push(h) }
     }
     @push_if(kids, TokenKind.LParen)
-    while @peek() == TokenKind.Ident {
-        mut pk = []Node.of(@take()) // parameter name
+    // A parameter starts with its NAME or with a MODE, and two of the four
+    // modes are KEYWORDS (`mut`, `ro`) rather than identifiers -- entering
+    // the loop only on Ident tore the list apart at the first `mut v int`
+    // and blamed a missing return type on a signature that declares one.
+    while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
+        @peek() == TokenKind.KwRo {
+        mut pk = []Node.new()
+        // A parameter MODE stands before the name: `fn take(consume v int)`.
+        // It is not a keyword in this lexer, so it is recognised by spelling
+        // and kept as a leaf -- the tree is lossless and check judges it.
+        // The mode set is closed and measured (sem.is_param_mode): `mut`,
+        // `ro`, `consume`, `uninit`. An arbitrary word here is not a mode --
+        // the oracle answers "expected `,`, got identifier" -- so the parser
+        // must not treat every leading identifier as one.
+        ro pmode = @peek_text()
+        ro is_mode = pmode == "mut" || pmode == "ro" ||
+            pmode == "consume" || pmode == "uninit"
+        ro mode_ahead = is_mode && @peek(skip: 1) == TokenKind.Ident
+        if mode_ahead {
+            pk.push(@take())
+        } else {
+            // No mode: the ordinary parameter, whose first leaf is its name.
+        }
+        pk.push(@take()) // parameter name
         // The TYPE is a type reference, not one identifier (owner 2026-08-17).
         // `Vec[T]`, `[]int`, `fn(int) -> str`, `ro []Vec[T]` all used to break
         // the parameter list apart here and take the rest of the signature

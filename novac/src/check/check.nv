@@ -39,7 +39,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, DefKind, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, DefKind, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 /// State of one check run: the source (for positions), the semantic context
 /// and the diagnostics collected so far. A receiver, not a triple of
@@ -281,6 +281,37 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
 /// would otherwise produce two diagnostics for one mistake (the Err branch's
 /// and this one) — a cascade, which the no-cascade rule forbids.
 fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
+    // The TYPE is located by the shared door, not by index: a parameter may
+    // carry a leading MODE leaf (`fn take(consume v int)`), and `kids[1]`
+    // then reads the NAME as the type. Same class as the method-declaration
+    // ice this morning -- a fixed index into a tree whose shape just grew.
+    ro at = param_type_at(kids)
+    if at > 1 {
+        match kids[at] {
+            Leaf(t) => {
+                ro is_form = t.kind == TokenKind.LBracket ||
+                    t.kind == TokenKind.EmptyBrackets ||
+                    t.kind == TokenKind.Star ||
+                    t.kind == TokenKind.KwRo ||
+                    t.kind == TokenKind.KwMut ||
+                    t.kind == TokenKind.KwFn ||
+                    t.kind == TokenKind.LParen
+                if is_form {
+                    @report_first_leaf_of(kids, TYPE_FORM_MSG)
+                } else {
+                    // A plain named type in a parameter carrying a mode: the
+                    // shape is fine and the name resolution judges the rest.
+                }
+                return
+            }
+            Branch { .. } => {
+                // A generics node after the name: judged by the loop below.
+                return
+            }
+        }
+    } else {
+        // No mode leaf (or no type at all): the ordinary path below answers.
+    }
     for c in kids {
         if c.kind_of() == NodeKind.Generics {
             @report_first_leaf_of(kids, TYPE_FORM_MSG)
@@ -351,12 +382,18 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
 /// Which leading qualifier is legal in WHICH position -- MEASURED against the
 /// oracle 2026-08-17, not guessed:
 ///
-///     v ro int        E_REDUNDANT_PARAM_RO         `ro` is the default
-///     v mut int       E_PARAM_TYPE_POS_MUT_RETRACTED
-///     v consume int   accepted
-///     v uninit int    accepted
-///     -> ro int       accepted
-///     -> mut int      E_REDUNDANT_RETURN_MUT
+///     v ro int         E_REDUNDANT_PARAM_RO        `ro` is the default
+///     v mut int        E_PARAM_TYPE_POS_MUT_RETRACTED
+///     v consume int    expected type, got `consume` -- it is a parameter
+///                      MODE and stands before the NAME
+///     consume v int    accepted, builds, runs
+///     v uninit int     E_UNSAFE_T_READ_REQUIRES_WRAP
+///     -> ro int        accepted
+///     -> mut int       E_REDUNDANT_RETURN_MUT
+///
+/// The `consume`/`uninit` rows were WRONG in an earlier version of this table:
+/// the probe left the parameter unused and the grep swallowed the diagnostic.
+/// A probe that does not USE what it declares proves less than it looks.
 ///
 /// The parser reads every qualifier in every position (plan 9.4), so this is
 /// where a misplaced one is named -- as a POSITION mistake, not as a form the
