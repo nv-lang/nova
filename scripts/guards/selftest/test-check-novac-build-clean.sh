@@ -53,6 +53,34 @@ else
     echo "  note: лога нет -> страж собрал сам/отказал (это законный красный)"
 fi
 
+
+# Владелец чужого кода определяется ПУТЁМ, а не каталогом сборки
+# (адверсарная проверка 2026-08-17: шапка обещала «предупреждение о std/
+# рантайме/оракуле не наше», а фильтр отбрасывал строки со словом target).
+printf 'warning: unused import in std/src/runtime/x.nv
+' > "$T/std.log"
+if sh "$G" "$ROOT" "$T/std.log" >/dev/null 2>&1; then
+    echo "  ok: предупреждение про std -> зелено"
+else
+    echo "  FAIL: предупреждение про std покрасило" >&2; fails=$((fails+1))
+fi
+
+printf 'warning: doc-comment before bare ro is ignored. span: Span { start: 12 }
+' > "$T/nopath.log"
+if sh "$G" "$ROOT" "$T/nopath.log" >/dev/null 2>&1; then
+    echo "  FAIL: предупреждение БЕЗ пути прошло зелёным — а собираем мы novac" >&2; fails=$((fails+1))
+else
+    echo "  ok: предупреждение без пути -> красный"
+fi
+
+printf 'warning: something in novac/src/lex/lex.nv:12
+' > "$T/ours.log"
+if sh "$G" "$ROOT" "$T/ours.log" >/dev/null 2>&1; then
+    echo "  FAIL: предупреждение про novac/src прошло зелёным" >&2; fails=$((fails+1))
+else
+    echo "  ok: предупреждение про novac/src -> красный"
+fi
+
 [ "$fails" -eq 0 ] && echo "test-check-novac-build-clean ok" && exit 0
 echo "test-check-novac-build-clean FAIL: $fails" >&2
 exit 1

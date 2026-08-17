@@ -49,9 +49,17 @@ if [ ! -f "$LOG" ]; then
     "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" > "$LOG" 2>&1
 fi
 
-# предупреждения, указывающие в НАШИ исходники
+# Предупреждение НАШЕ, если оно не указывает в чужую землю. Прежний фильтр
+# отбрасывал строки со словами novac/target и nova-cli/target — то есть по
+# каталогам СБОРКИ, а не по владельцу кода, и шапка обещала не то, что делал
+# код (адверсарная проверка 2026-08-17). Чужая земля — std, рантайм, оракул,
+# vcpkg и любые target/: предупреждения оттуда не наш красный. Всё
+# остальное, включая строки без пути (оракул печатает span без файла), —
+# наше, потому что собираем мы novac.
 W="${TMPDIR:-/tmp}/novac-build-clean.$$"
-grep -i "warning" "$LOG" | grep -v "novac/target\|nova-cli/target" > "$W" 2>/dev/null
+grep -i "warning" "$LOG" \
+    | grep -vE "(^|[^a-z])(std/|nova-cli/|compiler-codegen/|vcpkg|nova_tests/|[A-Za-z0-9_.-]*target/)" \
+    > "$W" 2>/dev/null
 n=$(grep -c . "$W" 2>/dev/null)
 [ -n "$n" ] || n=0
 

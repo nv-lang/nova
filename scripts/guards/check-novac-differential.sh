@@ -176,6 +176,28 @@ if [ -n "$wall_ms" ] && [ -n "$bud_ms" ]; then
     fi
     echo "$NAME: цена дифф-раннера ${wall_ms}мс при бюджете ${ebud_ms}мс (калибровка x${scale}/100)"
 fi
+# --- Монотонность САМОГО файла базы (адверсарная проверка 2026-08-17) ------
+# Храповик сверял ПРОГОН с файлом и ни разу — файл с его историей. Значит
+# откат делался в одну строку: опусти число в базе, и прогон снова "== база",
+# зелено. Ратчет, который можно отпустить рукой, — не ратчет. Сравниваем с
+# версией файла в HEAD; допускается только рост.
+BFILE="$ROOT/scripts/guards/novac-corpus.baseline"
+HEAD_B=$(git -C "$ROOT" show "HEAD:scripts/guards/novac-corpus.baseline" 2>/dev/null || true)
+if [ -n "$HEAD_B" ]; then
+    for key in contract-match behavior-match; do
+        was=$(printf '%s\n' "$HEAD_B" | sed -n "s/^$key[[:space:]][[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -1)
+        now=$(sed -n "s/^$key[[:space:]][[:space:]]*\([0-9][0-9]*\).*/\1/p" "$BFILE" 2>/dev/null | head -1)
+        [ -n "$was" ] && [ -n "$now" ] || continue
+        if [ "$now" -lt "$was" ]; then
+            echo "$NAME: FAIL — база ОПУЩЕНА рукой: $key было $was, стало $now (§10.4: числа могут только расти)" >&2
+            echo "  Если падение законно (корпус сузился, файл вышел из точки) — объясни это" >&2
+            echo "  строкой в самом файле базы и подними её отдельным решением, а не молча." >&2
+            exit 1
+        fi
+    done
+fi
+
+
 if [ "$cm" -lt "$base_cm" ] || [ "$bm" -lt "$base_bm" ]; then
     echo "$NAME: FAIL — ОТКАТ храповика: contract $cm (база $base_cm), behavior $bm (база $base_bm)" >&2
     exit 1
