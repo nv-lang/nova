@@ -1,0 +1,74 @@
+#!/bin/sh
+# scripts/guards/check-novac-table-is-match.sh — ТАБЛИЦА пишется `match`, а не
+# цепочкой `if x == Тип.Вариант { return ... }` (конвенция П21 п.3; владелец
+# 2026-08-17: «все три таблицы на match — такое предпочтительно, в конвенцию
+# + страж»).
+#
+# ЗАЧЕМ. Цепочка из девятнадцати `if k == TokenKind.X { return Some(...) }`
+# говорит ровно то же, что `match`, но: читается построчно вместо одного
+# взгляда, повторяет имя переменной в каждой строке, и главное — прячет, что
+# это ОТОБРАЖЕНИЕ. `match` показывает таблицу таблицей, а его ветка-остаток
+# обязана быть либо `None` (частичность, объявленная типом), либо отказом.
+#
+# ПРОВЕРЯЕТ novac/src/**/*.nv (тесты исключены): нет трёх и более ПОДРЯД строк
+#   вида `if <одна и та же переменная> == <Тип>.<Вариант> { return ... }`.
+#   Три — порог: две ветки ещё читаются как условие, три уже таблица.
+# НЕ ПРОВЕРЯЕТ: диспетчеры с телами (там `if` несёт работу, а не значение);
+#   сравнения с не-вариантами (числа, строки); `||`-цепочки — это предикат,
+#   а не таблица, и он законен (П29 требует лишь переносить длинную строку).
+#
+# $1 — корень; $2 — override директории (шов самотеста).
+# Проверялся: Windows (Git Bash), 2026-08-17.
+export LC_ALL=C
+ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+SRC="${2:-$ROOT/novac/src}"
+NAME=check-novac-table-is-match
+
+if [ ! -d "$SRC" ]; then
+    echo "$NAME ok: судить нечего (нет $SRC)"
+    exit 0
+fi
+
+T="${TMPDIR:-/tmp}/novac-table.$$"
+mkdir -p "$T" || exit 1
+trap 'rm -rf "$T"' 0
+
+find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort > "$T/files"
+[ -s "$T/files" ] || { echo "$NAME: FAIL — в $SRC нет ни одного .nv: страж потерял мишень (класс №519)" >&2; exit 1; }
+
+: > "$T/bad"
+: > "$T/cnt"
+while IFS= read -r f; do
+    rel=${f#"$SRC"/}
+    tr -d '\r' < "$f" | awk -v REL="$rel" -v OUT="$T/bad" -v CNT="$T/cnt" '
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            n = 0
+            if (match(line, /^if [A-Za-z_@][A-Za-z0-9_.]* == [A-Z][A-Za-z0-9_]*\.[A-Za-z0-9_]+ \{ return .* \}$/)) {
+                v = line; sub(/^if /, "", v); sub(/ ==.*/, "", v)
+                if (v == curvar) { run++ } else { curvar = v; run = 1; start = FNR }
+                total++
+                next
+            }
+            if (run >= 3) printf "  %s:%d — цепочка из %d `if %s == ...` подряд: это таблица, пиши match\n", REL, start, run, curvar >> OUT
+            run = 0; curvar = ""
+        }
+        END {
+            if (run >= 3) printf "  %s:%d — цепочка из %d `if %s == ...` подряд: это таблица, пиши match\n", REL, start, run, curvar >> OUT
+            print total+0 >> CNT
+        }
+    '
+done < "$T/files"
+N=$(awk '{s+=$1} END {print s+0}' "$T/cnt")
+
+if [ -s "$T/bad" ]; then
+    echo "$NAME: FAIL — таблица написана цепочкой if (П21 п.3):" >&2
+    cat "$T/bad" >&2
+    echo "  match показывает отображение отображением; ветка-остаток обязана быть" >&2
+    echo "  либо None (частичность по типу), либо отказом (ice/@refuse)." >&2
+    exit 1
+fi
+
+echo "$NAME ok: строк-таблиц (if x == Тип.Вариант => return): $N, цепочек длиннее двух: 0"
+exit 0

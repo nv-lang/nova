@@ -201,6 +201,7 @@ guard "$ROOT/scripts/guards/check-novac-line-length.sh" "$ROOT" || fail "стр�
 guard "$ROOT/scripts/guards/check-novac-batch.sh" "$ROOT" || fail "пачечный проход раннера разобран (274.2 §1б.1)"
 guard "$ROOT/scripts/guards/check-novac-precondition.sh" "$ROOT" || fail "предусловие двери спрятано в теле (П20 п.5)"
 guard "$ROOT/scripts/guards/check-novac-emitted-names.sh" "$ROOT" || fail "печатаемое C-имя вне объявленных пространств (П24)"
+guard "$ROOT/scripts/guards/check-novac-table-is-match.sh" "$ROOT" || fail "таблица написана цепочкой if вместо match (П21 п.4)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
 guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
 step "novac-lint (свод nv-coding-style по novac/src)"

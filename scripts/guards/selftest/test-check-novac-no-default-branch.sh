@@ -187,6 +187,33 @@ else
     grep -q "заглушка" "$T/err" && ok "на закрытом множестве подстановочник по-прежнему красный" || bad "красный, но не про заглушку"
 fi
 
+# --- `_ => None` — частичное отображение, а не проглатывание (2026-08-17) --
+mkdir -p "$T/partial/sem"
+{ echo 'module a'
+  echo 'fn op(k Kind) -> Option[Op] {'
+  echo '    match k {'
+  echo '        Plus => Some(Op.Add)'
+  echo '        _ => None'
+  echo '    }'
+  echo '}'
+} > "$T/partial/sem/a.nv"
+run "$T/partial" && ok "подстановочник в None законен: тип объявил отображение частичным" || bad "частичное отображение покраснело: $(cat "$T/err")"
+
+mkdir -p "$T/swallow/sem"
+{ echo 'module a'
+  echo 'fn name(k Kind) -> str {'
+  echo '    match k {'
+  echo '        Plus => "plus"'
+  echo '        _ => "other"'
+  echo '    }'
+  echo '}'
+} > "$T/swallow/sem/a.nv"
+if run "$T/swallow"; then
+    bad "заглушка с обычным значением прошла — запрет ослаб"
+else
+    grep -q "заглушка" "$T/err" && ok "заглушка не-None по-прежнему красная" || bad "красный, но не про заглушку"
+fi
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-no-default-branch ok: все случаи, включая живой дефект и оба вида не-диспетчера"
