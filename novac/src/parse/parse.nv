@@ -115,6 +115,26 @@ fn Cursor @peek_text(skip int = 0) -> str {
     @toks[@i + skip].text
 }
 
+/// Take the token if it is the one wanted, and say ONCE what it means when it
+/// is not.
+///
+/// The phrase `if @peek() == X { kids.push(@take()) }` stood at fifty-four
+/// places in this parser: every optional comma, closing bracket and keyword.
+/// Each was an incomplete branching (P31) whose missing half means the same
+/// thing everywhere -- the token is optional here, there is nothing to take,
+/// and that is a valid outcome. Fifty-four empty `else` comments would say it
+/// fifty-four times; a named door says it once, and the call site gets
+/// shorter into the bargain.
+fn Cursor mut @push_if(mut kids []Node, k TokenKind) -> () {
+    if @peek() == k {
+        kids.push(@take())
+    } else {
+        // Nothing to take: the token is optional at this position. This is
+        // THE empty branch P31 asks to be named, and it is named here for
+        // every call site at once.
+    }
+}
+
 /// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
     // Past the end of the stream, take() returns an EMPTY leaf and does
@@ -244,7 +264,7 @@ export fn parse(toks []Token) -> Node
 /// recovery on the next token.
 fn Cursor mut @type_decl() -> Node {
     mut kids = []Node.of(@take()) // KwType
-    if @peek() == TokenKind.Ident { kids.push(@take()) }
+    @push_if(kids, TokenKind.Ident)
     if @peek() == TokenKind.LBracket { kids.push(@generics()) }
     // The CANONICAL sum carries the `enum` marker -- `type Color enum` -- and
     // novac refused it until 2026-08-17: it parsed ONLY the older
@@ -265,9 +285,9 @@ fn Cursor mut @type_decl() -> Node {
                 vk.push(@take())
                 while @peek() == TokenKind.Ident {
                     vk.push(@take())
-                    if @peek() == TokenKind.Comma { vk.push(@take()) }
+                    @push_if(vk, TokenKind.Comma)
                 }
-                if @peek() == TokenKind.RParen { vk.push(@take()) }
+                @push_if(vk, TokenKind.RParen)
             }
             kids.push(@node(NodeKind.Variant, vk))
         }
@@ -275,14 +295,14 @@ fn Cursor mut @type_decl() -> Node {
     if @peek() == TokenKind.Pipe {
         while @peek() == TokenKind.Pipe {
             mut vk = []Node.of(@take()) // '|'
-            if @peek() == TokenKind.Ident { vk.push(@take()) }
+            @push_if(vk, TokenKind.Ident)
             if @peek() == TokenKind.LParen {
                 vk.push(@take())
                 while @peek() == TokenKind.Ident {
                     vk.push(@take()) // payload type name
-                    if @peek() == TokenKind.Comma { vk.push(@take()) }
+                    @push_if(vk, TokenKind.Comma)
                 }
-                if @peek() == TokenKind.RParen { vk.push(@take()) }
+                @push_if(vk, TokenKind.RParen)
             }
             kids.push(@node(NodeKind.Variant, vk))
         }
@@ -294,10 +314,10 @@ fn Cursor mut @type_decl() -> Node {
         kids.push(@take())
         while @peek() == TokenKind.Ident {
             mut fk = []Node.of(@take()) // field name
-            if @peek() == TokenKind.Ident { fk.push(@take()) } // field type
+            @push_if(fk, TokenKind.Ident) // field type
             kids.push(@node(NodeKind.Field, fk))
         }
-        if @peek() == TokenKind.RBrace { kids.push(@take()) }
+        @push_if(kids, TokenKind.RBrace)
     }
     @node(NodeKind.TypeDecl, kids)
 }
@@ -400,12 +420,12 @@ fn Cursor mut @fn_decl() -> Node {
     if @peek() == TokenKind.At {
         head.push(@take()) // '@'
         kids.push(@node(NodeKind.Recv, head))
-        if @peek() == TokenKind.Ident { kids.push(@take()) }
+        @push_if(kids, TokenKind.Ident)
         if @peek() == TokenKind.LBracket { kids.push(@generics()) }
     } else {
         for h in head { kids.push(h) }
     }
-    if @peek() == TokenKind.LParen { kids.push(@take()) }
+    @push_if(kids, TokenKind.LParen)
     while @peek() == TokenKind.Ident {
         mut pk = []Node.of(@take()) // parameter name
         // The TYPE is a type reference, not one identifier (owner 2026-08-17).
@@ -413,10 +433,10 @@ fn Cursor mut @fn_decl() -> Node {
         // the parameter list apart here and take the rest of the signature
         // into the junk bucket with them.
         for n in @type_ref() { pk.push(n) }
-        if @peek() == TokenKind.Comma { pk.push(@take()) }
+        @push_if(pk, TokenKind.Comma)
         kids.push(@node(NodeKind.Param, pk))
     }
-    if @peek() == TokenKind.RParen { kids.push(@take()) }
+    @push_if(kids, TokenKind.RParen)
     if @peek() == TokenKind.Arrow {
         mut rt = []Node.of(@take())
         for n in @type_ref() { rt.push(n) }
@@ -457,7 +477,7 @@ fn Cursor mut @block() -> Node {
         kids.push(@stmt())
         if @i == before { break }
     }
-    if @peek() == TokenKind.RBrace { kids.push(@take()) }
+    @push_if(kids, TokenKind.RBrace)
     @node(NodeKind.Block, kids)
 }
 
@@ -494,8 +514,8 @@ fn Cursor mut @stmt() -> Node {
         // One BindStmt for both: the first leaf keeps KwMut/KwRo, C locals
         // are identical either way (the oracle emits no const).
         mut kids = []Node.of(@take())
-        if @peek() == TokenKind.Ident { kids.push(@take()) }
-        if @peek() == TokenKind.Assign { kids.push(@take()) }
+        @push_if(kids, TokenKind.Ident)
+        @push_if(kids, TokenKind.Assign)
         kids.push(@expr())
         return @node(NodeKind.BindStmt, kids)
     }
@@ -507,8 +527,8 @@ fn Cursor mut @stmt() -> Node {
     }
     if @peek() == TokenKind.KwFor {
         mut kids = []Node.of(@take())
-        if @peek() == TokenKind.Ident { kids.push(@take()) }
-        if @peek() == TokenKind.KwIn { kids.push(@take()) }
+        @push_if(kids, TokenKind.Ident)
+        @push_if(kids, TokenKind.KwIn)
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace { kids.push(@block()) }
         return @node(NodeKind.ForStmt, kids)
@@ -601,7 +621,7 @@ fn Cursor mut @primary() -> Node {
     // method name against the one subset table.
     while @peek() == TokenKind.Dot {
         mut kids = []Node.of(e, @take()) // recv, '.'
-        if @peek() == TokenKind.Ident { kids.push(@take()) }
+        @push_if(kids, TokenKind.Ident)
         if @peek() == TokenKind.LParen {
             kids.push(@take())
             // Inside the parens the head restriction lifts (274.3/F23).
@@ -610,11 +630,11 @@ fn Cursor mut @primary() -> Node {
             while !@at_eof() && @peek() != TokenKind.RParen {
                 ro before = @i
                 kids.push(@expr())
-                if @peek() == TokenKind.Comma { kids.push(@take()) }
+                @push_if(kids, TokenKind.Comma)
                 if @i == before { break }
             }
             @no_ctor = saved
-            if @peek() == TokenKind.RParen { kids.push(@take()) }
+            @push_if(kids, TokenKind.RParen)
             e = @node(NodeKind.MethodCall, kids)
         } else {
             e = @node(NodeKind.FieldAccess, kids)
@@ -631,7 +651,7 @@ fn Cursor mut @primary() -> Node {
 fn Cursor mut @match_expr() -> Node {
     mut kids = []Node.of(@take()) // KwMatch
     kids.push(@head_expr())       // scrutinee: `match s {` — brace is the body
-    if @peek() == TokenKind.LBrace { kids.push(@take()) }
+    @push_if(kids, TokenKind.LBrace)
     while !@at_eof() && @peek() != TokenKind.RBrace {
         ro before = @i
         mut ak = []Node.new()
@@ -652,9 +672,9 @@ fn Cursor mut @match_expr() -> Node {
                 } else {
                     pk.push(@node(NodeKind.Err, []Node.of(@take())))
                 }
-                if @peek() == TokenKind.Comma { pk.push(@take()) }
+                @push_if(pk, TokenKind.Comma)
             }
-            if @peek() == TokenKind.RBracket { pk.push(@take()) }
+            @push_if(pk, TokenKind.RBracket)
             ak.push(@node(NodeKind.Pattern, pk))
         } else if @peek() == TokenKind.Ident {
             mut pk = []Node.of(@take())
@@ -662,9 +682,9 @@ fn Cursor mut @match_expr() -> Node {
                 pk.push(@take())
                 while @peek() == TokenKind.Ident {
                     pk.push(@take())
-                    if @peek() == TokenKind.Comma { pk.push(@take()) }
+                    @push_if(pk, TokenKind.Comma)
                 }
-                if @peek() == TokenKind.RParen { pk.push(@take()) }
+                @push_if(pk, TokenKind.RParen)
             }
             ak.push(@node(NodeKind.Pattern, pk))
         } else {
@@ -677,12 +697,12 @@ fn Cursor mut @match_expr() -> Node {
             gk.push(@expr())
             ak.push(@node(NodeKind.Guard, gk))
         }
-        if @peek() == TokenKind.FatArrow { ak.push(@take()) }
+        @push_if(ak, TokenKind.FatArrow)
         ak.push(@expr())
         kids.push(@node(NodeKind.MatchArm, ak))
         if @i == before { break }
     }
-    if @peek() == TokenKind.RBrace { kids.push(@take()) }
+    @push_if(kids, TokenKind.RBrace)
     @node(NodeKind.MatchExpr, kids)
 }
 
@@ -706,10 +726,10 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
             // Recovery inside a constructor: one Err, one token, advance.
             kids.push(@node(NodeKind.Err, []Node.of(@take())))
         }
-        if @peek() == TokenKind.Comma { kids.push(@take()) }
+        @push_if(kids, TokenKind.Comma)
         if @i == before { break }
     }
-    if @peek() == TokenKind.RBrace { kids.push(@take()) }
+    @push_if(kids, TokenKind.RBrace)
 }
 
 /// Parse a literal, match, array/record constructor, call or name; recover otherwise.
@@ -767,10 +787,10 @@ fn Cursor mut @atom() -> Node {
             } else {
                 kids.push(@expr())
             }
-            if @peek() == TokenKind.Comma { kids.push(@take()) }
+            @push_if(kids, TokenKind.Comma)
             if @i == before { break }
         }
-        if @peek() == TokenKind.RBracket { kids.push(@take()) }
+        @push_if(kids, TokenKind.RBracket)
         return @node(NodeKind.ArrayLit, kids)
     }
     if @peek() == TokenKind.LBrace && !@no_ctor {
@@ -793,11 +813,11 @@ fn Cursor mut @atom() -> Node {
             while !@at_eof() && @peek() != TokenKind.RParen {
                 ro before = @i
                 kids.push(@expr())
-                if @peek() == TokenKind.Comma { kids.push(@take()) }
+                @push_if(kids, TokenKind.Comma)
                 if @i == before { break }
             }
             @no_ctor = saved
-            if @peek() == TokenKind.RParen { kids.push(@take()) }
+            @push_if(kids, TokenKind.RParen)
             return @node(NodeKind.Call, kids)
         }
         if @peek() == TokenKind.LBrace && !@no_ctor {
