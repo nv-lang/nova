@@ -12688,6 +12688,71 @@ impl<'a> TypeCheckCtx<'a> {
         enforce_binding_rest: bool,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // №719: ПОЗИЦИОННЫЙ разбор record-варианта. Нормативна ФИГУРНАЯ форма
+        // (`spec/syntax.ru.md:746-750`, канон разбора `02-types.md:111-115`);
+        // позиционная приехала из ОШИБОЧНОГО примера в самом D54
+        // (`03-syntax.md:3741,3745`) — чекер её принимал, а кодоген падал
+        // `no member named '_0' in 'struct Nova_Shape::(unnamed union)'`, то есть
+        // ошибка чужого компилятора в лицо пользователю на шести строках.
+        //
+        // Проверка стоит ЗДЕСЬ, в едином обходе образцов (шесть точек вызова:
+        // match-армы, `ro`/`mut`-биндинги, разбор в for-цикле), а не в разборе
+        // `match`: иначе `if Circle(r) = s` остался бы живым — те самые «пять
+        // дверей», за которые проект уже платил.
+        //
+        // Доктрина консервативная (как у исчерпаемости №703): не резолвится
+        // сумма или вариант — молчим. Ложный отказ дороже пропуска.
+        if let Pattern::Variant { path, kind, span } = pattern {
+            if let crate::ast::VariantPatternKind::Tuple { patterns, .. } = kind {
+                if !patterns.is_empty() {
+                    if let Some(vname) = path.last() {
+                        // Сумму берём из типа скрутини; если его нет — из
+                        // квалификации самого образца (`Shape.Circle`).
+                        let sum_name: Option<String> = match scrutinee_ty {
+                            Some(TypeRef::Named { path: tp, .. }) => tp.last().cloned(),
+                            Some(TypeRef::Readonly(inner, _)) => match inner.as_ref() {
+                                TypeRef::Named { path: tp, .. } => tp.last().cloned(),
+                                _ => None,
+                            },
+                            _ => if path.len() >= 2 { path.first().cloned() } else { None },
+                        };
+                        if let Some(sn) = sum_name {
+                            if let Some(td) = self.types.get(sn.as_str()) {
+                                if let TypeDeclKind::Sum(variants) = &td.kind {
+                                    for v in variants {
+                                        if &v.name != vname { continue; }
+                                        if let SumVariantKind::Record(fs) = &v.kind {
+                                            let names: Vec<String> =
+                                                fs.iter().map(|f| f.name.clone()).collect();
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_RECORD_VARIANT_POSITIONAL_PATTERN] вариант \
+                                                     `{sum}.{var}` объявлен RECORD-формой \
+                                                     (`{var} {{ {fields} }}`), а разбирается \
+                                                     ПОЗИЦИОННО (`{var}(..)`). Нормативна фигурная \
+                                                     форма: `{var} {{ {first} }}` — см. таблицу форм \
+                                                     spec/syntax.ru.md и D54. Позиционный разбор \
+                                                     чекер принимал, а кодоген выпускал невалидный \
+                                                     СИ (`no member named '_0'`), т.е. ошибка \
+                                                     приходила от чужого компилятора (реестр 221.1 №719).",
+                                                    sum = sn,
+                                                    var = vname,
+                                                    fields = names.join(", "),
+                                                    first = names.first().cloned()
+                                                        .unwrap_or_else(|| "field".to_string()),
+                                                ),
+                                                *span,
+                                            ));
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         match pattern {
             Pattern::Record { type_path, fields, rest, span } => {
                 let tname_opt: Option<String> = type_path

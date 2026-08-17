@@ -1,0 +1,42 @@
+// EXPECT_STDOUT area=19.625 side=4 tuple=7 unit=ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Позитивная половина реестра 221.1 №719: формы, которые ЗАКОННЫ и обязаны
+// проходить после введения `E_RECORD_VARIANT_POSITIONAL_PATTERN`. Без неё
+// отказ мог бы оказаться слишком широким — neg-фикстура на такое молчит по
+// устройству.
+//
+// Здесь важны все три вида варианта, потому что отказ обязан различать их:
+//   * record-вариант РАЗБИРАЕТСЯ ФИГУРНО — канон;
+//   * tuple-вариант разбирается ПОЗИЦИОННО — и это НЕ нарушение;
+//   * unit-вариант без скобок.
+// Фикстура, взявшая только первый, доказала бы, что отказ срабатывает, но не
+// что он срабатывает ТОЛЬКО где надо.
+module standalone.d54_record_variant_brace_pos
+
+type Shape enum
+    | Circle { radius f64 }
+    | Square { side f64 }
+    | Point(int)
+    | Nothing
+
+fn area(s Shape) -> f64 => match s {
+    Circle { radius } => 3.14 * radius * radius
+    Square { side }   => side
+    Point(n)          => 0.0
+    Nothing           => 0.0
+}
+
+fn tag(s Shape) -> int => match s {
+    Point(n)          => n
+    Circle { radius } => 0
+    Square { side }   => 0
+    Nothing           => 0
+}
+
+fn main() {
+    ro c = Shape.Circle { radius: 2.5 }
+    ro q = Shape.Square { side: 4.0 }
+    ro p = Shape.Point(7)
+    println("area=${area(c)} side=${area(q)} tuple=${tag(p)} unit=ok")
+}
