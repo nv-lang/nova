@@ -51,7 +51,7 @@ if [ "$N" -eq 0 ]; then
 fi
 
 PY='
-import json, sys
+import json, os, sys
 p = sys.argv[1]
 try:
     data = json.load(open(p, encoding="utf-8"))
@@ -62,12 +62,43 @@ if isinstance(data, dict):
 if not isinstance(data, list):
     sys.exit("JSON is neither object nor array")
 req = ("id", "code", "severity", "primary", "message")
+
+
+# ПОЗИЦИИ — часть контракта, а не украшение (план 274 §4 п.4). До 2026-08-17
+# проверялось лишь НАЛИЧИЕ поля primary: диагностика с пустым primary
+# проходила, а правило «позиции обязательны» держалось на эвристике в другом
+# страже, которая смотрела на ИМЯ типа возврата (`-> []Token` не содержит
+# слова Span) и потому промахивалась — печатала WARN и выходила нулём.
+# Здесь судится сам спан: файл назван, границы целые, начало не позже конца,
+# конец не за краем файла.
+def check_span(i, d):
+    pr = d.get("primary")
+    if not isinstance(pr, dict):
+        sys.exit("diag %d: primary is not an object" % i)
+    for k in ("file", "start", "end"):
+        if k not in pr:
+            sys.exit("diag %d: primary has no %s" % (i, k))
+    if not isinstance(pr["file"], str) or not pr["file"]:
+        sys.exit("diag %d: primary.file is empty - the position points nowhere" % i)
+    s, e = pr["start"], pr["end"]
+    if not isinstance(s, int) or not isinstance(e, int):
+        sys.exit("diag %d: primary.start/end are not integers" % i)
+    if s < 0 or e < s:
+        sys.exit("diag %d: primary span %d..%d is impossible" % (i, s, e))
+    try:
+        size = os.path.getsize(pr["file"])
+    except OSError:
+        size = None
+    if size is not None and e > size:
+        sys.exit("diag %d: primary.end %d is past the end of %s (%d bytes)"
+                 % (i, e, pr["file"], size))
 for i, d in enumerate(data):
     if not isinstance(d, dict):
         sys.exit("diag %d is not an object" % i)
     miss = [k for k in req if k not in d]
     if miss:
         sys.exit("diag %d missing fields: %s" % (i, ",".join(miss)))
+    check_span(i, d)
 '
 
 bad=0

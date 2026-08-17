@@ -50,7 +50,6 @@ if [ -z "$FILES" ]; then
 fi
 
 BAD=""
-WARNS=""
 nfiles=0
 nexports=0
 while IFS= read -r f; do
@@ -67,35 +66,22 @@ while IFS= read -r f; do
     fi
 
     # --- мягкая часть: параметр-текст без Span/позиций в возврате ---------
-    # Файл с типом, несущим поле span, освобождает свои экспорты целиком.
-    if ! grep -qE '^[[:space:]]*span[[:space:]]' "$f"; then
-        w=$(awk -v FILE="$f" '
-            /^[[:space:]]*export[[:space:]]+fn[[:space:]]/ {
-                line=$0
-                p=index(line,"(")
-                a=index(line,"->")
-                if (p==0) next
-                if (a>0) { params=substr(line,p,a-p); ret=substr(line,a) }
-                else     { params=substr(line,p);     ret="" }
-                if (params ~ /(^|[^A-Za-z0-9_])str([^A-Za-z0-9_]|$)/) {
-                    if (ret !~ /Span|Pos|Loc|Line|Col/)
-                        printf "  %s:%d: %s\n", FILE, FNR, line
-                }
-            }
-        ' "$f")
-        if [ -n "$w" ]; then
-            WARNS="$WARNS$w
-"
-        fi
-    fi
+# ПОЗИЦИИ судятся НЕ ЗДЕСЬ (правка 2026-08-17 по адверсарной проверке).
+# Здесь стоял мягкий WARN: экспорт с параметром `str`, чей тип возврата не
+# содержит слова Span/Pos/Loc/Line/Col, объявлялся подозрительным. Эвристика
+# по ИМЕНИ типа промахивается по построению: `export fn lex(src str) ->
+# []Token` позиции несёт (в Token лежит срез исходника), а слова Span в имени
+# нет. Она печатала предупреждение и выходила нулём — то есть правило
+# «позиции обязательны» механизма не имело вовсе, только шум.
+#
+# Теперь его судит check-novac-diag-schema.sh и судит ПО СУЩЕСТВУ, на живом
+# выводе novac: каждая диагностика обязана нести primary с непустым файлом и
+# границами 0 <= start <= end <= размер файла. Правило переехало к тому, кто
+# может его проверить, а не осталось там, где его удобно было упомянуть.
 done <<EOF
 $FILES
 EOF
 
-if [ -n "$WARNS" ]; then
-    echo "check-novac-frontend-shape WARN (мягко, гейт НЕ роняет): экспорт с параметром-текстом не упоминает Span/позиции в возврате, и в файле нет типа с полем span (план 274 §4 п.4 — позиции хранятся везде):"
-    printf '%s' "$WARNS"
-fi
 
 if [ -n "$BAD" ]; then
     echo "check-novac-frontend-shape: FAIL — Result в экспортированных сигнатурах фронтенда:" >&2
