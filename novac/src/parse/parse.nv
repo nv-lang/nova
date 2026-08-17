@@ -362,6 +362,10 @@ fn Cursor mut @fn_decl() -> Node {
     // Receiver or free function? The two only differ AFTER the name and its
     // brackets, so the pieces are held aside and the `@` decides.
     mut head = @type_ref()
+    // `fn Account mut @bump()` -- the receiver may be qualified. Without this
+    // the `mut` broke the form apart and the refusal blamed a missing return
+    // type on a signature that declares one (2026-08-17).
+    if @peek() == TokenKind.KwMut && @peek(skip: 1) == TokenKind.At { head.push(@take()) }
     if @peek() == TokenKind.At {
         head.push(@take()) // '@'
         kids.push(@node(NodeKind.Recv, head))

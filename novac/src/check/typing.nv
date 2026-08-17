@@ -68,7 +68,36 @@ fn Checker mut @type_fn(f Node) -> () {
         @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
         return
     }
-    ro name = leaf_text(kids[1])
+    // A METHOD declaration puts a `Recv` BRANCH where a free function has its
+    // name leaf, and `leaf_text` on a branch is an ice. Until the parser
+    // learned methods (2026-08-17) this was unreachable; the moment it did,
+    // any `fn Account @tag()` in a user file killed the whole check with
+    // "sem: leaf_text on a branch node" -- a crash on correct input, which is
+    // worse than any refusal (P12: a user error leaves through a diagnostic).
+    mut has_recv = false
+    for c in kids {
+        if c.kind_of() == NodeKind.Recv { has_recv = true }
+    }
+    if has_recv {
+        @report_first_leaf_of(kids, METHOD_DECL_MSG)
+        return
+    }
+    // The name is the first identifier LEAF, not a fixed index: `fn[T] name`
+    // puts a Generics branch in between.
+    mut name_at = -1
+    mut ki = 0
+    for c in kids {
+        if name_at < 0 && ki > 0 && c.kind_of() == NodeKind.LeafNode
+            && leaf_kind(c) == TokenKind.Ident {
+            name_at = ki
+        }
+        ki += 1
+    }
+    if name_at < 0 {
+        @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+        return
+    }
+    ro name = leaf_text(kids[name_at])
     @scope = Scope.new()
     if name != ENTRY_FN {
         for c in kids {
@@ -302,6 +331,11 @@ fn Checker @init_reads_self(n Node) -> bool {
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
+/// One text for the method-declaration limit. novac does not DECLARE methods
+/// in the subset (it reads std's declarations to build the method table, P5);
+/// the form is parsed so the refusal can name it.
+const METHOD_DECL_MSG = "outside the subset: novac does not declare methods yet (the form is read from std declarations only)"
+
 /// One text for the exhaustiveness rule; the oracle's own code is named so a
 /// reader can find the other half of the story.
 const NOT_EXHAUSTIVE_MSG = "outside the subset: match on a sum leaves a variant uncovered (oracle: E_MATCH_NON_EXHAUSTIVE, registry 703)"
