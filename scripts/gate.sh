@@ -246,6 +246,8 @@ step 'retracted-try-semantics (снятая трактовка `?` в доке �
 guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
 step "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
+step "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
+guard "$ROOT/scripts/guards/check-mixed-eol.sh" "$ROOT" || fail "смешанные окончания строк: построчные и побайтные счётчики расходятся, git этого не видит (core.autocrlf), лечится перевыкладкой файла, а не коммитом"
 step "process-exit-under-pool (процесс завершается при 16 воркерах, ×200 — №694)"
 guard --deadline 300 "$ROOT/scripts/guards/check-process-exit-under-pool.sh" "$ROOT" || fail "процесс не завершается при полном пуле воркеров (№694: потерянная побудка при остановке)"
 step "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
