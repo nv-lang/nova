@@ -57,65 +57,44 @@ fi
 
 BAD=""
 
-# --- (A) писатели зовутся только из check ----------------------------------
-for f in $(find "$SRC" -type f -name '*.nv' | sort); do
-    rel=${f#"$SRC"/}
-    case "$rel" in
-        check/*) continue ;;      # единственный законный писатель
-        sem/channel.nv) continue ;; # определение дверей — не вызов
-    esac
-    hits=$(grep -n 'record_type(\|record_callee(\|record_subst(' "$f" | grep -v '^\s*//' || true)
-    if [ -n "$hits" ]; then
-        BAD="$BAD
-  $rel — зовёт писателя канала вне check/:
-$(printf '%s' "$hits" | sed 's/^/      /')"
-    fi
-done
-
-# --- (0) ПРЯМАЯ ЗАПИСЬ В ПОЛЕ КАНАЛА, мимо всякой двери ---------------------
-# Инвариант «ONE writer» держался на том, что никто не пробовал написать
-# напрямую: поля CheckOut публичны, и `out.types[id] = 0` из любого модуля
-# компилируется. Адверсарная проверка 2026-08-17 это и сделала — проба
-# собралась оракулом, страж остался зелёным, потому что грепал только имена
-# дверей `record_*`. Инвариант, который держится на вежливости читателя, не
-# инвариант; здесь судится сама форма записи.
-#
-# Законно: определение дверей в sem/channel.nv (там записи и живут) и
-# конструирование канала целиком (`CheckOut { ... }`) — это не запись в
-# чужую таблицу, а создание своей.
+# ОДИН проход по дереву вместо трёх (2026-08-18). Прежняя редакция читала все
+# файлы трижды и поднимала по два-три grep на каждый: 22.1 секунды стены на 29
+# файлах. Разделы и их тексты те же и в том же порядке -- (A) писатели вне
+# check/, затем ПРЯМАЯ запись в поле канала, затем (B) вывод типа ниже чекера,
+# -- иначе разойдётся сам вывод, а не только его скорость.
 CHAN_FIELDS='types|callees|substs|subst_args'
-for f in $(find "$SRC" -type f -name '*.nv' | sort); do
-    rel=${f#"$SRC"/}
-    case "$rel" in
-        sem/channel.nv) continue ;;
-    esac
-    hits=$(grep -nE "\.($CHAN_FIELDS)\[[^]]*\][[:space:]]*=[^=]" "$f" | grep -v '^[0-9]*:[[:space:]]*//' || true)
-    hits2=$(grep -nE "\.($CHAN_FIELDS)[[:space:]]*=[^=]" "$f" | grep -v '^[0-9]*:[[:space:]]*//' || true)
-    both=$(printf '%s\n%s' "$hits" "$hits2" | grep -v '^$' || true)
-    if [ -n "$both" ]; then
-        BAD="$BAD
-  $rel — ПРЯМАЯ запись в таблицу канала мимо двери:
-$(printf '%s' "$both" | sed 's/^/      /')"
-    fi
-done
+SCAN=$(find "$SRC" -type f -name '*.nv' | sort | xargs awk -v SRC="$SRC" -v CF="$CHAN_FIELDS" '
+    FNR == 1 { rel = FILENAME; sub("^" SRC "/", "", rel); is_check = (rel ~ /^check\//); is_chan = (rel == "sem/channel.nv") }
+    {
+        line = $0; sub(/\r$/, "", line)
+        bare = line; sub(/^[[:space:]]+/, "", bare)
+        if (bare ~ /^\/\//) next
 
+        if (!is_check && !is_chan && line ~ /record_type\(|record_callee\(|record_subst\(/)
+            printf "A|%s|%d:%s\n", rel, FNR, line
 
-# --- (B) вывод типа не живёт ниже чекера -----------------------------------
-for f in $(find "$SRC" -type f -name '*.nv' | sort); do
-    rel=${f#"$SRC"/}
-    case "$rel" in
-        check/*) continue ;;
-        sem/channel.nv) continue ;; # сам канал ОБЪЯВЛЯЕТ читателя type_of — это дверь чтения, а не вывод
-    esac
-    # `.type_of(` — чтение канала (законно); голый `type_of(` — вызов решётки.
-    hits=$(tr -d '\r' < "$f" | grep -n 'unify(\|fresh_var(\|infer_[a-z_]*(\|[^.a-zA-Z_]type_of(' \
-           | grep -v '^[0-9]*:[[:space:]]*//' | grep -v '^[0-9]*:[[:space:]]*///' || true)
-    if [ -n "$hits" ]; then
-        BAD="$BAD
-  $rel — вывод типа вне check/ (вторая дверь к типу, класс плана 196):
-$(printf '%s' "$hits" | sed 's/^/      /')"
-    fi
-done
+        if (!is_chan && (line ~ ("\\.(" CF ")\\[[^]]*\\][[:space:]]*=[^=]") ||
+                         line ~ ("\\.(" CF ")[[:space:]]*=[^=]")))
+            printf "D|%s|%d:%s\n", rel, FNR, line
+
+        if (!is_check && !is_chan &&
+            line ~ /unify\(|fresh_var\(|infer_[a-z_]*\(|[^.a-zA-Z_]type_of\(/)
+            printf "B|%s|%d:%s\n", rel, FNR, line
+    }
+')
+
+add_section() {
+    tag=$1; note=$2
+    printf '%s\n' "$SCAN" | grep "^$tag|" | cut -d'|' -f2- | sort -u -t'|' -k1,1 -k2,2 | \
+        awk -F'|' -v NOTE="$note" '
+            { if ($1 != cur) { cur = $1; printf "\n  %s — %s:\n", cur, NOTE } printf "      %s\n", $2 }
+        '
+}
+
+BAD="$BAD$(add_section A 'зовёт писателя канала вне check/')"
+BAD="$BAD$(add_section D 'ПРЯМАЯ запись в таблицу канала мимо двери')"
+BAD="$BAD$(add_section B 'вывод типа вне check/ (вторая дверь к типу, класс плана 196)')"
+BAD=$(printf '%s' "$BAD" | grep '[A-Za-z]' || true)
 
 if [ -n "$BAD" ]; then
     echo "$NAME: FAIL — у канала чекера появился второй писатель или вывод типа уехал ниже чекера:" >&2

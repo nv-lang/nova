@@ -76,22 +76,69 @@ if [ -f "$ALLOW" ]; then
     ALLOWED=$(sed -e 's/\r$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$ALLOW")
 fi
 
-# --- 2. cheap trap: static mut / top-level mut (no such form in Nova today) --
-BAD=$(find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    grep -nE '^(export )?mut |static mut' "$f" | while IFS= read -r hit; do
-        num=${hit%%:*}
-        line=${hit#*:}
-        name=$(printf '%s\n' "$line" | sed -n \
-            -e 's/^export mut[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' \
-            -e 's/^mut[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' \
-            -e 's/.*static[[:space:]]\{1,\}mut[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' | head -n 1)
-        if [ -n "$name" ] && printf '%s\n' "$ALLOWED" | grep -qFx "$name"; then
-            continue
-        fi
-        printf '  %s:%s: %s\n' "$rel" "$num" "$line"
-    done
+# --- ОДИН проход по всем файлам (2026-08-18) --------------------------------
+# Прежняя редакция: три find|while по всем файлам, и во внутренних циклах ещё по
+# процессу на КАЖДОЕ совпадение (sed, grep, printf). 27.7 секунды стены на 27
+# файлах, из которых работой не было ничего. Правила ниже те же; доказательство
+# — самотест и сравнение вывода на живом дереве.
+#
+# Проход собирает разом: (а) глобальные `mut` вне GLOBALS.allow, (б) типы,
+# объявленные самим novac, (в) mut-параметры этих типов в сигнатурах.
+ALLOWED_LIST=$(printf '%s\n' "$ALLOWED" | tr '\n' '|')
+SCAN=$(find "$SRC" -type f -name '*.nv' | sort | xargs awk -v SRC="$SRC" -v ALLOWED="$ALLOWED_LIST" '
+    function is_allowed(n,   i, a, k) { k = split(ALLOWED, a, /\|/); for (i = 1; i <= k; i++) if (a[i] == n) return 1; return 0 }
+
+    FNR == 1 {
+        rel = FILENAME; sub("^" SRC "/", "", rel)
+        mod = ""
+    }
+    mod == "" && /^module[[:space:]]+/ {
+        mod = $2; sub(/[^A-Za-z0-9_.].*$/, "", mod)
+    }
+    {
+        raw = $0; sub(/\r$/, "", raw)
+        # (а) глобальное изменяемое состояние
+        if (raw ~ /^(export )?mut / || raw ~ /static mut/) {
+            name = ""
+            if (match(raw, /^export mut[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
+                name = substr(raw, RSTART, RLENGTH); sub(/^export mut[[:space:]]+/, "", name)
+            } else if (match(raw, /^mut[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
+                name = substr(raw, RSTART, RLENGTH); sub(/^mut[[:space:]]+/, "", name)
+            } else if (match(raw, /static[[:space:]]+mut[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
+                name = substr(raw, RSTART, RLENGTH); sub(/.*mut[[:space:]]+/, "", name)
+            }
+            if (name == "" || !is_allowed(name)) printf "BAD %s:%d: %s\n", rel, FNR, raw
+        }
+        line = raw; sub(/\/\/.*$/, "", line)
+        # (б) типы, объявленные самим novac
+        if (match(line, /^[[:space:]]*(export[[:space:]]+)?type[[:space:]]+[A-Z][A-Za-z0-9_]*/)) {
+            t = substr(line, RSTART, RLENGTH); sub(/.*type[[:space:]]+/, "", t)
+            printf "TYPE %s\n", t
+        }
+        # (в) mut-параметры в сигнатурах
+        if (line ~ /^[[:space:]]*(export[[:space:]]+)?fn[[:space:]]/) {
+            rest = line
+            while (match(rest, /mut [a-z_][A-Za-z0-9_]* [A-Z][A-Za-z0-9_]*/)) {
+                pair = substr(rest, RSTART, RLENGTH)
+                ty = pair; sub(/.* /, "", ty)
+                m = mod
+                if (m == "") { m = rel; sub(/\/[^\/]*$/, "", m) }
+                if (m == "novac" || m == "novac.pipeline" || m == "novac.main" ||
+                    m == "pipeline" || m == "main" || m == ".") m = "driver"
+                printf "USE %s %s %s:%d\n", ty, m, rel, FNR
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+    }
+')
+
+BAD=$(printf '%s\n' "$SCAN" | sed -n 's/^BAD //p')
+DECLARED=$(printf '%s\n' "$SCAN" | sed -n 's/^TYPE //p' | sort -u)
+USES=$(printf '%s\n' "$SCAN" | sed -n 's/^USE //p' | while IFS=' ' read -r ty mod where; do
+    printf '%s\n' "$DECLARED" | grep -qFx "$ty" || continue
+    printf '%s %s %s\n' "$ty" "$mod" "$where"
 done)
+BAD=$(printf '%s\n' "$BAD" | sed 's/^/  /' | grep '[A-Za-z]')
 
 if [ -n "$BAD" ]; then
     echo "$NAME: FAIL — общее изменяемое состояние (274 §4 п.5):" >&2
@@ -100,31 +147,6 @@ if [ -n "$BAD" ]; then
     echo "  рёбрам карты. Write-once исключение — имя строкой в novac/GLOBALS.allow." >&2
     exit 1
 fi
-
-# --- 1. the working check: a mutable AGGREGATE threaded through two phases ---
-# types declared by novac itself (data, not a list inside the guard)
-DECLARED=$(find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-    sed 's|//.*$||' "$f" | sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}type[[:space:]]\{1,\}\([A-Z][A-Za-z0-9_]*\).*/\2/p'
-done | sort -u)
-
-# every `mut <name> <TypeName>` parameter of a fn declaration: TYPE MODULE WHERE
-USES=$(find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    mod=$(sed -n 's/^module[[:space:]]\{1,\}\([A-Za-z0-9_.]\{1,\}\).*/\1/p' "$f" | head -n 1)
-    [ -n "$mod" ] || mod=$(dirname "$rel")
-    case "$mod" in
-        novac|novac.pipeline|novac.main|pipeline|main|.) mod=driver ;;
-    esac
-    sed 's|//.*$||' "$f" | grep -nE '^[[:space:]]*(export[[:space:]]{1,})?fn[[:space:]]' | while IFS= read -r hit; do
-        num=${hit%%:*}
-        line=${hit#*:}
-        printf '%s\n' "$line" | grep -oE 'mut [a-z_][A-Za-z0-9_]* [A-Z][A-Za-z0-9_]*' | while IFS= read -r p; do
-            ty=${p##* }
-            printf '%s\n' "$DECLARED" | grep -qFx "$ty" || continue
-            printf '%s %s %s:%s\n' "$ty" "$mod" "$rel" "$num"
-        done
-    done
-done)
 
 NUSES=$(printf '%s\n' "$USES" | grep -c '[A-Za-z]')
 NTYPES=$(printf '%s\n' "$USES" | cut -d' ' -f1 | grep '[A-Za-z]' | sort -u | wc -l | tr -d '[:space:]')

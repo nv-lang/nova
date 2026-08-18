@@ -53,65 +53,85 @@ if [ ! -d "$SRC" ]; then
     exit 0
 fi
 
-BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    line=$(head -n 40 "$f" | tr -d '\r' | grep -E '^///? *Donor *[:—-]' | head -n 1)
-    if [ -z "$line" ]; then
-        echo "  $rel: нет строки '// Donor:' в заголовке (первые 40 строк)"
-        continue
-    fi
-    body=$(printf '%s' "$line" | sed -E 's/^\/\/\/? *Donor *[:—-] *//')
-    if printf '%s' "$body" | grep -qiE '^none[[:space:]]*(—|-|--)'; then
-        reason=$(printf '%s' "$body" | sed -E 's/^none[[:space:]]*(—|-|--)[[:space:]]*//')
-        nw=$(printf '%s' "$reason" | wc -w | tr -d '[:space:]')
-        [ "$nw" -ge 5 ] || echo "  $rel: 'Donor: none' без причины (нужно минимум пять слов): «$line»"
-        body="none reason ok"
-    fi
-    nw=$(printf '%s' "$body" | wc -w | tr -d '[:space:]')
-    [ "$nw" -ge 2 ] || echo "  $rel: 'Donor:' без сущности — одно имя не указатель: «$line»"
-    # П27 п.2а: оракул донором быть не может (П25). Совпадение выхода — не донорство.
-    # судим ВЕСЬ блок Donor (до строки Role), не только первую строку
-    dblock=$(head -n 40 "$f" | tr -d '
-' | awk '/^\/\/\/? *Donor *[:—-]/{p=1} /^\/\/\/? *Role *[:—-]/{p=0} p')
-    # П27 п.2б — ИЕРАРХИЯ доноров, машинная половина: (а) антипример (Swift, C#)
-    # в Donor законен ТОЛЬКО в форме отказа «NOT taken ... Swift/C#»: если имя
-    # стоит без «NOT taken» / «not taken» / «anti-example» в том же блоке —
-    # красный: антипример выдан за донора; (б) точечный донор (Zig, Koka,
-    # Nim, Chicken) обязан стоять рядом со СВОЕЙ сущностью (InternPool,
-    # evidence, ccgexprs...) — голое «Zig» как донор слоя — красный.
-    if printf '%s' "$dblock" | grep -qiE "(^|[^a-z])swift([^a-z]|$)|C#|[.]NET"; then
-        if ! printf '%s' "$dblock" | grep -qiE "not taken|anti-example|not a donor|NOT from"; then
-            echo "  $rel: Donor называет Swift/C# без формы отказа «NOT taken ...» — антипример выдан за донора (П27 2б)"
-        fi
-    fi
-    if printf '%s' "$dblock" | grep -qiE "(^|[^a-z])zig([^a-z]|$)" && ! printf '%s' "$dblock" | grep -qE "InternPool|Sema|StaticStringMap|OptionalIndex|std[.]"; then
-        echo "  $rel: Donor называет Zig без его сущности (InternPool/Sema/...) — точечный донор без точки (П27 2б)"
-    fi
-    if printf '%s' "$dblock" | grep -qiE "oracle|orakul|nova-cli|compiler-codegen|emit_c\.rs"; then
-        echo "  $rel: 'Donor:' называет ОРАКУЛ (нынешний компилятор) донором — запрещено П25/П27: доноры формы это rustc/Go/Swift/Zig/Roslyn/clang, а совпадение выхода с оракулом держит дифф-гейт, не заголовок"
-    fi
-    # Role и Used by — обязательны независимо от того, есть донор или нет
-    role=$(head -n 40 "$f" | tr -d '\r' | grep -E '^///? *Role *[:—-]' | head -n 1 | sed -E 's/^\/\/\/? *Role *[:—-] *//')
-    rw=$(printf '%s' "$role" | wc -w | tr -d '[:space:]')
-    [ "$rw" -ge 4 ] || echo "  $rel: нет строки '// Role:' с местом в общей картине (минимум четыре слова)"
-    used=$(head -n 40 "$f" | tr -d '\r' | grep -E '^///? *Used by *[:—-]' | head -n 1 | sed -E 's/^\/\/\/? *Used by *[:—-] *//')
-    uw=$(printf '%s' "$used" | wc -w | tr -d '[:space:]')
-    [ "$uw" -ge 3 ] || echo "  $rel: нет строки '// Used by:' — кто потребитель дальше и когда (минимум три слова)"
-    guarded=$(head -n 40 "$f" | tr -d '\r' | grep -E '^///? *Guarded by *[:—-]' | head -n 1 | sed -E 's/^\/\/\/? *Guarded by *[:—-] *//')
-    gw=$(printf '%s' "$guarded" | wc -w | tr -d '[:space:]')
-    if [ "$gw" -lt 1 ]; then
-        echo "  $rel: нет строки '// Guarded by:' — кто автоматически проверяет правильное использование"
-    else
-        # каждый названный check-*.sh обязан существовать
-        for gname in $(printf '%s' "$guarded" | grep -oE 'check-[a-z0-9-]+\.sh'); do
-            [ -f "$ROOT/scripts/guards/$gname" ] || echo "  $rel: 'Guarded by' называет $gname, а такого стража нет в scripts/guards — механизм выдуман"
-        done
-        # ни одного check-*.sh и нет честной формы compiler/acceptance — красный
-        if ! printf '%s' "$guarded" | grep -qE 'check-[a-z0-9-]+\.sh|^compiler|^acceptance|nova test|nova lint|fuzz'; then
-            echo "  $rel: 'Guarded by' не называет ни стража, ни теста, ни честного compiler/acceptance: «$guarded»"
-        fi
-    fi
-done)
+# ОДИН проход awk по всем файлам разом (2026-08-18). Прежняя редакция поднимала
+# около дюжины процессов на каждый файл и ещё по одному на имя стража в строке
+# `Guarded by`; на 27 файлах это 53.9 секунды стены, из которых работой не было
+# ничего. Правила ниже — те же, слово в слово; доказательство — самотест и
+# сравнение вывода на живом дереве.
+GUARDDIR="$ROOT/scripts/guards"
+BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v SRC="$SRC" -v GUARDDIR="$GUARDDIR" '
+    function words(s,   n, a) { gsub(/^[ \t]+|[ \t]+$/, "", s); if (s == "") return 0; n = split(s, a, /[ \t]+/); return n }
+    function say(msg) { printf "  %s: %s\n", rel, msg }
+
+    FNR == 1 {
+        if (NR > 1) judge()
+        rel = FILENAME; sub("^" SRC "/", "", rel)
+        donor = ""; role = ""; used = ""; guarded = ""; dblock = ""
+        seen_donor = 0; in_d = 0
+    }
+    FNR > 40 { next }
+    {
+        line = $0; sub(/\r$/, "", line)
+        if (line ~ /^\/\/\/? *Donor *[:—-]/) {
+            if (!seen_donor) { donor = line; sub(/^\/\/\/? *Donor *[:—-] */, "", donor); seen_donor = 1 }
+            in_d = 1
+        } else if (line ~ /^\/\/\/? *Role *[:—-]/) {
+            in_d = 0
+            if (role == "") { role = line; sub(/^\/\/\/? *Role *[:—-] */, "", role) }
+        } else if (line ~ /^\/\/\/? *Used by *[:—-]/) {
+            if (used == "") { used = line; sub(/^\/\/\/? *Used by *[:—-] */, "", used) }
+        } else if (line ~ /^\/\/\/? *Guarded by *[:—-]/) {
+            if (guarded == "") { guarded = line; sub(/^\/\/\/? *Guarded by *[:—-] */, "", guarded) }
+            else guarded = guarded " " line
+        } else if (guarded != "" && line ~ /^\/\/\/? +/) {
+            # продолжение строки Guarded by переносом
+            cont = line; sub(/^\/\/\/? */, "", cont)
+            if (cont ~ /check-[a-z0-9-]+\.sh/) guarded = guarded " " cont
+        }
+        if (in_d) dblock = dblock " " line
+    }
+    END { judge() }
+
+    function judge(   body, reason, nw, g, i, n, arr, gname) {
+        if (rel == "") return
+        if (!seen_donor) { say("нет строки \x27// Donor:\x27 в заголовке (первые 40 строк)"); rel = ""; return }
+        body = donor
+        if (tolower(body) ~ /^none[ \t]*(—|-|--)/) {
+            reason = body; sub(/^[Nn][Oo][Nn][Ee][ \t]*(—|-|--)[ \t]*/, "", reason)
+            if (words(reason) < 5) say("\x27Donor: none\x27 без причины (нужно минимум пять слов)")
+            body = "none reason ok"
+        }
+        if (words(body) < 2) say("\x27Donor:\x27 без сущности — одно имя не указатель: «" donor "»")
+
+        if (tolower(dblock) ~ /(^|[^a-z])swift([^a-z]|$)/ || dblock ~ /C#/ || dblock ~ /[.]NET/) {
+            if (tolower(dblock) !~ /not taken|anti-example|not a donor|not from/)
+                say("Donor называет Swift/C# без формы отказа «NOT taken ...» — антипример выдан за донора")
+        }
+        if (tolower(dblock) ~ /(^|[^a-z])zig([^a-z]|$)/ && dblock !~ /InternPool|Sema|StaticStringMap|OptionalIndex|std[.]/)
+            say("Donor называет Zig без его сущности (InternPool/Sema/...) — точечный донор без места")
+        if (tolower(dblock) ~ /oracle|orakul|nova-cli|compiler-codegen|emit_c\.rs/)
+            say("\x27Donor:\x27 называет ОРАКУЛ (нынешний компилятор) донором — запрещено (П25)")
+
+        if (words(role) < 4) say("нет строки \x27// Role:\x27 с местом в общей картине (минимум четыре слова)")
+        if (words(used) < 3) say("нет строки \x27// Used by:\x27 — кто потребитель дальше и когда")
+        if (words(guarded) < 1) {
+            say("нет строки \x27// Guarded by:\x27 — кто автоматически проверяет правило")
+        } else {
+            g = guarded
+            n = 0
+            while (match(g, /check-[a-z0-9-]+\.sh/)) {
+                gname = substr(g, RSTART, RLENGTH)
+                if (system("test -f " GUARDDIR "/" gname) != 0)
+                    say("\x27Guarded by\x27 называет " gname ", а такого стража нет в scripts/guards — механизм выдуман")
+                g = substr(g, RSTART + RLENGTH)
+                n++
+            }
+            if (n == 0 && guarded !~ /^compiler|^acceptance|nova test|nova lint|fuzz/)
+                say("\x27Guarded by\x27 не называет ни стража, ни теста, ни честного compiler/acceptance")
+        }
+        rel = ""
+    }
+')
 
 if [ -n "$BAD" ]; then
     echo "$NAME: FAIL — модуль novac без донора-указателя в заголовке (конвенция П27):" >&2
