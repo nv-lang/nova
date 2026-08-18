@@ -160,6 +160,7 @@ guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "го
 step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
 guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.sh" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"
+guard "$ROOT/scripts/guards/check-novac-plan-liveline.sh" "$ROOT" || fail "живая строка плана отстала от кода"
 guard "$ROOT/scripts/guards/check-novac-time-ledger.sh" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
 step "novac-deps (рёбра только из таблицы §3 архитектуры)"
 guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
