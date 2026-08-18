@@ -50,39 +50,48 @@ if [ -z "$EDGES" ]; then
     echo "check-novac-deps: FAIL — таблица §3 не распарсилась из $ARCH" >&2; exit 1
 fi
 
-BAD=""
-N=0
-for f in $(find "$SRC" -name '*.nv' 2>/dev/null); do
-    rel="${f#$SRC/}"
-    case "$rel" in
-        */*) mod="${rel%%/*}" ;;
-        *)   mod="main" ;;
-    esac
-    # модуль обязан быть известен карте (как источник или цель)
-    if ! printf '%s\n' "$EDGES" | grep -q "^$mod:\|:$mod$"; then
-        if [ "$mod" != "main" ]; then
-            BAD="$BAD\n  $rel: модуль '$mod' отсутствует в карте §3"
-            continue
-        fi
-    fi
-    # Импорт СЧИТАЕТСЯ с любым отступом (адверсарная проверка 2026-08-17).
-    # Якорь `^import` пропускал строку с ведущими пробелами: проба собралась
-    # оракулом и создала ребро вне таблицы — то есть единственное
-    # архитектурное правило обходилось двумя пробелами. Язык отступ
-    # принимает, значит и судья обязан.
-    # ВСЕ формы ввоза имён, а не одна (адверсарная проверка 2026-08-17).
-    # Проба: `use ../lex.{TokenKind}` в diag.nv -- модуле, который lex НЕ
-    # импортирует, -- собралась оракулом и типизировалась (7.1s, ребро
-    # diag -> lex рабочее). Страж видел только `import` и остался зелёным,
-    # то есть единственное архитектурное правило обходилось сменой
-    # ключевого слова. Форм четыре: import, use и обе с префиксом export.
-    # Отступ уже учтён; хвост после пути отрезается там же.
-    for imp in $(sed -n 's/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\?\(import\|use\)[[:space:]][[:space:]]*\(\.\.\?\/\)/\3/p' "$f" 2>/dev/null | sed 's|^\.\.\?/||; s/[ .{].*//'); do
-        N=$((N+1))
-        printf '%s\n' "$EDGES" | grep -q "^$mod:$imp$" || \
-            BAD="$BAD\n  $rel: импорт '$imp' — ребра '$mod -> $imp' нет в таблице §3"
-    done
-done
+# ОДИН проход awk по всем файлам разом (2026-08-19). Прежняя редакция звала
+# `sed` на каждый файл и `grep` на каждый импорт: двести процессов и 21
+# секунда стены на 32 файлах. Правила те же, слово в слово; форм ввоза
+# четыре (import/use, с `export` и без), отступ любой -- и то и другое
+# найдено адверсарными пробами и потому проверяется явно.
+SCAN=$(find "$SRC" -name '*.nv' 2>/dev/null | sort | xargs awk -v SRC="$SRC" -v EDGES="$EDGES" '
+    BEGIN {
+        n = split(EDGES, e, /\n/)
+        for (i = 1; i <= n; i++) if (e[i] != "") { edge[e[i]] = 1
+            split(e[i], p, ":"); known[p[1]] = 1; known[p[2]] = 1 }
+    }
+    FNR == 1 {
+        rel = FILENAME; sub("^" SRC "/", "", rel)
+        mod = rel
+        if (index(rel, "/") > 0) sub(/\/.*$/, "", mod); else mod = "main"
+        if (!(mod in known) && mod != "main") {
+            printf "  %s: модуль \047%s\047 отсутствует в карте §3\n", rel, mod
+            skip[FILENAME] = 1
+        }
+    }
+    skip[FILENAME] { next }
+    {
+        line = $0; sub(/\r$/, "", line)
+        if (line !~ /^[[:space:]]*(export[[:space:]]+)?(import|use)[[:space:]]/) next
+        imp = line
+        sub(/^[[:space:]]*(export[[:space:]]+)?(import|use)[[:space:]]+/, "", imp)
+        sub(/[[:space:]].*$/, "", imp)
+        # ТОЛЬКО относительные пути -- ввоз из `std` не модуль novac и ребром
+        # §3 не является; прежний sed печатал именно и только `./`/`../`.
+        if (imp !~ /^[.][.]?[/]/) next
+        sub(/^[.][.]?[/]/, "", imp)
+        # Резать по первому из пробела, точки или `{` -- как второй sed.
+        sub(/[ .{].*$/, "", imp)
+        if (imp == "") next
+        total++
+        if (!((mod ":" imp) in edge))
+            printf "  %s: импорт \047%s\047 — ребра \047%s -> %s\047 нет в таблице §3\n", rel, imp, mod, imp
+    }
+    END { printf "@@%d\n", total }
+')
+N=$(printf '%s\n' "$SCAN" | sed -n 's/^@@//p' | tail -n 1)
+BAD=$(printf '%s\n' "$SCAN" | grep -v '^@@' || true)
 
 if [ -n "$BAD" ]; then
     echo "check-novac-deps: FAIL — импорты вне таблицы рёбер (архитектура §3):" >&2

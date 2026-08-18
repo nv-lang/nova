@@ -52,33 +52,26 @@ trap 'rm -rf "$T"' 0
 BAD=""
 NCOMP=0
 NPCH=0
-for f in $FILES; do
-    rel=$(basename "$f")
-    # строки, где зовут компилятор C
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        n=${line%%:*}
-        body=${line#*:}
-        case "$body" in
-            *"-x c-header"*) NPCH=$((NPCH+1)); continue ;;   # это СБОРКА pch
-        esac
-        # КОМПИЛЯЦИЯ — это `-c`. Линковка тоже упоминает .o, но ничего не
-        # разбирает, поэтому PCH ей не нужен (страж принял её за компиляцию
-        # с первого захода — признак уточнён).
-        case "$body" in
-            *" -c "*) ;;
-            *) continue ;;
-        esac
-        NCOMP=$((NCOMP+1))
-        case "$body" in
-            *-include-pch*) ;;
-            *) BAD="$BAD
-  $rel:$n — компиляция C без -include-pch: каждый вызов снова разбирает 82 тыс. строк заголовков" ;;
-        esac
-    done <<EOF
-$(grep -n 'REAL_CLANG\|\$CL "\|clang\.exe' "$f" 2>/dev/null | grep -v '^[0-9]*: *#')
-EOF
-done
+# ОДИН проход awk по всем скриптам разом (2026-08-19). Прежняя редакция
+# поднимала basename и два grep на КАЖДЫЙ файл: около 180 процессов и 13.8
+# секунды стены. Правила ниже -- те же, слово в слово.
+SCAN=$(printf '%s\n' $FILES | xargs awk '
+    {
+        line = $0; sub(/\r$/, "", line)
+        if (line ~ /^[[:space:]]*#/) next
+        if (line !~ /REAL_CLANG|\$CL "|clang\.exe/) next
+        rel = FILENAME; sub(/^.*[\/]/, "", rel)
+        if (line ~ /-x c-header/) { npch++; next }
+        if (line !~ / -c /) next
+        ncomp++
+        if (line !~ /-include-pch/)
+            printf "  %s:%d — компиляция C без -include-pch: каждый вызов снова разбирает заголовки\n", rel, FNR
+    }
+    END { printf "@@%d %d\n", npch, ncomp }
+')
+NPCH=$(printf '%s\n' "$SCAN" | sed -n 's/^@@\([0-9]*\) .*/\1/p' | tail -n 1)
+NCOMP=$(printf '%s\n' "$SCAN" | sed -n 's/^@@[0-9]* \([0-9]*\)/\1/p' | tail -n 1)
+BAD=$(printf '%s\n' "$SCAN" | grep -v '^@@' || true)
 
 if [ "$NCOMP" -eq 0 ]; then
     echo "$NAME: FAIL — не найдено ни одной компиляции C: разбор сломался, а молчать нельзя (класс №519)" >&2
