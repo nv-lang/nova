@@ -17,8 +17,8 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{c_callable, method_name_of_type, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
-import ../builtins.{ENTRY_FN, PRINT_FN, bool_c_literal}
+import ../sem.{FnLookup, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
+import ../builtins.{EQUAL_METHOD, ENTRY_FN, PRINT_FN, bool_c_literal}
 
 
 /// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
@@ -201,7 +201,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The ROW the checker decided on, not a name rebuilt from the receiver's
         // type: after the checker, nobody infers.
         ro cr = @out.callee_of(e.id_of())
-        @body.append(c_callable(@ctx, cr.target_row, no_args(), false))
+        @body.append(c_callable(@ctx, cr.target_row, no_args()))
         @body.append("(")
         @emit_expr(kids[0])
         mut i = 0
@@ -224,7 +224,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ro vrow = def_payload
             @body.append("${c_maker(@ctx, vrow)}(")
         } else if def_kind == DefKind.DefFn {
-            @body.append("${c_callable(@ctx, def_payload, no_args(), false)}(")
+            @body.append("${c_callable(@ctx, def_payload, no_args())}(")
         } else {
             ice("emit_c: call target is neither a variant nor a fn")
         }
@@ -270,7 +270,14 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // one door takes a row; this has none, which is precisely why the
             // exception is written out instead of being hidden in a second
             // door (owner's question 2026-08-18).
-            @body.append(method_name_of_type(@ctx, lhs_t, "equal"))
+            // The row, then the ONE door -- the same path an ordinary method
+            // call takes. Spelling the name here would be a second decision
+            // about a symbol the registry already knows.
+            match @ctx.fns.lookup(lhs_t, EQUAL_METHOD) {
+                FnFound(row) => @body.append(c_callable(@ctx, row, no_args()))
+                FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_args()))
+                FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")
+            }
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(", ")

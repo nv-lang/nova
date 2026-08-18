@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // novac/src/sem — tests beside the module (project convention).
 //
-// The load-bearing property here is the ACCEPTANCE of E2-b2 stated in plan 274
-// section 9.1: two instantiations of one callable must not collide in C. It is
-// tested at the mangling layer because that is where a collision would happen,
-// and because this layer can be tested before the call-site syntax exists --
-// the alternative is to verify it by reading, which the plan calls a feeling
-// rather than a number.
+// What these tests hold: a C name is a function of the ROW, and the row carries
+// everything the name needs -- the parameters (overloading is BY parameters),
+// the instance arguments (E2-b2), and whose ABI the symbol belongs to.
 //
-// Since 2026-08-18 the door is ONE (`c_callable`) and takes a registry ROW, so
-// the tests below name a callable the way the compiler does: by its row.
+// The live defect behind the parameter half (owner's review 2026-08-19):
+// `fn describe(v int)` and `fn describe(v str)` are legal Nova, the oracle
+// accepts them, novac accepted them -- and emitted TWO C functions called
+// `novac_user_describe`. Invalid C from a valid program, with no diagnostic.
 
 module novac.sem
 import ../tree.{Node, NodeKind, branch}
@@ -20,51 +19,59 @@ import ../tree.{Node, NodeKind, branch}
 /// add one.
 fn empty_file() -> Node => branch(0, NodeKind.File, []Node.new())
 
-/// A registry holding one plain function named `hold`, and its row.
-fn with_fn(name str) -> (Ctx, int) {
+test "a name with no parameters is the plain form" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add(name, ctx.prims.int_id, false, []int.new())
-    (ctx, ctx.fns.rows.len() - 1)
+    ctx.fns.add("used", ctx.prims.int_id, false, false, []int.new())
+    assert(c_callable(ctx, ctx.fns.rows.len() - 1, []int.new()) == "novac_fn_used__to_nova_int")
 }
 
-test "instance key: no type arguments spells the plain name" {
-    ro (ctx, row) = with_fn("used")
-    assert(c_callable(ctx, row, []int.new(), false) == "novac_user_used")
-}
-
-test "instance key: the entry point answers to the runtime, not to us" {
-    ro (ctx, row) = with_fn("main")
-    assert(c_callable(ctx, row, []int.new(), true) == "nova_fn_main_impl")
-}
-
-test "instance key: different type arguments give different C names" {
-    ro (ctx, row) = with_fn("hold")
-    ro a = c_callable(ctx, row, []int.of(ctx.prims.int_id), false)
-    ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id), false)
-    assert(a != b)
-    assert(a == "novac_user_hold__nova_int")
-}
-
-test "instance key: arity matters, not just the set" {
-    ro (ctx, row) = with_fn("pair")
-    ro one = c_callable(ctx, row, []int.of(ctx.prims.int_id), false)
-    ro two = c_callable(ctx, row, []int.of(ctx.prims.int_id, ctx.prims.int_id), false)
-    assert(one != two)
-}
-
-test "one door: a METHOD row answers in the oracle's namespace, not ours" {
-    // The split that used to justify two doors: a method read from std
-    // signatures carries the ORACLE's name, a function declared here carries
-    // novac's. That is a property of the ROW, and the one door reads it.
+test "PARAMETERS are in the name: two overloads cannot collide" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("len", ctx.prims.int_id, true, []int.of(ctx.prims.str_id))
+    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id))
+    ro by_int = ctx.fns.rows.len() - 1
+    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id))
+    ro by_str = ctx.fns.rows.len() - 1
+    assert(c_callable(ctx, by_int, []int.new()) != c_callable(ctx, by_str, []int.new()))
+}
+
+test "arity is in the name too" {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("pair", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id))
+    ro one = ctx.fns.rows.len() - 1
+    ctx.fns.add("pair", ctx.prims.int_id, false, false,
+        []int.of(ctx.prims.int_id, ctx.prims.int_id))
+    ro two = ctx.fns.rows.len() - 1
+    assert(c_callable(ctx, one, []int.new()) != c_callable(ctx, two, []int.new()))
+}
+
+test "the entry point answers to the RUNTIME, and one place knows it" {
+    // No `is_entry` flag threaded through every call site: the row carries the
+    // name, and the door decides what that name means (owner, 2026-08-19).
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("main", ctx.prims.int_id, false, false, []int.new())
+    assert(c_callable(ctx, ctx.fns.rows.len() - 1, []int.new()) == "nova_fn_main_impl")
+}
+
+test "instance arguments distinguish two instantiations of one callable" {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("hold", ctx.prims.int_id, false, false, []int.new())
     ro row = ctx.fns.rows.len() - 1
-    // A RELATION, not a literal: the ABI spelling belongs to the oracle, and
-    // writing it here would be a second place that decides it (P24). What
-    // this test owns is the claim that ONE door tells the two apart.
-    ctx.fns.add("len", ctx.prims.int_id, false, []int.new())
-    ro plain = ctx.fns.rows.len() - 1
-    assert(c_callable(ctx, row, []int.new(), false) !=
-        c_callable(ctx, plain, []int.new(), false))
-    assert(c_callable(ctx, plain, []int.new(), false) == "novac_user_len")
+    ro a = c_callable(ctx, row, []int.of(ctx.prims.int_id))
+    ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id))
+    assert(a != b)
+    assert(a != c_callable(ctx, row, []int.new()))
+}
+
+test "a FOREIGN row answers in the oracle's namespace, ours does not" {
+    // The exception is not "method" -- plan 273 made a method a function whose
+    // first parameter is the receiver -- it is ORIGIN: a symbol novac did not
+    // choose. Asserted as a RELATION, because writing the oracle's spelling
+    // here would be a second place deciding it (P24).
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("len", ctx.prims.int_id, true, true, []int.of(ctx.prims.str_id))
+    ro foreign_row = ctx.fns.rows.len() - 1
+    ctx.fns.add("len", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id))
+    ro our_row = ctx.fns.rows.len() - 1
+    assert(c_callable(ctx, foreign_row, []int.new()) != c_callable(ctx, our_row, []int.new()))
+    assert(c_callable(ctx, our_row, []int.new()) == "novac_fn_len__nova_str__to_nova_int")
 }

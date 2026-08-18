@@ -117,21 +117,15 @@ export fn DefTable @find(name str) -> int => @names.find(name)
 /// a missing door looks like from the inside: each author writes the five
 /// lines rather than finding a name they cannot guess.
 export fn decl_fn_row(f Node, ctx Ctx) -> int {
-    ro kids = branch_children(f)
-    if kids.len() < 2 {
+    ro id = f.id_of()
+    if id < 0 || id >= ctx.fn_decl_rows.len() {
+        // A node from ANOTHER parse -- the declarations handed to novac have
+        // their own id space -- owns no row in this file's table.
         return -1
     } else {
-        // A declaration always carries at least the keyword and the name;
-        // fewer children is a recovery shape, and it owns no row.
+        // The id addresses this file's table, so the slot answers directly.
     }
-    ro nm = kids[1]
-    if nm.kind_of() != NodeKind.LeafNode {
-        return -1
-    } else {
-        // The name slot holds a branch only after recovery: nothing was
-        // registered under it, so there is no row to answer with.
-    }
-    ctx.defs.fn_row(leaf_text(nm))
+    ctx.fn_decl_rows[id]
 }
 
 /// The CALLABLE row a name owns, or -1 when the registry knows no such fn.
@@ -309,6 +303,7 @@ export type FnDef value {
     param_off int /// first parameter of this callable in FnTable.params
     param_cnt int /// how many parameters, INCLUDING the receiver when there is one
     has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
+    foreign bool /// the SYMBOL is not ours to choose: read from the oracle's declarations
     next_row int /// next row carrying the SAME name, or -1; see FnTable
 }
 
@@ -370,8 +365,17 @@ export fn FnTable.new() -> FnTable =>
 #realtime nogc
 export fn FnTable @recv_of(row int) -> int {
     ro fd = @rows[row]
-    if !fd.has_recv { return -1 }
-    if fd.param_cnt < 1 { return -1 }
+    if !fd.has_recv {
+        return -1
+    } else {
+        // The mark says parameter zero IS the receiver; without it the
+        // callable simply has no receiver, and -1 says so.
+    }
+    // A receiver IS the first parameter (plan 273), so "marked as having one
+    // and holding none" is a broken registry, not a shape to tolerate. It
+    // returned -1 here until 2026-08-19, which turned a bug into a silent
+    // "no receiver" and let it travel (owner's review).
+    assert(fd.param_cnt >= 1, "sem: a callable marked with a receiver has no parameters")
     @params[fd.param_off]
 }
 
@@ -400,14 +404,14 @@ export fn FnTable @row_of(recv_id int, name str) -> int {
 /// `param_ids` carries the receiver FIRST when `has_recv` — the plan 273
 /// order (§4.4 fixes the position, so the caller has no other place to put
 /// it, and no way to name a second one).
-export fn FnTable mut @add(name str, ret_id int, has_recv bool, param_ids []int) -> () {
+export fn FnTable mut @add(name str, ret_id int, has_recv bool, foreign bool, param_ids []int) -> () {
     ro head = @heads.find(name)
     ro off = @params.len()
     // Whole slice at once: std does the copy (nv-coding-style section 18a --
     // a counted push loop is the red flag it names).
     @params.append(param_ids)
     @heads.put(name, @rows.len())
-    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, next_row: head })
+    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, foreign, next_row: head })
 }
 
 /// Whether a callable with this name exists for SOME receiver at all.
@@ -485,6 +489,7 @@ export type Ctx {
     fields FieldTable /// Record fields, addressed through the owner type.
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
     payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
+    fn_decl_rows []int /// NodeId of a FnDecl -> its row in `fns`; -1 = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
 }
 
@@ -597,7 +602,9 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         if pt < 0 { return }
         param_ids.push(pt)
     }
-    fns.add(mname, ret_t, true, param_ids)
+    // Read from the declarations handed to novac: the oracle emits this
+    // symbol, and matching it byte for byte IS the ABI.
+    fns.add(mname, ret_t, true, true, param_ids)
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -627,6 +634,7 @@ export fn collect_types(file Node) -> Ctx {
     mut variant_rows = []VariantDef.new()
     mut payload_types = []int.new()
     mut fns = FnTable.new()
+    mut fn_decl_rows = []int.new()
     // First pass: register every type NAME (id = order of appearance after
     // the primitives), so later rows can reference any type of the file
     // regardless of declaration order. TypeDef records are BUILT on the
@@ -772,8 +780,17 @@ export fn collect_types(file Node) -> Ctx {
                 }
                 param_ids.push(defs.type_id(leaf_text(pk[1])))
             }
-            fns.add(fname, ret, false, param_ids)
-            defs.add(fname, DefKind.DefFn, fns.rows.len() - 1)
+            fns.add(fname, ret, false, false, param_ids)
+            ro frow = fns.rows.len() - 1
+            defs.add(fname, DefKind.DefFn, frow)
+            // The DECLARATION's own row, keyed by its node. Asking `defs` by
+            // name gives the LAST row of that name (the table is
+            // last-write-wins), so two overloads used to answer with one row --
+            // and the emitter wrote two C functions with one name, carrying the
+            // other overload's parameter types (owner's review 2026-08-19).
+            ro did = c.id_of()
+            while fn_decl_rows.len() <= did { fn_decl_rows.push(-1) }
+            fn_decl_rows[did] = frow
         } else {
             // Every other top-level node -- the module declaration, imports,
             // and recovery Err branches -- declares neither a type nor a
@@ -792,7 +809,7 @@ export fn collect_types(file Node) -> Ctx {
     for i in 0..types.len() {
         assert(types[i].ty_id == i, "sem: interned term id diverged from declaration index before E2-b2 — a type was interned out of declaration order")
     }
-    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fns }
+    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns }
 }
 
 /// The BODY of a match arm: its last child is not always the body.

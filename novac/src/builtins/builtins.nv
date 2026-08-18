@@ -54,6 +54,11 @@ export const ENTRY_FN = "main"
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
 
+/// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
+/// the others (P5): the emitter must not spell std names itself, and the
+/// registry is asked for the row under this name.
+export const EQUAL_METHOD = "equal"
+
 /// One pre-declared type of the universe: (source name, runtime C spelling).
 /// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a
 /// fact, not a mangling result; everything non-primitive goes through the

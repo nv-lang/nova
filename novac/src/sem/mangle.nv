@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../diag.{ice}
-import ../builtins.{prim_c_name}
+import ../builtins.{ENTRY_FN, prim_c_name}
 
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
@@ -90,54 +90,94 @@ export fn c_maker(ctx Ctx, vrow int) -> str {
     "novac_make_${ctx.types[vd.sum_id].name}_${vd.name}"
 }
 
+/// The RUNTIME's entry slot. Not ours to choose: the shell calls this exact
+/// symbol, and `check-novac-shell-freshness.sh` holds the pair together.
+const ENTRY_C_NAME = "nova_fn_main_impl"
+
 /// C name of a method call on a receiver type: the oracle's shape is
 /// `<Recv>_method_<name>` where <Recv> is the receiver's C base spelling
 /// (`Nova_str` for str). Only str receivers exist in the subset today; the
 /// rule generalizes with the registry (records: `Nova_<name>`).
-/// The C name of a CALLABLE, whichever kind it is.
+/// The C name of a CALLABLE. ONE scheme for all of them.
 ///
-/// ONE door (owner's question 2026-08-18). There used to be two -- `c_method`
-/// keyed by (receiver type, name text) and `c_fn` keyed by (name, args) -- and
-/// the split was not method-vs-function, which plan 273 abolished when it made
-/// a method "a function whose first parameter is marked the receiver" and put
-/// both in ONE table. The split was WHOSE ABI the name belongs to, and that is
-/// a property of the row, not a reason for a second door.
+/// Plan 273 says a method IS a function whose first parameter is marked the
+/// receiver, and this door now spells it that way: the receiver is simply
+/// parameter zero, and no `method` appears in the name. What IS special is
+/// not method-ness but ORIGIN -- a symbol we did not choose:
+///   * the entry point answers to the RUNTIME (`nova_fn_main_impl`);
+///   * a callable read from the oracle's declarations answers to the
+///     ORACLE's ABI, and matching it byte for byte is the fixed point that
+///     `check-novac-mangle-fixed-point.sh` holds.
+/// Everything else is ours, and ours carries its PARAMETER TYPES.
 ///
-/// Keyed by the ROW, so the emitter reads a decision instead of re-deriving one
-/// from the receiver's type -- the second-door disease plan 196 exists to
-/// remove. `args` carries the instance key (E2-b2); empty means "no type
-/// arguments", which is every callable until generics land.
-export fn c_callable(ctx Ctx, row int, args []int, is_entry bool) -> str
+/// The parameters are in the name because overloading is BY parameters:
+/// until 2026-08-19 `fn describe(v int)` and `fn describe(v str)` -- legal
+/// Nova, accepted by the oracle and by novac -- emitted TWO C functions
+/// called `novac_user_describe`. Invalid C from a valid program, and no
+/// diagnostic anywhere (owner's review; the probe is in the wave's commit).
+///
+/// `args` carries the instance key on top (E2-b2): two instantiations of one
+/// generic callable differ in the same name, after the parameters.
+export fn c_callable(ctx Ctx, row int, args []int) -> str
     requires row >= 0 && row < ctx.fns.rows.len(), "mangle: callable row outside the registry"
 {
-    if is_entry { return "nova_fn_main_impl" }
     ro fd = ctx.fns.rows[row]
-    if fd.has_recv {
-        // A method READ from std signatures: the name is the ORACLE's, and
-        // matching it byte for byte IS the ABI (check-novac-mangle-fixed-point).
-        return method_name_of_type(ctx, ctx.fns.recv_of(row), fd.name)
+    if fd.name == ENTRY_FN {
+        return ENTRY_C_NAME
     } else {
-        // A function declared in this file: novac's own namespace.
+        // Every other callable is named by the scheme below; the entry
+        // point is the one whose symbol the RUNTIME dictates.
     }
-    if args.len() == 0 { return "novac_user_${fd.name}" }
-    mut s = "novac_user_${fd.name}"
+    if fd.foreign {
+        // A symbol we did NOT choose: the oracle emits it, and reproducing it
+        // byte for byte is the ABI. Its scheme is written from the first
+        // parameter's type -- and that is the ORACLE's business, not a receiver
+        // path of ours: here the first parameter is read as a parameter.
+        assert(fd.param_cnt >= 1, "mangle: a foreign callable with no parameters has no oracle spelling")
+        return oracle_symbol(ctx, ctx.fns.params[fd.param_off], fd.name)
+    } else {
+        // Ours: one scheme for every callable, below.
+    }
+    // ONE scheme for every callable of ours. A receiver is parameter zero and
+    // gets no special treatment: plan 273 says a method IS a function whose
+    // first parameter is marked the receiver, so the name has no `method` in it
+    // and no branch on `has_recv`. Overloading is by parameter types (and the
+    // oracle accepts a difference in the return type alone), so both are here.
+    mut s = "novac_fn_${fd.name}"
+    for pt in ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt] {
+        s = "${s}__${type_tag(ctx, pt)}"
+    }
+    // The RETURN type belongs in the name too: the oracle accepts two
+    // callables that differ only by it (probed 2026-08-19), so leaving it
+    // out would reopen the collision the parameters just closed. It is
+    // absent only for the -1 sentinel, which is legal for the entry point
+    // alone and answered above.
+    if fd.ret_id >= 0 {
+        s = "${s}__to_${type_tag(ctx, fd.ret_id)}"
+    } else {
+        // No declared return: check refuses this everywhere but `main`,
+        // and `main` never reaches here.
+    }
     for a in args {
-        s = "${s}__${type_tag(ctx, a)}"
+        s = "${s}__inst_${type_tag(ctx, a)}"
     }
     s
 }
-
-/// The oracle's spelling of a method entry point. NOT a door: the one door is
-/// `c_callable`, and this is how it spells one of its two cases.
-export fn method_name_of_type(ctx Ctx, recv_t int, name str) -> str {
-    ro td = ctx.types[recv_t]
+/// The ORACLE's spelling of a method entry point -- a symbol novac did not
+/// choose and must reproduce. NOT a second door: `c_callable` is the door,
+/// and this is how it writes a FOREIGN name. Also used by the emitter for the
+/// `==`-on-strings call it synthesises, which no tree node carries.
+fn oracle_symbol(ctx Ctx, first_param_t int, name str) -> str {
+    ro td = ctx.types[first_param_t]
     match td.kind {
-        TkPrim => { return "Nova_${td.name}_method_${name}" }
-        TkRecord => { return "Nova_${td.name}_method_${name}" }
-        TkSum => { return "Nova_${td.name}_method_${name}" }
-        TkApp => { ice("mangle: method name on an applied receiver — the instance door arrives with E2-b2") }
-        TkParam => { ice("mangle: method name on a type parameter — resolution happens on the head, not here") }
-        TkInfer => { ice("mangle: method name on an inference variable — a variable escaped its body") }
+        // ONE arm, not three: the three kinds spell the name identically, and
+        // writing it three times is one decision recorded thrice -- the second
+        // door in miniature (owner, 2026-08-19, looking at the function I had
+        // just renamed without seeing it).
+        TkPrim | TkRecord | TkSum => { return "Nova_${td.name}_method_${name}" }
+        TkApp => { ice("mangle: oracle symbol on an applied first parameter — the instance door arrives with E2-b2") }
+        TkParam => { ice("mangle: oracle symbol on a type parameter — resolution happens on the head, not here") }
+        TkInfer => { ice("mangle: oracle symbol on an inference variable — a variable escaped its body") }
     }
 }
 

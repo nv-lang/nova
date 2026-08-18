@@ -757,7 +757,22 @@ fn Checker mut @type_expr(e Node) -> () {
         // construction, so a fourth DefKind cannot slip past silently.
         ro def = @ctx.defs.rows[d]
         match def.kind {
-            DefVariant | DefFn => @chan.record_callee(e.id_of(), def.kind, def.payload)
+            DefVariant => @chan.record_callee(e.id_of(), def.kind, def.payload)
+            DefFn => {
+                // NOT `def.payload`: `defs` is keyed by the bare name and lives
+                // by last-write-wins, so with two overloads it answers with the
+                // LAST one -- `describe(1)` went to the `str` overload, silently
+                // (owner's review 2026-08-19). The callable registry knows the
+                // whole set; narrowing by argument types arrives with E2-b3, and
+                // until then an ambiguous name is REFUSED rather than guessed.
+                match @ctx.fns.lookup(-1, cname) {
+                    FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+                    FnOverloaded(_) => @report_first_leaf_of(kids,
+                        "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
+                    FnUnknown => @report_first_leaf_of(kids,
+                        "outside the subset: this name is not a callable novac knows")
+                }
+            }
             // A type name in call position is not a callee: the lattice
             // judges that shape and ices on it, and the channel holds
             // answers, so there is nothing to record here.
