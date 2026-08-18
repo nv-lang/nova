@@ -20,9 +20,10 @@ name: crate-tests
 # гейта. Здесь и там гоняется одно и то же; расхождение между ними — само по
 # себе дефект.
 #
-# `compiler-codegen` НЕ покрыт ни тут, ни локально: его набор не стартует без
-# увеличенного стека и содержит 29 красных (замер 2026-08-18, №723). Сначала
-# они, потом шаг — заведомо красный шаг приучает себя обходить.
+# `compiler-codegen` покрыт с 2026-08-18: 29 красных разобраны, набор 1249/0.
+# Ему нужен УВЕЛИЧЕННЫЙ СТЕК — без `RUST_MIN_STACK` прогон падает
+# `STATUS_STACK_OVERFLOW`, не дойдя до конца; это же требование записано в
+# локальном страже. Интеграционные цели (`tests/`, 39 файлов) пока вне охвата.
 
 on:
   push:
@@ -36,7 +37,7 @@ concurrency:
 
 jobs:
   crate-tests:
-    name: nova-lsp + nova-cli own test suites
+    name: own test suites of nova-lsp, nova-cli and compiler-codegen
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -83,3 +84,12 @@ jobs:
       # них запускает настоящий `nova` через CARGO_BIN_EXE_nova.
       - name: nova-cli — full test suite
         run: cargo test --release --locked --manifest-path nova-cli/Cargo.toml --no-fail-fast
+
+      # `compiler-codegen` — сам компилятор. Стек обязателен, см. шапку.
+      # `--locked` здесь НЕ ставится: его `Cargo.lock` не отслеживается git'ом,
+      # и требовать неизменности файла, которого в репозитории нет, значит
+      # уронить job на ровном месте.
+      - name: compiler-codegen — lib test suite
+        env:
+          RUST_MIN_STACK: "134217728"
+        run: cargo test --release --lib --manifest-path compiler-codegen/Cargo.toml --no-fail-fast

@@ -51988,7 +51988,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // primitive_unchanged`/`_named_tuple_heap_box`). `nova_int`
             // needs no hint to resolve — it IS the element type already.
             "nova_int"  => "nova_int",
-            _ => match self.current_array_elem_hint.as_deref().unwrap_or_else(|| panic!("[P67] nova_int collapse")) {
+            // №723-хвост (2026-08-18): здесь стояла паника `[P67] nova_int
+            // collapse`. Ветка достижима, когда элемент не примитивен И
+            // контекст не дал подсказку; отказ A8 двумя десятками строк ниже
+            // написан ровно для этого случая, так что ICE подменял собой уже
+            // готовую диагностику. Возвращаем её — и с НАСТОЯЩИМ именем типа
+            // элемента, а не с подставленным `nova_int`.
+            _ => match self.current_array_elem_hint.as_deref() {
+                None => return Err(format!(
+                    "[Plan172.12-A8] `[]T` array literal with element `{}` needs the \
+                     `collections` prelude facade (Vec[T] backing, D239 []T ≡ Vec[T]) — \
+                     this compilation unit's `#prelude(...)` doesn't include it, and no \
+                     element-type hint reached the literal. Add `collections` to the \
+                     `#prelude(...)` attribute (see \
+                     [M-partial-prelude-primitive-method-registry]).",
+                    first_item_ty)),
+                Some(hint) => match hint {
                 "nova_str"  => "nova_str",
                 "nova_bool" => "nova_bool",
                 "nova_f64"  => "nova_f64",
@@ -52006,6 +52021,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "uint64_t"  => "uint64_t",
                 "void_p"    => "void_p",
                 _           => "nova_int",
+                },
             },
         }};
         // Plan 172.12 A8: the legacy `NovaArray_<T>*` runtime (array.h
@@ -66286,60 +66302,55 @@ mod array_lit_named_tuple_box_tests {
         }
     }
 
+    /// Без фасада `collections` эмиссия литерала массива обязана ОТКАЗАТЬ
+    /// ВНЯТНО — и это единственный инвариант, который здесь ещё существует.
+    ///
+    /// Прежняя пара тестов закрепляла легаси-боксинг `NovaArray_<T>*`
+    /// (`nova_alloc(sizeof(...))` + `nova_array_push_nova_int`). Plan 172.12 A8
+    /// снял его 2026-07-09: `[]T` подпёрт `Vec[T]` (D239), а для любого
+    /// элемента кроме `void_p` путь возвращает `Err` РАНЬШЕ, чем доходит до
+    /// боксинга. Тесты проверяли недостижимый код и держались на голом
+    /// `CEmitter::new()`, где `Vec`-шаблон не зарегистрирован вовсе, поэтому
+    /// современный путь `try_emit_typed_vec_literal` не запускался никогда.
+    ///
+    /// НАСТОЯЩИЙ инвариант — «структура переживает литерал массива» — стережёт
+    /// теперь сквозная фикстура `spec_tests/conformance/
+    /// d215_named_tuple_in_array_literal.nv`: она идёт по живому конвейеру и
+    /// читает поля обратно, а не смотрит на строку в приватном эмиттере.
     #[test]
-    fn emit_array_lit_named_tuple_heap_box() {
-        // Plan 128.1 Ф.2 PRIMARY FIX (codegen). `[Vec3(1.0, 2.0, 3.0)]` где
-        // Vec3 = NamedTuple. infer_expr_c_type(Vec3(...)) = "NovaTuple_Vec3"
-        // (value struct, no pointer). Без fix'а array-lit storage (elem_ty =
-        // nova_int) попытался бы push'нуть raw compound literal в
-        // NovaArray_nova_int — invalid C cast.
-        //
-        // Post-fix: needs_heap_alloc match'ит NovaTuple_* → emit'ит
-        //   NovaTuple_Vec3* tmp = (NovaTuple_Vec3*)nova_alloc(sizeof(NovaTuple_Vec3));
-        //   *tmp = Vec3(...);
-        //   nova_array_push_nova_int(arr, (nova_int)(tmp));
+    fn emit_array_lit_without_collections_facade_refuses_legibly() {
+        // (1) Элемент — именованный кортеж. До 2026-08-18 здесь была ПАНИКА
+        // `[P67] nova_int collapse`: ICE подменял собой отказ, написанный для
+        // этого самого случая двумя десятками строк ниже.
         let mut e = CEmitter::new();
-        // Register NamedTuple alias so infer_expr_c_type(Vec3(...)) returns
-        // "NovaTuple_Vec3" via the type_aliases path (см. emit_c.rs:28787).
         e.type_aliases.insert("Vec3".into(), "NovaTuple_Vec3".into());
         let elem = call(ident("Vec3"), vec![float_lit(1.0), float_lit(2.0), float_lit(3.0)]);
-        let elems = vec![ArrayElem::Item(elem)];
-        let before_out = e.out.clone();
-        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
-        let emitted = &e.out[before_out.len()..];
-        // Verify heap-alloc path was taken: must contain nova_alloc(sizeof(NovaTuple_Vec3)).
-        assert!(emitted.contains("nova_alloc(sizeof(NovaTuple_Vec3))"),
-            "Plan 128.1 Ф.2: NamedTuple element must heap-alloc via \
-             nova_alloc(sizeof(NovaTuple_Vec3)); emitted:\n{}", emitted);
-        // And use the NovaArray_nova_int storage (boxed via pointer-stomp).
-        assert!(emitted.contains("NovaArray_nova_int"),
-            "NamedTuple element stored в boxed NovaArray_nova_int; emitted:\n{}",
-            emitted);
-        assert!(emitted.contains("nova_array_push_nova_int"),
-            "must push as nova_int (pointer-stomp); emitted:\n{}", emitted);
-    }
+        let err = e.emit_array_lit(&vec![ArrayElem::Item(elem)])
+            .expect_err("без фасада `collections` эмиссия обязана отказать, а не выдать код");
+        assert!(err.contains("[Plan172.12-A8]"),
+            "отказ обязан назвать A8, иначе его не с чем связать; получено:\n{}", err);
+        assert!(err.contains("NovaTuple_Vec3"),
+            "отказ обязан назвать НАСТОЯЩИЙ тип элемента, а не подставленный \
+             `nova_int`; получено:\n{}", err);
 
-    #[test]
-    fn emit_array_lit_int_primitive_unchanged() {
-        // Regression guard: primitive `nova_int` element (`[1, 2, 3]`)
-        // must NOT take heap-alloc path — primitives store inline в
-        // NovaArray_nova_int. Без guard'а слишком широкий whitelist
-        // (e.g. accidentally matching int prefix) сломал бы baseline.
-        let mut e = CEmitter::new();
-        let elems = vec![
+        // (2) Примитивный элемент — тот же отказ, тот же текст. Проверяется
+        // отдельно: примитив идёт по другой ветке разбора типа элемента.
+        let mut e2 = CEmitter::new();
+        let ints = vec![
             ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
             ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
         ];
-        let before_out = e.out.clone();
-        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
-        let emitted = &e.out[before_out.len()..];
-        // Must NOT call nova_alloc (no heap-box) for primitive ints.
-        assert!(!emitted.contains("nova_alloc(sizeof("),
-            "Plan 128.1 Ф.2 REGRESSION: primitive int элементы НЕ должны \
-             heap-alloc'аться; emitted:\n{}", emitted);
-        assert!(emitted.contains("NovaArray_nova_int"),
-            "int storage must remain NovaArray_nova_int; emitted:\n{}",
-            emitted);
+        let err2 = e2.emit_array_lit(&ints)
+            .expect_err("примитивный элемент без фасада — тот же отказ");
+        assert!(err2.contains("[Plan172.12-A8]"),
+            "получено:\n{}", err2);
+
+        // (3) И ни один отказ не смеет тянуть за собой снятый рантайм: в
+        // сообщении нечего искать, но и в выводе не должно остаться следов.
+        assert!(!e.out.contains("nova_array_push_nova_int"),
+            "снятый рантайм не должен эмититься даже частично:\n{}", e.out);
+        assert!(!e2.out.contains("nova_array_push_nova_int"),
+            "снятый рантайм не должен эмититься даже частично:\n{}", e2.out);
     }
 
     #[test]
