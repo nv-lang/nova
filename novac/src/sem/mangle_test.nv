@@ -2,11 +2,14 @@
 // novac/src/sem — tests beside the module (project convention).
 //
 // The load-bearing property here is the ACCEPTANCE of E2-b2 stated in plan 274
-// §9.1: two instantiations of one callable must not collide in C. It is tested
-// at the mangling layer because that is where the collision would happen, and
-// because this layer can be tested before the call-site syntax exists -- the
-// alternative is to verify it by reading, which is what the plan calls a
-// feeling rather than a number.
+// section 9.1: two instantiations of one callable must not collide in C. It is
+// tested at the mangling layer because that is where a collision would happen,
+// and because this layer can be tested before the call-site syntax exists --
+// the alternative is to verify it by reading, which the plan calls a feeling
+// rather than a number.
+//
+// Since 2026-08-18 the door is ONE (`c_callable`) and takes a registry ROW, so
+// the tests below name a callable the way the compiler does: by its row.
 
 module novac.sem
 import ../tree.{Node, NodeKind, branch}
@@ -17,30 +20,51 @@ import ../tree.{Node, NodeKind, branch}
 /// add one.
 fn empty_file() -> Node => branch(0, NodeKind.File, []Node.new())
 
+/// A registry holding one plain function named `hold`, and its row.
+fn with_fn(name str) -> (Ctx, int) {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add(name, ctx.prims.int_id, false, []int.new())
+    (ctx, ctx.fns.rows.len() - 1)
+}
+
 test "instance key: no type arguments spells the plain name" {
-    ro ctx = collect_types(empty_file())
-    assert(c_fn(ctx, "used", []int.new(), false) == "novac_user_used")
+    ro (ctx, row) = with_fn("used")
+    assert(c_callable(ctx, row, []int.new(), false) == "novac_user_used")
 }
 
 test "instance key: the entry point answers to the runtime, not to us" {
-    ro ctx = collect_types(empty_file())
-    assert(c_fn(ctx, "main", []int.new(), true) == "nova_fn_main_impl")
+    ro (ctx, row) = with_fn("main")
+    assert(c_callable(ctx, row, []int.new(), true) == "nova_fn_main_impl")
 }
 
 test "instance key: different type arguments give different C names" {
-    ro ctx = collect_types(empty_file())
-    ro t_int = ctx.prims.int_id
-    ro t_str = ctx.prims.str_id
-    ro a = c_fn(ctx, "hold", []int.of(t_int), false)
-    ro b = c_fn(ctx, "hold", []int.of(t_str), false)
+    ro (ctx, row) = with_fn("hold")
+    ro a = c_callable(ctx, row, []int.of(ctx.prims.int_id), false)
+    ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id), false)
     assert(a != b)
     assert(a == "novac_user_hold__nova_int")
 }
 
 test "instance key: arity matters, not just the set" {
-    ro ctx = collect_types(empty_file())
-    ro t_int = ctx.prims.int_id
-    ro one = c_fn(ctx, "pair", []int.of(t_int), false)
-    ro two = c_fn(ctx, "pair", []int.of(t_int, t_int), false)
+    ro (ctx, row) = with_fn("pair")
+    ro one = c_callable(ctx, row, []int.of(ctx.prims.int_id), false)
+    ro two = c_callable(ctx, row, []int.of(ctx.prims.int_id, ctx.prims.int_id), false)
     assert(one != two)
+}
+
+test "one door: a METHOD row answers in the oracle's namespace, not ours" {
+    // The split that used to justify two doors: a method read from std
+    // signatures carries the ORACLE's name, a function declared here carries
+    // novac's. That is a property of the ROW, and the one door reads it.
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("len", ctx.prims.int_id, true, []int.of(ctx.prims.str_id))
+    ro row = ctx.fns.rows.len() - 1
+    // A RELATION, not a literal: the ABI spelling belongs to the oracle, and
+    // writing it here would be a second place that decides it (P24). What
+    // this test owns is the claim that ONE door tells the two apart.
+    ctx.fns.add("len", ctx.prims.int_id, false, []int.new())
+    ro plain = ctx.fns.rows.len() - 1
+    assert(c_callable(ctx, row, []int.new(), false) !=
+        c_callable(ctx, plain, []int.new(), false))
+    assert(c_callable(ctx, plain, []int.new(), false) == "novac_user_len")
 }

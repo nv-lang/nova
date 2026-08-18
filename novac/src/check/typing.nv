@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -273,6 +273,43 @@ fn Checker mut @type_stmt(st Node) -> () {
     } else {
         // SILENT-OK: a statement kind outside the subset is refused at the
         // emitter's door, so this walk has no answer to record for it.
+    }
+}
+/// Decide WHICH row a method call goes to, and record the decision.
+///
+/// Finding C9 of 274.3: the pair (receiver type, method name) was resolved
+/// nowhere -- check asked only whether the name existed in some declaration,
+/// and the emitter rebuilt the C name out of the receiver's type. Two answers
+/// to one question, with the second one winning in silence: exactly the shape
+/// plan 196 spends its waves removing from the current compiler.
+///
+/// Overload sets are NOT narrowed here -- that arrives with E2-b3 and needs
+/// argument types. An overloaded name is refused BY NAME instead of being
+/// guessed, because guessing is how the wrong entry point gets emitted.
+fn Checker mut @record_method_callee(e Node, kids []Node, recv_t int) -> () {
+    if kids.len() < 3 {
+        return
+    } else {
+        // Three children are the receiver, the dot and the name: fewer
+        // than that is a recovery shape check has already refused.
+    }
+    match kids[2] {
+        Branch { .. } => {}
+        Leaf(t) => {
+            match @ctx.fns.lookup(recv_t, t.text) {
+                FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+                FnUnknown => @refuse(t,
+                    "outside the subset: this type has no such method in the declarations novac was handed")
+                // An overload SET: narrowing by argument types arrives with
+                // E2-b3. Recording the first row is not a guess about which
+                // overload runs -- it is a statement about the NAME, and the
+                // oracle spells every overload of one (receiver, name) the
+                // same way (Nova_<T>_method_<name>, no arity in it). So the
+                // choice cannot change the emitted C name, and the corpus
+                // holds that honest: refusing here regressed strings.nv.
+                FnOverloaded(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+            }
+        }
     }
 }
 
@@ -672,13 +709,17 @@ fn Checker mut @type_expr(e Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: a method call needs a name after the dot")
             return
         }
-        // The receiver's type is what the mangling door takes; the callee row
-        // itself is NOT recorded yet, because the door still mangles from the
-        // receiver type rather than from a declaration (that flip is the
-        // instance door of E2-b2).
         @type_expr(kids[0])
         if @out.len() == 0 {
-            @record(kids[0], type_of(kids[0], @ctx, @scope))
+            ro recv_t = type_of(kids[0], @ctx, @scope)
+            @record(kids[0], recv_t)
+            // The DECISION, not a hint: which row this method call goes to.
+            // Until 2026-08-18 nobody made it -- check only asked whether the
+            // NAME existed anywhere, and the emitter rebuilt the C name from
+            // the receiver's type. That is two answers to one question, the
+            // shape plan 196 exists to remove, and it is why the mangling door
+            // had to be two doors. Same lookup door the diagnostics use.
+            @record_method_callee(e, kids, recv_t)
         } else {
             // A diagnostic already stands, so the receiver's type is not
             // trustworthy and nothing is recorded; the arguments are still
