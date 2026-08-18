@@ -291,7 +291,7 @@ par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая двер
 par_add "$ROOT/scripts/guards/check-novac-one-door-export.sh" "одна операция из двух модулей (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-edge-payload.sh" "ребро §3 без «что течёт» (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-surface.sh" "публичная поверхность разошлась с базой (274 §10.4)"
-par_add "$ROOT/scripts/guards/check-novac-temp-edges.sh" "временное ребро без срока или истекло (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-temp-edges.py" "временное ребро без срока или истекло (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-module-donor.sh" "модуль novac без донора-указателя в заголовке (П27)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "резолв с тихим дефолтом или линейным сканом имён"
