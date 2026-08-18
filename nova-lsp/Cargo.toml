@@ -11,6 +11,21 @@ publish = false
 name = "nova-lsp"
 path = "src/main.rs"
 
+# Второе имя для ТОГО ЖЕ сервера, в том же `target/`. Нужно потому, что
+# `nova-lsp.exe` держит открытым работающий редактор владельца: линковка тогда
+# падает с `os error 5` / LNK1105, и это выглядит как поломка сборки, хотя
+# сборка ни при чём. Собирается ТОЛЬКО по явному запросу — `required-features`
+# держит цель выключенной, так что ни `cargo build`, ни поставка её не видят:
+#     cargo build --release --features agent-bin --bin nova-lsp-agent
+[[bin]]
+name = "nova-lsp-agent"
+path = "src/agent_main.rs"
+required-features = ["agent-bin"]
+
+[features]
+# Пустая по содержанию: включает не код, а вторую бинарную цель выше.
+agent-bin = []
+
 [lib]
 name = "nova_lsp"
 path = "src/lib.rs"

@@ -244,4 +244,299 @@ mod tests {
         apply_changes(&mut rope, &[change(0, 0, 2, 0, "NEW\n")]);
         assert_eq!(rope.to_string(), "NEW\nline3\n");
     }
+    // ── prop ─────────────────────────────────────────────────────────────────
+    //
+    // THE INVARIANT THIS FILE EXISTS FOR, and it had no test until 2026-08-18:
+    // after ANY sequence of incremental edits, the server's copy of the document
+    // must equal the editor's, byte for byte. Every position the server ever
+    // reports -- a diagnostic, a hover, an inlay hint -- is an offset INTO that
+    // copy. If it drifts, positions stay internally consistent and become
+    // externally wrong, which is why the drift is invisible from inside: the
+    // hints are right for a text nobody is looking at.
+    //
+    // The per-case tests above check individual edits against hand-written
+    // expectations. That cannot catch drift, because drift needs a SEQUENCE:
+    // each edit is applied to the result of the previous one, so one bad offset
+    // silently poisons every edit after it.
+    //
+    // Reference implementation is deliberately INDEPENDENT -- a plain String and
+    // a hand-rolled LSP position walker (lines split on \n, \r\n and lone \r;
+    // characters counted in UTF-16 code units, per the LSP spec). Comparing
+    // ropey against ropey would only prove it agrees with itself.
+
+    /// Deterministic generator: a fixed sequence beats a random one that cannot
+    /// be replayed when it fails.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+        fn below(&mut self, n: usize) -> usize {
+            if n == 0 { 0 } else { (self.next() as usize) % n }
+        }
+    }
+
+    /// LSP position → byte offset, by the spec's own rules and nothing else.
+    fn ref_pos_to_byte(text: &str, line: u32, character: u32) -> usize {
+        let b = text.as_bytes();
+        let mut idx = 0usize;
+        let mut cur = 0u32;
+        while cur < line && idx < b.len() {
+            match b[idx] {
+                b'\n' => { idx += 1; cur += 1; }
+                b'\r' => {
+                    idx += 1;
+                    if idx < b.len() && b[idx] == b'\n' { idx += 1; }
+                    cur += 1;
+                }
+                _ => idx += 1,
+            }
+        }
+        let mut cu = 0u32;
+        for ch in text[idx..].chars() {
+            if ch == '\n' || ch == '\r' { break }
+            if cu >= character { break }
+            cu += ch.len_utf16() as u32;
+            idx += ch.len_utf8();
+        }
+        idx
+    }
+
+    /// Byte offset → LSP position, the same rules read the other way.
+    fn ref_byte_to_pos(text: &str, off: usize) -> Position {
+        let b = text.as_bytes();
+        let mut idx = 0usize;
+        let mut line = 0u32;
+        let mut line_start = 0usize;
+        while idx < off && idx < b.len() {
+            match b[idx] {
+                b'\n' => { idx += 1; line += 1; line_start = idx; }
+                b'\r' => {
+                    idx += 1;
+                    if idx < b.len() && b[idx] == b'\n' { idx += 1; }
+                    line += 1;
+                    line_start = idx;
+                }
+                _ => idx += 1,
+            }
+        }
+        let off = off.min(text.len()).max(line_start);
+        let character = text[line_start..off]
+            .chars()
+            .map(|c| c.len_utf16() as u32)
+            .sum();
+        Position { line, character }
+    }
+
+    /// The editor's own model of the edit: replace a byte range in a String.
+    fn ref_apply(text: &mut String, change: &TextDocumentContentChangeEvent) {
+        match &change.range {
+            None => *text = change.text.clone(),
+            Some(r) => {
+                let s = ref_pos_to_byte(text, r.start.line, r.start.character);
+                let e = ref_pos_to_byte(text, r.end.line, r.end.character);
+                if s > e { return }
+                text.replace_range(s..e, &change.text);
+            }
+        }
+    }
+
+    /// Snap a byte index onto a position an editor could actually address: a
+    /// char boundary, and never between the `\r` and the `\n` of one CRLF --
+    /// that gap is a valid char boundary but not a place a cursor can be, and
+    /// generating it tests the harness rather than the code.
+    fn snap(text: &str, mut i: usize) -> usize {
+        if i > text.len() { i = text.len() }
+        while i > 0 && !text.is_char_boundary(i) { i -= 1 }
+        let b = text.as_bytes();
+        if i > 0 && i < b.len() && b[i - 1] == b'\r' && b[i] == b'\n' { i -= 1 }
+        i
+    }
+
+    /// One randomized run: `n` edits over `seed`, comparing after EVERY edit so
+    /// the failure names the first bad step instead of the wreckage at the end.
+    fn drive(start: &str, seed: u64, n: usize) {
+        let inserts = [
+            "", "x", "\n", "\r\n", "abc", "мир", "\n    ro x = 1\n",
+            "}", "// комментарий\n", "()", "  ", "\t", "@peek()",
+        ];
+        let mut rope = Rope::from_str(start);
+        let mut refr = start.to_string();
+        let mut rng = Lcg(seed);
+
+        for step in 0..n {
+            let a = snap(&refr, rng.below(refr.len() + 1));
+            let b = snap(&refr, rng.below(refr.len() + 1));
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            let ch = TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: ref_byte_to_pos(&refr, lo),
+                    end: ref_byte_to_pos(&refr, hi),
+                }),
+                range_length: None,
+                text: inserts[rng.below(inserts.len())].to_string(),
+            };
+
+            ref_apply(&mut refr, &ch);
+            apply_changes(&mut rope, std::slice::from_ref(&ch));
+
+            let got = rope.to_string();
+            assert_eq!(
+                got, refr,
+                "seed {seed}, step {step}: the server's copy drifted from the editor's.\n\
+                 edit was {:?} -> {:?}\n\
+                 server : {:?}\n\
+                 editor : {:?}",
+                ch.range, ch.text, got, refr
+            );
+        }
+    }
+
+    #[test]
+    fn prop1_lf_document_stays_in_sync_over_a_long_edit_sequence() {
+        let src = "module a
+
+fn main() -> () {
+    ro x = 1
+    println(\"hi\")
+}
+";
+        for seed in 1..=24u64 {
+            drive(src, seed, 60);
+        }
+    }
+
+    #[test]
+    fn prop2_crlf_document_stays_in_sync() {
+        // The endings this project actually ships on Windows.
+        let src = "module a\r\n\r\nfn main() -> () {\r\n    ro x = 1\r\n}\r\n";
+        for seed in 101..=124u64 {
+            drive(src, seed, 60);
+        }
+    }
+
+    #[test]
+    fn prop3_cyrillic_comments_do_not_break_the_utf16_walk() {
+        // Non-ASCII is where a byte/char/UTF-16 mix-up shows up first, and the
+        // compiler's own sources are full of Russian comments.
+        let src = "module a
+// комментарий раз
+fn main() -> () {
+    // два
+    ro x = 1
+}
+";
+        for seed in 201..=224u64 {
+            drive(src, seed, 60);
+        }
+    }
+
+    #[test]
+    fn prop4_mixed_endings_stay_in_sync() {
+        // A mixed file is bad hygiene (check-mixed-eol) but it must not make the
+        // server and the editor disagree about where anything is.
+        let src = "module a
+fn f() -> () {
+    ro x = 1
+}
+";
+        for seed in 301..=324u64 {
+            drive(src, seed, 60);
+        }
+    }
+
+    /// Same invariant, but the edits arrive BATCHED, as an editor sends them.
+    /// Each change in one notification is defined against the result of the
+    /// previous change in that same notification -- computing them all against
+    /// the pre-batch text is the classic way to get this wrong, and it is
+    /// invisible to every single-edit test.
+    fn drive_batched(start: &str, seed: u64, notifications: usize) {
+        let inserts = [
+            "", "x", "\n", "abc", "мир", "()", "}", "\n    ro y = 2\n", "  ",
+        ];
+        let mut rope = Rope::from_str(start);
+        let mut refr = start.to_string();
+        let mut rng = Lcg(seed);
+
+        for n in 0..notifications {
+            let batch_len = 1 + rng.below(4);
+            let mut batch: Vec<TextDocumentContentChangeEvent> = Vec::new();
+
+            // Build the batch against a running copy, exactly as the spec reads:
+            // change k is expressed in the coordinates left by change k-1.
+            let mut staged = refr.clone();
+            for _ in 0..batch_len {
+                let a = snap(&staged, rng.below(staged.len() + 1));
+                let b = snap(&staged, rng.below(staged.len() + 1));
+                let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+                let ch = TextDocumentContentChangeEvent {
+                    range: Some(Range {
+                        start: ref_byte_to_pos(&staged, lo),
+                        end: ref_byte_to_pos(&staged, hi),
+                    }),
+                    range_length: None,
+                    text: inserts[rng.below(inserts.len())].to_string(),
+                };
+                ref_apply(&mut staged, &ch);
+                batch.push(ch);
+            }
+
+            for ch in &batch {
+                ref_apply(&mut refr, ch);
+            }
+            apply_changes(&mut rope, &batch);
+
+            let got = rope.to_string();
+            assert_eq!(
+                got, refr,
+                "seed {seed}, notification {n} of {batch_len} change(s): the server's \
+                 copy drifted from the editor's.\nserver : {:?}\neditor : {:?}",
+                got, refr
+            );
+        }
+    }
+
+    #[test]
+    fn prop6_batched_changes_in_one_notification_stay_in_sync() {
+        let src = "module a\n\nfn main() -> () {\n    ro x = 1\n    println(\"hi\")\n}\n";
+        for seed in 401..=424u64 {
+            drive_batched(src, seed, 40);
+        }
+    }
+
+    #[test]
+    fn prop7_batched_changes_on_a_crlf_document_stay_in_sync() {
+        let src = "module a\r\nfn main() -> () {\r\n    ro x = 1\r\n}\r\n";
+        for seed in 501..=524u64 {
+            drive_batched(src, seed, 40);
+        }
+    }
+
+    #[test]
+    fn prop5_document_can_be_emptied_and_refilled() {
+        // Select-all + type-over: the range covers the whole document, including
+        // the position one past the last line, which is where clamping bugs live.
+        let mut rope = Rope::from_str("a
+b
+c
+");
+        let mut refr = String::from("a
+b
+c
+");
+        for (sl, sc, el, ec, txt) in [
+            (0u32, 0u32, 3u32, 0u32, ""),
+            (0, 0, 0, 0, "new
+text
+"),
+            (0, 0, 2, 0, ""),
+            (0, 0, 0, 0, "x"),
+        ] {
+            let ch = change(sl, sc, el, ec, txt);
+            ref_apply(&mut refr, &ch);
+            apply_changes(&mut rope, std::slice::from_ref(&ch));
+            assert_eq!(rope.to_string(), refr, "edit {sl}:{sc}..{el}:{ec} -> {txt:?}");
+        }
+    }
 }

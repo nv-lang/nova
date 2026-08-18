@@ -1,0 +1,59 @@
+// Реестр 221.1 №725 — обратная сторона neg-фикстуры того же номера.
+//
+// Починка расширяет то, что проверка ПОНИМАЕТ, а значит может начать
+// отвергать законный код. Здесь закреплены формы, которые обязаны проходить:
+// покрытие через `|` — и целиком, и вперемешку с одиночными армами, и в паре
+// с `_`, и на двух строках. Neg-фикстура одна ничего из этого не защищает:
+// страж, умеющий только краснеть, останавливает проект.
+//
+// Замер радиуса при внесении правки: `std`, `examples`, `novac` — НОЛЬ новых
+// отказов; в conformance ровно один, и это заведомая neg-фикстура №703.
+
+module standalone.d65_or_pattern_exhaustive_pos
+
+type Color enum Red | Green | Blue | Amber | White
+
+// (a) один арм-группа покрывает всё
+fn all_in_one(c Color) -> int {
+    match c {
+        Red | Green | Blue | Amber | White => 7
+    }
+}
+
+// (b) одиночные армы вперемешку с группой
+fn mixed(c Color) -> int {
+    match c {
+        Red => 1
+        Green | Blue => 2
+        Amber => 3
+        White => 4
+    }
+}
+
+// (c) группа плюс `_` — остаток безразличен и назван явно
+fn with_rest(c Color) -> int {
+    match c {
+        Red | Green => 10
+        _ => 20
+    }
+}
+
+// (d) та же группа, разложенная на строки. Перенос идёт ПОСЛЕ `|`: форма с
+// ведущим `|` на новой строке грамматикой не берётся (`expected =>, got
+// newline`) — проверено, а не предположено.
+fn wrapped(c Color) -> int {
+    match c {
+        Red |
+        Green |
+        Blue => 5
+        Amber | White => 6
+    }
+}
+
+fn main() Io -> () {
+    println("${all_in_one(Color.White)}")
+    println("${mixed(Color.Blue)}")
+    println("${with_rest(Color.Amber)}")
+    println("${wrapped(Color.Blue)}")
+    println("${wrapped(Color.White)}")
+}

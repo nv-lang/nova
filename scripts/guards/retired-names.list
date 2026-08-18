@@ -1,0 +1,40 @@
+# Снятые имена: `старое -> новое  # когда и почему`.
+#
+# Читается ядром scripts/guards/retired-names-scan.py. Пара попадает сюда
+# ТОЙ ЖЕ волной, что и само переименование, — иначе следующий раз повторится
+# то, ради чего страж заведён: правку внесли в один файл, а форма живёт в
+# восьми.
+#
+# ЖИВЫЕ ЗОНЫ (spec, std, docs/guide, docs/dev, examples, compiler-codegen,
+# nova-cli/src, scripts) держатся на НУЛЕ, без храповика: переименование либо
+# сделано, либо нет. `docs/plans/**` не проверяется — это исторические записи.
+#
+# Строка, которая САМА помечает имя снятым (амендмент, «здесь стояло»,
+# renamed/legacy/retired), не считается: иначе страж заставил бы удалить
+# объяснение, ради которого амендмент и пишется.
+#
+# ── 2026-08-17, type-set знаковых/беззнаковых (D310, решение владельца) ──
+# Множественное число, как в std/src/prelude/protocols.nv:685-686 и в D430.
+# Найдено владельцем: первая правка легла в один файл, форма жила в восьми
+# (28 вхождений), включая три файла std.
+SignedInt   -> SignedInts
+UnsignedInt -> UnsignedInts
+#
+# ── 2026-08-17, семейство фиберных настроек (D233-амендмент) ──
+# `MAX_FIBERS` звучало как потолок, а означало умолчание; настоящий потолок
+# звался SLOT_COUNT_MAX. Пять ролей, одинаковые суффиксы в обоих семействах.
+NOVA_MAX_FIBERS               -> NOVA_FIBERS_PER_WORKER
+NOVA_MAX_FIBERS_DEFAULT       -> NOVA_FIBERS_PER_WORKER_DEFAULT
+NOVA_FIBER_SLOT_COUNT         -> NOVA_FIBERS_PER_WORKER
+NOVA_FIBER_SLOT_COUNT_DEFAULT -> NOVA_FIBERS_PER_WORKER_BUILTIN
+NOVA_FIBER_SLOT_COUNT_MAX     -> NOVA_FIBERS_PER_WORKER_LIMIT
+NOVA_FIBER_SLOT_COUNT_MIN     -> NOVA_FIBERS_PER_WORKER_FLOOR
+NOVA_FIBER_STACK_SIZE         -> NOVA_FIBER_STACK_BUILTIN
+NOVA_FIBER_STACK_MAX          -> NOVA_FIBER_STACK_LIMIT
+NOVA_FIBER_STACK_MIN          -> NOVA_FIBER_STACK_FLOOR
+max_fibers                    -> fibers_per_worker
+#
+# ── 2026-08-17, переменная auto-arm (аудит спеки, пункт 38) ──
+# Переименование зафиксировано планом 83.4.5.9 ещё в мае; спека фиксировала
+# его в ОДНОЙ строке, а три соседние продолжали пользоваться старым именем.
+NOVA_NO_AUTOARM -> NOVA_AUTOARM

@@ -29747,7 +29747,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //   - Plan 83.4.5.1: cancel-wake-all + dispatch_ready re-queue.
         //   - Plan 83.4.5.2: AsyncDetach production-grade + orphan-spawn.
         //   - Plan 83.4.5.4: spawn-time handler-snapshot TLS capture.
-        //   - Plan 83.4.5.5: NOVA_NO_AUTOARM=1 escape hatch (cooperative).
+        //   - Plan 83.4.5.5: NOVA_NO_AUTOARM=1 (legacy name; renamed to
+        //     NOVA_AUTOARM=0 by Plan 83.4.5.9) escape hatch (cooperative).
         //   - Plan 83.4.5.7 Ф.1: atomic fiber state machine + CAS guards
         //     mco_resume sites + idempotent wake CAS на parked flag +
         //     nova_runtime_shutdown ordering pre evloop_close.
@@ -31379,9 +31380,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `emit_expr_with_target_type`'s `TupleLit` arm already decodes
             // `_NovaTuple_` elem types and recurses correctly; it just wasn't
             // reached from here. See docs/plans/wip/closure-megacu-fix-notes.md.
+            // №720: РАСХОДЯЩИЙСЯ трейлинг (`panic(...)`, `throw`, вызов
+            // `-> never`) обязан идти по ТИПИЗИРОВАННОМУ пути при ЛЮБОМ типе
+            // возврата, а не только при типах из списка выше. `never` не имеет
+            // представления, и до этой правки его лоуэрили заглушкой
+            // int-семейства (`(nova_int)0LL`, `emit_c.rs:4394/40012`), которая
+            // становилась ИНИЦИАЛИЗАТОРОМ возвращаемого временного. При
+            // `-> int`/`-> bool` типы C случайно совпадали и программа
+            // работала; при `-> str` не совпадали, и пользователь получал
+            // ошибку чужого компилятора при зелёном `nova check`. То есть
+            // громкий отказ был везением, а не проверкой.
+            //
+            // Новой логики эмиссии не добавляется: типизированная заглушка
+            // (`emit_divergent_with_target_125` + `typed_zero_value_125`, дающая
+            // `((T){0})` для структур) уже написана, до неё просто не доходил
+            // маршрут — `emit_expr_with_target_type` сам переадресует на неё.
             let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_")
                 || ret_ty.starts_with("_NovaTuple_")
-                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty) {
+                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty)
+                || self.expr_diverges_125(trailing) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
@@ -43557,7 +43574,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // [Числовой паритет-2, 2026-07-20] 3c. D74 `int.abs()` →
                 // `llabs(n)` hardcode REMOVED (`int_method_to_c` retired —
                 // was UB on `LLONG_MIN`). `abs` on `int` is now a normal
-                // `.nv` `fn[T SignedInt] T @abs() -> T` blanket (std/
+                // `.nv` `fn[T SignedInts] T @abs() -> T` blanket (std/
                 // prelude/protocols.nv) — it must reach the ORDINARY
                 // `.nv`-method dispatch below, not be intercepted here.
                 // Plan 206 Ф.1 (D423): `@overflowing_add/_sub/_mul` on any
@@ -55150,7 +55167,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// those (called directly from `emit_call`, not through this existence
     /// oracle). [Числовой паритет-2, 2026-07-20] `int_method_to_c` itself is
     /// GONE now (not just this arm) — `int.abs()` was retracted from the
-    /// hardcode entirely and replaced by a real `.nv` `SignedInt` blanket
+    /// hardcode entirely and replaced by a real `.nv` `SignedInts` blanket
     /// (std/prelude/protocols.nv), so it no longer needs any C-function-name
     /// mapping table at all (its `.nv` body compiles like any other method).
     ///
@@ -57483,7 +57500,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 70.4 Ф.4: u8 → nova_byte (C typedef uint8_t).
             ("u8",   "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
             // Plan 172.3 (D310): unsigned MIN rows (all = 0) — were missing; required by
-            // type-set-bounded generics over UnsignedInt using `T.MIN` (e.g. parse range-check).
+            // type-set-bounded generics over UnsignedInts using `T.MIN` (e.g. parse range-check).
             ("u64",  "MIN", "((uint64_t)0)",          "uint64_t"),
             ("uint", "MIN", "((nova_uint)0)",         "nova_uint"),
             ("u32",  "MIN", "((uint32_t)0)",          "uint32_t"),
@@ -61331,7 +61348,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // ahead of this legacy). NO-HIT across the same 4-corpus measurement
                         // ⟹ structurally unreachable (§5). [Числовой паритет-2, 2026-07-20]
                         // `int_method_to_c` itself is now fully RETRACTED (not just this
-                        // consultation arm) — `int.abs()` is a real `.nv` `SignedInt`
+                        // consultation arm) — `int.abs()` is a real `.nv` `SignedInts`
                         // blanket (std/prelude/protocols.nv), no C-function-name table
                         // needed for it anymore; see runtime_registry.rs/emit_call.
                         // Plan 196.2 W1 [gate-1]: B11ab_str_method_big_match_second REMOVED.

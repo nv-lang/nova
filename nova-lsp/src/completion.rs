@@ -1763,10 +1763,11 @@ fn main() -> () {
         );
         assert!(has_label(&items, "encoding"), "encoding under std");
         assert!(has_label(&items, "net"), "net under std");
+        // Written since this test was -- the list follows the filesystem.
+        assert!(has_label(&items, "io"), "io under std (std/src/io)");
+        assert!(has_label(&items, "math"), "math under std (std/src/math)");
         // [M-104.10-hardcode-lists]: stale modules must NOT be advertised.
         assert!(!has_label(&items, "sync"), "std.sync does not exist");
-        assert!(!has_label(&items, "io"), "std.io does not exist");
-        assert!(!has_label(&items, "math"), "std.math does not exist");
     }
 
     /// imp_pos3: `["std", "collections"]` prefix returns vec, hashmap, set.
@@ -1775,10 +1776,11 @@ fn main() -> () {
         let prefix = vec!["std".to_string(), "collections".to_string()];
         let items = import_items(&prefix);
         assert!(has_label(&items, "vec"), "vec under std.collections");
-        assert!(has_label(&items, "hashmap"), "hashmap under std.collections");
+        assert!(has_label(&items, "hash_map"), "hash_map under std.collections");
         assert!(has_label(&items, "set"), "set under std.collections");
-        // [M-104.10-hardcode-lists]: `map` never existed (it is `hashmap`).
+        // [M-104.10-hardcode-lists]: `map` never existed (it is `hash_map`).
         assert!(!has_label(&items, "map"), "std.collections.map does not exist");
+        assert!(!has_label(&items, "hashmap"), "hashmap was renamed to hash_map");
     }
 
     /// imp_pos4: import_items returns MODULE kind items with sort_text.
@@ -1988,11 +1990,58 @@ fn main() -> () {
         assert_eq!(resolved.insert_text, snip.insert_text);
     }
 
+    /// The invariant the repair exists for, and had no test until 2026-08-18:
+    /// whatever it produces must PARSE under the grammar as it stands today.
+    /// Nothing here is currently broken -- this test exists because the failure
+    /// mode is SILENT. An unparseable repaired buffer yields no `expr_types`, so
+    /// method completion drops to the textual scan and quietly loses stdlib
+    /// methods, cross-file methods and doc comments, with no error anywhere.
+    /// A grammar change is exactly what would trigger it, which is why the
+    /// shapes below are written the way a user actually types.
+    #[test]
+    fn repair_pos1_repaired_buffer_parses_for_every_interactive_shape() {
+        let shapes = [
+            ("method at end of fn",
+             "module t\ntype Foo { a int }\nfn Foo @m() -> str => \"x\"\nfn f() -> () {\n    ro x Foo = Foo.new(1)\n    x."),
+            ("inside a call",
+             "module t\nfn f() -> () {\n    ro s = \"a\"\n    println(s."),
+            // The index must be a BINDING, not a literal: `v[0.` is a float
+            // literal being typed, and `method_dot_offset` is right to say so.
+            ("inside an index",
+             "module t\nfn f() -> () {\n    ro v = []int.of(1)\n    ro i = 0\n    ro y = v[i]."),
+            ("nested blocks",
+             "module t\nfn f() -> () {\n    if true {\n        ro s = \"a\"\n        s."),
+            ("after a string with a brace in it",
+             "module t\nfn f() -> () {\n    ro s = \"{ not a block\"\n    s."),
+            ("chained receiver",
+             "module t\nfn f() -> () {\n    ro s = \"a\"\n    ro t = s.trim()."),
+        ];
+        for (name, src) in shapes {
+            let dot = method_dot_offset(src, src.len())
+                .unwrap_or_else(|| panic!("{name}: no dot found"));
+            let repaired = repair_completion_buffer(src, dot);
+            if let Err(e) = nova_codegen::parser::parse(&repaired) {
+                panic!("{name}: repaired buffer does not parse: {}\n{:?}", e.message, repaired);
+            }
+            // The whole point of repairing rather than truncating: every offset
+            // up to the cursor must still mean what it meant.
+            assert_eq!(&repaired[..dot], &src[..dot], "{name}: prefix moved");
+        }
+    }
+
     /// resolve_pos4: method documentation is deferred — the initial method item
     /// has no `documentation`; resolve attaches the stashed doc comment.
     #[test]
     fn resolve_pos4_method_lazy_doc() {
-        let src = "module t\nfn Foo @greet() -> str => \"hi\"\n/// Greets loudly.\nfn Foo @shout() -> str => \"HI\"\nfn f() -> () {\n    ro x Foo = Foo {}\n    x.";
+        // Two things here are LOAD-BEARING, and the test spent a while red
+        // because both were missing. `type Foo` must be declared, or the
+        // receiver type cannot be inferred and completion falls back to the
+        // textual scan, which carries no doc at all. And the value must be built
+        // with `Foo.new(..)`: the `Foo {}` record-literal form is retired, and a
+        // buffer containing it does not parse, which empties `expr_types` for
+        // the same reason. Either way the test would have passed or failed for
+        // reasons unrelated to lazy doc resolution.
+        let src = "module t\ntype Foo { a int }\nfn Foo @greet() -> str => \"hi\"\n/// Greets loudly.\nfn Foo @shout() -> str => \"HI\"\nfn f() -> () {\n    ro x Foo = Foo.new(1)\n    x.";
         let items = method_items(src, src.len());
         let shout = find_item(&items, "shout");
         assert!(

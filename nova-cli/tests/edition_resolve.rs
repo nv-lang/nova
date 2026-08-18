@@ -59,7 +59,7 @@ fn pin_marker() -> int {
 }
 
 test "edition 2026.05 pin marker visible" {
-    let n = pin_marker()
+    ro n = pin_marker()
     assert(n == 5)
 }
 "#,
@@ -105,7 +105,7 @@ fn rolling_marker() -> int {
 }
 
 test "rolling facade marker visible" {
-    let n = rolling_marker()
+    ro n = rolling_marker()
     assert(n == 5)
 }
 "#,

@@ -33,7 +33,7 @@ struct Args {
     stdio: bool,
 }
 
-fn main() {
+pub fn main() {
     // Parse CLI args first — `--version` / `--help` exit here before async code.
     let _args = Args::parse();
 

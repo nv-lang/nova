@@ -12688,6 +12688,71 @@ impl<'a> TypeCheckCtx<'a> {
         enforce_binding_rest: bool,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // №719: ПОЗИЦИОННЫЙ разбор record-варианта. Нормативна ФИГУРНАЯ форма
+        // (`spec/syntax.ru.md:746-750`, канон разбора `02-types.md:111-115`);
+        // позиционная приехала из ОШИБОЧНОГО примера в самом D54
+        // (`03-syntax.md:3741,3745`) — чекер её принимал, а кодоген падал
+        // `no member named '_0' in 'struct Nova_Shape::(unnamed union)'`, то есть
+        // ошибка чужого компилятора в лицо пользователю на шести строках.
+        //
+        // Проверка стоит ЗДЕСЬ, в едином обходе образцов (шесть точек вызова:
+        // match-армы, `ro`/`mut`-биндинги, разбор в for-цикле), а не в разборе
+        // `match`: иначе `if Circle(r) = s` остался бы живым — те самые «пять
+        // дверей», за которые проект уже платил.
+        //
+        // Доктрина консервативная (как у исчерпаемости №703): не резолвится
+        // сумма или вариант — молчим. Ложный отказ дороже пропуска.
+        if let Pattern::Variant { path, kind, span } = pattern {
+            if let crate::ast::VariantPatternKind::Tuple { patterns, .. } = kind {
+                if !patterns.is_empty() {
+                    if let Some(vname) = path.last() {
+                        // Сумму берём из типа скрутини; если его нет — из
+                        // квалификации самого образца (`Shape.Circle`).
+                        let sum_name: Option<String> = match scrutinee_ty {
+                            Some(TypeRef::Named { path: tp, .. }) => tp.last().cloned(),
+                            Some(TypeRef::Readonly(inner, _)) => match inner.as_ref() {
+                                TypeRef::Named { path: tp, .. } => tp.last().cloned(),
+                                _ => None,
+                            },
+                            _ => if path.len() >= 2 { path.first().cloned() } else { None },
+                        };
+                        if let Some(sn) = sum_name {
+                            if let Some(td) = self.types.get(sn.as_str()) {
+                                if let TypeDeclKind::Sum(variants) = &td.kind {
+                                    for v in variants {
+                                        if &v.name != vname { continue; }
+                                        if let SumVariantKind::Record(fs) = &v.kind {
+                                            let names: Vec<String> =
+                                                fs.iter().map(|f| f.name.clone()).collect();
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_RECORD_VARIANT_POSITIONAL_PATTERN] вариант \
+                                                     `{sum}.{var}` объявлен RECORD-формой \
+                                                     (`{var} {{ {fields} }}`), а разбирается \
+                                                     ПОЗИЦИОННО (`{var}(..)`). Нормативна фигурная \
+                                                     форма: `{var} {{ {first} }}` — см. таблицу форм \
+                                                     spec/syntax.ru.md и D54. Позиционный разбор \
+                                                     чекер принимал, а кодоген выпускал невалидный \
+                                                     СИ (`no member named '_0'`), т.е. ошибка \
+                                                     приходила от чужого компилятора (реестр 221.1 №719).",
+                                                    sum = sn,
+                                                    var = vname,
+                                                    fields = names.join(", "),
+                                                    first = names.first().cloned()
+                                                        .unwrap_or_else(|| "field".to_string()),
+                                                ),
+                                                *span,
+                                            ));
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         match pattern {
             Pattern::Record { type_path, fields, rest, span } => {
                 let tname_opt: Option<String> = type_path
@@ -13643,6 +13708,20 @@ impl<'a> TypeCheckCtx<'a> {
     ///   * арм с `if`-guard — он может не сработать (rustc считает так же);
     ///   * `Literal`/`Array`/`Tuple`/`Record`-паттерн на сумме — форма не из
     ///     этого разбора, снимаем проверку.
+    ///
+    /// OR-ОБРАЗЕЦ (`p | q | r`) РАЗБИРАЕТСЯ, и это не расширение доктрины, а
+    /// её исполнение (реестр №725, найдено окном 274 2026-08-18). Раньше он
+    /// попадал в «форма вне разбора» и снимал проверку СО ВСЕГО `match`, хотя
+    /// понимается точно. Цена была не в одном пропуске: `|` — идиоматичный
+    /// способ собрать «здесь ничего не делаем» в одну строку, то есть проверка
+    /// молча отключалась ровно в САМЫХ БОЛЬШИХ таблицах. Замер на пяти
+    /// вариантах с одним непокрытым: армы по одному имени дают отказ, а
+    /// `Green | Blue | Amber => 0` принимается, и собранная программа печатает
+    /// нулевое значение типа результата без единой диагностики.
+    ///
+    /// Консервативность сохранена буквально: неизвестная альтернатива ВНУТРИ
+    /// `|` снимает проверку так же, как неизвестный арм снаружи.
+    #[allow(clippy::only_used_in_recursion)]
     fn check_match_exhaustive(
         &self,
         scrut_ty: Option<&TypeRef>,
@@ -13679,20 +13758,12 @@ impl<'a> TypeCheckCtx<'a> {
             if arm.guard.is_some() {
                 continue;
             }
-            match &arm.pattern {
-                // catch-all: `_` и голое имя-биндинг
-                Pattern::Wildcard(_) => return,
-                Pattern::Ident { .. } => return,
-                Pattern::Variant { path, .. } => {
-                    match path.last() {
-                        Some(v) => {
-                            covered.insert(v.clone());
-                        }
-                        None => return,
-                    }
-                }
+            match arm_coverage(&arm.pattern) {
+                // catch-all (`_`, голое имя-биндинг) — покрыто всё, разбор окончен
+                ArmCoverage::CatchAll => return,
+                ArmCoverage::Variants(vs) => covered.extend(vs),
                 // форма вне разбора — снимаем проверку целиком (см. доктрину выше)
-                _ => return,
+                ArmCoverage::Unknown => return,
             }
         }
 
@@ -26277,8 +26348,8 @@ fn check_generic_bound_declarations(
             // Signedness uniformity (Q6, D310) — amended by Plan 206 (D423):
             // a PARTIAL signed/unsigned mix stays incompatible-value-domains
             // unsound (`u64.MAX = 2^64-1 ∉ i64`). A FULL union (every signed
-            // member ∧ every unsigned member, no gaps — exactly `SignedInt ∪
-            // UnsignedInt`) is exempted: per-member monomorphization already
+            // member ∧ every unsigned member, no gaps — exactly `SignedInts ∪
+            // UnsignedInts`) is exempted: per-member monomorphization already
             // resolves `T.MAX`/`T.MIN` per-instance (D310 §«Семантика тела»),
             // and sign-agnostic comparisons (`rhs < 0`) are well-defined
             // (constant-false) for every unsigned member — no cross-domain
@@ -26294,7 +26365,7 @@ fn check_generic_bound_declarations(
                         "[E_TYPE_SET_MIXED_SIGNEDNESS] type-set `{}` mixes signed and unsigned \
                          integer members PARTIALLY — a single body cannot be sound for a partial mix \
                          (u64.MAX = 2^64-1 ∉ i64). Split into separate signed/unsigned sets (e.g. \
-                         SignedInt / UnsignedInt), or list the FULL union (all of i8/i16/i32/i64/int \
+                         SignedInts / UnsignedInts), or list the FULL union (all of i8/i16/i32/i64/int \
                          + all of u8/u16/u32/u64/uint — exempted, D310 amend D423).",
                         t.name
                     ),
@@ -26719,7 +26790,7 @@ impl<'a> BoundCtx<'a> {
         // Plan 172.3 (D310): type-set name → member type-refs (membership at instantiation).
         let mut type_sets: HashMap<String, Vec<TypeRef>> = HashMap::new();
         // Scan local items + peer files (so cross-module/stdlib type-sets like
-        // SignedInt resolve when the generic fn lives in another file of the package).
+        // SignedInts resolve when the generic fn lives in another file of the package).
         let type_set_scan = |items: &[Item], type_sets: &mut HashMap<String, Vec<TypeRef>>| {
             for item in items {
                 if let Item::Type(t) = item {
@@ -54664,5 +54735,48 @@ mod expr_types_ide_tests {
         // a.b.c.z = [s, s+7] : int
         let tabcz = ty_span(&m, s, s + 7).expect("a.b.c.z recorded");
         assert!(is_named(tabcz, "int"), "expected int for `a.b.c.z`, got {:?}", tabcz);
+    }
+}
+
+/// Что арм даёт разбору исчерпаемости (реестр №703, №725).
+///
+/// Отдельный тип, а не `Option<Vec<String>>`, потому что различать надо ТРИ
+/// исхода, и путать их дорого: «покрыто всё» и «ничего не понял» одинаково
+/// заканчивают проверку, но по разным причинам, и однажды они разойдутся.
+enum ArmCoverage {
+    /// `_` или голое имя-биндинг — дальше смотреть нечего.
+    CatchAll,
+    /// Арм называет эти варианты суммы.
+    Variants(Vec<String>),
+    /// Форма вне разбора — проверку снять целиком (доктрина консервативности).
+    Unknown,
+}
+
+/// Разбор одного арма. Рекурсия ровно одна — в альтернативы `|`.
+fn arm_coverage(p: &crate::ast::Pattern) -> ArmCoverage {
+    use crate::ast::Pattern;
+    match p {
+        Pattern::Wildcard(_) => ArmCoverage::CatchAll,
+        Pattern::Ident { .. } => ArmCoverage::CatchAll,
+        Pattern::Variant { path, .. } => match path.last() {
+            Some(v) => ArmCoverage::Variants(vec![v.clone()]),
+            None => ArmCoverage::Unknown,
+        },
+        // `p | q | r`: покрытие альтернатив СКЛАДЫВАЕТСЯ. Одна непонятая
+        // альтернатива обнуляет весь арм — иначе `Known | <непонятое>` выглядел
+        // бы уже, чем есть, и проверка потребовала бы ветку, которая на деле
+        // покрыта. Ложный красный здесь дороже пропуска (доктрина выше).
+        Pattern::Or { alternatives, .. } => {
+            let mut acc = Vec::new();
+            for alt in alternatives {
+                match arm_coverage(alt) {
+                    ArmCoverage::CatchAll => return ArmCoverage::CatchAll,
+                    ArmCoverage::Variants(vs) => acc.extend(vs),
+                    ArmCoverage::Unknown => return ArmCoverage::Unknown,
+                }
+            }
+            ArmCoverage::Variants(acc)
+        }
+        _ => ArmCoverage::Unknown,
     }
 }

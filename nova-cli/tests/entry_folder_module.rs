@@ -26,9 +26,16 @@ fn repo_root() -> PathBuf {
 #[test]
 fn nova_check_entry_folder_module_peer() {
     let repo = repo_root();
+    // Фикстура живёт РЯДОМ С ТЕСТОМ, а не в общем корпусе. Прежний путь
+    // (`nova_tests/plan81/entry_fmod/`) уехал в архив `nova_tests.old` при
+    // переходе на простую схему тестов, и тест с тех пор падал на «fixture
+    // missing» — незаметно, потому что набор `nova-cli` не гонял никто (№723).
+    // Тест, чья фикстура лежит в чужом дереве, переживает это дерево ровно один
+    // раз.
     let entry = repo
-        .join("nova_tests")
-        .join("plan81")
+        .join("nova-cli")
+        .join("tests")
+        .join("fixtures")
         .join("entry_fmod")
         .join("app.nv");
     assert!(

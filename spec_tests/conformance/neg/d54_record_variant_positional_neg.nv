@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR E_RECORD_VARIANT_POSITIONAL_PATTERN
+//
+// Реестр 221.1 №719. Вариант объявлен RECORD-формой, а разбирается ПОЗИЦИОННО.
+//
+// ЧТО БЫЛО ДО ЭТОЙ ФИКСТУРЫ. Чекер форму ПРИНИМАЛ, а кодоген выпускал
+// невалидный СИ: `no member named '_0' in 'struct Nova_Shape::(unnamed union)'`.
+// То есть ошибка приходила от чужого компилятора, на шести строках обычного
+// кода — и приходила ТОЛЬКО если функцию кто-то вызывал: без вызова её
+// выбрасывал DCE, и проба «собирается молча» (класс №573) давала неверный
+// диагноз. Именно на этом разошлись отчёт окна 274 и перепроверка интегратора.
+//
+// ОТКУДА ФОРМА ВЗЯЛАСЬ. Из ОШИБОЧНОГО примера в самом D54
+// (`03-syntax.md`): он объявлял `Circle { radius f64 }`, а разбирал
+// `Circle(r)`. Нормативна фигурная форма — таблица форм `spec/syntax.ru.md`
+// и канонический разбор того же типа в `02-types.md`. Пример исправлен той же
+// волной: оставить его значило бы чинить компилятор и учить писать неверно.
+//
+// ПОЧЕМУ ПРОВЕРКА В ЕДИНОМ ОБХОДЕ ОБРАЗЦОВ, А НЕ В `match`. У обхода шесть
+// точек вызова (армы, биндинги, разбор в for-цикле). Проверка «только в match»
+// оставила бы `if Circle(r) = s` живым — те самые «пять дверей».
+module neg.d54_record_variant_positional_neg
+
+type Shape enum
+    | Circle { radius f64 }
+    | Square { side f64 }
+
+// Первая дверь: арм `match`.
+fn area(s Shape) -> f64 => match s {
+    // nova:expect E_RECORD_VARIANT_POSITIONAL_PATTERN -- record-вариант разобран позиционно
+    Circle(r) => r
+    Square(a) => a
+}
+
+// Вторая дверь: if-биндинг. Проверка стоит в едином обходе образцов именно
+// затем, чтобы эта форма не осталась живой.
+fn radius_or_zero(s Shape) -> f64 {
+    // nova:expect E_RECORD_VARIANT_POSITIONAL_PATTERN -- та же форма вне `match`
+    if Circle(r) = s {
+        return r
+    }
+    0.0
+}
+
+test "No. 719: a record-form variant cannot be destructured positionally" {
+    assert(true)
+}
