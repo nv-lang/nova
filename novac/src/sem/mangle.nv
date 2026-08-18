@@ -115,7 +115,32 @@ export fn c_method(ctx Ctx, recv_t int, name str) -> str {
 ///   oracle's `nova_fn_<mangled>`, so novac's output can never collide with
 ///   a runtime or std symbol. Same reason `c_tag` says `NOVAC_TAG_` and
 ///   `c_maker` says `novac_make_`.
-export fn c_fn(name str, is_entry bool) -> str {
+export fn c_fn(ctx Ctx, name str, args []int, is_entry bool) -> str {
     if is_entry { return "nova_fn_main_impl" }
-    "novac_user_${name}"
+    if args.len() == 0 { return "novac_user_${name}" }
+    mut s = "novac_user_${name}"
+    for a in args {
+        s = "${s}__${type_tag(ctx, a)}"
+    }
+    s
+}
+
+/// An identifier-safe tag for a type, for use INSIDE a C name.
+///
+/// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
+/// star is not a letter. The tag answers a different question -- "which type is
+/// this, spelled so it can sit in an identifier" -- and the two must not be
+/// conflated, or the first pointer instance emits a name C refuses to parse.
+fn type_tag(ctx Ctx, t int) -> str
+    requires t >= 0 && t < ctx.types.len(), "mangle: type_tag of a type id outside the registry"
+{
+    ro td = ctx.types[t]
+    match td.kind {
+        TkPrim => prim_c_name(ctx.tys.head_of(td.ty_id))
+        TkRecord => td.name
+        TkSum => td.name
+        TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
+        TkParam => ice("mangle: type_tag of a type parameter — a parameter is not an instance")
+        TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
+    }
 }

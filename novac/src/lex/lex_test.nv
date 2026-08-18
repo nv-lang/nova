@@ -64,13 +64,26 @@ test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {
     assert(lo1 + toks[1].text.byte_len() == 8)
 }
 
-test "interpolated string is refused honestly, not mislexed (owner 2026-08-14)" {
-    // Flat scan would close the outer string at the inner quote -- plausibly
-    // wrong tokenization. E1 marks the token ErrorTok instead; bytes survive.
+test "interpolated string stays ONE literal; the checker names it (S9.4a)" {
+    // Until 2026-08-18 this token was ErrorTok: the lexer refused the form.
+    // That made the refusal come out as "construct not in the MVP grammar"
+    // over the whole string, naming nothing -- so the rule moved where it
+    // belongs. `"hello ${x}"` is ONE literal of the language; the lexer keeps
+    // it whole, and check refuses it BY NAME (string interpolation is not
+    // compiled yet). A flat scan would still be wrong -- it would close the
+    // outer string at the inner quote -- so the scan itself is unchanged.
     ro src = "f(\"hello \${x}\")"
     ro toks = lex(src)
-    assert(toks[2].kind == TokenKind.ErrorTok)
+    assert(toks[2].kind == TokenKind.StrLit)
     assert(reserialize(toks) == src)
+}
+
+test "an UNTERMINATED string is still a lexer error, not a literal" {
+    // The other half of the same decision: interpolation is a FORM of the
+    // language, an unclosed run is not. Calling it a literal would hand the
+    // parser a lie about what it holds.
+    ro toks = lex("f(\"never closed")
+    assert(toks[2].kind == TokenKind.ErrorTok)
 }
 
 test "arithmetic tokens: two-char operators split before one-char (E1 growth)" {

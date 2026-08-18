@@ -85,6 +85,12 @@ type Emitter consume {
     next_tmp int /// counter behind @fresh_uniq — the ONLY source of temporary names (F30)
 }
 
+/// No type arguments: the ONE spelling of "this instance substitutes nothing",
+/// so the day substitutions arrive there is one place to stop passing it.
+/// A fn and not a `const`: a vector is allocated, and an allocation is not a
+/// constant expression (E_CONST_NOT_CONSTEXPR -- the oracle is right).
+fn no_args() -> []int => []int.new()
+
 /// Finish the emission: the literal pool AND the accumulated code, together.
 /// Named `into_*` because it is a consume conversion into a different type
 /// (nv-coding-style §1a, caught by `nova lint` once it was pointed at novac).
@@ -226,15 +232,55 @@ fn render(lits []str, body str) -> str {
 }
 
 /// Emit one static nova_str per registered string literal.
+/// Drop the backslash of `\$`, and touch nothing else.
+///
+/// Written byte by byte rather than with a replace-all: the backslash before a
+/// dollar is only an escape when it is not ITSELF escaped, and `\\${` means a
+/// literal backslash followed by an interpolation. A blind replace would eat
+/// the wrong one.
+fn unescape_dollar(s str) -> str {
+    ro b = s.bytes()
+    consume out = StringBuilder.new()
+    mut one = []u8.new()
+    one.push(0 as u8)
+    mut i = 0
+    while i < b.len() {
+        ro c = b[i]
+        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
+        if c == BACKSLASH_BYTE && next_is_dollar {
+            one[0] = DOLLAR_BYTE
+            out.append(one)
+            i += 2
+        } else {
+            one[0] = c
+            out.append(one)
+            i += 1
+        }
+    }
+    out
+}
+
+/// The two bytes this door compares against; the character is in the comment
+/// for the same reason the lexer's tables carry it.
+const BACKSLASH_BYTE u8 = 0x5C  // backslash
+const DOLLAR_BYTE u8 = 0x24     // $
+
+/// Write the literal pool: one C array per string the file holds.
+///
+/// The only place a Nova literal becomes C text -- which is why the escaped
+/// dollar is unescaped here and nowhere else.
 fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
     mut i = 0
     for raw in lits {
-        // raw is the token text INCLUDING quotes; escapes verbatim. The
-        // subset string has no interpolation (lex refuses it), and Nova's
-        // escape set in the subset (\" \\ \n) matches C's — recorded subset
-        // boundary, the diff gate holds it honest.
+        // raw is the token text INCLUDING quotes. Nova's subset escape set
+        // (\" \\ \n \t \r) matches C's one for one -- check refuses everything
+        // else BY NAME -- with a single exception: `\$`. Nova spells an escaped
+        // dollar that way so a literal `${` does not open an interpolation; C
+        // has no such escape and would take it as undefined. So the backslash
+        // is dropped HERE, at the one place that writes a literal into C, and
+        // the rest of the text is passed through untouched.
         out.append("static const uint8_t _novac_strlit_${i}_buf[] = ")
-        out.append(raw)
+        out.append(unescape_dollar(raw))
         out.append(";\n")
         out.append("static const nova_str _novac_strlit_${i} = { .ptr = _novac_strlit_${i}_buf, .len = sizeof(_novac_strlit_${i}_buf) - 1 };\n")
         i += 1
@@ -293,11 +339,11 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro ret = @ctx.fns.rows[fn_row].ret_id // -1 for main only; check refuses it elsewhere
     mut has_expr_body = false
     if name == ENTRY_FN {
-        @body.append("static nova_unit ${c_fn(name, true)}(void) {\n")
+        @body.append("static nova_unit ${c_fn(@ctx, name, no_args(), true)}(void) {\n")
     } else {
         @body.append("static ")
         @body.append(c_type(@ctx, ret))
-        @body.append(" ${c_fn(name, false)}(")
+        @body.append(" ${c_fn(@ctx, name, no_args(), false)}(")
         mut first = true
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }

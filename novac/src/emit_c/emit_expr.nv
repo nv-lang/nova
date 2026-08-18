@@ -222,7 +222,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ro vrow = def_payload
             @body.append("${c_maker(@ctx, vrow)}(")
         } else if def_kind == DefKind.DefFn {
-            @body.append("${c_fn(cname, false)}(")
+            @body.append("${c_fn(@ctx, cname, no_args(), false)}(")
         } else {
             ice("emit_c: call target is neither a variant nor a fn")
         }

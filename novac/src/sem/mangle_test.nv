@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem — tests beside the module (project convention).
+//
+// The load-bearing property here is the ACCEPTANCE of E2-b2 stated in plan 274
+// §9.1: two instantiations of one callable must not collide in C. It is tested
+// at the mangling layer because that is where the collision would happen, and
+// because this layer can be tested before the call-site syntax exists -- the
+// alternative is to verify it by reading, which is what the plan calls a
+// feeling rather than a number.
+
+module novac.sem
+import ../tree.{Node, NodeKind, branch}
+
+/// An empty file node: these tests need a Ctx with the primitives seeded and
+/// nothing else. Building it here keeps `sem` from importing the parser -- the
+/// architecture table has no edge sem -> parse, and a test is not a licence to
+/// add one.
+fn empty_file() -> Node => branch(0, NodeKind.File, []Node.new())
+
+test "instance key: no type arguments spells the plain name" {
+    ro ctx = collect_types(empty_file())
+    assert(c_fn(ctx, "used", []int.new(), false) == "novac_user_used")
+}
+
+test "instance key: the entry point answers to the runtime, not to us" {
+    ro ctx = collect_types(empty_file())
+    assert(c_fn(ctx, "main", []int.new(), true) == "nova_fn_main_impl")
+}
+
+test "instance key: different type arguments give different C names" {
+    ro ctx = collect_types(empty_file())
+    ro t_int = ctx.prims.int_id
+    ro t_str = ctx.prims.str_id
+    ro a = c_fn(ctx, "hold", []int.of(t_int), false)
+    ro b = c_fn(ctx, "hold", []int.of(t_str), false)
+    assert(a != b)
+    assert(a == "novac_user_hold__nova_int")
+}
+
+test "instance key: arity matters, not just the set" {
+    ro ctx = collect_types(empty_file())
+    ro t_int = ctx.prims.int_id
+    ro one = c_fn(ctx, "pair", []int.of(t_int), false)
+    ro two = c_fn(ctx, "pair", []int.of(t_int, t_int), false)
+    assert(one != two)
+}
