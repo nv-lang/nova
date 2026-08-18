@@ -79,6 +79,7 @@ type Emitter consume {
     out CheckOut /// THE checker's channel: every type question is a READ here, never a re-derivation (E2-b1)
     lits []str /// string literals in registration order; the index is the C name suffix
     consume body StringBuilder /// the code slot of the shell, built in a single pass
+    next_tmp int /// counter behind @fresh_uniq — the ONLY source of temporary names (F30)
 }
 
 /// Finish the emission: the literal pool AND the accumulated code, together.
@@ -101,7 +102,7 @@ fn Emitter consume @into_parts() -> ([]str, str) => (@lits, @body.into_str())
 /// back to computing a type itself is an emitter with a second opinion, and
 /// the second opinion is what plan 196 spent a wave deleting.
 export fn emit(file Node, ctx Ctx, out CheckOut) -> str {
-    consume e = Emitter { ctx, out, lits: []str.new(), body: StringBuilder.new() }
+    consume e = Emitter { ctx, out, next_tmp: 0, lits: []str.new(), body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_file(file)
     ro (lits, code) = e.into_parts()
@@ -295,12 +296,20 @@ fn Emitter mut @emit_fn(f Node) -> () {
             ro ek = branch_children(c)
             ro e = ek[ek.len() - 1]
             if e.kind_of() == NodeKind.MatchExpr {
-                @emit_match(e, name, ret)
-                @body.append("    return _novac_match_${name};\n")
+                ro u = @fresh_uniq()
+                @emit_match(e, u, ret)
+                @body.append("    return _novac_match_t${u};\n")
             } else if is_expr_kind(e.kind_of()) {
                 @body.append("    return ")
                 @emit_expr(e)
                 @body.append(";\n")
+            } else if e.kind_of() == NodeKind.RecordCtor {
+                // F34: the body position IS an initializer position -- that
+                // is exactly why the oracle asks for bare braces here -- so
+                // the constructor is emitted like any other, through the
+                // shared door.
+                ro rtmp = @emit_record_ctor(e, ret)
+                @body.append("    return ${rtmp};\n")
             } else {
                 ice("emit_c: fn expression body is neither a match nor an expression")
             }
@@ -328,15 +337,27 @@ fn Emitter mut @emit_fn(f Node) -> () {
 /// The oracle's match scheme (fixed point on match_demo.nv): scrutinee tmp,
 /// result var, matched flag, then an if-chain — literal pattern compares,
 /// binder pattern binds (guard nests one more if), variant pattern checks
+/// A fresh suffix for the temporaries of one `match`.
+///
+/// F30: the suffix used to be the BINDING NAME, and Nova lets a name be bound
+/// twice in one scope (`ro r = match ..` then `ro r = match ..` -- the oracle
+/// accepts it). Two identical `nova_int _novac_match_r` then landed in the same
+/// C block: a redefinition, from a program that is perfectly legal Nova. The
+/// counter makes collision impossible instead of unlikely.
+fn Emitter mut @fresh_uniq() -> int {
+    @next_tmp += 1
+    @next_tmp
+}
+
 /// the tag and unpacks payload fields in order. uniq must be unique per
 /// function body: the binding name or the fn name.
-fn Emitter mut @emit_match(m Node, uniq str, res_t int) -> () {
+fn Emitter mut @emit_match(m Node, uniq int, res_t int) -> () {
     ro kids = branch_children(m)
     ro scr = kids[1]
     ro scr_t = @out.type_of(scr.id_of())
     @body.append("    ")
     @body.append(c_type(@ctx, scr_t))
-    @body.append(" _novac_scr_${uniq} = ")
+    @body.append(" _novac_scr_t${uniq} = ")
     @emit_expr(scr)
     @body.append(";\n    ")
     // The temporary is declared with its type AND zero-initialised
@@ -348,10 +369,10 @@ fn Emitter mut @emit_match(m Node, uniq str, res_t int) -> () {
     // compound literal `(T){0}` is C99 and works for scalars and structs
     // alike, so the emitter needs no per-type knowledge here.
     @body.append(c_type(@ctx, res_t))
-    @body.append(" _novac_match_${uniq} = (")
+    @body.append(" _novac_match_t${uniq} = (")
     @body.append(c_type(@ctx, res_t))
     @body.append("){0};\n")
-    @body.append("    int _novac_matched_${uniq} = 0;\n")
+    @body.append("    int _novac_matched_t${uniq} = 0;\n")
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
         @emit_arm(c, uniq, scr_t)
@@ -360,12 +381,12 @@ fn Emitter mut @emit_match(m Node, uniq str, res_t int) -> () {
 
 /// Tag test of a variant pattern: user sums are GC pointers with novac's own
 /// tag names; std sums (Option) are VALUES with the oracle's tag names.
-fn Emitter mut @emit_tag_test(uniq str, vrow int) -> () {
-    @body.append("(_novac_scr_${uniq}->tag == ${c_tag(@ctx, vrow)})")
+fn Emitter mut @emit_tag_test(uniq int, vrow int) -> () {
+    @body.append("(_novac_scr_t${uniq}->tag == ${c_tag(@ctx, vrow)})")
 }
 
 /// Emit one match arm: pattern test, binder unpacking, optional guard, arm value.
-fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
+fn Emitter mut @emit_arm(arm Node, uniq int, scr_t int) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak)]
@@ -373,11 +394,11 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
     for g in ak {
         has_guard = has_guard || g.kind_of() == NodeKind.Guard
     }
-    @body.append("    if (!_novac_matched_${uniq} && (")
+    @body.append("    if (!_novac_matched_t${uniq} && (")
     ro p0 = pat[0]
     mut vrow = -1
     if leaf_kind(p0) == TokenKind.IntLit {
-        @body.append("(_novac_scr_${uniq} == ")
+        @body.append("(_novac_scr_t${uniq} == ")
         @body.append(leaf_text(p0))
         @body.append("LL)")
     } else if leaf_kind(p0) == TokenKind.Ident {
@@ -438,14 +459,14 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
             ro bt = @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi]
             @body.append("        ")
             @body.append(c_type(@ctx, bt))
-            @body.append(" ${bname} = _novac_scr_${uniq}->payload.${vname}._${pi};\n")
+            @body.append(" ${bname} = _novac_scr_t${uniq}->payload.${vname}._${pi};\n")
             pi += 1
         }
     } else if is_plain_binder {
         // Plain binder: the scrutinee under a new name.
         @body.append("        ")
         @body.append(c_type(@ctx, scr_t))
-        @body.append(" ${leaf_text(p0)} = _novac_scr_${uniq};\n")
+        @body.append(" ${leaf_text(p0)} = _novac_scr_t${uniq};\n")
     } else {
         // The remaining pattern shapes -- an int literal and the wildcard
         // `_` -- introduce no name: the test emitted above IS the whole
@@ -460,13 +481,13 @@ fn Emitter mut @emit_arm(arm Node, uniq str, scr_t int) -> () {
             @emit_expr(branch_children(g)[1])
             @body.append(") {\n")
         }
-        @body.append("            _novac_match_${uniq} = ")
+        @body.append("            _novac_match_t${uniq} = ")
         @emit_expr(arm_e)
-        @body.append(";\n            _novac_matched_${uniq} = 1;\n        }\n")
+        @body.append(";\n            _novac_matched_t${uniq} = 1;\n        }\n")
     } else {
-        @body.append("        _novac_match_${uniq} = ")
+        @body.append("        _novac_match_t${uniq} = ")
         @emit_expr(arm_e)
-        @body.append(";\n        _novac_matched_${uniq} = 1;\n")
+        @body.append(";\n        _novac_matched_t${uniq} = 1;\n")
     }
     @body.append("    }\n")
 }
@@ -615,6 +636,46 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         ice("emit: statement kind outside the subset")
     }
 }
+/// Emit a record constructor into a fresh temporary and answer its C name.
+///
+/// ONE door for both positions: the initializer of a binding, and the
+/// expression body of a fn (`fn mk() -> Pt => { x: 1, y: 2 }`). F34 was the
+/// second position missing -- check accepted the form and emit answered with
+/// an ice, so a legal program had no compiler at all. Copying the twenty
+/// lines instead would have set up the next divergence between two places
+/// that must agree.
+fn Emitter mut @emit_record_ctor(init Node, vtype int) -> str {
+    ro rec = c_struct(@ctx, vtype)
+    // F30: the temporary is NUMBERED, not named after the binding --
+        // a name may be bound twice in one scope (the oracle accepts it)
+        // and the C would then declare the same variable twice in one
+        // block: invalid C from perfectly legal Nova.
+        ro tmp = "_novac_tmp_t${@fresh_uniq()}"
+    @body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
+    for c in branch_children(init) {
+        ro ck = c.kind_of()
+        if ck == NodeKind.CtorSpread {
+            @body.append("    *${tmp} = *")
+            @emit_expr(branch_children(c)[1])
+            @body.append(";\n")
+        } else if ck == NodeKind.CtorField {
+            ro fk = branch_children(c)
+            ro fname = leaf_text(fk[0])
+            @body.append("    ${tmp}->${fname} = ")
+            if fk.len() > 1 {
+                @emit_expr(fk[2])
+            } else {
+                // Punning: `Point { x }` stores the local of that name.
+                @body.append(fname)
+            }
+            @body.append(";\n")
+        } else {
+            // The '{' ',' '}' leaves of the constructor: punctuation
+            // stores no field, so the temporary is left as it is.
+        }
+    }
+    tmp
+}
 
 /// Binding. A record-constructor initializer follows the oracle's tmp scheme
 /// (fixed point on records.nv); a match initializer follows the match
@@ -625,38 +686,16 @@ fn Emitter mut @emit_bind(st Node) -> () {
     ro init = kids[kids.len() - 1]
     ro vtype = @out.type_of(init.id_of())
     if init.kind_of() == NodeKind.MatchExpr {
-        @emit_match(init, vname, vtype)
+        ro u = @fresh_uniq()
+        @emit_match(init, u, vtype)
         @body.append("    ")
         @body.append(c_type(@ctx, vtype))
-        @body.append(" ${vname} = _novac_match_${vname};\n")
+        @body.append(" ${vname} = _novac_match_t${u};\n")
         return
     }
     if init.kind_of() == NodeKind.RecordCtor {
         ro rec = c_struct(@ctx, vtype)
-        ro tmp = "_novac_tmp_${vname}"
-        @body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
-        for c in branch_children(init) {
-            ro ck = c.kind_of()
-            if ck == NodeKind.CtorSpread {
-                @body.append("    *${tmp} = *")
-                @emit_expr(branch_children(c)[1])
-                @body.append(";\n")
-            } else if ck == NodeKind.CtorField {
-                ro fk = branch_children(c)
-                ro fname = leaf_text(fk[0])
-                @body.append("    ${tmp}->${fname} = ")
-                if fk.len() > 1 {
-                    @emit_expr(fk[2])
-                } else {
-                    // Punning: `Point { x }` stores the local of that name.
-                    @body.append(fname)
-                }
-                @body.append(";\n")
-            } else {
-                // The '{' ',' '}' leaves of the constructor: punctuation
-                // stores no field, so the temporary is left as it is.
-            }
-        }
+        ro tmp = @emit_record_ctor(init, vtype)
         @body.append("    ${rec}* ${vname} = ${tmp};\n")
     } else if is_expr_kind(init.kind_of()) {
         @body.append("    ")
