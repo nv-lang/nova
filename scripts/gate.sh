@@ -246,6 +246,8 @@ step 'retracted-try-semantics (снятая трактовка `?` в доке �
 guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
 step "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
+step "bare-type-lookups (чтения карты типов голым именем не растут — №705)"
+guard "$ROOT/scripts/guards/check-bare-type-lookups.sh" "$ROOT" || fail "прибавилось чтений карты типов чекера ГОЛЫМ именем: карта коллидирует между модулями last-write-wins, и класс на этом возвращался четырежды (196.7, №696, №705, №729) — разрешай по файлу места использования, types_get_for_file(name, id)"
 step "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
 guard "$ROOT/scripts/guards/check-mixed-eol.sh" "$ROOT" || fail "смешанные окончания строк: построчные и побайтные счётчики расходятся, git этого не видит (core.autocrlf), лечится перевыкладкой файла, а не коммитом"
 step "crate-tests (собственные наборы nova-lsp и nova-cli — №723)"
