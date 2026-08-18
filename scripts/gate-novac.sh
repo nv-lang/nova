@@ -63,6 +63,17 @@ DESYNC_N=0
 GATE_T0=$(date +%s)
 
 # Швы: какие включены — говорим вслух и запоминаем для вердикта.
+# УРОВЕНЬ прогона (2026-08-19, по замеру: полный гейт 584с, из них 238с --
+# мутационная проверка САМИХ стражей, а не компилятора).
+#   loop — только правила по novac/src + сборка + модульные тесты (~80с);
+#   push — плюс поведение: дифф с оракулом, паники, пачка, фаззер (по умолчанию);
+#   full — плюс мутационный самотест стражей и замер цены цикла (CI).
+NOVAC_TIER="${NOVAC_TIER:-push}"
+case "$NOVAC_TIER" in
+    loop|push|full) : ;;
+    *) echo "NOVAC_TIER: loop | push | full (дано: $NOVAC_TIER)" >&2; exit 2 ;;
+esac
+
 SEAMS=""
 [ "${NOVAC_CORPUS:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_CORPUS=0"
 [ "${NOVAC_COST:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_COST=0"
@@ -297,24 +308,36 @@ guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail 
 # «правка → проверка»: один только дифф стоил полутора минут. Здесь они идут
 # вместе с фаззером и мутационным самотестом — то есть перед пушем, а не на
 # каждый чих (замер того же дня: текстовая часть 260с → 80с без них).
-par_reset
-par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
-par_add "$ROOT/scripts/guards/check-novac-differential.sh" "расхождение novac с оракулом вне реестра (дифф-гейт)"
-par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
-par_add "$ROOT/scripts/guards/check-novac-cli-surface.sh" "команда novac, которой нет у nova-cli (П26)"
-par_add "$ROOT/scripts/guards/check-novac-batch.sh" "пачечный проход раннера разобран (274.2 §1б.1)"
-par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
-par_run
+if [ "$NOVAC_TIER" != "loop" ]; then
+    step "novac-behaviour (запускают novac и корпус: дифф, паники, пачка, чистая сборка)"
+    par_reset
+    par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
+    par_add "$ROOT/scripts/guards/check-novac-differential.sh" "расхождение novac с оракулом вне реестра (дифф-гейт)"
+    par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
+    par_add "$ROOT/scripts/guards/check-novac-cli-surface.sh" "команда novac, которой нет у nova-cli (П26)"
+    par_add "$ROOT/scripts/guards/check-novac-batch.sh" "пачечный проход раннера разобран (274.2 §1б.1)"
+    par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
+    par_run
+fi
 
-step "novac-heavy (дедлайновые: мэнглинг, шаблон, цена, мутационная проверка самотестов)"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-fuzz-zero-panic.sh" "$ROOT" || fail "фаззер нашёл падение novac: приёмка Э1 ранга CORE (274.3/F2)"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-module-tests.sh" "$ROOT" || fail "модульный тест novac упал (контракт модуля)"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух"
-guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла вышла из бюджета (П14)"
-guard --deadline 600 "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "$ROOT" || fail "самотест стража novac проходит над заглушкой (П16)"
+if [ "$NOVAC_TIER" != "loop" ]; then
+    step "novac-heavy (дедлайновые: мэнглинг, шаблон, цена, мутационная проверка самотестов)"
+    par_reset
+    par_add "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "мэнгл novac разошёлся с оракулом"
+    par_add "$ROOT/scripts/guards/check-novac-fuzz-zero-panic.sh" "фаззер нашёл падение novac: приёмка Э1 ранга CORE (274.3/F2)"
+    par_add "$ROOT/scripts/guards/check-novac-module-tests.sh" "модульный тест novac упал (контракт модуля)"
+    par_add "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "shell.tpl.c протух"
+    if [ "$NOVAC_TIER" = "full" ]; then par_add "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "самотест стража novac проходит над заглушкой (П16)"; fi
+    par_run
+fi
+
+# `iteration-cost` ИЗМЕРЯЕТ время цикла и потому идёт ОДИН: рядом с фаззером
+# он мерил бы чужую нагрузку и краснел на здоровом дереве.
+if [ "$NOVAC_TIER" = "full" ]; then guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла вышла из бюджета (П14)"; fi
 step "novac-registry (реестр стражей: план ↔ файлы ↔ вызовы ↔ самотесты)"
-guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "реестр стражей novac разошёлся"
+# Реестр стражей сверяет ГЕЙТ с планом, а не компилятор с языком (21с):
+# в цикле «правка → вердикт» он не нужен, перед пушем обязателен.
+if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
 
 # Рубеж ПЕРЕД вердиктом — иначе красный прогон печатает зелёную строку (№690).
 if [ "$GATE_FAIL_N" -gt 0 ]; then

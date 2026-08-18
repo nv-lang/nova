@@ -123,7 +123,7 @@ sort -u "$T/b_raw" > "$T/b"
 # 274.3/F12: упоминание в тексте fail-сообщения или в комментарии считалось
 # вызовом, и страж, вынутый из гейта, оставался зелёным).
 cat $GATES | grep -v '^[[:space:]]*#'  \
-    | grep -E '^[[:space:]]*guard[[:space:]]' \
+    | grep -E '^[[:space:]]*(guard|par_add)[[:space:]]|; then (guard|par_add)[[:space:]]' \
     | sed 's/||.*$//' \
     | grep -oE 'check-novac-[a-z0-9-]+\.sh' \
     | sort -u > "$T/c"
