@@ -45,9 +45,9 @@ find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort > "$T/files"
 
 : > "$T/bad"
 : > "$T/cnt"
-while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    tr -d '\r' < "$f" | awk -v REL="$rel" -v OUT="$T/bad" -v CNT="$T/cnt" '
+cat "$T/files" | xargs awk -v SRC="$SRC" -v OUT="$T/bad" -v CNT="$T/cnt" '
+        FNR == 1 { REL = FILENAME; sub("^" SRC "/", "", REL) }
+        { sub(/\r$/, "", $0) }
         {
             line = $0
             sub(/^[[:space:]]+/, "", line)
@@ -66,7 +66,6 @@ while IFS= read -r f; do
             print total+0 >> CNT
         }
     '
-done < "$T/files"
 N=$(awk '{s+=$1} END {print s+0}' "$T/cnt")
 
 if [ -s "$T/bad" ]; then

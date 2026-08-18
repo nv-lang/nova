@@ -61,9 +61,9 @@ fi
 
 : > "$T/bad"
 NL=0
-while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    tr -d '\r' < "$f" | awk -v REL="$rel" -v LIM="$LIMIT" -v OUT="$T/bad" -v CNT="$T/cnt" '
+cat "$T/files" | xargs awk -v SRC="$SRC" -v LIM="$LIMIT" -v OUT="$T/bad" -v CNT="$T/cnt" '
+        FNR == 1 { REL = FILENAME; sub("^" SRC "/", "", REL) }
+        { sub(/\r$/, "", $0) }
         { total++ }
         length($0) <= LIM { next }
         # 1. импорт — язык не переносит
@@ -89,7 +89,6 @@ while IFS= read -r f; do
         { printf "  %s:%d — %d символов (предел %d)\n", REL, FNR, length($0), LIM >> OUT }
         END { print total >> CNT }
     '
-done < "$T/files"
 NL=$(awk '{s+=$1} END {print s+0}' "$T/cnt" 2>/dev/null)
 
 if [ -s "$T/bad" ]; then

@@ -67,9 +67,9 @@ fi
 : > "$T/bad"
 NFN=0
 NRET=0
-while IFS= read -r f; do
-    rel=$(basename "$f")
-    tr -d '\r' < "$f" | awk -v REL="$rel" -v STAT="$T/stat" '
+cat "$T/files" | xargs awk -v SRC="$SRC" -v STAT="$T/stat" '
+        FNR == 1 { REL = FILENAME; sub("^" SRC "/", "", REL) }
+        { sub(/\r$/, "", $0) }
         # вход в функцию прохода канала
         /^fn Checker mut @type_[a-z_]*\(/ { inwalk = 1; nfn++; delete hist; nh = 0; next }
         /^fn / || /^export fn / { inwalk = 0 }
@@ -90,7 +90,7 @@ while IFS= read -r f; do
                 cand = line
                 for (i = 0; i < 3 && nh - i >= 1; i++) cand = cand " " hist[nh - i]
                 if (cand ~ /@refuse\(/ || cand ~ /@report_/ || cand ~ /ice\(/ || cand ~ /@out\.len\(\) > 0/) okay = 1
-                if (!okay) printf "  %s:%d — молчаливый выход в проходе канала: %s\n", REL, NR, body
+                if (!okay) printf "  %s:%d — молчаливый выход в проходе канала: %s\n", REL, FNR, body
             }
             hist[++nh] = body
         }
@@ -101,7 +101,6 @@ while IFS= read -r f; do
         NRET=$((NRET + $(cut -d' ' -f2 "$T/stat")))
         rm -f "$T/stat"
     fi
-done < "$T/files"
 
 if [ "$NFN" -eq 0 ]; then
     echo "$NAME: FAIL — не найдено ни одной функции прохода канала (fn Checker mut @type_*): страж потерял мишень (класс №519)" >&2
