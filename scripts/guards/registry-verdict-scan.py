@@ -36,6 +36,16 @@ TARGET = os.path.join("docs", "plans", "221.1-bug-sweep.md")
 
 MARK_BLOCK = u"БЛОКИРУЕТ ТЕГ:"
 MARK_STATUS = u"Статус:"
+# Маршрут — третий вердикт строки. Добавлен 2026-08-18 после того, как
+# перемаршрутизация приписала новый маршрут в хвост и строка стала нести ДВА:
+# сканер продолжал читать первый и видеть «нет плана». Та же ошибка, против
+# которой этот страж и заведён, — совершённая через час после его установки.
+#
+# ВАЖНОЕ ОТЛИЧИЕ ОТ ВЕРДИКТА И СТАТУСА: у маршрута НЕЛЬЗЯ считать, что
+# побеждает последний. Замер: у #617 второе вхождение оказалось не маршрутом, а
+# заметкой «окно не правило» — действующим был ПЕРВЫЙ. Поэтому страж не
+# схлопывает, а требует, чтобы решение было принято человеком.
+MARK_ROUTE = u"ЧИНИТСЯ:"
 ROW = re.compile(r"^\|\s*(\d+)\s*\|")
 # Код-вставка markdown: цитата маркера, а не сам маркер.
 INLINE_CODE = re.compile(r"`[^`]*`")
@@ -53,11 +63,12 @@ def main():
 
     if not os.path.isfile(path):
         w("MISSING %s\n" % TARGET.replace(os.sep, "/"))
-        w("dup_verdict=-1\ndup_status=-1\n")
+        w("dup_verdict=-1\ndup_status=-1\ndup_route=-1\n")
         return 1
 
     dup_v = 0
     dup_s = 0
+    dup_r = 0
     for line in io.open(path, encoding="utf-8", errors="replace"):
         m = ROW.match(line)
         if not m:
@@ -72,14 +83,19 @@ def main():
         bare = INLINE_CODE.sub(u" ", line)
         nv = bare.count(MARK_BLOCK)
         ns = bare.count(MARK_STATUS)
+        nr = bare.count(MARK_ROUTE)
         if nv > 1:
             dup_v += 1
             w("row %s: %d verdicts 'BLOCKS TAG'\n" % (num, nv))
         if ns > 1:
             dup_s += 1
             w("row %s: %d markers 'Status'\n" % (num, ns))
+        if nr > 1:
+            dup_r += 1
+            w("row %s: %d markers 'CHINITSYA' (route)\n" % (num, nr))
     w("dup_verdict=%d\n" % dup_v)
     w("dup_status=%d\n" % dup_s)
+    w("dup_route=%d\n" % dup_r)
     return 0
 
 

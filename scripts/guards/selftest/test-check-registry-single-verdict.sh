@@ -82,6 +82,18 @@ io.open(p, "w", encoding="utf-8", newline="\n").write(
 PY
 check "dva statusa -- krasneet" "$(run)" "1"
 
+python - "$REG" <<'PY'
+import io, sys
+p = sys.argv[1]
+BL = u"БЛОКИРУЕТ ТЕГ:"
+ST = u"Статус:"
+CH = u"ЧИНИТСЯ:"
+io.open(p, "w", encoding="utf-8", newline="\n").write(
+    u"| 1 | K1 | **%s** net plana ... **%s** plan 196 **%s NET** %s ZAKRYT |\n"
+    % (CH, CH, BL, ST))
+PY
+check "dva marshruta -- krasneet" "$(run)" "1"
+
 echo "== ne vret o srede =="
 rm -f "$REG"
 check "propavshiy reestr -- FAIL, a ne 'ok'" "$(run)" "1"
