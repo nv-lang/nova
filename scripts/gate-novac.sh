@@ -150,6 +150,53 @@ guard() {
     return 1
 }
 
+# ПАРАЛЛЕЛЬНЫЙ блок независимых текстовых стражей (2026-08-19).
+#
+# Они не зависят друг от друга и читают одно и то же дерево только на чтение.
+# Последовательно это ~45 запусков по 3-5 секунд = две с половиной минуты
+# ожидания человеком; параллельно — секунды. Вывод собирается в файлы и
+# ПЕЧАТАЕТСЯ В ПОРЯДКЕ ОБЪЯВЛЕНИЯ: недетерминированный порядок красных строк
+# читался бы как разные прогоны.
+PAR_DIR="${TMPDIR:-/tmp}/novac-gate-par.$$"
+PAR_N=0
+par_reset() { rm -rf "$PAR_DIR"; mkdir -p "$PAR_DIR"; PAR_N=0; }
+par_add() {
+    PAR_N=$((PAR_N + 1))
+    printf '%s\n' "$1" > "$PAR_DIR/$PAR_N.cmd"
+    printf '%s\n' "$2" > "$PAR_DIR/$PAR_N.msg"
+}
+par_run() {
+    _i=1
+    while [ "$_i" -le "$PAR_N" ]; do
+        _g=$(cat "$PAR_DIR/$_i.cmd")
+        _runner=bash
+        case "$_g" in *.py) _runner=python ;; esac
+        ( "$_runner" "$_g" "$ROOT" > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
+        _i=$((_i + 1))
+    done
+    wait
+    _i=1
+    while [ "$_i" -le "$PAR_N" ]; do
+        cat "$PAR_DIR/$_i.out"
+        _rc=$(cat "$PAR_DIR/$_i.rc" 2>/dev/null || echo 1)
+        _msg=$(cat "$PAR_DIR/$_i.msg")
+        if [ "$_rc" -ne 0 ]; then
+            if is_desync "$(cat "$PAR_DIR/$_i.out")"; then
+                desync "$(basename "$(cat "$PAR_DIR/$_i.cmd")"): рассинхрон рантайма"
+            else
+                fail "$_msg"
+            fi
+        elif ! grep -q 'ok:' "$PAR_DIR/$_i.out"; then
+            echo "ШАГ НИЧЕГО НЕ ДОКАЗАЛ: $(basename "$(cat "$PAR_DIR/$_i.cmd")") вышел с нулём, но не напечатал 'ok:'" >&2
+            fail "$_msg"
+        else
+            : # зелёный со строкой доказательства
+        fi
+        _i=$((_i + 1))
+    done
+    rm -rf "$PAR_DIR"
+}
+
 # ── Стражи БЕЗ бинаря: текст, дока, форма исходника. Идут первыми — дёшевы. ──
 step "novac-arch-class-proofs (три доказательства у каждого класса — 274.1)"
 guard "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "$ROOT" || fail "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
@@ -194,59 +241,71 @@ else
 fi
 
 step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"
-guard "$ROOT/scripts/guards/check-novac-file-size.sh" "$ROOT" || fail "файл novac длиннее 1000 строк (решение 12)"
-guard "$ROOT/scripts/guards/check-novac-atomics-door.sh" "$ROOT" || fail "атомики/TLS мимо одной двери (274 §8.1)"
-guard "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "$ROOT" || fail "строковый ключ таблицы вне names (архитектура §4а, К2)"
-guard "$ROOT/scripts/guards/check-novac-no-global-state.sh" "$ROOT" || fail "глобальное изменяемое состояние в novac (274 §4 п.5)"
-guard "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "$ROOT" || fail "Result в сигнатуре фронтенда novac (274 §4 п.1)"
-guard "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "$ROOT" || fail "форма грамматики без наблюдающих фикстур (К7)"
-guard "$ROOT/scripts/guards/check-novac-differential.sh" "$ROOT" || fail "расхождение novac с оракулом вне реестра (дифф-гейт)"
-guard "$ROOT/scripts/guards/check-novac-diag-schema.sh" "$ROOT" || fail "диагностика novac не по схеме §7"
-guard "$ROOT/scripts/guards/check-novac-no-cascade.sh" "$ROOT" || fail "каскад диагностик от одной причины (274 §6)"
-guard "$ROOT/scripts/guards/check-novac-no-panic.sh" "$ROOT" || fail "паника/крэш novac на фикстурах (решение 11: ноль паник)"
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-file-size.sh" "файл novac длиннее 1000 строк (решение 12)"
+par_add "$ROOT/scripts/guards/check-novac-atomics-door.sh" "атомики/TLS мимо одной двери (274 §8.1)"
+par_add "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "строковый ключ таблицы вне names (архитектура §4а, К2)"
+par_add "$ROOT/scripts/guards/check-novac-no-global-state.sh" "глобальное изменяемое состояние в novac (274 §4 п.5)"
+par_add "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
+par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
+par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
+par_run
 
 # ═══ НАБОР ОКНА 274 — влит слиянием 2026-08-16 вместе с файлами ═══
 # Порядок: дешёвые статические — потом дедлайновые — потом мутационный —
 # реестр стражей последним (судит сам набор).
 step "novac-conventions (П13..П27: доки, имена, реестры, двери, доноры)"
-guard "$ROOT/scripts/guards/check-novac-type-field-docs.sh" "$ROOT" || fail "тип/поле/функция novac без документации (П13)"
-guard "$ROOT/scripts/guards/check-novac-doc-language.sh" "$ROOT" || fail "русский текст в .nv novac (П13)"
-guard "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "$ROOT" || fail "имя языка/std строкой вне builtins (П5)"
-guard "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "$ROOT" || fail "novac объявил имя, которое экспортирует прелюдия"
-guard "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "$ROOT" || fail "таблица строк в Ctx без строки плана §10.3б (П17)"
-guard "$ROOT/scripts/guards/check-novac-row-fields.sh" "$ROOT" || fail "поле строки реестра без записи в §10.3в (П22/П23)"
-guard "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "$ROOT" || fail "поле-ссылка без суффикса пространства (П19)"
-guard "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "$ROOT" || fail "дверь поиска аллоцирует (П18)"
-guard "$ROOT/scripts/guards/check-novac-ice-messages.sh" "$ROOT" || fail "текст ice() повторяется или без модуля (П20)"
-guard "$ROOT/scripts/guards/check-novac-no-default-branch.sh" "$ROOT" || fail "ветка «всё остальное» на закрытом множестве (П21)"
-guard "$ROOT/scripts/guards/check-novac-mangling-one-way.sh" "$ROOT" || fail "C-имя разбирается обратно (П24)"
-guard "$ROOT/scripts/guards/check-novac-cli-surface.sh" "$ROOT" || fail "команда novac, которой нет у nova-cli (П26)"
-guard "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "$ROOT" || fail "способность ниже двери (П15)"
-guard "$ROOT/scripts/guards/check-novac-second-door.py" "$ROOT" || fail "вторая дверь: одна операция написана дважды"
-guard "$ROOT/scripts/guards/check-novac-one-door-export.sh" "$ROOT" || fail "одна операция из двух модулей (274.1 §2в)"
-guard "$ROOT/scripts/guards/check-novac-edge-payload.sh" "$ROOT" || fail "ребро §3 без «что течёт» (274.1 §2в)"
-guard "$ROOT/scripts/guards/check-novac-surface.sh" "$ROOT" || fail "публичная поверхность разошлась с базой (274 §10.4)"
-guard "$ROOT/scripts/guards/check-novac-temp-edges.sh" "$ROOT" || fail "временное ребро без срока или истекло (274.1 §2в)"
-guard "$ROOT/scripts/guards/check-novac-module-donor.sh" "$ROOT" || fail "модуль novac без донора-указателя в заголовке (П27)"
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-type-field-docs.sh" "тип/поле/функция novac без документации (П13)"
+par_add "$ROOT/scripts/guards/check-novac-doc-language.sh" "русский текст в .nv novac (П13)"
+par_add "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "имя языка/std строкой вне builtins (П5)"
+par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "novac объявил имя, которое экспортирует прелюдия"
+par_add "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "таблица строк в Ctx без строки плана §10.3б (П17)"
+par_add "$ROOT/scripts/guards/check-novac-row-fields.sh" "поле строки реестра без записи в §10.3в (П22/П23)"
+par_add "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "поле-ссылка без суффикса пространства (П19)"
+par_add "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "дверь поиска аллоцирует (П18)"
+par_add "$ROOT/scripts/guards/check-novac-ice-messages.sh" "текст ice() повторяется или без модуля (П20)"
+par_add "$ROOT/scripts/guards/check-novac-no-default-branch.sh" "ветка «всё остальное» на закрытом множестве (П21)"
+par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.sh" "C-имя разбирается обратно (П24)"
+par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
+par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
+par_add "$ROOT/scripts/guards/check-novac-one-door-export.sh" "одна операция из двух модулей (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-edge-payload.sh" "ребро §3 без «что течёт» (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-surface.sh" "публичная поверхность разошлась с базой (274 §10.4)"
+par_add "$ROOT/scripts/guards/check-novac-temp-edges.sh" "временное ребро без срока или истекло (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-module-donor.sh" "модуль novac без донора-указателя в заголовке (П27)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
-guard "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "$ROOT" || fail "резолв с тихим дефолтом или линейным сканом имён"
-guard "$ROOT/scripts/guards/check-novac-channel-one-writer.sh" "$ROOT" || fail "у канала чекера второй писатель или вывод типа ниже чекера"
-guard "$ROOT/scripts/guards/check-novac-match-exhaustive.sh" "$ROOT" || fail "match по сумме novac не покрывает все варианты (оракул это не ловит)"
-guard "$ROOT/scripts/guards/check-novac-no-silent-skip.sh" "$ROOT" || fail "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
-guard "$ROOT/scripts/guards/check-novac-pch.sh" "$ROOT" || fail "PCH исчез из горячего пути (274.2 §1а)"
-guard "$ROOT/scripts/guards/check-novac-line-length.sh" "$ROOT" || fail "строка длиннее 120 символов вне исключений (П29)"
-guard "$ROOT/scripts/guards/check-novac-batch.sh" "$ROOT" || fail "пачечный проход раннера разобран (274.2 §1б.1)"
-guard "$ROOT/scripts/guards/check-novac-precondition.sh" "$ROOT" || fail "предусловие двери спрятано в теле (П20 п.5)"
-guard "$ROOT/scripts/guards/check-novac-emitted-names.sh" "$ROOT" || fail "печатаемое C-имя вне объявленных пространств (П24)"
-guard "$ROOT/scripts/guards/check-novac-table-is-match.sh" "$ROOT" || fail "таблица написана цепочкой if вместо match (П21 п.4)"
-guard "$ROOT/scripts/guards/check-novac-no-grammar-excuse.sh" "$ROOT" || fail "диагностика ссылается на незнание грамматики (§9.4)"
-guard "$ROOT/scripts/guards/check-novac-no-copy-loop.sh" "$ROOT" || fail "коллекция перекладывается поэлементно вместо append (П32)"
-guard "$ROOT/scripts/guards/check-novac-branch-complete.sh" "$ROOT" || fail "неполные ветвления выросли (П31)"
-guard "$ROOT/scripts/guards/check-novac-build-clean.sh" "$ROOT" || fail "сборка novac печатает предупреждения компилятора (П30)"
+par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "резолв с тихим дефолтом или линейным сканом имён"
+par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.sh" "у канала чекера второй писатель или вывод типа ниже чекера"
+par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.sh" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
+par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.sh" "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
+par_add "$ROOT/scripts/guards/check-novac-pch.sh" "PCH исчез из горячего пути (274.2 §1а)"
+par_add "$ROOT/scripts/guards/check-novac-line-length.sh" "строка длиннее 120 символов вне исключений (П29)"
+par_add "$ROOT/scripts/guards/check-novac-precondition.sh" "предусловие двери спрятано в теле (П20 п.5)"
+par_add "$ROOT/scripts/guards/check-novac-emitted-names.sh" "печатаемое C-имя вне объявленных пространств (П24)"
+par_add "$ROOT/scripts/guards/check-novac-table-is-match.sh" "таблица написана цепочкой if вместо match (П21 п.4)"
+par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.sh" "диагностика ссылается на незнание грамматики (§9.4)"
+par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.sh" "коллекция перекладывается поэлементно вместо append (П32)"
+par_add "$ROOT/scripts/guards/check-novac-branch-complete.sh" "неполные ветвления выросли (П31)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
-guard "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "$ROOT" || fail "правило конвенции без названного механизма"
+par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "правило конвенции без названного механизма"
+par_run
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
+# ПОВЕДЕНЧЕСКИЕ проверки: они ЗАПУСКАЮТ novac и корпус, а не читают текст.
+# До 2026-08-19 они стояли среди текстовых правил, и человек ждал их в цикле
+# «правка → проверка»: один только дифф стоил полутора минут. Здесь они идут
+# вместе с фаззером и мутационным самотестом — то есть перед пушем, а не на
+# каждый чих (замер того же дня: текстовая часть 260с → 80с без них).
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
+par_add "$ROOT/scripts/guards/check-novac-differential.sh" "расхождение novac с оракулом вне реестра (дифф-гейт)"
+par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
+par_add "$ROOT/scripts/guards/check-novac-cli-surface.sh" "команда novac, которой нет у nova-cli (П26)"
+par_add "$ROOT/scripts/guards/check-novac-batch.sh" "пачечный проход раннера разобран (274.2 §1б.1)"
+par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
+par_run
+
 step "novac-heavy (дедлайновые: мэнглинг, шаблон, цена, мутационная проверка самотестов)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-fuzz-zero-panic.sh" "$ROOT" || fail "фаззер нашёл падение novac: приёмка Э1 ранга CORE (274.3/F2)"
