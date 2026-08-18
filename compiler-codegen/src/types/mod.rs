@@ -13708,6 +13708,20 @@ impl<'a> TypeCheckCtx<'a> {
     ///   * арм с `if`-guard — он может не сработать (rustc считает так же);
     ///   * `Literal`/`Array`/`Tuple`/`Record`-паттерн на сумме — форма не из
     ///     этого разбора, снимаем проверку.
+    ///
+    /// OR-ОБРАЗЕЦ (`p | q | r`) РАЗБИРАЕТСЯ, и это не расширение доктрины, а
+    /// её исполнение (реестр №725, найдено окном 274 2026-08-18). Раньше он
+    /// попадал в «форма вне разбора» и снимал проверку СО ВСЕГО `match`, хотя
+    /// понимается точно. Цена была не в одном пропуске: `|` — идиоматичный
+    /// способ собрать «здесь ничего не делаем» в одну строку, то есть проверка
+    /// молча отключалась ровно в САМЫХ БОЛЬШИХ таблицах. Замер на пяти
+    /// вариантах с одним непокрытым: армы по одному имени дают отказ, а
+    /// `Green | Blue | Amber => 0` принимается, и собранная программа печатает
+    /// нулевое значение типа результата без единой диагностики.
+    ///
+    /// Консервативность сохранена буквально: неизвестная альтернатива ВНУТРИ
+    /// `|` снимает проверку так же, как неизвестный арм снаружи.
+    #[allow(clippy::only_used_in_recursion)]
     fn check_match_exhaustive(
         &self,
         scrut_ty: Option<&TypeRef>,
@@ -13744,20 +13758,12 @@ impl<'a> TypeCheckCtx<'a> {
             if arm.guard.is_some() {
                 continue;
             }
-            match &arm.pattern {
-                // catch-all: `_` и голое имя-биндинг
-                Pattern::Wildcard(_) => return,
-                Pattern::Ident { .. } => return,
-                Pattern::Variant { path, .. } => {
-                    match path.last() {
-                        Some(v) => {
-                            covered.insert(v.clone());
-                        }
-                        None => return,
-                    }
-                }
+            match arm_coverage(&arm.pattern) {
+                // catch-all (`_`, голое имя-биндинг) — покрыто всё, разбор окончен
+                ArmCoverage::CatchAll => return,
+                ArmCoverage::Variants(vs) => covered.extend(vs),
                 // форма вне разбора — снимаем проверку целиком (см. доктрину выше)
-                _ => return,
+                ArmCoverage::Unknown => return,
             }
         }
 
@@ -54729,5 +54735,48 @@ mod expr_types_ide_tests {
         // a.b.c.z = [s, s+7] : int
         let tabcz = ty_span(&m, s, s + 7).expect("a.b.c.z recorded");
         assert!(is_named(tabcz, "int"), "expected int for `a.b.c.z`, got {:?}", tabcz);
+    }
+}
+
+/// Что арм даёт разбору исчерпаемости (реестр №703, №725).
+///
+/// Отдельный тип, а не `Option<Vec<String>>`, потому что различать надо ТРИ
+/// исхода, и путать их дорого: «покрыто всё» и «ничего не понял» одинаково
+/// заканчивают проверку, но по разным причинам, и однажды они разойдутся.
+enum ArmCoverage {
+    /// `_` или голое имя-биндинг — дальше смотреть нечего.
+    CatchAll,
+    /// Арм называет эти варианты суммы.
+    Variants(Vec<String>),
+    /// Форма вне разбора — проверку снять целиком (доктрина консервативности).
+    Unknown,
+}
+
+/// Разбор одного арма. Рекурсия ровно одна — в альтернативы `|`.
+fn arm_coverage(p: &crate::ast::Pattern) -> ArmCoverage {
+    use crate::ast::Pattern;
+    match p {
+        Pattern::Wildcard(_) => ArmCoverage::CatchAll,
+        Pattern::Ident { .. } => ArmCoverage::CatchAll,
+        Pattern::Variant { path, .. } => match path.last() {
+            Some(v) => ArmCoverage::Variants(vec![v.clone()]),
+            None => ArmCoverage::Unknown,
+        },
+        // `p | q | r`: покрытие альтернатив СКЛАДЫВАЕТСЯ. Одна непонятая
+        // альтернатива обнуляет весь арм — иначе `Known | <непонятое>` выглядел
+        // бы уже, чем есть, и проверка потребовала бы ветку, которая на деле
+        // покрыта. Ложный красный здесь дороже пропуска (доктрина выше).
+        Pattern::Or { alternatives, .. } => {
+            let mut acc = Vec::new();
+            for alt in alternatives {
+                match arm_coverage(alt) {
+                    ArmCoverage::CatchAll => return ArmCoverage::CatchAll,
+                    ArmCoverage::Variants(vs) => acc.extend(vs),
+                    ArmCoverage::Unknown => return ArmCoverage::Unknown,
+                }
+            }
+            ArmCoverage::Variants(acc)
+        }
+        _ => ArmCoverage::Unknown,
     }
 }
