@@ -110,6 +110,58 @@ export fn DefTable mut @add(name str, kind DefKind, payload int) -> () {
 #realtime nogc
 export fn DefTable @find(name str) -> int => @names.find(name)
 
+/// The callable row a DECLARATION NODE owns, or -1.
+///
+/// The tree half of the same question. It lived as two identical private
+/// copies (emit_c and mono, body for body) until 2026-08-18, which is what
+/// a missing door looks like from the inside: each author writes the five
+/// lines rather than finding a name they cannot guess.
+export fn decl_fn_row(f Node, ctx Ctx) -> int {
+    ro kids = branch_children(f)
+    if kids.len() < 2 {
+        return -1
+    } else {
+        // A declaration always carries at least the keyword and the name;
+        // fewer children is a recovery shape, and it owns no row.
+    }
+    ro nm = kids[1]
+    if nm.kind_of() != NodeKind.LeafNode {
+        return -1
+    } else {
+        // The name slot holds a branch only after recovery: nothing was
+        // registered under it, so there is no row to answer with.
+    }
+    ctx.defs.fn_row(leaf_text(nm))
+}
+
+/// The CALLABLE row a name owns, or -1 when the registry knows no such fn.
+///
+/// The registry's own question, and therefore the registry's door. Before
+/// 2026-08-18 it lived nowhere, so every consumer wrote the two-step
+/// (`find` then `rows[..]`) itself: ten sites across three modules, two of them
+/// identical body for body -- and I wrote the second one myself while
+/// commenting that it asked "the same question". A door is found by NAME; if
+/// the name does not exist, the next author writes their own. That is how
+/// second doors get in, and the answer is not vigilance but a door.
+#realtime nogc
+export fn DefTable @fn_row(name str) -> int {
+    ro d = @find(name)
+    if d < 0 {
+        return -1
+    } else {
+        // The registry does not know the name: that is an ANSWER for a
+        // tolerant door, and check refuses the program elsewhere.
+    }
+    ro { kind: k, payload: row } = @rows[d]
+    if k != DefKind.DefFn {
+        return -1
+    } else {
+        // The name is a type or a variant, not a callable: the caller asked
+        // for a fn row, and -1 says honestly that there is none.
+    }
+    row
+}
+
 /// Type by name during COLLECTION: -1 if the name is unknown or not a
 /// type. Collection is DELIBERATELY tolerant of broken input
 /// (274.3/F-B4): the file picture is built for check too, and check

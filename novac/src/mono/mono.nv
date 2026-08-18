@@ -16,7 +16,7 @@
 module novac.mono
 
 import ../tree.{Node, NodeKind}
-import ../sem.{Ctx, CheckOut, DefKind, branch_children, leaf_text}
+import ../sem.{decl_fn_row, Ctx, CheckOut, DefKind, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
 import ../diag.{ice}
 
@@ -97,7 +97,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         grew = false
         for c in branch_children(file) {
             if c.kind_of() != NodeKind.FnDecl { continue }
-            ro row = fn_row_of(c, ctx)
+            ro row = decl_fn_row(c, ctx)
             if row < 0 { continue }
             if row >= seen.len() { continue }
             if !seen[row] { continue }
@@ -114,34 +114,8 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
 }
 
 /// The row of the entry point, or -1 when this file declares none.
-///
-/// A DOOR: it asks the registry and builds nothing, which is why it carries the
-/// mark and why the collector keeps the lookup out of its own body -- a
-/// function that both searches and allocates is neither, and P18 refuses it for
-/// the reason the oracle paid for: a composite key built per lookup, in the
-/// hottest path of the compiler.
 #realtime nogc
-fn entry_row(ctx Ctx) -> int {
-    ro d = ctx.defs.find(ENTRY_FN)
-    if d < 0 { return -1 }
-    ro { kind: k, payload: row } = ctx.defs.rows[d]
-    if k != DefKind.DefFn { return -1 }
-    row
-}
-
-/// The fn row a declaration owns, or -1 when the registry does not know it.
-#realtime nogc
-fn fn_row_of(f Node, ctx Ctx) -> int {
-    ro kids = branch_children(f)
-    if kids.len() < 2 { return -1 }
-    ro nm = kids[1]
-    if nm.kind_of() != NodeKind.LeafNode { return -1 }
-    ro d = ctx.defs.find(leaf_text(nm))
-    if d < 0 { return -1 }
-    ro { kind: k, payload: row } = ctx.defs.rows[d]
-    if k != DefKind.DefFn { return -1 }
-    row
-}
+fn entry_row(ctx Ctx) -> int => ctx.defs.fn_row(ENTRY_FN)
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool) -> bool {

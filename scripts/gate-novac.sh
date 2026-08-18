@@ -222,6 +222,7 @@ guard "$ROOT/scripts/guards/check-novac-no-default-branch.sh" "$ROOT" || fail "�
 guard "$ROOT/scripts/guards/check-novac-mangling-one-way.sh" "$ROOT" || fail "C-имя разбирается обратно (П24)"
 guard "$ROOT/scripts/guards/check-novac-cli-surface.sh" "$ROOT" || fail "команда novac, которой нет у nova-cli (П26)"
 guard "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "$ROOT" || fail "способность ниже двери (П15)"
+guard "$ROOT/scripts/guards/check-novac-second-door.py" "$ROOT" || fail "вторая дверь: одна операция написана дважды"
 guard "$ROOT/scripts/guards/check-novac-one-door-export.sh" "$ROOT" || fail "одна операция из двух модулей (274.1 §2в)"
 guard "$ROOT/scripts/guards/check-novac-edge-payload.sh" "$ROOT" || fail "ребро §3 без «что течёт» (274.1 §2в)"
 guard "$ROOT/scripts/guards/check-novac-surface.sh" "$ROOT" || fail "публичная поверхность разошлась с базой (274 §10.4)"
