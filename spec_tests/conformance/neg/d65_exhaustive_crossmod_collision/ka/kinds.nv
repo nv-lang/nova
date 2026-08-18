@@ -1,0 +1,12 @@
+module ka.kinds
+
+// Своя сумма. `match` ниже НЕ покрывает `Gamma`.
+type XKind enum Alpha | Beta | Gamma
+
+export fn describe_a(k XKind) -> int {
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `Gamma` is uncovered; before window W6 the cross-module bare-name collision made the check disable ITSELF, so this compiled clean (registry No. 705)
+    match k {
+        Alpha => 1
+        Beta => 2
+    }
+}
