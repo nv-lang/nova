@@ -1,0 +1,15 @@
+// Вторая половина коллизии: ТО ЖЕ имя `CecKind`, но ДВА варианта.
+//
+// В слитом CU оба объявления кладутся в карту типов чекера под голым именем
+// `CecKind`; побеждает зарегистрированный позже. Именно из-за этого проверка
+// исчерпаемости в `cec_a` снимает себя самопроверкой разрешения.
+module crossmod_exhaustive_collision.cec_b
+
+type CecKind enum Left | Right
+
+export fn describe_b(k CecKind) -> int {
+    match k {
+        Left => 10
+        Right => 20
+    }
+}
