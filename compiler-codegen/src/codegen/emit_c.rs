@@ -65857,8 +65857,18 @@ mod receiver_c_type_coverage_tests {
         ];
         for (recv, want) in cases {
             assert_eq!(e.receiver_c_type(recv, false), *want, "receiver_c_type({:?}, false)", recv);
-            // Primitives are by-value receivers (D35 v2) — recv_mutable is a no-op.
-            assert_eq!(e.receiver_c_type(recv, true), *want, "receiver_c_type({:?}, true)", recv);
+            // R5 + решение владельца 2026-08-09 (закрывает №468): `mut @` ≡
+            // `mut ref @` ВСЕГДА по указателю, любого размера — примитивы
+            // включительно. Прежняя формулировка («примитивы по значению,
+            // recv_mutable — no-op») описывала июльскую конвенцию и с тех пор
+            // снята. Утверждение не удаляется, а переписывается: удалить
+            // значило бы тихо расстегнуть ABI, закреплённый №468.
+            assert_eq!(
+                e.receiver_c_type(recv, true),
+                format!("{}*", want),
+                "receiver_c_type({:?}, true)",
+                recv
+            );
         }
     }
 

@@ -10063,7 +10063,7 @@ mod tests {
         // — must NOT warn.
         let m = parse(
             "module foo\n\
-             fn run(v mut Vec[int]) {\n    \
+             fn run(mut v Vec[int]) {\n    \
              ro extra = 4\n    \
              v.cap(v.len() + extra)\n\
              }\n",
@@ -10083,7 +10083,7 @@ mod tests {
         // adjacency-tracking по имени НЕ должен ложно смэтчить `v`.
         let m = parse(
             "module foo\n\
-             fn run(w mut Vec[int]) {\n    \
+             fn run(mut w Vec[int]) {\n    \
              mut v = Vec[int].new()\n    \
              w.cap(16)\n    \
              v.push(1)\n\
@@ -10125,7 +10125,7 @@ mod tests {
         // Real corpus shape: examples/tls/echo_server.nv
         // `stream.write_all("echo_ok\n".bytes())`.
         let src = "module foo\n\
-             fn run(stream mut TcpStream) -> () {\n    \
+             fn run(mut stream TcpStream) -> () {\n    \
              stream.write_all(\"echo_ok\\n\".bytes())\n\
              }\n";
         let m = parse(src);
@@ -10139,7 +10139,7 @@ mod tests {
         // Interpolated string receiver — always `str`-typed regardless of
         // content (mirrors StrLit treatment), owner brief 2026-07-21.
         let src = "module foo\n\
-             fn run(stream mut TcpStream, msg str) -> () {\n    \
+             fn run(mut stream TcpStream, msg str) -> () {\n    \
              stream.write_all(\"echo: ${msg}\".bytes())\n\
              }\n";
         let m = parse(src);
@@ -10154,7 +10154,7 @@ mod tests {
         // syntactically str-guaranteed — real corpus shape (fmt/duration):
         // `f.write(@nanos.to_str().bytes())`.
         let src = "module foo\n\
-             fn run(f mut FmtCtx, nanos i64) -> () {\n    \
+             fn run(mut f FmtCtx, nanos i64) -> () {\n    \
              f.write(nanos.to_str().bytes())\n\
              }\n";
         let m = parse(src);
@@ -10170,7 +10170,7 @@ mod tests {
         // stay silent (even though the general D429 `#coerce` mechanism
         // would ALSO cover a variable receiver at a KNOWN-type position).
         let src = "module foo\n\
-             fn run(stream mut TcpStream, s str) -> () {\n    \
+             fn run(mut stream TcpStream, s str) -> () {\n    \
              stream.write_all(s.bytes())\n\
              }\n";
         let m = parse(src);
@@ -10231,7 +10231,7 @@ mod tests {
              type Blob { ro data []u8 }\n\
              #coerce\n\
              fn Blob @view_bytes() -> ro []u8 => @data\n\
-             fn run(sink mut TcpStream, b Blob) -> () {\n    \
+             fn run(mut sink TcpStream, b Blob) -> () {\n    \
              sink.write_all(b.view_bytes())\n\
              }\n";
         let m = parse(src);
@@ -10477,8 +10477,8 @@ mod tests {
              fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
              fn run(n int) -> int {\n\
                  match find(n) {\n\
-                     Some(v) => v,\n\
-                     None => 0,\n\
+                     Some(v) => v\n\
+                     None => 0\n\
                  }\n\
              }\n";
         let m = parse(src);
@@ -10495,8 +10495,8 @@ mod tests {
              fn find(n int) -> Result[int, E] => if n > 0 { Ok(n) } else { Err(E.Bad) }\n\
              fn run(n int) -> int {\n\
                  match find(n) {\n\
-                     Ok(v) => v,\n\
-                     Err(_) => -1,\n\
+                     Ok(v) => v\n\
+                     Err(_) => -1\n\
                  }\n\
              }\n";
         let m = parse(src);
@@ -10511,8 +10511,8 @@ mod tests {
              fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
              fn run(n int) -> Option[int] {\n\
                  ro x = match find(n) {\n\
-                     Some(v) => v,\n\
-                     None => return None,\n\
+                     Some(v) => v\n\
+                     None => return None\n\
                  }\n\
                  Some(x + 1)\n\
              }\n";
@@ -10533,8 +10533,8 @@ mod tests {
              fn find(n int) -> Result[int, E] => if n > 0 { Ok(n) } else { Err(E.Bad) }\n\
              fn run(n int) -> bool {\n\
                  match find(n) {\n\
-                     Ok(_) => true,\n\
-                     Err(_) => false,\n\
+                     Ok(_) => true\n\
+                     Err(_) => false\n\
                  }\n\
              }\n";
         let m = parse(src);
@@ -10554,8 +10554,8 @@ mod tests {
              fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
              fn run(n int) -> int {\n\
                  match find(n) {\n\
-                     Some(v) => v + 1,\n\
-                     None => 0,\n\
+                     Some(v) => v + 1\n\
+                     None => 0\n\
                  }\n\
              }\n";
         let m = parse(src);
@@ -10575,8 +10575,8 @@ mod tests {
              fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
              fn run(n int) -> int {\n\
                  match find(n) {\n\
-                     Some(v) => n,\n\
-                     None => 0,\n\
+                     Some(v) => n\n\
+                     None => 0\n\
                  }\n\
              }\n";
         let m = parse(src);
@@ -10599,8 +10599,8 @@ mod tests {
              fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
              fn run(n int) -> bool {\n\
                  (match find(n) {\n\
-                     Some(v) => v,\n\
-                     None => return false,\n\
+                     Some(v) => v\n\
+                     None => return false\n\
                  }) > 0\n\
              }\n";
         let m = parse(src);
@@ -10627,11 +10627,11 @@ mod tests {
              fn close() -> () => ()\n\
              fn run(n int) -> int {\n\
                  match find(n) {\n\
-                     Ok(v) => v,\n\
+                     Ok(v) => v\n\
                      Err(e) => {\n\
                          close()\n\
                          panic(\"boom\")\n\
-                     },\n\
+                     }\n\
                  }\n\
              }\n";
         // Sibling fixture: same shape, but the fallback DOES reference the
@@ -10642,8 +10642,8 @@ mod tests {
              fn describe(e E) -> str => \"err\"\n\
              fn run(n int) -> str {\n\
                  match find(n) {\n\
-                     Ok(v) => v.to_str(),\n\
-                     Err(e) => describe(e),\n\
+                     Ok(v) => v.to_str()\n\
+                     Err(e) => describe(e)\n\
                  }\n\
              }\n";
         let m = parse(src);
@@ -10977,7 +10977,11 @@ mod tests {
         assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
         let s = hit[0].diag.suggestion.as_ref().expect("suggestion");
         assert_eq!(s.replacement, "", "fix-it removes exactly the `.to_str()` tail");
-        assert_eq!(s.applicability, Applicability::MachineApplicable);
+        // №520: правило судит по ИМЕНИ метода и типа получателя не видит, поэтому
+        // совет НЕ машинно-применим — 2026-08-11 применимость понижена намеренно.
+        // Возврат к `MachineApplicable` заново открыл бы №520 (совет, результат
+        // которого не компилируется) и №634 (компилируется и падает).
+        assert_eq!(s.applicability, Applicability::MaybeIncorrect);
     }
 
     #[test]
@@ -11264,7 +11268,7 @@ mod redundant_paren_tests {
     #[test]
     fn no_warning_on_match_tuple_scrutinee() {
         let src = "module foo\nfn run(a int, b int) -> int {\n    \
-                    match (a, b) {\n        (1, 2) => 3,\n        _ => 0,\n    }\n}\n";
+                    match (a, b) {\n        (1, 2) => 3\n        _ => 0\n    }\n}\n";
         assert!(hits(src).is_empty(), "got: {:?}", hits(src));
     }
 

@@ -13220,7 +13220,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn f(opt int) -> int {
-                if let Some(x) = opt { x } else { 0 }
+                if Some(x) = opt { x } else { 0 }
             }
             "#,
         );
@@ -13265,7 +13265,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             test "addition works" {
-                assert 1 + 1 == 2
+                assert(1 + 1 == 2)
             }
             "#,
         );

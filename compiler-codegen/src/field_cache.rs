@@ -12878,7 +12878,7 @@ fn L1 @use_both() -> int {
         let src = r#"
 module testmod.v73_scc
 type Counter { mut n int }
-fn Counter mut @inc() -> () { @n = @n + 1  @double() }
+fn Counter mut @inc() -> () { @n = @n + 1; @double() }
 fn Counter mut @double() -> () { @inc() }
 "#;
         let module = crate::parser::parse(src).expect("parse");
@@ -13222,27 +13222,41 @@ type C { mut r Result }
             "sum-type field must be ref-typed");
     }
 
-    /// Newtype around primitive — recurse → primitive (safe) ⇒ TRUE.
-    /// (Primitives can't host slot-mutating methods per `is_primitive_leaf`
-    /// rationale в classify_named_leaf.)
+    /// Newtype around primitive — recurse → primitive ⇒ FALSE.
+    ///
+    /// Решение владельца 2026-08-09 (№468, R5) перевернуло примитивную ветку
+    /// `classify_named_leaf` с `true` на `false`: `E_PRIMITIVE_MUT_METHOD`
+    /// снят, `mut @` передаётся ПО УКАЗАТЕЛЮ, и метод действительно может
+    /// переписать биты слота. Прежнее обоснование («примитивы не могут нести
+    /// методы, меняющие слот») именно этой правкой и отменено.
     #[test]
-    fn v7_6_refactor_newtype_primitive_is_ref() {
+    fn v7_6_refactor_newtype_primitive_is_not_ref() {
         let src = r#"
 module testmod.v7_6_newtype_int
 type Id u64
 type C { mut id Id }
 "#;
         let reg = build_test_registry(src);
-        assert!(is_ref(&reg, "C", "id"),
-            "newtype over primitive must inherit safe-slot semantics");
+        assert!(!is_ref(&reg, "C", "id"),
+            "после №468: newtype над примитивом наследует НЕстабильный слот");
     }
 
-    /// Newtype around `[]u8` — recurse → Array ⇒ TRUE.
+    /// Newtype around an array — recurse → Array ⇒ TRUE.
+    ///
+    /// ФИКСТУРА ЗДЕСЬ НЕСЛУЧАЙНА. Прежняя писала `type Bytes []u8` и НИКОГДА
+    /// не объявляла newtype над массивом: по D52 скобка сразу после имени типа
+    /// — это список generic-параметров, поэтому `[]` съедался как ПУСТОЙ
+    /// список, а `Bytes` оказывался newtype над примитивом `u8`. Тест дублировал
+    /// соседний `..._newtype_primitive_is_not_ref` и сломался вместе с ним на
+    /// №468. Перевернуть утверждение было бы худшим из решений: тест стал бы
+    /// зелёным, а ветка Newtype→Array осталась бы без покрытия совсем.
+    /// `ro []u8` даёт Newtype(Readonly(Array)) и проверяет ровно ту рекурсию,
+    /// ради которой тест написан.
     #[test]
     fn v7_6_refactor_newtype_array_is_ref() {
         let src = r#"
 module testmod.v7_6_newtype_box
-type Bytes []u8
+type Bytes ro []u8
 type C { mut b Bytes }
 "#;
         let reg = build_test_registry(src);
@@ -13286,18 +13300,21 @@ type C { mut x SomeCrossModuleType }
             "unknown cross-module type must conservatively classify as ref-typed");
     }
 
-    /// `str` — immutable per spec D26 (08-runtime.md:658) ⇒ TRUE.
-    /// Even if user added `fn str mut @hack(...)` (parser-permissive),
-    /// codegen primitive-by-value passing makes mutation silent no-op.
+    /// `str` — слот НЕ стабилен ⇒ FALSE.
+    ///
+    /// Тем же решением 2026-08-09 (№468): `fn str mut @` получает приёмник по
+    /// настоящему указателю и переписывает весь handle `nova_str`. Прежняя
+    /// формулировка («передача примитивов по значению делает мутацию тихим
+    /// no-op») описывала снятую конвенцию.
     #[test]
-    fn v7_6_refactor_str_is_ref() {
+    fn v7_6_refactor_str_is_not_ref() {
         let src = r#"
 module testmod.v7_6_str
 type C { mut s str }
 "#;
         let reg = build_test_registry(src);
-        assert!(is_ref(&reg, "C", "s"),
-            "str field must be ref-typed (spec-immutable + by-value receiver)");
+        assert!(!is_ref(&reg, "C", "s"),
+            "после №468: поле str НЕ ref-typed — `fn str mut @` переписывает handle");
     }
 
     /// `ro T` wrapper — recurse inner.
