@@ -69,10 +69,17 @@ jobs:
       # на машине разработчика держит открытым работающий редактор; здесь это не
       # мешает, но набор один и тот же с локальным стражем, и расхождение
       # охвата между ними — лишний источник «у меня зелено, у вас красно».
+      # `--locked` НЕ украшение. Первый же прогон этого job'а упал не на тесте, а
+      # на разрешении зависимостей: лок `nova-lsp` пинил `icu_* 2.2.0`, которым
+      # нужен rustc 1.86, при заявленном во всех трёх крейтах `rust-version =
+      # "1.85"`. На машине разработчика этого не видно — там тулчейн новее, — и
+      # MSRV годами может быть заявленным, но не соблюдаемым. С `--locked` cargo
+      # не станет молча переразрешать: расхождение манифеста и лока становится
+      # ОТКАЗОМ с внятной строкой, а не тихой подменой версий.
       - name: nova-lsp — lib test suite
-        run: cargo test --release --lib --manifest-path nova-lsp/Cargo.toml --no-fail-fast
+        run: cargo test --release --locked --lib --manifest-path nova-lsp/Cargo.toml --no-fail-fast
 
       # nova-cli — двоичный крейт, у него всё в интеграционных тестах; часть из
       # них запускает настоящий `nova` через CARGO_BIN_EXE_nova.
       - name: nova-cli — full test suite
-        run: cargo test --release --manifest-path nova-cli/Cargo.toml --no-fail-fast
+        run: cargo test --release --locked --manifest-path nova-cli/Cargo.toml --no-fail-fast
