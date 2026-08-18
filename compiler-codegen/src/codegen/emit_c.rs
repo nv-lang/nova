@@ -62058,9 +62058,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
         if std::env::var_os("NOVA_CH2_TRACE").is_some() {
             if let ExprKind::Index { .. } = &expr.kind {
-                if let Some(rt) = self.resolved_types.get(&expr.id) {
-                    eprintln!("[CH2-IDX] id={:?} rt={:?} lower={:?}",
-                        expr.id, rt, self.resolved_type_to_c(rt));
+                // №676: трассировка обязана печатать И ПРОМАХ. Печатая только
+                // попадания, она отвечала на вопрос «что в канале», тогда как
+                // спрашивают «есть ли там хоть что-нибудь» — а именно пустой
+                // канал и разбирается.
+                match self.resolved_types.get(&expr.id) {
+                    Some(rt) => eprintln!("[CH2-IDX] HIT  id={:?} rt={:?} lower={:?}",
+                        expr.id, rt, self.resolved_type_to_c(rt)),
+                    None => eprintln!("[CH2-IDX] MISS id={:?} id_set={}",
+                        expr.id, expr.id.is_set()),
                 }
             }
         }
