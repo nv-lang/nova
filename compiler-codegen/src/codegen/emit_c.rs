@@ -36636,6 +36636,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Member { obj, name } => {
+                // №716: `Option[int].None` — безнагрузочный вариант, пришедший
+                // как `Member{Index}` (парсер откатил turbofish, потому что за
+                // `]` не последовала скобка). Снимаем квалификатор и эмитим как
+                // голый вариант — прежде здесь печаталось `((Option)[nv_int]->None)`.
+                if let Some(bare_ctor) = self.qualified_variant_ctor_as_bare(expr) {
+                    return self.emit_expr(&bare_ctor);
+                }
                 // Plan 11 Ф.4: method values (bound / unbound).
                 // `obj.@method` — bound method value (закрывает `obj` как self).
                 // `Type.@method` — unbound method value (fn-pointer, явный self).
@@ -39529,6 +39536,61 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+
+    /// №716: `SumType[Args].Variant` → голый `Variant`, если `Variant`
+    /// действительно вариант этой суммы.
+    ///
+    /// ЗАЧЕМ. Квалифицированный конструктор generic-суммы приходил в эмиссию
+    /// двумя РАЗНЫМИ узлами, и ни один из них не разбирался как конструктор:
+    /// парсер признаёт turbofish только если после `]` идёт `(`, поэтому
+    /// `Option[int].Some(10)` даёт `Member{TurboFish}`, а `Option[int].None`
+    /// откатывается в `Member{Index}`. Обе формы доезжали до терминальных
+    /// fallback'ов и печатали имена ИЗ ИСХОДНИКА прямо в Си:
+    /// `Option->Some(...)` и `((Option)[nv_int]->None)` — то есть валидный на
+    /// вид код, ссылающийся на несуществующие идентификаторы.
+    ///
+    /// ПОЧЕМУ ПЕРЕПИСЫВАНИЕМ, А НЕ НОВОЙ ВЕТКОЙ ЭМИССИИ. Голая форма
+    /// (`Some(10)`) уже работает целиком: канал `resolved_variant_ctors`, выбор
+    /// моно-инстанса по ожидаемому типу, эмиссия тега. Дублировать это значило
+    /// бы завести второй источник правды — ровно то, против чего план 196.
+    /// Тот же приём дважды применён выше по файлу (`variant_chain_as_member`,
+    /// `assoc_const_chain_as_member`).
+    ///
+    /// ПРЕДИКАТ УЗКИЙ: только если `V` числится вариантом суммы `T` в реестре
+    /// схем. `Type[T].method(...)` — статический метод, не вариант, — под него
+    /// не подпадает и идёт прежним путём.
+    fn qualified_variant_ctor_as_bare(&self, e: &Expr) -> Option<Expr> {
+        let ExprKind::Member { obj, name } = &e.kind else { return None };
+        if name.starts_with('@') {
+            return None;
+        }
+        // База: `T[Args]` в любой из двух форм, которыми её отдаёт парсер.
+        let base_ident = match &obj.kind {
+            ExprKind::TurboFish { base, .. } => &base.kind,
+            ExprKind::Index { obj: inner, .. } => &inner.kind,
+            _ => return None,
+        };
+        let ExprKind::Ident(type_name) = base_ident else { return None };
+        // `V` обязан быть вариантом ИМЕННО этой суммы. Кандидаты приходят и
+        // моно-именами (`Option____nova_int`) — сравниваем по базе.
+        let is_variant_of = self
+            .sum_schema_registry
+            .variant_sum_candidates(name)
+            .into_iter()
+            .any(|c| c.split("____").next() == Some(type_name.as_str()));
+        if !is_variant_of {
+            return None;
+        }
+        // Идентификатор выражения СОХРАНЯЕТСЯ: по нему ходит канал
+        // `resolved_variant_ctors`, и потеря id увела бы разбор в эвристики.
+        Some(Expr {
+            kind: ExprKind::Ident(name.clone()),
+            span: e.span,
+            id: e.id,
+            debug_only: e.debug_only,
+        })
+    }
+
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
         // [M-176-xmod-payload-variant-ctor]: a nullary-variant method chain
         // collapsed by the parser into a flat 3-part Path
@@ -39549,6 +39611,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // equivalent Member form and re-enter — see `assoc_const_chain_as_member`.
         if let Some(member_func) = self.assoc_const_chain_as_member(func) {
             return self.emit_call(&member_func, args, call_id);
+        }
+        // №716: `Option[int].Some(10)` — квалифицированный конструктор варианта
+        // generic-суммы. Снимаем квалификатор и переисполняем: голая форма уже
+        // умеет и канал, и выбор моно-инстанса по ожидаемому типу.
+        if let Some(bare_ctor) = self.qualified_variant_ctor_as_bare(func) {
+            return self.emit_call(&bare_ctor, args, call_id);
         }
         // Plan 184 Р10: a value/primitive `mut x T` free-fn param uses the
         // by-pointer in-out ABI (`T*`). Wrap the matching call args in `RefArg`
