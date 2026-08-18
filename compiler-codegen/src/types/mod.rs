@@ -4669,6 +4669,43 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
+        // №705, `NOVA_TYPE_COLLISION_REPORT`: сколько имён типов объявлено в
+        // НЕСКОЛЬКИХ файлах слитого CU. Именно эти имена карта `types`
+        // разрешает last-write-wins — то есть неверно, — и именно они дают
+        // класс №696/№705.
+        //
+        // ЗАЧЕМ ЭТО ОСТАЁТСЯ В КОДЕ. Окно, которое будет чинить ключ карты
+        // (W6, план 196), обязано знать поверхность ДО правки и проверить её
+        // ПОСЛЕ. Замер 2026-08-18 по conformance: 1073 проверенных CU,
+        // коллизии в 39 (3.6%), максимум ДВА имени на модуль, а всего
+        // различных сталкивающихся имён в корпусе — шесть: `Kind`, `Node`,
+        // `Rect`, `SignedInts`, `Widget`, `Write`. Поверхность перечислима,
+        // значит фикс проверяется исчерпывающе, а не выборочно.
+        //
+        // Стоимость вне замера — ноль: тело считается только под переменной.
+        if std::env::var_os("NOVA_TYPE_COLLISION_REPORT").is_some() {
+            let mut owners: HashMap<&str, Vec<crate::diag::FileId>> = HashMap::new();
+            for (fid, per_file) in &file_local_types {
+                for name in per_file.keys() {
+                    owners.entry(name.as_str()).or_default().push(*fid);
+                }
+            }
+            let mut collided: Vec<(&str, usize)> = owners
+                .iter()
+                .filter(|(_, files)| files.len() > 1)
+                .map(|(n, files)| (*n, files.len()))
+                .collect();
+            collided.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+            eprintln!(
+                "[TYPE-COLLISION] names_total={} collided={} decls_in_cu={}",
+                owners.len(),
+                collided.len(),
+                owners.values().map(|v| v.len()).sum::<usize>(),
+            );
+            for (name, n) in collided.iter().take(40) {
+                eprintln!("[TYPE-COLLISION]   {} declared in {} files", name, n);
+            }
+        }
         TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, imported_modules,
             import_prefix_to_module_last,
             entry_imported_modules,
