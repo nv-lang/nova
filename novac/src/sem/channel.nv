@@ -174,6 +174,16 @@ export fn CheckOut @callee_of(id int) -> CalleeRef
     c
 }
 
+/// Does this node carry a resolved callee? TOLERANT, and for the same reason
+/// `has_subst` is: the mono collector walks every node of a body and most of
+/// them call nothing, so "no callee here" is an ANSWER and not a hole.
+#realtime nogc
+export fn CheckOut @has_callee(id int) -> bool
+    requires id >= 0 && id < @callees.len(), "sem: has_callee asked about a node outside this file's id space"
+{
+    @callees[id].target_row >= 0
+}
+
 /// Whether a node carries a substitution — the only tolerant question in this
 /// module, and it is tolerant because "no substitution" is a legal ANSWER
 /// here, not a hole: most nodes instantiate nothing.

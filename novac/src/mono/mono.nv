@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `collect_crate_mono_items` -- reachability walked FROM ROOTS
+// over resolved call targets, with a worklist and a seen-set, rather than
+// "emit everything and let the linker sort it out". Go's stenciling has the
+// same shape at the instantiation level.
+//
+// Role: layer 9 of the map -- the set of callables that are actually REACHED.
+//   Today the key is a fn row (E2-b2 without type arguments); it becomes
+//   `(DeclId, substs)` when generics arrive, and the collector is written so
+//   that the key is the only thing that has to change.
+// Used by: emit_c -- it emits a function only if this set contains it.
+// Guarded by: check-novac-emission-size.sh (the ratchet this collector moves),
+//   check-novac-deps.sh (the edge mono -> sem is in the architecture table),
+//   check-novac-differential.sh (behaviour must not shift when code is dropped).
+
+module novac.mono
+
+import ../tree.{Node, NodeKind}
+import ../sem.{Ctx, CheckOut, DefKind, branch_children, leaf_text}
+import ../builtins.{ENTRY_FN}
+import ../diag.{ice}
+
+/// Which fn rows are reachable from the roots.
+///
+/// A Vec of flags indexed by the row, not a set of names: the row IS the
+/// identity of a callable in this compiler, and asking by name here would be
+/// the second door to a decision the registry already made.
+export type Reach {
+    seen []bool /// indexed by fn row; true = reached from a root
+}
+
+/// Is this fn row reached from a root? Tolerant on purpose: the emitter asks
+/// about every fn it walks, including rows that belong to std method
+/// signatures rather than to this file.
+export fn Reach @has(row int) -> bool {
+    if row < 0 { return false }
+    if row >= @seen.len() { return false }
+    @seen[row]
+}
+
+/// How many rows the set holds -- for the one line the pipeline prints.
+export fn Reach @count() -> int {
+    mut n = 0
+    for f in @seen {
+        if f {
+            n += 1
+        } else {
+            // Not reached: nothing to count, and the branch says so rather
+            // than leaving the reader to infer it (P31).
+        }
+    }
+    n
+}
+
+/// Collect the callables reachable from the roots of this file.
+///
+/// The root is `main`: everything a program does, it does from there. rustc
+/// seeds the same walk with more roots (exported items, `#[used]` statics)
+/// because a crate is a library too; a novac file today is a program, and when
+/// modules arrive the export list joins the seeds here -- one place, named.
+///
+/// The walk is a FIXPOINT over the file's declarations rather than an index
+/// from row to node. The reason is honesty about what is known: rows are handed
+/// out by sem while it walks the top level, and std method signatures take rows
+/// too, so "row minus first row" is an assumption about ordering that nothing
+/// checks. A pass that repeats until nothing changes needs no such assumption.
+/// The cost is passes x declarations, and both are file-sized; when files grow
+/// enough for that to matter, the fix is a real row->node index, not a guess.
+export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
+    mut seen = []bool.new()
+    mut i = 0
+    while i < ctx.fns.rows.len() {
+        seen.push(false)
+        i += 1
+    }
+
+    ro root = entry_row(ctx)
+    if root < 0 {
+        // No entry point in this file: nothing is reachable, and that is an
+        // ANSWER, not a hole -- check refuses such a file by name long before
+        // the emitter is asked anything.
+        return Reach { seen }
+    } else {
+        // The entry point is the one root of a program.
+    }
+    if root < seen.len() {
+        seen[root] = true
+    } else {
+        // The registry knows the entry point but the flag vector is shorter
+        // than its row: that is a broken invariant, not a program shape, and
+        // the door below is the only place allowed to answer -1.
+        ice("mono: the entry row is outside the callable table")
+    }
+
+    mut grew = true
+    while grew {
+        grew = false
+        for c in branch_children(file) {
+            if c.kind_of() != NodeKind.FnDecl { continue }
+            ro row = fn_row_of(c, ctx)
+            if row < 0 { continue }
+            if row >= seen.len() { continue }
+            if !seen[row] { continue }
+            if mark_callees(c, ctx, out, seen) {
+                grew = true
+            } else {
+                // This body added nothing new this round; the loop stops when
+                // no body does.
+            }
+        }
+    }
+
+    Reach { seen }
+}
+
+/// The row of the entry point, or -1 when this file declares none.
+///
+/// A DOOR: it asks the registry and builds nothing, which is why it carries the
+/// mark and why the collector keeps the lookup out of its own body -- a
+/// function that both searches and allocates is neither, and P18 refuses it for
+/// the reason the oracle paid for: a composite key built per lookup, in the
+/// hottest path of the compiler.
+#realtime nogc
+fn entry_row(ctx Ctx) -> int {
+    ro d = ctx.defs.find(ENTRY_FN)
+    if d < 0 { return -1 }
+    ro { kind: k, payload: row } = ctx.defs.rows[d]
+    if k != DefKind.DefFn { return -1 }
+    row
+}
+
+/// The fn row a declaration owns, or -1 when the registry does not know it.
+#realtime nogc
+fn fn_row_of(f Node, ctx Ctx) -> int {
+    ro kids = branch_children(f)
+    if kids.len() < 2 { return -1 }
+    ro nm = kids[1]
+    if nm.kind_of() != NodeKind.LeafNode { return -1 }
+    ro d = ctx.defs.find(leaf_text(nm))
+    if d < 0 { return -1 }
+    ro { kind: k, payload: row } = ctx.defs.rows[d]
+    if k != DefKind.DefFn { return -1 }
+    row
+}
+
+/// Mark every callee of this subtree; answer whether anything was newly marked.
+fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool) -> bool {
+    mut grew = false
+    ro id = n.id_of()
+    if id >= 0 && out.has_callee(id) {
+        ro cr = out.callee_of(id)
+        // Every kind is NAMED: a call whose target is a variant constructor or
+        // a type is emitted by its own door, and the fn set says nothing about
+        // it. A `_` arm here would swallow whatever kind the registry grows
+        // next, and the collector would silently stop reaching it.
+        match cr.kind {
+            DefFn => {
+                ro row = cr.target_row
+                if row >= 0 && row < seen.len() && !seen[row] {
+                    seen[row] = true
+                    grew = true
+                } else {
+                    // Already reached, or a row this file's table does not
+                    // hold: reaching it twice is not news either way.
+                }
+            }
+            DefVariant => {}
+            DefType => {}
+        }
+    } else {
+        // Not a call, or a call check never resolved -- the refusal for the
+        // second case is already in the diagnostics.
+    }
+    if n.kind_of() == NodeKind.LeafNode { return grew }
+    for c in branch_children(n) {
+        if mark_callees(c, ctx, out, seen) {
+            grew = true
+        } else {
+            // Nothing new under this child.
+        }
+    }
+    grew
+}

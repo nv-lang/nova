@@ -65,6 +65,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
+import ../mono.{Reach, reachable}
 import ../sem.{arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, c_method, c_fn}
 import ../builtins.{ENTRY_FN, PRINT_FN, bool_c_literal}
 
@@ -79,6 +80,8 @@ type Emitter consume {
     out CheckOut /// THE checker's channel: every type question is a READ here, never a re-derivation (E2-b1)
     lits []str /// string literals in registration order; the index is the C name suffix
     consume body StringBuilder /// the code slot of the shell, built in a single pass
+    reach Reach /// WHICH callables are reached from a root (mono, E2-b2): the emitter
+        /// asks, it does not decide
     next_tmp int /// counter behind @fresh_uniq — the ONLY source of temporary names (F30)
 }
 
@@ -102,7 +105,11 @@ fn Emitter consume @into_parts() -> ([]str, str) => (@lits, @body.into_str())
 /// back to computing a type itself is an emitter with a second opinion, and
 /// the second opinion is what plan 196 spent a wave deleting.
 export fn emit(file Node, ctx Ctx, out CheckOut) -> str {
-    consume e = Emitter { ctx, out, next_tmp: 0, lits: []str.new(), body: StringBuilder.new() }
+    // The reachable set is computed ONCE, before a line is written: it is a
+    // property of the file, and recomputing it per declaration would make the
+    // emitter the place where the decision lives.
+    ro reach = reachable(file, ctx, out)
+    consume e = Emitter { ctx, out, reach, next_tmp: 0, lits: []str.new(), body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_file(file)
     ro (lits, code) = e.into_parts()
@@ -234,6 +241,24 @@ fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
     }
 }
 
+/// The fn row a declaration owns, or -1 when the registry does not know it.
+///
+/// The same question mono asks, asked the same way: the emitter must not
+/// re-derive an answer the registry already holds, and the two must not drift
+/// into two spellings of one lookup.
+#realtime nogc
+fn fn_row_of_decl(f Node, ctx Ctx) -> int {
+    ro kids = branch_children(f)
+    if kids.len() < 2 { return -1 }
+    ro nm = kids[1]
+    if nm.kind_of() != NodeKind.LeafNode { return -1 }
+    ro d = ctx.defs.find(leaf_text(nm))
+    if d < 0 { return -1 }
+    ro { kind: k, payload: row } = ctx.defs.rows[d]
+    if k != DefKind.DefFn { return -1 }
+    row
+}
+
 /// Emit every fn declaration of the file in source order.
 fn Emitter mut @emit_file(file Node) -> () {
     match file {
@@ -242,6 +267,10 @@ fn Emitter mut @emit_file(file Node) -> () {
             assert(kind == NodeKind.File, "emit: root is not File")
             for c in children {
                 if c.kind_of() != NodeKind.FnDecl { continue }
+                // E2-b2: a callable NOT reached from a root is not emitted.
+                // The decision belongs to mono, not to the emitter: the
+                // emitter writes what it is given and asks who decided.
+                if !@reach.has(fn_row_of_decl(c, @ctx)) { continue }
                 @emit_fn(c)
             }
         }
