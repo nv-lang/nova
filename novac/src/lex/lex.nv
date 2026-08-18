@@ -60,6 +60,7 @@ export type TokenKind enum
     | KwUse
     | KwExport
     | KwTest
+    | KwElse
     | Hash
     | Ident
     | IntLit
@@ -196,10 +197,10 @@ export fn paren_delta(k TokenKind) -> int {
         LParen => 1
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | Hash | Ident | IntLit | FloatLit | StrLit |
-        LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus | Star |
-        Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
-        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | Hash | Ident | IntLit | FloatLit |
+        StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
         DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
@@ -211,10 +212,10 @@ export fn bracket_delta(k TokenKind) -> int {
         LBracket => 1
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | Hash | Ident | IntLit | FloatLit | StrLit |
-        LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus | Star |
-        Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
-        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | Hash | Ident | IntLit | FloatLit |
+        StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
         DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
@@ -227,10 +228,10 @@ export fn brace_delta(k TokenKind) -> int {
         LBrace => 1
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | Hash | Ident | IntLit | FloatLit | StrLit |
-        LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus | Star |
-        Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
-        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | Hash | Ident | IntLit | FloatLit |
+        StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
         DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
@@ -262,6 +263,12 @@ fn keyword_kind(t str) -> TokenKind => match t {
     "use" => TokenKind.KwUse
     "export" => TokenKind.KwExport
     "test" => TokenKind.KwTest
+    // `else` was not a keyword until 2026-08-18, and the miss wore a
+    // disguise: `if c { } else { }` was refused with "record constructor
+    // only as a binding initializer", because the brace after the
+    // identifier `else` read as a record literal. A form the parser does
+    // not know does not stay silent -- it lies.
+    "else" => TokenKind.KwElse
     // The domain is OPEN -- any identifier text may arrive -- so the
     // wildcard is the type's own partiality, not a hidden case (P21 p.3):
     // whatever is not a keyword IS an identifier.
@@ -409,14 +416,21 @@ export fn lex(src str) -> []Token {
                 }
             }
             kind = TokenKind.StrLit
-            // Honest refusals, both K7-shaped (E1 review p.4): a string that
-            // never closed is not a plausible StrLit, and interpolation is
-            // outside the E1 subset (context-dependent lexing is the E2
-            // mode-stack step). Either way the bytes stay ours -- lossless.
-            if has_interp || !closed {
+            // A string that never CLOSED is not a plausible StrLit -- the
+            // bytes stay ours either way, but calling an unterminated run a
+            // literal would hand the parser a lie.
+            //
+            // INTERPOLATION, on the other hand, stopped being a lexer error
+            // on 2026-08-18 (S9.4: the grammar is the language's, the subset
+            // is the checker's). `"n=${n}"` is one literal of the language;
+            // making it an ErrorTok meant the refusal came out as "construct
+            // not in the MVP grammar" over the whole string, naming nothing.
+            // The literal now reaches the tree whole and check names the form
+            // by looking for the marker in its text.
+            if !closed {
                 kind = TokenKind.ErrorTok
             } else {
-                // A closed literal with no interpolation: StrLit stands.
+                // A closed literal: StrLit stands, interpolated or not.
             }
         } else {
             // TWO dispatches, both by `match`, and neither byte is read twice

@@ -202,6 +202,7 @@ guard "$ROOT/scripts/guards/check-novac-batch.sh" "$ROOT" || fail "пачечн�
 guard "$ROOT/scripts/guards/check-novac-precondition.sh" "$ROOT" || fail "предусловие двери спрятано в теле (П20 п.5)"
 guard "$ROOT/scripts/guards/check-novac-emitted-names.sh" "$ROOT" || fail "печатаемое C-имя вне объявленных пространств (П24)"
 guard "$ROOT/scripts/guards/check-novac-table-is-match.sh" "$ROOT" || fail "таблица написана цепочкой if вместо match (П21 п.4)"
+guard "$ROOT/scripts/guards/check-novac-no-grammar-excuse.sh" "$ROOT" || fail "диагностика ссылается на незнание грамматики (§9.4)"
 guard "$ROOT/scripts/guards/check-novac-no-copy-loop.sh" "$ROOT" || fail "коллекция перекладывается поэлементно вместо append (П32)"
 guard "$ROOT/scripts/guards/check-novac-branch-complete.sh" "$ROOT" || fail "неполные ветвления выросли (П31)"
 guard "$ROOT/scripts/guards/check-novac-build-clean.sh" "$ROOT" || fail "сборка novac печатает предупреждения компилятора (П30)"

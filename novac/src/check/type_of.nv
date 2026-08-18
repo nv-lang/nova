@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{Ctx, CheckOut, DefKind, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 /// Type of an expression over the tiny registry lattice. Every kind is
 /// judged positively; the residual is an ice, never an int (#652 class).
@@ -142,7 +142,9 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         for c in branch_children(e) {
             if c.kind_of() == NodeKind.MatchArm {
                 ro ak = branch_children(c)
-                return type_of(ak[ak.len() - 1], ctx, scope)
+                ro at = arm_body_at(ak)
+                if at < 0 { return -1 }
+                return type_of(ak[at], ctx, scope)
             }
         }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;

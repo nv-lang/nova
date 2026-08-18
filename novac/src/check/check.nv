@@ -216,6 +216,14 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_qualifier_misplaced(children, "result")
                     @report_if_return_form(children)
                 }
+                IfExpr => {
+                    @report_first_leaf_of(children, IF_EXPR_MSG)
+                    return
+                }
+                SelfField => {
+                    @report_first_leaf_of(children, SELF_FIELD_MSG)
+                    return
+                }
                 ImportDecl => {
                     @report_first_leaf_of(children, IMPORT_MSG)
                     return
@@ -287,7 +295,27 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                         // Initializer position: legal, walked below.
                     }
                 }
-                BindStmt | FnExprBody => {
+                BindStmt => {
+                    // A plain binding is FOUR children -- keyword, name,
+                    // `=`, initializer -- so a declared type makes it five.
+                    // Written as `> 3` at first, the rule fired on every
+                    // ordinary binding in the language and reported a
+                    // declared type where none was written. Counting is a
+                    // measurement too, and this one went unmeasured.
+                    if children.len() > 4 {
+                        @report_first_leaf_of(children, TYPED_LOCAL_MSG)
+                        return
+                    } else {
+                        // No declared type: the ordinary binding.
+                    }
+                    mut i = 0
+                    for c in children {
+                        @walk(c, init_pos: i == children.len() - 1)
+                        i += 1
+                    }
+                    return
+                }
+                FnExprBody => {
                     // The LAST child is the initializer, and only there are a
                     // record constructor and a match legal -- that is what
                     // `init_pos` carries.
@@ -298,9 +326,20 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     }
                     return
                 }
-                LeafNode | File | ModuleDecl | Args | Bin | Lit | IfStmt | RetStmt => {}
+                Lit => {
+                    // `"n=${n}"` reaches the tree as ONE literal leaf -- the
+                    // lexer keeps the string whole -- so the interpolation is
+                    // found in its text and named here.
+                    @report_if_interpolated(children)
+                }
+                Variant => {
+                    // A record-form variant carries a brace run among its
+                    // leaves; the ordinary variant does not.
+                    @report_if_record_variant(children)
+                }
+                LeafNode | File | ModuleDecl | Args | Bin | IfStmt | RetStmt => {}
                 AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
-                Variant | MatchArm | Pattern | ArraySpread | Guard => {}
+                MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
             }
             for c in children {
@@ -468,6 +507,30 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
 
+/// `if c { a } else { b }` standing where a VALUE is expected. The STATEMENT
+/// form is compiled -- including its `else` since 2026-08-18 -- but as a value
+/// it needs a temporary the emitter does not build yet, exactly like `match`
+/// outside an initializer.
+const IF_EXPR_MSG = "outside the subset: an `if` in value position is not compiled yet"
+
+/// `@field` -- the receiver's own field. It can only appear inside a method
+/// body, and novac does not declare methods yet, so this refusal and the
+/// method-declaration one are two doors of the same limit.
+const SELF_FIELD_MSG = "outside the subset: `@field` arrives with methods"
+
+/// `ro x int = 1` -- a local with a DECLARED type. The subset infers the type
+/// from the initializer; honouring a written one means checking the two agree,
+/// and that is the inference stage's work (E2-b3).
+const TYPED_LOCAL_MSG = "outside the subset: a declared local type is not compiled yet (E2-b3)"
+
+/// `"n=${n}"` -- string interpolation. The lexer keeps the literal whole, so
+/// nothing is lost; compiling it means emitting a format call.
+const INTERP_MSG = "outside the subset: string interpolation is not compiled yet"
+
+/// `| Circle { radius f64 }` -- a record-form variant. D54 (#719) rules on how
+/// it may be destructured; the form itself arrives with records in sums.
+const RECORD_VARIANT_MSG = "outside the subset: a record-form variant is not compiled yet"
+
 /// `import a.b.{X}` and `use a.b.c`. The parser reads both spellings; the
 /// subset compiles ONE module, so there is nothing for an import to name yet.
 const IMPORT_MSG = "outside the subset: `import`/`use` arrive with modules (E3)"
@@ -504,6 +567,41 @@ const NAMED_ARG_MSG = "outside the subset: a named argument `name: value` is not
 /// the cast lexed as two names and the refusal read "unknown name" -- the
 /// reader was sent looking for a binding that was never meant to exist.
 const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2-b, with the numeric family)"
+
+/// Does this literal carry an interpolation? `${` is the marker, and it is
+/// looked for in the literal's own text because the lexer -- rightly -- keeps a
+/// string whole: a form the parser must not lose is not a form it must split.
+fn Checker mut @report_if_interpolated(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.StrLit { continue }
+        // The marker is ESCAPED: written plainly it opens an interpolation
+        // in THIS file ("unterminated interpolation", 2026-08-18). A
+        // compiler that reads a form still spells it like everyone else,
+        // and the language spells it `\$`.
+        if leaf_text(c).contains("\${") {
+            @report_first_leaf_of(kids, INTERP_MSG)
+            return
+        } else {
+            // An ordinary string literal: nothing to name.
+        }
+    }
+}
+
+/// A record-form variant (`| Circle { radius f64 }`) shows up as a brace among
+/// the variant's leaves.
+fn Checker mut @report_if_record_variant(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        // The terminator ends this branching (P31 form 2); an `else` after
+        // it would be dead text, and an `else` closing a test BY VARIANT is
+        // what P21 refuses -- both rules point the same way here.
+        if leaf_kind(c) == TokenKind.LBrace {
+            @report_first_leaf_of(kids, RECORD_VARIANT_MSG)
+            return
+        }
+    }
+}
 
 /// `...args []T`: the variadic marker stands before the parameter's name.
 fn has_variadic_mark(kids []Node) -> bool {
@@ -555,6 +653,40 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     }
 }
 
+/// Does this statement END the function on every path?
+///
+/// A `return` does. So does an `if` whose branches ALL return -- and that
+/// second half only became possible on 2026-08-18, when the parser learned
+/// `else`: before it, an if-statement had no else branch to judge. The rule
+/// missed it and refused `fn classify(n int) -> int { if .. { return 3 }
+/// else { return 1 } }`, which the oracle accepts and which is the ordinary
+/// way to write such a function.
+///
+/// An `if` WITHOUT an else never terminates: the false path falls through,
+/// and that is exactly the shape the oracle refuses too.
+fn stmt_terminates(st Node) -> bool {
+    ro k = st.kind_of()
+    if k == NodeKind.RetStmt { return true }
+    if k != NodeKind.IfStmt { return false }
+    ro kids = branch_children(st)
+    if kids.len() <= 4 { return false }
+    ro then_b = kids[2]
+    ro else_b = kids[4]
+    block_terminates(then_b) && block_terminates(else_b)
+}
+
+/// Does this block end the function on every path? An `else if` chain
+/// arrives here as a nested IfStmt rather than a Block, and it answers
+/// through the same door.
+fn block_terminates(b Node) -> bool {
+    ro k = b.kind_of()
+    if k == NodeKind.IfStmt { return stmt_terminates(b) }
+    if k != NodeKind.Block { return false }
+    for s in branch_children(b) {
+        if stmt_terminates(s) { return true }
+    }
+    false
+}
 /// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
 /// do not.
 fn declares_a_value(rk []Node) -> bool {
@@ -613,7 +745,7 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         mut i = 0
         mut terminates = false
         for b in bk {
-            terminates = terminates || b.kind_of() == NodeKind.RetStmt
+            terminates = terminates || stmt_terminates(b)
             last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
             i += 1
         }
@@ -821,6 +953,14 @@ fn Checker mut @report_if_error_token(t Token) -> () {
     @refuse(t, "outside the E1 subset: unrecognized or context-dependent token")
 }
 
+/// A run the parser could not read at all.
+///
+/// Every FORM of the language is parsed since S9.4a, so this is no longer
+/// a way of saying "the subset does not go that far" -- it says the text is
+/// not Nova. Whatever the subset declines, it declines BY NAME somewhere
+/// else, and `check-novac-no-grammar-excuse.sh` keeps that true.
+const SYNTAX_MSG = "syntax error: this is not a form of the language"
+
 /// An Err branch is ONE recovered mistake: one diagnostic at its first leaf.
 fn Checker mut @report_err_branch(children []Node) -> () {
     // One Err branch — one diagnostic, at its FIRST leaf. The leaf can nest:
@@ -835,7 +975,12 @@ fn Checker mut @report_err_branch(children []Node) -> () {
                 // The whole run is the subject, so the whole run is underlined.
                 ro lo = @src.offset_of(t.text)
                 ro hi = @run_end_of(children, lo + t.text.byte_len())
-                @refuse_span(lo, hi, "outside the E1 subset: construct not in the MVP grammar")
+                // NOT "outside the subset" any more (S9.4a closed on
+                // 2026-08-18): the parser reads the whole LANGUAGE, so a run
+                // it could not read is a SYNTAX error and the message says
+                // that. The old text blamed the subset for the parser's own
+                // ignorance -- and it was the last carrier of that class.
+                @refuse_span(lo, hi, SYNTAX_MSG)
                 return
             }
             Branch { children: inner, .. } => @report_err_branch(inner)

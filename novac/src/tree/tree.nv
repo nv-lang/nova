@@ -81,6 +81,12 @@ export type NodeKind enum
     | AttrDecl
     // `test "name" { ... }`.
     | TestDecl
+    // `if c { a } else { b }` standing where a VALUE is expected. The
+    // statement form keeps its own kind: one of them the emitter writes,
+    // the other needs a temporary it does not build yet.
+    | IfExpr
+    // `@field` -- a field of the receiver, inside a method body.
+    | SelfField
     | Recv
     | Generics
     | RetType

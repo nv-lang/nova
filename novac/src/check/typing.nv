@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -198,6 +198,22 @@ fn Checker mut @type_stmt(st Node) -> () {
         }
         @type_expr(kids[1])
         @type_block(kids[2])
+        // The ELSE branch, since the parser learned `else` (2026-08-18).
+        // Typing it is not optional: check passed the file and emit ICEd
+        // with "sem: no type recorded" -- a decision taken by one layer
+        // that never reached the next, which is the very class this
+        // compiler was built to stop repeating.
+        if kids.len() > 4 {
+            ro tail = kids[4]
+            if tail.kind_of() == NodeKind.Block {
+                @type_block(tail)
+            } else {
+                // `else if ...`: a nested if, typed by this same door.
+                @type_stmt(tail)
+            }
+        } else {
+            // No else branch was written.
+        }
     } else if k == NodeKind.RetStmt {
         ro kids = branch_children(st)
         // `return` with no operand carries no value, so there is nothing for
@@ -589,7 +605,7 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> int {
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
     }
-    ro body = ak[ak.len() - 1]
+    ro body = ak[arm_body_at(ak)]
     @type_expr(body)
     // -1 is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).

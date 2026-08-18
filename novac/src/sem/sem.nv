@@ -743,6 +743,28 @@ export fn collect_types(file Node) -> Ctx {
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fns }
 }
 
+/// The BODY of a match arm: its last child is not always the body.
+///
+/// A one-line `match n { 1 => 10, _ => 2 }` writes a COMMA after each arm body
+/// (D452), and the comma is kept in the tree because the tree is lossless. The
+/// readers that took `ak[ak.len() - 1]` then asked the checker for the type of
+/// a comma and got the honest ice "expression kind without a type rule".
+///
+/// Third instance of the fixed-index class in one day (the method-declaration
+/// ice, check's kids[1], typing's pk[0]/pk[1]). The shape of a tree grows; an
+/// index does not grow with it, and a door does.
+export fn arm_body_at(ak []Node) -> int {
+    mut i = ak.len() - 1
+    while i >= 0 {
+        ro c = ak[i]
+        ro is_punct = c.kind_of() == NodeKind.LeafNode &&
+            (leaf_kind(c) == TokenKind.Comma || leaf_kind(c) == TokenKind.FatArrow)
+        if !is_punct { return i }
+        i -= 1
+    }
+    -1
+}
+
 /// Where the NAME of a parameter sits among its children, and where its TYPE
 /// begins.
 ///

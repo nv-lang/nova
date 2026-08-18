@@ -1,0 +1,357 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_codegen_ssa `mir/rvalue.rs` -- operand and operator lowering
+// sits apart from statement and item lowering there too; the operator
+// tables and the expression walk are one subject.
+//
+// Role: emission of EXPRESSIONS -- the C forms of every operator, the
+//   expression walk itself, and the call-as-statement door.
+// Used by: emit_c.nv (statements and bindings ask for an expression).
+// Guarded by: check-novac-file-size.sh (this split), check-novac-deps.sh,
+//   check-novac-emission-size.sh, check-novac-doc-language.sh.
+//
+// Split out of emit_c.nv on 2026-08-18: writing the `else` branch pushed
+// that file past a thousand lines.
+
+module novac.emit_c
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
+import ../diag.{ice}
+import ../sem.{arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, c_method, c_fn}
+import ../builtins.{ENTRY_FN, PRINT_FN, bool_c_literal}
+
+
+/// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
+/// DECISION and the operand type -- one exhaustive match instead of the three
+/// token-keyed tables this replaced (`checked_op`, `cmp_op`, `raw_op`), each
+/// of which returned an empty string on anything it did not know and let the
+/// next one guess.
+///
+/// PRIMITIVE is the load-bearing word (owner's correction 2026-08-16). In
+/// Nova every operator is overloadable on user types through protocols
+/// (D46/D363: `@plus`, `@compare`, `@equal`), so the emitted form is a
+/// function of the operator AND the operand type. The subset emits only the
+/// primitive half; `check` refuses the rest at the operator's position rather
+/// than letting this table answer for a type it knows nothing about.
+///
+/// `is_float` comes from the checker's channel: float arithmetic is raw C
+/// (the oracle's shape, and floats have no overflow trap), int arithmetic
+/// goes through the runtime's checked helpers, comparisons are C operators
+/// either way.
+fn c_binary_form(op BinOp, is_float bool) -> str {
+    match op {
+        Add => {
+            if is_float { return "+" }
+            "nova_int_checked_add"
+        }
+        Sub => {
+            if is_float { return "-" }
+            "nova_int_checked_sub"
+        }
+        Mul => {
+            if is_float { return "*" }
+            "nova_int_checked_mul"
+        }
+        Div => {
+            if is_float { return "/" }
+            "nova_int_checked_div"
+        }
+        Modulo => {
+            // The float remainder is `fmod`, not a C operator -- and it IS
+            // part of the language (D46 F, registry No. 707: the precedence
+            // table never restricted `%` by type, and forbidding it would
+            // narrow the language to work around a codegen defect). Sign
+            // follows the DIVIDEND as in C and Rust; there is no
+            // divide-by-zero panic here, IEEE-754 gives NaN.
+            if is_float { return "fmod" }
+            "nova_int_checked_rem"
+        }
+        Less => "<"
+        LessEq => "<="
+        Greater => ">"
+        GreaterEq => ">="
+        Equal => "=="
+        NotEqual => "!="
+        AndAlso => "&&"
+        OrElse => "||"
+        BitAnd => "&"
+        BitOr => "|"
+        BitXor => "^"
+        ShiftLeft => "<<"
+        ShiftRight => ">>"
+        Range => ice("emit_c: a range reached expression emission -- for-heads consume it")
+    }
+}
+
+/// Does this operator emit as a C INFIX operator inside a truth-value cast?
+/// Comparisons, equality and the logical pair all yield bool and share the
+/// same C shape; the bitwise family is infix too but keeps int width, so it
+/// is a third answer rather than a second.
+fn is_truth_infix(op BinOp) -> bool {
+    match op {
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse => true
+        Add | Sub | Mul | Div | Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// Is this form WRITTEN as a call `f(a, b)` rather than infix `a f b`?
+///
+/// One rule, two callers -- the binary expression and the compound
+/// assignment. They had drifted: the compound path passed `is_float: false`
+/// unconditionally, so `f += 0.25` on doubles emitted `nova_int_checked_add`,
+/// the C still compiled, and the ANSWER came out wrong (found 2026-08-17,
+/// prompted by the integrator's warning that a compound assignment has its
+/// own emission path -- they had been caught by the same shape the same day).
+fn is_call_form(op BinOp, is_float bool) -> bool {
+    match op {
+        // Integer arithmetic goes through the runtime's checked helpers;
+        // float arithmetic is raw C -- except the remainder, which is fmod.
+        Add | Sub | Mul | Div => !is_float
+        Modulo => true
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse => false
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => false
+        Range => ice("emit_c: a range has no binary form -- for-heads consume it")
+    }
+}
+
+/// Is this the equality pair? They are the operators whose C form depends on
+/// the OPERAND type: scalars compare with `==`, `str` goes through `@equal`.
+fn is_equality(op BinOp) -> bool {
+    match op {
+        Equal | NotEqual => true
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// `!=` is not a second protocol method: the spec DERIVES it from `@equal`
+/// (D46 rule 3), so the emitter negates the same call.
+fn op_is_not_equal(op BinOp) -> bool {
+    match op {
+        NotEqual => true
+        Equal | Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// Plain C infix with no cast: the bitwise and shift family on int.
+fn is_bit_infix(op BinOp) -> bool {
+    match op {
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => true
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse | Range => false
+    }
+}
+
+/// The C form of a prefix operator. `!` is logical on bool, `-` negates,
+/// `~` complements -- all three are plain C on the primitives the subset
+/// admits (check refuses the protocol cases).
+fn c_unary_form(op UnOp) -> str {
+    match op {
+        Not => "!"
+        Negate => "-"
+        BitNot => "~"
+    }
+}
+
+/// Is this operator a comparison? Derived from the decision (P22: derived is
+/// a function, not a second table), and exhaustive so a new operator must
+/// answer here too.
+/// Emit one expression: literals, names, fields, method/fn calls, binary ops.
+fn Emitter mut @emit_expr(e Node) -> () {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit {
+        ro lkids = branch_children(e)
+        ro t = lkids[lkids.len() - 1]
+        ro neg = lkids.len() > 1 // [Minus, lit]
+        ro lk = leaf_kind(t)
+        if lk == TokenKind.IntLit {
+            @body.append("((nova_int)")
+            @body.append(if neg { "-" } else { "" })
+            @body.append(leaf_text(t))
+            @body.append("LL)")
+        } else if lk == TokenKind.FloatLit {
+            @body.append("((nova_f64)")
+            @body.append(if neg { "-" } else { "" })
+            @body.append(leaf_text(t))
+            @body.append(")")
+        } else if lk == TokenKind.StrLit {
+            // A string literal in value position (binding init, method
+            // argument): registered like a println literal, referenced by
+            // its C name — the oracle emits the same shape.
+            ro idx = @lits.len()
+            @lits.push(leaf_text(t))
+            @body.append("_novac_strlit_${idx}")
+        } else {
+            ice("emit_c: literal kind outside the subset")
+        }
+    } else if k == NodeKind.Name {
+        // `nova_bool` IS C `bool`, so the literals are the C keywords -- the
+        // same shape the oracle emits.
+        @body.append(expr_leaf_name(e))
+    } else if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        @body.append("(")
+        @emit_expr(kids[0])
+        @body.append("->")
+        @body.append(leaf_text(kids[2]))
+        @body.append(")")
+    } else if k == NodeKind.MethodCall {
+        // kids: [recv, '.', name, '(', args..., ')'] -> <Recv>_method_<name>(recv, args...)
+        // The C receiver prefix follows the oracle's mono naming: str ->
+        // Nova_str_method_, []int -> Vec____nova_int_method_.
+        ro kids = branch_children(e)
+        ro recv_t = @out.type_of(kids[0].id_of())
+        @body.append(c_method(@ctx, recv_t, leaf_text(kids[2])))
+        @body.append("(")
+        @emit_expr(kids[0])
+        mut i = 0
+        for c in kids {
+            i += 1 // 1-based position: recv, '.', name occupy 1..3
+            if i <= 3 || !is_expr_kind(c.kind_of()) { continue }
+            @body.append(", ")
+            @emit_expr(c)
+        }
+        @body.append(")")
+    } else if k == NodeKind.Call {
+        ro kids = branch_children(e)
+        ro cname = call_callee_text(kids)
+        // ONE lookup, then the kind decides (owner's correction 2026-08-14).
+        ro d = @ctx.defs.find(cname)
+        assert(d >= 0, "emit: call target not in the registry (#652 class)")
+        ro { kind: def_kind, payload: def_payload } = @ctx.defs.rows[d]
+        if def_kind == DefKind.DefVariant {
+            // Variant constructor call -> the maker.
+            ro vrow = def_payload
+            @body.append("${c_maker(@ctx, vrow)}(")
+        } else if def_kind == DefKind.DefFn {
+            @body.append("${c_fn(cname, false)}(")
+        } else {
+            ice("emit_c: call target is neither a variant nor a fn")
+        }
+        mut first = true
+        for c in kids {
+            if !is_expr_kind(c.kind_of()) { continue }
+            @body.append(if first { "" } else { ", " })
+            @emit_expr(c)
+            first = false
+        }
+        @body.append(")")
+    } else if k == NodeKind.Paren {
+        @body.append("(")
+        @emit_expr(branch_children(e)[1])
+        @body.append(")")
+    } else if k == NodeKind.Unary {
+        ro kids = branch_children(e)
+        @body.append("(")
+        @body.append(c_unary_form(un_op_of(leaf_kind(kids[0]))))
+        @body.append("(")
+        @emit_expr(kids[1])
+        @body.append("))")
+    } else if k == NodeKind.Bin {
+        ro kids = branch_children(e)
+        ro op = bin_op_of(leaf_kind(kids[1]))
+        // The RESULT of a comparison is bool, so the float test must look at
+        // the OPERAND, not at the expression: `a < b` on two f64 is still an
+        // f64 comparison. Arithmetic's result type equals its operands', so
+        // the two agree there.
+        ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
+        ro form = c_binary_form(op, is_float)
+        // `str` equality is the protocol method, not a C operator (D46:
+        // `a == b` is `a.@equal(b)`), and `!=` is DERIVED from it — the spec
+        // states the derivation, so novac spells it the same way instead of
+        // inventing a second method name (owner's reminder 2026-08-16).
+        ro lhs_t = @out.type_of(kids[0].id_of())
+        if lhs_t == @ctx.prims.str_id && is_equality(op) {
+            @body.append("((nova_int)(")
+            @body.append(if op_is_not_equal(op) { "!" } else { "" })
+            @body.append(c_method(@ctx, lhs_t, "equal"))
+            @body.append("(")
+            @emit_expr(kids[0])
+            @body.append(", ")
+            @emit_expr(kids[2])
+            @body.append(")))")
+        } else if is_bit_infix(op) {
+            @body.append("((")
+            @emit_expr(kids[0])
+            @body.append(") ")
+            @body.append(form)
+            @body.append(" (")
+            @emit_expr(kids[2])
+            @body.append("))")
+        } else if is_truth_infix(op) {
+            @body.append("((nova_int)((")
+            @emit_expr(kids[0])
+            @body.append(") ")
+            @body.append(form)
+            @body.append(" (")
+            @emit_expr(kids[2])
+            @body.append(")))")
+        } else if !is_call_form(op, is_float) {
+            // f64 arithmetic is RAW C with left-assoc parens -- the oracle's
+            // shape: ((((nova_f64)3.14) * r) * r).
+            @body.append("(")
+            @emit_expr(kids[0])
+            @body.append(" ")
+            @body.append(form)
+            @body.append(" ")
+            @emit_expr(kids[2])
+            @body.append(")")
+        } else {
+            @body.append(form)
+            @body.append("(")
+            @emit_expr(kids[0])
+            @body.append(", ")
+            @emit_expr(kids[2])
+            @body.append(")")
+        }
+    } else {
+        ice("emit: expression kind outside the subset")
+    }
+}
+
+/// Emit a CALL STATEMENT. The subset knows exactly one callee here,
+/// `println`, and check refuses the rest — the ice below is the second
+/// floor, not the first answer (owner's question 2026-08-16: the name
+/// `emit_println` read as if every Call were a println).
+/// One printer per argument by its type, then a newline.
+fn Emitter mut @emit_call_stmt(call Node) -> () {
+    ro kids = branch_children(call)
+    if call_callee_text(kids) != PRINT_FN {
+        ice("emit: the subset knows only println calls in statement position")
+    }
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit && leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {
+            ro t = branch_children(c)[0]
+            ro idx = @lits.len()
+            @lits.push(leaf_text(t))
+            @body.append("    nova_print_str(_novac_strlit_${idx});\n")
+        } else if is_expr_kind(ck) {
+            // Dispatch on the registry — the oracle prints each argument
+            // with its own printer, newline once at the end.
+            ro at = @out.type_of(c.id_of())
+            if at == @ctx.prims.str_id {
+                @body.append("    nova_print_str(")
+            } else if at == @ctx.prims.bool_id {
+                @body.append("    nova_print_bool(")
+            } else if at == @ctx.prims.f64_id {
+                @body.append("    nova_print_f64(")
+            } else if at == @ctx.prims.int_id {
+                @body.append("    nova_print_int(")
+            } else {
+                // Found by the generics scouting 2026-08-16: this used to be a
+                // bare `else` printing anything unknown AS AN INT — a record
+                // would have had its GC pointer printed as a number, in
+                // silence. The set of types is open, so there is no exhaustive
+                // match to write; the honest form is to name every case we
+                // handle and refuse the rest. The first floor (a check-level
+                // refusal) arrives with local typing, 274.3 wave 3 / C9.
+                ice("emit_c: println of a type with no printer in the subset")
+            }
+            @emit_expr(c)
+            @body.append(");\n")
+        } else {
+            // The callee leaf and the parenthesis leaves are not arguments;
+            // the callee itself was already refused or accepted by name above.
+        }
+    }
+    @body.append("    nova_print_newline();\n")
+}

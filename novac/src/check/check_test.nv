@@ -62,7 +62,7 @@ test "tail rule: a CONDITIONAL return does not save the tail" {
 test "tail rule: a fn that declares no value is exempt" {
     // In the E1 subset every fn but `main` must declare `-> T`, and `-> ()`
     // is not in the grammar at all -- probed 2026-08-17, it comes back as
-    // "construct not in the MVP grammar". So the only shape that declares no
+    // the syntax-error text. So the only shape that declares no
     // value is main itself, and the rule must not touch it: a binding tail
     // there is ordinary code, not a missing return.
     ro src = "module m\n\nfn main() {\n    ro x = 1\n}\n"
