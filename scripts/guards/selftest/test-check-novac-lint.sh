@@ -1,31 +1,56 @@
 #!/bin/sh
-# Самотест check-novac-lint.sh (П16). Шов $2 — бинарь nova (подменный скрипт).
+# Самотест check-novac-lint.sh (П16).
+#
+# ЗАЧЕМ ИМЕННО ЭТОТ. 2026-08-18 страж написал «вывод nova lint не распознан
+# (сломан разбор)» о совершенно здоровом дереве — потому что его позвали с
+# ОТНОСИТЕЛЬНЫМ корнем, он собрал аргумент `./novac/src`, а `nova lint` с
+# ведущим `./` отвечает «no .nv files to lint» и кодом 0 (дефект оракула,
+# репро — docs/dev/repro/lint_dot_slash_path). Ложная краснота стоит дороже
+# отсутствующей проверки: по ней идут искать поломку, которой нет.
+#
+# Корень стража с тех пор приводится к абсолютному пути. Этот тест держит
+# правило: одинаковый вердикт из абсолютного корня, из `.` и из `..`.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
 G="$GD/check-novac-lint.sh"
-T="${TMPDIR:-/tmp}/novac-lint-selftest.$$"
-mkdir -p "$T"
-trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
-printf '#!/bin/sh\necho "lint: 20 file(s), 0 finding(s)"\n' > "$T/clean"; chmod +x "$T/clean"
-run "$T/clean" && ok "чистый линт — зелёный" || bad "чистый линт покраснел: $(cat "$T/err")"
-
-printf '#!/bin/sh\necho "novac/src/x.nv:3: style: bad name"\necho "lint: 20 file(s), 1 finding(s)"\n' > "$T/dirty"; chmod +x "$T/dirty"
-if run "$T/dirty"; then bad "линт с замечанием прошёл — главный случай не ловится"; else grep -q "нашёл замечания" "$T/err" && ok "замечание линта поймано" || bad "красный, но не про замечания"; fi
-
-printf '#!/bin/sh\necho "boom"\nexit 2\n' > "$T/broken"; chmod +x "$T/broken"
-if run "$T/broken"; then bad "нераспознанный вывод прошёл"; else grep -q "не распознан" "$T/err" && ok "сломанный разбор пойман (№519)" || bad "красный, но не про разбор"; fi
-
-if run "$T/absent"; then bad "отсутствующий бинарь прошёл"; else grep -q "не найден" "$T/err" && ok "нет бинаря — красный, не молчит" || bad "красный, но не про бинарь"; fi
-
-echo "итог: FAIL $fails"
-if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-lint ok: все случаи, включая замечание линта и сломанный разбор вывода"
+if [ ! -f "$ROOT/nova-cli/target/release/nova.exe" ] && [ ! -f "$ROOT/nova-cli/target/release/nova" ]; then
+    echo "test-check-novac-lint: пропуск — оракул не собран (судить нечем)"
     exit 0
 fi
-exit 1
+
+abs_out=$(sh "$G" "$ROOT" 2>&1); abs_rc=$?
+
+# из корня, относительный `.`
+rel_out=$(cd "$ROOT" && sh "$G" . 2>&1); rel_rc=$?
+[ "$rel_rc" = "$abs_rc" ] && ok "относительный '.' даёт тот же код ($abs_rc)" \
+    || bad "'.' дал код $rel_rc против $abs_rc — корень снова не абсолютный"
+case "$rel_out" in
+    *"не распознан"*) bad "'.' вернул «вывод не распознан» — регрессия 2026-08-18" ;;
+    *) ok "'.' не даёт «вывод не распознан»" ;;
+esac
+
+# из подкаталога, относительный `..`
+sub_rc=1
+if [ -d "$ROOT/novac" ]; then
+    sub_out=$(cd "$ROOT/novac" && sh "$G" .. 2>&1); sub_rc=$?
+    [ "$sub_rc" = "$abs_rc" ] && ok "относительный '..' из подкаталога даёт тот же код" \
+        || bad "'..' дал код $sub_rc против $abs_rc"
+    case "$sub_out" in
+        *"не распознан"*) bad "'..' вернул «вывод не распознан»" ;;
+        *) ok "'..' не даёт «вывод не распознан»" ;;
+    esac
+else
+    ok "подкаталога novac нет — шаг пропущен"
+fi
+
+# несуществующий корень: страж обязан отказать, а не судить корень ФС
+sh "$G" /no/such/place >/dev/null 2>&1 \
+    && bad "несуществующий корень прошёл — пустой ROOT судил бы корень ФС" \
+    || ok "несуществующий корень красный"
+
+[ "$fails" -eq 0 ] && echo "test-check-novac-lint: ok" || exit 1

@@ -1,9 +1,25 @@
 module m
 
-// An arm carrying an OR-pattern disables the exhaustiveness check:
-// `Violet` has no arm here, and `nova check` says nothing (exit 0).
+// FIXED in main on 2026-08-18 as #725 -- this file is now a REGRESSION
+// fixture: `nova check` must REFUSE it. If it ever passes again, the
+// hole is back.
 //
-// The same file with the arms written one per name IS refused:
+// What it showed while it was open: an arm carrying an OR-pattern
+// disabled the exhaustiveness check. `Violet` has no arm here, and
+// `nova check` said nothing (exit 0); built and run, the program
+// answered `0` for the uncovered variant.
+//
+// The integrator's diagnosis, recorded because it explains the shape:
+// the checker understood three arm forms and everything else fell into
+// a conservative `_ => return` (doctrine #703, and that doctrine is
+// right). `p | q | r` is parsed exactly, so counting it among the
+// "not understood" was an unfinished branch, not caution. Arm parsing
+// now lives in `arm_coverage` (CatchAll/Variants/Unknown); an unknown
+// alternative inside `|` still voids the whole arm, or the refusal
+// would be false.
+//
+// The measurement that found it (arms written one per name were already
+// refused; the OR forms were not):
 //
 //     Red => 1 / Green => 2 / Blue => 3 / Amber => 4
 //         -> E_MATCH_NON_EXHAUSTIVE, correct

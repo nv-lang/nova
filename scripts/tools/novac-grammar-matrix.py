@@ -79,7 +79,15 @@ FORMS = [
                            '    ro d = Deque[int].new()\n    println(d.len())\n}\n'),
     ("import_whole", "B", 'import std.time.duration\n\nfn main() { println(1) }\n'),
 
-    ("match_stmt", "C", 'type Col enum Red | Green\n\nfn code(c Col) -> int {\n'
+# Record-ФОРМА варианта суммы. Приехала с решением #719/D54 (позиционный
+    # разбор такого варианта запрещён): правило нельзя реализовать раньше,
+    # чем форма читается, поэтому строка живёт в описи, а не в чужой голове.
+    ("record_variant", "B",
+     'type Shape enum\n    | Circle { radius f64 }\n    | Square(f64)\n\n'
+     'fn side(s Shape) -> f64 {\n    match s {\n        Circle { radius } => radius\n'
+     '        Square(a) => a\n    }\n}\n\n'
+     'fn main() { println(side(Shape.Square(2.0))) }\n'),
+        ("match_stmt", "C", 'type Col enum Red | Green\n\nfn code(c Col) -> int {\n'
                         '    match c {\n        Red => 1\n        Green => 2\n    }\n}\n\n'
                         'fn main() { println(code(Col.Red)) }\n'),
     # E_READONLY_COERCE не даёт вернуть ro-биндинг наружу, генерик остаётся
