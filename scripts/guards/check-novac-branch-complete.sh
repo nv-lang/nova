@@ -55,7 +55,8 @@ fi
 N=0
 while IFS= read -r f; do
     rel=${f#"$SRC"/}
-    tr -d '\r' < "$f" | awk -v REL="$rel" -v OUT="$T/bad" -v CNT="$T/cnt" '
+    awk -v REL="$rel" -v OUT="$T/bad" -v CNT="$T/cnt" '
+        { sub(/\r$/, "", $0) }
         function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
         {
             line[NR] = $0
@@ -93,14 +94,15 @@ while IFS= read -r f; do
             }
             print total >> CNT
         }
-    '
+    ' "$f"
 done < "$T/files"
 N=$(awk '{s+=$1} END {print s+0}' "$T/cnt" 2>/dev/null)
 
 # пустой else обязан нести причину
 while IFS= read -r f; do
     rel=${f#"$SRC"/}
-    tr -d '\r' < "$f" | awk -v REL="$rel" -v OUT="$T/bad" '
+    awk -v REL="$rel" -v OUT="$T/bad" '
+        { sub(/\r$/, "", $0) }
         function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
         { line[NR] = $0 }
         END {
@@ -120,7 +122,7 @@ while IFS= read -r f; do
                 }
             }
         }
-    '
+    ' "$f"
 done < "$T/files"
 
 # ХРАПОВИК, а не мгновенный запрет. Правило введено 2026-08-17 на дереве, где

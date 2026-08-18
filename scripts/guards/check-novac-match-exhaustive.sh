@@ -61,9 +61,8 @@ if [ ! -s "$T/files" ]; then
 fi
 
 # --- суммы: "СУММА вариант" ------------------------------------------------
-while IFS= read -r f; do
-    tr -d '\r' < "$f"
-done < "$T/files" | awk '
+# ОДИН cat и ОДИН tr на всё дерево вместо `tr` на каждый файл (2026-08-19).
+xargs cat < "$T/files" | tr -d '\r' | awk '
     /^(export )?type [A-Z][A-Za-z0-9_]* enum/ {
         for (i = 1; i <= NF; i++) if ($i == "enum") sum = $(i-1)
         next

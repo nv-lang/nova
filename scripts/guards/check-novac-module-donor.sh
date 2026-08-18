@@ -59,7 +59,14 @@ fi
 # ничего. Правила ниже — те же, слово в слово; доказательство — самотест и
 # сравнение вывода на живом дереве.
 GUARDDIR="$ROOT/scripts/guards"
-BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v SRC="$SRC" -v GUARDDIR="$GUARDDIR" '
+# Имена стражей собираются ОДИН раз: `test -f` внутри awk поднимал процесс
+# на каждое имя в строке `Guarded by`, а их десятки (2026-08-19).
+GUARDLIST=$(ls "$GUARDDIR" 2>/dev/null | tr "\n" " ")
+BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v SRC="$SRC" -v GUARDLIST="$GUARDLIST" '
+    BEGIN {
+        _n = split(GUARDLIST, _g, / /)
+        for (_i = 1; _i <= _n; _i++) if (_g[_i] != "") GUARDS[_g[_i]] = 1
+    }
     function words(s,   n, a) { gsub(/^[ \t]+|[ \t]+$/, "", s); if (s == "") return 0; n = split(s, a, /[ \t]+/); return n }
     function say(msg) { printf "  %s: %s\n", rel, msg }
 
@@ -121,7 +128,7 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v
             n = 0
             while (match(g, /check-[a-z0-9-]+\.sh/)) {
                 gname = substr(g, RSTART, RLENGTH)
-                if (system("test -f " GUARDDIR "/" gname) != 0)
+                if (!(gname in GUARDS))
                     say("\x27Guarded by\x27 называет " gname ", а такого стража нет в scripts/guards — механизм выдуман")
                 g = substr(g, RSTART + RLENGTH)
                 n++

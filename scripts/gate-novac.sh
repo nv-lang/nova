@@ -177,12 +177,22 @@ par_add() {
     printf '%s\n' "$2" > "$PAR_DIR/$PAR_N.msg"
 }
 par_run() {
+    # ПРЕДЕЛ одновременности: запуск всех разом на восьми ядрах не ускоряет,
+    # а толкается -- каждый страж сам порождает процессы. Число берётся из
+    # NOVAC_JOBS, по умолчанию 8.
+    _jobs="${NOVAC_JOBS:-8}"
     _i=1
+    _running=0
     while [ "$_i" -le "$PAR_N" ]; do
         _g=$(cat "$PAR_DIR/$_i.cmd")
         _runner=bash
         case "$_g" in *.py) _runner=python ;; esac
         ( "$_runner" "$_g" "$ROOT" > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
+        _running=$((_running + 1))
+        if [ "$_running" -ge "$_jobs" ]; then
+            wait
+            _running=0
+        fi
         _i=$((_i + 1))
     done
     wait
@@ -258,8 +268,6 @@ par_add "$ROOT/scripts/guards/check-novac-atomics-door.sh" "атомики/TLS �
 par_add "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "строковый ключ таблицы вне names (архитектура §4а, К2)"
 par_add "$ROOT/scripts/guards/check-novac-no-global-state.sh" "глобальное изменяемое состояние в novac (274 §4 п.5)"
 par_add "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
-par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
-par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
 par_run
 
 # ═══ НАБОР ОКНА 274 — влит слиянием 2026-08-16 вместе с файлами ═══
@@ -317,6 +325,8 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     par_add "$ROOT/scripts/guards/check-novac-cli-surface.sh" "команда novac, которой нет у nova-cli (П26)"
     par_add "$ROOT/scripts/guards/check-novac-batch.sh" "пачечный проход раннера разобран (274.2 §1б.1)"
     par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
+    par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
+    par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
     par_run
 fi
 
