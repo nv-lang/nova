@@ -247,6 +247,7 @@ guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail 
 step "novac-heavy (дедлайновые: мэнглинг, шаблон, цена, мутационная проверка самотестов)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "$ROOT" || fail "мэнгл novac разошёлся с оракулом"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-fuzz-zero-panic.sh" "$ROOT" || fail "фаззер нашёл падение novac: приёмка Э1 ранга CORE (274.3/F2)"
+guard --deadline 300 "$ROOT/scripts/guards/check-novac-module-tests.sh" "$ROOT" || fail "модульный тест novac упал (контракт модуля)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "$ROOT" || fail "shell.tpl.c протух"
 guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла вышла из бюджета (П14)"
 guard --deadline 600 "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "$ROOT" || fail "самотест стража novac проходит над заглушкой (П16)"
