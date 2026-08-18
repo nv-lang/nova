@@ -66,38 +66,38 @@ CR=$(git -C "$ROOT" ls-files --eol -- 'scripts/*.sh' 'scripts/**/*.sh' 2>/dev/nu
 [ -n "$CR" ] && BAD="$BAD$CR
 "
 
-# (2) слепота: назвал .exe и не знает второго имени.
-EXE=$(printf '%s\n' "$FILES" | while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    case "$f" in
-        *"$DOOR") continue ;;
-        # Самотесты СОЗДАЮТ фикстуру-бинарь и сами дают ей имя; дверь ищет .exe
-        # первым на любой платформе, так что фикстура находится и на Linux.
-        */selftest/*) continue ;;
-    esac
-    # Комментарий и строка примера — не резолв: в них имя стоит как ТЕКСТ.
-    grep -v '^[[:space:]]*#' "$f" 2>/dev/null | grep -q 'release/nova\.exe' || continue
-    grep -q 'novac_find_oracle' "$f" 2>/dev/null && continue
-    grep -qE 'release/nova"|release/nova ' "$f" 2>/dev/null && continue
-    printf '  %s: знает только nova.exe — на Linux не найдёт оракула и промолчит\n' "${f#"$ROOT/"}"
-done)
-[ -n "$EXE" ] && BAD="$BAD$EXE
-"
-
-# (3) апостроф, который выполнит оболочка.
-TICK=$(printf '%s\n' "$FILES" | while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    grep -n '^[[:space:]]*\(echo\|printf\|ok\|bad\)[[:space:]]' "$f" 2>/dev/null \
-        | grep -v "'" \
-        | grep -v '\\`' \
-        | grep '`' \
-        | cut -d: -f1 \
-        | while IFS= read -r ln; do
-            printf '  %s:%s: апостроф в двойных кавычках — оболочка выполнит его как команду\n' \
-                "${f#"$ROOT/"}" "$ln"
-        done
-done)
-[ -n "$TICK" ] && BAD="$BAD$TICK
+# (2) и (3) — ОДИН проход awk по всем скриптам разом (2026-08-19). Прежняя
+# редакция поднимала до десяти процессов на файл: 84 секунды на 277 файлах,
+# больше любого другого шага гейта. Страж о цене формы сам платил её.
+SCAN=$(printf '%s\n' "$FILES" | xargs awk -v ROOT="$ROOT/" -v DOOR="$DOOR" '
+    function verdict() {
+        if (rel == "") return
+        if (!skip && saw_exe && !saw_door && !saw_fallback)
+            printf "  %s: знает только nova.exe — на Linux не найдёт оракула и промолчит\n", rel
+    }
+    FNR == 1 {
+        verdict()
+        rel = FILENAME; sub("^" ROOT, "", rel)
+        skip = (index(rel, DOOR) > 0 || index(rel, "/selftest/") > 0)
+        saw_exe = 0; saw_door = 0; saw_fallback = 0
+    }
+    {
+        line = $0; sub(/\r$/, "", line)
+        if (!skip) {
+            if (line !~ /^[[:space:]]*#/ && line ~ /release\/nova\.exe/) saw_exe = 1
+            if (line ~ /novac_find_oracle/) saw_door = 1
+            if (line ~ /release\/nova"/ || line ~ /release\/nova /) saw_fallback = 1
+        }
+        # Строки с одинарной кавычкой пропускаются целиком: там awk-программы
+        # и фикстуры самотестов, где апостроф безобиден (слепая зона названа
+        # в шапке).
+        if (line ~ /^[[:space:]]*(echo|printf|ok|bad)[[:space:]]/ &&
+            index(line, "\047") == 0 && index(line, "\\`") == 0 && index(line, "`") > 0)
+            printf "  %s:%d: апостроф в двойных кавычках — оболочка выполнит его как команду\n", rel, FNR
+    }
+    END { verdict() }
+')
+[ -n "$SCAN" ] && BAD="$BAD$SCAN
 "
 
 if [ -n "$(printf '%s' "$BAD" | tr -d '[:space:]')" ]; then

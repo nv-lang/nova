@@ -78,20 +78,17 @@ PAR=$(printf '\302\247')                         # §
 REF="($PE|$NO|$PAR ?)[0-9]+([.][0-9]+)*$SUF"
 
 scan() {
-    find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-        rel=${f#"$SRC"/}
-        awk -v rel="$rel" -v REF="$REF" -v CYR="$CYR" '
-            {
-                line = $0; sub(/\r$/, "", line)
-                # снимаем разрешённые ссылки: П13.5, №114б, §10.3а
-                probe = line
-                gsub(REF, "", probe)
-                if (probe ~ CYR) {
-                    printf "  %s:%d: %s\n", rel, NR, line
-                }
-            }
-        ' "$f"
-    done
+    # ОДИН awk на всё дерево (2026-08-19): прежняя редакция поднимала awk на
+    # КАЖДЫЙ файл -- тридцать два процесса и 8.6 секунды стены.
+    find "$SRC" -type f -name '*.nv' | sort | xargs awk -v SRC="$SRC" -v REF="$REF" -v CYR="$CYR" '
+        FNR == 1 { rel = FILENAME; sub("^" SRC "/", "", rel) }
+        {
+            line = $0; sub(/\r$/, "", line)
+            probe = line
+            gsub(REF, "", probe)
+            if (probe ~ CYR) printf "  %s:%d: %s\n", rel, FNR, line
+        }
+    '
 }
 
 BAD=$(scan)
@@ -106,8 +103,7 @@ if [ -n "$BAD" ]; then
 fi
 
 N=$(find "$SRC" -type f -name '*.nv' | wc -l | tr -d '[:space:]')
-REFS=$(find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-    awk -v REF="$REF" '{ t += gsub(REF, "") } END { print t+0 }' "$f"
-done | awk '{ t += $1 } END { print t+0 }')
+REFS=$(find "$SRC" -type f -name '*.nv' | sort | xargs awk -v REF="$REF" \
+    '{ t += gsub(REF, "") } END { print t+0 }')
 echo "$NAME ok: файлов .nv: $N, строк с кириллицей: 0 (законных ссылок П/№/§ + цифра: $REFS)"
 exit 0
