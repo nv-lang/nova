@@ -30,7 +30,8 @@ set -u
 
 NAME="check-novac-module-tests"
 ROOT="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}"
-ORACLE="${2:-$ROOT/nova-cli/target/release/nova.exe}"
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/lib/novac.sh"
+ORACLE="${2:-$(novac_find_oracle "$ROOT" || true)}"
 SRC="$ROOT/novac/src"
 
 if [ ! -d "$SRC" ]; then

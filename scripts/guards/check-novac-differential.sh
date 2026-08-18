@@ -51,14 +51,13 @@ NAME=check-novac-differential
 
 novac_require_bin "$NAME" "$ROOT" "$BIN"
 
-ORACLE="$ROOT/nova-cli/target/release/nova.exe"
-if [ ! -f "$ORACLE" ]; then
+ORACLE="$(novac_find_oracle "$ROOT" || true)"
+if [ -z "$ORACLE" ]; then
     # Worktree без своего target: оракул главного дерева (приём №650 —
     # главная репа выводится из git, не из памяти).
-    MAINROOT=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-    [ -n "$MAINROOT" ] && ORACLE="$MAINROOT/../nova-cli/target/release/nova.exe"
+    :
 fi
-if [ ! -f "$ORACLE" ]; then
+if [ -z "$ORACLE" ]; then
     echo "$NAME ok: судить нечего (оракул nova-cli/target/release/nova.exe не собран)"
     exit 0
 fi

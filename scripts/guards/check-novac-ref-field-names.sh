@@ -66,7 +66,7 @@ OUT=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | while IFS= r
             total++
             if (fname == "payload") { exempt++; next }
             if (fname ~ /_(id|row|off|cnt|len)$/) { good++; next }
-            printf "  %s:%d: поле `%s int` без суффикса пространства\n", rel, NR, fname
+            printf "  %s:%d: поле \`%s int\` без суффикса пространства\n", rel, NR, fname
         }
         END { printf "@@ %d %d %d\n", total, good, exempt }
     '

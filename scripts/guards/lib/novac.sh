@@ -68,3 +68,31 @@ novac_load_scale() {
     [ "$_sc" -gt 2000 ] && _sc=2000
     echo "$_sc"
 }
+
+# novac_find_oracle ROOT — путь к бинарю ОРАКУЛА или пусто (rc=1).
+#
+# ОДНО место, знающее имя файла. 2026-08-18, разбор красного CI: дифф-страж и
+# страж свежести оболочки печатали на Linux «судить нечего (оракул не собран)»,
+# хотя job собирает его командой cargo. Причина — одна буква: искали
+# `nova.exe`, а на Linux бинарь зовётся `nova`. Главное доказательство
+# корректности проекта — дифф против оракула — не выполнялось на CI и
+# держалось только на машине автора, причём ЗЕЛЁНЫМ молчанием, неотличимым
+# от «проверено» (класс K-A, 274.3/F1).
+novac_find_oracle() {
+    _fo_root="$1"
+    for _fo_c in \
+        "$_fo_root/nova-cli/target/release/nova.exe" \
+        "$_fo_root/nova-cli/target/release/nova"; do
+        [ -f "$_fo_c" ] && { printf '%s\n' "$_fo_c"; return 0; }
+    done
+    # Worktree без своего target: сборка одна на все деревья (реестр #650).
+    _fo_main=$(git -C "$_fo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    if [ -n "$_fo_main" ]; then
+        for _fo_c in \
+            "$_fo_main/../nova-cli/target/release/nova.exe" \
+            "$_fo_main/../nova-cli/target/release/nova"; do
+            [ -f "$_fo_c" ] && { printf '%s\n' "$_fo_c"; return 0; }
+        done
+    fi
+    return 1
+}

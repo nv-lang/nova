@@ -173,14 +173,14 @@ if [ "$#" -gt 0 ]; then
             h = substr(cl, RSTART, RLENGTH)
             sub(/^[^A-Za-z0-9_]*with[[:space:]]+/, "", h)
             sub(/[[:space:]]*=$/, "", h)
-            printf "%s:%d: обработчик `with %s = ...` ниже двери\n", FILENAME, FNR, h
+            printf "%s:%d: обработчик \`with %s = ...\` ниже двери\n", FILENAME, FNR, h
         }
         # 2. объявление эффекта
         if (match(cl, /(^|[^A-Za-z0-9_])type[[:space:]]+[A-Z][A-Za-z0-9_]*[[:space:]]+effect([[:space:]]*\{|[[:space:]]*$)/)) {
             h = substr(cl, RSTART, RLENGTH)
             sub(/^[^A-Za-z0-9_]*type[[:space:]]+/, "", h)
             sub(/[[:space:]]+effect[[:space:]]*\{?[[:space:]]*$/, "", h)
-            printf "%s:%d: объявление эффекта `type %s effect` ниже двери\n", FILENAME, FNR, h
+            printf "%s:%d: объявление эффекта \`type %s effect\` ниже двери\n", FILENAME, FNR, h
         }
         # 3. строка эффектов: имена между `)` списка параметров и
         # `->` / `=>` / `{` / концом строки.
@@ -222,7 +222,7 @@ if [ "$#" -gt 0 ]; then
             if (closed)
                 for (j = 1; j <= nn; j++)
                     if (enames[j] in eff)
-                        printf "%s:%d: эффект `%s` в сигнатуре функции ниже двери\n", FILENAME, FNR, enames[j]
+                        printf "%s:%d: эффект \`%s\` в сигнатуре функции ниже двери\n", FILENAME, FNR, enames[j]
         }
     }
     ' "$@" > "$T/bad"

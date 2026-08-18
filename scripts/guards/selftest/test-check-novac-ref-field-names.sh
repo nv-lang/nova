@@ -47,7 +47,7 @@ export type FieldDef value {
 }
 EOF
 if run "$T/g2"; then
-    bad "голое `owner int` прошло — страж не ловит свой главный случай"
+    bad "голое \`owner int\` прошло — страж не ловит свой главный случай"
 else
     grep -q "owner" "$T/err" && grep -q "sem.nv:6" "$T/err" && ok "голое имя поймано с файлом и строкой" || bad "красный, но без имени/строки [$(cat "$T/err")]"
 fi

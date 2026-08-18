@@ -42,7 +42,8 @@ mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 
 [ -f "$NOVAC" ] || { echo "novac-diff-corpus: нет $NOVAC" >&2; exit 2; }
-ORACLE="$ROOT/nova-cli/target/release/nova.exe"
+. "$(CDPATH= cd -- "$(dirname -- "$0")/../guards" && pwd)/lib/novac.sh"
+ORACLE="$(novac_find_oracle "$ROOT" || true)"
 if [ ! -f "$ORACLE" ]; then
     MAINROOT=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
     [ -n "$MAINROOT" ] && ORACLE="$MAINROOT/../nova-cli/target/release/nova.exe"

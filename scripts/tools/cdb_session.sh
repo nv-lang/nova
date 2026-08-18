@@ -114,7 +114,10 @@ fi
 echo "[cdb] building test exe with --keep-artifacts..." >&2
 TEST_BASE=$(basename "$TEST_FILE" .nv)
 NOVA_LOG=$(mktemp)
-./nova-cli/target/release/nova.exe test "$TEST_FILE" --keep-artifacts > "$NOVA_LOG" 2>&1
+. "$(CDPATH= cd -- "$(dirname -- "$0")/../guards" && pwd)/lib/novac.sh"
+NOVA_BIN="$(novac_find_oracle "$(pwd)" || true)"
+[ -n "$NOVA_BIN" ] || { echo "oracle binary not found" >&2; exit 1; }
+"$NOVA_BIN" test "$TEST_FILE" --keep-artifacts > "$NOVA_LOG" 2>&1
 NOVA_EC=$?
 
 EXE=$(find /tmp/nova_tests -name "${TEST_BASE}.exe" -mmin -2 2>/dev/null | head -1)

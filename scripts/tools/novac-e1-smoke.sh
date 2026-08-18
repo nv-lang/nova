@@ -33,7 +33,8 @@ cd "$ROOT" || exit 2
 # ---- oracle location & stamp: computed once per cache dir ---------------
 if [ ! -f "$CACHE/oracle.path" ]; then
     ORACLE_MAIN=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-    ORACLE="$ORACLE_MAIN/../nova-cli/target/release/nova.exe"
+. "$(CDPATH= cd -- "$(dirname -- "$0")/../guards" && pwd)/lib/novac.sh"
+ORACLE="$(novac_find_oracle "$(pwd)" || true)"
     [ -f "$ORACLE" ] || ORACLE="$ROOT/nova-cli/target/release/nova.exe"
     [ -f "$ORACLE" ] || fail "нет оракула"
     printf '%s\n' "$ORACLE" > "$CACHE/oracle.path"
