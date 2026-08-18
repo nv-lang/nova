@@ -48,17 +48,21 @@ if [ "$NFILES" -eq 0 ]; then
     exit 0
 fi
 
-BAD=$(find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    case "$rel" in
-        names/*|*/names/*)
-            grep -Fn 'Map[str' "$f" | grep -Fv 'NamespaceId' | sed "s|^|  $rel:|"
-            ;;
-        *)
-            grep -Fn 'Map[str' "$f" | sed "s|^|  $rel:|"
-            ;;
-    esac
-done)
+# ОДИН проход awk (2026-08-19): было по два grep и sed на КАЖДЫЙ файл.
+# Правило то же: тип-таблица с ключом `Map[str`; в `names/` дверь легальна,
+# поэтому там строка с `NamespaceId` не судится.
+BAD=$(find "$SRC" -type f -name '*.nv' | sort | xargs awk -v SRC="$SRC" '
+    FNR == 1 {
+        rel = FILENAME; sub("^" SRC "/", "", rel)
+        in_names = (rel ~ /^names\// || rel ~ /\/names\//)
+    }
+    {
+        line = $0; sub(/\r$/, "", line)
+        if (index(line, "Map[str") == 0) next
+        if (in_names && index(line, "NamespaceId") > 0) next
+        printf "  %s:%d:%s\n", rel, FNR, line
+    }
+')
 
 # Вторая половина правила (владелец 2026-08-16): СИНТЕЗ ключа строкой.
 # Дверь `names` легальна, поэтому первая половина молчала, когда ключ
@@ -68,10 +72,14 @@ done)
 # Законная форма — цепочка одноимённых строк плюс целочисленное сравнение
 # (см. FnTable/FieldTable в sem). Судим ровно вызовы двери с интерполяцией
 # в первом аргументе; голое имя-переменная законно.
-SYNTH=$(find "$SRC" -type f -name '*.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    grep -n '\.\(put\|find\)("[^"]*\${' "$f" | sed "s|^|  $rel:|"
-done)
+SYNTH=$(find "$SRC" -type f -name '*.nv' | sort | xargs awk -v SRC="$SRC" '
+    FNR == 1 { rel = FILENAME; sub("^" SRC "/", "", rel) }
+    {
+        line = $0; sub(/\r$/, "", line)
+        if (line ~ /\.(put|find)\("[^"]*\$\{/)
+            printf "  %s:%d:%s\n", rel, FNR, line
+    }
+')
 
 if [ -n "$SYNTH" ]; then
     echo "check-novac-no-string-keys: FAIL — ключ двери СИНТЕЗИРОВАН строкой (архитектура §4а, П17):" >&2

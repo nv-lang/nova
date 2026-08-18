@@ -95,11 +95,19 @@ if [ -z "$ALT" ]; then
     exit 1
 fi
 
-BAD=$(find "$SRC" -type f -name '*.nv' ! -name 'builtins.nv' ! -name '*_test.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    # literal = "..." вне комментария; комментарии срезаются С УЧЁТОМ кавычек
-    strip_comments "$f" | grep -n -E "\"($ALT)\"" | sed "s|^|  $rel:|"
-done)
+# ОДИН проход awk (2026-08-19): было strip_comments + grep + sed на файл.
+# Комментарии срезаются внутри прохода — той же формой, что и раньше:
+# строка, начинающаяся с //, и хвост после //.
+BAD=$(find "$SRC" -type f -name '*.nv' ! -name 'builtins.nv' ! -name '*_test.nv' | sort \
+    | xargs awk -v SRC="$SRC" -v ALT="$ALT" '
+    FNR == 1 { rel = FILENAME; sub("^" SRC "/", "", rel) }
+    {
+        line = $0; sub(/\r$/, "", line)
+        code = line; sub(/\/\/.*$/, "", code)
+        if (code ~ ("\"(" ALT ")\""))
+            printf "  %s:%d:%s\n", rel, FNR, line
+    }
+')
 
 if [ -n "$BAD" ]; then
     echo "$NAME: FAIL — имена языка/std как строковые литералы вне builtins.nv (П5):" >&2

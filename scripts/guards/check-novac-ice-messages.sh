@@ -58,10 +58,20 @@ T="${TMPDIR:-/tmp}/novac-ice-msgs.$$"
 mkdir -p "$T" || exit 1
 trap 'rm -rf "$T"' 0
 
-find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | while IFS= read -r f; do
-    rel=${f#"$SRC"/}
-    tr -d '\r' < "$f" | grep -noP 'ice\("\K[^"]+' | sed "s|^|$rel:|"
-done > "$T/all"
+# ОДИН проход awk (2026-08-19): было tr+grep+sed на каждый файл.
+# Правило то же: текст первого аргумента ice("...") с именем файла и строкой.
+find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v SRC="$SRC" '
+    FNR == 1 { rel = FILENAME; sub("^" SRC "/", "", rel) }
+    {
+        line = $0; sub(/\r$/, "", line)
+        rest = line
+        while (match(rest, /ice\("[^"]*"/)) {
+            s = substr(rest, RSTART + 5, RLENGTH - 6)
+            printf "%s:%d:%s\n", rel, FNR, s
+            rest = substr(rest, RSTART + RLENGTH)
+        }
+    }
+' > "$T/all"
 
 TOTAL=$(wc -l < "$T/all" | tr -d '[:space:]')
 if [ "$TOTAL" -eq 0 ]; then
