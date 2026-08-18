@@ -7653,6 +7653,7 @@ impl Parser {
         &mut self,
         in_carrier_position: bool,
     ) -> Result<Vec<GenericParam>, Diagnostic> {
+        let lbracket_span = self.peek().span;
         self.expect(&TokenKind::LBracket)?;
         let mut params = Vec::new();
         // Plan 153.5: structured carrier slot TypeRefs, parallel to `params`'
@@ -7660,6 +7661,35 @@ impl Parser {
         // mode; read back via `last_carrier_slot_types`.
         let mut slot_types: Vec<TypeRef> = Vec::new();
         self.skip_newlines();
+        // №729-сосед, реестр 221.1 №728 (решение владельца 2026-08-18): ПУСТОЙ
+        // `[]` в позиции списка generic-параметров отвергается.
+        //
+        // ЧТО БЫЛО. Скобка сразу после имени типа — по D52 список generic-
+        // параметров, и пустой он принимался БЕЗ ЕДИНОЙ ДИАГНОСТИКИ: цикл ниже
+        // не исполнялся ни разу, список оставался пустым, а остаток строки
+        // становился базой newtype. То есть `type Bytes []u8` молча объявлял
+        // newtype над `u8`, а не над срезом, и `ro a Bytes = 7` принималось.
+        // Пользователь писал один тип и получал ДРУГОЙ, ничего об этом не
+        // узнавая, — тот самый тихо неверный ответ, ради которого ведётся
+        // реестр. Этим же объясняется, как тест `v7_6_refactor_newtype_array_
+        // is_ref` годами стоял зелёным, проверяя чужую ветку.
+        //
+        // ПОЧЕМУ ОТКАЗ, А НЕ ПЕРЕТОЛКОВАНИЕ ФОРМЫ. Дать `[]` значение среза
+        // было бы изменением ЯЗЫКА и требовало бы амендмента к D52; решение
+        // владельца — отвергать, оставив D52 как есть. Обе законные записи
+        // существуют и названы в подсказке.
+        if matches!(self.peek().kind, TokenKind::RBracket) {
+            return Err(Diagnostic::new(
+                "[E_EMPTY_GENERIC_PARAM_LIST] пустой `[]` в позиции списка \
+                 generic-параметров (D52, решение владельца 2026-08-18, реестр \
+                 №728) — скобка сразу после имени типа объявляет ПАРАМЕТРЫ, а \
+                 не срез, поэтому `type Bytes []u8` молча означал бы newtype \
+                 над `u8`.\n  \
+                 fix: срез — `type Bytes Vec[u8]` (или `ro []u8` в позиции \
+                 типа); generic-тип — назови параметры: `type Bytes[T] …`.",
+                lbracket_span,
+            ));
+        }
         while !matches!(self.peek().kind, TokenKind::RBracket) {
             // Plan 153.5: carrier-position NESTED type slot. A slot of the form
             // `Ident[` (ident immediately followed by `[`) is a nested generic
