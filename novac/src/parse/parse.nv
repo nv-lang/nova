@@ -31,7 +31,7 @@
 
 module novac.parse
 
-import ../lex.{Token, TokenKind}
+import ../lex.{Token, TokenKind, brace_delta}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -206,6 +206,14 @@ export fn parse(toks []Token) -> Node
             items.push(p.fn_decl())
         } else if k == TokenKind.KwType {
             items.push(p.type_decl())
+        } else if k == TokenKind.KwExport {
+            items.push(p.export_decl())
+        } else if k == TokenKind.KwImport || k == TokenKind.KwUse {
+            items.push(p.import_decl())
+        } else if k == TokenKind.Hash {
+            items.push(p.attr_decl())
+        } else if k == TokenKind.KwTest {
+            items.push(p.test_decl())
         } else if k == TokenKind.KwModule {
             // A module declaration that is NOT the file header is outside
             // the language shape — wrap it in Err so check reports it. It

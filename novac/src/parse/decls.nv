@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_parse `item.rs` -- item parsing lives apart from expression
+// and type parsing there along the same seam, and for the same reason: an
+// item is recognised by its leading keyword and nothing else.
+//
+// Role: the readers of TOP-LEVEL declarations -- `export`, `import`/`use`,
+//   the `#...` attribute line, the `test` block. These are forms of the
+//   LANGUAGE that the subset does not compile yet, and the parser must read
+//   them all the same (S9.4: the grammar is the language's, the subset is
+//   the checker's).
+// Used by: parse.nv -- its top-level loop, and export_decl for the
+//   declaration it wraps.
+// Guarded by: check-novac-file-size.sh (this split), check-novac-deps.sh, check-novac-doc-language.sh.
+//
+// Split out of parse.nv on 2026-08-18 when the declarations batch of S9.4a
+// pushed that file past the thousand-line limit -- the same seam type_ref.nv
+// came out of a day earlier.
+
+module novac.parse
+
+import ../lex.{Token, TokenKind, brace_delta}
+import ../tree.{Node, NodeKind}
+
+/// `export <declaration>` -- the visibility WRAPS the declaration.
+///
+/// A wrapper and not a prefix leaf inside the declaration: `export` says
+/// something about the declaration as a whole, and every reader of a FnDecl
+/// (the method harvest, the emitter, the checker's shape rules) keeps working
+/// on exactly the shape it knew. Until 2026-08-18 `export` was not a keyword
+/// at all, so the token fell into the top-level junk bucket -- and since std
+/// writes `export` in front of nearly everything, the most common declaration
+/// form in the language was answered with "construct not in the MVP grammar".
+fn Cursor mut @export_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwExport
+    ro k = @peek()
+    if k == TokenKind.KwFn {
+        kids.push(@fn_decl())
+    } else if k == TokenKind.KwType {
+        kids.push(@type_decl())
+    } else if k == TokenKind.KwImport || k == TokenKind.KwUse {
+        kids.push(@import_decl())
+    } else {
+        // `export` in front of something that is not a declaration. The leaf is
+        // already in the tree (nothing is lost); naming the mistake is check's
+        // job, and it has the span.
+        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+    }
+    @node(NodeKind.ExportDecl, kids)
+}
+
+/// `import a.b.c` / `import a.b.{X, Y}` / `use a.b.{X}`.
+///
+/// The path is spelled with DOTS (measured 2026-08-18: a slash is
+/// "expected newline or end of input, got `/`"), and the optional brace list
+/// names what is taken. Both keywords build the same node -- they differ in
+/// meaning, not in shape, and the keyword leaf is right there for whoever
+/// needs to tell them apart.
+fn Cursor mut @import_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwImport or KwUse
+    while @peek() == TokenKind.Ident || @peek() == TokenKind.Dot {
+        kids.push(@take())
+    }
+    if @peek() == TokenKind.LBrace {
+        mut depth = 0
+        while !@at_eof() {
+            ro k = @peek()
+            ro delta = brace_delta(k)
+            depth += delta
+            kids.push(@take())
+            if depth == 0 { break }
+        }
+    } else {
+        // No brace list: the whole module is imported under its own name.
+    }
+    @node(NodeKind.ImportDecl, kids)
+}
+
+/// `#realtime nogc` -- an attribute line before a declaration.
+///
+/// Newlines are trivia in this lexer, so the line's end is not a token: the
+/// attribute runs while identifiers follow, and the next declaration keyword
+/// ends it. That is enough for every attribute the language writes today
+/// (`#realtime nogc`, `#inline`), and the tree keeps every leaf either way.
+fn Cursor mut @attr_decl() -> Node {
+    mut kids = []Node.of(@take()) // '#'
+    while @peek() == TokenKind.Ident {
+        kids.push(@take())
+    }
+    @node(NodeKind.AttrDecl, kids)
+}
+
+/// `test "name" { ... }`.
+fn Cursor mut @test_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwTest
+    @push_if(kids, TokenKind.StrLit)
+    if @peek() == TokenKind.LBrace {
+        kids.push(@block())
+    } else {
+        // A test without a body: the marker is what turns silent acceptance
+        // into one honest refusal, exactly as for a bodiless `if`.
+        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+    }
+    @node(NodeKind.TestDecl, kids)
+}

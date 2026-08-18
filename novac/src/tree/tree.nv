@@ -70,6 +70,17 @@ export type NodeKind enum
     // `expr as Type`. The right side is a TYPE, which is why the cast is
     // a node of its own and not a binary operator over two expressions.
     | Cast
+    // `import a.b.{X}` and `use a.b.c` -- one node for both spellings,
+    // the keyword leaf tells them apart.
+    | ImportDecl
+    // `export` in front of a declaration. It wraps rather than prefixes:
+    // the visibility belongs to the declaration, and a wrapper keeps the
+    // declaration's own shape untouched for every reader of it.
+    | ExportDecl
+    // `#realtime nogc` -- an attribute line standing before a declaration.
+    | AttrDecl
+    // `test "name" { ... }`.
+    | TestDecl
     | Recv
     | Generics
     | RetType

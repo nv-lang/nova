@@ -56,6 +56,11 @@ export type TokenKind enum
     | KwType
     | KwMatch
     | KwAs
+    | KwImport
+    | KwUse
+    | KwExport
+    | KwTest
+    | Hash
     | Ident
     | IntLit
     | FloatLit
@@ -190,13 +195,13 @@ export fn paren_delta(k TokenKind) -> int {
     match k {
         LParen => 1
         RParen => -1
-        EmptyBrackets | KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | Ident | IntLit | FloatLit | StrLit | LBrace | RBrace | LBracket |
-        RBracket | Dot | Comma | Plus | Minus | Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq |
-        BangEq | AmpAmp | PipePipe | Amp | Caret | Shl | Shr | Tilde | Bang | Pipe | FatArrow |
-        Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
-        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis | Colon | At | Arrow |
-        ErrorTok | Eof => 0
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | KwImport | KwUse | KwExport | KwTest | Hash | Ident | IntLit | FloatLit | StrLit |
+        LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus | Star |
+        Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
+        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
+        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
 }
 
@@ -206,12 +211,28 @@ export fn bracket_delta(k TokenKind) -> int {
         LBracket => 1
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | Ident | IntLit | FloatLit | StrLit | LParen | RParen | LBrace | RBrace |
-        EmptyBrackets | Dot | Comma | Plus | Minus | Star | Slash | Lt | Le | Gt | Ge | Percent |
-        EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl | Shr | Tilde | Bang | Pipe | FatArrow |
-        Assign | PlusAssign | MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
-        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis | Colon | At | Arrow |
-        ErrorTok | Eof => 0
+        KwAs | KwImport | KwUse | KwExport | KwTest | Hash | Ident | IntLit | FloatLit | StrLit |
+        LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus | Star |
+        Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
+        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
+        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+    }
+}
+
+/// The same for `{` and `}` -- the brace list of an import, and any other
+/// balanced brace run a reader walks without interpreting.
+export fn brace_delta(k TokenKind) -> int {
+    match k {
+        LBrace => 1
+        RBrace => -1
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | KwImport | KwUse | KwExport | KwTest | Hash | Ident | IntLit | FloatLit | StrLit |
+        LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus | Star |
+        Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
+        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
+        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
 }
 
@@ -232,6 +253,15 @@ fn keyword_kind(t str) -> TokenKind => match t {
     // names and the refusal read "unknown name" -- about a cast, not a
     // name. A missing keyword does not stay missing quietly.
     "as" => TokenKind.KwAs
+    // The DECLARATION words. `export` stands in front of most of std, and
+    // until 2026-08-18 it lexed as a plain identifier: the top-level loop
+    // dropped it into the junk bucket and the file was refused with a
+    // nameless message. `use` and `import` are BOTH real (measured against
+    // the oracle the same day), `export import` is not.
+    "import" => TokenKind.KwImport
+    "use" => TokenKind.KwUse
+    "export" => TokenKind.KwExport
+    "test" => TokenKind.KwTest
     // The domain is OPEN -- any identifier text may arrive -- so the
     // wildcard is the type's own partiality, not a hidden case (P21 p.3):
     // whatever is not a keyword IS an identifier.
@@ -254,6 +284,7 @@ fn punct_kind(b u8) -> TokenKind => match b {
     0x5D => TokenKind.RBracket  // ]
     0x2E => TokenKind.Dot       // .
     0x2C => TokenKind.Comma     // ,
+    0x23 => TokenKind.Hash      // #
     0x3A => TokenKind.Colon     // :
     0x40 => TokenKind.At        // @
     0x2B => TokenKind.Plus      // +

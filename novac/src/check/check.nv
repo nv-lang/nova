@@ -216,6 +216,22 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_qualifier_misplaced(children, "result")
                     @report_if_return_form(children)
                 }
+                ImportDecl => {
+                    @report_first_leaf_of(children, IMPORT_MSG)
+                    return
+                }
+                ExportDecl => {
+                    @report_first_leaf_of(children, EXPORT_MSG)
+                    return
+                }
+                AttrDecl => {
+                    @report_first_leaf_of(children, ATTR_MSG)
+                    return
+                }
+                TestDecl => {
+                    @report_first_leaf_of(children, TEST_MSG)
+                    return
+                }
                 NamedArg => {
                     @report_first_leaf_of(children, NAMED_ARG_MSG)
                     return
@@ -451,6 +467,22 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 /// refusal names the shape instead of pretending the type is missing.
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
+
+/// `import a.b.{X}` and `use a.b.c`. The parser reads both spellings; the
+/// subset compiles ONE module, so there is nothing for an import to name yet.
+const IMPORT_MSG = "outside the subset: `import`/`use` arrive with modules (E3)"
+
+/// `export` in front of a declaration. Nearly every declaration in std wears
+/// it, and until 2026-08-18 novac answered the most common form in the
+/// language with "construct not in the MVP grammar" -- `export` was not even a
+/// keyword, so the token fell into the top-level junk bucket.
+const EXPORT_MSG = "outside the subset: `export` arrives with modules (E3)"
+
+/// `#realtime nogc` and its kin.
+const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
+
+/// `test "name" { ... }`.
+const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"
 
 /// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
 /// the grammar is the language's), and D69 -- it must be last -- is a position
