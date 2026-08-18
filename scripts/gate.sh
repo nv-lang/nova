@@ -246,6 +246,8 @@ step 'retracted-try-semantics (снятая трактовка `?` в доке �
 guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
 step "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
+step "registry-single-verdict (одна строка — один вердикт и статус — №730)"
+guard "$ROOT/scripts/guards/check-registry-single-verdict.sh" "$ROOT" || fail "в реестре строка с ДВУМЯ вердиктами или статусами: сканеры читают первое вхождение, дописки идут в хвост — заглавные числа релиза начинают врать в обе стороны (№730)"
 step "bare-type-lookups (чтения карты типов голым именем не растут — №705)"
 guard "$ROOT/scripts/guards/check-bare-type-lookups.sh" "$ROOT" || fail "прибавилось чтений карты типов чекера ГОЛЫМ именем: карта коллидирует между модулями last-write-wins, и класс на этом возвращался четырежды (196.7, №696, №705, №729) — разрешай по файлу места использования, types_get_for_file(name, id)"
 step "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
