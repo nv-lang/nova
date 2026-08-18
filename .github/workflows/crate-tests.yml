@@ -1,0 +1,78 @@
+name: crate-tests
+
+# ЗАЧЕМ ОТДЕЛЬНЫЙ WORKFLOW. 2026-08-18 обнаружилось, что собственные наборы
+# тестов `nova-lsp` (433 штуки) и `nova-cli` (191) не гонял НИКТО — ни
+# `scripts/gate.sh`, ни один из восьми workflow здесь: `cargo test` до сих пор
+# запускался только для `compiler-codegen` (doc-семейство и z3). Восемь тестов
+# были красными, и сказать, как давно, нельзя: гнилой тест не оставляет следа,
+# пока его не запустят. Оба крейта входят в поставку v0.1 — то есть
+# непроверенными поставлялись куски продукта. Реестр 221.1 №723.
+#
+# Один из восьми оказался настоящим и оправдывает всё остальное: `nova check .`
+# не проверял НИЧЕГО и возвращал НОЛЬ (№724). Его не поймал ни один тест,
+# потому что все звали `nova check <файл>`, а не каталог.
+#
+# ПОЧЕМУ НЕ ШАГОМ В `nova-gate`. Домены отказа разные: там компилятор и
+# конформанс, здесь — инструменты вокруг него. Склеенные, они блокируют друг
+# друга (то же соображение, по которому 2026-08-16 отделили novac-гейт).
+#
+# ЛОКАЛЬНЫЙ БЛИЗНЕЦ — `scripts/guards/check-crate-tests.sh`, шаг главного
+# гейта. Здесь и там гоняется одно и то же; расхождение между ними — само по
+# себе дефект.
+#
+# `compiler-codegen` НЕ покрыт ни тут, ни локально: его набор не стартует без
+# увеличенного стека и содержит 29 красных (замер 2026-08-18, №723). Сначала
+# они, потом шаг — заведомо красный шаг приучает себя обходить.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: crate-tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  crate-tests:
+    name: nova-lsp + nova-cli own test suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install system deps (docs/guide/linux-build.md recipe)
+        run: sudo apt-get update && sudo apt-get install -y clang cmake make libgc-dev build-essential
+
+      - name: Cache cargo registry + targets
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nova-cli/target
+            target
+          key: ${{ runner.os }}-crate-tests-${{ hashFiles('nova-cli/Cargo.lock', 'nova-lsp/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-crate-tests-
+
+      # nova-lsp: ТОЛЬКО `--lib`. Двоичные цели линкуются в `nova-lsp`, который
+      # на машине разработчика держит открытым работающий редактор; здесь это не
+      # мешает, но набор один и тот же с локальным стражем, и расхождение
+      # охвата между ними — лишний источник «у меня зелено, у вас красно».
+      - name: nova-lsp — lib test suite
+        run: cargo test --release --lib --manifest-path nova-lsp/Cargo.toml --no-fail-fast
+
+      # nova-cli — двоичный крейт, у него всё в интеграционных тестах; часть из
+      # них запускает настоящий `nova` через CARGO_BIN_EXE_nova.
+      - name: nova-cli — full test suite
+        run: cargo test --release --manifest-path nova-cli/Cargo.toml --no-fail-fast
