@@ -103,7 +103,9 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     c.walk(file)
     if c.out.len() == 0 {
         c.type_file(file)
-        c.chan.assert_disjoint()
+        // The disjointness walk that stood here is gone (2026-08-18): the
+        // channel holds ONE sum per node now, so "a call and an
+        // instantiation at once" is not a state that can be built.
     } else {
         // A refused file is not typed: the walk's answer on broken input is an
         // ice today ([LEGACY-#700-user-error-as-ice until:E2b3]), so the refusals already

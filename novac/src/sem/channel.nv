@@ -89,10 +89,26 @@ export type SubstRef value {
 /// call node records a callee, an instantiating non-call node records a
 /// substitution, and `assert_disjoint` states it as a checkable fact rather
 /// than a habit.
+/// What a node resolves TO, when it resolves to anything at all.
+///
+/// ONE field instead of two vectors (owner's question 2026-08-18: "if they are
+/// one to one, why two arrays?"). They were never a pairing -- they were two
+/// PARALLEL VECTORS over one index space, and "no node is both a call and an
+/// instantiation" was held by a walk over the whole file (`assert_disjoint`).
+/// The conventions say the opposite (rule 3, rustc `IndexVec<Idx, RowDef>`): a
+/// row makes desynchronisation UNREPRESENTABLE rather than checkable. A sum
+/// does it one better -- the walk is not weakened, it is deleted, because the
+/// state it looked for cannot be built.
+export type Resolution enum
+    | Unresolved
+    | Callee(CalleeRef)
+    | Subst(SubstRef)
+
+/// THE checker's channel: what the checker decided, read by everyone after it
+/// and re-derived by no one.
 export type CheckOut {
     types []int /// resolved_types: NodeId -> interned type id; -1 = not recorded.
-    callees []CalleeRef /// resolved_callees: NodeId -> the decided target of a call.
-    substs []SubstRef /// node_substs: NodeId -> the range of its substitution arguments.
+    res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
     subst_args []int /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
 }
 
@@ -102,14 +118,12 @@ export type CheckOut {
 /// instance -- each parse has its OWN id space).
 export fn CheckOut.new(node_count int) -> CheckOut {
     mut types = []int.new()
-    mut callees = []CalleeRef.new()
-    mut substs = []SubstRef.new()
+    mut res = []Resolution.new()
     for _ in 0..node_count {
         types.push(-1)
-        callees.push(CalleeRef { kind: DefKind.DefFn, target_row: -1 })
-        substs.push(SubstRef { arg_off: -1, arg_cnt: 0 })
+        res.push(Resolution.Unresolved)
     }
-    CheckOut { types, callees, substs, subst_args: []int.new() }
+    CheckOut { types, res, subst_args: []int.new() }
 }
 
 /// Record the type of a node. Writing a DIFFERENT answer over an existing one
@@ -127,13 +141,16 @@ export fn CheckOut mut @record_type(id int, t int) -> ()
 
 /// Record the decided target of a call.
 export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> ()
-    requires id >= 0 && id < @callees.len(), "sem: channel asked about a call outside this file's id space"
+    requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
     requires target_row >= 0, "sem: channel callee write with no row — absence is not a decision"
 {
-    ro prev = @callees[id]
-    ro same = prev.target_row == target_row && prev.kind == kind
-    assert(prev.target_row < 0 || same, "sem: a call was resolved twice to different targets")
-    @callees[id] = CalleeRef { kind, target_row }
+    match @res[id] {
+        Unresolved => {}
+        Callee(prev) => assert(prev.target_row == target_row && prev.kind == kind,
+            "sem: a call was resolved twice to different targets")
+        Subst(_) => ice("sem: record_callee on a node already recorded as an instantiation")
+    }
+    @res[id] = Resolution.Callee(CalleeRef { kind, target_row })
 }
 
 /// Record the substitution instantiating a generic at a NON-call node (record
@@ -142,13 +159,19 @@ export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> (
 /// disjointness invariant exist now, because the invariant is what makes the
 /// two tables two rather than one habit.
 export fn CheckOut mut @record_subst(id int, args []int) -> ()
-    requires id >= 0 && id < @substs.len(), "sem: subst_of asked about a node outside this file's id space"
-    requires @callees[id].target_row < 0, "sem: a node cannot be both a resolved call and a standalone instantiation"
-    requires @substs[id].arg_off < 0, "sem: a node was instantiated twice"
+    requires id >= 0 && id < @res.len(), "sem: subst_of asked about a node outside this file's id space"
 {
+    // The two exclusions that used to be `requires` over two tables are now ONE
+    // question to one field: the sum cannot hold both, so "a call and an
+    // instantiation at once" is not a state to forbid -- it does not exist.
+    match @res[id] {
+        Unresolved => {}
+        Callee(_) => ice("sem: record_subst on a node already recorded as a call")
+        Subst(_) => ice("sem: record_subst twice on one node")
+    }
     ro arg_off = @subst_args.len()
     @subst_args.append(args)
-    @substs[id] = SubstRef { arg_off, arg_cnt: args.len() }
+    @res[id] = Resolution.Subst(SubstRef { arg_off, arg_cnt: args.len() })
 }
 
 /// The type of a node. TOTAL: a hole is an ice, not an Option — an optional
@@ -167,11 +190,13 @@ export fn CheckOut @type_of(id int) -> int
 /// The decided target of a call. TOTAL, for the same reason.
 #realtime nogc
 export fn CheckOut @callee_of(id int) -> CalleeRef
-    requires id >= 0 && id < @callees.len(), "sem: channel asked about a call outside this file's id space"
+    requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
 {
-    ro c = @callees[id]
-    assert(c.target_row >= 0, "sem: no callee recorded for this call — a hole in the checker's channel")
-    c
+    match @res[id] {
+        Callee(c) => c
+        Unresolved => ice("sem: callee_of on a node with nothing recorded — a hole in the channel")
+        Subst(_) => ice("sem: callee_of on a node recorded as an instantiation")
+    }
 }
 
 /// Does this node carry a resolved callee? TOLERANT, and for the same reason
@@ -179,9 +204,13 @@ export fn CheckOut @callee_of(id int) -> CalleeRef
 /// them call nothing, so "no callee here" is an ANSWER and not a hole.
 #realtime nogc
 export fn CheckOut @has_callee(id int) -> bool
-    requires id >= 0 && id < @callees.len(), "sem: has_callee asked about a node outside this file's id space"
+    requires id >= 0 && id < @res.len(), "sem: has_callee asked about a node outside this file's id space"
 {
-    @callees[id].target_row >= 0
+    match @res[id] {
+        Callee(_) => true
+        Unresolved => false
+        Subst(_) => false
+    }
 }
 
 /// Whether a node carries a substitution — the only tolerant question in this
@@ -189,31 +218,31 @@ export fn CheckOut @has_callee(id int) -> bool
 /// here, not a hole: most nodes instantiate nothing.
 #realtime nogc
 export fn CheckOut @has_subst(id int) -> bool
-    requires id >= 0 && id < @substs.len(), "sem: subst_of asked about a node outside this file's id space"
+    requires id >= 0 && id < @res.len(), "sem: has_subst asked about a node outside this file's id space"
 {
-    @substs[id].arg_off >= 0
+    match @res[id] {
+        Subst(_) => true
+        Unresolved => false
+        Callee(_) => false
+    }
 }
 
 /// The substitution of a node; asking about a node that has none is an ice
 /// (ask `has_subst` first).
 export fn CheckOut @subst_of(id int) -> ro []int
-    requires id >= 0 && id < @substs.len(), "sem: subst_of asked about a node outside this file's id space"
+    requires id >= 0 && id < @res.len(), "sem: subst_of asked about a node outside this file's id space"
 {
-    ro sr = @substs[id]
-    assert(sr.arg_off >= 0, "sem: no substitution recorded for this node — a hole in the checker's channel")
+    ro sr = match @res[id] {
+        Subst(s) => s
+        Unresolved => ice("sem: subst_of on a node with nothing recorded — a hole in the channel")
+        Callee(_) => ice("sem: subst_of on a node recorded as a call")
+    }
     // A VIEW into the pool, not a copy: the arguments live once (nv-coding-style
     // section 18a; a counted push loop here would allocate per question).
     @subst_args[sr.arg_off..sr.arg_off + sr.arg_cnt]
 }
 
-/// The two tables are disjoint: no node is both a resolved call and a
-/// standalone instantiation. Checked once at the end of a check run — the
-/// recorders enforce it pairwise, this states it over the whole file, which is
-/// what makes it an invariant rather than two local habits.
-export fn CheckOut @assert_disjoint() -> () {
-    for i in 0..@callees.len() {
-        if @callees[i].target_row >= 0 && @substs[i].arg_off >= 0 {
-            ice("sem: channel tables overlap — a node is both a call and an instantiation")
-        }
-    }
-}
+// `assert_disjoint` lived here until 2026-08-18 and is gone with its reason.
+// It walked the whole file checking that no node sat in both `callees` and
+// `substs`; those two are now ONE sum, so the state it looked for cannot be
+// built. An invariant that the type system holds needs no walk.
