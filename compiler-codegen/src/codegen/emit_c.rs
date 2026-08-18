@@ -39914,6 +39914,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //
         // Если fn НЕ variadic, но args содержит `Spread` — compile error.
         let variadic_arity: Option<usize> = self.debt_lookup_variadic_arity(func);
+        // №726: подавление относится к решению ОДНОГО вызова, и снимается сразу
+        // после того, как решение принято.
+        //
+        // Флаг поднимается ниже перед рекурсией в `emit_call` с уже собранными
+        // аргументами — иначе тот же вызов перемаршрутизировался бы снова, без
+        // конца. Но оставаясь поднятым на всю эмиссию, он доставался и
+        // АРГУМЕНТАМ: вложенный `Vec[int].of(1,2,3)` внутри аргументов внешнего
+        // `.of` не упаковывался и уходил в Си тремя голыми аргументами при
+        // сигнатуре с одним. Пользователь при этом видел не диагностику Nova, а
+        // ошибку clang с внутренними именами.
+        let variadic_suppressed =
+            std::mem::replace(&mut self.suppress_variadic_routing, false);
         if let Some(regular_arity) = variadic_arity {
             // Гард: больше regular args чем у fn — undefined behavior.
             // (variadic-args начинаются с regular_arity-индекса.)
@@ -39950,7 +39962,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return result;
         }
         // Non-variadic call: spread args не разрешены.
-        if !self.suppress_variadic_routing {
+        // Смотрим на СОХРАНЁННОЕ значение (№726): запрет относится к этому же
+        // вызову, а не к вложенным, у которых своя собственная маршрутизация.
+        if !variadic_suppressed {
             for a in args {
                 if a.is_spread() {
                     return Err(format!(
