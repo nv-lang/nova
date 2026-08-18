@@ -1554,7 +1554,7 @@ fn cmd_check_explain_cache(
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
+                if !should_skip_path_full(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -1659,7 +1659,7 @@ fn cmd_check_telemetry_cache(
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
+                if !should_skip_path_full(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -2067,7 +2067,7 @@ fn cmd_check(
             nova_codegen::test_runner::walk_nv_for_check(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                match classify_skip_path(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
+                match classify_skip_path(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     None => files.push(f),
                     Some(SkipReason::UserPattern) => skipped_user += 1,
                     Some(SkipReason::AutogenStub) => skipped_autogen += 1,
@@ -2726,7 +2726,7 @@ fn cmd_lint(
                 if is_lint_fixture {
                     continue;
                 }
-                if !should_skip_path_full(&f, include_runtime, skip, std_runtime_dir.as_deref()) {
+                if !should_skip_path_full(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
                 }
             }
@@ -2895,6 +2895,7 @@ enum SkipReason {
 /// кодом один раз (не пересчитывается на каждый файл).
 fn classify_skip_path(
     p: &Path,
+    root: Option<&Path>,
     include_runtime: bool,
     skip: &[String],
     std_runtime_dir: Option<&Path>,
@@ -2925,9 +2926,27 @@ fn classify_skip_path(
             }
         }
     }
-    // Skip if any component starts with `_` or `.`, or is target/node_modules/vendor.
-    for comp in p.components() {
-        if let Some(name) = comp.as_os_str().to_str() {
+    // Служебные каталоги — `_`/`.`-префикс, target/node_modules/vendor.
+    //
+    // СУДИТСЯ ТОЛЬКО ТО, ЧТО ВНУТРИ ЗАПРОШЕННОГО ДЕРЕВА, и это не мелочь
+    // оформления. Раньше правило шло по ВСЕМ компонентам полного пути, и
+    // `nova check .` не проверял НИЧЕГО: первый компонент — `.`, значит каждый
+    // найденный файл объявлялся служебным, обход оставался пустым, команда
+    // печатала «no .nv files to check» и возвращала НОЛЬ. Зелёный свет на
+    // проекте, который не компилируется, — худший вид отказа: он неотличим от
+    // успеха. Замер на одной рабочей области с одной намеренной ошибкой типа:
+    // `.` → 0/ничего, `./src` → 0/ничего, `src` → 1/ошибка найдена,
+    // абсолютный путь → 1/ошибка найдена.
+    //
+    // По той же причине не судятся ПРЕДКИ корня: проект, лежащий в
+    // `~/.config/proj`, — обычный проект, а не служебный каталог.
+    //
+    // `Component::Normal` обязателен: `.` и `..` — это способ записи пути, а не
+    // имена каталогов, и «начинается с точки» к ним неприменимо.
+    let rel = root.and_then(|r| p.strip_prefix(r).ok()).unwrap_or(p);
+    for comp in rel.components() {
+        let std::path::Component::Normal(os) = comp else { continue };
+        if let Some(name) = os.to_str() {
             if name.starts_with('_') || name.starts_with('.') {
                 return Some(SkipReason::Housekeeping);
             }
@@ -2946,17 +2965,18 @@ fn classify_skip_path(
 /// кодом один раз (не пересчитывается на каждый файл).
 fn should_skip_path_full(
     p: &Path,
+    root: Option<&Path>,
     include_runtime: bool,
     skip: &[String],
     std_runtime_dir: Option<&Path>,
 ) -> bool {
-    classify_skip_path(p, include_runtime, skip, std_runtime_dir).is_some()
+    classify_skip_path(p, root, include_runtime, skip, std_runtime_dir).is_some()
 }
 
 /// Backward-compat shim (default flags — no override).
 #[allow(dead_code)]
 fn should_skip_path(p: &Path) -> bool {
-    should_skip_path_full(p, false, &[], std_runtime_dir_hint().as_deref())
+    should_skip_path_full(p, None, false, &[], std_runtime_dir_hint().as_deref())
 }
 
 fn num_cpus() -> usize {
