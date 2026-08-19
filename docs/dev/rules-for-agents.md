@@ -143,7 +143,7 @@
   любой фикстуре (инвариант 11); `check-novac-grammar-fixture-coverage.sh` —
   грамматическая форма без фикстуры; `check-novac-arch-invariants.py` — раздел
   карты архитектуры без счётчика инвариантов (274.1 §2б);
-  `check-novac-arch-class-proofs.sh` — класс задачи без названной двери.
+  `check-novac-arch-class-proofs.py` — класс задачи без названной двери.
   `check-novac-no-naked-panic.py` — голый `panic(` вне двери `ice()` (П12:
   явный инвариант рендерит `E_NOVAC_ICE` по схеме и лишь затем умирает по
   правилу языка).

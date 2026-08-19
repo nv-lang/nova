@@ -1,17 +1,17 @@
 #!/bin/sh
-# Самотест check-novac-conventions-coverage.sh (П16: обязан доказать, что ловит).
+# Самотест check-novac-conventions-coverage.py (П16: обязан доказать, что ловит).
 # Шов $2 — путь к файлу конвенций; каждый случай это свой крошечный файл.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-conventions-coverage.sh"
+G="$GD/check-novac-conventions-coverage.py"
 T="${TMPDIR:-/tmp}/novac-conv-cov-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
 # --- 1. у обоих правил назван страж — зелёный ----------------------------
 cat > "$T/c1.md" <<'EOF'
@@ -114,7 +114,7 @@ run "$T/absent.md"
 grep -q "судить нечего" "$T/out" && ok "нет файла — судить нечего" || bad "ждали «судить нечего»"
 
 # --- 8. настоящий файл конвенций ----------------------------------------
-sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящие конвенции — зелёные" || bad "настоящий файл покраснел: $(sh "$G" "$ROOT" 2>&1 | head -3)"
+python "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящие конвенции — зелёные" || bad "настоящий файл покраснел: $(python "$G" "$ROOT" 2>&1 | head -3)"
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then

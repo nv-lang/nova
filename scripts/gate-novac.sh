@@ -252,12 +252,12 @@ par_run() {
 # процессом (run-guards.py), а shell-овые параллельно.
 step "novac-text (карта, маркеры, леджер, рёбра — до рубежа F1, бинарь не нужен)"
 par_reset
-par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
+par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.py" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
 par_add "$ROOT/scripts/guards/check-novac-arch-invariants.py" "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
 par_add "$ROOT/scripts/guards/check-novac-no-naked-panic.py" "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
-par_add "$ROOT/scripts/guards/check-novac-plan-liveline.sh" "живая строка плана отстала от кода"
+par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
 par_add "$ROOT/scripts/guards/check-novac-time-ledger.py" "коммит в novac/** без строки в леджере времени (274 §1.4)"
 par_add "$ROOT/scripts/guards/check-novac-deps.py" "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
 par_run
@@ -333,7 +333,7 @@ par_add "$ROOT/scripts/guards/check-novac-one-door-export.py" "одна опер
 par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 без «что течёт» (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-temp-edges.py" "временное ребро без срока или истекло (274.1 §2в)"
-par_add "$ROOT/scripts/guards/check-novac-module-donor.sh" "модуль novac без донора-указателя в заголовке (П27)"
+par_add "$ROOT/scripts/guards/check-novac-module-donor.py" "модуль novac без донора-указателя в заголовке (П27)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
@@ -347,7 +347,7 @@ par_add "$ROOT/scripts/guards/check-novac-table-is-match.py" "таблица н�
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагностика ссылается на незнание грамматики (§9.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
-par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "правило конвенции без названного механизма"
+par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.py" "правило конвенции без названного механизма"
 par_run
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
