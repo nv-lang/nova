@@ -60,7 +60,7 @@ grep -c "✅" $W/docs/plans/274.3-review-findings-classes.md                    
   единственная дверь C-имён, держится диффом с оракулом (`check-novac-mangle-fixed-point.sh`).
 - **builtins** — лист-модуль, единственное место строковых имён языка (universe
   примитивы с ABI-именами, `ENTRY_FN`/`PRINT_FN`, `[LEGACY-SUBSET Э2-б]` str-метод-таблица);
-  страж `check-novac-no-name-hardcode.sh`. Инстансы дженериков и C-имена неприм. типов там
+  страж `check-novac-no-name-hardcode.py`. Инстансы дженериков и C-имена неприм. типов там
   ЗАПРЕЩЕНЫ (вердикт владельца).
 - **emit_c** — только C-рендер по формам оракула (записи — GC-указатели, суммы —
   tag+union+maker, match — if-цепочка). Оболочка `shell.tpl.c` генерится **машиной** из

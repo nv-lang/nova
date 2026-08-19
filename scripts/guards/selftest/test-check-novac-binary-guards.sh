@@ -36,12 +36,12 @@ exit 0
 EOF
 mkbin onediag.exe <<'EOF'
 #!/bin/sh
-printf '%s\n' '[{"id":"D1","code":"E_TEST","severity":"error","primary":{"file":"f.nv","line":1,"col":1},"message":"one error, one cause"}]'
+printf '%s\n' '[{"id":"D1","code":"E_TEST","severity":"error","primary":{"file":"f.nv","start":0,"end":1},"message":"one error, one cause"}]'
 exit 1
 EOF
 mkbin cascade.exe <<'EOF'
 #!/bin/sh
-printf '%s\n' '[{"id":"D1","code":"E_A","severity":"error","primary":{"file":"f.nv","line":1,"col":1},"message":"first"},{"id":"D2","code":"E_B","severity":"error","primary":{"file":"f.nv","line":2,"col":1},"message":"cascade echo"}]'
+printf '%s\n' '[{"id":"D1","code":"E_A","severity":"error","primary":{"file":"f.nv","start":0,"end":1},"message":"first"},{"id":"D2","code":"E_B","severity":"error","primary":{"file":"f.nv","start":2,"end":3},"message":"cascade echo"}]'
 exit 1
 EOF
 mkbin badschema.exe <<'EOF'

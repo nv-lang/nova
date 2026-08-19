@@ -6,7 +6,7 @@
 // Role: the lattice. The walk decides WHERE to look; this file answers WHAT a
 // node's type is.
 // Used by: check/typing.nv (every record into the channel goes through it).
-// Guarded by: check-novac-resolve-discipline.sh (no linear name resolution,
+// Guarded by: check-novac-resolve-discipline.py (no linear name resolution,
 // no silent int default), check-novac-file-size.py.
 //
 // Split out of typing.nv on 2026-08-17 when that file crossed the

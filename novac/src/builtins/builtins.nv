@@ -3,13 +3,13 @@
 // Role: the universe — the ONE table of pre-declared names and primitive ABI facts the compiler reads (П5).
 // Used by: sem seeds the registry from it, mangle asks prim_c_name (E1+); grows only when the language's universe
 // grows.
-// Guarded by: check-novac-no-name-hardcode.sh (std names only here), check-novac-no-prelude-shadow.py,
+// Guarded by: check-novac-no-name-hardcode.py (std names only here), check-novac-no-prelude-shadow.py,
 // check-novac-mangle-fixed-point.sh (prim_c_name matches nova_rt.h).
 // pre-declared names lives in ONE table the compiler reads, never a scattering
 // of string literals (П5); NOT taken: rustc's symbol interning (names here are
 // four).
 // novac/src/builtins — THE ONE FILE where names of the language may appear as
-// string literals (convention P5, guard check-novac-no-name-hardcode.sh; owner
+// string literals (convention P5, guard check-novac-no-name-hardcode.py; owner
 // 2026-08-15). What is legitimate here, by the reference compilers (rustc
 // `sym`/LangItem, Go `types.Universe`, Zig builtins): (a) the universe —
 // primitive types with their runtime ABI spelling; (b) language entry

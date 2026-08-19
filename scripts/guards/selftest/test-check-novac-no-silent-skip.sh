@@ -1,16 +1,16 @@
 #!/bin/sh
-# Самотест check-novac-no-silent-skip.sh (П16). Шов $2 — сканируемая директория.
+# Самотест check-novac-no-silent-skip.py (П16). Шов $2 — сканируемая директория.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-no-silent-skip.sh"
+G="$GD/check-novac-no-silent-skip.py"
 T="${TMPDIR:-/tmp}/novac-silent-skip-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 mk()  { d="$T/$1"; mkdir -p "$d"; shift; printf '%s\n' "$@" > "$d/check.nv"; echo "$d"; }
 
 # --- ГЛАВНЫЙ случай: ветка ушла молча -------------------------------------

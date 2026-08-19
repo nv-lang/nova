@@ -7,7 +7,7 @@
 // chains (always null today).
 // Role: the §7 diagnostic schema and its JSON door; the ice() door for compiler invariants (П12/П20).
 // Used by: check writes, main prints (E1+); the diag-schema guard; the LSP at E3 maps the same records to protocol.
-// Guarded by: check-novac-diag-schema.sh (§7 fields, one JSON per line), check-novac-ice-messages.sh (every ice text
+// Guarded by: check-novac-diag-schema.sh (§7 fields, one JSON per line), check-novac-ice-messages.py (every ice text
 // unique and module-prefixed), check-novac-no-naked-panic.sh (panic only through ice).
 // a severity, one primary span, a message; JSON one per line as rustc
 // `--error-format=json`; NOT taken: suggestions and children (a later wave).

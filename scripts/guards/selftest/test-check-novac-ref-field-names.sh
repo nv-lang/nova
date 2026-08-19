@@ -1,19 +1,19 @@
 #!/bin/sh
-# Самотест check-novac-ref-field-names.sh (П16: обязан доказать, что ловит).
+# Самотест check-novac-ref-field-names.py (П16: обязан доказать, что ловит).
 #
 # ПОДЛОЖКА. Шов $2 — override сканируемой директории: каждый случай это своя
 # крошечная .nv-запись во временной папке, настоящий sem не нужен.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-ref-field-names.sh"
+G="$GD/check-novac-ref-field-names.py"
 T="${TMPDIR:-/tmp}/novac-ref-names-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 mk()  { d="$T/$1"; mkdir -p "$d"; cat > "$d/sem.nv"; }
 
 # --- 1. все суффиксы на месте — зелёный -----------------------------------
@@ -105,7 +105,7 @@ run "$T/absent"
 grep -q "судить нечего" "$T/out" && ok "нет директории — судить нечего" || bad "ждали «судить нечего»"
 
 # --- 8. настоящее дерево --------------------------------------------------
-sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src/sem — зелёный" || bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
+python "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src/sem — зелёный" || bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -3)"
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then

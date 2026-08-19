@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самотест check-novac-resolve-discipline.sh — два антипаттерна резолва
+# Самотест check-novac-resolve-discipline.py — два антипаттерна резолва
 # (правила владельца 2026-08-14; класс №652 «тихий int-дефолт»). Норма
 # самотестов — план 231 §4в: ловит нарушение И не даёт ложняка.
 #
@@ -15,7 +15,7 @@
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-resolve-discipline.sh"
+G="$ROOT/scripts/guards/check-novac-resolve-discipline.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -25,7 +25,7 @@ has()  { if grep -q "$2" "$1"; then ok "$3"; else bad "$3 (нет '$2' в $1: $(
 
 SRC="$TMP/src"
 mkdir -p "$SRC/names" "$SRC/sem"
-run() { sh "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
+run() { python "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
 
 # Дверь имён: линейный скан здесь — законное внутреннее устройство таблицы.
 cat > "$SRC/names/table.nv" <<'EOF'
@@ -54,7 +54,7 @@ EOF
 }
 
 echo "== законное — проходит =="
-sh "$G" "$ROOT" "$TMP/absent" > "$TMP/out" 2>&1
+python "$G" "$ROOT" "$TMP/absent" > "$TMP/out" 2>&1
 check "сканируемой директории нет — зелёный" "$?" "0"
 has "$TMP/out" 'ok: судить нечего' "«судить нечего» напечатано (№645)"
 
@@ -66,7 +66,7 @@ echo "== правило 1: линейный резолв по имени =="
 clean_sem
 printf 'fn find_decl(d: Decls, name: str) -> DeclId {\n    for x in d.items { if x.text == name { return x.id } }\n    return -1\n}\n' >> "$SRC/sem/check.nv"
 check "тот же скан ВНЕ names/ — красный" "$(run)" "1"
-has "$TMP/err" 'линейный резолв по имени' "правило 1 названо"
+has "$TMP/err" 'линейный резолв' "правило 1 названо"
 has "$TMP/err" 'check.nv' "файл-нарушитель назван"
 
 clean_sem
@@ -82,7 +82,7 @@ has "$TMP/err" 'тихий int' "правило 2 названо"
 clean_sem
 printf 'fn ty2(e: Expr) -> TypeId {\n    if e.is_str_lit() { return T_STR }\n    T_INT\n}\n' >> "$SRC/sem/check.nv"
 check "голый хвост T_INT — красный" "$(run)" "1"
-has "$TMP/err" 'хвост-дефолт int' "хвост-дефолт назван"
+has "$TMP/err" 'хвост-дефолт' "хвост-дефолт назван"
 
 clean_sem
 printf 'fn cname(e: Expr) -> str {\n    if e.is_str_lit() { return "nova_str" }\n    "nova_int"\n}\n' >> "$SRC/sem/check.nv"
@@ -99,7 +99,7 @@ printf 'fn find2(t: NameTable, name: str) -> int {\n    for s in t.slots { if s.
 check "второй скан ВНУТРИ names/ — зелёный (это и есть дверь)" "$(run)" "0"
 
 echo "== настоящее дерево =="
-sh "$G" "$ROOT" >/dev/null 2>&1
+python "$G" "$ROOT" >/dev/null 2>&1
 check "novac/src проекта чист" "$?" "0"
 
 echo "итог: $PASS ok, $FAIL FAIL"

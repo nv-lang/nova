@@ -8,7 +8,7 @@
 // Used by: parse.nv (statements and signatures ask for an expression),
 //   decls.nv indirectly through the block reader.
 // Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh,
-//   check-novac-doc-language.sh.
+//   check-novac-doc-language.py.
 //
 // Split out of parse.nv on 2026-08-18, when the expression batch of S9.4a
 // pushed that file past a thousand lines for the second time in two days.

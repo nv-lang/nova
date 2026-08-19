@@ -9,7 +9,7 @@
 //   decides what the subset compiles.
 // Used by: check.nv -- its walk calls these and nothing else does.
 // Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh,
-//   check-novac-no-grammar-excuse.sh (the texts), check-novac-doc-language.sh.
+//   check-novac-no-grammar-excuse.py (the texts), check-novac-doc-language.py.
 //
 // Split out of check.nv on 2026-08-18, when the expression batch and the
 // K-C wave together pushed that file past a thousand lines.
@@ -707,7 +707,7 @@ fn Checker mut @report_if_error_token(t Token) -> () {
 /// Every FORM of the language is parsed since S9.4a, so this is no longer
 /// a way of saying "the subset does not go that far" -- it says the text is
 /// not Nova. Whatever the subset declines, it declines BY NAME somewhere
-/// else, and `check-novac-no-grammar-excuse.sh` keeps that true.
+/// else, and `check-novac-no-grammar-excuse.py` keeps that true.
 const SYNTAX_MSG = "syntax error: this is not a form of the language"
 
 /// An Err branch is ONE recovered mistake: one diagnostic at its first leaf.

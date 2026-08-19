@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самотест check-novac-doc-language.sh — дока, комментарии и строковые
+# Самотест check-novac-doc-language.py — дока, комментарии и строковые
 # литералы novac по-английски (конвенция П13, план 274; норма самотестов —
 # план 231 §4в: ловит нарушение И не даёт ложняка).
 #
@@ -26,7 +26,7 @@
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-doc-language.sh"
+G="$ROOT/scripts/guards/check-novac-doc-language.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -36,7 +36,7 @@ has()  { if grep -q "$2" "$1"; then ok "$3"; else bad "$3 (нет '$2' в $1: $(
 
 SRC="$TMP/src"
 mkdir -p "$SRC/sem" "$SRC/check"
-run() { sh "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
+run() { python "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
 
 # Чистая подложка: английская дока, английские литералы. Переписывается
 # заново перед каждым случаем, чтобы случаи не заражали друг друга.
@@ -58,7 +58,7 @@ EOF
 }
 
 echo "== законное — проходит =="
-sh "$G" "$ROOT" "$TMP/absent" > "$TMP/out" 2>&1
+python "$G" "$ROOT" "$TMP/absent" > "$TMP/out" 2>&1
 check "сканируемой директории нет — зелёный" "$?" "0"
 has "$TMP/out" 'ok: судить нечего' "«судить нечего» напечатано"
 
@@ -168,7 +168,7 @@ check "законная ссылка + русский в той же строк�
 has "$TMP/err" 'sem/mix.nv:2' "смешанная строка названа"
 
 echo "== настоящее дерево =="
-sh "$G" "$ROOT" > "$TMP/out" 2> "$TMP/err"
+python "$G" "$ROOT" > "$TMP/out" 2> "$TMP/err"
 check "novac/src проекта — зелёный (он уже переведён)" "$?" "0"
 has "$TMP/out" 'check-novac-doc-language ok' "зелёная строка формата <имя> ok:"
 

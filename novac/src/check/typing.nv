@@ -11,7 +11,7 @@
 // Role: layer 7's writing half — the pass that types a clean file and publishes the channel.
 // Used by: check (the subset walk calls it once the verdict is clean); nothing else may call it — the channel is the
 // interface.
-// Guarded by: check-novac-no-silent-skip.sh (no branch decides nothing), check-novac-channel-one-writer.sh (only this
+// Guarded by: check-novac-no-silent-skip.py (no branch decides nothing), check-novac-channel-one-writer.py (only this
 // module writes the channel), check-novac-match-exhaustive.py (every sum answered), check-novac-file-size.py (this file
 // exists because check.nv crossed 1000 lines).
 // novac/src/check/typing.nv — the typing walk and the lattice it uses.

@@ -38,9 +38,13 @@ fi
 mkdir -p "$T/tree/novac/src"
 printf 'built: ok
 ' > "$T/tree/build.log"
-sleep 1
 printf 'module m
 ' > "$T/tree/novac/src/main.nv"
+# Возраст лога задаётся ЯВНО, а не сном. `sleep 1` давал обоим файлам ОДНУ
+# секунду в двух прогонах из пяти (замер 2026-08-19): find -newer не находил
+# ничего, страж судил чистый лог и давал зелёный — случай, доказывающий
+# красноту, сам зеленел через раз.
+touch -t 202001010000 "$T/tree/build.log"
 if sh "$G" "$T/tree" "$T/tree/build.log" >/dev/null 2>&1; then
     echo "  FAIL: протухший лог принят за свежий" >&2; fails=$((fails+1))
 else

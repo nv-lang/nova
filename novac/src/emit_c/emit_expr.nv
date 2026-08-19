@@ -7,7 +7,7 @@
 //   expression walk itself, and the call-as-statement door.
 // Used by: emit_c.nv (statements and bindings ask for an expression).
 // Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh,
-//   check-novac-emission-size.sh, check-novac-doc-language.sh.
+//   check-novac-emission-size.sh, check-novac-doc-language.py.
 //
 // Split out of emit_c.nv on 2026-08-18: writing the `else` branch pushed
 // that file past a thousand lines.

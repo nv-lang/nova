@@ -1,17 +1,17 @@
 #!/bin/sh
-# Самотест check-novac-ice-messages.sh (П16: обязан доказать, что ловит).
+# Самотест check-novac-ice-messages.py (П16: обязан доказать, что ловит).
 # Подложка через шов $2 — крошечные .nv во временной папке.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-ice-messages.sh"
+G="$GD/check-novac-ice-messages.py"
 T="${TMPDIR:-/tmp}/novac-ice-msgs-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
 # --- 1. уникальные и с префиксом — зелёный --------------------------------
 mkdir -p "$T/g1/sem" "$T/g1/diag"
@@ -68,7 +68,7 @@ run "$T/g7"
 grep -q "судить нечего" "$T/out" && ok "нет вызовов ice — судить нечего" || bad "ждали «судить нечего» [$(cat "$T/out")]"
 
 # --- 8. настоящее дерево --------------------------------------------------
-sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
+python "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -3)"
 
 # --- условный ice обязан быть assert (2026-08-16) -------------------------
 mkdir -p "$T/cond/sem"

@@ -1,16 +1,16 @@
 #!/bin/sh
-# Самотест check-novac-pch.sh (П16). Шов $2 — сканируемая директория инструментов.
+# Самотест check-novac-pch.py (П16). Шов $2 — сканируемая директория инструментов.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-pch.sh"
+G="$GD/check-novac-pch.py"
 T="${TMPDIR:-/tmp}/novac-pch-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
 mk() {
     d="$T/$1"; mkdir -p "$d/tools"; shift

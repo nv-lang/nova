@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самотест check-novac-no-name-hardcode.sh — запрет хардкода имён Nova/std в
+# Самотест check-novac-no-name-hardcode.py — запрет хардкода имён Nova/std в
 # компиляторе (конвенция П5, план 274; норма самотестов — план 231 §4в:
 # ловит нарушение И не даёт ложняка).
 #
@@ -16,7 +16,7 @@
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-no-name-hardcode.sh"
+G="$ROOT/scripts/guards/check-novac-no-name-hardcode.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -26,7 +26,7 @@ has()  { if grep -q "$2" "$1"; then ok "$3"; else bad "$3 (нет '$2' в $1: $(
 
 SRC="$TMP/src"
 mkdir -p "$SRC/builtins" "$SRC/sem" "$SRC/lex"
-run() { sh "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
+run() { python "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
 
 # Единственный законный дом имён: реестр остатка П5.
 cat > "$SRC/builtins/builtins.nv" <<'EOF'
@@ -60,7 +60,7 @@ EOF
 }
 
 echo "== законное — проходит =="
-sh "$G" "$ROOT" "$TMP/absent" > "$TMP/out" 2>&1
+python "$G" "$ROOT" "$TMP/absent" > "$TMP/out" 2>&1
 check "сканируемой директории нет — зелёный" "$?" "0"
 has "$TMP/out" 'ok: судить нечего' "«судить нечего» напечатано (№645)"
 
@@ -97,14 +97,14 @@ check "второе имя из реестра — тоже красный" "$(r
 echo "== прелюдия языка — без builtins.nv =="
 SRC2="$TMP/src2"; mkdir -p "$SRC2/sem"
 printf '/// Clean.\nfn f() -> int {\n    return 1\n}\n' > "$SRC2/sem/a.nv"
-sh "$G" "$ROOT" "$SRC2" > "$TMP/out" 2> "$TMP/err"
+python "$G" "$ROOT" "$SRC2" > "$TMP/out" 2> "$TMP/err"
 check "дерево без builtins.nv и без имён — зелёный" "$?" "0"
 printf 'fn g() -> str {\n    return "Option"\n}\n' >> "$SRC2/sem/a.nv"
-sh "$G" "$ROOT" "$SRC2" > "$TMP/out" 2> "$TMP/err"
+python "$G" "$ROOT" "$SRC2" > "$TMP/out" 2> "$TMP/err"
 check "имя ПРЕЛЮДИИ («Option») без всякого builtins.nv — красный" "$?" "1"
 
 echo "== настоящее дерево =="
-sh "$G" "$ROOT" >/dev/null 2>&1
+python "$G" "$ROOT" >/dev/null 2>&1
 check "novac/src проекта чист" "$?" "0"
 
 echo "итог: $PASS ok, $FAIL FAIL"
