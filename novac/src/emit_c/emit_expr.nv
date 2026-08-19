@@ -212,7 +212,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The ROW the checker decided on, not a name rebuilt from the receiver's
         // type: after the checker, nobody infers.
         ro cr = @out.callee_of(e.id_of())
-        @body.append(c_callable(@ctx, cr.target_row, no_args()))
+        @body.append(c_callable(@ctx, cr.target_row, no_subst()))
         @body.append("(")
         @emit_expr(kids[0])
         mut i = 0
@@ -235,7 +235,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ro vrow = def_payload
             @body.append("${c_maker(@ctx, vrow)}(")
         } else if def_kind == DefKind.DefFn {
-            @body.append("${c_callable(@ctx, def_payload, no_args())}(")
+            @body.append("${c_callable(@ctx, def_payload, no_subst())}(")
         } else {
             ice("emit_c: call target is neither a variant nor a fn")
         }
@@ -289,8 +289,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // asked at the same door. The right side's type is not read here:
             // `equal` takes its own type, so the position is left unknown.
             match @ctx.fns.lookup(EQUAL_METHOD, equal_key(lhs_t)) {
-                FnFound(row) => @body.append(c_callable(@ctx, row, no_args()))
-                FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_args()))
+                FnFound(row) => @body.append(c_callable(@ctx, row, no_subst()))
+                FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_subst()))
                 FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")
             }
             @body.append("(")

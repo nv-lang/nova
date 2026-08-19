@@ -118,7 +118,7 @@ const ENTRY_C_NAME = "nova_fn_main_impl"
 ///
 /// `args` carries the instance key on top (E2-b2): two instantiations of one
 /// generic callable differ in the same name, after the parameters.
-export fn c_callable(ctx Ctx, row int, args []int) -> str
+export fn c_callable(ctx Ctx, row int, subst []int) -> str
     requires row >= 0 && row < ctx.fns.rows.len(), "mangle: callable row outside the registry"
 {
     ro fd = ctx.fns.rows[row]
@@ -158,7 +158,10 @@ export fn c_callable(ctx Ctx, row int, args []int) -> str
         // No declared return: check refuses this everywhere but `main`,
         // and `main` never reaches here.
     }
-    for a in args {
+    // ONLY a generic call has these: `subst` is the substitution of the
+    // declaration's type parameters, empty for every ordinary callable.
+    // They are what makes `id[int]` and `id[str]` two C functions.
+    for a in subst {
         s = "${s}__inst_${type_tag(ctx, a)}"
     }
     s

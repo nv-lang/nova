@@ -89,7 +89,7 @@ type Emitter consume {
 /// so the day substitutions arrive there is one place to stop passing it.
 /// A fn and not a `const`: a vector is allocated, and an allocation is not a
 /// constant expression (E_CONST_NOT_CONSTEXPR -- the oracle is right).
-fn no_args() -> []int => []int.new()
+fn no_subst() -> []int => []int.new()
 
 /// Finish the emission: the literal pool AND the accumulated code, together.
 /// Named `into_*` because it is a consume conversion into a different type
@@ -332,11 +332,11 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro ret = @ctx.fns.rows[fn_row].ret_id // -1 for main only; check refuses it elsewhere
     mut has_expr_body = false
     if name == ENTRY_FN {
-        @body.append("static nova_unit ${c_callable(@ctx, fn_row, no_args())}(void) {\n")
+        @body.append("static nova_unit ${c_callable(@ctx, fn_row, no_subst())}(void) {\n")
     } else {
         @body.append("static ")
         @body.append(c_type(@ctx, ret))
-        @body.append(" ${c_callable(@ctx, fn_row, no_args())}(")
+        @body.append(" ${c_callable(@ctx, fn_row, no_subst())}(")
         mut first = true
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
