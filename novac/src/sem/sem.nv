@@ -99,8 +99,11 @@ export type DefTable {
 export fn DefTable.new() -> DefTable =>
     { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new() }
 
-/// Register one name; collisions across kinds are check's ground (later
-/// wave) — last put wins for now, recorded honestly.
+/// Register one name. LAST PUT WINS, and that is the rule rather than a
+/// shortcut: `collect_types` gives the id to the FIRST declaration that owns
+/// it, so a later duplicate resolves to the same id and pushes no second row.
+/// Judging the duplicate is CHECK's ground — sem builds the picture and does
+/// not refuse; two truths for one name is what this shape prevents.
 export fn DefTable mut @add(name str, kind DefKind, payload int) -> () {
     @names.put(name, @rows.len())
     @rows.push(Def { kind, payload })

@@ -348,8 +348,9 @@ fn Cursor mut @atom() -> Node {
     }
     if @peek() == TokenKind.LBrace && !@no_ctor {
         // Anonymous constructor `{ ...p, y: 10.0 }` — the record type comes
-        // from the spread's expression (type inference is the emitter's
-        // tiny lattice for now).
+        // from the spread's EXPRESSION. The parser does not name it: naming a
+        // type is the registry's answer, and the spread already carries the
+        // one expression that has it.
         mut kids = []Node.of(@take())
         @ctor_fields(kids)
         return @node(NodeKind.RecordCtor, kids)

@@ -129,10 +129,23 @@ export fn c_callable(ctx Ctx, row int, subst []int) -> str
         // point is the one whose symbol the RUNTIME dictates.
     }
     if fd.foreign {
-        // A symbol we did NOT choose: the oracle emits it, and reproducing it
-        // byte for byte is the ABI. Its scheme is written from the first
-        // parameter's type -- and that is the ORACLE's business, not a receiver
-        // path of ours: here the first parameter is read as a parameter.
+        // An EXTERNAL declaration: novac was handed this callable's SIGNATURE
+        // and not its body. That is an ordinary, permanent notion of separate
+        // compilation, not a state to grow out of -- every compiler that can be
+        // handed an interface has it.
+        //
+        // The name of an external symbol follows the scheme of whoever PRODUCES
+        // it, and the build says who that is. std's objects are produced by the
+        // existing toolchain today, so its scheme is used here. When novac
+        // compiles std -- which is the goal, and compatibility with the oracle
+        // is NOT (owner, 2026-08-19: "you compile std yourself, we are not and
+        // will not be compatible with it, it has too many bugs") -- those rows
+        // stop being external and the ordinary scheme below applies. Same rule,
+        // different answer; nothing here is temporary.
+        //
+        // The producer's scheme is written from the first parameter's type --
+        // ITS business, not a receiver path of ours: here the first parameter is
+        // read as a parameter.
         assert(fd.param_cnt >= 1, "mangle: a foreign callable with no parameters has no oracle spelling")
         return oracle_symbol(ctx, ctx.fns.params[fd.param_off], fd.name)
     } else {
