@@ -348,6 +348,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагнос�
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
 par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.py" "правило конвенции без названного механизма"
+par_add "$ROOT/scripts/guards/check-novac-gate-budget.py" "механизм бюджета времени гейта выхолощен (П33)"
 par_run
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
@@ -389,6 +390,37 @@ step "novac-registry (реестр стражей: план ↔ файлы ↔ �
 # Реестр стражей сверяет ГЕЙТ с планом, а не компилятор с языком (21с):
 # в цикле «правка → вердикт» он не нужен, перед пушем обязателен.
 if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.py" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
+
+# ── БЮДЖЕТ ЯРУСА (П33): гейт меряет СЕБЯ. ────────────────────────────────
+# Гейт, который идёт девять минут, не гоняют — а правило, которое не гоняют, не
+# правило. Цену возвращают не проверки, а форма: процессы на учёт, старты
+# интерпретатора, пересборка без нужды. Здесь она измерена и сравнена с
+# записанным потолком; предел масштабируется калибровкой машины.
+GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
+BUDGET_FILE="$ROOT/scripts/guards/novac-gate-budget.baseline"
+BUDGET=""
+if [ -f "$BUDGET_FILE" ]; then
+    while read -r _k _v _rest; do
+        [ "$_k" = "$NOVAC_TIER" ] && BUDGET="$_v"
+    done < "$BUDGET_FILE"
+fi
+if [ -n "$BUDGET" ]; then
+    BUDGET_LIMIT=$(( BUDGET * CAL ))
+    if [ "$GATE_ELAPSED" -gt "$BUDGET_LIMIT" ]; then
+        echo "novac-gate: ЯРУС $NOVAC_TIER занял ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с (база $BUDGET x калибровка $CAL)" >&2
+        echo "  Сначала ищи ФОРМУ, а не проверку: процессы на учёт, старт интерпретатора" >&2
+        echo "  на каждого стража, пересборка без нужды — так уже было (558с, 2026-08-19)." >&2
+        echo "  Если работа честно выросла — подними число в $BUDGET_FILE ЗАМЕРОМ и тем же" >&2
+        echo "  слиянием, назвав, чем она выросла." >&2
+        fail "ярус $NOVAC_TIER вышел за бюджет времени (П33)"
+    else
+        echo "novac-gate ok: ярус $NOVAC_TIER — ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с"
+    fi
+else
+    # Молчание тут было бы вечнозелёным: ярус без строки бюджета не судится
+    # вовсе, и об этом надо СКАЗАТЬ, а не промолчать (класс №519).
+    echo "novac-gate: ярус $NOVAC_TIER — ${GATE_ELAPSED}с, строки бюджета для него нет (не судится)"
+fi
 
 # Рубеж ПЕРЕД вердиктом — иначе красный прогон печатает зелёную строку (№690).
 if [ "$GATE_FAIL_N" -gt 0 ]; then
