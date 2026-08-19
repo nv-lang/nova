@@ -21,25 +21,25 @@ fn empty_file() -> Node => branch(0, NodeKind.File, []Node.new())
 
 test "a name with no parameters is the plain form" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("used", ctx.prims.int_id, false, false, []int.new())
+    ctx.fns.add("used", ctx.prims.int_id, false, false, []int.new(), []str.new())
     assert(c_callable(ctx, ctx.fns.rows.len() - 1, []int.new()) == "novac_fn_used__to_nova_int")
 }
 
 test "PARAMETERS are in the name: two overloads cannot collide" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id))
+    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id), []str.new())
     ro by_int = ctx.fns.rows.len() - 1
-    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id))
+    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id), []str.new())
     ro by_str = ctx.fns.rows.len() - 1
     assert(c_callable(ctx, by_int, []int.new()) != c_callable(ctx, by_str, []int.new()))
 }
 
 test "arity is in the name too" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("pair", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id))
+    ctx.fns.add("pair", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id), []str.new())
     ro one = ctx.fns.rows.len() - 1
     ctx.fns.add("pair", ctx.prims.int_id, false, false,
-        []int.of(ctx.prims.int_id, ctx.prims.int_id))
+        []int.of(ctx.prims.int_id, ctx.prims.int_id), []str.new())
     ro two = ctx.fns.rows.len() - 1
     assert(c_callable(ctx, one, []int.new()) != c_callable(ctx, two, []int.new()))
 }
@@ -48,13 +48,13 @@ test "the entry point answers to the RUNTIME, and one place knows it" {
     // No `is_entry` flag threaded through every call site: the row carries the
     // name, and the door decides what that name means (owner, 2026-08-19).
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("main", ctx.prims.int_id, false, false, []int.new())
+    ctx.fns.add("main", ctx.prims.int_id, false, false, []int.new(), []str.new())
     assert(c_callable(ctx, ctx.fns.rows.len() - 1, []int.new()) == "nova_fn_main_impl")
 }
 
 test "instance arguments distinguish two instantiations of one callable" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("hold", ctx.prims.int_id, false, false, []int.new())
+    ctx.fns.add("hold", ctx.prims.int_id, false, false, []int.new(), []str.new())
     ro row = ctx.fns.rows.len() - 1
     ro a = c_callable(ctx, row, []int.of(ctx.prims.int_id))
     ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id))
@@ -68,9 +68,9 @@ test "a FOREIGN row answers in the oracle's namespace, ours does not" {
     // choose. Asserted as a RELATION, because writing the oracle's spelling
     // here would be a second place deciding it (P24).
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("len", ctx.prims.int_id, true, true, []int.of(ctx.prims.str_id))
+    ctx.fns.add("len", ctx.prims.int_id, true, true, []int.of(ctx.prims.str_id), []str.new())
     ro foreign_row = ctx.fns.rows.len() - 1
-    ctx.fns.add("len", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id))
+    ctx.fns.add("len", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id), []str.new())
     ro our_row = ctx.fns.rows.len() - 1
     assert(c_callable(ctx, foreign_row, []int.new()) != c_callable(ctx, our_row, []int.new()))
     assert(c_callable(ctx, our_row, []int.new()) == "novac_fn_len__nova_str__to_nova_int")

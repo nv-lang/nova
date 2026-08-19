@@ -102,6 +102,37 @@ echo "== настоящее дерево =="
 python "$G" "$ROOT" >/dev/null 2>&1
 check "novac/src проекта чист" "$?" "0"
 
+# ── BINDER-OK: связывание — не резолв, но исключение обязано нести причину ──
+# Скан по type-параметрам ОДНОГО объявления ограничен его арностью; правило же
+# говорит о резолве имени в РЕЕСТРЕ. Исключение снимает ровно первое правило и
+# ровно при названной причине — молчаливое исключение было бы дырой.
+clean_sem
+cat >> "$SRC/sem/check.nv" <<'EOF'
+
+fn tparam_index(fd: FnDef, name: str) -> int {
+    for i in 0..fd.tparam_cnt {
+        // BINDER-OK: a type parameter is a binder of THIS declaration, so the
+        // set is bounded by its own arity, not by the registry.
+        if tparams[fd.tparam_off + i] == name { return i }
+    }
+    return -1
+}
+EOF
+check "BINDER-OK с причиной — зелено" "$(run)" "0"
+
+clean_sem
+cat >> "$SRC/sem/check.nv" <<'EOF'
+
+fn tparam_index(fd: FnDef, name: str) -> int {
+    for i in 0..fd.tparam_cnt {
+        // BINDER-OK: short
+        if tparams[fd.tparam_off + i] == name { return i }
+    }
+    return -1
+}
+EOF
+check "BINDER-OK без внятной причины — по-прежнему красно" "$(run)" "1"
+
 echo "итог: $PASS ok, $FAIL FAIL"
 if [ "$FAIL" -eq 0 ]; then
     echo "test-check-novac-resolve-discipline ok: $PASS/$PASS"

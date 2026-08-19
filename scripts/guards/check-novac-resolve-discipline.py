@@ -12,6 +12,13 @@
 Комментарии не судятся: доккомментарий, ЦИТИРУЮЩИЙ запрещённую форму, краснел
 (правка 2026-08-17).
 
+ИСКЛЮЧЕНИЕ С ФОРМОЙ (2026-08-19): строка `// BINDER-OK: <причина>` над местом
+снимает ПЕРВОЕ правило. Связывание — не резолв: скан по type-параметрам ОДНОГО
+объявления ограничен его арностью (одно-три имени), и так же смотрят на них
+rustc и Go, тогда как правило говорит о резолве имени в РЕЕСТРЕ. Причина
+обязательна и не короче четырёх слов: молчаливое исключение — та же дыра, ради
+которой правило и заведено.
+
 ПОЧЕМУ PYTHON: старт процесса дороже самой проверки (П14).
 
 $1 — корень; $2 — override директории (шов самотеста).
@@ -26,6 +33,11 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-novac-resolve-discipline"
 RE_COMMENT = re.compile(r"^[ \t\v\f]*//")
+# Связывание — не резолв. `// BINDER-OK: <причина>` над строкой снимает ПЕРВОЕ
+# правило (и только его): скан по биндерам ОДНОГО объявления ограничен его
+# арностью, тогда как правило говорит о резолве имени в РЕЕСТРЕ. Причина
+# обязательна и не короче четырёх слов: молчаливое исключение — та же дыра.
+RE_BINDER_OK = re.compile(r"//[ \t]*BINDER-OK:[ \t]*(\S+(?:[ \t]+\S+){3,})")
 RE_NAMECMP = re.compile(r"[=!]= (name|fname)([^A-Za-z0-9_]|$)")
 RE_MISS = (re.compile(r"< 0.*return T_INT"), re.compile(r"< 0.*return 0 \}"))
 RE_TAIL = re.compile(r'^[ \t\v\f]*(T_INT|"nova_int")[ \t\v\f]*$')
@@ -52,11 +64,13 @@ def main():
     for f in files:
         rel = str(f.relative_to(src)).replace("\\", "/")
         in_names = rel.startswith("names/") or "/names/" in rel
+        window = []
         for n, line in enumerate(f.read_bytes().decode("utf-8", "replace").split("\n"), 1):
             if line.endswith("\r"):
                 line = line[:-1]
             is_comment = bool(RE_COMMENT.match(line))
-            if not in_names and not is_comment and RE_NAMECMP.search(line):
+            if not in_names and not is_comment and RE_NAMECMP.search(line) \
+                    and not any(RE_BINDER_OK.search(w) for w in window):
                 bad.append(f"  {rel}:{n}:{line} — линейный резолв сравнением имён "
                            f"(дверь — names.NameTable)")
             if any(rx.search(line) for rx in RE_MISS):
@@ -67,6 +81,7 @@ def main():
             if RE_TAILRET.match(line):
                 bad.append(f"  {rel}:{n}:{line} — остаточная ветка решает тип "
                            f"(хвост обязан быть ice)")
+            window = (window + [line])[-3:]
 
     if bad:
         print(f"{NAME}: FAIL — дисциплина резолва нарушена:", file=sys.stderr)

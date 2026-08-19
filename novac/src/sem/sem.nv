@@ -334,6 +334,8 @@ export type FnDef value {
     param_off int /// first parameter of this callable in FnTable.params
     param_cnt int /// how many parameters, INCLUDING the receiver when there is one
     has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
+    tparam_off int /// start of this callable's type parameters in FnTable.tparams
+    tparam_cnt int /// how many type parameters it declares; 0 = not generic
     foreign bool /// the SYMBOL is not ours to choose: read from the oracle's declarations
     next_row int /// next row carrying the SAME name, or -1; see FnTable
 }
@@ -385,6 +387,7 @@ export type FnDef value {
 /// them (owner's review 2026-08-16). Ambiguity is now a property of the
 /// chain, not a flag on a row.
 export type FnTable {
+    tparams []str /// type-parameter NAMES of every callable, grouped by tparam_off/cnt
     rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
     params []int /// parameter type ids of every callable, addressed by FnDef.param_off/param_cnt
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
@@ -392,7 +395,7 @@ export type FnTable {
 
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
-    { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables) }
+    { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables), tparams: []str.new() }
 
 /// Does this row take a call with these argument types?
 ///
@@ -425,20 +428,68 @@ fn FnTable @fits(row int, arg_ids []int) -> bool {
     true
 }
 
+/// Which substitution slot this name binds in this callable, or None when the
+/// name is not one of its type parameters.
+///
+/// A type parameter is a BINDER, and its identity inside the declaration is its
+/// NAME — the same reading `Scope.bind(name, type)` gives a local. The index is
+/// the slot: `fn f[T, U]` binds T to 0 and U to 1, and a call's type arguments
+/// stand in the same order (plan 274 E2-b2: turbofish is mandatory, so the
+/// order is the whole mapping).
+#realtime nogc
+export fn FnTable @tparam_index(row int, name str) -> Option[int] {
+    ro fd = @rows[row]
+    for i in 0..fd.tparam_cnt {
+        // BINDER-OK: a type parameter is a binder of THIS declaration, so the
+        // set is bounded by its own arity, not by the registry.
+        if @tparams[fd.tparam_off + i] == name {
+            return Some(i)
+        } else {
+            // Not this slot; the next one may bind the name.
+        }
+    }
+    None
+}
+
+/// The TYPE PARAMETER names a declaration binds, in source order.
+///
+/// `fn f[T, U](..)` binds T to slot 0 and U to slot 1, and a call's type
+/// arguments stand in the same order — turbofish is mandatory in E2-b2, so the
+/// order IS the whole mapping and nothing has to be inferred.
+///
+/// A `Generics` node holds its brackets and commas as leaves too (the tree is
+/// lossless), so only identifier leaves are names.
+fn tparam_names_of(kids []Node) -> []str {
+    mut out = []str.new()
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        for g in branch_children(c) {
+            if g.kind_of() != NodeKind.LeafNode { continue }
+            if leaf_kind(g) != TokenKind.Ident { continue }
+            out.push(leaf_text(g))
+        }
+    }
+    out
+}
+
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT
 /// dropped: it becomes its own row in the same chain, so the collision stays
 /// describable. Silent choosing between overloads is not allowed anywhere.
 /// `param_ids` carries the receiver FIRST when `has_recv` — the plan 273
 /// order (§4.4 fixes the position, so the caller has no other place to put
 /// it, and no way to name a second one).
-export fn FnTable mut @add(name str, ret_id int, has_recv bool, foreign bool, param_ids []int) -> () {
+export fn FnTable mut @add(name str, ret_id int, has_recv bool, foreign bool, param_ids []int,
+                          tparam_names []str) -> () {
     ro head = @heads.find(name)
     ro off = @params.len()
     // Whole slice at once: std does the copy (nv-coding-style section 18a --
     // a counted push loop is the red flag it names).
     @params.append(param_ids)
     @heads.put(name, @rows.len())
-    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, foreign, next_row: head })
+    ro toff = @tparams.len()
+    @tparams.append(tparam_names)
+    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, foreign,
+                       tparam_off: toff, tparam_cnt: tparam_names.len(), next_row: head })
 }
 
 /// Whether a callable with this name exists at all.
@@ -633,7 +684,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     }
     // Read from the declarations handed to novac: the oracle emits this
     // symbol, and matching it byte for byte IS the ABI.
-    fns.add(mname, ret_t, true, true, param_ids)
+    fns.add(mname, ret_t, true, true, param_ids, tparam_names_of(kids))
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -811,7 +862,7 @@ export fn collect_types(file Node) -> Ctx {
                 // collection is tolerant, and check is the judge.
                 param_ids.push(defs.type_id(leaf_text(pk[1])) ?? UNKNOWN_TYPE)
             }
-            fns.add(fname, ret, false, false, param_ids)
+            fns.add(fname, ret, false, false, param_ids, tparam_names_of(fk))
             ro frow = fns.rows.len() - 1
             defs.add(fname, DefKind.DefFn, frow)
             // The DECLARATION's own row, keyed by its node. Asking `defs` by
