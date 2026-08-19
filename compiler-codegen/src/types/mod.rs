@@ -12261,7 +12261,15 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_expr(e, gs, scope, errors);
                 }
             }
-            ExprKind::With { body, .. } => {
+            // [#710] Handler-литералы живут в `bindings`, а не в `body`.
+            // Без спуска в них тело обработчика, записанного ПРЯМО в
+            // `with`-позиции, не проверяется ВОВСЕ: тот же литерал,
+            // вынесенный в переменную, проверяется через арм `HandlerLit`
+            // ниже. Спуск делает две формы одной.
+            ExprKind::With { bindings, body } => {
+                for b in bindings {
+                    self.f1_expr(&b.handler, gs, scope, errors);
+                }
                 self.f1_block(body, gs, scope, errors)
             }
             ExprKind::Forall { range, body, .. }
@@ -28165,7 +28173,13 @@ impl<'a> BoundCtx<'a> {
             ExprKind::CoalesceReturnFallback(opt) => {
                 if let Some(e) = opt { self.walk_expr(e, scope, errors); }
             }
-            ExprKind::With { body, .. } => self.walk_block(body, scope, errors),
+            // [#710] Спуск в `bindings`: handler-литералы живут там, а не в `body`.
+            ExprKind::With { bindings, body } => {
+                for b in bindings {
+                    self.walk_expr(&b.handler, scope, errors);
+                }
+                self.walk_block(body, scope, errors)
+            }
             // D.1.3: квантор — только в контрактах; обходим range и body.
             ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
                 self.walk_expr(range, scope, errors);
@@ -28176,12 +28190,30 @@ impl<'a> BoundCtx<'a> {
             ExprKind::ProtocolLit { proto_name, methods } => {
                 self.check_protocol_lit(proto_name, methods, e.span, errors);
             }
-            // Литералы / ident'ы / handler-литералы — без рекурсии в bound-проверке.
+            // [#710] Тела методов handler-литерала — ЧАСТЬ bound-проверки, а не
+            // исключение из неё. Стоявший здесь отказ от рекурсии не называл
+            // причины, а цена его измерена контролем: вызов
+            // `HashMap[UserId, int].new()` с типом без `hash()` ВНЕ
+            // обработчика отвергается (`does not satisfy `Hash` bound`), а тот
+            // же вызов внутри тела обработчика проходил молча.
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods {
+                    match &m.body {
+                        HandlerMethodBody::Expr(e) => {
+                            self.walk_expr(e, scope, errors)
+                        }
+                        HandlerMethodBody::Block(b) => {
+                            self.walk_block(b, scope, errors)
+                        }
+                    }
+                }
+            }
+            // Литералы и ident'ы — без рекурсии в bound-проверке.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
             | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
-            | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
-            | ExprKind::HandlerLit { .. } => {}
+            | ExprKind::Ident(_) | ExprKind::Path(_)
+            | ExprKind::SelfAccess => {}
         }
     }
 

@@ -130,7 +130,7 @@ test "D432: LIFO order for two auto-cleanup bindings" {
     with ResourceTrace = effect ResourceTrace {
         on_resource_enter(_label) -> () { return () }
         on_resource_exit(label, _outcome, _duration_ms, _overrun) -> () {
-            order = order + label
+            order = "${order}${label}"
             return ()
         }
     } {

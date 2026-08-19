@@ -232,4 +232,31 @@ no_caveat=35
 #   is the boundary No.731 wrote down on the day it was built, now met in
 #   the wild. What found this row was the DISCIPLINE of running the
 #   carrier first, not a scanner.
-blockers=51
+# 2026-08-19, No.710 -- 51 -> 50. The handler body written in `with`
+#   position was not type-checked AT ALL, and the row is closed by two
+#   fixes, not one.
+#   Root isolated by a ONE-VARIABLE difference: the same handler literal
+#   hoisted into a variable was caught as [E7301] on the same binary,
+#   while inline in `with` position it gave PASS: 1 FAIL: 0. So the
+#   checker always knew HOW to check handler bodies -- the `HandlerLit`
+#   arm existed and worked -- and exactly one descent was missing:
+#   `f1_expr_inner` destructured `With { body, .. }` and dropped
+#   `bindings`.
+#   The SECOND hole was found by not believing my own "closed": the
+#   bound pass has its OWN `With` node and its OWN `HandlerLit` arm,
+#   declared empty with no reason given. Control on the same binary:
+#   `HashMap[UserId, int].new()` with a key lacking `hash()` OUTSIDE a
+#   handler -> `does not satisfy `Hash` bound`; the same call INSIDE the
+#   body -> silence. Descending into `bindings` alone was NOT enough
+#   there: it reaches the literal node, which then returned silently.
+#   The first attempt at that probe was written on a user generic fn with
+#   a bound and its CONTROL came out green -- the probe could not fail and
+#   would have proved nothing (class F1, No.645). The working shape was
+#   taken from a LIVE failure, examples/real_world/orm_demo.nv.
+#   Radius measured BEFORE landing, as the row itself demanded; 83 files
+#   carry handler literals and none is rejected.
+#   NOT closed by this row, stated plainly: the typeref walker still
+#   destructures `With { body, .. }`. Its probe could not fail either --
+#   the control outside a handler was also silent -- so no observable hole
+#   can be named there and no edit is made without a measurement.
+blockers=50
