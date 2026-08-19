@@ -163,4 +163,15 @@ no_caveat=36
 #     №720 — выключатель `NOVA_KILL_720` на том же бинаре: CC-FAIL.
 #   ВСЕ ПЯТЬ проверены тем, что фикстура УМЕЕТ ПАДАТЬ, а не тем, что зелена.
 #   Против повтора поставлен страж `check-fixed-but-open` (№731).
-blockers=57
+# 2026-08-19, No.639 -- 57 -> 56. Both remaining acceptance points met.
+#   (1) The number is NAMED by measurement: the compiler can emit 421
+#       diagnostic codes; 79 appear as a bare literal, 364 in the canonical
+#       bracketed form, 342 ONLY in the canonical one. 211 are named by at
+#       least one neg fixture -- 210 are named by none. The broken pattern
+#       had been guarding 19% of the surface.
+#   (2) The selftest now exercises BOTH spellings, plus the second half of
+#       the same defect (a code already on the base must not be called new).
+#       Controlled: reverting the pattern turns case A3 red at once.
+#   Beyond the acceptance: the number became a standing ratchet --
+#   check-diag-fixture-coverage, baseline 210, selftest 9/9, gate step.
+blockers=56

@@ -110,6 +110,86 @@ if [ "$RC2" -ne 0 ]; then
     FAIL=1
 fi
 
+# --- (A3): новый код в КАНОННОЙ форме `"[E_…] текст"` — красный, называет код.
+#     Это ВТОРАЯ форма записи из реестра №639, и именно она канон: код стоит
+#     внутри сообщения. До 2026-08-13 образец видел только форму (1), и четыре
+#     пятых кодов компилятора проходили гейт без neg-фикстуры (замер
+#     2026-08-19: из 421 кода в канонной форме 364, а в форме литерала — 79).
+#     Без этого случая починка образца держалась бы на слове.
+cat > "$REPO/compiler-codegen/src/foo.rs" <<'EOF'
+fn check() -> Result<(), String> {
+    Err("E_OLD_CODE".to_string())?;
+    Err("E_FOO_BAR".to_string())?;
+    Err("[E_CANON_FORM] the receiver is not consumable here".to_string())
+}
+EOF
+OUT6="$(bash "$GUARD" "$REPO" "$BASE_SHA" 2>&1)"
+RC6=$?
+if [ "$RC6" -eq 0 ]; then
+    echo "SELFTEST FAIL (A3): страж НЕ покраснел на новом коде в канонной форме \"[E_…] …\"" >&2
+    FAIL=1
+fi
+if ! printf '%s' "$OUT6" | grep -q "E_CANON_FORM"; then
+    echo "SELFTEST FAIL (A3): страж не назвал код E_CANON_FORM — образец слеп ко второй форме (№639)" >&2
+    FAIL=1
+fi
+
+# --- (A4): тот же канонный код с neg-фикстурой — зелёный (не ложнит).
+cat > "$REPO/spec_tests/conformance/neg/selftest_canon_neg.nv" <<'EOF'
+// EXPECT_COMPILE_ERROR E_CANON_FORM
+
+module neg.selftest_canon
+
+fn probe() -> int => 1
+EOF
+OUT7="$(bash "$GUARD" "$REPO" "$BASE_SHA" 2>&1)"
+RC7=$?
+if [ "$RC7" -ne 0 ]; then
+    echo "SELFTEST FAIL (A4): страж ЛОЖНИТ на канонном коде, у которого neg-фикстура ЕСТЬ" >&2
+    echo "$OUT7" >&2
+    FAIL=1
+fi
+
+# --- (A5): ВТОРАЯ ПОЛОВИНА ТОГО ЖЕ ДЕФЕКТА (№639) — сверка с базой обязана
+#     понимать код в ТОЙ ЖЕ форме, что и извлечение. Код, УЖЕ существовавший
+#     на diff-base в канонной форме, при правке своей строки не должен
+#     объявляться новым: иначе каждый диф, задевший текст сообщения, требовал
+#     бы фикстуру на давно существующий код, и страж стал бы шумом, который
+#     отключают.
+REPO2="$TMP/repo2"
+mkdir -p "$REPO2/compiler-codegen/src" "$REPO2/spec_tests" "$REPO2/std" "$REPO2/docs/plans"
+cat > "$REPO2/compiler-codegen/src/foo.rs" <<'EOF'
+fn check() -> Result<(), String> {
+    Err("[E_BASE_CANON] the old wording of the message".to_string())
+}
+EOF
+cat > "$REPO2/docs/plans/221.1-bug-sweep.md" <<'EOF'
+# План 221.1 — тестовый реестр
+Легенда: ✅ закрыт · 🟠 открыт
+
+| 1 | категория | `[M-selftest-marker]` — тестовая находка | 🟠 открыт, K3 |
+EOF
+: > "$REPO2/docs/plans/backlog-followups.md"
+(
+    cd "$REPO2" || exit 1
+    git init -q
+    git add -A
+    commit_env commit -q -m base
+)
+BASE_SHA2="$(cd "$REPO2" && git rev-parse HEAD)"
+cat > "$REPO2/compiler-codegen/src/foo.rs" <<'EOF'
+fn check() -> Result<(), String> {
+    Err("[E_BASE_CANON] the message was reworded, the code is the same".to_string())
+}
+EOF
+OUT8="$(bash "$GUARD" "$REPO2" "$BASE_SHA2" 2>&1)"
+RC8=$?
+if [ "$RC8" -ne 0 ] || printf '%s' "$OUT8" | grep -q "E_BASE_CANON"; then
+    echo "SELFTEST FAIL (A5): страж объявил НОВЫМ код, который был на базе в канонной форме — сверка с базой не понимает вторую форму (№639)" >&2
+    echo "$OUT8" >&2
+    FAIL=1
+fi
+
 # =========================================================================
 # Часть C: bonus (registry_backlog_divergence) — файлы без git, diff-base не нужен.
 # =========================================================================
@@ -172,5 +252,5 @@ if [ "$FAIL" -ne 0 ]; then
     echo "selftest check-test-fixture-coverage: FAIL (см. сообщения выше)" >&2
     exit 1
 fi
-echo "selftest check-test-fixture-coverage: OK (rule5 ловит/не лжёт, rule1 ловит/не лжёт, bonus ловит/не лжёт x2)"
+echo "selftest check-test-fixture-coverage: OK (rule5 ловит/не лжёт на ОБЕИХ формах записи кода и не считает новым код с базы, rule1 ловит/не лжёт, bonus ловит/не лжёт x2)"
 exit 0

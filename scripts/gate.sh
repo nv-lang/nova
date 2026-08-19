@@ -297,6 +297,8 @@ step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фи
 TFC_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
     || fail "test-fixture-coverage: не вычислить diff-base (см. scripts/tools/require-diff-base.sh) — rule5/rule1 не могут выполниться"
 guard "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
+step "diag-fixture-coverage (кодов диагностик без neg-фикстуры не прибавляется — №639)"
+guard "$ROOT/scripts/guards/check-diag-fixture-coverage.sh" "$ROOT" || fail "прибавилось кодов диагностики без neg-фикстуры: правило 5 работает ПО ДИФФУ и про накопленное не знает ничего — замер 2026-08-19: из 421 кода без фикстуры 210 (№639); новая диагностика обязана приезжать со своей neg-фикстурой, обе формы записи кода считаются одинаково"
 
 step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
 # НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
