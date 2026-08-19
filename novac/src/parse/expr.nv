@@ -86,6 +86,29 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
     left
 }
 
+/// The type arguments of an explicit instantiation: `[T, U]` as a Generics
+/// node, brackets and commas kept as leaves (the tree is lossless).
+///
+/// The SAME node kind a declaration uses for its type parameters, so both ends
+/// of the mapping read the same shape — one question, one answer.
+fn Cursor mut @turbofish() -> Node {
+    mut gk = []Node.of(@take())            // '['
+    while !@at_eof() && @peek() != TokenKind.RBracket {
+        ro before = @i
+        gk.append(@type_ref())
+        @push_if(gk, TokenKind.Comma)
+        if @i == before {
+            // Nothing was consumed: keep the byte so the tree stays lossless
+            // and let check refuse the form with a position.
+            gk.push(@take())
+        } else {
+            // A type argument was read; the loop moves on.
+        }
+    }
+    @push_if(gk, TokenKind.RBracket)
+    @node(NodeKind.Generics, gk)
+}
+
 /// Parse an atom with its postfix chain: `.method(args)` and `.field`.
 ///
 /// A PREFIX operator binds tighter than any binary one (spec level 14) and
@@ -333,6 +356,24 @@ fn Cursor mut @atom() -> Node {
     }
     if @peek() == TokenKind.Ident {
         ro name = @take()
+        if @peek() == TokenKind.LBracket {
+            // TURBOFISH: `id[int](7)` — the type arguments of an EXPLICIT
+            // instantiation. The form is unambiguous here: the subset has no
+            // index expression at all (there is no Index node), so a bracket
+            // after a name can only be this. Mandatory by plan 274 E2-b2 —
+            // there is no inference, and the order of the arguments IS the
+            // whole mapping to the declaration's type parameters.
+            mut kids = []Node.of(name, @turbofish())
+            if @peek() == TokenKind.LParen {
+                kids.push(@take())
+                @call_args(kids)
+            } else {
+                // No call follows: a bare `id[int]` is not a form of the
+                // subset, and the node keeps what was written so check can
+                // refuse it with a position rather than the parser guessing.
+            }
+            return @node(NodeKind.Call, kids)
+        }
         if @peek() == TokenKind.LParen {
             mut kids = []Node.of(name, @take())
             @call_args(kids)
