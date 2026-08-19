@@ -3651,6 +3651,19 @@ impl<'a> std::ops::DerefMut for TypeTable<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.map }
 }
 
+/// W6 (№705): область «текущего файла». Восстанавливает прежнее значение в
+/// `Drop`, то есть на ЛЮБОМ выходе из области, включая ранний `return`.
+struct FileScope<'c, 'a> {
+    ctx: &'c TypeCheckCtx<'a>,
+    prev: Option<crate::diag::FileId>,
+}
+
+impl<'c, 'a> Drop for FileScope<'c, 'a> {
+    fn drop(&mut self) {
+        self.ctx.current_file.set(self.prev);
+    }
+}
+
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
     arity: HashMap<String, ArityInfo>,
@@ -4910,7 +4923,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// or (b) any module in the cross-module `sig_table`.
     /// Used for disambiguation before full resolution (Step 3).
     fn is_known_type(&self, name: &str) -> bool {
-        self.types.contains_key(name)
+        self.types_get_here_contains(name)
             || !self.sig_table.find_type_modules(name).is_empty()
     }
 
@@ -4924,6 +4937,24 @@ impl<'a> TypeCheckCtx<'a> {
     /// back to the legacy global slot otherwise. Non-colliding names never
     /// populate `file_local_types` (empty per-file map lookup, O(1) miss) —
     /// byte-identical to `self.types.get(name)` outside the collision case.
+    /// W6 (№705): войти в файл и ОБЯЗАТЕЛЬНО выйти из него.
+    ///
+    /// Возвращает страж, восстанавливающий прежнее значение на выходе из
+    /// области — в том числе при раннем `return`. Без восстановления
+    /// значение протухает: площадка, до которой добрались уже ПОСЛЕ проверки
+    /// функции, увидит ЧУЖОЙ файл и разрешит коллидирующее имя не туда,
+    /// молча. Это тот самый класс, против которого заведено окно, и допустить
+    /// его в самом механизме нельзя.
+    fn enter_file(&self, file_id: crate::diag::FileId) -> FileScope<'_, 'a> {
+        let prev = self.current_file.get();
+        self.current_file.set(Some(file_id));
+        FileScope { ctx: self, prev }
+    }
+
+    fn types_get_here_contains(&self, name: &str) -> bool {
+        self.types_get_here(name).is_some()
+    }
+
     /// W6 (№705): чтение карты типов ПО ТЕКУЩЕМУ ФАЙЛУ.
     ///
     /// Для имени, объявленное только в одном файле, поведение остаётся
@@ -5046,7 +5077,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             TypeRef::Named { path, generics, .. } if generics.is_empty() => {
                 let name = path.last()?;
-                match &self.types.get(name)?.kind {
+                match &self.types_get_here(name)?.kind {
                     TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
                         self.resolve_fn_newtype_typeref(inner)
                     }
@@ -5650,7 +5681,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Тип known? Если не known — это либо primitive (`int`/`str`)
             // либо unresolved (caught by name resolution). Skip primitive
             // случаи silently.
-            let is_known_type = self.types.contains_key(&type_name)
+            let is_known_type = self.types_get_here_contains(&type_name)
                 || self.type_has_any_method(&type_name);
             // Even for primitive types like `int`/`str` — нет cleanup → error.
             // Но diagnostic должен быть полезный (suggest implement).
@@ -6421,7 +6452,7 @@ impl<'a> TypeCheckCtx<'a> {
             // type-check error elsewhere). Distinct from B1 (which targets `[]T`).
             let tn = r.type_name.as_str();
             if tn.len() <= 2 && tn.chars().all(|c| c.is_ascii_uppercase()) {
-                if !gs.contains_key(tn) && !self.types.contains_key(tn) {
+                if !gs.contains_key(tn) && !self.types_get_here_contains(tn) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_BARE_TYPEVAR_NEEDS_PREFIX] `fn {tn} @{m}` — \
@@ -6513,7 +6544,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Detect `fn[T] T @method` + `type T { ... }` в scope. fn-prefix
             // shadows named type — ambiguous. Loud error suggests rename.
             for g in &fd.generics {
-                if self.types.contains_key(&g.name) {
+                if self.types_get_here_contains(&g.name) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_PREFIX_SHADOWS_NAMED_TYPE] `fn[{tn}] ...` — \
@@ -6575,7 +6606,7 @@ impl<'a> TypeCheckCtx<'a> {
                 for (leaf_name, leaf_span) in leaves {
                     if fd_generic_names.contains(leaf_name.as_str()) { continue; }
                     if !reported.insert(leaf_name.clone()) { continue; }
-                    let is_shadow = self.types.contains_key(&leaf_name)
+                    let is_shadow = self.types_get_here_contains(&leaf_name)
                         || Self::is_primitive_scalar_type_name(&leaf_name);
                     if is_shadow {
                         errors.push(Diagnostic::new(
@@ -7114,7 +7145,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // Resolve the named TypeDecl. Unresolvable → STOP (the size walk
                 // returns None there; a false positive would violate the
                 // zero-false-positive gate).
-                let td = match self.types.get(name).copied() {
+                let td = match self.types_get_here(name) {
                     Some(td) => td,
                     None => return None,
                 };
@@ -7206,7 +7237,7 @@ impl<'a> TypeCheckCtx<'a> {
         if gs.contains_key(base) { return; }
         // Prelude sum-types (variant check, v2) → OK.
         if base == "Option" || base == "Result" || base == "any" { return; }
-        let is_record = match self.types.get(base) {
+        let is_record = match self.types_get_here(base) {
             Some(td) => match &td.kind {
                 // Sum-typed operand (incl. enums) → OK (v2 variant check).
                 TypeDeclKind::Sum(_) => return,
@@ -7308,7 +7339,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if name == "Vec" {
                     return true; // slice/Vec — GC-handle
                 }
-                match self.types.get(name) {
+                match self.types_get_here(name) {
                     Some(td) => match &td.kind {
                         crate::ast::TypeDeclKind::Record(_) => {
                             td.allocation != crate::ast::AllocKind::Value
@@ -7844,7 +7875,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if let Some(last) = tn.last() {
                         if last != "Self"
                             && !gs.contains_key(last)
-                            && !self.types.contains_key(last)
+                            && !self.types_get_here_contains(last)
                             // [M-compress-checksum-structvariant-ctor-xmodule]:
                             // `self.types` — HashMap keyed по имени суммы; при
                             // co-presence НЕСКОЛЬКИХ одноимённых sum-типов из
@@ -7870,7 +7901,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 if let Some(tn) = type_name {
                     if let Some(last) = tn.last() {
-                        if let Some(td) = self.types.get(last) {
+                        if let Some(td) = self.types_get_here(last) {
                             for f in fields {
                                 if f.is_spread { continue; }
                                 if td.assoc_consts.iter().any(|ac| ac.name == f.name) {
@@ -8137,10 +8168,11 @@ impl<'a> TypeCheckCtx<'a> {
     // ================================================================
 
     fn f1_check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
-        // W6 (№705): тело функции целиком лежит в одном файле — ставим
-        // его один раз, чтобы разрешение одноимённых типов ниже шло по
-        // импортам ИМЕННО этого файла, а не по last-write-wins карте.
-        self.current_file.set(Some(fd.span.file_id));
+        // W6 (№705): тело функции целиком лежит в одном файле — входим в него
+        // на время проверки, чтобы разрешение одноимённых типов ниже
+        // шло по импортам ИМЕННО этого файла. Страж снимает его на
+        // ЛЮБОМ выходе — протухший файл был бы тем же дефектом.
+        let _file_scope = self.enter_file(fd.span.file_id);
         if std::env::var_os("NOVA_F1_TRACE").is_some() {
             eprintln!("[F1] {}.{} fid={:?}", fd.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("-"), fd.name, fd.span.file_id);
         }
@@ -8193,9 +8225,11 @@ impl<'a> TypeCheckCtx<'a> {
             let mut nb = self.numeric_bounded_params.borrow_mut();
             for g in &fd.generics {
                 let numeric = g.bounds.iter().any(|b| {
-                    let TypeRef::Named { path, generics: bg, .. } = b else { return false };
+                    let TypeRef::Named { path, generics: bg, span: b_span, .. } = b else { return false };
                     if !bg.is_empty() || path.len() != 1 { return false; }
-                    self.types.get(&path[0]).map_or(false, |td| {
+                    // W6 (№705): разрешаем по файлу САМОГО баунда — вторая
+                    // по частоте площадка замера (96 чтений).
+                    self.types_get_for_file(&path[0], b_span.file_id).map_or(false, |td| {
                         if let TypeDeclKind::TypeSet(members) = &td.kind {
                             !members.is_empty() && members.iter().all(|m| {
                                 matches!(m, TypeRef::Named { path: mp, generics: mg, .. }
@@ -8732,7 +8766,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let (Pattern::Record { .. }, true, Some(TypeRef::Named { path, .. })) =
                     (&d.pattern, d.value.id.is_set(), &scrut_ty)
                 {
-                    let is_nt = path.last().and_then(|n| self.types.get(n.as_str()))
+                    let is_nt = path.last().and_then(|n| self.types_get_here(n.as_str()))
                         .map_or(false, |td| matches!(td.kind, TypeDeclKind::NamedTuple(_)));
                     if is_nt {
                         self.resolved_types_buf.borrow_mut().entry(d.value.id)
@@ -9000,7 +9034,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // escape hatch for it at all.
                 if let ExprKind::Path(parts) = &target.kind {
                     if parts.len() == 2 {
-                        if let Some(td) = self.types.get(parts[0].as_str()) {
+                        if let Some(td) = self.types_get_here(parts[0].as_str()) {
                             if let Some(ac) = td.assoc_consts.iter().find(|ac| ac.name == parts[1]) {
                                 let kw = if ac.is_lazy_ro { "ro" } else { "const" };
                                 errors.push(Diagnostic::new(
@@ -9446,7 +9480,7 @@ impl<'a> TypeCheckCtx<'a> {
         if let ExprKind::RecordLit { type_name: Some(rl_name), .. } = &e.kind {
             if let Some(rl_last) = rl_name.last() {
                 if e.id.is_set()
-                    && self.types.get(rl_last.as_str()).map_or(false, |td| td.generics.is_empty())
+                    && self.types_get_here(rl_last.as_str()).map_or(false, |td| td.generics.is_empty())
                 {
                     self.resolved_types_buf.borrow_mut().insert(
                         e.id,
@@ -9590,7 +9624,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 // ТОЛЬКО non-generic recv: generic Self{...} в mono
                                 // требует инстанс-имени (bare сломал бы mono —
                                 // поймано гейтом 2026-07-04, расширение откачено).
-                                if self.types.get(&recv)
+                                if self.types_get_here(&recv)
                                     .map_or(false, |td| td.generics.is_empty())
                                 {
                                     self.resolved_types_buf.borrow_mut().insert(
@@ -9605,7 +9639,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // 172.1.2 (record-вариант sum'а, 2026-07-03): `Cons{...}` —
                         // имя ВАРИАНТА (не в self.types) → тип литерала = содержащий
                         // sum; гейт: единственный non-generic sum с record-вариантом.
-                        if !self.types.contains_key(last.as_str()) && e.id.is_set() {
+                        if !self.types_get_here_contains(last.as_str()) && e.id.is_set() {
                             let mut owner: Option<&String> = None;
                             let mut ambiguous = false;
                             for (tn, td2) in self.types.iter() {
@@ -9628,7 +9662,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 );
                             }
                         }
-                        if let Some(td) = self.types.get(last) {
+                        if let Some(td) = self.types_get_here(last) {
                             if let TypeDeclKind::Record(field_decls) = &td.kind {
                                 // Generic args: для каждого generic-параметра тип-аргумент =
                                 // inferred-тип поля литерала, чей шаблонный тип — ровно этот
@@ -9707,7 +9741,7 @@ impl<'a> TypeCheckCtx<'a> {
                             let concrete_value_named = matches!(&rt,
                                 ResolvedType::Named { name, args, .. }
                                     if args.is_empty()
-                                        && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                        && self.types_get_here(name).map_or(false, |td| matches!(&td.kind,
                                             TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                             | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
                             if Self::primitive_gate(&rt) || concrete_value_named {
@@ -10252,7 +10286,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // is a known type — a genuine value-receiver method call never
                             // matches this Member-of-Member-of-Ident shape.
                             if matches!(&mod_obj.kind, ExprKind::Ident(_))
-                                && self.types.contains_key(tyname)
+                                && self.types_get_here_contains(tyname)
                             {
                                 if let Some((tr, _node_subst, _fn_span)) =
                                     self.resolve_generic_static_return(tyname, method, &[], e.span)
@@ -10319,7 +10353,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         && generics.is_empty()
                                         && gs.contains_key(&path[0])
                                     {
-                                        if let Some(td) = self.types.get("Serialize") {
+                                        if let Some(td) = self.types_get_here("Serialize") {
                                             if let TypeDeclKind::Protocol { methods, .. } =
                                                 &td.kind
                                             {
@@ -10461,7 +10495,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // its `deserialize` return still mentions the method's
                             // own generics after substitution — no annotation
                             // (honest fall-through to legacy, as before).
-                            if let Some(td) = self.types.get("Deserialize") {
+                            if let Some(td) = self.types_get_here("Deserialize") {
                                 if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
                                     if let Some(m) =
                                         methods.iter().find(|m| m.name == "deserialize")
@@ -10686,7 +10720,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     if variants.iter().any(|v| v.name == *fname))
                             });
                             let is_newtype_or_tuple_ctor = !shadows_sum_variant
-                                && self.types.get(fname.as_str())
+                                && self.types_get_here(fname.as_str())
                                 .map(|td| matches!(&td.kind, TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_)))
                                 .unwrap_or(false);
                             if is_newtype_or_tuple_ctor {
@@ -12899,7 +12933,7 @@ impl<'a> TypeCheckCtx<'a> {
             _ => None,
         };
         let Some(tname) = tname_opt else { return };
-        let Some(td) = self.types.get(tname) else { return };
+        let Some(td) = self.types_get_here(tname) else { return };
         if let TypeDeclKind::NamedTuple(fields) = &td.kind {
             let field_list: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
             errors.push(Diagnostic::new(
@@ -12977,7 +13011,7 @@ impl<'a> TypeCheckCtx<'a> {
                             _ => if path.len() >= 2 { path.first().cloned() } else { None },
                         };
                         if let Some(sn) = sum_name {
-                            if let Some(td) = self.types.get(sn.as_str()) {
+                            if let Some(td) = self.types_get_here(sn.as_str()) {
                                 if let TypeDeclKind::Sum(variants) = &td.kind {
                                     for v in variants {
                                         if &v.name != vname { continue; }
@@ -13027,7 +13061,7 @@ impl<'a> TypeCheckCtx<'a> {
                         _ => None,
                     });
                 let Some(tname) = tname_opt else { return };
-                let Some(td) = self.types.get(tname.as_str()) else { return };
+                let Some(td) = self.types_get_here(tname.as_str()) else { return };
                 // Plan 124.2 + 124.4 + 124.6 (D221+D222+D224): unified priv
                 // check (Record + NamedTuple). Per-field visible_to taken into
                 // account (Plan 124.6).
@@ -13420,7 +13454,7 @@ impl<'a> TypeCheckCtx<'a> {
         match rt {
             R::TypeParam(_) => false,
             R::Named { name, module, args } => {
-                if module.is_empty() && args.is_empty() && !self.types.contains_key(name) {
+                if module.is_empty() && args.is_empty() && !self.types_get_here_contains(name) {
                     return false;
                 }
                 args.iter().all(|a| self.rt_is_closed(a))
@@ -13904,7 +13938,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 Some(generics[1].clone())
                             }
                             _ if generics.is_empty() => {
-                                self.types.get(sum_name).and_then(|td| {
+                                self.types_get_here(sum_name).and_then(|td| {
                                     if !td.generics.is_empty() { return None; }
                                     if let TypeDeclKind::Sum(variants) = &td.kind {
                                         variants.iter().find(|v| v.name == variant).and_then(|v| {
@@ -14122,7 +14156,7 @@ impl<'a> TypeCheckCtx<'a> {
                             && sum_name != "Option"
                             && sum_name != "Result"
                         {
-                            self.types.get(sum_name).and_then(|td| {
+                            self.types_get_here(sum_name).and_then(|td| {
                                 if let TypeDeclKind::Sum(variants) = &td.kind {
                                     variants.iter().any(|v| v.name == variant)
                                         .then(|| sum_name.to_string())
@@ -14173,9 +14207,11 @@ impl<'a> TypeCheckCtx<'a> {
                                     {
                                         vec![Some(generics[1].clone())]
                                     }
+                                    // W6 (№705): последняя голая площадка по
+                                    // ИМЕНИ: батч её не тронул, потому что вызов
+                                    // разнесён по трём строкам.
                                     _ if generics.is_empty() => self
-                                        .types
-                                        .get(sum_name)
+                                        .types_get_here(sum_name)
                                         .and_then(|td| {
                                             if !td.generics.is_empty() {
                                                 return None;
@@ -14413,7 +14449,7 @@ impl<'a> TypeCheckCtx<'a> {
         let concrete_value_named = matches!(&rt,
             ResolvedType::Named { name, args, .. }
                 if args.is_empty()
-                    && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                    && self.types_get_here(name).map_or(false, |td| matches!(&td.kind,
                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
         // 172.1.2 (2026-07-04): all-Unit match → Unit (byte-identical legacy).
@@ -16938,7 +16974,7 @@ impl<'a> TypeCheckCtx<'a> {
                         let concrete_value_named = matches!(&rt,
                             ResolvedType::Named { name, args, .. }
                                 if args.is_empty()
-                                    && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                    && self.types_get_here(name).map_or(false, |td| matches!(&td.kind,
                                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
                         let _ = concrete_value_named; // gate снят Шагом 2b (TypeParam-носитель)
@@ -17085,7 +17121,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 // Plan 114.4.1 (D200): assoc const detection — если `name` matches
                 // одну из assoc consts типа, hint user про namespace access.
-                let is_assoc_const = self.types.get(tname)
+                let is_assoc_const = self.types_get_here(tname)
                     .map(|td| td.assoc_consts.iter().any(|ac| ac.name == name))
                     .unwrap_or(false);
                 if is_assoc_const {
@@ -17159,7 +17195,7 @@ impl<'a> TypeCheckCtx<'a> {
                         let concrete_value_named = matches!(&rt,
                             ResolvedType::Named { name, args, .. }
                                 if args.is_empty()
-                                    && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                    && self.types_get_here(name).map_or(false, |td| matches!(&td.kind,
                                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
                         let _ = concrete_value_named; // gate снят Шагом 2b (TypeParam-носитель)
@@ -17280,7 +17316,7 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         let ExprKind::Ident(name) = &func.kind else { return; };
         if scope.contains_key(name.as_str()) { return; }
-        let Some(td) = self.types.get(name.as_str()) else { return; };
+        let Some(td) = self.types_get_here(name.as_str()) else { return; };
         match &td.kind {
             TypeDeclKind::NamedTuple(fields) => {
                 // Plan 124.4 (D222) + 124.6 (D225): if any priv field exists,
@@ -17625,7 +17661,7 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            let proto_decl = match self.types.get(proto_base) {
+            let proto_decl = match self.types_get_here(proto_base) {
                 Some(td) => td,
                 None => {
                     // Plan 162.1 Step 3: suppress E_UNKNOWN_PROTOCOL when the
@@ -17870,7 +17906,7 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            let proto_decl = match self.types.get(proto_base) {
+            let proto_decl = match self.types_get_here(proto_base) {
                 Some(td) => td,
                 None => {
                     errors.push(Diagnostic::new(
@@ -17991,7 +18027,7 @@ impl<'a> TypeCheckCtx<'a> {
         // E7320 normally (opt-in nominal layer над structural protocols).
         // Plan 164 Ф.1: impl_protocols may contain "Next[U]" — extract bare names
         // for the opted_in set which is compared against self.types keys (bare names).
-        let opted_in: HashSet<&str> = self.types.get(tname)
+        let opted_in: HashSet<&str> = self.types_get_here(tname)
             .map(|td| td.impl_protocols.iter().map(|s| impl_spec_base_name(s)).collect())
             .unwrap_or_default();
         for (proto_name, td) in self.types.iter() {
@@ -18050,7 +18086,7 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn t_provides_field(&self, tname: &str, name: &str) -> bool {
-        if let Some(td) = self.types.get(tname) {
+        if let Some(td) = self.types_get_here(tname) {
             if let TypeDeclKind::Record(fields) = &td.kind {
                 return fields.iter().any(|f| f.name == name);
             }
@@ -18169,7 +18205,7 @@ impl<'a> TypeCheckCtx<'a> {
         ) {
             return None;
         }
-        let td = self.types.get(&tname)?; // unknown/builtin name — leave to other passes.
+        let td = self.types_get_here(&tname)?; // unknown/builtin name — leave to other passes.
         if !td.generics.is_empty() {
             return None; // generic declared type (incl. Option/Result) — mono-time concern.
         }
@@ -18331,7 +18367,7 @@ impl<'a> TypeCheckCtx<'a> {
         if scope.contains_key(name) {
             return;
         }
-        let Some(td) = self.types.get(name) else { return; };
+        let Some(td) = self.types_get_here(name) else { return; };
         let kind = match &td.kind {
             TypeDeclKind::Record(fields) if !fields.is_empty() => "record type",
             TypeDeclKind::Sum(variants) if !variants.is_empty() => "sum type",
@@ -18397,7 +18433,7 @@ impl<'a> TypeCheckCtx<'a> {
         let concrete = if generics.is_empty() {
             let rt = ResolvedType::from_type_ref(expected);
             Self::ts_member(&rt, constraint_solver::TypeSet::Primitive)
-                || self.types.contains_key(last)
+                || self.types_get_here_contains(last)
         } else {
             generics.iter().all(|g| {
                 let rt = ResolvedType::from_type_ref(g);
@@ -18461,7 +18497,7 @@ impl<'a> TypeCheckCtx<'a> {
                             let concrete_value_named = matches!(&arg_rt,
                                 ResolvedType::Named { name, args, .. }
                                     if args.is_empty()
-                                        && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                        && self.types_get_here(name).map_or(false, |td| matches!(&td.kind,
                                             TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                             | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
                             if Self::ts_member(&arg_rt, constraint_solver::TypeSet::Primitive)
@@ -18501,7 +18537,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if let TypeRef::Named { path, generics, .. } = expected {
                         if generics.is_empty() {
                             if let Some(tname) = path.last() {
-                                if let Some(td) = self.types.get(tname) {
+                                if let Some(td) = self.types_get_here(tname) {
                                     if td.generics.is_empty() {
                                         if let TypeDeclKind::Sum(variants) = &td.kind {
                                             if variants.iter().any(|v| &v.name == n) {
@@ -18601,7 +18637,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 }
                                 match r {
                                     ResolvedType::Named { name, args, .. } if args.is_empty() =>
-                                        self.types.contains_key(name.as_str()),
+                                        self.types_get_here_contains(name.as_str()),
                                     _ => false,
                                 }
                             });
@@ -18660,7 +18696,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let TypeRef::Named { path, generics, .. } = expected {
                     if generics.is_empty() {
                         if let Some(name) = path.last() {
-                            if let Some(td) = self.types.get(name) {
+                            if let Some(td) = self.types_get_here(name) {
                                 if td.generics.is_empty() {
                                     if let TypeDeclKind::Record(decl_fields) = &td.kind {
                                         for f in fields {
@@ -19224,7 +19260,7 @@ impl<'a> TypeCheckCtx<'a> {
     ) -> Compat {
         let direct = self.assignable_direct(expr, expected, expr_gs, exp_gs, scope);
         if let Compat::Bad { .. } = &direct {
-            let lookup = |n: &str| self.types.get(n).map(|td| td.kind.clone());
+            let lookup = |n: &str| self.types_get_here(n).map(|td| td.kind.clone());
             let candidates = single_wrap_candidates(&lookup, expected);
             if !candidates.is_empty() {
                 let found_kind = self.wrap_kind_of_expr(expr, scope);
@@ -19379,7 +19415,7 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(WrapKind::Str),
             _ => {
                 let tr = self.infer_expr_type(expr, scope)?;
-                let lookup = |n: &str| self.types.get(n).map(|td| td.kind.clone());
+                let lookup = |n: &str| self.types_get_here(n).map(|td| td.kind.clone());
                 Some(wrap_kind_of(&tr, &lookup, 0))
             }
         }
@@ -19413,7 +19449,7 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Pointer(inner, _) => self.typeref_is_func_compatible_depth(inner, depth + 1),
             TypeRef::Named { path, generics, .. } if generics.is_empty() => {
                 let Some(n) = path.last() else { return false; };
-                match self.types.get(n).map(|td| &td.kind) {
+                match self.types_get_here(n).map(|td| &td.kind) {
                     Some(TypeDeclKind::Newtype(inner)) | Some(TypeDeclKind::Alias(inner)) => {
                         self.typeref_is_func_compatible_depth(inner, depth + 1)
                     }
@@ -19445,7 +19481,7 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Pointer(inner, _) => self.peel_func_return_depth(inner, depth + 1),
             TypeRef::Named { path, generics, .. } if generics.is_empty() => {
                 let n = path.last()?;
-                match self.types.get(n).map(|td| &td.kind) {
+                match self.types_get_here(n).map(|td| &td.kind) {
                     Some(TypeDeclKind::Newtype(inner)) | Some(TypeDeclKind::Alias(inner)) => {
                         self.peel_func_return_depth(inner, depth + 1)
                     }
@@ -19558,7 +19594,7 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Pointer(inner, _) => self.peel_func_shape_depth(inner, depth + 1),
             TypeRef::Named { path, generics, .. } if generics.is_empty() => {
                 let n = path.last()?;
-                match self.types.get(n).map(|td| &td.kind) {
+                match self.types_get_here(n).map(|td| &td.kind) {
                     Some(TypeDeclKind::Newtype(inner)) | Some(TypeDeclKind::Alias(inner)) => {
                         self.peel_func_shape_depth(inner, depth + 1)
                     }
@@ -19709,7 +19745,7 @@ impl<'a> TypeCheckCtx<'a> {
             return;
         }
         let Some(tname) = path.last() else { return };
-        let Some(td) = self.types.get(tname) else { return };
+        let Some(td) = self.types_get_here(tname) else { return };
         if !td.generics.is_empty() {
             return;
         }
@@ -20037,7 +20073,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let TypeRef::Named { path, generics, .. } = expected {
                     if generics.is_empty() {
                         if let Some(tname) = path.last() {
-                            if let Some(td) = self.types.get(tname) {
+                            if let Some(td) = self.types_get_here(tname) {
                                 if td.generics.is_empty() {
                                     if let TypeDeclKind::Sum(variants) = &td.kind {
                                         if variants.iter().any(|v| &v.name == name) {
@@ -20246,7 +20282,7 @@ impl<'a> TypeCheckCtx<'a> {
         // satisfies by identity; a DIFFERENT protocol name would need protocol-to-
         // protocol subset checking, out of scope here — skip (permissive, unchanged
         // from before this fix) rather than false-positive.
-        if self.types.get(&concrete_name)
+        if self.types_get_here(&concrete_name)
             .map(|td| matches!(td.kind, TypeDeclKind::Protocol { .. }))
             .unwrap_or(false)
         {
@@ -20775,7 +20811,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // real top-level type, look for the ONE non-generic sum type
                 // whose variant list has a Record-kind variant of that name.
                 let last = name.last()?;
-                if self.types.contains_key(last.as_str()) {
+                if self.types_get_here_contains(last.as_str()) {
                     return Some(TypeRef::Named {
                         path: name.clone(),
                         generics: Vec::new(),
@@ -21364,7 +21400,7 @@ impl<'a> TypeCheckCtx<'a> {
                     _ => None,
                 };
                 if let Some((eff, op_name)) = eff_op {
-                    if let Some(td) = self.types.get(eff) {
+                    if let Some(td) = self.types_get_here(eff) {
                         if let TypeDeclKind::Effect(ops) = &td.kind {
                             if let Some(op) = ops.iter().find(|m| m.name == op_name) {
                                 return Some(match &op.return_type {
@@ -21444,7 +21480,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         {
                                             if path[0] == "Self" {
                                                 Some(parts[0].clone())
-                                            } else if self.types.contains_key(&path[0])
+                                            } else if self.types_get_here_contains(&path[0])
                                                 || Self::is_primitive_type_name(&path[0])
                                             {
                                                 Some(path[0].clone())
@@ -21635,7 +21671,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // return-конкретизации; НЕ новый инференс, тот же `method_overloads`
                     // lookup, тот же single-overload/static/non-generic гейт.
                     if let ExprKind::Ident(tyname) = &obj.kind {
-                        let non_generic_known_recv = self.types.get(tyname.as_str())
+                        let non_generic_known_recv = self.types_get_here(tyname.as_str())
                             .map_or(false, |td| td.generics.is_empty())
                             || Self::is_primitive_type_name(tyname);
                         if non_generic_known_recv {
@@ -21652,7 +21688,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                 {
                                                     if path[0] == "Self" {
                                                         Some(tyname.clone())
-                                                    } else if self.types.contains_key(&path[0])
+                                                    } else if self.types_get_here_contains(&path[0])
                                                         || Self::is_primitive_type_name(&path[0])
                                                     {
                                                         Some(path[0].clone())
@@ -21754,7 +21790,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // instead; this arm stays return-type-free for method calls.
                 }
                 if let ExprKind::Ident(name) = &func.kind {
-                    if let Some(td) = self.types.get(name) {
+                    if let Some(td) = self.types_get_here(name) {
                         // Plan 128.1 Ф.2 — D215 NamedTuple constructor (`Vec3(1,2,3)`)
                         // is type-producing наряду с Newtype/Alias. Без этого
                         // assignable() для NamedTuple bindings (e.g. `let v Vec3 = Vec3(...)`)
@@ -21899,7 +21935,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let TypeRef::Named { path, generics, .. } = &elem_tr {
                     if path.len() == 1
                         && generics.is_empty()
-                        && self.types.get(&path[0]).map_or(false, |td| td.generics.is_empty())
+                        && self.types_get_here(&path[0]).map_or(false, |td| td.generics.is_empty())
                     {
                         return Some(TypeRef::Array(Box::new(elem_tr), expr.span));
                     }
@@ -21953,7 +21989,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     span: expr.span,
                                 });
                                 let is_concrete = Self::primitive_gate(&concrete)
-                                    || self.types.contains_key(elem_name);
+                                    || self.types_get_here_contains(elem_name);
                                 if !elem_name.is_empty() && is_concrete {
                                     return Some(TypeRef::Named {
                                         path: vec![elem_name.to_string()],
@@ -22476,7 +22512,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // метода живёт в декларации ПРОТОКОЛА (D53), не в method_table.
                 // Konkretный declared return (без generics/Self) — фундаментальный
                 // факт контракта; residual → None (честно).
-                if let Some(td) = self.types.get(&type_name) {
+                if let Some(td) = self.types_get_here(&type_name) {
                     if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
                         let mut it = methods.iter().filter(|m| {
                             m.name == method || m.name.trim_start_matches('@') == method
@@ -23540,7 +23576,7 @@ impl<'a> TypeCheckCtx<'a> {
             // guard in `f3_check_member_ctx`).
             return None;
         }
-        let td = self.types.get(type_name)?;
+        let td = self.types_get_here(type_name)?;
         let field_ty: &TypeRef = match &td.kind {
             TypeDeclKind::Record(fields) => &fields.iter().find(|f| f.name == name)?.ty,
             TypeDeclKind::NamedTuple(fields) => &fields.iter().find(|f| f.name == name)?.ty,
@@ -24192,7 +24228,7 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// Resolve record fields for a type name. Returns None if not a Record type.
     fn record_fields_for<'t>(&'t self, type_name: &str) -> Option<&'t Vec<RecordField>> {
-        match self.types.get(type_name)?.kind {
+        match self.types_get_here(type_name)?.kind {
             TypeDeclKind::Record(ref fields) => Some(fields),
             _ => None,
         }
