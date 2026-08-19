@@ -29,6 +29,14 @@
 #   * файл, называющий nova.exe, знает и второе имя — через дверь
 #     novac_find_oracle или прямым запасным путём;
 #   * апостроф в двойных кавычках у echo/printf.
+# ПРОВЕРЯЕТ scripts/**/*.py — стражи переезжают на python (П14: один старт
+#   интерпретатора вместо сорока), и судья, который смотрит только .sh, слепнет
+#   РОВНО ПО МЕРЕ ПЕРЕЕЗДА. Это класс №519, и он здесь закрыт:
+#   * та же слепота к имени бинаря (nova.exe без второго имени);
+#   * check-*.py, который печатает вердикт, не переведя поток на LF: python на
+#     Windows пишет CRLF там, где shell писал LF, и вывод расходится с
+#     shell-редакцией молча — сверка порта перестаёт что-либо значить
+#     (поймано на первых же портах 2026-08-19).
 # НЕ ПРОВЕРЯЕТ: строки, содержащие одинарную кавычку — там живут awk-программы
 #   и фикстуры самотестов, где апостроф безобиден; это сознательная слепая
 #   зона, названная здесь, а не молчаливая. Смысл сообщений; прочие башизмы
@@ -111,6 +119,41 @@ CRCR=$(git -C "$ROOT" ls-files -z -- 'novac/**' 'scripts/**' 'docs/**' 2>/dev/nu
 [ -n "$CRCR" ] && BAD="$BAD$CRCR
 "
 
+# (5) Питоновские стражи — под тем же судом. Считаются ОТДЕЛЬНО и печатаются
+# в итоге: если завтра переезд доедет до конца, а число питоновских останется
+# нулём, это будет видно в строке вердикта, а не выяснится через месяц.
+PY=$(find "$DIR" -type f -name '*.py' | sort)
+NPY=$(printf '%s\n' "$PY" | grep -c . || true)
+if [ "$NPY" -gt 0 ]; then
+    PSCAN=$(printf '%s\n' "$PY" | xargs awk -v ROOT="$ROOT/" '
+        function verdict() {
+            if (rel == "") return
+            if (!skip && saw_exe && !saw_fallback)
+                printf "  %s: знает только nova.exe — на Linux не найдёт оракула и промолчит\n", rel
+            if (is_check && saw_print && !saw_lf)
+                printf "  %s: печатает вердикт, не переведя поток на LF — на Windows это CRLF\n", rel
+        }
+        FNR == 1 {
+            verdict()
+            rel = FILENAME; sub("^" ROOT, "", rel)
+            skip = (index(rel, "/selftest/") > 0)
+            is_check = (rel ~ /check-[^\/]*\.py$/)
+            saw_exe = 0; saw_fallback = 0; saw_print = 0; saw_lf = 0
+        }
+        {
+            line = $0; sub(/\r$/, "", line)
+            if (line !~ /^[[:space:]]*#/ && line ~ /release\/nova\.exe/) saw_exe = 1
+            if (line ~ /release\/nova[^.]/ || line ~ /release\/nova$/) saw_fallback = 1
+            if (line ~ /novac_find_oracle/) saw_fallback = 1
+            if (line ~ /(^|[^A-Za-z_.])print\(/) saw_print = 1
+            if (line ~ /reconfigure\(/ && line ~ /newline=/) saw_lf = 1
+        }
+        END { verdict() }
+    ')
+    [ -n "$PSCAN" ] && BAD="$BAD$PSCAN
+"
+fi
+
 if [ -n "$(printf '%s' "$BAD" | tr -d '[:space:]')" ]; then
     echo "$NAME: FAIL — страж может соврать или промолчать вместо проверки" >&2
     printf '%s' "$BAD" >&2
@@ -118,5 +161,5 @@ if [ -n "$(printf '%s' "$BAD" | tr -d '[:space:]')" ]; then
     exit 1
 fi
 
-echo "$NAME ok: скриптов проверено $N, CRLF 0, слепых к имени бинаря 0, съедаемых оболочкой сообщений 0"
+echo "$NAME ok: скриптов проверено $N (.sh) и ${NPY:-0} (.py), CRLF 0, слепых к имени бинаря 0, съедаемых оболочкой сообщений 0"
 exit 0

@@ -181,13 +181,26 @@ par_run() {
     # а толкается -- каждый страж сам порождает процессы. Число берётся из
     # NOVAC_JOBS, по умолчанию 8.
     _jobs="${NOVAC_JOBS:-8}"
+    # ВСЕ питоновские стражи -- ОДНИМ процессом. Интерпретатор стартует 73мс
+    # (замер 2026-08-19), работа самого стража -- 40..60мс: на сорока стражах
+    # старт стоит дороже проверки. Раннер пишет те же N.out и N.rc, поэтому
+    # разбор ниже не знает, кто их написал.
+    _py=""
+    _i=1
+    while [ "$_i" -le "$PAR_N" ]; do
+        case "$(cat "$PAR_DIR/$_i.cmd")" in *.py) _py="$_py $_i" ;; esac
+        _i=$((_i + 1))
+    done
+    if [ -n "$_py" ]; then
+        # shellcheck disable=SC2086
+        python "$ROOT/scripts/guards/run-guards.py" "$ROOT" "$PAR_DIR" $_py &
+    fi
     _i=1
     _running=0
     while [ "$_i" -le "$PAR_N" ]; do
         _g=$(cat "$PAR_DIR/$_i.cmd")
-        _runner=bash
-        case "$_g" in *.py) _runner=python ;; esac
-        ( "$_runner" "$_g" "$ROOT" > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
+        case "$_g" in *.py) _i=$((_i + 1)); continue ;; esac
+        ( bash "$_g" "$ROOT" > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
         _running=$((_running + 1))
         if [ "$_running" -ge "$_jobs" ]; then
             wait
@@ -305,7 +318,7 @@ par_add "$ROOT/scripts/guards/check-novac-emitted-names.py" "печатаемо�
 par_add "$ROOT/scripts/guards/check-novac-table-is-match.sh" "таблица написана цепочкой if вместо match (П21 п.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.sh" "диагностика ссылается на незнание грамматики (§9.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.sh" "коллекция перекладывается поэлементно вместо append (П32)"
-par_add "$ROOT/scripts/guards/check-novac-branch-complete.sh" "неполные ветвления выросли (П31)"
+par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
 par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "правило конвенции без названного механизма"
 par_run
 step "novac-lint (свод nv-coding-style по novac/src)"

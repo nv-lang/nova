@@ -22,8 +22,20 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASE = pathlib.Path(os.environ.get("TEMP", "/tmp")) / "novac-grammar-matrix"
-ORACLE = ROOT / "nova-cli/target/release/nova.exe"
-NOVAC = ROOT / "novac/target/novac.exe"
+
+
+def _bin(base):
+    """Бинарь по имени БЕЗ расширения: на Windows он `.exe`, на Linux — нет.
+
+    Инструмент, знающий только `.exe`, на Linux просто не находит цель и молчит
+    (правило check-guard-honesty). Молчание тут неотличимо от «всё сошлось».
+    """
+    exe = base.with_suffix(".exe")
+    return exe if exe.is_file() else base
+
+
+ORACLE = _bin(ROOT / "nova-cli/target/release/nova")
+NOVAC = _bin(ROOT / "novac/target/novac")
 
 # Класс A -- отказ novac называет ЛОЖНУЮ причину (дороже всех).
 # Класс B -- отказ безымянный: «construct not in the MVP grammar».

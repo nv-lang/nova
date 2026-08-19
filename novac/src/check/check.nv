@@ -13,7 +13,7 @@
 // Used by: pipeline (E1+); the LSP at E3 reads its channel instead of re-walking; emit_c reads its verdicts, never
 // re-derives.
 // Guarded by: check-novac-no-cascade.sh, check-novac-diag-schema.sh, check-novac-differential.sh (verdicts match the
-// oracle on the corpus), check-novac-no-default-branch.sh (kind dispatch is exhaustive), the pipeline tests (one cause,
+// oracle on the corpus), check-novac-no-default-branch.py (kind dispatch is exhaustive), the pipeline tests (one cause,
 // one diagnostic).
 // rustc `FnCtxt` for the walk shape; poisoning discipline from rustc
 // `TyKind::Error` — an already-reported node yields nothing further; NOT taken:

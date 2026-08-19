@@ -48,6 +48,12 @@ import sys
 import tempfile
 import os
 
+# Поток вердикта — с LF: python на Windows иначе печатает CRLF там, где shell
+# печатал LF, и вывод молча расходится с shell-редакцией (правило
+# check-guard-honesty, заведено 2026-08-19).
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+
 # Each entry: the exact C symbol name to look for, and why it's a legitimate
 # divergence. Keep this list SHORT — every entry here is content the tool
 # will NOT flag, so a padded list quietly turns the tool into "everything is

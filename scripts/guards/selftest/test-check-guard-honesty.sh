@@ -96,10 +96,62 @@ else
     bad "отсутствие scripts сделано красным: [$(head -n 1 "$T/o7")]"
 fi
 
+# ── 8. .py, знающий только nova.exe, — красный ───────────────────────────
+# Каждая питоновская фикстура несёт и пустой .sh: без единого .sh страж
+# краснеет РАНЬШЕ, на правиле «судить нечего там, где судить обязано», и
+# случай доказал бы не то, что проверяет.
+mkdir -p "$T/pyblind/scripts/guards"
+printf '#!/bin/sh\nexit 0\n' > "$T/pyblind/scripts/guards/check-ok.sh"
+cat > "$T/pyblind/scripts/guards/check-p.py" <<'PY'
+import pathlib
+ORACLE = pathlib.Path("nova-cli/target/release/nova.exe")
+PY
+if sh "$G" "$T/pyblind" > "$T/o8" 2> "$T/e8"; then
+    bad ".py, знающий только .exe, прошёл: [$(head -n 1 "$T/o8")]"
+else
+    grep -q "знает только" "$T/e8" \
+        && ok ".py со слепотой на Linux — красный" \
+        || bad "красный, но не про слепоту: [$(head -n 1 "$T/e8")]"
+fi
+
+# ── 9. check-*.py, печатающий вердикт без перевода потока на LF, — красный ─
+mkdir -p "$T/pycrlf/scripts/guards"
+printf '#!/bin/sh\nexit 0\n' > "$T/pycrlf/scripts/guards/check-ok.sh"
+cat > "$T/pycrlf/scripts/guards/check-q.py" <<'PY'
+import sys
+print("check-q ok: nothing to judge")
+PY
+if sh "$G" "$T/pycrlf" > "$T/o9" 2> "$T/e9"; then
+    bad "печать вердикта без LF прошла: [$(head -n 1 "$T/o9")]"
+else
+    grep -q "не переведя поток на LF" "$T/e9" \
+        && ok "вердикт без перевода потока на LF — красный" \
+        || bad "красный, но не про LF: [$(head -n 1 "$T/e9")]"
+fi
+
+# ── 10. здоровый .py — зелёный: правило про слепоту, а не про наличие print
+# Здесь же названная слепая зона: helper.py печатает без LF и НЕ судится —
+# правило адресовано печатающим вердикт, то есть check-*.py.
+mkdir -p "$T/pygood/scripts/guards"
+printf '#!/bin/sh\nexit 0\n' > "$T/pygood/scripts/guards/check-ok.sh"
+cat > "$T/pygood/scripts/guards/check-r.py" <<'PY'
+import sys
+sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+print("check-r ok: nothing to judge")
+PY
+cat > "$T/pygood/scripts/guards/helper.py" <<'PY'
+print("not a verdict printer")
+PY
+if sh "$G" "$T/pygood" > "$T/o10" 2>&1; then
+    ok "здоровый .py законен, helper вне суда (слепая зона названа)"
+else
+    bad "здоровый .py покраснел: [$(head -n 2 "$T/o10")]"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
     exit 1
 fi
 echo "итог: PASS"
-echo "test-check-guard-honesty ok: все случаи, включая ловушку экранированного апострофа"
+echo "test-check-guard-honesty ok: все случаи, включая ловушку экранированного апострофа и оба питоновских правила"
 exit 0

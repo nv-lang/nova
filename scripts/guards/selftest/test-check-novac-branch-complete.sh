@@ -5,7 +5,7 @@
 # принимает и на них счётчик не растёт.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-branch-complete.sh"
+G="$ROOT/scripts/guards/check-novac-branch-complete.py"
 T="${TMPDIR:-/tmp}/selftest-branch.$$"
 mkdir -p "$T/src/m" "$T/scripts/guards"
 trap 'rm -rf "$T"' 0
@@ -36,7 +36,7 @@ fn c(x int) -> () {
     }
 }
 NV
-sh "$G" "$T" "$T/src" >/dev/null 2>&1 && ok "три полные формы -> зелено" || bad "полные формы покрасили"
+python "$G" "$T" "$T/src" >/dev/null 2>&1 && ok "три полные формы -> зелено" || bad "полные формы покрасили"
 
 # НЕПОЛНОЕ ветвление: счётчик растёт выше базы
 cat >> "$T/src/m/a.nv" <<'NV'
@@ -47,7 +47,7 @@ fn d(x int) -> () {
     }
 }
 NV
-OUT=$(sh "$G" "$T" "$T/src" 2>&1); RC=$?
+OUT=$(python "$G" "$T" "$T/src" 2>&1); RC=$?
 if [ "$RC" -eq 0 ]; then
     bad "неполное ветвление прошло зелёным"
 else
@@ -56,7 +56,7 @@ fi
 
 # база отсутствует -> красный, а не «нечего судить»
 rm -f "$T/scripts/guards/novac-branch.baseline"
-sh "$G" "$T" "$T/src" >/dev/null 2>&1 && bad "без базы прошло зелёным" || ok "нет базы -> красный"
+python "$G" "$T" "$T/src" >/dev/null 2>&1 && bad "без базы прошло зелёным" || ok "нет базы -> красный"
 
 [ "$fails" -eq 0 ] && echo "test-check-novac-branch-complete ok" && exit 0
 echo "test-check-novac-branch-complete FAIL: $fails" >&2
