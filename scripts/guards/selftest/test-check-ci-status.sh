@@ -66,6 +66,25 @@ echo "$OUT" | grep -q "RED" && ok "RED — красный прогон расп�
 [ "$(run_guard_code --strict "$SHA")" = "1" ] \
     && ok "RED — --strict роняет (exit 1)" || bad "RED — --strict не уронил"
 
+# 1a. ОТМЕНА ПО ВЫТЕСНЕНИЮ — НЕ отказ.
+#     У nova-gate задана группа параллелизма: при частых пушах GitHub
+#     снимает СТОЯЩИЙ В ОЧЕРЕДИ прогон, когда приходит более новый.
+#     2026-08-19 это случалось на каждом втором пуше подряд, и страж,
+#     считавший любую отмену красной, ронял бы отправки по причине,
+#     которой нет (ложный красный останавливает всех, довод 703).
+make_gh "[{\"name\":\"nova-gate\",\"status\":\"completed\",\"conclusion\":\"cancelled\",\"headSha\":\"$SHA\",\"createdAt\":\"2026-08-19T01:00:00Z\"},{\"name\":\"nova-gate\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"deadbeef1\",\"createdAt\":\"2026-08-19T02:00:00Z\"}]"
+OUT_S="$(run_guard "$SHA")"
+echo "$OUT_S" | grep -q "RED" \
+    && bad "superseded cancel засчитан красным: $OUT_S" \
+    || ok "отмена по вытеснению отказом НЕ считается"
+
+# 1b. ОТМЕНА БЕЗ более нового прогона — отказ: её сняли намеренно.
+make_gh "[{\"name\":\"nova-gate\",\"status\":\"completed\",\"conclusion\":\"cancelled\",\"headSha\":\"$SHA\",\"createdAt\":\"2026-08-19T03:00:00Z\"}]"
+OUT_C="$(run_guard "$SHA")"
+echo "$OUT_C" | grep -q "RED" \
+    && ok "одинокая отмена остаётся отказом" \
+    || bad "одинокая отмена пропущена: $OUT_C"
+
 # ── 2. OK: не лжёт (зелёное не должно ронять даже в --strict) ────────────────
 make_gh "[{\"name\":\"nova-gate\",\"status\":\"completed\",\"conclusion\":\"success\",\"headSha\":\"$SHA\",\"createdAt\":\"2026-08-07T00:00\"}]"
 OUT="$(run_guard "$SHA")"
