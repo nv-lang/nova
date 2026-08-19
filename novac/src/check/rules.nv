@@ -8,7 +8,7 @@
 //   the whole point of S9.4: the parser reads the language, the checker
 //   decides what the subset compiles.
 // Used by: check.nv -- its walk calls these and nothing else does.
-// Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh,
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py,
 //   check-novac-no-grammar-excuse.py (the texts), check-novac-doc-language.py.
 //
 // Split out of check.nv on 2026-08-18, when the expression batch and the

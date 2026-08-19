@@ -10,7 +10,7 @@
 //   that the key is the only thing that has to change.
 // Used by: emit_c -- it emits a function only if this set contains it.
 // Guarded by: check-novac-emission-size.sh (the ratchet this collector moves),
-//   check-novac-deps.sh (the edge mono -> sem is in the architecture table),
+//   check-novac-deps.py (the edge mono -> sem is in the architecture table),
 //   check-novac-differential.sh (behaviour must not shift when code is dropped).
 
 module novac.mono

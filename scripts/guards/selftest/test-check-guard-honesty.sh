@@ -1,5 +1,5 @@
 #!/bin/sh
-# Самотест check-guard-honesty.sh.
+# Самотест check-guard-honesty.py.
 #
 # Доказывает мутацией, что страж ловит все три формы «вердикт есть, проверки
 # нет», и — отдельно — что он НЕ краснеет на здоровом коде. Последнее здесь не
@@ -10,7 +10,7 @@ export LC_ALL=C
 
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-guard-honesty.sh"
+G="$GD/check-guard-honesty.py"
 T="${TMPDIR:-/tmp}/guard-honesty-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
@@ -20,7 +20,7 @@ ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # ── 1. живое дерево — зелёный СО СТРОКОЙ ok: ──────────────────────────────
-if sh "$G" "$ROOT" > "$T/out" 2> "$T/err"; then
+if python "$G" "$ROOT" > "$T/out" 2> "$T/err"; then
     if grep -q "^check-guard-honesty ok:" "$T/out"; then
         ok "живое дерево — зелёный со строкой ok:"
     else
@@ -37,7 +37,7 @@ cat > "$T/blind/scripts/guards/check-x.sh" <<'SH'
 ORACLE="$ROOT/nova-cli/target/release/nova.exe"
 [ -f "$ORACLE" ] || exit 0
 SH
-if sh "$G" "$T/blind" > "$T/o2" 2> "$T/e2"; then
+if python "$G" "$T/blind" > "$T/o2" 2> "$T/e2"; then
     bad "файл, знающий только .exe, прошёл: [$(head -n 1 "$T/o2")]"
 else
     grep -q "знает только" "$T/e2" \
@@ -52,7 +52,7 @@ cat > "$T/seeing/scripts/guards/check-y.sh" <<'SH'
 ORACLE="$ROOT/nova-cli/target/release/nova.exe"
 [ -f "$ORACLE" ] || ORACLE="$ROOT/nova-cli/target/release/nova"
 SH
-if sh "$G" "$T/seeing" > "$T/o3" 2>&1; then
+if python "$G" "$T/seeing" > "$T/o3" 2>&1; then
     ok "файл с запасным именем законен"
 else
     bad "файл, знающий оба имени, покраснел: [$(head -n 2 "$T/o3")]"
@@ -61,7 +61,7 @@ fi
 # ── 4. НЕэкранированный апостроф в сообщении — красный ───────────────────
 mkdir -p "$T/tick/scripts/guards"
 printf '#!/bin/sh\necho "smells like `date` here"\n' > "$T/tick/scripts/guards/check-z.sh"
-if sh "$G" "$T/tick" > "$T/o4" 2> "$T/e4"; then
+if python "$G" "$T/tick" > "$T/o4" 2> "$T/e4"; then
     bad "неэкранированный апостроф прошёл: [$(head -n 1 "$T/o4")]"
 else
     grep -q "выполнит его как команду" "$T/e4" \
@@ -72,7 +72,7 @@ fi
 # ── 5. ЭКРАНИРОВАННЫЙ апостроф — зелёный (ловушка первой редакции) ───────
 mkdir -p "$T/esc/scripts/guards"
 printf '#!/bin/sh\necho "the door is \\`nova update\\` and nothing else"\n' > "$T/esc/scripts/guards/check-w.sh"
-if sh "$G" "$T/esc" > "$T/o5" 2>&1; then
+if python "$G" "$T/esc" > "$T/o5" 2>&1; then
     ok "экранированный апостроф законен — страж не краснеет на здоровом"
 else
     bad "экранированный апостроф покраснел (ловушка первой редакции): [$(head -n 2 "$T/o5")]"
@@ -80,7 +80,7 @@ fi
 
 # ── 6. пустой scripts — красный: судить нечего там, где судить обязано ───
 mkdir -p "$T/empty/scripts"
-if sh "$G" "$T/empty" > "$T/o6" 2> "$T/e6"; then
+if python "$G" "$T/empty" > "$T/o6" 2> "$T/e6"; then
     bad "дерево без единого .sh прошло: [$(head -n 1 "$T/o6")]"
 else
     ok "scripts без единого .sh — красный"
@@ -88,7 +88,7 @@ fi
 
 # ── 7. нет scripts вовсе — честное «судить нечего» ───────────────────────
 mkdir -p "$T/bare"
-if sh "$G" "$T/bare" > "$T/o7" 2>&1; then
+if python "$G" "$T/bare" > "$T/o7" 2>&1; then
     grep -q "судить нечего" "$T/o7" \
         && ok "нет scripts — судить нечего" \
         || bad "зелёный без честной формулировки: [$(head -n 1 "$T/o7")]"
@@ -106,7 +106,7 @@ cat > "$T/pyblind/scripts/guards/check-p.py" <<'PY'
 import pathlib
 ORACLE = pathlib.Path("nova-cli/target/release/nova.exe")
 PY
-if sh "$G" "$T/pyblind" > "$T/o8" 2> "$T/e8"; then
+if python "$G" "$T/pyblind" > "$T/o8" 2> "$T/e8"; then
     bad ".py, знающий только .exe, прошёл: [$(head -n 1 "$T/o8")]"
 else
     grep -q "знает только" "$T/e8" \
@@ -121,7 +121,7 @@ cat > "$T/pycrlf/scripts/guards/check-q.py" <<'PY'
 import sys
 print("check-q ok: nothing to judge")
 PY
-if sh "$G" "$T/pycrlf" > "$T/o9" 2> "$T/e9"; then
+if python "$G" "$T/pycrlf" > "$T/o9" 2> "$T/e9"; then
     bad "печать вердикта без LF прошла: [$(head -n 1 "$T/o9")]"
 else
     grep -q "не переведя поток на LF" "$T/e9" \
@@ -142,7 +142,7 @@ PY
 cat > "$T/pygood/scripts/guards/helper.py" <<'PY'
 print("not a verdict printer")
 PY
-if sh "$G" "$T/pygood" > "$T/o10" 2>&1; then
+if python "$G" "$T/pygood" > "$T/o10" 2>&1; then
     ok "здоровый .py законен, helper вне суда (слепая зона названа)"
 else
     bad "здоровый .py покраснел: [$(head -n 2 "$T/o10")]"
@@ -155,7 +155,7 @@ fi
 # полю — молчало полтора дня и пропустило живое нарушение.
 mkdir -p "$T/eaten/scripts/guards"
 printf '#!/bin/sh\nX=$(cat f | tr -d %s\n%s | grep -F x)\n' "'" "'" > "$T/eaten/scripts/guards/check-e.sh"
-if sh "$G" "$T/eaten" > "$T/o11" 2> "$T/e11"; then
+if python "$G" "$T/eaten" > "$T/o11" 2> "$T/e11"; then
     bad "удаление переводов строк прошло: [$(head -n 1 "$T/o11")]"
 else
     grep -q "съеденный" "$T/e11" \
@@ -168,25 +168,26 @@ fi
 # красить её значило бы платить ложной краснотой за букву.
 mkdir -p "$T/join/scripts/guards"
 printf '#!/bin/sh\nX=$(cat f | tr %s\n%s " " )\n' "'" "'" > "$T/join/scripts/guards/check-j.sh"
-if sh "$G" "$T/join" > "$T/o12" 2>&1; then
+if python "$G" "$T/join" > "$T/o12" 2>&1; then
     ok "замена переводов на пробел законна — ложной красноты нет"
 else
     bad "законная замена покрашена: [$(head -n 2 "$T/o12")]"
 fi
 
-# ── 13. УПАВШИЙ сканер — красный, а не «нарушений нет» ───────────────────
-# Мутация ПОДСУДИМОГО: ломаем awk-программу в копии стража. 2026-08-19 такой
-# страж напечатал «ok» — пустой результат сломанного сканера неотличим от
-# честного «находок нет», и это ровно тот вердикт без проверки, который он
-# судит у других.
+# ── 13. СЛОМАННЫЙ страж не печатает зелёный ─────────────────────────────
+# Мутация ПОДСУДИМОГО: ломаем разбор в копии стража. В shell-редакции скан был
+# отдельным процессом (awk), и его крах давал пустой результат, неотличимый от
+# «находок нет» — 2026-08-19 такой страж напечатал «ok». В python скан живёт в
+# самом страже: поломка поднимает исключение, процесс умирает ненулевым. Случай
+# держит границу: зелёного при сломанном разборе быть не может.
 mkdir -p "$T/broken"
-sed 's/END { verdict() }/END { verdict( }/' "$G" > "$T/broken/g.sh"
-if sh "$T/broken/g.sh" "$ROOT" > "$T/o13" 2> "$T/e13"; then
-    bad "сломанный сканер напечатал зелёный: [$(head -n 1 "$T/o13")]"
+sed 's|    bad = \[\]|    bad = [] + 1|' "$G" > "$T/broken/g.py"
+if python "$T/broken/g.py" "$ROOT" > "$T/o13" 2> "$T/e13"; then
+    bad "сломанный страж напечатал зелёный: [$(head -n 1 "$T/o13")]"
+elif grep -q "ok:" "$T/o13"; then
+    bad "сломанный страж вышел ненулём, но напечатал строку ok:"
 else
-    grep -q "сканер скриптов упал" "$T/e13" \
-        && ok "упавший сканер — красный, причина названа" \
-        || bad "красный, но не про сканер: [$(head -n 1 "$T/e13")]"
+    ok "сломанный разбор — красный, строки ok: нет"
 fi
 
 if [ "$fails" -ne 0 ]; then
@@ -194,5 +195,5 @@ if [ "$fails" -ne 0 ]; then
     exit 1
 fi
 echo "итог: PASS"
-echo "test-check-guard-honesty ok: все случаи, включая ловушку экранированного апострофа, оба питоновских правила, съеденный возврат каретки и упавший сканер"
+echo "test-check-guard-honesty ok: все случаи, включая ловушку экранированного апострофа, оба питоновских правила, съеденный возврат каретки и сломанный разбор"
 exit 0

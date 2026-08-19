@@ -1,5 +1,5 @@
 #!/bin/sh
-# Самотест check-novac-one-door-export.sh (П16: страж обязан ДОКАЗАТЬ, что ловит).
+# Самотест check-novac-one-door-export.py (П16: страж обязан ДОКАЗАТЬ, что ловит).
 #
 # ПОДЛОЖКА. У стража один шов — $2 (сканируемая директория), поэтому каждый
 # случай собирается крошечным деревом во временном каталоге: модуль = папка,
@@ -23,14 +23,14 @@
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-one-door-export.sh"
+G="$GD/check-novac-one-door-export.py"
 T="${TMPDIR:-/tmp}/novac-one-door-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
 # mkf <путь файла> <строка>... — файл с шапкой module и заданными строками.
 # Первая строка файла всегда "module m", значит содержимое начинается со 2-й.
@@ -257,10 +257,10 @@ grep -q "судить нечего (нет .nv" "$T/out" && ok "каталог �
     || bad "пустой каталог: ждали «судить нечего» [$(cat "$T/out")$(cat "$T/err")]"
 
 # --- 20. настоящее дерево ------------------------------------------------
-if sh "$G" "$ROOT" >/dev/null 2>&1; then
+if python "$G" "$ROOT" >/dev/null 2>&1; then
     ok "настоящее дерево novac/src — зелёное"
 else
-    bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -5)"
+    bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -5)"
 fi
 
 echo "итог: FAIL $fails"

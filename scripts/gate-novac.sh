@@ -241,11 +241,11 @@ guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "го
 step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
 guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"
-guard "$ROOT/scripts/guards/check-guard-honesty.sh" "$ROOT" || fail "страж может соврать или промолчать вместо проверки"
+guard "$ROOT/scripts/guards/check-guard-honesty.py" "$ROOT" || fail "страж может соврать или промолчать вместо проверки"
 guard "$ROOT/scripts/guards/check-novac-plan-liveline.sh" "$ROOT" || fail "живая строка плана отстала от кода"
 guard "$ROOT/scripts/guards/check-novac-time-ledger.py" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
 step "novac-deps (рёбра только из таблицы §3 архитектуры)"
-guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
+guard "$ROOT/scripts/guards/check-novac-deps.py" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
 
 # ── РУБЕЖ F1: дальше идут бинарь-зависимые. Бинарь строит ГЕЙТ. ──
 step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено»)"
@@ -301,7 +301,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-default-branch.py" "ветка «в
 par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя разбирается обратно (П24)"
 par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
 par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
-par_add "$ROOT/scripts/guards/check-novac-one-door-export.sh" "одна операция из двух модулей (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-one-door-export.py" "одна операция из двух модулей (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 без «что течёт» (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-temp-edges.py" "временное ребро без срока или истекло (274.1 §2в)"

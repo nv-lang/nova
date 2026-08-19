@@ -8,7 +8,7 @@
 // qualifier is legal WHERE is not decided here: the parser reads the
 // language, the checker judges the subset (plan 9.4).
 // Used by: parse/parse.nv (fn and type declarations).
-// Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh.
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py.
 //
 // Split out of parse.nv on 2026-08-17 when that file crossed the thousand-line
 // line (decision 12 / P13): the type reader grew with the grammar wave --

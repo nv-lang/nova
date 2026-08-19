@@ -10,7 +10,7 @@
 //   the checker's).
 // Used by: parse.nv -- its top-level loop, and export_decl for the
 //   declaration it wraps.
-// Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh, check-novac-doc-language.py.
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py, check-novac-doc-language.py.
 //
 // Split out of parse.nv on 2026-08-18 when the declarations batch of S9.4a
 // pushed that file past the thousand-line limit -- the same seam type_ref.nv

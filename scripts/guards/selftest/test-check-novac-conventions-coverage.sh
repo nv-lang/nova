@@ -21,7 +21,7 @@ cat > "$T/c1.md" <<'EOF'
 
 Текст правила.
 
-**Механизм:** `check-novac-deps.sh`.
+**Механизм:** `check-novac-deps.py`.
 
 ## П2. Второе правило
 
@@ -41,7 +41,7 @@ cat > "$T/c2.md" <<'EOF'
 
 ## П1. Со стражем
 
-`check-novac-deps.sh` держит это.
+`check-novac-deps.py` держит это.
 
 ## П2. Без всего
 
@@ -79,7 +79,7 @@ cat > "$T/c5.md" <<'EOF'
 
 ## П1. Со стражем
 
-`check-novac-deps.sh`.
+`check-novac-deps.py`.
 
 ## П2. Без механизма
 
