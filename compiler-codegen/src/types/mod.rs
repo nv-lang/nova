@@ -3781,6 +3781,19 @@ struct TypeCheckCtx<'a> {
     /// путь разрешения остаётся прежним, байт-в-байт. Замер 2026-08-18: таких
     /// имён во всём корпусе шесть.
     colliding_type_names: std::collections::HashSet<String>,
+    /// W6 (№705): файл, чьё ОБЪЯВЛЕНИЕ проверяется прямо сейчас.
+    ///
+    /// Правильный ответ на «какой из одноимённых типов имеется в виду» даёт
+    /// `types_get_for_file(name, file_id)` — по импортам файла, где имя
+    /// написано. Но у большинства площадок чтения span'а на руках нет, а
+    /// протаскивать его через семьдесят сигнатур значит сделать правку,
+    /// радиус которой больше её пользы.
+    ///
+    /// Тело объявления целиком лежит в ОДНОМ файле, поэтому файл ставится
+    /// один раз на входе в проверку и читается где угодно ниже через
+    /// `types_get_here`. Замер площадок, которым это нужно, —
+    /// docs/plans/repro/p705/README.md (23 из 71).
+    current_file: std::cell::Cell<Option<crate::diag::FileId>>,
     /// Plan 81 Ф.2: префиксы импортированных модулей (alias + последний
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
@@ -4824,6 +4837,7 @@ impl<'a> TypeCheckCtx<'a> {
             .collect();
         TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
             colliding_type_names, imported_modules,
+            current_file: std::cell::Cell::new(None),
             import_prefix_to_module_last,
             entry_imported_modules,
             entry_file_ids,
@@ -4910,6 +4924,24 @@ impl<'a> TypeCheckCtx<'a> {
     /// back to the legacy global slot otherwise. Non-colliding names never
     /// populate `file_local_types` (empty per-file map lookup, O(1) miss) —
     /// byte-identical to `self.types.get(name)` outside the collision case.
+    /// W6 (№705): чтение карты типов ПО ТЕКУЩЕМУ ФАЙЛУ.
+    ///
+    /// Для имени, объявленное только в одном файле, поведение остаётся
+    /// байт-в-байт прежним: импорто-осведомлённый поиск внутри
+    /// `types_get_for_file` включается ТОЛЬКО для коллидирующих имён, а их во
+    /// всём корпусе шесть. Значит перевод площадки на этот аксессор не может
+    /// изменить ничего, кроме тех самых шести имён, — и радиус правки равен
+    /// поверхности коллизий, а не числу площадок.
+    ///
+    /// Если текущий файл не выставлен (площадка вне проверки объявления),
+    /// ответ прежний — глобальная карта.
+    fn types_get_here(&self, name: &str) -> Option<&'a TypeDecl> {
+        match self.current_file.get() {
+            Some(fid) => self.types_get_for_file(name, fid),
+            None => self.types.get(name).copied(),
+        }
+    }
+
     fn types_get_for_file(&self, name: &str, use_file_id: crate::diag::FileId) -> Option<&'a TypeDecl> {
         // 1. Объявлено В ЭТОМ ЖЕ файле — самый сильный ответ.
         if let Some(td) = self
@@ -8105,6 +8137,10 @@ impl<'a> TypeCheckCtx<'a> {
     // ================================================================
 
     fn f1_check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // W6 (№705): тело функции целиком лежит в одном файле — ставим
+        // его один раз, чтобы разрешение одноимённых типов ниже шло по
+        // импортам ИМЕННО этого файла, а не по last-write-wins карте.
+        self.current_file.set(Some(fd.span.file_id));
         if std::env::var_os("NOVA_F1_TRACE").is_some() {
             eprintln!("[F1] {}.{} fid={:?}", fd.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("-"), fd.name, fd.span.file_id);
         }
@@ -24720,7 +24756,7 @@ impl<'a> TypeCheckCtx<'a> {
             return R::Any; // mirrors cat_of_depth depth-guard → Other
         }
         match tr {
-            TypeRef::Named { path, generics, .. } => {
+            TypeRef::Named { path, generics, span: tr_span, .. } => {
                 let Some(name) = path.last() else { return R::Any; };
                 if gs.contains_key(name) {
                     return R::Any; // generic type-param → permissive
@@ -24764,7 +24800,12 @@ impl<'a> TypeCheckCtx<'a> {
                     // resolves as an unknown name → `Any` via the `other` arm below.
                     // `TypeRef::Pointer` (typed `*T`) still → `Ptr` further down.)
                     "any" | "never" | "Self" => R::Any,
-                    other => match self.types.get(other) {
+                    // W6 (№705): разрешаем по ФАЙЛУ, ГДЕ НАПИСАНА САМА ССЫЛКА
+                    // на тип, а не по last-write-wins карте. Здесь span есть
+                    // прямо в образце — ответ точнее «текущего файла».
+                    // Самая частая площадка по замеру: 124 чтения
+                    // коллидирующих имён из 624 (пять разных имён).
+                    other => match self.types_get_for_file(other, tr_span.file_id) {
                         Some(td) => match &td.kind {
                             // Alias transparent (D52); newtype/record/sum/named-tuple
                             // nominal by name (+ generic args); protocol/effect/opaque permissive.
