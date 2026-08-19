@@ -21,9 +21,27 @@
 // imports pipeline + diag only, exactly as the §3 table always said.
 
 module novac.pipeline
+/// Tokens of a source text — and the LOSSLESS invariant, checked here.
+///
+/// The tree is non-destructive by design: every byte of the input stands in the
+/// token stream, trivia included. That is a property of the LEXER, so it is
+/// asserted where the lexer is used — on every file novac ever reads, the whole
+/// corpus included — instead of being shown on fixtures and hoped for
+/// elsewhere.
+///
+/// Plan 274 wave 3 asked for this as a `reserialize` CLI over the corpus. An
+/// invariant needs no command, and П26 forbids inventing one nova-cli does not
+/// have: novac is built as a REPLACEMENT for it, not a neighbour. Checking it
+/// here is strictly stronger than a command someone must remember to run.
+fn tokens_of(text str) -> []Token {
+    ro toks = lex(text)
+    assert(reserialize(toks) == text, "lex: the token stream lost bytes of the source")
+    toks
+}
+
 
 import ../source.{SourceText}
-import ../lex.{lex}
+import ../lex.{lex, reserialize, Token}
 import ../parse.{parse}
 import ../tree.{Node}
 import ../check.{check}
@@ -38,7 +56,7 @@ import ../sem.{Ctx, collect}
 /// interface.
 fn context(tree Node, decl_texts []str) -> Ctx {
     mut decls = []Node.new()
-    for d in decl_texts { decls.push(parse(lex(d))) }
+    for d in decl_texts { decls.push(parse(tokens_of(d))) }
     collect(tree, decls)
 }
 
@@ -48,7 +66,7 @@ fn context(tree Node, decl_texts []str) -> Ctx {
 /// gets an honest subset rejection).
 export fn compile(text str, decl_texts []str) -> []Diagnostic {
     ro src = SourceText { text }
-    ro tree = parse(lex(text))
+    ro tree = parse(tokens_of(text))
     ro (diags, _) = check(tree, src, context(tree, decl_texts))
     diags
 }
@@ -59,7 +77,7 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic {
 /// used; no Result in signatures (274 p4.1).
 export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) {
     ro src = SourceText { text }
-    ro tree = parse(lex(text))
+    ro tree = parse(tokens_of(text))
     ro ctx = context(tree, decl_texts)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 {
