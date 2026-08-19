@@ -199,6 +199,9 @@ step "форма записей реестра (класс, приоритет, 
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
 step "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
 guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
+step "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
+guard "$ROOT/scripts/guards/check-guard-external-caller.py" "$ROOT" \
+    || fail "стражей без внешнего вызывающего стало больше (docs/dev/gate-guard-conventions.md, Г8)"
 
 guard "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 
