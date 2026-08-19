@@ -166,19 +166,27 @@ export fn DefTable @fn_row(name str) -> Option[int] {
     Some(row)
 }
 
-/// Type by name during COLLECTION: -1 if the name is unknown or not a
+/// Type by name during COLLECTION: None if the name is unknown or not a
 /// type. Collection is DELIBERATELY tolerant of broken input
 /// (274.3/F-B4): the file picture is built for check too, and check
 /// must issue a diagnostic, not die in an ICE. check is the judge (the
 /// rule "a type in type position must be declared"); sem invents
 /// nothing — it just does not register what it did not understand.
 #realtime nogc
-export fn DefTable @type_id(name str) -> int {
+export fn DefTable @type_id(name str) -> Option[int] {
     ro d = @names.find(name)
-    if d < 0 { return -1 }
+    if d < 0 {
+        return None
+    } else {
+        // The registry knows the name; whether it names a TYPE is next.
+    }
     ro def = @rows[d]
-    if def.kind != DefKind.DefType { return -1 }
-    def.payload
+    if def.kind != DefKind.DefType {
+        return None
+    } else {
+        // A type: its id is the answer.
+    }
+    Some(def.payload)
 }
 
 /// Resolve `name` in TYPE POSITION (params, fields, returns, constructor
@@ -599,9 +607,9 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         }
     }
     if recv_name == "" || mname == "" || ret_name == "" { return }
-    ro recv_t = defs.type_id(recv_name)
-    ro ret_t = defs.type_id(ret_name)
-    if recv_t < 0 || ret_t < 0 { return }
+    ro recv_t = defs.type_id(recv_name) ?? UNKNOWN_TYPE
+    ro ret_t = defs.type_id(ret_name) ?? UNKNOWN_TYPE
+    if recv_t == UNKNOWN_TYPE || ret_t == UNKNOWN_TYPE { return }
     // A signature is valid only if ALL its types are known, including
     // its parameters. Otherwise std overloads would land in the table
     // as "one name twice" and get rejected as ambiguous: `str` has both
@@ -619,8 +627,8 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         ro pk = branch_children(c)
         if pk.len() < 2 { return }
         if pk[1].kind_of() != NodeKind.LeafNode { return }
-        ro pt = defs.type_id(leaf_text(pk[1]))
-        if pt < 0 { return }
+        ro pt = defs.type_id(leaf_text(pk[1])) ?? UNKNOWN_TYPE
+        if pt == UNKNOWN_TYPE { return }
         param_ids.push(pt)
     }
     // Read from the declarations handed to novac: the oracle emits this
@@ -675,7 +683,7 @@ export fn collect_types(file Node) -> Ctx {
         // silent "last put wins" of DefTable.add). Reporting the
         // duplicate is check's job (a later wave); sem's job is to
         // not build a second truth for one name.
-        if defs.type_id(leaf_text(nk[1])) >= 0 { continue }
+        if defs.type_id(leaf_text(nk[1])).is_some() { continue }
         defs.add(leaf_text(nk[1]), DefKind.DefType, next_id)
         next_id += 1
     }
@@ -686,8 +694,8 @@ export fn collect_types(file Node) -> Ctx {
             if tkids.len() < 2 { continue }
             if tkids[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(tkids[1])
-            ro owner_id = defs.type_id(tname)
-            if owner_id < 0 { continue }
+            ro owner_id = defs.type_id(tname) ?? UNKNOWN_TYPE
+            if owner_id == UNKNOWN_TYPE { continue }
             // Only the declaration that OWNS the id builds the row: a later
             // duplicate resolves to the same id and must not push a second
             // row for it (that is what broke the ty_id == index invariant).
@@ -699,8 +707,8 @@ export fn collect_types(file Node) -> Ctx {
                 ro fk = branch_children(f)
                 if fk.len() < 2 { continue }
                 if fk[0].kind_of() != NodeKind.LeafNode || fk[1].kind_of() != NodeKind.LeafNode { continue }
-                ro ft = defs.type_id(leaf_text(fk[1]))
-                if ft < 0 { continue }
+                ro ft = defs.type_id(leaf_text(fk[1])) ?? UNKNOWN_TYPE
+                if ft == UNKNOWN_TYPE { continue }
                 fields.add(owner_id, leaf_text(fk[0]), ft)
                 cnt += 1
             }
@@ -711,8 +719,8 @@ export fn collect_types(file Node) -> Ctx {
             if skids.len() < 2 { continue }
             if skids[1].kind_of() != NodeKind.LeafNode { continue }
             ro sname = leaf_text(skids[1])
-            ro sum_id = defs.type_id(sname)
-            if sum_id < 0 { continue }
+            ro sum_id = defs.type_id(sname) ?? UNKNOWN_TYPE
+            if sum_id == UNKNOWN_TYPE { continue }
             if sum_id != types.len() { continue } // same rule as for records
             ro off = variant_rows.len()
             mut vcnt = 0
@@ -760,8 +768,8 @@ export fn collect_types(file Node) -> Ctx {
                         j += 1
                         if pj.kind_of() != NodeKind.LeafNode { continue }
                         if leaf_kind(pj) != TokenKind.Ident { continue }
-                        ro pt = defs.type_id(leaf_text(pj))
-                        if pt < 0 { continue }
+                        ro pt = defs.type_id(leaf_text(pj)) ?? UNKNOWN_TYPE
+                        if pt == UNKNOWN_TYPE { continue }
                         payload_types.push(pt)
                         pcnt += 1
                     }
@@ -774,15 +782,15 @@ export fn collect_types(file Node) -> Ctx {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }
             if fk[1].kind_of() != NodeKind.LeafNode { continue }
-            // -1 sentinel = no declared return. Legal ONLY for main (check
-            // refuses it elsewhere); backends ice on -1 as the second
-            // floor — never a silent int (#652 class).
-            mut ret = -1
+            // UNKNOWN_TYPE = no declared return. Legal ONLY for main (check
+            // refuses it elsewhere); backends ice on it as the second floor —
+            // never a silent int (#652 class).
+            mut ret = UNKNOWN_TYPE
             for r in fk {
                 if r.kind_of() != NodeKind.RetType { continue }
                 ro rk = branch_children(r)
                 if rk.len() < 2 || rk[1].kind_of() != NodeKind.LeafNode { continue }
-                ret = defs.type_id(leaf_text(rk[1]))
+                ret = defs.type_id(leaf_text(rk[1])) ?? UNKNOWN_TYPE
             }
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
@@ -799,7 +807,9 @@ export fn collect_types(file Node) -> Ctx {
                     param_ids.push(-1)
                     continue
                 }
-                param_ids.push(defs.type_id(leaf_text(pk[1])))
+                // An unknown type is STORED as UNKNOWN_TYPE and said so:
+                // collection is tolerant, and check is the judge.
+                param_ids.push(defs.type_id(leaf_text(pk[1])) ?? UNKNOWN_TYPE)
             }
             fns.add(fname, ret, false, false, param_ids)
             ro frow = fns.rows.len() - 1
@@ -831,162 +841,4 @@ export fn collect_types(file Node) -> Ctx {
         assert(types[i].ty_id == i, "sem: interned term id diverged from declaration index before E2-b2 — a type was interned out of declaration order")
     }
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns }
-}
-
-/// The BODY of a match arm, or None when the arm carries nothing but
-/// punctuation. Its last child is not always the body.
-///
-/// A one-line `match n { 1 => 10, _ => 2 }` writes a COMMA after each arm body
-/// (D452), and the comma is kept in the tree because the tree is lossless. The
-/// readers that took `ak[ak.len() - 1]` then asked the checker for the type of
-/// a comma and got the honest ice "expression kind without a type rule".
-///
-/// Third instance of the fixed-index class in one day (the method-declaration
-/// ice, check's kids[1], typing's pk[0]/pk[1]). The shape of a tree grows; an
-/// index does not grow with it, and a door does.
-export fn arm_body_at(ak []Node) -> Option[int] {
-    mut i = ak.len() - 1
-    while i >= 0 {
-        ro c = ak[i]
-        ro is_punct = c.kind_of() == NodeKind.LeafNode &&
-            (leaf_kind(c) == TokenKind.Comma || leaf_kind(c) == TokenKind.FatArrow)
-        if !is_punct { return Some(i) }
-        i -= 1
-    }
-    None
-}
-
-/// Where the NAME of a parameter sits among its children, and where its TYPE
-/// begins.
-///
-/// A parameter is `[name, type...]` -- and since 2026-08-17 it may carry a
-/// leading MODE leaf (`fn take(consume v int)`), which shifts both. Every
-/// consumer used to index `pk[0]` and `pk[1]` directly, and the moment the
-/// shape grew those indexes started reading the mode as the name and the name
-/// as the type. That is the same defect the checker hit this morning with
-/// `kids[1]` on a method declaration: a fixed index into a tree whose shape
-/// just grew is a bug waiting for the next form.
-export fn param_name_at(pk []Node) -> Option[int] {
-    mut i = 0
-    for c in pk {
-        ro is_ident = c.kind_of() == NodeKind.LeafNode &&
-            leaf_kind(c) == TokenKind.Ident
-        if is_ident && !is_param_mode(leaf_text(c)) { return Some(i) }
-        i += 1
-    }
-    None
-}
-
-/// The parameter MODES, and the set is measured rather than assumed
-/// (2026-08-17, after the owner asked why only `consume` was skipped):
-///
-///     mut v int       legal -- and the one std actually uses, 131 times
-///     consume v int   legal -- 4 times in std
-///     ro v int        parses, then E_REDUNDANT_PARAM_RO (`ro` is default)
-///     uninit v int    parses
-///     own v int       "expected `,`, got identifier" -- NOT a mode
-///     zzz v int       the same, so the set is closed, not open
-///
-/// The `own`/`borrow`/`inout` rows came back "accepted" in an earlier probe of
-/// mine, and they were wrong the same way twice in one shift: the grep behind
-/// the measurement matched only BRACKETED error codes, and this diagnostic
-/// carries none. A measurement is only as good as what it agrees to see.
-fn is_param_mode(word str) -> bool =>
-    word == "mut" || word == "ro" || word == "consume" || word == "uninit"
-
-/// The first node of the parameter's TYPE, or None when it declares none.
-export fn param_type_at(pk []Node) -> Option[int] {
-    match param_name_at(pk) {
-        // No name: a recovery shape, and a type cannot be located without one.
-        None => None
-        Some(n) => type_slot_after(pk, n)
-    }
-}
-
-/// The slot holding the type that follows the name at `n`, or None: the name
-/// may be the LAST child (`fn f(v)`) or be followed by a comma (`fn f(v, w)`),
-/// and in both cases the parameter declares no type of its own.
-fn type_slot_after(pk []Node, n int) -> Option[int] {
-    if n + 1 >= pk.len() {
-        return None
-    } else {
-        // There is a child after the name; whether it is a type is next.
-    }
-    ro t = n + 1
-    ro c = pk[t]
-    ro no_type = c.kind_of() == NodeKind.LeafNode &&
-        leaf_kind(c) == TokenKind.Comma
-    if no_type {
-        return None
-    } else {
-        // A real node stands where the type belongs.
-    }
-    Some(t)
-}
-
-/// Children of a branch node; a leaf here is an invariant break.
-///
-/// The view is READ-ONLY (`-> ro`, owner's review 2026-08-17): the green tree
-/// is immutable by definition, and handing its own children out as a plain
-/// `[]Node` would give every caller a mutable alias of it. The compiler does
-/// not catch that today (see the `ro`-laundering repro in
-/// docs/dev/novac-divergences.md), so the signature has to say it.
-export fn branch_children(n Node) -> ro []Node {
-    match n {
-        Leaf(_) => ice("sem: expected a branch node")
-        Branch { children, .. } => children
-    }
-}
-
-/// Token text of a leaf node; a branch here is an invariant break.
-export fn leaf_text(n Node) -> str {
-    match n {
-        Leaf(t) => t.text
-        Branch { .. } => ice("sem: leaf_text on a branch node")
-    }
-}
-
-/// Token kind of a leaf node; a branch here is an invariant break.
-export fn leaf_kind(n Node) -> TokenKind {
-    match n {
-        Leaf(t) => t.kind
-        Branch { .. } => ice("sem: leaf_kind on a branch node")
-    }
-}
-
-/// Node kinds that stand as expressions (argument/operand positions).
-export fn is_expr_kind(k NodeKind) -> bool {
-    // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
-    // `||` on the next line is parsed as something else entirely (the oracle
-    // answered E_CLOSURE_SCALAR_RETURN), and parentheses around a multi-line
-    // chain are refused outright.
-    k == NodeKind.Paren ||
-    k == NodeKind.Unary ||
-    k == NodeKind.Bin ||
-    k == NodeKind.Lit ||
-    k == NodeKind.Name ||
-    k == NodeKind.Call ||
-    k == NodeKind.MethodCall ||
-    k == NodeKind.FieldAccess ||
-    k == NodeKind.MatchExpr ||
-    k == NodeKind.Cast
-}
-
-/// First-leaf text of a Name-like node (its identifier).
-export fn expr_leaf_name(e Node) -> str {
-    ro kids = branch_children(e)
-    leaf_text(kids[0])
-}
-
-/// Callee text of a Call node's children (leaf or Name-branch callee).
-export fn call_callee_text(kids []Node) -> str {
-    match kids[0] {
-        Leaf(t) => t.text
-        Branch { children, .. } => {
-            match children[0] {
-                Leaf(t) => t.text
-                Branch { .. } => ""
-            }
-        }
-    }
 }

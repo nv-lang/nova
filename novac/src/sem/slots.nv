@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `hir::Node` accessors and Go `ast.Inspect` helpers for "ask the
+// node WHICH child holds what" instead of indexing; NOT taken: a visitor
+// framework — these are plain questions over a children slice, and a framework
+// would hide the very indices this file exists to remove.
+// Role: layer 3 — the ONE place that knows where a name, a type or a body
+//   stands among a node's children; every pass asks here instead of counting.
+// Used by: check, emit_c, mono and sem itself, at every stage from E1 on.
+// Guarded by: check-novac-no-alloc-in-lookup.py (these doors allocate nothing),
+// check-novac-type-field-docs.py (every function documented), the module tests
+// of parse and check that break the moment a shape changes.
+//
+// WHY A FILE OF ITS OWN. `sem.nv` crossed 1000 lines (decision 12), and the
+// answer to that is a cut along a seam, not an exception. The seam is real: the
+// registries and the collector know WHAT is declared, while these doors know
+// WHERE in the tree it is written. Every one of them was born from the same
+// case: a fixed index (`kids[1]`, `pk[0]`) read a mode as the name, or a comma
+// as the type, the moment the shape grew one child.
+
+module novac.sem
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+import ../diag.{ice}
+
+/// The BODY of a match arm, or None when the arm carries nothing but
+/// punctuation. Its last child is not always the body.
+///
+/// A one-line `match n { 1 => 10, _ => 2 }` writes a COMMA after each arm body
+/// (D452), and the comma is kept in the tree because the tree is lossless. The
+/// readers that took `ak[ak.len() - 1]` then asked the checker for the type of
+/// a comma and got the honest ice "expression kind without a type rule".
+///
+/// Third instance of the fixed-index class in one day (the method-declaration
+/// ice, check's kids[1], typing's pk[0]/pk[1]). The shape of a tree grows; an
+/// index does not grow with it, and a door does.
+export fn arm_body_at(ak []Node) -> Option[int] {
+    mut i = ak.len() - 1
+    while i >= 0 {
+        ro c = ak[i]
+        ro is_punct = c.kind_of() == NodeKind.LeafNode &&
+            (leaf_kind(c) == TokenKind.Comma || leaf_kind(c) == TokenKind.FatArrow)
+        if !is_punct { return Some(i) }
+        i -= 1
+    }
+    None
+}
+
+/// Where the NAME of a parameter sits among its children, and where its TYPE
+/// begins.
+///
+/// A parameter is `[name, type...]` -- and since 2026-08-17 it may carry a
+/// leading MODE leaf (`fn take(consume v int)`), which shifts both. Every
+/// consumer used to index `pk[0]` and `pk[1]` directly, and the moment the
+/// shape grew those indexes started reading the mode as the name and the name
+/// as the type. That is the same defect the checker hit this morning with
+/// `kids[1]` on a method declaration: a fixed index into a tree whose shape
+/// just grew is a bug waiting for the next form.
+export fn param_name_at(pk []Node) -> Option[int] {
+    mut i = 0
+    for c in pk {
+        ro is_ident = c.kind_of() == NodeKind.LeafNode &&
+            leaf_kind(c) == TokenKind.Ident
+        if is_ident && !is_param_mode(leaf_text(c)) { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+/// The parameter MODES, and the set is measured rather than assumed
+/// (2026-08-17, after the owner asked why only `consume` was skipped):
+///
+///     mut v int       legal -- and the one std actually uses, 131 times
+///     consume v int   legal -- 4 times in std
+///     ro v int        parses, then E_REDUNDANT_PARAM_RO (`ro` is default)
+///     uninit v int    parses
+///     own v int       "expected `,`, got identifier" -- NOT a mode
+///     zzz v int       the same, so the set is closed, not open
+///
+/// The `own`/`borrow`/`inout` rows came back "accepted" in an earlier probe of
+/// mine, and they were wrong the same way twice in one shift: the grep behind
+/// the measurement matched only BRACKETED error codes, and this diagnostic
+/// carries none. A measurement is only as good as what it agrees to see.
+fn is_param_mode(word str) -> bool =>
+    word == "mut" || word == "ro" || word == "consume" || word == "uninit"
+
+/// The first node of the parameter's TYPE, or None when it declares none.
+export fn param_type_at(pk []Node) -> Option[int] {
+    match param_name_at(pk) {
+        // No name: a recovery shape, and a type cannot be located without one.
+        None => None
+        Some(n) => type_slot_after(pk, n)
+    }
+}
+
+/// The slot holding the type that follows the name at `n`, or None: the name
+/// may be the LAST child (`fn f(v)`) or be followed by a comma (`fn f(v, w)`),
+/// and in both cases the parameter declares no type of its own.
+fn type_slot_after(pk []Node, n int) -> Option[int] {
+    if n + 1 >= pk.len() {
+        return None
+    } else {
+        // There is a child after the name; whether it is a type is next.
+    }
+    ro t = n + 1
+    ro c = pk[t]
+    ro no_type = c.kind_of() == NodeKind.LeafNode &&
+        leaf_kind(c) == TokenKind.Comma
+    if no_type {
+        return None
+    } else {
+        // A real node stands where the type belongs.
+    }
+    Some(t)
+}
+
+/// Children of a branch node; a leaf here is an invariant break.
+///
+/// The view is READ-ONLY (`-> ro`, owner's review 2026-08-17): the green tree
+/// is immutable by definition, and handing its own children out as a plain
+/// `[]Node` would give every caller a mutable alias of it. The compiler does
+/// not catch that today (see the `ro`-laundering repro in
+/// docs/dev/novac-divergences.md), so the signature has to say it.
+export fn branch_children(n Node) -> ro []Node {
+    match n {
+        Leaf(_) => ice("sem: expected a branch node")
+        Branch { children, .. } => children
+    }
+}
+
+/// Token text of a leaf node; a branch here is an invariant break.
+export fn leaf_text(n Node) -> str {
+    match n {
+        Leaf(t) => t.text
+        Branch { .. } => ice("sem: leaf_text on a branch node")
+    }
+}
+
+/// Token kind of a leaf node; a branch here is an invariant break.
+export fn leaf_kind(n Node) -> TokenKind {
+    match n {
+        Leaf(t) => t.kind
+        Branch { .. } => ice("sem: leaf_kind on a branch node")
+    }
+}
+
+/// Node kinds that stand as expressions (argument/operand positions).
+export fn is_expr_kind(k NodeKind) -> bool {
+    // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
+    // `||` on the next line is parsed as something else entirely (the oracle
+    // answered E_CLOSURE_SCALAR_RETURN), and parentheses around a multi-line
+    // chain are refused outright.
+    k == NodeKind.Paren ||
+    k == NodeKind.Unary ||
+    k == NodeKind.Bin ||
+    k == NodeKind.Lit ||
+    k == NodeKind.Name ||
+    k == NodeKind.Call ||
+    k == NodeKind.MethodCall ||
+    k == NodeKind.FieldAccess ||
+    k == NodeKind.MatchExpr ||
+    k == NodeKind.Cast
+}
+
+/// First-leaf text of a Name-like node (its identifier).
+export fn expr_leaf_name(e Node) -> str {
+    ro kids = branch_children(e)
+    leaf_text(kids[0])
+}
+
+/// Callee text of a Call node's children (leaf or Name-branch callee).
+export fn call_callee_text(kids []Node) -> str {
+    match kids[0] {
+        Leaf(t) => t.text
+        Branch { children, .. } => {
+            match children[0] {
+                Leaf(t) => t.text
+                Branch { .. } => ""
+            }
+        }
+    }
+}

@@ -238,8 +238,8 @@ fn Checker mut @bind_typed_param(pk []Node, tat int) -> bool {
     // dropped by the collector, and then die as an ICE -- a compiler-bug
     // message on valid Nova the oracle accepts. A narrow subset is legitimate;
     // a subset whose boundary is an ice is not.
-    ro pt = @ctx.defs.type_id(leaf_text(tnode))
-    if pt < 0 {
+    ro pt = @ctx.defs.type_id(leaf_text(tnode)) ?? UNKNOWN_TYPE
+    if pt == UNKNOWN_TYPE {
         match tnode {
             Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
             Branch { .. } => {}
@@ -555,19 +555,10 @@ fn Checker mut @type_match(m Node) -> () {
     if @out.len() > 0 { return }
     ro scr_t = type_of(scr, @ctx, @scope)
     @record(scr, scr_t)
-    mut first_t = -1
+    mut first_t = None
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
-        ro at = @type_arm(c, scr_t)
-        if at < 0 { continue }
-        if first_t < 0 {
-            first_t = at
-        } else if at != first_t && @out.len() == 0 {
-            @report_first_leaf_of([]Node.of(c), ARMS_DISAGREE_MSG)
-        } else {
-            // The arm agrees with the first one, or a diagnostic already
-            // stands: first_t is the answer either way, so nothing to do.
-        }
+        first_t = @fold_arm_type(c, scr_t, first_t)
     }
     if @out.len() > 0 { return }
     @report_if_not_exhaustive(kids, scr_t)
@@ -647,6 +638,38 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
 /// bidirectional inference -- E2-b3 work, not a patch. Refusing is the safe
 /// direction: narrower than the language, never wider.
 
+/// Fold one arm's type into the answer the arms agreed on so far.
+///
+/// Every arm of a `match` must carry the SAME type, and the first arm that has
+/// one sets it. Both "no answer" cases are None and neither is a number: the
+/// arm whose body the walk refused has no type to compare, and before the first
+/// such arm there is nothing to compare AGAINST — two facts that shared the
+/// value -1 until 2026-08-19 and were told apart by their position in the code.
+fn Checker mut @fold_arm_type(arm Node, scr_t int, first Option[int]) -> Option[int] {
+    match @type_arm(arm, scr_t) {
+        // The arm reported a diagnostic: it has no type to offer.
+        None => first
+        Some(at) => @agree_arm_type(arm, at, first)
+    }
+}
+
+/// The same fold once THIS arm has a type: agree with the first one or report.
+fn Checker mut @agree_arm_type(arm Node, at int, first Option[int]) -> Option[int] {
+    match first {
+        // The first arm with a type sets what the rest must match.
+        None => Some(at)
+        Some(f) => {
+            if at != f && @out.len() == 0 {
+                @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
+            } else {
+                // The arm agrees, or a diagnostic already stands: the answer
+                // is the first arm's type either way.
+            }
+            first
+        }
+    }
+}
+
 /// One arm: binders first (payload fields of a variant pattern, or the whole
 /// scrutinee under a plain binder), then the guard and the arm's value --
 /// the emitter's order exactly.
@@ -656,18 +679,18 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
 /// the arm-agreement rule (F36) asked for it after the walk, outside the
 /// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
 /// diagnostic -- the binders were gone by then.
-fn Checker mut @type_arm(arm Node, scr_t int) -> int {
+fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
     // An arm's binders live in the arm and nowhere else.
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
     if ak.len() < 1 {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
-        return -1
+        return None
     }
     ro pat = branch_children(ak[0])
     if pat.len() < 1 {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
-        return -1
+        return None
     }
     ro p0 = pat[0]
     ro is_ident = leaf_kind(p0) == TokenKind.Ident
@@ -717,9 +740,9 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> int {
     }
     ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
     @type_expr(body)
-    // -1 is "this arm has no type to compare": the walk refused something in
+    // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
-    ro body_t = if @out.len() == 0 { type_of(body, @ctx, @scope) } else { -1 }
+    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope)) } else { None }
     @scope.release(mark)
     body_t
 }
