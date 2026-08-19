@@ -1,17 +1,17 @@
 #!/bin/sh
-# Самотест check-novac-mangling-one-way.sh (П16: обязан доказать, что ловит).
+# Самотест check-novac-mangling-one-way.py (П16: обязан доказать, что ловит).
 # Подложка через шов $2.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-mangling-one-way.sh"
+G="$GD/check-novac-mangling-one-way.py"
 T="${TMPDIR:-/tmp}/novac-mangling-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 mk()  { d="$T/$1"; mkdir -p "$d/sem"; cat > "$d/sem/a.nv"; }
 
 # --- 1. чистое дерево: имена только СТРОЯТСЯ — зелёный --------------------
@@ -83,7 +83,7 @@ run "$T/absent"
 grep -q "судить нечего" "$T/out" && ok "нет директории — судить нечего" || bad "ждали «судить нечего»"
 
 # --- 9. настоящее дерево -------------------------------------------------
-sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
+python "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -3)"
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
