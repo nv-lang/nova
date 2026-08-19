@@ -15,7 +15,7 @@
 // Used by: sem since E2-b1 (TypeDef.ty_id); check/type_of and mangle at E2-b1 tail; mono and layout at E2-b2; infer at
 // E2-b3.
 // Guarded by: the interner tests in types_test.nv (identity, subst, concreteness), check-novac-row-fields.sh (TyRow
-// fields justified), check-novac-no-alloc-in-lookup.sh (reader doors carry #realtime nogc), the ty_id == index assert
+// fields justified), check-novac-no-alloc-in-lookup.py (reader doors carry #realtime nogc), the ty_id == index assert
 // in sem.collect_types until E2-b2.
 // Nothing here is a copy of the oracle: the oracle has three parallel type
 // representations and none of them is a key (П25).

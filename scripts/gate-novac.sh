@@ -282,7 +282,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh" "novac объя�
 par_add "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "таблица строк в Ctx без строки плана §10.3б (П17)"
 par_add "$ROOT/scripts/guards/check-novac-row-fields.sh" "поле строки реестра без записи в §10.3в (П22/П23)"
 par_add "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "поле-ссылка без суффикса пространства (П19)"
-par_add "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.sh" "дверь поиска аллоцирует (П18)"
+par_add "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.py" "дверь поиска аллоцирует (П18)"
 par_add "$ROOT/scripts/guards/check-novac-ice-messages.sh" "текст ice() повторяется или без модуля (П20)"
 par_add "$ROOT/scripts/guards/check-novac-no-default-branch.sh" "ветка «всё остальное» на закрытом множестве (П21)"
 par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя разбирается обратно (П24)"
