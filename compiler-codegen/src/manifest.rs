@@ -1655,9 +1655,26 @@ mod parse_tests {
 
     /// Helper: записывает text в tempfile под name, возвращает (path, dir).
     /// Использует unique временную директорию, чтобы тесты не интерферировали.
+    /// Временный каталог для одного вызова.
+    ///
+    /// К имени и PID добавляется АТОМАРНЫЙ СЧЁТЧИК, и это не украшение.
+    /// Тесты Rust идут параллельно в ОДНОМ процессе, поэтому `process::id()`
+    /// у них общий: два вызова с одинаковым `name` получали ОДИН каталог и
+    /// ОДИН `nova.toml`, а значит гонялись друг с другом. Именно так
+    /// 2026-08-19 упал на CI `read_std_key_absent` — три теста передавали
+    /// имя `"nova.toml"`, один писал манифест С ключом `std`, другой ждал
+    /// его отсутствия. Локально гонка выигрывалась.
+    ///
+    /// Счётчик убирает КЛАСС: совпасть два вызова больше не могут, как бы их
+    /// ни назвали. Переименование трёх вызовов починило бы случай и оставило
+    /// грабли следующему (родня №733 — там общим ресурсом была переменная
+    /// среды, здесь путь).
     fn write_toml(name: &str, text: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("nova_manifest_test_{}_{}", name,
-            std::process::id()));
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let uniq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("nova_manifest_test_{}_{}_{}", name,
+            std::process::id(), uniq));
         std::fs::create_dir_all(&dir).expect("mkdir tempdir");
         let toml_path = dir.join("nova.toml");
         let mut f = std::fs::File::create(&toml_path).expect("create toml");
