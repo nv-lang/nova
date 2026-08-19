@@ -12890,15 +12890,24 @@ type Counter { mut n int }
 fn Counter mut @inc() -> () { @n = @n + 1; @double() }
 fn Counter mut @double() -> () { @inc() }
 "#;
-        let module = crate::parser::parse(src).expect("parse");
-        let cfg = FieldCacheConfig::default();
-        let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
-        let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
-        let double_set = ws.get(&("Counter".to_string(), "double".to_string())).expect("double");
-        assert!(inc_set.contains("n"), "inc should write n directly");
-        assert!(double_set.contains("n"),
-            "double should inherit n via SCC closure (cycle with inc); got {:?}",
-            double_set);
+        // Общий ресурс: `build_write_set_registry` ходит в ТЕ ЖЕ
+        // процессно-глобальные SCC-кэши, чьи счётчики утверждает
+        // `v74_write_and_read_caches_isolated`. Без общего мьютекса этот
+        // тест приземлялся между её сбросом и её ассертом, и счёт промахов
+        // читался как (0, 2) вместо (0, 1) — зелёное держалось
+        // планировщиком. Семья №733/№734/№736.
+        with_scc_env(true, || {
+            let module = crate::parser::parse(src).expect("parse");
+            let cfg = FieldCacheConfig::default();
+            let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
+            let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
+            let double_set =
+                ws.get(&("Counter".to_string(), "double".to_string())).expect("double");
+            assert!(inc_set.contains("n"), "inc should write n directly");
+            assert!(double_set.contains("n"),
+                "double should inherit n via SCC closure (cycle with inc); got {:?}",
+                double_set);
+        });
     }
 
     #[test]
@@ -12906,18 +12915,25 @@ fn Counter mut @double() -> () { @inc() }
         // Setting NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1 must still produce
         // valid (correct если iter_limit достаточен) closures.
         // Сохраним then restore env var.
-        std::env::set_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE", "1");
         let src = r#"
 module testmod.v73_legacy
 type Counter { mut n int }
 fn Counter mut @inc() -> () { @n = @n + 1 }
 "#;
-        let module = crate::parser::parse(src).expect("parse");
-        let cfg = FieldCacheConfig::default();
-        let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
-        std::env::remove_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE");
-        let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
-        assert!(inc_set.contains("n"));
+        // Здесь ДВА общих ресурса сразу: переменная среды (её этот тест
+        // ставил вообще без защиты — №733 в чистом виде) и глобальные
+        // SCC-кэши, куда ходит `build_write_set_registry`. Оба берутся под
+        // общий `SCC_ENV_GUARD`; `false` — потому что проверяется ЛЕГАСИ
+        // итеративный путь, а не SCC-кэш.
+        with_scc_env(false, || {
+            std::env::set_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE", "1");
+            let module = crate::parser::parse(src).expect("parse");
+            let cfg = FieldCacheConfig::default();
+            let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
+            std::env::remove_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE");
+            let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
+            assert!(inc_set.contains("n"));
+        });
     }
 
     #[test]
