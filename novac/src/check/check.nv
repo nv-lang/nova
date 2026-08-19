@@ -78,7 +78,7 @@ type Checker {
 /// apart (the rustc_middle model — `TyCtxt` holds data, passes consume it).
 /// It would also invert an edge of the §3 table: `Ctx` lives in `sem`, so a
 /// method on it would make `sem` reference `Diagnostic` and the checker,
-/// and `check-novac-deps.sh` refuses that edge by construction. What the
+/// and `check-novac-deps.py` refuses that edge by construction. What the
 /// entry point IS, is a constructor plus a run — the same shape `emit_c`
 /// uses for `Emitter`: the module has one door, and the receiver lives
 /// behind it.
