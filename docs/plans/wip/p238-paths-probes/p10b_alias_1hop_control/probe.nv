@@ -1,0 +1,17 @@
+// Control for probe 10: ONE hop of plain identifier re-binding (`ro b = a`)
+// instead of three, isolated in its own file/module to avoid clashing with
+// probe.nv's `main`. If even one hop is not caught, three hops adds nothing
+// new — the boundary is at hop 1, not hop 3.
+
+module p238paths.p10_control_1hop
+
+fn main() {
+    mut acc = Vec[int].new()
+    ro a = || { acc.push(1) }
+    ro b = a
+    supervised {
+        spawn {
+            b()
+        }
+    }
+}

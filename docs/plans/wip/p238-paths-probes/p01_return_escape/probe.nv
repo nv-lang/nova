@@ -1,0 +1,29 @@
+// p238-paths probe 01: RETURN-ESCAPE. Closure with mut-capture is created
+// INSIDE a helper function and RETURNED as a plain `fn() -> ()` value; the
+// caller stores it in a `ro` binding and calls it from MANY concurrent
+// fibers (mirrors the ratelimit/router-middleware shape from №341: a
+// function builds state, returns a closure over it, the closure becomes a
+// long-lived handler invoked later from parallel fibers). No `spawn`/
+// `detach`/`parallel for`/`with`-handler syntactically touches the closure
+// literal itself or its free variables at ANY point visible to a purely
+// syntactic scan — the only trace of "this value came from somewhere with
+// a mut capture" is inside `make_counter`'s own body, which the call site
+// in `main` never re-examines.
+
+module p238paths.p01_return_escape
+
+fn make_counter() -> fn() -> () {
+    mut count = 0
+    || { count = count + 1 }
+}
+
+fn main() {
+    ro bump = make_counter()
+    supervised {
+        for _ in 0..8 {
+            spawn {
+                bump()
+            }
+        }
+    }
+}

@@ -1,0 +1,26 @@
+// p238-paths probe 03: LOCAL CONTAINER OF CLOSURES, NO STRUCT AT ALL.
+// `field_sink_call_task_queue_neg.nv` (existing conformance fixture) proves
+// the same shape IS caught when the `Vec[fn()->()]` is a STRUCT FIELD
+// (`spawn_tainted_fields_of_module` keys taint by `(TypeName, field)` pairs,
+// walked via a method receiver). This probe removes the struct entirely:
+// `tasks` is a bare LOCAL variable inside `main`, populated by two closures
+// that both close over the SAME outer `mut order`, then iterated with
+// `parallel for` (each element dispatched to its own fiber, all racing on
+// `order`). There is no `(TypeName, field)` pair for the S1a mechanism to
+// taint, and no fn-typed PARAMETER for the §3(a) mechanism to taint either
+// — the closures never cross a function-call boundary as arguments, only as
+// elements of a collection built and consumed in one function body.
+
+module p238paths.p03_local_vec_no_struct
+
+fn main() {
+    mut order = Vec[int].new()
+    mut tasks = Vec[fn() -> ()].new()
+    tasks.push(|| { order.push(1) })
+    tasks.push(|| { order.push(2) })
+    supervised {
+        parallel for t in tasks {
+            t()
+        }
+    }
+}

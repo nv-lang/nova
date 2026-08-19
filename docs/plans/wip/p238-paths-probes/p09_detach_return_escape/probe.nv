@@ -1,0 +1,20 @@
+// p238-paths probe 09: RETURN-ESCAPE THROUGH `detach` INSTEAD OF `spawn`.
+// Same shape as probe 01, but the orphan-fiber form `detach` is the
+// boundary instead of `supervised { spawn {..} }`. D415 §2's amendment
+// ([M-detach-consume-escape-unchecked]) shows `detach` has historically
+// needed SEPARATE fixes from `spawn` for the same underlying class (pattern
+// bindings) — worth checking independently rather than assuming parity.
+
+module p238paths.p09_detach_return_escape
+
+fn make_counter() -> fn() -> () {
+    mut count = 0
+    || { count = count + 1 }
+}
+
+fn main() Detach {
+    ro bump = make_counter()
+    detach {
+        bump()
+    }
+}
