@@ -180,3 +180,26 @@ export fn call_callee_text(kids []Node) -> str {
         }
     }
 }
+
+/// The identifier NAMES a `Generics` node holds, in source order.
+///
+/// ONE question with one answer, asked from both ends of the mapping: a
+/// declaration reads its type PARAMETERS with it (`fn f[T, U]` binds T to slot
+/// 0), and a call site reads its type ARGUMENTS (`f[int, str]` fills the same
+/// slots). Writing it twice is what check-novac-second-door caught on
+/// 2026-08-19 — two identical bodies in two modules, differing only in name.
+///
+/// Brackets and commas are leaves too (the tree is lossless), so only
+/// identifier leaves are names.
+export fn generic_names(kids []Node) -> []str {
+    mut out = []str.new()
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        for g in branch_children(c) {
+            if g.kind_of() != NodeKind.LeafNode { continue }
+            if leaf_kind(g) != TokenKind.Ident { continue }
+            out.push(leaf_text(g))
+        }
+    }
+    out
+}

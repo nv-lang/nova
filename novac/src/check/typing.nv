@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -189,13 +189,57 @@ fn Checker mut @type_block(b Node) -> () {
 /// error — the exact class P12 forbids (measured by the step-1 probe,
 /// 2026-08-19).
 fn Checker mut @record_free_callee(e Node, kids []Node, row int) -> () {
-    if @ctx.fns.rows[row].tparam_cnt > 0 {
-        @report_first_leaf_of(kids,
-            "outside the subset: a generic function is called with explicit type arguments, and novac does not read them yet (E2-b2)")
+    ro want = @ctx.fns.rows[row].tparam_cnt
+    ro given = generic_names(kids)
+    if want == 0 {
+        if given.len() > 0 {
+            @report_first_leaf_of(kids,
+                "outside the subset: type arguments on a function that declares none")
+        } else {
+            @chan.record_callee(e.id_of(), DefKind.DefFn, row, []int.new())
+        }
+        return
     } else {
-        @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+        // A generic callable: the turbofish decides which instance is meant.
     }
+    if given.len() == 0 {
+        // No inference in E2-b2 BY DESIGN (plan 274): the turbofish is the
+        // whole mapping, so its absence is a refusal and not a guess.
+        @report_first_leaf_of(kids,
+            "outside the subset: this function is generic, so the call needs explicit type arguments -- novac infers none")
+        return
+    } else {
+        // Written explicitly; the count and the names are next.
+    }
+    if given.len() != want {
+        @report_first_leaf_of(kids,
+            "outside the subset: the call gives a different number of type arguments than the declaration binds")
+        return
+    } else {
+        // As many arguments as the declaration binds: each is resolved below.
+    }
+    mut ids = []int.new()
+    for name in given {
+        ids.push(@ctx.defs.type_id(name) ?? UNKNOWN_TYPE)
+    }
+    for id in ids {
+        if id == UNKNOWN_TYPE {
+            @report_first_leaf_of(kids,
+                "outside the subset: a type argument names a type novac does not know")
+            return
+        } else {
+            // A type the registry knows: it can stand in the substitution.
+        }
+    }
+    // The substitution is READ and checked; recording it waits for the piece
+    // that makes it usable. A type PARAMETER is not yet a type of its own, so
+    // the declared `-> T` is unknown to the registry and `type_of` could not
+    // say what this call is worth. Refusing keeps a user mistake a DIAGNOSTIC
+    // instead of an ice (P12) -- the step-2 probe caught exactly that regress.
+    @report_first_leaf_of(kids,
+        "outside the subset: the type arguments are read, but a type parameter is not a type novac can substitute yet (E2-b2)")
 }
+
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
 /// one slot per written argument.
@@ -418,7 +462,7 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t int) -> () {
         Branch { .. } => {}
         Leaf(t) => {
             match @ctx.fns.lookup(t.text, method_call_key(kids, recv_t)) {
-                FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+                FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row, []int.new())
                 FnUnknown => @refuse(t,
                     "outside the subset: this type has no such method in the declarations novac was handed")
                 // An overload SET: narrowing by argument types arrives with
@@ -428,7 +472,7 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t int) -> () {
                 // same way (Nova_<T>_method_<name>, no arity in it). So the
                 // choice cannot change the emitted C name, and the corpus
                 // holds that honest: refusing here regressed strings.nv.
-                FnOverloaded(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+                FnOverloaded(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row, []int.new())
             }
         }
     }
@@ -696,7 +740,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // construction, so a fourth DefKind cannot slip past silently.
         ro def = @ctx.defs.rows[d]
         match def.kind {
-            DefVariant => @chan.record_callee(e.id_of(), def.kind, def.payload)
+            DefVariant => @chan.record_callee(e.id_of(), def.kind, def.payload, []int.new())
             DefFn => {
                 // NOT `def.payload`: `defs` is keyed by the bare name and lives
                 // by last-write-wins, so with two overloads it answers with the

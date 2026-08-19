@@ -451,26 +451,6 @@ export fn FnTable @tparam_index(row int, name str) -> Option[int] {
     None
 }
 
-/// The TYPE PARAMETER names a declaration binds, in source order.
-///
-/// `fn f[T, U](..)` binds T to slot 0 and U to slot 1, and a call's type
-/// arguments stand in the same order — turbofish is mandatory in E2-b2, so the
-/// order IS the whole mapping and nothing has to be inferred.
-///
-/// A `Generics` node holds its brackets and commas as leaves too (the tree is
-/// lossless), so only identifier leaves are names.
-fn tparam_names_of(kids []Node) -> []str {
-    mut out = []str.new()
-    for c in kids {
-        if c.kind_of() != NodeKind.Generics { continue }
-        for g in branch_children(c) {
-            if g.kind_of() != NodeKind.LeafNode { continue }
-            if leaf_kind(g) != TokenKind.Ident { continue }
-            out.push(leaf_text(g))
-        }
-    }
-    out
-}
 
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT
 /// dropped: it becomes its own row in the same chain, so the collision stays
@@ -684,7 +664,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     }
     // Read from the declarations handed to novac: the oracle emits this
     // symbol, and matching it byte for byte IS the ABI.
-    fns.add(mname, ret_t, true, true, param_ids, tparam_names_of(kids))
+    fns.add(mname, ret_t, true, true, param_ids, generic_names(kids))
 }
 
 /// Build the semantic context: the file's types + methods from declarations.
@@ -862,7 +842,7 @@ export fn collect_types(file Node) -> Ctx {
                 // collection is tolerant, and check is the judge.
                 param_ids.push(defs.type_id(leaf_text(pk[1])) ?? UNKNOWN_TYPE)
             }
-            fns.add(fname, ret, false, false, param_ids, tparam_names_of(fk))
+            fns.add(fname, ret, false, false, param_ids, generic_names(fk))
             ro frow = fns.rows.len() - 1
             defs.add(fname, DefKind.DefFn, frow)
             // The DECLARATION's own row, keyed by its node. Asking `defs` by

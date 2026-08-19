@@ -54,8 +54,10 @@ import ../diag.{ice}
 /// gives, kept as a pair so the emitter reads a DECISION instead of repeating
 /// the lookup by name. `target_row < 0` means "nothing recorded here".
 export type CalleeRef value {
-    kind DefKind /// Which table `row` indexes -- the registry's own sum, not a second encoding of the same fact.
-    target_row int /// Row in the table `kind` names (fns row for DefFn, variant row for DefVariant); -1 = absent.
+    kind DefKind /// Which table `row` indexes -- the registry's own sum, not a second encoding of the answer
+    target_row int /// Row in the table `kind` names (fns row for DefFn, variant row for DefVariant)
+    subst_off int /// First type argument of this call in `subst_args`; 0 with subst_cnt 0 = not generic
+    subst_cnt int /// How many type arguments the call was written with; 0 = a plain call
 }
 
 /// Where a substitution's arguments live in the pool. A range is ONE value,
@@ -140,7 +142,7 @@ export fn CheckOut mut @record_type(id int, t int) -> ()
 }
 
 /// Record the decided target of a call.
-export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> ()
+export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int, subst []int) -> ()
     requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
     requires target_row >= 0, "sem: channel callee write with no row — absence is not a decision"
 {
@@ -150,7 +152,12 @@ export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int) -> (
             "sem: a call was resolved twice to different targets")
         Subst(_) => ice("sem: record_callee on a node already recorded as an instantiation")
     }
-    @res[id] = Resolution.Callee(CalleeRef { kind, target_row })
+    // The call's decision is the WHOLE answer: which row, and with which type
+    // arguments. rustc keeps the same two facts about one node (type_dependent
+    // _defs + node_args); here they live in one row, so they cannot disagree.
+    ro subst_off = @subst_args.len()
+    @subst_args.append(subst)
+    @res[id] = Resolution.Callee(CalleeRef { kind, target_row, subst_off, subst_cnt: subst.len() })
 }
 
 /// Record the substitution instantiating a generic at a NON-call node (record
