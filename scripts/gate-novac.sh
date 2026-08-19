@@ -185,10 +185,15 @@ par_run() {
     # (замер 2026-08-19), работа самого стража -- 40..60мс: на сорока стражах
     # старт стоит дороже проверки. Раннер пишет те же N.out и N.rc, поэтому
     # разбор ниже не знает, кто их написал.
+    # `read` — ВСТРОЕННАЯ команда: строка читается без порождения процесса.
+    # Прежняя редакция звала `cat` на каждый .cmd, и разбор очереди стоил
+    # дороже работы, которую он разбирает (замер 2026-08-19: 10с на блоке,
+    # где стражи считаются за 1.7с).
     _py=""
     _i=1
     while [ "$_i" -le "$PAR_N" ]; do
-        case "$(cat "$PAR_DIR/$_i.cmd")" in *.py) _py="$_py $_i" ;; esac
+        read -r _g < "$PAR_DIR/$_i.cmd"
+        case "$_g" in *.py) _py="$_py $_i" ;; esac
         _i=$((_i + 1))
     done
     if [ -n "$_py" ]; then
@@ -198,7 +203,7 @@ par_run() {
     _i=1
     _running=0
     while [ "$_i" -le "$PAR_N" ]; do
-        _g=$(cat "$PAR_DIR/$_i.cmd")
+        read -r _g < "$PAR_DIR/$_i.cmd"
         case "$_g" in *.py) _i=$((_i + 1)); continue ;; esac
         ( bash "$_g" "$ROOT" > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
         _running=$((_running + 1))
@@ -211,20 +216,29 @@ par_run() {
     wait
     _i=1
     while [ "$_i" -le "$PAR_N" ]; do
-        cat "$PAR_DIR/$_i.out"
-        _rc=$(cat "$PAR_DIR/$_i.rc" 2>/dev/null || echo 1)
-        _msg=$(cat "$PAR_DIR/$_i.msg")
+        # .out читается ОДИН раз в переменную: печать, поиск строки ok: и
+        # разбор рассинхрона идут по ней, а не тремя процессами по файлу.
+        _out=$(cat "$PAR_DIR/$_i.out" 2>/dev/null)
+        [ -n "$_out" ] && printf '%s\n' "$_out"
+        _rc=1
+        [ -f "$PAR_DIR/$_i.rc" ] && read -r _rc < "$PAR_DIR/$_i.rc"
+        read -r _msg < "$PAR_DIR/$_i.msg"
+        read -r _cmd < "$PAR_DIR/$_i.cmd"
+        _base=${_cmd##*/}
         if [ "$_rc" -ne 0 ]; then
-            if is_desync "$(cat "$PAR_DIR/$_i.out")"; then
-                desync "$(basename "$(cat "$PAR_DIR/$_i.cmd")"): рассинхрон рантайма"
+            if is_desync "$_out"; then
+                desync "$_base: рассинхрон рантайма"
             else
                 fail "$_msg"
             fi
-        elif ! grep -q 'ok:' "$PAR_DIR/$_i.out"; then
-            echo "ШАГ НИЧЕГО НЕ ДОКАЗАЛ: $(basename "$(cat "$PAR_DIR/$_i.cmd")") вышел с нулём, но не напечатал 'ok:'" >&2
-            fail "$_msg"
         else
-            : # зелёный со строкой доказательства
+            case "$_out" in
+                *ok:*) : ;; # зелёный со строкой доказательства
+                *)
+                    echo "ШАГ НИЧЕГО НЕ ДОКАЗАЛ: $_base вышел с нулём, но не напечатал 'ok:'" >&2
+                    fail "$_msg"
+                    ;;
+            esac
         fi
         _i=$((_i + 1))
     done
@@ -232,20 +246,21 @@ par_run() {
 }
 
 # ── Стражи БЕЗ бинаря: текст, дока, форма исходника. Идут первыми — дёшевы. ──
-step "novac-arch-class-proofs (три доказательства у каждого класса — 274.1)"
-guard "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "$ROOT" || fail "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
-step "novac-arch-invariants (счётчик инвариантов у разделов карты)"
-guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
-step "novac-no-naked-panic (явный инвариант — через дверь ice(), П12)"
-guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
-step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
-guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
-step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"
-guard "$ROOT/scripts/guards/check-guard-honesty.py" "$ROOT" || fail "страж может соврать или промолчать вместо проверки"
-guard "$ROOT/scripts/guards/check-novac-plan-liveline.sh" "$ROOT" || fail "живая строка плана отстала от кода"
-guard "$ROOT/scripts/guards/check-novac-time-ledger.py" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
-step "novac-deps (рёбра только из таблицы §3 архитектуры)"
-guard "$ROOT/scripts/guards/check-novac-deps.py" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
+# Восемь стражей до рубежа F1 шли ПО ОДНОМУ: восемь стартов процесса строго
+# по очереди ради восьми заголовков в логе. Пачка даёт то же самое — своё
+# сообщение об отказе и своя строка ok: у каждого, — но питоновские идут ОДНИМ
+# процессом (run-guards.py), а shell-овые параллельно.
+step "novac-text (карта, маркеры, леджер, рёбра — до рубежа F1, бинарь не нужен)"
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
+par_add "$ROOT/scripts/guards/check-novac-arch-invariants.py" "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
+par_add "$ROOT/scripts/guards/check-novac-no-naked-panic.py" "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
+par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
+par_add "$ROOT/scripts/guards/check-novac-plan-liveline.sh" "живая строка плана отстала от кода"
+par_add "$ROOT/scripts/guards/check-novac-time-ledger.py" "коммит в novac/** без строки в леджере времени (274 §1.4)"
+par_add "$ROOT/scripts/guards/check-novac-deps.py" "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
+par_run
 
 # ── РУБЕЖ F1: дальше идут бинарь-зависимые. Бинарь строит ГЕЙТ. ──
 step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено»)"
@@ -278,7 +293,7 @@ step "novac-guards (Э1-набор: файл/атомики/ключи/глоб�
 par_reset
 par_add "$ROOT/scripts/guards/check-novac-file-size.py" "файл novac длиннее 1000 строк (решение 12)"
 par_add "$ROOT/scripts/guards/check-novac-atomics-door.py" "атомики/TLS мимо одной двери (274 §8.1)"
-par_add "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "строковый ключ таблицы вне names (архитектура §4а, К2)"
+par_add "$ROOT/scripts/guards/check-novac-no-string-keys.py" "строковый ключ таблицы вне names (архитектура §4а, К2)"
 par_add "$ROOT/scripts/guards/check-novac-no-global-state.py" "глобальное изменяемое состояние в novac (274 §4 п.5)"
 par_add "$ROOT/scripts/guards/check-novac-frontend-shape.py" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
 par_run

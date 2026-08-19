@@ -9,7 +9,7 @@
 // Used by: parse builds it, check/sem/emit_c walk it (E1-E2); lower replaces the walkers at E4, the tree stays for the
 // LSP (E3).
 // Guarded by: check-novac-frontend-shape.py (no Result in the frontend, tree always returned), the reserialize property
-// in lex_test.nv, check-novac-no-string-keys.sh (kinds are ids, not names).
+// in lex_test.nv, check-novac-no-string-keys.py (kinds are ids, not names).
 // green half of the red/green split; NOT taken: the red tree (positions are
 // derived on demand through source.offset_of, so no second tree is needed).
 // novac/src/tree — the green tree (architecture §2/§5, Roslyn model).
