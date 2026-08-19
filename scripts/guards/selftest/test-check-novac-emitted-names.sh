@@ -1,16 +1,16 @@
 #!/bin/sh
-# Самотест check-novac-emitted-names.sh (П16). Шов $2 — список файлов.
+# Самотест check-novac-emitted-names.py (П16). Шов $2 — список файлов.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-emitted-names.sh"
+G="$GD/check-novac-emitted-names.py"
 T="${TMPDIR:-/tmp}/novac-names-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 mk()  { f="$T/$1.nv"; shift; printf "%s
 " "$@" > "$f"; echo "$f"; }
 

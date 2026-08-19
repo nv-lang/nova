@@ -289,7 +289,7 @@ par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя раз�
 par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
 par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
 par_add "$ROOT/scripts/guards/check-novac-one-door-export.sh" "одна операция из двух модулей (274.1 §2в)"
-par_add "$ROOT/scripts/guards/check-novac-edge-payload.sh" "ребро §3 без «что течёт» (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 без «что течёт» (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-temp-edges.py" "временное ребро без срока или истекло (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-module-donor.sh" "модуль novac без донора-указателя в заголовке (П27)"
@@ -301,12 +301,11 @@ par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.sh" "ветка про�
 par_add "$ROOT/scripts/guards/check-novac-pch.sh" "PCH исчез из горячего пути (274.2 §1а)"
 par_add "$ROOT/scripts/guards/check-novac-line-length.sh" "строка длиннее 120 символов вне исключений (П29)"
 par_add "$ROOT/scripts/guards/check-novac-precondition.sh" "предусловие двери спрятано в теле (П20 п.5)"
-par_add "$ROOT/scripts/guards/check-novac-emitted-names.sh" "печатаемое C-имя вне объявленных пространств (П24)"
+par_add "$ROOT/scripts/guards/check-novac-emitted-names.py" "печатаемое C-имя вне объявленных пространств (П24)"
 par_add "$ROOT/scripts/guards/check-novac-table-is-match.sh" "таблица написана цепочкой if вместо match (П21 п.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.sh" "диагностика ссылается на незнание грамматики (§9.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.sh" "коллекция перекладывается поэлементно вместо append (П32)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.sh" "неполные ветвления выросли (П31)"
-guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
 par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.sh" "правило конвенции без названного механизма"
 par_run
 step "novac-lint (свод nv-coding-style по novac/src)"
@@ -327,6 +326,7 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
     par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
     par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
+    guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
     par_run
 fi
 

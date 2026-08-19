@@ -1,5 +1,5 @@
 #!/bin/sh
-# Самотест check-novac-edge-payload.sh (П16: страж обязан ДОКАЗАТЬ, что ловит).
+# Самотест check-novac-edge-payload.py (П16: страж обязан ДОКАЗАТЬ, что ловит).
 #
 # ПОДЛОЖКА. У стража один шов — $2 (путь к файлу архитектуры), поэтому
 # настоящее дерево нужно ровно один раз (последний случай): каждый случай —
@@ -18,14 +18,14 @@
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-edge-payload.sh"
+G="$GD/check-novac-edge-payload.py"
 T="${TMPDIR:-/tmp}/novac-edge-payload-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
 # --- конструктор подложки --------------------------------------------------
 # doc_open: всё до строк таблицы рёбер §3 (включая соседний раздел §2 с его
@@ -360,7 +360,7 @@ else
 fi
 
 # --- 15. настоящее дерево --------------------------------------------------
-if sh "$G" "$ROOT" > "$T/real.out" 2> "$T/real.err"; then
+if python "$G" "$ROOT" > "$T/real.out" 2> "$T/real.err"; then
     ok "настоящая карта — зелёная: $(cat "$T/real.out")"
 else
     bad "настоящая карта КРАСНАЯ (это находка по факту): $(head -4 "$T/real.err")"
