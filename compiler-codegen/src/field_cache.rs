@@ -12649,9 +12649,18 @@ fn L1 @use_both() -> int {
     // threads, env-var manipulation isn't thread-safe natively.
     // ─────────────────────────────────────────────────────────────────
 
+    // No.736: МЬЮТЕКС ОБЯЗАН ЖИТЬ ВНЕ ДЖЕНЕРИКА.
+    //
+    // Статик, объявленный ВНУТРИ generic-функции, инстанцируется НА КАЖДУЮ
+    // мономорфизацию. У `with_scc_env<F>` параметр — ТИП ЗАМЫКАНИЯ,
+    // а он у каждого вызова СВОЙ — значит у каждого теста был СВОЙ
+    // мьютекс, и сериализация была видимостью. На CI это дало
+    // `write cache: 1 miss` — left (0, 3), right (0, 1): счётчики протекли
+    // из соседнего теста, шедшего параллельно.
+    static SCC_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn with_scc_env<F: FnOnce()>(enabled: bool, body: F) {
-        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _g = GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let _g = SCC_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
         let prev = std::env::var("NOVA_FIELD_CACHE_SCC_CACHE").ok();
         if enabled {
             std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", "1");
