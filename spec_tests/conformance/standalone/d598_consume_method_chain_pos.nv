@@ -1,0 +1,42 @@
+// EXPECT_STDOUT taken=7 peeked=7 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №598, КОНТРОЛЬ НА ЗАКОННЫЕ ФОРМЫ.
+//
+// Правило «заимствующий метод не потребляет свой приёмник» обязано молчать
+// там, где всё в порядке, — иначе оно хуже своего отсутствия. Здесь обе
+// законные формы в одной сборке:
+//   (1) ПОТРЕБЛЯЮЩИЙ зовёт потребляющий (`@into_value()` → `@into_raw()`) —
+//       обязательство передаётся дальше, а не размножается;
+//   (2) ЗАИМСТВУЮЩИЙ зовёт ЗАИМСТВУЮЩИЙ (`@peek()` → `@raw()`) — приёмник
+//       никуда не отдан.
+//
+// Имена потребляющих — `@into_*`: потребляющее преобразование в другой тип
+// обязано так называться (nv-coding-style), и линт это проверяет. В самой
+// записи №598 репро был написан как `@take()` — здесь он приведён к канону,
+// предмет пробы от этого не меняется.
+//
+// Отказ на неверной форме — `neg/d598_borrowing_method_consumes_self_neg.nv`.
+
+module standalone.d598_consume_method_chain_pos
+
+type Box consume { v int }
+
+fn Box consume @into_raw() -> int => @v
+
+fn Box consume @into_value() -> int => @into_raw()
+
+fn Box @raw() -> int => @v
+
+fn Box @peek() -> int => @raw()
+
+fn main() Io -> () {
+    consume a = Box { v: 7 }
+    ro taken = a.into_value()
+
+    consume b = Box { v: 7 }
+    ro peeked = b.peek()
+    ro _drop = b.into_raw()
+
+    println("taken=${taken} peeked=${peeked} ok")
+}

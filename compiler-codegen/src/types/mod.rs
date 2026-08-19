@@ -39700,6 +39700,14 @@ fn consume_pattern_names_with_mut(p: &Pattern, out: &mut Vec<(String, bool)>) {
 /// Flow-context consume-анализа одной функции / теста.
 struct ConsumeCtx<'a> {
     reg: &'a ConsumeRegistry,
+    /// №598: приёмник ТЕКУЩЕГО метода — `(имя типа, объявлен ли consume)`.
+    ///
+    /// Нужен, чтобы поймать заимствующий метод, потребляющий СВОЙ ЖЕ
+    /// приёмник: `fn Box @peek() -> int => @take()` при
+    /// `fn Box consume @take()`. Проверка линейности живёт на ИМЕНАХ
+    /// биндингов, а `@` имени не имеет — поэтому такой вызов проходил
+    /// молча, и одно значение отдавалось трижды.
+    self_recv: Option<(String, bool)>,
     /// Plan 100.1 (D133): LinearityRegistry для consume-типов и методов.
     lin_reg: &'a LinearityRegistry,
     /// Состояние линейности per-variable. Ключ — каноническое имя
@@ -39886,6 +39894,7 @@ impl<'a> ConsumeCtx<'a> {
     ) -> Self {
         ConsumeCtx {
             reg,
+            self_recv: None,
             lin_reg,
             rebind_shadows,
             states: HashMap::new(),
@@ -42256,6 +42265,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 // effects, consulted by `check_obligations_at_exit` against
                 // a leftover fallible-`@cleanup` binding's effect row.
                 ctx.current_fn_effects = Some(&f.effects);
+                // №598: приёмник этого метода — для проверки
+                // «заимствующий метод потребляет свой же приёмник».
+                ctx.self_recv = f.receiver.as_ref()
+                    .map(|r| (r.type_name.clone(), r.consume));
 
                 // Plan 100.2 (D156): collect `[T consume]` bound generics.
                 // Внутри тела функции параметры с такими типами —
@@ -45092,6 +45105,42 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Вызовы — точки consume ───
         ExprKind::Call { func, args, trailing } => {
+            // №598: ЗАИМСТВУЮЩИЙ МЕТОД НЕ МОЖЕТ ПОТРЕБИТЬ СВОЙ ЖЕ ПРИЁМНИК.
+            //
+            // Обещание системы `consume` — «отдал один раз». Оно обходилось
+            // переносом потребляющего вызова ВНУТРЬ заимствующего метода:
+            // `fn Box @peek() -> int => @take()` при `fn Box consume @take()`
+            // собиралось, и `b.peek()` дважды плюс `b.take()` печатали
+            // `first=7 second=7 third=7` — одно значение отдано ТРИЖДЫ, без
+            // единого слова компилятора.
+            //
+            // Почему проверка не срабатывала: линейность отслеживается по
+            // ИМЕНАМ биндингов, а `@` имени не имеет — потребление приёмника
+            // не попадало ни в одно состояние. Здесь оно ловится по форме
+            // вызова: `Member { obj: SelfAccess, name }`, где `name` — метод
+            // с consume-приёмником у ТОГО ЖЕ типа.
+            if let (Some((self_ty, self_is_consume)), ExprKind::Member { obj, name }) =
+                (ctx.self_recv.clone(), &func.kind)
+            {
+                if !self_is_consume
+                    && matches!(obj.kind, ExprKind::SelfAccess)
+                    && ctx.reg.methods.contains(&(self_ty.clone(), name.clone()))
+                {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_BORROWING_METHOD_CONSUMES_SELF] метод объявлен \
+                             ЗАИМСТВУЮЩИМ (`fn {} @…`), но зовёт потребляющий \
+                             `@{}()` на своём же приёмнике — значение было бы \
+                             отдано, а вызывающий продолжил бы им \
+                             пользоваться. Объяви и этот метод потребляющим \
+                             (`fn {} consume @…`), либо не потребляй приёмник \
+                             внутри",
+                            self_ty, name, self_ty,
+                        ),
+                        e.span,
+                    ));
+                }
+            }
             // #671: конструктор варианта ЗАБИРАЕТ владение своими аргументами
             // (см. `variant_ctor_names`). Имена собираем здесь, а помечаем
             // потреблёнными В КОНЦЕ ветки — после обхода аргументов: пометка до

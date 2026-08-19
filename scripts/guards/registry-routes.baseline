@@ -208,4 +208,17 @@ no_caveat=35
 #   wrong-shaped `display` AND a `to_str` is still swallowed by the D410
 #   hatch -- verified by putting the old shape back and watching the SEGV
 #   return. That half closes in codegen, not in the checker.
-blockers=53
+# 2026-08-19, No.598 -- 53 -> 52. The owner's own rule is enforced at last:
+#   a BORROWING method may not consume its own receiver. The promise of
+#   the consume system -- given away once -- was bypassed by moving the
+#   consuming call INSIDE a borrowing method, and the carrier printed
+#   `first=7 second=7 third=7`: one value handed out THREE times with no
+#   word from the compiler.
+#   Linearity is tracked by binding NAMES and `@` has no name, so the
+#   receiver's consumption entered no state at all -- the rule was written
+#   down and never enforced (class O-2). Now checked by the SHAPE of the
+#   call in `consume_walk_expr`.
+#   Blast radius measured at ZERO: no hits across std, examples, novac or
+#   the whole conformance corpus; conformance 820/0, lint 1461/0, crate
+#   1250/0. Its sibling #572 was probed the same hour and is ALIVE.
+blockers=52
