@@ -1057,6 +1057,20 @@ pub struct CEmitter {
     /// Используется в for-in для Iter[T] dispatch: проверяем
     /// `all_methods.contains((iter_struct, "next"))`.
     all_methods: HashSet<(String, String)>,
+    /// №634: пары `(тип, метод)`, чей `@display`/`@debug` объявлен В ФОРМЕ
+    /// D422 — ровно один параметр типа `Fmt`.
+    ///
+    /// `all_methods` ключуется ИМЕНЕМ, и этого оказалось мало: семь методов
+    /// `std/time/civil` пережили миграцию D422 в старой форме
+    /// `(mut w Write)`, а интерполяция звала их, передавая `Nova_FmtCtx*` в
+    /// функцию с параметром `Nova_StringBuilder*`. Голая `${date}` падала
+    /// нарушением доступа, не напечатав ни байта, при зелёном `nova check`
+    /// и зелёном `nova build`.
+    ///
+    /// Сверки в чекере НЕ ХВАТАЕТ, и это проверено контролем: лазейка D410
+    /// (`T.to_str()`) отвечает «Display есть» и глушит диагностику, а
+    /// эмиссия всё равно зовёт метод. Поэтому требование стоит и здесь.
+    fmt_shaped_display: HashSet<(String, String)>,
     /// Типы-ресиверы, у которых есть ХОТЬ ОДИН метод. `all_methods`
     /// ключуется парой, поэтому вопрос «есть ли у типа методы вообще»
     /// отвечался перебором всего множества — на каждом сайте вызова
@@ -2637,6 +2651,7 @@ impl CEmitter {
             c_literal_extern_fns: HashSet::new(),
             embed_fields: BTreeMap::new(),
             all_methods: HashSet::new(),
+            fmt_shaped_display: HashSet::new(),
             all_method_recv_types: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
@@ -8225,6 +8240,15 @@ impl CEmitter {
                     );
                     // Plan 06 Ф.1: multi-key для for-in Iter[T] dispatch.
                     self.all_methods.insert((recv.type_name.clone(), f.name.clone()));
+                    // №634: запоминаем ФОРМУ `display`/`debug` рядом с именем.
+                    if (f.name == "display" || f.name == "debug")
+                        && f.params.len() == 1
+                        && matches!(&f.params[0].ty, crate::ast::TypeRef::Named { path, .. }
+                            if path.last().map_or(false, |s| s == "Fmt"))
+                    {
+                        self.fmt_shaped_display
+                            .insert((recv.type_name.clone(), f.name.clone()));
+                    }
                     self.all_method_recv_types.insert(recv.type_name.clone());
                     // Plan 11 Ф.1: register signature в multi-overload registry.
                     // param_c_types — C-типы параметров без receiver'а.
@@ -48601,8 +48625,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             | "nova_f64" | "nova_f32" | "nova_int")
                     {
                         let arg_type = self.channel_named_type(e.id).unwrap_or_else(|| Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty));
+                        // №634: метод годится ТОЛЬКО в форме D422.
+                        // Иначе (старая `(mut w Write)`) вызов передал бы
+                        // `FmtCtx` туда, где ждут `Write`, — SEGV у
+                        // пользователя при зелёной сборке. Не годится —
+                        // уходим на честный путь `to_str` ниже.
                         let has_explicit = self.all_methods
-                            .contains(&(arg_type.clone(), method_name.to_string()));
+                            .contains(&(arg_type.clone(), method_name.to_string()))
+                            && self.fmt_shaped_display
+                                .contains(&(arg_type.clone(), method_name.to_string()));
                         let method_c_fn: Option<String> = if has_explicit {
                             let safe = Self::sanitize_c_for_ident(&arg_type);
                             Some(format!("Nova_{}_method_{}", safe, method_name))
