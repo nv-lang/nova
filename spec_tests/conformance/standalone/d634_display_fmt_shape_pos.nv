@@ -1,0 +1,34 @@
+// EXPECT_STDOUT local=fmt:7 date=2026-07-10 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №634, КОНТРОЛЬ НА ЗАКОННЫЕ ФОРМЫ и ЗАКРЕПЛЕНИЕ НОСИТЕЛЯ.
+//
+// (1) Локальный тип с `@display(mut f Fmt)` — законная форма, печатается
+//     своим представлением.
+// (2) `${d}` для `Date` из `std/time/civil` — ТОТ САМЫЙ носитель записи.
+//     Он падал нарушением доступа (`0xC0000005`), не напечатав ни байта, при
+//     зелёном `nova check` и зелёном `nova build`: у `Date` объявлен
+//     `@display(mut w Write)` — форма ДО D422, — кодоген звал его, передавая
+//     `Nova_FmtCtx*` в функцию с параметром `Nova_StringBuilder*`.
+//
+// Семь типов `std/time/civil` пережили миграцию D422 в старой форме, потому
+// что проверка искала метод ПО ИМЕНИ. Здесь закреплён результат миграции:
+// `${date}` печатает ISO-форму, а не падает.
+//
+// Отказ на НЕВЕРНОЙ форме — `neg/d634_display_wrong_shape_neg.nv`.
+
+module standalone.d634_display_fmt_shape_pos
+
+import std.time.civil
+
+type Loc value { n int }
+
+fn Loc.make(n int) -> Loc => { n }
+
+fn Loc @display(mut f Fmt) -> () { f.write("fmt:${@n}") }
+
+fn main() Io -> () {
+    ro l = Loc.make(7)
+    ro d = Date.new(2026, Jul, 10)!!
+    println("local=${l} date=${d} ok")
+}

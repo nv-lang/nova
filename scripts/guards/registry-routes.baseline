@@ -196,4 +196,16 @@ no_caveat=35
 #   guards FAILING tests and is blind to ABSENT ones. Now measured and
 #   ratcheted: 39 module dirs, 3 with no test at all (std/src/ffi,
 #   std/src/unicode, std/src/runtime/string -- the string runtime).
-blockers=54
+# 2026-08-19, No.634 -- 54 -> 53. The shipped SEGV is gone: bare `${date}`
+#   crashed with 0xC0000005 printing nothing, on a green check and a green
+#   build. Root: the checker looked for `display` BY NAME, so seven
+#   `std/time/civil` methods survived the D422 migration in the old
+#   `(mut w Write)` shape while codegen called them with a `FmtCtx`.
+#   Migrated, and the checker now compares the SIGNATURE.
+#   The row stays OPEN by its own acceptance (enumerate every ground by
+#   which a value reaches an interpolation and prove each by running), and
+#   the remaining half of the class is named: a type with BOTH a
+#   wrong-shaped `display` AND a `to_str` is still swallowed by the D410
+#   hatch -- verified by putting the old shape back and watching the SEGV
+#   return. That half closes in codegen, not in the checker.
+blockers=53

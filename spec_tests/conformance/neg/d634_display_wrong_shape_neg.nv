@@ -1,0 +1,36 @@
+// EXPECT_COMPILE_ERROR E_INTERP_NO_DISPLAY
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №634. Метод с ИМЕНЕМ `display`, но НЕ ТОЙ ФОРМЫ, больше не
+// считается реализацией Display.
+//
+// ЧТО СТОЯЛО ЗА ЭТИМ. D422 (план 208 Ф.2) сменил форму: `@display(mut f Fmt)`
+// вместо `@display(mut w Write)`. Проверка интерполяции искала метод ПО ИМЕНИ
+// и молчала, найдя любой; кодоген звал его, передавая `Nova_FmtCtx*` в
+// функцию с параметром `Nova_StringBuilder*`. Голая `${x}` падала нарушением
+// доступа, не напечатав ни байта, — при зелёном `nova check` и зелёном
+// `nova build`.
+//
+// Так пережили миграцию СЕМЬ типов `std/time/civil` (Date, TimeOfDay,
+// DateTime, ZonedDateTime, Period, Offset, Timestamp): остаток был невидим
+// ровно потому, что сверялось имя, а не подпись. Тот же класс «имя вместо
+// типа», что №520/№536/№576 — но ценой не ложного совета линта, а SEGV.
+//
+// ГРАНИЦА ЭТОЙ ФИКСТУРЫ НАЗВАНА ЧЕСТНО: у типа здесь НЕТ `to_str`. Когда он
+// есть, лазейка D410 (`str.from(T)` / `T.to_str()`) отвечает «Display есть» и
+// диагностика молчит — эту половину закрывает не чекер, а кодоген, и она
+// остаётся открытой в записи. Контроль на законную форму —
+// `standalone/d634_display_fmt_shape_pos.nv`.
+
+module neg.d634_display_wrong_shape_neg
+
+type Old value { n int }
+
+fn Old.make(n int) -> Old => { n }
+
+fn Old @display(mut w Write) -> () { w.write("old".bytes()) }
+
+fn probe() -> str {
+    ro o = Old.make(7)
+    "bare=${o}"
+}

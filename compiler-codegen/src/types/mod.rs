@@ -18244,6 +18244,28 @@ impl<'a> TypeCheckCtx<'a> {
     /// Deliberately narrower than `t_satisfies_str_from` above (which also
     /// accepts `@into() -> str` — the retracted D73 Into[str] auto-derive
     /// path, no longer consulted by emit_c's interpolation fallback).
+    /// №634: есть ли у типа `@display` В ТОЙ ФОРМЕ, которую зовёт кодоген.
+    ///
+    /// Форма задана D422 (план 208 Ф.2): `@display(mut f Fmt)`. Прежняя,
+    /// `@display(mut w Write)`, осталась в `std/time/civil/format.nv` у СЕМИ
+    /// типов и пережила миграцию МОЛЧА — потому что проверка искала метод по
+    /// ИМЕНИ. Кодоген звал его, передавая `Nova_FmtCtx*` в функцию с
+    /// параметром `Nova_StringBuilder*`, и голая `${date}` падала с
+    /// нарушением доступа, не напечатав ни байта: `nova check` зелёный,
+    /// `nova build` зелёный.
+    ///
+    /// Тот же класс «имя вместо типа», что №520/№536/№576 — но ценой не
+    /// ложного совета линта, а SEGV. Поэтому здесь сверяется ПАРАМЕТР.
+    fn has_fmt_shaped_display(&self, tname: &str, method: &str) -> bool {
+        let Some(fd) = self.find_method_decl(tname, method) else {
+            return false;
+        };
+        // Ровно один параметр, и его тип — `Fmt`.
+        fd.params.len() == 1
+            && matches!(&fd.params[0].ty, TypeRef::Named { path, .. }
+                if path.last().map_or(false, |s| s == "Fmt"))
+    }
+
     fn interp_display_via_str_from_or_to_str(&self, tname: &str) -> bool {
         let str_from = self.method_overloads("str", "from")
             .map_or(false, |fns| fns.iter().any(|f| {
@@ -18361,7 +18383,8 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(tname) = self.resolve_interp_user_value_type(ex, gs, scope) else {
             return;
         };
-        if self.find_method_decl(&tname, "display").is_some() {
+        // №634: ПО ПОДПИСИ, а не по имени — см. `has_fmt_shaped_display`.
+        if self.has_fmt_shaped_display(&tname, "display") {
             return; // explicit `@display` OR gate-satisfied auto-derive synth.
         }
         if self.interp_display_via_str_from_or_to_str(&tname) {
