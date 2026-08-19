@@ -349,6 +349,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция �
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
 par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.py" "правило конвенции без названного механизма"
 par_add "$ROOT/scripts/guards/check-gate-budget.py" "механизм бюджета времени гейта выхолощен (конвенция гейтов, Г4)"
+par_add "$ROOT/scripts/guards/check-guard-external-caller.py" "страж без внешнего вызывающего: рост числа (конвенция гейтов, Г8)"
 par_run
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
