@@ -160,8 +160,11 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         for c in branch_children(e) {
             if c.kind_of() == NodeKind.MatchArm {
                 ro ak = branch_children(c)
-                ro at = arm_body_at(ak)
-                if at < 0 { return -1 }
+                // An arm whose children are all punctuation cannot come from a
+                // successful parse; until 2026-08-19 this answered -1 and the
+                // unknown type travelled on, which is the same shape the
+                // sibling case below already refuses out loud.
+                ro at = arm_body_at(ak) ?? ice("check: a match arm with no body reached type_of")
                 return type_of(ak[at], ctx, scope)
             }
         }

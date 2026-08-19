@@ -74,22 +74,21 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         i += 1
     }
 
-    ro root = entry_row(ctx)
-    if root < 0 {
+    match entry_row(ctx) {
         // No entry point in this file: nothing is reachable, and that is an
         // ANSWER, not a hole -- check refuses such a file by name long before
         // the emitter is asked anything.
-        return Reach { seen }
-    } else {
-        // The entry point is the one root of a program.
-    }
-    if root < seen.len() {
-        seen[root] = true
-    } else {
-        // The registry knows the entry point but the flag vector is shorter
-        // than its row: that is a broken invariant, not a program shape, and
-        // the door below is the only place allowed to answer -1.
-        ice("mono: the entry row is outside the callable table")
+        None => { return Reach { seen } }
+        Some(root) => {
+            if root < seen.len() {
+                seen[root] = true
+            } else {
+                // The registry knows the entry point but the flag vector is
+                // shorter than its row: a broken invariant, not a program
+                // shape.
+                ice("mono: the entry row is outside the callable table")
+            }
+        }
     }
 
     mut grew = true
@@ -97,15 +96,28 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         grew = false
         for c in branch_children(file) {
             if c.kind_of() != NodeKind.FnDecl { continue }
-            ro row = decl_fn_row(c, ctx)
-            if row < 0 { continue }
-            if row >= seen.len() { continue }
-            if !seen[row] { continue }
-            if mark_callees(c, ctx, out, seen) {
-                grew = true
-            } else {
-                // This body added nothing new this round; the loop stops when
-                // no body does.
+            match decl_fn_row(c, ctx) {
+                // A declaration that owns no row is not a callable of this
+                // file: there is nothing to walk from.
+                None => continue
+                Some(row) => {
+                    if row >= seen.len() {
+                        continue
+                    } else {
+                        // The row addresses the flag vector, so it can be read.
+                    }
+                    if !seen[row] {
+                        continue
+                    } else {
+                        // Already reached: its callees are worth walking.
+                    }
+                    if mark_callees(c, ctx, out, seen) {
+                        grew = true
+                    } else {
+                        // This body added nothing new this round; the loop
+                        // stops when no body does.
+                    }
+                }
             }
         }
     }
@@ -113,9 +125,9 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     Reach { seen }
 }
 
-/// The row of the entry point, or -1 when this file declares none.
+/// The row of the entry point, or None when this file declares none.
 #realtime nogc
-fn entry_row(ctx Ctx) -> int => ctx.defs.fn_row(ENTRY_FN)
+fn entry_row(ctx Ctx) -> Option[int] => ctx.defs.fn_row(ENTRY_FN)
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool) -> bool {

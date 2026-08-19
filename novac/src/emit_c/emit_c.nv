@@ -298,7 +298,18 @@ fn Emitter mut @emit_file(file Node) -> () {
                 // E2-b2: a callable NOT reached from a root is not emitted.
                 // The decision belongs to mono, not to the emitter: the
                 // emitter writes what it is given and asks who decided.
-                if !@reach.has(decl_fn_row(c, @ctx)) { continue }
+                match decl_fn_row(c, @ctx) {
+                    // No row: this declaration is not a callable of the file,
+                    // so there is nothing for the emitter to write.
+                    None => continue
+                    Some(row) => {
+                        if !@reach.has(row) {
+                            continue
+                        } else {
+                            // Reached from a root: the emitter writes it below.
+                        }
+                    }
+                }
                 @emit_fn(c)
             }
         }
@@ -446,7 +457,7 @@ fn Emitter mut @emit_tag_test(uniq int, vrow int) -> () {
 fn Emitter mut @emit_arm(arm Node, uniq int, scr_t int) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
-    ro arm_e = ak[arm_body_at(ak)]
+    ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
     mut has_guard = false
     for g in ak {
         has_guard = has_guard || g.kind_of() == NodeKind.Guard

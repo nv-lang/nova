@@ -685,7 +685,7 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> int {
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
     }
-    ro body = ak[arm_body_at(ak)]
+    ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
     @type_expr(body)
     // -1 is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).

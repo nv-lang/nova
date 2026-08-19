@@ -110,25 +110,35 @@ export fn DefTable mut @add(name str, kind DefKind, payload int) -> () {
 #realtime nogc
 export fn DefTable @find(name str) -> int => @names.find(name)
 
-/// The callable row a DECLARATION NODE owns, or -1.
+/// The callable row a DECLARATION NODE owns, or None.
 ///
 /// The tree half of the same question. It lived as two identical private
 /// copies (emit_c and mono, body for body) until 2026-08-18, which is what
 /// a missing door looks like from the inside: each author writes the five
 /// lines rather than finding a name they cannot guess.
-export fn decl_fn_row(f Node, ctx Ctx) -> int {
+export fn decl_fn_row(f Node, ctx Ctx) -> Option[int] {
     ro id = f.id_of()
     if id < 0 || id >= ctx.fn_decl_rows.len() {
         // A node from ANOTHER parse -- the declarations handed to novac have
         // their own id space -- owns no row in this file's table.
-        return -1
+        return None
     } else {
         // The id addresses this file's table, so the slot answers directly.
     }
-    ctx.fn_decl_rows[id]
+    ro row = ctx.fn_decl_rows[id]
+    if row < 0 {
+        // The table is a DENSE int vector and stores -1 for "no row" — that is
+        // a representation choice and it stays. The DOOR answers in the
+        // language's terms, so no caller has to know the storage (wave 3,
+        // "Option instead of -1").
+        return None
+    } else {
+        // A real row: the node owns a callable.
+    }
+    Some(row)
 }
 
-/// The CALLABLE row a name owns, or -1 when the registry knows no such fn.
+/// The CALLABLE row a name owns, or None when the registry knows no such fn.
 ///
 /// The registry's own question, and therefore the registry's door. Before
 /// 2026-08-18 it lived nowhere, so every consumer wrote the two-step
@@ -138,22 +148,22 @@ export fn decl_fn_row(f Node, ctx Ctx) -> int {
 /// the name does not exist, the next author writes their own. That is how
 /// second doors get in, and the answer is not vigilance but a door.
 #realtime nogc
-export fn DefTable @fn_row(name str) -> int {
+export fn DefTable @fn_row(name str) -> Option[int] {
     ro d = @find(name)
     if d < 0 {
-        return -1
+        return None
     } else {
         // The registry does not know the name: that is an ANSWER for a
         // tolerant door, and check refuses the program elsewhere.
     }
     ro { kind: k, payload: row } = @rows[d]
     if k != DefKind.DefFn {
-        return -1
+        return None
     } else {
         // The name is a type or a variant, not a callable: the caller asked
-        // for a fn row, and -1 says honestly that there is none.
+        // for a fn row, and None says honestly that there is none.
     }
-    row
+    Some(row)
 }
 
 /// Type by name during COLLECTION: -1 if the name is unknown or not a
@@ -823,7 +833,8 @@ export fn collect_types(file Node) -> Ctx {
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns }
 }
 
-/// The BODY of a match arm: its last child is not always the body.
+/// The BODY of a match arm, or None when the arm carries nothing but
+/// punctuation. Its last child is not always the body.
 ///
 /// A one-line `match n { 1 => 10, _ => 2 }` writes a COMMA after each arm body
 /// (D452), and the comma is kept in the tree because the tree is lossless. The
@@ -833,16 +844,16 @@ export fn collect_types(file Node) -> Ctx {
 /// Third instance of the fixed-index class in one day (the method-declaration
 /// ice, check's kids[1], typing's pk[0]/pk[1]). The shape of a tree grows; an
 /// index does not grow with it, and a door does.
-export fn arm_body_at(ak []Node) -> int {
+export fn arm_body_at(ak []Node) -> Option[int] {
     mut i = ak.len() - 1
     while i >= 0 {
         ro c = ak[i]
         ro is_punct = c.kind_of() == NodeKind.LeafNode &&
             (leaf_kind(c) == TokenKind.Comma || leaf_kind(c) == TokenKind.FatArrow)
-        if !is_punct { return i }
+        if !is_punct { return Some(i) }
         i -= 1
     }
-    -1
+    None
 }
 
 /// Where the NAME of a parameter sits among its children, and where its TYPE
