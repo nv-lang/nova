@@ -31,6 +31,7 @@ type D706Gen[T] enum
     | D706GC
 
 fn probe(k D706Gen[int]) -> int {
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- generic-сумма разбирается не вся: нет арма на третий вариант
     match k {
         D706GA(x) => x
         D706GB    => 2

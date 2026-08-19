@@ -24,6 +24,7 @@ type Box consume { v int }
 
 fn Box consume @take() -> int => @v
 
+// nova:expect E_BORROWING_METHOD_CONSUMES_SELF -- заимствующий метод зовёт `consume`-метод на себе
 fn Box @peek() -> int => @take()
 
 fn probe() -> int {

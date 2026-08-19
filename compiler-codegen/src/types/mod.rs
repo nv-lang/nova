@@ -30664,7 +30664,7 @@ impl<'a> BoundCtx<'a> {
             .map(|n| n.to_string())
             .unwrap_or_else(|| "<anonymous protocol>".to_string());
         let mut msg = format!(
-            "type `{}` does not satisfy `{}` bound (in call to `{}[{} {}]`).\n\n  `{}` requires:\n",
+            "[E_BOUND_NOT_SATISFIED] type `{}` does not satisfy `{}` bound (in call to `{}[{} {}]`).\n\n  `{}` requires:\n",
             concrete_name, bound_display, fn_name, type_param_name, bound_display, bound_display);
         for req in required {
             let prefix = if req.is_static { "." } else { "" };

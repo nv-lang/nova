@@ -22,6 +22,7 @@
 // дал ноль прочих срабатываний.
 
 module neg.plan103_2_atomic_i32_no_such_static_neg
+// nova:expect E_NO_STATIC_METHOD -- у `AtomicI32` нет такого статика — ловит чекер, не линковщик
 fn bad() -> AtomicI32 => AtomicI32.from_bytes()
 
 test "should not compile" {

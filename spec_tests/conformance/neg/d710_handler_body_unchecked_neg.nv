@@ -32,6 +32,7 @@ type Probe effect { fill(x int) -> int }
 fn probe() -> int {
     with Probe = effect Probe {
         fill(x) -> int => {
+            // nova:expect E7301 -- тело handler-литерала в `with`-позиции обязано проверяться
             ro q int = "not an int"
             x + 1
         }

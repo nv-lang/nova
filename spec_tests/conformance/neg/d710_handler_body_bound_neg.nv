@@ -33,6 +33,7 @@ type D710Bound effect { go() -> int }
 fn probe() -> int {
     with D710Bound = effect D710Bound {
         go() -> int {
+            // nova:expect E_BOUND_NOT_SATISFIED -- bound-проверка обязана заходить в тело handler-литерала
             ro m = HashMap[UserId, int].new()
             return m.len()
         }

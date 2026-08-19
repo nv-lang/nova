@@ -31,6 +31,7 @@ type CommitErr { msg str }
 type WorkErr { msg str }
 
 fn thrower() Fail[CommitErr] -> () {
+    // nova:expect E_THROW_TYPE_MISMATCH -- объявлен `Fail[CommitErr]`, бросается `WorkErr`
     throw WorkErr { msg: "declared CommitErr, thrown WorkErr" }
 }
 
