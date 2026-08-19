@@ -4951,6 +4951,9 @@ impl<'a> TypeCheckCtx<'a> {
         FileScope { ctx: self, prev }
     }
 
+    // `#[track_caller]` пробрасывается по ЦЕПОЧКЕ: без него трасса
+    // называет сам аксессор, а не площадку, ради которой она заведена.
+    #[track_caller]
     fn types_get_here_contains(&self, name: &str) -> bool {
         self.types_get_here(name).is_some()
     }
@@ -4966,6 +4969,9 @@ impl<'a> TypeCheckCtx<'a> {
     ///
     /// Если текущий файл не выставлен (площадка вне проверки объявления),
     /// ответ прежний — глобальная карта.
+    // `#[track_caller]` пробрасывается по ЦЕПОЧКЕ: без него трасса
+    // называет сам аксессор, а не площадку, ради которой она заведена.
+    #[track_caller]
     fn types_get_here(&self, name: &str) -> Option<&'a TypeDecl> {
         match self.current_file.get() {
             Some(fid) => self.types_get_for_file(name, fid),
@@ -4973,6 +4979,9 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    // `#[track_caller]` пробрасывается по ЦЕПОЧКЕ: без него трасса
+    // называет сам аксессор, а не площадку, ради которой она заведена.
+    #[track_caller]
     fn types_get_for_file(&self, name: &str, use_file_id: crate::diag::FileId) -> Option<&'a TypeDecl> {
         // 1. Объявлено В ЭТОМ ЖЕ файле — самый сильный ответ.
         if let Some(td) = self
@@ -5322,8 +5331,18 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                     self.check_fn(fd, errors)
                 }
-                Item::Type(td) => self.check_type_decl(td, errors),
+                Item::Type(td) => {
+                    // W6 (№705): вход в файл этого объявления — чтобы разрешение
+                    // одноимённых типов шло по его импортам. Замер после первой
+                    // волны: 150 чтений шли без файла именно отсюда.
+                    let _file_scope = self.enter_file(td.span.file_id);
+                    self.check_type_decl(td, errors)
+                }
                 Item::Const(cd) => {
+                    // W6 (№705): вход в файл этого объявления — чтобы разрешение
+                    // одноимённых типов шло по его импортам. Замер после первой
+                    // волны: 150 чтений шли без файла именно отсюда.
+                    let _file_scope = self.enter_file(cd.span.file_id);
                     let empty: GenericScope = HashMap::new();
                     if let Some(t) = &cd.ty {
                         self.walk_typeref(t, &empty, errors);
@@ -5348,6 +5367,10 @@ impl<'a> TypeCheckCtx<'a> {
                     // implicit grant + explicit test_access list). Guard
                     // restores previous state on drop.
                     let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
+                    // W6 (№705): вход в файл этого объявления — чтобы разрешение
+                    // одноимённых типов шло по его импортам. Замер после первой
+                    // волны: 150 чтений шли без файла именно отсюда.
+                    let _file_scope = self.enter_file(t.span.file_id);
                     let empty: GenericScope = HashMap::new();
                     self.walk_block(&t.body, &empty, errors);
                 }
@@ -5355,6 +5378,10 @@ impl<'a> TypeCheckCtx<'a> {
                 // bindings are subject to the strict partition forward direction.
                 // A constexpr-eligible `ro X = …` must instead be `const X = …`.
                 Item::Let(ld) => {
+                    // W6 (№705): вход в файл этого объявления — чтобы разрешение
+                    // одноимённых типов шло по его импортам. Замер после первой
+                    // волны: 150 чтений шли без файла именно отсюда.
+                    let _file_scope = self.enter_file(ld.span.file_id);
                     if let Some(d) = check_ro_module_partition(
                         ld, &partition_known_consts, &partition_const_fn_names,
                         &partition_named_tuple_names,
@@ -5422,6 +5449,10 @@ impl<'a> TypeCheckCtx<'a> {
                     // the f1 assignability pass too (handles priv record-init
                     // and write checks that fire from f1_check_assign_let).
                     let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
+                    // W6 (№705): вход в файл этого объявления — чтобы разрешение
+                    // одноимённых типов шло по его импортам. Замер после первой
+                    // волны: 150 чтений шли без файла именно отсюда.
+                    let _file_scope = self.enter_file(t.span.file_id);
                     let gs: GenericScope = HashMap::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.f1_block(&t.body, &gs, &mut scope, errors);
