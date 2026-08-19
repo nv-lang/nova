@@ -156,11 +156,18 @@ def _newer_exists(r):
                for o in runs)
 hard=[r for r in mine if r.get('conclusion') in ('failure','timed_out','startup_failure')]
 canc=[r for r in mine if r.get('conclusion') == 'cancelled']
-red=hard + [r for r in canc if not _newer_exists(r)]
+# Снятый прогон НЕ отказ и НЕ зелёное — это ОТСУТСТВИЕ вердикта, и
+# называется оно теперь своим именем (второй носитель №735): три
+# подряд отмены crate-tests 2026-08-19 были сняты из ОЧЕРЕДИ, не
+# начав ни одного шага, а страж объявлял их красными.
+red=hard
+noverdict=[r for r in canc if not _newer_exists(r)]
 superseded=[r for r in canc if _newer_exists(r)]
 run=[r for r in mine if r.get('status') != 'completed']
 if red:
     print('RED|' + ', '.join(sorted({r['name'] for r in red})))
+elif noverdict:
+    print('NOVERDICT|' + ', '.join(sorted({r['name'] for r in noverdict})))
 elif run:
     print('RUNNING|' + ', '.join(sorted({r['name'] for r in run})))
 else:
@@ -180,6 +187,21 @@ case "$KIND" in
         ;;
     RUNNING)
         say "идёт — на $SHORT ещё выполняются: $DETAIL"
+        exit 0
+        ;;
+    NOVERDICT)
+        say "НЕТ ВЕРДИКТА на $SHORT: прогон СНЯТ, не дав результата — $DETAIL"
+        say "  снятый прогон — это ОТСУТСТВИЕ вердикта, а не отказ. Назвать"
+        say "  его красным значило бы утверждать причину, которой никто не"
+        say "  устанавливал (№735, родня №727: диагностика обязана называть"
+        say "  ту причину, которую установила)."
+        say "  ЗАМЕР 2026-08-19: три подряд отмены crate-tests, у всех"
+        say "  startedAt == createdAt и снятие через 45-48 минут после"
+        say "  постановки, при том что зелёный прогон того же задания идёт"
+        say "  7 минут — их сняли ИЗ ОЧЕРЕДИ, не начав."
+        say "  Отправка всё равно остановлена: отсутствие вердикта — не"
+        say "  разрешение. Получить настоящий: gh run rerun <id>"
+        [ "$STRICT" -eq 1 ] && exit 1
         exit 0
         ;;
     RED)
