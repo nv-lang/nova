@@ -1,0 +1,11 @@
+module scratch_p248.p3a_affine_nokw
+
+type Handle consume value { x int }
+
+fn Handle consume @cleanup(_outcome ScopeOutcome) -> () {
+}
+
+test "probe affine empty cleanup, no consume keyword at binding" {
+    ro h = Handle { x: 1 }
+    assert(h.x == 1)
+}
