@@ -202,11 +202,16 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                 }
                 Call => @report_if_ordered_args(children)
                 FnDecl => {
-                    @report_if_generic(children)
+                    @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
                 }
-                TypeDecl | SumDecl => @report_if_generic(children)
+                TypeDecl | SumDecl => {
+                    // A generic TYPE is not in the subset at all: position
+                    // first, so a misplaced form is named as misplaced.
+                    @report_if_misplaced_generics(children)
+                    @report_if_generic_form(children)
+                }
                 ForStmt => {
                     @report_if_bad_for_head(children)
                     // The head is walked SEPARATELY, skipping index 3: a range

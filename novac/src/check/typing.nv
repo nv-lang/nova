@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, UNKNOWN_TYPE, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -62,6 +62,20 @@ fn Checker mut @type_file(file Node) -> () {
     }
 }
 
+/// Does this declaration bind type parameters of its own?
+///
+/// Asked of the REGISTRY, not of the tree: the collector already read the
+/// declaration, and asking the tree again would be a second answer to one
+/// question (plan 196). A declaration the registry does not know owns no row
+/// and is not generic — the walk then judges it like any other.
+fn Checker @is_generic_decl(f Node) -> bool {
+    match decl_fn_row(f, @ctx) {
+        // No row: this node is not a callable of this file.
+        None => false
+        Some(row) => @ctx.fns.rows[row].tparam_cnt > 0
+    }
+}
+
 /// One function: fresh scope, parameters bound, then the body.
 fn Checker mut @type_fn(f Node) -> () {
     ro kids = branch_children(f)
@@ -82,6 +96,21 @@ fn Checker mut @type_fn(f Node) -> () {
     if has_recv {
         @report_first_leaf_of(kids, METHOD_DECL_MSG)
         return
+    } else {
+        // A free function: its body is this walk's business.
+    }
+    // A GENERIC declaration is not typed here. Its body has no types until a
+    // substitution exists, and checking it "in general" would mean a second,
+    // weaker checker standing next to the real one. The body travels through
+    // this same walk once an instance is created with its type arguments
+    // (plan 274 E2-b2, donor: Go stenciling). The SIGNATURE is already
+    // collected, so calls can be resolved and refused by name meanwhile.
+    if @is_generic_decl(f) {
+        // SILENT-OK: the body of a generic declaration is typed per INSTANCE,
+        // not here; its signature is already collected, so nothing is lost.
+        return
+    } else {
+        // Not generic: types are known now, so the walk proceeds.
     }
     // The name is the first identifier LEAF, not a fixed index: `fn[T] name`
     // puts a Generics branch in between.
@@ -147,6 +176,25 @@ fn Checker mut @type_block(b Node) -> () {
         }
     }
     @scope.release(mark)
+}
+
+/// Record the callee of a free call — or refuse it, when the callable is
+/// GENERIC and its type arguments are not read yet.
+///
+/// A generic row carries an unknown return type by construction: its `-> T`
+/// names a type PARAMETER, not a type. Until E2-b2 step 2 reads the turbofish
+/// and records the substitution, a call to such a row must leave through a
+/// DIAGNOSTIC: without this the first generic call reached `type_of`, hit
+/// `assert(ret >= 0)` and turned a user mistake into an internal compiler
+/// error — the exact class P12 forbids (measured by the step-1 probe,
+/// 2026-08-19).
+fn Checker mut @record_free_callee(e Node, kids []Node, row int) -> () {
+    if @ctx.fns.rows[row].tparam_cnt > 0 {
+        @report_first_leaf_of(kids,
+            "outside the subset: a generic function is called with explicit type arguments, and novac does not read them yet (E2-b2)")
+    } else {
+        @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+    }
 }
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
@@ -542,211 +590,6 @@ const NOT_EXHAUSTIVE_MSG = "outside the subset: match on a sum leaves a variant 
 /// mean two limits.
 const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
 
-/// A match: the scrutinee's type is the answer the emitter needs (it declares
-/// the C temporary with it); the arms bind their binders and are typed after.
-fn Checker mut @type_match(m Node) -> () {
-    ro kids = branch_children(m)
-    if kids.len() < 2 {
-        @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
-        return
-    }
-    ro scr = kids[1]
-    @type_expr(scr)
-    if @out.len() > 0 { return }
-    ro scr_t = type_of(scr, @ctx, @scope)
-    @record(scr, scr_t)
-    mut first_t = None
-    for c in kids {
-        if c.kind_of() != NodeKind.MatchArm { continue }
-        first_t = @fold_arm_type(c, scr_t, first_t)
-    }
-    if @out.len() > 0 { return }
-    @report_if_not_exhaustive(kids, scr_t)
-}
-
-/// A match on a sum must cover every variant -- the rule novac did not have
-/// AT ALL until 2026-08-17, which made it WIDER than the language in the one
-/// direction a subset must never be wide.
-///
-/// Measured: `match c { Red(x) => x + 1  Green(x) => x + 2 }` on a three-variant
-/// sum is refused by the oracle (E_MATCH_NON_EXHAUSTIVE, registry #703) and
-/// was accepted by novac with rc=0. The emitted C declares the result
-/// temporary UNINITIALISED, walks the arm chain, and returns it: a program the
-/// oracle refuses to compile became, through novac, a read of uninitialised
-/// automatic storage. Two defects in one -- a divergence from the language and
-/// a silent miscompilation (class K-C).
-///
-/// A wildcard or a plain binder arm covers everything by construction, so the
-/// scan stops there; a guard does NOT count as coverage, because a guard can
-/// be false (the oracle judges it the same way).
-fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
-    if scr_t < 0 || scr_t >= @ctx.types.len() { return }
-    ro td = @ctx.types[scr_t]
-    if td.kind != TypeKind.TkSum { return }
-    if td.row_cnt < 1 { return }
-    mut covered = 0
-    for c in kids {
-        if c.kind_of() != NodeKind.MatchArm { continue }
-        ro ak = branch_children(c)
-        if ak.len() < 1 { continue }
-        mut has_guard = false
-        for g in ak {
-            has_guard = has_guard || g.kind_of() == NodeKind.Guard
-        }
-        if has_guard { continue }
-        ro pat = branch_children(ak[0])
-        if pat.len() < 1 { continue }
-        ro p0 = pat[0]
-        if leaf_kind(p0) != TokenKind.Ident { continue }
-        ro d = @ctx.defs.find(leaf_text(p0))
-        if d < 0 {
-            // `_` or a plain binder: it matches anything, so the match is
-            // exhaustive whatever the variants are.
-            return
-        }
-        ro def = @ctx.defs.rows[d]
-        if def.kind != DefKind.DefVariant { return }
-        covered += if @ctx.variant_rows[def.payload].sum_id == scr_t { 1 } else { 0 }
-    }
-    if covered >= td.row_cnt { return }
-    @report_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
-}
-
-/// (rule lives in @type_match now) Every arm of a match must produce the SAME type -- and until 2026-08-17
-/// nobody checked, because `type_of` took the FIRST arm's type and the
-/// comment beside it said the arms "agree by construction".
-///
-/// They do not. Probe -- and it must be written MULTI-LINE, because the
-/// one-line form (arms separated by `,`, spec syntax.ru.md:115) is legal Nova
-/// that this subset does not parse yet:
-///
-///     ro r = match n {
-///         1 => 10
-///         _ => 2.5
-///     }
-///
-/// in a `-> f64` fn.
-/// The emitted C declared `nova_int _novac_match_r`, then assigned
-/// `((nova_f64)2.5)` into it, so the program returned 2 where the oracle
-/// returns 2.5 -- valid C, wrong answer, no diagnostic anywhere. That is the
-/// worst shape a defect can take (class K-C), and it survived because a
-/// comment stood where a check belongs.
-///
-/// The subset REFUSES disagreement rather than unifying it. Unification here
-/// would mean an expected type flowing down into the arms (the oracle has
-/// it: the `-> f64` return coerces the integer literal), and that is
-/// bidirectional inference -- E2-b3 work, not a patch. Refusing is the safe
-/// direction: narrower than the language, never wider.
-
-/// Fold one arm's type into the answer the arms agreed on so far.
-///
-/// Every arm of a `match` must carry the SAME type, and the first arm that has
-/// one sets it. Both "no answer" cases are None and neither is a number: the
-/// arm whose body the walk refused has no type to compare, and before the first
-/// such arm there is nothing to compare AGAINST — two facts that shared the
-/// value -1 until 2026-08-19 and were told apart by their position in the code.
-fn Checker mut @fold_arm_type(arm Node, scr_t int, first Option[int]) -> Option[int] {
-    match @type_arm(arm, scr_t) {
-        // The arm reported a diagnostic: it has no type to offer.
-        None => first
-        Some(at) => @agree_arm_type(arm, at, first)
-    }
-}
-
-/// The same fold once THIS arm has a type: agree with the first one or report.
-fn Checker mut @agree_arm_type(arm Node, at int, first Option[int]) -> Option[int] {
-    match first {
-        // The first arm with a type sets what the rest must match.
-        None => Some(at)
-        Some(f) => {
-            if at != f && @out.len() == 0 {
-                @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
-            } else {
-                // The arm agrees, or a diagnostic already stands: the answer
-                // is the first arm's type either way.
-            }
-            first
-        }
-    }
-}
-
-/// One arm: binders first (payload fields of a variant pattern, or the whole
-/// scrutinee under a plain binder), then the guard and the arm's value --
-/// the emitter's order exactly.
-/// Returns the arm BODY's type, and the return value is the whole point:
-/// the binders of a pattern live only until `release(mark)` below, so the
-/// body's type can be computed HERE and nowhere later. The first version of
-/// the arm-agreement rule (F36) asked for it after the walk, outside the
-/// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
-/// diagnostic -- the binders were gone by then.
-fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
-    // An arm's binders live in the arm and nowhere else.
-    ro mark = @scope.mark()
-    ro ak = branch_children(arm)
-    if ak.len() < 1 {
-        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
-        return None
-    }
-    ro pat = branch_children(ak[0])
-    if pat.len() < 1 {
-        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
-        return None
-    }
-    ro p0 = pat[0]
-    ro is_ident = leaf_kind(p0) == TokenKind.Ident
-    // ONE question about the pattern head, asked once: which variant row does
-    // it name? -1 answers "none" for every other shape (a plain binder, `_`,
-    // a punctuation leaf), and both branches below read that one answer.
-    ro d = if is_ident { @ctx.defs.find(leaf_text(p0)) } else { -1 }
-    ro is_variant = d >= 0 && @ctx.defs.rows[d].kind == DefKind.DefVariant
-    ro vrow = if is_variant { @ctx.defs.rows[d].payload } else { -1 }
-    if vrow >= 0 {
-        mut pi = 0
-        mut j = 2
-        while j < pat.len() {
-            ro pj = pat[j]
-            // ONE question -- is this child a binder leaf? Two nested ifs
-            // asked it in two steps and neither named its second branch.
-            // Punctuation leaves of the pattern name no binder; a guard says
-            // it without branching on a variant test (no-default-branch keeps
-            // that shape for `match`).
-            // Asked ONCE and named: the branch then tests a bool, not a
-            // variant, which is what the no-default-branch rule reserves for
-            // `match` (a TokenKind match here would need a wildcard, and the
-            // same rule forbids that on a closed sum).
-            ro binds_name = pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident
-            if binds_name {
-                @scope.bind(leaf_text(pj), @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi])
-                pi += 1
-            } else {
-                // The pattern's parentheses and commas are leaves too: they
-                // bind nothing, and the payload cursor must not move.
-            }
-            j += 1
-        }
-    } else if is_ident && leaf_text(p0) != "_" {
-        @scope.bind(leaf_text(p0), scr_t)
-    } else {
-        // `_` and a non-identifier head bind nothing by definition: an arm
-        // sees the scrutinee only through a name, and there is no name here.
-    }
-    for g in ak {
-        if g.kind_of() != NodeKind.Guard { continue }
-        ro gk = branch_children(g)
-        // A guard is `if expr` -- two children. A shorter one is a parse
-        // remnant with nothing to type; the next arm child is next.
-        if gk.len() < 2 { continue }
-        @type_expr(gk[1])
-    }
-    ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
-    @type_expr(body)
-    // None is "this arm has no type to compare": the walk refused something in
-    // the body, so the lattice must not be asked about it (its miss is an ice).
-    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope)) } else { None }
-    @scope.release(mark)
-    body_t
-}
-
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
@@ -862,7 +705,7 @@ fn Checker mut @type_expr(e Node) -> () {
                 // whole set; narrowing by argument types arrives with E2-b3, and
                 // until then an ambiguous name is REFUSED rather than guessed.
                 match @ctx.fns.lookup(cname, free_call_key(kids)) {
-                    FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
+                    FnFound(row) => @record_free_callee(e, kids, row)
                     FnOverloaded(_) => @report_first_leaf_of(kids,
                         "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
                     FnUnknown => @report_first_leaf_of(kids,
