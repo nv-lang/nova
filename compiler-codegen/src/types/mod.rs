@@ -4975,7 +4975,19 @@ impl<'a> TypeCheckCtx<'a> {
     fn types_get_here(&self, name: &str) -> Option<&'a TypeDecl> {
         match self.current_file.get() {
             Some(fid) => self.types_get_for_file(name, fid),
-            None => self.types.get(name).copied(),
+            None => {
+                // ОТДЕЛЬНАЯ МЕТКА В ТРАССЕ: без неё две разные причины
+                // провала — «файл не выставлен» и «файл имя не знает» —
+                // выглядят одинаково, а требуют разных действий.
+                if !self.colliding_type_names.is_empty()
+                    && self.colliding_type_names.contains(name)
+                    && type_lookup_trace_on()
+                {
+                    eprintln!("[nova-type-lookup] NOFILE {} <- {}",
+                              name, std::panic::Location::caller());
+                }
+                self.types.get(name).copied()
+            }
         }
     }
 
@@ -9416,6 +9428,13 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // W6 (№705): файл берётся из САМОГО ВЫРАЖЕНИЯ, а не из того,
+        // кто запустил обход. Проходов по модулю несколько, и
+        // гоняться за каждым входом значит пропустить тот, который
+        // появится завтра. У выражения span есть ВСЕГДА, и это
+        // ровно «где этот код написан». Замер до: 101 чтение
+        // шло без файла, две трети из них — через этот обход.
+        let _file_scope = self.enter_file(e.span.file_id);
         // Plan 172.1 U.4.4(b): annotate this Ident's resolved type into the checker channel
         // (lifted into `ModuleEnv.resolved_types` → read AUTHORITATIVELY by codegen instead of
         // re-deriving in `infer_expr_c_type`, §0/§1). This is the scope-aware producer the
