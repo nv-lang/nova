@@ -283,4 +283,14 @@ no_caveat=35
 #   the baseline: both name resolutions moved to `types_get_here`, and the
 #   whole-table scan was dropped together with the part of the check it
 #   served. Back to 16.
-blockers=49
+# 2026-08-19, No.740 -- 49 -> 50. GROWTH, and it is measurement honesty rather
+#   than a weakened rule: a NEW blocker was found, not an old one re-labelled.
+#   `lint-no-silent-int-fallback` reports Cat A1 at 21 against a baseline of 7 --
+#   fourteen fresh sites where `type_ref_to_c` fails and a fallback type is
+#   emitted SILENTLY, i.e. wrong C with no diagnostic. The sites date from
+#   2026-06-11, 2026-07-24 and 2026-08-06: two months of drift.
+#   Nothing runs that guard -- 0 in gate.sh, 0 in every CI workflow, 0 in any
+#   script. The count did not rise because the tree got worse today; it rose
+#   because someone finally looked. Hiding that by leaving the ratchet at 49
+#   would be the exact dishonesty these baselines exist to prevent.
+blockers=50
