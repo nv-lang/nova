@@ -255,6 +255,7 @@ par_reset
 par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.py" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
 par_add "$ROOT/scripts/guards/check-novac-arch-invariants.py" "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
 par_add "$ROOT/scripts/guards/check-novac-no-naked-panic.py" "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+par_add "$ROOT/scripts/guards/check-novac-no-crutch.py" "механизм novac назван костылём вместо того, чтобы быть названным правилом (П34)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"

@@ -10,9 +10,14 @@
 # заглушкой (`#!/bin/sh` + `exit 0`) и гоняем его самотест. Самотест обязан
 # упасть. Прошёл над заглушкой — значит он не судит стража, а рапортует.
 #
-# ПРОВЕРЯЕТ: для каждого scripts/guards/check-novac-*.sh, у которого есть
-#   scripts/guards/selftest/test-<имя>.sh, — что самотест НАД ЗАГЛУШКОЙ
-#   возвращает ненулевой код. Печатает числом, сколько доказали.
+# ПРОВЕРЯЕТ: для каждого scripts/guards/check-novac-*.sh И check-novac-*.py,
+#   у которого есть scripts/guards/selftest/test-<имя>.sh, — что самотест НАД
+#   ЗАГЛУШКОЙ возвращает ненулевой код. Печатает числом, сколько доказали.
+#   ОБА РАСШИРЕНИЯ ОБЯЗАТЕЛЬНЫ: замер 2026-08-19 показал 44 стража на python
+#   против 18 на shell, и все 44 стояли вне доказательства — их самотесты
+#   считались «групповыми» и не краснели. Класс №519: страж потерял мишень
+#   при переносе носителей и отрапортовал зелёным. Заглушка пишется НА ЯЗЫКЕ
+#   стража, иначе подмена не исполнится и «доказательство» будет мусором.
 # НЕ ПРОВЕРЯЕТ: качество зелёной стороны (ложняки — дело самого самотеста и
 #   приёмки); стражей вне семьи novac (у них своя норма 254 и свой реестр);
 #   групповые самотесты без одноимённого стража (test-check-novac-binary-guards
@@ -82,9 +87,14 @@ BLIND=""
 GROUPED=0
 NOSELF=""
 
-for g in "$GUARDS"/check-novac-*.sh; do
+for g in "$GUARDS"/check-novac-*.sh "$GUARDS"/check-novac-*.py; do
     [ -f "$g" ] || continue
-    base=$(basename "$g" .sh)
+    case "$g" in
+        *.py) base=$(basename "$g" .py); stub='import sys
+sys.exit(0)' ;;
+        *)    base=$(basename "$g" .sh); stub='#!/bin/sh
+exit 0' ;;
+    esac
     st="$SELF/test-$base.sh"
     if [ ! -f "$st" ]; then
         NOSELF="$NOSELF $base"
@@ -95,13 +105,13 @@ for g in "$GUARDS"/check-novac-*.sh; do
     # без исключений, но исключение чуть не сделал sh своим ленивым чтением)
     cksum < "$g" > "$T/before.$base"
     cp "$g" "$g.proving-backup"
-    printf '#!/bin/sh\nexit 0\n' > "$g" 2>/dev/null
+    printf '%s\n' "$stub" > "$g" 2>/dev/null
     # Запись заглушки может не пройти (на Windows файл иногда занят). Молча
     # пропустить нельзя: самотест тогда прогонится против НАСТОЯЩЕГО стража,
     # пройдёт, и мы зачтём доказательство, которого не было. Одна повторная
     # попытка, затем красный (поймано живым прогоном 2026-08-16).
     if [ "$(wc -l < "$g" | tr -d '[:space:]')" != "2" ]; then
-        printf '#!/bin/sh\nexit 0\n' > "$g" 2>/dev/null
+        printf '%s\n' "$stub" > "$g" 2>/dev/null
     fi
     if [ "$(wc -l < "$g" | tr -d '[:space:]')" != "2" ]; then
         mv "$g.proving-backup" "$g"
@@ -132,7 +142,7 @@ done
 for st in "$SELF"/test-check-novac-*.sh; do
     [ -f "$st" ] || continue
     b=$(basename "$st" .sh); b=${b#test-}
-    [ -f "$GUARDS/$b.sh" ] || GROUPED=$((GROUPED + 1))
+    [ -f "$GUARDS/$b.sh" ] || [ -f "$GUARDS/$b.py" ] || GROUPED=$((GROUPED + 1))
 done
 
 if [ -n "$BLIND" ]; then
