@@ -274,7 +274,20 @@ if [ -f "$ROOT/novac/src/main.nv" ]; then
     [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
     if [ -f "$NOVA_BIN" ]; then
         mkdir -p "$ROOT/target" "$ROOT/novac/target"
-        if ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1; then
+        # ПЕРЕСБОРКА ТОЛЬКО ПО НУЖДЕ (П14). Пять секунд на каждой правке текста
+        # — а правок текста в цикле большинство. Условие консервативное:
+        # пропускаем, только если бинарь есть, ни один .nv не новее его и оракул
+        # не новее его. Ошибиться тут дороже, чем пересобрать: свежий на вид, но
+        # протухший бинарь — ровно класс 274.3/F1, из-за которого сборку завели.
+        NOVAC_OUT="$ROOT/novac/target/novac.exe"
+        NOVAC_FRESH=0
+        if [ -f "$NOVAC_OUT" ] && [ ! "$NOVA_BIN" -nt "$NOVAC_OUT" ] \
+           && [ -z "$(find "$ROOT/novac/src" -name '*.nv' -newer "$NOVAC_OUT" 2>/dev/null | head -n 1)" ]; then
+            NOVAC_FRESH=1
+        fi
+        if [ "$NOVAC_FRESH" -eq 1 ]; then
+            echo "novac-build ok: бинарь новее всех .nv и оракула — пересборка не нужна"
+        elif ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1; then
             BUILD_OUT="$(cat "$ROOT/target/novac-build.log" 2>/dev/null || true)"
             if is_desync "$BUILD_OUT"; then
                 desync "novac-build: оракул эмитит вызов рантайма, которого нет в заголовках этого дерева — см. target/novac-build.log"
