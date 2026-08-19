@@ -132,7 +132,8 @@ no_route=0
 #   (в) ревизия пропусков «нечего запускать» сделана замером — все 57 законны.
 #   Условие самой записи («включать нельзя, пока дорожка красна больше чем
 #   №692») выполнено: PASS 840 / FAIL 1 / SKIP 57.
-no_caveat=36
+# 2026-08-19, No.471 -- no_caveat 36 -> 35 with the same closure.
+no_caveat=35
 # №728 (`type Bytes []u8` молча значит newtype над `u8`) — новый блокер,
 #   найден 2026-08-18 по дороге к №723. Скобка после имени типа — список
 #   generic-параметров (D52), и парсер принимает его пустым без
@@ -185,4 +186,14 @@ no_caveat=36
 #   lint 1459 files / 0 findings; crate 1250/0. Blast radius was exactly
 #   one fixture, and that fixture had been documenting the defect as
 #   normal (`EXPECT_CC_ERROR Nova_AtomicI32_static_from_bytes`).
-blockers=55
+# 2026-08-19, No.471 -- 55 -> 54. The carrier vanished on its own and the
+#   rule was put in place. The row read 'std/src/net DOES NOT BUILD, any new
+#   test beside it fails on a foreign [P67-LEGACY] error'. Measured today:
+#   `nova test std/src/net` gives PASS 4 / FAIL 0 and [P67-LEGACY] does not
+#   occur at all. Ninth stale row of the day (class No.731).
+#   Its rule had two halves and only the first stood: CI runs std tests
+#   against a NAMED failure list. The second was missing -- that list
+#   guards FAILING tests and is blind to ABSENT ones. Now measured and
+#   ratcheted: 39 module dirs, 3 with no test at all (std/src/ffi,
+#   std/src/unicode, std/src/runtime/string -- the string runtime).
+blockers=54
