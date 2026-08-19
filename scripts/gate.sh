@@ -248,6 +248,8 @@ step "retired-names (снятое имя не живёт в рабочих зо�
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
 step "registry-single-verdict (одна строка — один вердикт и статус — №730)"
 guard "$ROOT/scripts/guards/check-registry-single-verdict.sh" "$ROOT" || fail "в реестре строка с ДВУМЯ вердиктами или статусами: сканеры читают первое вхождение, дописки идут в хвост — заглавные числа релиза начинают врать в обе стороны (№730)"
+step "fixed-but-open (правка слита — строка не числится открытой — №731)"
+guard "$ROOT/scripts/guards/check-fixed-but-open.sh" "$ROOT" || fail "в реестре строка со СЛИТОЙ правкой стоит OPEN: план показывает работу, которой нет, и блокеры тега завышены — четыре БЛОКИРУЮЩИХ строки (№711, №714, №719, №720) стояли так при приколотой фикстуре (№731); либо закрой строку по ЗАМЕРУ, либо впиши номер в scripts/guards/fixed-but-open.baseline с причиной"
 step "bare-type-lookups (чтения карты типов голым именем не растут — №705)"
 guard "$ROOT/scripts/guards/check-bare-type-lookups.sh" "$ROOT" || fail "прибавилось чтений карты типов чекера ГОЛЫМ именем: карта коллидирует между модулями last-write-wins, и класс на этом возвращался четырежды (196.7, №696, №705, №729) — разрешай по файлу места использования, types_get_for_file(name, id)"
 step "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
