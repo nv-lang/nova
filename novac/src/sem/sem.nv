@@ -866,15 +866,15 @@ export fn arm_body_at(ak []Node) -> Option[int] {
 /// as the type. That is the same defect the checker hit this morning with
 /// `kids[1]` on a method declaration: a fixed index into a tree whose shape
 /// just grew is a bug waiting for the next form.
-export fn param_name_at(pk []Node) -> int {
+export fn param_name_at(pk []Node) -> Option[int] {
     mut i = 0
     for c in pk {
         ro is_ident = c.kind_of() == NodeKind.LeafNode &&
             leaf_kind(c) == TokenKind.Ident
-        if is_ident && !is_param_mode(leaf_text(c)) { return i }
+        if is_ident && !is_param_mode(leaf_text(c)) { return Some(i) }
         i += 1
     }
-    -1
+    None
 }
 
 /// The parameter MODES, and the set is measured rather than assumed
@@ -894,17 +894,34 @@ export fn param_name_at(pk []Node) -> int {
 fn is_param_mode(word str) -> bool =>
     word == "mut" || word == "ro" || word == "consume" || word == "uninit"
 
-/// The first node of the parameter's TYPE, or -1 when it declares none.
-export fn param_type_at(pk []Node) -> int {
-    ro n = param_name_at(pk)
-    if n < 0 { return -1 }
-    if n + 1 >= pk.len() { return -1 }
+/// The first node of the parameter's TYPE, or None when it declares none.
+export fn param_type_at(pk []Node) -> Option[int] {
+    match param_name_at(pk) {
+        // No name: a recovery shape, and a type cannot be located without one.
+        None => None
+        Some(n) => type_slot_after(pk, n)
+    }
+}
+
+/// The slot holding the type that follows the name at `n`, or None: the name
+/// may be the LAST child (`fn f(v)`) or be followed by a comma (`fn f(v, w)`),
+/// and in both cases the parameter declares no type of its own.
+fn type_slot_after(pk []Node, n int) -> Option[int] {
+    if n + 1 >= pk.len() {
+        return None
+    } else {
+        // There is a child after the name; whether it is a type is next.
+    }
     ro t = n + 1
     ro c = pk[t]
     ro no_type = c.kind_of() == NodeKind.LeafNode &&
         leaf_kind(c) == TokenKind.Comma
-    if no_type { return -1 }
-    t
+    if no_type {
+        return None
+    } else {
+        // A real node stands where the type belongs.
+    }
+    Some(t)
 }
 
 /// Children of a branch node; a leaf here is an invariant break.

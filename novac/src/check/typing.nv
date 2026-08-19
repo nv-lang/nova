@@ -101,45 +101,15 @@ fn Checker mut @type_fn(f Node) -> () {
     if name != ENTRY_FN {
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
-            ro pk = branch_children(c)
-            // NAME and TYPE are located by the shared doors, never by index.
-            // `pk[0]`/`pk[1]` read the MODE as the name and the name as the
-            // type the moment a parameter is written `fn take(mut v int)`,
-            // and the failure wore a lie for a face: `int` refused as a type
-            // novac does not know. Third instance of the fixed-index class
-            // today (method-declaration ice, check's kids[1], this).
-            ro nat = param_name_at(pk)
-            ro tat = param_type_at(pk)
-            if nat < 0 || tat < 0 { continue }
-            // [LEGACY-#676] var-index-method (until:E3): a method called on
-            // `pk[tat]` with a VARIABLE index takes the CONTAINER as its
-            // receiver. Where the container happens to own a method of the
-            // same name the program simply returns the wrong number and says
-            // nothing -- measured 2026-08-18, `xs[i].len()` answering 1 for
-            // `["abc"]`. The intermediate binding is the whole workaround.
-            ro tnode = pk[tat]
-            ro nnode = pk[nat]
-            if tnode.kind_of() != NodeKind.LeafNode ||
-                leaf_kind(tnode) != TokenKind.Ident { continue }
-            // FIRST FLOOR for a type novac does not know (owner
-            // 2026-08-16, "not all builtin types are parsed --
-            // does that make sense?"). Its universe is four
-            // primitives; the language has the integer family,
-            // f32, char and byte besides. A `u8` parameter used
-            // to pass the shape test, get silently dropped by the
-            // collector, and then die as an ICE -- a compiler-bug
-            // message on valid Nova the oracle accepts. A narrow
-            // subset is legitimate; a subset whose boundary is an
-            // ice is not.
-            ro pt = @ctx.defs.type_id(leaf_text(tnode))
-            if pt < 0 {
-                match tnode {
-                    Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
-                    Branch { .. } => {}
-                }
+            if @bind_param(branch_children(c)) {
+                // Bound, or a shape this walk does not judge: either way the
+                // next parameter is the next question.
+            } else {
+                // SILENT-OK: the refusal was already reported one call deeper.
+                // `@bind_param` answers false ONLY after `@refuse`, and saying
+                // it again here would be the cascade no-cascade forbids.
                 return
             }
-            @scope.bind(leaf_text(nnode), pt)
         }
     } else {
         // ENTRY_FN takes no parameters in the subset, so there is nothing to
@@ -221,6 +191,66 @@ fn unknown_args(kids []Node, from int) -> []int {
     out
 }
 
+
+
+/// One parameter of a declaration: bind its name to its type in the scope.
+///
+/// Answers whether the walk may CONTINUE. A parameter this walk does not judge
+/// — no type declared, or a type that is not a plain identifier — is skipped
+/// with `true`; a type novac does not know is REFUSED, and then the whole
+/// declaration is done, which `false` says.
+///
+/// NAME and TYPE are located by the shared doors, never by index. `pk[0]`/
+/// `pk[1]` read the MODE as the name and the name as the type the moment a
+/// parameter is written `fn take(mut v int)`, and the failure wore a lie for a
+/// face: `int` refused as a type novac does not know.
+fn Checker mut @bind_param(pk []Node) -> bool {
+    match param_type_at(pk) {
+        // No type declared: a recovery shape the parse already refused, and
+        // there is nothing here to look up.
+        None => true
+        Some(tat) => @bind_typed_param(pk, tat)
+    }
+}
+
+/// The same parameter, with the slot of its type already located.
+fn Checker mut @bind_typed_param(pk []Node, tat int) -> bool {
+    // `param_type_at` locates the type AFTER the name, so a located type means
+    // the name was located too; its absence here is a broken invariant.
+    ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
+    // [LEGACY-#676] var-index-method (until:E3): a method called on `pk[tat]`
+    // with a VARIABLE index takes the CONTAINER as its receiver. Where the
+    // container happens to own a method of the same name the program simply
+    // returns the wrong number and says nothing -- measured 2026-08-18,
+    // `xs[i].len()` answering 1 for `["abc"]`. The intermediate binding is the
+    // whole workaround.
+    ro tnode = pk[tat]
+    ro nnode = pk[nat]
+    if tnode.kind_of() != NodeKind.LeafNode || leaf_kind(tnode) != TokenKind.Ident {
+        return true
+    } else {
+        // A plain identifier stands where the type belongs: it can be resolved.
+    }
+    // FIRST FLOOR for a type novac does not know (owner 2026-08-16, "not all
+    // builtin types are parsed -- does that make sense?"). Its universe is four
+    // primitives; the language has the integer family, f32, char and byte
+    // besides. A `u8` parameter used to pass the shape test, get silently
+    // dropped by the collector, and then die as an ICE -- a compiler-bug
+    // message on valid Nova the oracle accepts. A narrow subset is legitimate;
+    // a subset whose boundary is an ice is not.
+    ro pt = @ctx.defs.type_id(leaf_text(tnode))
+    if pt < 0 {
+        match tnode {
+            Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
+            Branch { .. } => {}
+        }
+        return false
+    } else {
+        // A type the registry knows: the name can be bound to it.
+    }
+    @scope.bind(leaf_text(nnode), pt)
+    true
+}
 
 /// One statement. A kind the subset does not know is NOT typed and NOT iced:
 /// the emitter refuses it at its own door, and a second death here would only

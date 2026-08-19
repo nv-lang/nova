@@ -34,32 +34,42 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     // carry a leading MODE leaf (`fn take(consume v int)`), and `kids[1]`
     // then reads the NAME as the type. Same class as the method-declaration
     // ice this morning -- a fixed index into a tree whose shape just grew.
-    ro at = param_type_at(kids)
-    if at > 1 {
-        match kids[at] {
-            Leaf(t) => {
-                ro is_form = t.kind == TokenKind.LBracket ||
-                    t.kind == TokenKind.EmptyBrackets ||
-                    t.kind == TokenKind.Star ||
-                    t.kind == TokenKind.KwRo ||
-                    t.kind == TokenKind.KwMut ||
-                    t.kind == TokenKind.KwFn ||
-                    t.kind == TokenKind.LParen
-                if is_form {
-                    @report_first_leaf_of(kids, TYPE_FORM_MSG)
-                } else {
-                    // A plain named type in a parameter carrying a mode: the
-                    // shape is fine and the name resolution judges the rest.
+    match param_type_at(kids) {
+        // The parameter declares no type at all: the ordinary path below is
+        // the one answer for that shape.
+        None => {}
+        Some(at) => {
+            // A slot at 0 or 1 means no MODE leaf stands before the type, and
+            // then the ordinary path below answers as well.
+            if at > 1 {
+                match kids[at] {
+                    Leaf(t) => {
+                        ro is_form = t.kind == TokenKind.LBracket ||
+                            t.kind == TokenKind.EmptyBrackets ||
+                            t.kind == TokenKind.Star ||
+                            t.kind == TokenKind.KwRo ||
+                            t.kind == TokenKind.KwMut ||
+                            t.kind == TokenKind.KwFn ||
+                            t.kind == TokenKind.LParen
+                        if is_form {
+                            @report_first_leaf_of(kids, TYPE_FORM_MSG)
+                        } else {
+                            // A plain named type in a parameter carrying a
+                            // mode: the shape is fine and the name resolution
+                            // judges the rest.
+                        }
+                        return
+                    }
+                    Branch { .. } => {
+                        // A generics node after the name: judged by the loop
+                        // below.
+                        return
+                    }
                 }
-                return
-            }
-            Branch { .. } => {
-                // A generics node after the name: judged by the loop below.
-                return
+            } else {
+                // No mode leaf: the ordinary path below answers.
             }
         }
-    } else {
-        // No mode leaf (or no type at all): the ordinary path below answers.
     }
     for c in kids {
         if c.kind_of() == NodeKind.Generics {
