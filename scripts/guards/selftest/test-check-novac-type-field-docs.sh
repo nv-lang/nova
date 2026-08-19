@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самотест check-novac-type-field-docs.sh — каждый тип, каждая функция и
+# Самотест check-novac-type-field-docs.py — каждый тип, каждая функция и
 # каждое поле novac несут ///-док (конвенция П13, слова владельца
 # 2026-08-14/15). Норма самотестов — план 231 §4в: ловит нарушение И не даёт
 # ложняка.
@@ -21,7 +21,7 @@
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-type-field-docs.sh"
+G="$ROOT/scripts/guards/check-novac-type-field-docs.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0; SKIP=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -109,11 +109,11 @@ fn f() -> int {
 }
 EOF
 
-runt() { sh "$G" "$RT" "$1" > "$TMP/out" 2> "$TMP/err"; echo $?; }
-runs() { sh "$G" "$RS" "$1" > "$TMP/out" 2> "$TMP/err"; echo $?; }
+runt() { python "$G" "$RT" "$1" > "$TMP/out" 2> "$TMP/err"; echo $?; }
+runs() { python "$G" "$RS" "$1" > "$TMP/out" 2> "$TMP/err"; echo $?; }
 
 echo "== переходный режим (пина нет) =="
-sh "$G" "$RT" "$TMP/absent" > "$TMP/out" 2>&1
+python "$G" "$RT" "$TMP/absent" > "$TMP/out" 2>&1
 check "сканируемой директории нет — зелёный" "$?" "0"
 has "$TMP/out" 'ok: судить нечего' "«судить нечего» напечатано (№645)"
 
@@ -141,7 +141,7 @@ else
 fi
 
 echo "== настоящее дерево =="
-sh "$G" "$ROOT" >/dev/null 2>&1
+python "$G" "$ROOT" >/dev/null 2>&1
 check "novac/src проекта документирован" "$?" "0"
 
 echo "итог: $PASS ok, $FAIL FAIL, $SKIP skip"

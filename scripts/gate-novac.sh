@@ -275,7 +275,7 @@ par_run
 # реестр стражей последним (судит сам набор).
 step "novac-conventions (П13..П27: доки, имена, реестры, двери, доноры)"
 par_reset
-par_add "$ROOT/scripts/guards/check-novac-type-field-docs.sh" "тип/поле/функция novac без документации (П13)"
+par_add "$ROOT/scripts/guards/check-novac-type-field-docs.py" "тип/поле/функция novac без документации (П13)"
 par_add "$ROOT/scripts/guards/check-novac-doc-language.sh" "русский текст в .nv novac (П13)"
 par_add "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "имя языка/std строкой вне builtins (П5)"
 par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.py" "novac объявил имя, которое экспортирует прелюдия"
