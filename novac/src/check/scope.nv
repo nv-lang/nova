@@ -7,7 +7,7 @@
 // of the typing pass, reset per function.
 // Used by: check/typing.nv (the walk) and check/type_of.nv (the lattice reads
 // a binding's type); nothing outside the module touches its fields.
-// Guarded by: check-novac-file-size.sh (the split that created this file),
+// Guarded by: check-novac-file-size.py (the split that created this file),
 // check-novac-no-string-keys.sh (the name table is the one string door).
 //
 // Split out of typing.nv on 2026-08-17 when that file crossed the

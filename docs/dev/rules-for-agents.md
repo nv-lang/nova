@@ -129,12 +129,12 @@
   Правило §10.1: ограничение стоит ноль на первом коммите и невозможно на
   десятитысячном. Что каждый не даёт сделать:
   `check-novac-deps.sh` — импорт вне таблицы рёбер архитектуры (§10.2, одна
-  таблица — один источник); `check-novac-file-size.sh` — файл больше тысячи
+  таблица — один источник); `check-novac-file-size.py` — файл больше тысячи
   строк, жёстко; `check-novac-frontend-shape.sh` — `Result` в сигнатурах
   фронтенда и узлы без позиций; `check-novac-no-global-state.sh` — общее
   изменяемое состояние между фазами; `check-novac-no-string-keys.sh` —
   строковый ключ таблицы после двери `names` (идентичность — не имя);
-  `check-novac-atomics-door.sh` — прямые `__atomic_*` мимо одной двери (§8.1);
+  `check-novac-atomics-door.py` — прямые `__atomic_*` мимо одной двери (§8.1);
   `check-novac-diag-schema.sh` — диагностика вне JSON-схемы
   (id, code, severity, primary, message); `check-novac-no-cascade.sh` — больше
   одного `severity=error` на одну посеянную причину (№636 механизмом);

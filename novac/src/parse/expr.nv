@@ -7,7 +7,7 @@
 //   chain, `match`, constructor fields, and the atom reader.
 // Used by: parse.nv (statements and signatures ask for an expression),
 //   decls.nv indirectly through the block reader.
-// Guarded by: check-novac-file-size.sh (this split), check-novac-deps.sh,
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh,
 //   check-novac-doc-language.sh.
 //
 // Split out of parse.nv on 2026-08-18, when the expression batch of S9.4a

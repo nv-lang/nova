@@ -43,8 +43,8 @@ import sys
 # Вывод строго UTF-8: на Windows труба берёт cp1251, и тогда собственные
 # сообщения стража приходят мозаикой — самотест не находит в них своих строк,
 # а человек не читает причину (поймано первым же прогоном самотеста).
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-novac-second-door"
 MIN_LINES = 6

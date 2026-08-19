@@ -29,8 +29,8 @@ import pathlib
 import re
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-novac-temp-edges"
 ORDER = ["E1", "E2", "E2b1", "E2b2", "E2b3", "E3", "E4", "E5", "E6"]

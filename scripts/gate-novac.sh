@@ -263,8 +263,8 @@ fi
 
 step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"
 par_reset
-par_add "$ROOT/scripts/guards/check-novac-file-size.sh" "файл novac длиннее 1000 строк (решение 12)"
-par_add "$ROOT/scripts/guards/check-novac-atomics-door.sh" "атомики/TLS мимо одной двери (274 §8.1)"
+par_add "$ROOT/scripts/guards/check-novac-file-size.py" "файл novac длиннее 1000 строк (решение 12)"
+par_add "$ROOT/scripts/guards/check-novac-atomics-door.py" "атомики/TLS мимо одной двери (274 §8.1)"
 par_add "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "строковый ключ таблицы вне names (архитектура §4а, К2)"
 par_add "$ROOT/scripts/guards/check-novac-no-global-state.sh" "глобальное изменяемое состояние в novac (274 §4 п.5)"
 par_add "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "Result в сигнатуре фронтенда novac (274 §4 п.1)"

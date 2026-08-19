@@ -57,7 +57,7 @@ tr -d '\r' < "$CONV" | awk '
         next
     }
     rule != "" {
-        if ($0 ~ /check-[a-z0-9-]+\.sh/) covered = 1
+        if ($0 ~ /check-[a-z0-9-]+\.(sh|py)/) covered = 1
         else if ($0 ~ /⚖|немашинн|не формализуем|формализовать .* нельзя|судится приёмкой|на ревью|красные на ревью/) covered = 1
     }
     END { if (rule != "") printf "%s\t%d\t%d\n", rule, line, covered }

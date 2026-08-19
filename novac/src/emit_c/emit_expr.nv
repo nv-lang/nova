@@ -6,7 +6,7 @@
 // Role: emission of EXPRESSIONS -- the C forms of every operator, the
 //   expression walk itself, and the call-as-statement door.
 // Used by: emit_c.nv (statements and bindings ask for an expression).
-// Guarded by: check-novac-file-size.sh (this split), check-novac-deps.sh,
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.sh,
 //   check-novac-emission-size.sh, check-novac-doc-language.sh.
 //
 // Split out of emit_c.nv on 2026-08-18: writing the `else` branch pushed
