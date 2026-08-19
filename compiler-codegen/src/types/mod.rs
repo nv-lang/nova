@@ -3697,6 +3697,20 @@ struct TypeCheckCtx<'a> {
     /// (the common case) — byte-parity preserved for callers that don't
     /// consult it. Read via `types_get_for_file`.
     file_local_types: HashMap<crate::diag::FileId, HashMap<String, &'a TypeDecl>>,
+    /// W6 (№705): импорты КАЖДОГО файла — пути `import a.b.c` как сегменты.
+    /// Нужны, когда одноимённый тип объявлен в нескольких файлах и различить
+    /// их может только то, что импортировал использующий файл.
+    file_imports: HashMap<crate::diag::FileId, Vec<Vec<String>>>,
+    /// W6 (№705): канонический путь файла — вторая половина того же ответа.
+    /// В `d78_dup_decl_type_cross_import` оба кандидата объявляют ОДИН И ТОТ
+    /// ЖЕ модуль `neg.kind` и различаются ТОЛЬКО физическим путём (`a/` vs
+    /// `b/`), поэтому сопоставлять импорт приходится с путём.
+    file_paths: HashMap<crate::diag::FileId, std::path::PathBuf>,
+    /// W6 (№705): имена типов, объявленные БОЛЕЕ ЧЕМ В ОДНОМ файле.
+    /// Поиск по импортам включается только для них — для всех прочих имён
+    /// путь разрешения остаётся прежним, байт-в-байт. Замер 2026-08-18: таких
+    /// имён во всём корпусе шесть.
+    colliding_type_names: std::collections::HashSet<String>,
     /// Plan 81 Ф.2: префиксы импортированных модулей (alias + последний
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
@@ -4706,7 +4720,40 @@ impl<'a> TypeCheckCtx<'a> {
                 eprintln!("[TYPE-COLLISION]   {} declared in {} files", name, n);
             }
         }
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, imported_modules,
+        // W6 (№705): три карты, которыми разрешение имени становится
+        // ИМПОРТО-ОСВЕДОМЛЁННЫМ. Материал берётся из AST как есть — у каждого
+        // `PeerFile` уже лежат свой путь, свои импорты и свои объявления.
+        //
+        // Зачем путь, а не только имя модуля: в `d78_dup_decl_type_cross_import`
+        // ОБА кандидата объявляют ОДИН И ТОТ ЖЕ модуль `neg.kind` и различаются
+        // ТОЛЬКО физическим каталогом (`a/` против `b/`). Имя модуля там не
+        // различает ничего.
+        let mut file_imports: HashMap<crate::diag::FileId, Vec<Vec<String>>> =
+            HashMap::new();
+        let mut file_paths: HashMap<crate::diag::FileId, std::path::PathBuf> =
+            HashMap::new();
+        for pf in &module.peer_files {
+            file_paths.insert(pf.file_id, pf.path.clone());
+            let e = file_imports.entry(pf.file_id).or_default();
+            for imp in &pf.imports {
+                e.push(imp.path.clone());
+            }
+        }
+        // Имена, объявленные БОЛЕЕ ЧЕМ В ОДНОМ файле. Только для них включается
+        // поиск по импортам — для всех прочих путь остаётся прежним.
+        let mut decl_count: HashMap<&str, usize> = HashMap::new();
+        for per_file in file_local_types.values() {
+            for name in per_file.keys() {
+                *decl_count.entry(name.as_str()).or_insert(0) += 1;
+            }
+        }
+        let colliding_type_names: std::collections::HashSet<String> = decl_count
+            .into_iter()
+            .filter(|(_, n)| *n > 1)
+            .map(|(s, _)| s.to_string())
+            .collect();
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
+            colliding_type_names, imported_modules,
             import_prefix_to_module_last,
             entry_imported_modules,
             entry_file_ids,
@@ -4794,11 +4841,81 @@ impl<'a> TypeCheckCtx<'a> {
     /// populate `file_local_types` (empty per-file map lookup, O(1) miss) —
     /// byte-identical to `self.types.get(name)` outside the collision case.
     fn types_get_for_file(&self, name: &str, use_file_id: crate::diag::FileId) -> Option<&'a TypeDecl> {
-        self.file_local_types
+        // 1. Объявлено В ЭТОМ ЖЕ файле — самый сильный ответ.
+        if let Some(td) = self
+            .file_local_types
             .get(&use_file_id)
             .and_then(|m| m.get(name))
             .copied()
-            .or_else(|| self.types.get(name).copied())
+        {
+            return Some(td);
+        }
+        // 2. W6 (№705): объявлено в модуле, который ЭТОТ файл ИМПОРТИРУЕТ.
+        //
+        // Шаг 1 закрывает только случай «файл сам объявляет тип». Замер
+        // 2026-08-19 показал границу: на `d78_dup_decl_type_cross_import`
+        // `Kind` ИМПОРТИРОВАН, перебор по объявляющему файлу пуст, и
+        // разрешение падало в коллидирующую карту — ложный отказ.
+        //
+        // Цена для обычного пути НОЛЬ: ветка входит только для имён,
+        // объявленных больше чем в одном файле (их шесть на весь корпус).
+        if self.colliding_type_names.contains(name) {
+            if let Some(imports) = self.file_imports.get(&use_file_id) {
+                for imp_path in imports {
+                    for (fid, per_file) in &self.file_local_types {
+                        let Some(td) = per_file.get(name) else { continue };
+                        let Some(path) = self.file_paths.get(fid) else { continue };
+                        if Self::path_matches_import(path, imp_path) {
+                            return Some(*td);
+                        }
+                    }
+                }
+            }
+        }
+        // 3. Прежний ответ — карта по голому имени. Откат сохранён намеренно:
+        //    правка обязана только УТОЧНЯТЬ, а не терять то, что резолвилось.
+        self.types.get(name).copied()
+    }
+
+    /// W6 (№705): совпадает ли путь ОБЪЯВЛЯЮЩЕГО файла с путём `import`.
+    ///
+    /// Сравнение суффиксное и по двум формам сразу, потому что импорт может
+    /// называть как файл, так и папку-модуль:
+    ///   `import a.neg.kind`  → файл `…/a/neg/kind.nv`   (путь без расширения)
+    ///   `import ./ka`        → файл `…/ka/kinds.nv`     (каталог файла)
+    /// Пустой путь импорта не совпадает ни с чем — иначе он подошёл бы к
+    /// любому кандидату и «уточнение» стало бы случайным выбором.
+    fn path_matches_import(path: &std::path::Path, imp: &[String]) -> bool {
+        if imp.is_empty() {
+            return false;
+        }
+        let comps: Vec<String> = path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        let ends_with = |hay: &[String]| -> bool {
+            hay.len() >= imp.len()
+                && hay[hay.len() - imp.len()..]
+                    .iter()
+                    .zip(imp.iter())
+                    .all(|(a, b)| a == b)
+        };
+        // (а) путь файла без расширения
+        let mut no_ext = comps.clone();
+        if let Some(last) = no_ext.last_mut() {
+            if let Some(stem) = std::path::Path::new(last.as_str())
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+            {
+                *last = stem;
+            }
+        }
+        if ends_with(&no_ext) {
+            return true;
+        }
+        // (б) каталог файла — форма импорта папки-модуля
+        let dir = &comps[..comps.len().saturating_sub(1)];
+        ends_with(dir)
     }
 
     /// Plan 162.1 Step 2: returns `true` if `name` is a known free function in
@@ -13795,7 +13912,23 @@ impl<'a> TypeCheckCtx<'a> {
         //
         // `types_get_for_file` откатывается на глобальную карту при промахе,
         // поэтому правка может только УТОЧНИТЬ ответ, но не потерять его.
-        let all: Vec<String> = match self.types_get_for_file(&sum_name, span.file_id) {
+        // Файл, по которому разрешается сумма: сперва тот, где написан САМ ТИП
+        // скрутини, и только потом тот, где стоит `match`.
+        //
+        // Уточнено замером 2026-08-19. Первая версия брала span `match` — и на
+        // `xmodule_struct_variant_ctor_test.nv` дала ложный отказ: файл
+        // импортирует ФУНКЦИИ из двух модулей, обе возвращают одноимённый
+        // `Kind`, а span разбора у обоих тестов один и тот же. Судья — тип
+        // скрутини: `make_info` объявлена `-> Kind` в модуле A, `make_bad` —
+        // в модуле B, и span этого `TypeRef` единственный различает их.
+        let resolve_file = match scrut_ty {
+            Some(TypeRef::Named { span: ty_span, .. }) if ty_span.file_id != span.file_id => {
+                ty_span.file_id
+            }
+            Some(TypeRef::Named { span: ty_span, .. }) => ty_span.file_id,
+            _ => span.file_id,
+        };
+        let all: Vec<String> = match self.types_get_for_file(&sum_name, resolve_file) {
             Some(td) => match &td.kind {
                 TypeDeclKind::Sum(variants) => variants.iter().map(|v| v.name.clone()).collect(),
                 _ => return,
@@ -13821,35 +13954,24 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        // САМОПРОВЕРКА РАЗРЕШЕНИЯ (№705): `self.types` ключуется ГОЛЫМ именем и
-        // коллидирует между модулями last-write-wins — та же болезнь, что у таблиц
-        // кодогена (№696), только на стороне чекера. Замер 2026-08-16: на
-        // `std/src/io/error.nv` разбор поднял ЧУЖОЙ `ErrorKind` (http/net) и
-        // потребовал варианты `Connect`/`Dns`/`Tls`, которых в io-шном нет.
-        // Признак промаха локален и надёжен: арм назвал вариант, которого в
-        // поднятой сумме НЕТ — значит поднята не та сумма. Снимаем проверку.
+        // ОБХОД-САМОПРОВЕРКА (№705) СНЯТ 2026-08-19, окно W6.
         //
-        // ОБХОД ПРОБОВАЛИ СНЯТЬ 2026-08-19 (W6, №705) — НЕЛЬЗЯ, И ВОТ ПОЧЕМУ.
-        // Разрешение выше переведено на `types_get_for_file(name, span.file_id)`,
-        // и один носитель это ДОКАЗАННО чинит: межмодульная коллизия, где
-        // использующий файл САМ ОБЪЯВЛЯЕТ свой тип (фикстура
-        // `neg/d65_exhaustive_crossmod_collision`; контроль на одном бинаре — до
-        // правки `PASS: 1` и ни одной диагностики, после — честный отказ).
+        // Здесь стояло: «арм назвал вариант, которого в поднятой
+        // сумме НЕТ — значит поднята не та, снимаем проверку
+        // целиком». Честная защита от ложных отказов — ценой того,
+        // что при коллизии исчерпаемость не проверялась ВООБЩЕ.
         //
-        // Но снятие обхода тут же дало ЛОЖНЫЙ отказ на
-        // `d78_dup_decl_type_cross_import/client_a.nv`: потребован вариант
-        // `Gamma` чужого `Kind`. Граница названа этим замером: `file_local_types`
-        // хранит объявления по ОБЪЯВЛЯЮЩЕМУ файлу, поэтому для ИМПОРТИРОВАННОГО
-        // типа перебор пуст и разрешение падает обратно в коллидирующую карту.
+        // Снят по ЗАМЕРУ, а не по рассуждению. Разрешение стало
+        // импорто-осведомлённым и идёт по файлу, где написан САМ
+        // ТИП скрутини. После этого БЕЗ обхода: conformance 814/0,
+        // `std`/`examples`/`novac` — ноль новых отказов.
         //
-        // Значит остаток W6 — не «развести ещё сорок вызовов», а сделать
-        // разрешение ИМПОРТО-ОСВЕДОМЛЁННЫМ: какой модуль имеется в виду,
-        // определяют импорты использующего файла. До тех пор обход остаётся, и
-        // снимать его по одному зелёному прогону ЗАПРЕЩЕНО — измерено, что он
-        // ещё ловит.
-        if covered.iter().any(|c| !all.iter().any(|v| v == c)) {
-            return;
-        }
+        // Два ложных отказа, найденных по дороге, закрыты шагами,
+        // а не послаблением правила: `d78_dup_decl_type_cross_import`
+        // (импортированный тип — нужны импорты файла) и
+        // `xmodule_struct_variant_ctor_test` (две функции из разных
+        // модулей возвращают одноимённый тип — судья только span
+        // самого типа).
         let missing: Vec<&String> = all.iter().filter(|v| !covered.contains(*v)).collect();
         if missing.is_empty() {
             return;
