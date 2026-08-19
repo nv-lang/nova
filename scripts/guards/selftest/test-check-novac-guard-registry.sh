@@ -1,5 +1,5 @@
 #!/bin/sh
-# Самотест check-novac-guard-registry.sh — ОБА направления (норма 254):
+# Самотест check-novac-guard-registry.py — ОБА направления (норма 254):
 # страж обязан пропускать сошедшийся реестр и краснеть на каждом из четырёх
 # видов расхождения по отдельности. Страж, который никогда не краснеет, —
 # мёртвый механизм (класс №519), поэтому красных случаев здесь больше, чем
@@ -8,7 +8,7 @@
 #
 # Подложки строятся во временном каталоге; рабочее дерево не трогается.
 export LC_ALL=C
-G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-guard-registry.sh"
+G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-guard-registry.py"
 T="${TMPDIR:-/tmp}/novac-guard-registry-selftest.$$"
 mkdir -p "$T" || exit 1
 fails=0
@@ -83,7 +83,7 @@ build_good() {
     plan_tail
 }
 
-run() { sh "$G" "$R" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$R" > "$T/out" 2> "$T/err"; }
 
 # --- 1. Зелёный: реестр сошёлся --------------------------------------------
 build_good good

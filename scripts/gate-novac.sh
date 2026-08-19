@@ -347,7 +347,7 @@ if [ "$NOVAC_TIER" = "full" ]; then guard --deadline 600 "$ROOT/scripts/guards/c
 step "novac-registry (реестр стражей: план ↔ файлы ↔ вызовы ↔ самотесты)"
 # Реестр стражей сверяет ГЕЙТ с планом, а не компилятор с языком (21с):
 # в цикле «правка → вердикт» он не нужен, перед пушем обязателен.
-if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.sh" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
+if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.py" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
 
 # Рубеж ПЕРЕД вердиктом — иначе красный прогон печатает зелёную строку (№690).
 if [ "$GATE_FAIL_N" -gt 0 ]; then
