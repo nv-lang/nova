@@ -14211,7 +14211,9 @@ impl<'a> TypeCheckCtx<'a> {
         // 1. Тип скрутини — именованная сумма? Generic-инстанс (`Option[T]`)
         //    и builtin'ы пока вне разбора: у них свои пути в кодогене.
         let sum_name = match scrut_ty {
-            Some(TypeRef::Named { path, generics, .. }) if generics.is_empty() => {
+            // [#706] generic-инстанс тоже разбирается: имена вариантов
+            // не зависят от аргументов типа, а исчерпаемость считается ПО ИМЕНАМ.
+            Some(TypeRef::Named { path, .. }) => {
                 match path.last() {
                     Some(n) => n.clone(),
                     None => return,
