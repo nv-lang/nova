@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самотест check-novac-no-prelude-shadow.sh — запрет тени прелюдных имён в
+# Самотест check-novac-no-prelude-shadow.py — запрет тени прелюдных имён в
 # novac (план 274 §10.3; норма самотестов — план 231 §4в: ловит нарушение
 # И не даёт ложняка).
 #
@@ -24,7 +24,7 @@
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-no-prelude-shadow.sh"
+G="$ROOT/scripts/guards/check-novac-no-prelude-shadow.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -34,7 +34,7 @@ has()  { if grep -q "$2" "$1"; then ok "$3"; else bad "$3 (нет '$2' в $1: $(
 
 SRC="$TMP/src"; PRE="$TMP/prelude"
 mkdir -p "$SRC/lex" "$SRC/sem" "$PRE"
-run() { sh "$G" "$ROOT" "$SRC" "$PRE" > "$TMP/out" 2> "$TMP/err"; echo $?; }
+run() { python "$G" "$ROOT" "$SRC" "$PRE" > "$TMP/out" 2> "$TMP/err"; echo $?; }
 # Сколько имён прелюдии страж насчитал в последнем зелёном прогоне.
 nnames() { sed -n 's/.*имён прелюдии: \([0-9][0-9]*\),.*/\1/p' "$TMP/out"; }
 
@@ -83,10 +83,10 @@ EOF
 }
 
 echo "== судить нечего =="
-sh "$G" "$ROOT" "$TMP/absent" "$PRE" > "$TMP/out" 2>&1
+python "$G" "$ROOT" "$TMP/absent" "$PRE" > "$TMP/out" 2>&1
 check "нет директории novac — зелёный" "$?" "0"
 has "$TMP/out" 'ok: судить нечего' "«судить нечего» напечатано (№645)"
-sh "$G" "$ROOT" "$SRC" "$TMP/absent-prelude" > "$TMP/out" 2>&1
+python "$G" "$ROOT" "$SRC" "$TMP/absent-prelude" > "$TMP/out" 2>&1
 check "нет директории прелюдии — зелёный" "$?" "0"
 has "$TMP/out" 'ok: судить нечего' "«судить нечего» напечатано и про прелюдию"
 
@@ -212,7 +212,7 @@ has "$TMP/err" 'Frobnicate' "новое имя названо поимённо"
 clean_prelude
 
 echo "== настоящее дерево =="
-sh "$G" "$ROOT" >/dev/null 2>&1
+python "$G" "$ROOT" >/dev/null 2>&1
 check "novac/src проекта не тенит прелюдию" "$?" "0"
 
 echo "итог: $PASS ok, $FAIL FAIL"

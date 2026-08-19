@@ -90,7 +90,7 @@ mk g6e <<'EOF'
 // Donor: Swift ConstraintSystem — ranking overloads by score.
 // Role: layer 7 candidate choice.
 // Used by: check at E2-b3.
-// Guarded by: check-novac-no-default-branch.sh.
+// Guarded by: check-novac-no-default-branch.py.
 module a
 EOF
 if run "$T/g6e"; then bad "Swift выдан за донора и прошёл"; else grep -q "антипример" "$T/err" && ok "Swift как донор без формы отказа пойман" || bad "красный, но не про антипример"; fi
@@ -98,7 +98,7 @@ mk g6f <<'EOF'
 // Donor: rustc method::probe — ambiguity is an error; NOT taken: Swift score ranking (exponential).
 // Role: layer 7 candidate choice.
 // Used by: check at E2-b3.
-// Guarded by: check-novac-no-default-branch.sh.
+// Guarded by: check-novac-no-default-branch.py.
 module a
 EOF
 run "$T/g6f" && ok "Swift в форме «NOT taken» законен" || bad "форма отказа покраснела: $(cat "$T/err")"
