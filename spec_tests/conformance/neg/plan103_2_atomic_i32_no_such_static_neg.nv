@@ -1,9 +1,25 @@
+// EXPECT_COMPILE_ERROR E_NO_STATIC_METHOD
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
 // Plan 103.2 Ф.9 negative — non-existent static constructor on AtomicI32.
 //
-// EXPECT_CC_ERROR Nova_AtomicI32_static_from_bytes
+// ОЖИДАНИЕ СМЕНИЛОСЬ 2026-08-19 (реестр 221.1 №729), И ЭТО НЕ ПРАВКА
+// ФИКСТУРЫ ПОД КОД, А ЗАПИСЬ О ТОМ, ЧТО ДЕФЕКТ ПОЧИНЕН.
 //
-// `AtomicI32.from_bytes()` doesn't exist — codegen emits a call to
-// `Nova_AtomicI32_static_from_bytes` which is not declared → CC error.
+// Здесь стояло `EXPECT_CC_ERROR Nova_AtomicI32_static_from_bytes`: чекер
+// пропускал вызов несуществующего статика, кодоген выпускал обращение к
+// необъявленному символу, и отказ приходил ОТ СИ-КОМПИЛЯТОРА — чужими
+// именами, на чужом этапе. Фикстура фиксировала ровно это поведение, то есть
+// документировала дефект как норму.
+//
+// Теперь отказ ставит ЧЕКЕР: тип объявлен в этом CU, не generic, простой
+// формы — значит его набор статиков чекеру известен ПОЛНО, и промах
+// авторитетен. Пользователь получает имя своего типа и своего метода вместо
+// `Nova_AtomicI32_static_from_bytes`.
+//
+// Эта фикстура — ЕДИНСТВЕННОЕ место во всём корпусе, которое правило
+// затронуло: замер по conformance (единым CU), `std`, `examples` и `novac`
+// дал ноль прочих срабатываний.
 
 module neg.plan103_2_atomic_i32_no_such_static_neg
 fn bad() -> AtomicI32 => AtomicI32.from_bytes()

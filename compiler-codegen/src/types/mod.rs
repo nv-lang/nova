@@ -15969,6 +15969,76 @@ impl<'a> TypeCheckCtx<'a> {
                 if is_primitive_recv && !matches!(overloads, Some(m) if m.len() >= 2) {
                     return;
                 }
+                // №729 [M-196-static-miss-not-diagnosed]: вызов НЕСУЩЕСТВУЮЩЕГО
+                // СТАТИКА на типе, ОБЪЯВЛЕННОМ В ЭТОМ ЖЕ CU, обязан отвергаться
+                // ЗДЕСЬ, а не линковщиком в терминах Си.
+                //
+                // ЧТО БЫЛО: `Box.new(1)` для `type Box { v int }` проходил
+                // `nova check` кодом 0 и падал `lld-link: undefined symbol:
+                // Nova_Box_static_new`. Две соседние формы при этом ловились —
+                // свободная функция (`undefined identifier`) и метод экземпляра
+                // (`[E7320] no field or method`), — то есть дыра узкая и очерчена
+                // работающими соседями.
+                //
+                // ПОЧЕМУ ЭТО НЕ ПРОТИВОРЕЧИТ ПЕРМИССИВНОСТИ ВЫШЕ. Она введена
+                // потому, что чекер не держит полный набор методов Си-рантайма, и
+                // жёсткое правило давало бы ложные срабатывания. Но для типа,
+                // ОБЪЯВЛЕННОГО В ЭТОМ CU, не-generic и простой формы, знание
+                // чекера ПОЛНО — тот же довод, которым обосновано соседнее
+                // правило для настоящих примитивов.
+                //
+                // ПЕРВАЯ ПОПЫТКА (2026-08-18) БЫЛА ОТКАЧЕНА, И ПРИЧИНА ВАЖНА:
+                // конформанс как ЕДИНЫЙ CU дал два ложных отказа — `Kind.Info(5)`
+                // и `Node.Leaf(7)`, оба КОНСТРУКТОРЫ ВАРИАНТОВ. Виновата была не
+                // эта проверка, а коллизия голых имён (№705): поднимался ЧУЖОЙ
+                // одноимённый тип — запись вместо суммы, — и вопрос «есть ли у
+                // этого типа такой член» относился к другому типу. Класс разведён
+                // тремя волнами W6, и `types_get_here` ниже разрешает имя по файлу
+                // ВЫРАЖЕНИЯ, а не по last-write-wins карте. Поэтому исключение по
+                // вариантам суммы теперь опирается на ТОТ САМЫЙ тип.
+                if overloads.is_none()
+                    && !gs.contains_key(parts[0].as_str())
+                    && self.find_method_decl(&parts[0], &parts[1]).is_none()
+                    && !self.blanket_method_names.contains(&parts[1])
+                {
+                    if let Some(td) = self.types_get_here(parts[0].as_str()) {
+                        // Знание полно только для простых форм: у alias/protocol/
+                        // effect/type-set и у generic-типов оно неполно по
+                        // построению, и правило там молчит.
+                        let knowledge_is_complete = td.generics.is_empty()
+                            && matches!(
+                                &td.kind,
+                                TypeDeclKind::Record(_)
+                                    | TypeDeclKind::NamedTuple(_)
+                                    | TypeDeclKind::Newtype(_)
+                                    | TypeDeclKind::Sum(_)
+                            );
+                        // `Kind.Info(5)` — КОНСТРУКТОР ВАРИАНТА, а не статик.
+                        let is_variant_ctor = match &td.kind {
+                            TypeDeclKind::Sum(vs) => vs.iter().any(|v| v.name == parts[1]),
+                            _ => false,
+                        };
+                        // `Type.NAME` может быть ассоциированной константой.
+                        let is_assoc_const =
+                            td.assoc_consts.iter().any(|ac| ac.name == parts[1]);
+                        if knowledge_is_complete && !is_variant_ctor && !is_assoc_const {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_STATIC_METHOD] тип `{}` объявлен в этом \
+                                     модуле и не имеет статического метода `{}`. \
+                                     Статик объявляется как `fn {}.{}(…) -> …`; без \
+                                     объявления вызов доходит до линковщика и \
+                                     сообщается его именами (`Nova_{}_static_{}`), а \
+                                     не вашими",
+                                    parts[0], parts[1], parts[0], parts[1],
+                                    parts[0], parts[1],
+                                ),
+                                base.span,
+                            ));
+                            return;
+                        }
+                    }
+                }
                 // [M-196-facetc-generic-static-named-arg-misdispatch] (Plan 196 Facet C,
                 // T.deserialize(d)-shape probe, last cell): `parts[0]` is a GENERIC
                 // TYPE-PARAMETER in scope (`T.method(...)` static dispatch through a

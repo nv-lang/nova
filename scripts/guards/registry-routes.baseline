@@ -174,4 +174,15 @@ no_caveat=36
 #       Controlled: reverting the pattern turns case A3 red at once.
 #   Beyond the acceptance: the number became a standing ratchet --
 #   check-diag-fixture-coverage, baseline 210, selftest 9/9, gate step.
-blockers=56
+# 2026-08-19, No.729 -- 56 -> 55. The route this very row prescribed was
+#   followed in order: FIRST the bare-name class (three W6 waves the same
+#   day, 81 -> 16 bare reads, none by name left outside the accessors),
+#   THEN the rule. The first attempt had been reverted precisely because
+#   the collision made `does this type have such a member` a question
+#   about the WRONG type.
+#   Measured as the row demanded -- conformance as a SINGLE CU: 816/0
+#   (814 plus the two new fixtures); zero hits on std/examples/novac;
+#   lint 1459 files / 0 findings; crate 1250/0. Blast radius was exactly
+#   one fixture, and that fixture had been documenting the defect as
+#   normal (`EXPECT_CC_ERROR Nova_AtomicI32_static_from_bytes`).
+blockers=55
