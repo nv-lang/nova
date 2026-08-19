@@ -98,3 +98,56 @@ conformance 1073 CU, коллизии в 39 (3.6%), максимум два им
 
 **Храповик на время окна:** `check-bare-type-lookups` (база 72) не даёт числу
 расти, пока окно не пришло.
+
+## Карта площадок, снятая С КОРПУСА (2026-08-19)
+
+Перечисление голых чтений давало 71 площадку — и разбирать их вслепую значит
+менять код без доказательства: заранее неизвестно, какие из них вообще ВИДЯТ
+коллидирующее имя.
+
+Поэтому карта типов чекера обёрнута в `TypeTable` (`types/mod.rs`), и под
+`NOVA_TYPE_LOOKUP_TRACE=1` чтение имени из списка коллидирующих печатает место
+вызова через `#[track_caller]`. Радиус самой обёртки — ДВЕ правки на крейт
+(тип поля и один `for`-цикл): сигнатуры `get`/`contains_key` совпадают с
+`HashMap` намеренно, остальное идёт через `Deref`.
+
+**Замер на `nova check spec_tests/conformance`: 624 чтений с 23 площадок** —
+не 71. Вот они, по убыванию частоты:
+
+| Функция | Чтений | Имена |
+|---|---|---|
+| `resolved_cat_of_depth` | 124 | CecKind, Node, Rect, Write, XKind |
+| `f1_check_fn` | 96 | SignedInts, Write |
+| `materialize_literal_coercion` | 90 | Kind, Node, Rect, Write |
+| `resolve_instance_method_return_arity` | 66 | Write |
+| `types_get_for_file` | 54 | Write |
+| `f3_check_member_ctx` | 52 | Write |
+| `resolve_pattern_variant_types` | 32 | CecKind, Kind, Node, XKind |
+| `infer_expr_type` | 22 | Kind, Node |
+| `match_arm_bindings` | 12 | Kind |
+| `infer_expr_type` | 12 | Rect |
+| `check_priv_pattern_recursive_inner` | 8 | Kind, Node |
+| `resolve_pattern_variant_types` | 8 | Kind, Node |
+| `materialize_literal_coercion` | 8 | Kind, Node, Widget |
+| `record_fields_for` | 8 | Rect |
+| `annotate_expected_concrete` | 8 | Kind |
+| `f1_expr_inner` | 4 | Rect |
+| `f1_expr_inner` | 4 | Rect |
+| `f1_expr_inner` | 4 | Rect |
+| `assignable_direct` | 4 | Node |
+| `materialize_literal_coercion` | 2 | Node |
+| `record_bare_variant_ctor` | 2 | Kind |
+| `walk_expr` | 2 | Rect |
+| `walk_expr` | 2 | Rect |
+
+Читается так: `types_get_for_file` в списке — это ПРАВИЛЬНЫЙ путь (он же
+фолбэк), а не долг. Остальные — очередь окна W6, и порядок в ней задан
+замером, а не догадкой.
+
+**Что мешает развести их пачкой:** у большинства площадок на строке нет
+`span`, то есть нечем ответить «в каком файле это написано». Отсюда следующий
+шаг окна: завести на контексте текущий файл проверяемого элемента и
+разрешать по нему — тогда `types_get_for_file` становится доступен везде без
+протаскивания параметра. Оговорка из первой волны остаётся в силе: там, где
+имя приходит НЕ из проверяемого файла (тип из возврата чужой функции),
+правильный файл — тот, где написан САМ ТИП, и такие места решаются отдельно.

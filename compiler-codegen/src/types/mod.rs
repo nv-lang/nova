@@ -3581,6 +3581,76 @@ impl FnDeclArena {
 }
 
 /// Plan 79: проход типовой полноты type-checker'а.
+/// W6 (№705): карта типов чекера — ОБЁРТКА, а не голая `HashMap`.
+///
+/// **Зачем обёртка.** Ключ здесь — ПРОСТОЕ имя типа, поэтому при коллизии
+/// между модулями побеждает последний записавший. Правильный ответ даёт
+/// `types_get_for_file(name, file_id)`, но голых чтений в крейте семьдесят
+/// с лишним, и разбирать их вслепую значит менять код без доказательства:
+/// заранее неизвестно, какие из них вообще ВИДЯТ коллидирующее имя.
+///
+/// **Что она даёт.** Под `NOVA_TYPE_LOOKUP_TRACE=1` чтение имени из списка
+/// коллидирующих печатает МЕСТО ВЫЗОВА (`#[track_caller]`) — и корпус сам
+/// называет площадки, которые надо развести. Замер вместо перебора.
+///
+/// Сигнатуры `get`/`contains_key` совпадают с `HashMap` намеренно: ни одна
+/// из существующих площадок не правится, обёртка ставится под них.
+/// Остальное (`iter`, `values`, `len`, `insert`) идёт через `Deref`.
+#[derive(Debug, Default)]
+struct TypeTable<'a> {
+    map: HashMap<String, &'a TypeDecl>,
+    /// Имена, объявленные более чем в одном файле. Пусто — трассы нет вовсе,
+    /// и обёртка стоит ровно один предикат на чтение.
+    watch: std::collections::HashSet<String>,
+}
+
+/// Проверка переменной среды делается ОДИН раз: чтение карты типов — горячий
+/// путь, и `var_os` на каждом обращении заметен.
+fn type_lookup_trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NOVA_TYPE_LOOKUP_TRACE").is_some())
+}
+
+impl<'a> TypeTable<'a> {
+    fn new(map: HashMap<String, &'a TypeDecl>,
+           watch: std::collections::HashSet<String>) -> Self {
+        TypeTable { map, watch }
+    }
+
+    #[track_caller]
+    fn get(&self, k: &str) -> Option<&&'a TypeDecl> {
+        self.trace("get", k);
+        self.map.get(k)
+    }
+
+    #[track_caller]
+    fn contains_key(&self, k: &str) -> bool {
+        self.trace("contains_key", k);
+        self.map.contains_key(k)
+    }
+
+    #[track_caller]
+    #[inline]
+    fn trace(&self, op: &str, k: &str) {
+        if self.watch.is_empty() || !type_lookup_trace_on() {
+            return;
+        }
+        if self.watch.contains(k) {
+            eprintln!("[nova-type-lookup] {} {} <- {}",
+                      op, k, std::panic::Location::caller());
+        }
+    }
+}
+
+impl<'a> std::ops::Deref for TypeTable<'a> {
+    type Target = HashMap<String, &'a TypeDecl>;
+    fn deref(&self) -> &Self::Target { &self.map }
+}
+
+impl<'a> std::ops::DerefMut for TypeTable<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.map }
+}
+
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
     arity: HashMap<String, ArityInfo>,
@@ -3606,7 +3676,7 @@ struct TypeCheckCtx<'a> {
     blanket_method_names: HashSet<String>,
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
-    types: HashMap<String, &'a TypeDecl>,
+    types: TypeTable<'a>,
     /// [M-p67-path-call-const-receiver-method-ice]: top-level `const NAME TYPE
     /// = value` name → its declared `TYPE`, for every const in the merged CU
     /// (`module.items`, built once in `build`). Consts WITHOUT an explicit type
@@ -4752,7 +4822,7 @@ impl<'a> TypeCheckCtx<'a> {
             .filter(|(_, n)| *n > 1)
             .map(|(s, _)| s.to_string())
             .collect();
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
             colliding_type_names, imported_modules,
             import_prefix_to_module_last,
             entry_imported_modules,
@@ -17888,7 +17958,7 @@ impl<'a> TypeCheckCtx<'a> {
         let opted_in: HashSet<&str> = self.types.get(tname)
             .map(|td| td.impl_protocols.iter().map(|s| impl_spec_base_name(s)).collect())
             .unwrap_or_default();
-        for (proto_name, td) in &self.types {
+        for (proto_name, td) in self.types.iter() {
             if !opted_in.contains(proto_name.as_str()) {
                 continue;
             }

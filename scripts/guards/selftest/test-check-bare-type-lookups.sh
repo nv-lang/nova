@@ -49,6 +49,19 @@ mk_src 'for t in self.types.values() { }'
 mk_base 0
 check "obhod karty tozhe schitaetsya" "$(run)" "1"
 
+# Karta, ushedshaya v svobodnuyu funkciyu CELIKOM, -- tot zhe dolg na shag
+# dalshe: file_id tam net po postroeniyu. Do 2026-08-19 obrazec etoy formy
+# ne videl vovse, i vosem takih mest v types/mod.rs byli nevidimy.
+mk_src 'let ok = is_fully_stack_value(&t, &self.types);'
+mk_base 0
+check "peredacha karty celikom tozhe schitaetsya" "$(run)" "1"
+mk_src 'let ok = helper(&type_check_ctx.types, true);'
+mk_base 0
+check "ta zhe forma cherez ctx" "$(run)" "1"
+mk_src 'let ok = helper(&other.types, true);'
+mk_base 0
+check "chuzhoe pole .types ne schitaetsya" "$(run)" "0"
+
 echo "== ne vret o srede =="
 rm -f "$TMP/compiler-codegen/src/types/mod.rs"
 mk_base 10
