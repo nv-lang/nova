@@ -609,6 +609,56 @@ echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
 [ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
 
+step "conformance-full (лейны panic/exit/timeout — их не гонял НИКТО)"
+# ЗАЧЕМ. Мега-CU выше идёт с `--positive --compile-error`. Фикстуры с
+# `EXPECT_RUNTIME_PANIC` (32), `EXPECT_EXIT_CODE` (6) и `EXPECT_TIMEOUT_MS` (16)
+# в эти лейны не попадают — храповик SKIP (№453б) лишь СЧИТАЛ их пропущенными и
+# ни разу не проверял. Двадцать семь поставляемых проверок не исполнял никто.
+#
+# ПОЧЕМУ `--full`, А НЕ ПЕРЕЧИСЛЕНИЕ ЛЕЙНОВ. Перечень отстанет от корпуса ровно
+# так же, как отстал этот: новый вид `EXPECT_*` тихо не попадёт ни в один лейн и
+# снова станет невидимым. `--full` значит «всё», и новый вид покрывается сам.
+# Цена — повтор позитивного лейна, ~150 с на сорокаминутном гейте.
+#
+# ПОЧЕМУ СВЕРКА МНОЖЕСТВА, А НЕ ЧИСЛА. Храповик «не больше N красных» пропустил
+# бы подмену одного красного другим — страж ни о чём (класс F1, №645). Поэтому
+# сверяются ИМЕНА, а список красных явный и с причинами.
+FULL_LOG="${TMPDIR:-/tmp}/gate_full_$$.log"
+FULL_KNOWN="$ROOT/scripts/guards/conformance-known-red.list"
+"$NOVA" test --full --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$FULL_LOG" 2>&1
+FULL_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
+echo "conformance-full :: $FULL_LINE"
+echo "$FULL_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
+    || fail "conformance-full: строки PASS/FAIL нет вовсе (краш её не печатает — см. $FULL_LOG)"
+
+# Имена упавших. Маркеры перечислены явно; если какой-то вид отказа сюда не
+# попал — это ловится самопроверкой ниже, а не проходит молча.
+FULL_BAD=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" \
+    | grep -E "^(NEG-[A-Z-]+|CC-FAIL|RUN-FAIL|CODEGEN-FAIL|MISMATCH|TIMEOUT|FAIL) +spec_tests/" \
+    | awk '{print $2}' | sort -u)
+FULL_BAD_N=$(printf '%s' "$FULL_BAD" | grep -c . || true)
+FULL_FAIL_N=$(echo "$FULL_LINE" | grep -oE "FAIL: [0-9]+" | grep -oE "[0-9]+" | head -1)
+[ -n "$FULL_FAIL_N" ] || FULL_FAIL_N=0
+
+# САМОПРОВЕРКА: сколько сказал итог — столько имён и обязано извлечься. Иначе
+# шаг сверяет НЕ ТО и «зелено» означает «не смог назвать».
+[ "$FULL_BAD_N" -eq "$FULL_FAIL_N" ] \
+    || fail "conformance-full: итог сообщает FAIL: $FULL_FAIL_N, а по именам извлеклось $FULL_BAD_N — вид отказа не разобран, шаг сверял бы не то (см. $FULL_LOG и список маркеров в gate.sh)"
+
+FULL_EXP=$(grep -vE '^\s*#' "$FULL_KNOWN" 2>/dev/null | awk '{print $1}' | grep -E '^spec_tests/' | sort -u)
+FULL_NEW=$(comm -23 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+FULL_GONE=$(comm -13 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+
+if [ -n "$FULL_NEW" ]; then
+    printf '%s\n' "$FULL_NEW" | head -10 >&2
+    fail "conformance-full: красная фикстура вне списка известных ($FULL_KNOWN). Это лейн, который до 2026-08-19 не гонял никто — чини дефект, а не заноси в список; занесение только с номером строки реестра и причиной."
+fi
+if [ -n "$FULL_GONE" ]; then
+    echo "  ЗАМЕТКА: позеленели и могут уйти из $FULL_KNOWN:" >&2
+    printf '  %s\n' "$FULL_GONE" >&2
+fi
+echo "conformance-full ok: красных ровно столько и ровно тех, что в списке"
+
 step "check std/src (byte-canon)"
 STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/${ESC}\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
 echo "std :: $STD_LINE"
