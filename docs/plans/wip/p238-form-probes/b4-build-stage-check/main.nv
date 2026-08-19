@@ -1,0 +1,13 @@
+export type Safe protocol {
+    @dummy() -> ()
+}
+
+export fn register[F Safe](f F) -> () {
+    f.dummy()
+}
+
+fn inc(x int) -> int => x + 1
+
+fn main() -> () {
+    register(inc)
+}

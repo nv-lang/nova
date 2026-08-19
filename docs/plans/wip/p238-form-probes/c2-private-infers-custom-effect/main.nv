@@ -1,0 +1,17 @@
+export type Signal effect {
+    ping() -> ()
+}
+
+// private, no effect declared in signature — per D28, should be inferred silently
+fn helper() -> () {
+    Signal.ping()
+}
+
+export fn use_it() -> () {
+    with Signal = effect Signal { ping() -> () => () } {
+        helper()
+    }
+}
+
+// honesty control
+export fn honesty_control() -> int => undefined_identifier_zzz

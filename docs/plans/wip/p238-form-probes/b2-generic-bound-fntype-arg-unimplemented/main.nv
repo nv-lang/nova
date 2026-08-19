@@ -1,0 +1,16 @@
+export type Safe protocol {
+    @dummy() -> ()
+}
+
+export fn register[F Safe](f F) -> () {
+    ()
+}
+
+fn inc(x int) -> int => x + 1
+
+export fn use_it() -> () {
+    register(inc)
+}
+
+// honesty control
+export fn honesty_control() -> int => undefined_identifier_zzz

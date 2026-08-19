@@ -1,0 +1,6 @@
+export fn register[F #share](f F) -> () {
+    ()
+}
+
+// honesty control
+export fn honesty_control() -> int => undefined_identifier_zzz

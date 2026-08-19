@@ -1,0 +1,9 @@
+export type Safe effect {
+}
+
+export fn register(f fn(int) Safe -> int) -> () {
+    ()
+}
+
+// honesty control
+export fn honesty_control() -> int => undefined_identifier_zzz
