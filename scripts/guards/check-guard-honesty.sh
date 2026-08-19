@@ -5,7 +5,7 @@
 # ОДИН предмет, три формы. Все три пойманы живьём 2026-08-18 разбором красного
 # CI, и каждая делала одно и то же: вердикт был, а проверки не было.
 #
-#  (1) CRLF в .sh. check-novac-cli-surface.sh и check-novac-row-fields.sh лежали
+#  (1) CRLF в .sh. check-novac-cli-surface.sh и check-novac-row-fields.py лежали
 #      в индексе с CRLF; под sh на Linux они падали с "syntax error near
 #      unexpected token do\r" — а гейт показывал их ПАДЕНИЕ как нарушение
 #      правила: «команда novac, которой нет у nova-cli», «поле строки реестра
@@ -28,7 +28,17 @@
 #   * ни одного CRLF в ИНДЕКСЕ (рабочее дерево на Windows законно иное);
 #   * файл, называющий nova.exe, знает и второе имя — через дверь
 #     novac_find_oracle или прямым запасным путём;
-#   * апостроф в двойных кавычках у echo/printf.
+#   * апостроф в двойных кавычках у echo/printf;
+#   * СЪЕДЕННЫЙ возврат каретки: `tr -d '<перевод строки>'` — кавычка открыта
+#     в конце строки и закрыта в начале следующей. Вместо `tr -d '\r'` сносит не
+#     возвраты каретки, а переводы строк: файл склеивается в ОДНУ строку, и
+#     всякий последующий grep находит в ней что угодно. Поймано 2026-08-19 в
+#     check-novac-row-fields.sh — правило П23 полтора дня засчитывало пометку с
+#     ЧУЖОЙ строки плана каждому полю и пропустило живое нарушение. Самотест
+#     этого не показывал: фикстура была МЕНЬШЕ дефекта — в плане из двух строк
+#     пометка либо стоит на судимом поле, либо её нет нигде. НЕ судится замена
+#     `tr '<перевод строки>' ' '`: склеить список в одну строку — законная
+#     идиома, и красить её значило бы платить ложной краснотой за букву.
 # ПРОВЕРЯЕТ scripts/**/*.py — стражи переезжают на python (П14: один старт
 #   интерпретатора вместо сорока), и судья, который смотрит только .sh, слепнет
 #   РОВНО ПО МЕРЕ ПЕРЕЕЗДА. Это класс №519, и он здесь закрыт:
@@ -88,6 +98,7 @@ SCAN=$(printf '%s\n' "$FILES" | xargs awk -v ROOT="$ROOT/" -v DOOR="$DOOR" '
         rel = FILENAME; sub("^" ROOT, "", rel)
         skip = (index(rel, DOOR) > 0 || index(rel, "/selftest/") > 0)
         saw_exe = 0; saw_door = 0; saw_fallback = 0
+        prev = ""
     }
     {
         line = $0; sub(/\r$/, "", line)
@@ -102,9 +113,25 @@ SCAN=$(printf '%s\n' "$FILES" | xargs awk -v ROOT="$ROOT/" -v DOOR="$DOOR" '
         if (line ~ /^[[:space:]]*(echo|printf|ok|bad)[[:space:]]/ &&
             index(line, "\047") == 0 && index(line, "\\`") == 0 && index(line, "`") > 0)
             printf "  %s:%d: апостроф в двойных кавычках — оболочка выполнит его как команду\n", rel, FNR
+        # Komanda udaleniya: kavychka otkryta v kontse stroki i zakryta v
+        # nachale sleduyushchey - UDALYAYUTSYA perevody strok. Namerenno etogo
+        # ne delayut, a vot vozvrat karetki sedaetsya tak postoyanno. Zamena
+        # perevodov na probel ne suditsya: skleit spisok - zakonnaya idioma.
+        # na probel ne suditsya: skleit spisok v stroku - zakonnaya idioma.
+        if (prev ~ /tr[[:space:]]+-d[[:space:]]*\047$/ && substr(line, 1, 1) == "\047")
+            printf "  %s:%d: перевод строки в одинарных кавычках — съеденный \\r: снесёт строки вместо возвратов каретки, и правило умрёт молча\n", rel, FNR - 1
+        prev = line
     }
     END { verdict() }
 ')
+SCAN_RC=$?
+# Сканер, который УПАЛ, даёт пустой SCAN — то есть «находок нет» — то есть
+# зелено. Это ровно тот вердикт без проверки, который страж и судит: 2026-08-19
+# сломанная awk-программа напечатала здесь «ok». Код возврата теперь смотрится.
+if [ "$SCAN_RC" -ne 0 ]; then
+    echo "$NAME: FAIL — сканер скриптов упал (код $SCAN_RC): пустой результат это НЕ «нарушений нет»" >&2
+    exit 1
+fi
 [ -n "$SCAN" ] && BAD="$BAD$SCAN
 "
 

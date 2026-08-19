@@ -52,21 +52,27 @@ MIN_HEADER_LINES=8
 problems=0
 report() { echo "  ✗ $1" >&2; problems=$((problems + 1)); }
 
-echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh"
+echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh и check-*.py"
 
 shopt -s nullglob
-guards=("$REPO_ROOT"/scripts/guards/check-*.sh)
+# Расширение НЕ часть личности стража (переезд на python, П14).
+guards=("$REPO_ROOT"/scripts/guards/check-*.sh "$REPO_ROOT"/scripts/guards/check-*.py)
 if [ "${#guards[@]}" -eq 0 ]; then
     echo "  стражей не найдено — нечего проверять"
     exit 0
 fi
 
 for g in "${guards[@]}"; do
-    name="$(basename "$g" .sh)"
+    name="$(basename "$g")"; name="${name%.sh}"; name="${name%.py}"
     ok=1
 
     # 1. Документирован: содержательная шапка + ссылка на план.
-    header_lines="$(head -20 "$g" | grep -c '^#' || true)"
+    # Шапка питоновского стража живёт в докстринге, а не в решётках:
+    # считать только '^#' значило бы объявить каждый порт недокументированным.
+    case "$g" in
+        *.py) header_lines="$(head -20 "$g" | awk '/^#/ { c++; next } /^"""/ { d = !d; c++; next } d { c++ } END { print c+0 }')" ;;
+        *)    header_lines="$(head -20 "$g" | grep -c '^#' || true)" ;;
+    esac
     if [ "$header_lines" -lt "$MIN_HEADER_LINES" ]; then
         report "$name: шапка тонкая ($header_lines строк < $MIN_HEADER_LINES) — нужно «зачем / что проверяет / как запускать»"
         ok=0

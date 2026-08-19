@@ -21,7 +21,7 @@
 //   E2-b1, the owner of the type interner; the truth
 // every pass below reads.
 // Used by: check and emit_c (E1-E2); mono and layout at E2-b2; becomes the checker's channel writer at E4.
-// Guarded by: check-novac-ctx-tables.sh (the set of Ctx tables is declared in plan 10.3b), check-novac-row-fields.sh
+// Guarded by: check-novac-ctx-tables.py (the set of Ctx tables is declared in plan 10.3b), check-novac-row-fields.py
 // (every row field justified in 10.3v, no derived field), check-novac-ref-field-names.sh (_id/_row suffixes),
 // check-novac-resolve-discipline.sh (no silent int default), check-novac-no-alloc-in-lookup.py (doors carry #realtime
 // nogc).

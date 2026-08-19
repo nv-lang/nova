@@ -1,17 +1,17 @@
 #!/bin/sh
-# Самотест check-novac-row-fields.sh (П16: обязан доказать, что ловит).
+# Самотест check-novac-row-fields.py (П16: обязан доказать, что ловит).
 # Швы $2 (sem.nv) и $3 (план) — подложка из пары крошечных файлов.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-row-fields.sh"
+G="$GD/check-novac-row-fields.py"
 T="${TMPDIR:-/tmp}/novac-row-fields-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" "$2" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" "$2" > "$T/out" 2> "$T/err"; }
 
 mk_sem() { f="$1"; shift; { echo "module novac.sem"; echo ""; echo "$@"; } > "$f"; }
 mk_plan() { # $1 файл, дальше пары "Запись поле"
@@ -134,11 +134,38 @@ run "$T/absent.nv" "$T/p1.md"
 grep -q "судить нечего" "$T/out" && ok "нет sem.nv — судить нечего" || bad "ждали «судить нечего»"
 
 # --- 9. настоящее дерево -------------------------------------------------
-sh "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src/sem — зелёный" || bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
+python "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src/sem — зелёный" || bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -3)"
+
+# --- 10. пометка на ДРУГОЙ строке не засчитывается судимому полю --------
+# Случай, который отличает работающее правило C от сломанного. Пока страж
+# сносил из плана переводы строк вместо возвратов каретки, план склеивался в
+# ОДНУ строку и «[на элемент]» где угодно засчитывалось всем полям сразу. На
+# фикстуре из двух строк это неотличимо от исправности: пометки там либо нет
+# нигде, либо она стоит на судимом поле. Живой план — как раз третий вид.
+mk_sem "$T/s10.nv" 'export type FnDef value {
+    has_recv bool /// есть ли получатель
+    foreign bool /// чужой символ или наш
+}
+
+export type FnTable {
+    rows []FnDef /// строки таблицы
+}'
+{ echo "# План"; echo ""; echo "### 10.3в. Реестр полей строк"; echo ""
+  echo "| строка | поле | зачем |"; echo "|---|---|---|"
+  echo "| \`FnDef\` | \`has_recv\` | **[на элемент]** — бит различается у каждой строки |"
+  echo "| \`FnDef\` | \`foreign\` | причина без пометки |"
+} > "$T/p10.md"
+if run "$T/s10.nv" "$T/p10.md"; then
+    bad "пометка с ЧУЖОЙ строки засчиталась полю foreign — правило C мертво"
+else
+    grep -q "FnDef.foreign" "$T/err" \
+        && ok "пометка на другой строке не засчитывается — назван именно foreign" \
+        || bad "красный, но foreign не назван: [$(head -n 2 "$T/err")]"
+fi
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-row-fields ok: все случаи, включая поле без записи и выделенный элемент списка"
+    echo "test-check-novac-row-fields ok: все случаи, включая поле без записи, выделенный элемент списка и пометку с чужой строки"
     exit 0
 fi
 exit 1

@@ -279,7 +279,7 @@ par_reset
 par_add "$ROOT/scripts/guards/check-novac-file-size.py" "файл novac длиннее 1000 строк (решение 12)"
 par_add "$ROOT/scripts/guards/check-novac-atomics-door.py" "атомики/TLS мимо одной двери (274 §8.1)"
 par_add "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "строковый ключ таблицы вне names (архитектура §4а, К2)"
-par_add "$ROOT/scripts/guards/check-novac-no-global-state.sh" "глобальное изменяемое состояние в novac (274 §4 п.5)"
+par_add "$ROOT/scripts/guards/check-novac-no-global-state.py" "глобальное изменяемое состояние в novac (274 §4 п.5)"
 par_add "$ROOT/scripts/guards/check-novac-frontend-shape.py" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
 par_run
 
@@ -292,8 +292,8 @@ par_add "$ROOT/scripts/guards/check-novac-type-field-docs.py" "тип/поле/�
 par_add "$ROOT/scripts/guards/check-novac-doc-language.sh" "русский текст в .nv novac (П13)"
 par_add "$ROOT/scripts/guards/check-novac-no-name-hardcode.sh" "имя языка/std строкой вне builtins (П5)"
 par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.py" "novac объявил имя, которое экспортирует прелюдия"
-par_add "$ROOT/scripts/guards/check-novac-ctx-tables.sh" "таблица строк в Ctx без строки плана §10.3б (П17)"
-par_add "$ROOT/scripts/guards/check-novac-row-fields.sh" "поле строки реестра без записи в §10.3в (П22/П23)"
+par_add "$ROOT/scripts/guards/check-novac-ctx-tables.py" "таблица строк в Ctx без строки плана §10.3б (П17)"
+par_add "$ROOT/scripts/guards/check-novac-row-fields.py" "поле строки реестра без записи в §10.3в (П22/П23)"
 par_add "$ROOT/scripts/guards/check-novac-ref-field-names.sh" "поле-ссылка без суффикса пространства (П19)"
 par_add "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.py" "дверь поиска аллоцирует (П18)"
 par_add "$ROOT/scripts/guards/check-novac-ice-messages.sh" "текст ice() повторяется или без модуля (П20)"

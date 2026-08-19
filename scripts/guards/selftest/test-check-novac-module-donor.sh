@@ -18,7 +18,7 @@ mk g1 <<'EOF'
 // Donor: rustc TyCtxt (rustc_middle::ty) — interned Ty taken, arenas not.
 // Role: layer 4 of the map, the type interner.
 // Used by: sem and check at E2-b1.
-// Guarded by: check-novac-row-fields.sh and the interner tests.
+// Guarded by: check-novac-row-fields.py and the interner tests.
 module a
 EOF
 run "$T/g1" && ok "указатель с сущностью — зелёный" || bad "указатель покраснел: $(cat "$T/err")"
@@ -107,7 +107,7 @@ mk g6g <<'EOF'
 // Donor: Zig — the way they do it.
 // Role: layer 4 interner.
 // Used by: sem at E2-b1.
-// Guarded by: check-novac-row-fields.sh.
+// Guarded by: check-novac-row-fields.py.
 module a
 EOF
 if run "$T/g6g"; then bad "голый Zig как донор прошёл"; else grep -q "без его сущности" "$T/err" && ok "Zig без сущности пойман" || bad "красный, но не про сущность Zig"; fi

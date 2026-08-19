@@ -22,7 +22,7 @@
 // one.
 // Used by: check writes it (the ONE writer), emit_c reads it; mono and layout read it at E2-b2; the LSP reads it at E3
 // instead of re-walking.
-// Guarded by: check-novac-ctx-tables.sh (channel tables declared in plan 10.3b), check-novac-row-fields.sh (CalleeRef
+// Guarded by: check-novac-ctx-tables.py (channel tables declared in plan 10.3b), check-novac-row-fields.py (CalleeRef
 // fields justified in 10.3v), check-novac-no-alloc-in-lookup.py (the readers are doors and allocate nothing),
 // check-novac-differential.sh (a wrong recorded type shows up as different C or a different verdict).
 // novac/src/sem/channel.nv -- the checker's channel (architecture section 1,

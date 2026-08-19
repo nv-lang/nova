@@ -21,7 +21,7 @@
 #   * есть строка `// Role:` — минимум четыре слова (место в карте / класс задачи);
 #   * есть строка `// Used by:` — минимум три слова (потребитель и этап);
 #   * есть строка `// Guarded by:` — кто АВТОМАТИЧЕСКИ проверяет правильное
-#     использование дальше: каждый названный `check-*.sh` обязан существовать
+#     использование дальше: каждый названный `check-*.sh`/`check-*.py` обязан существовать
 #     файлом в scripts/guards (несуществующий — красный: механизм не назван,
 #     а выдуман); честные формы без файла — `compiler — ...` и
 #     `acceptance — ...` (норма 254);
@@ -93,7 +93,7 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v
         } else if (guarded != "" && line ~ /^\/\/\/? +/) {
             # продолжение строки Guarded by переносом
             cont = line; sub(/^\/\/\/? */, "", cont)
-            if (cont ~ /check-[a-z0-9-]+\.sh/) guarded = guarded " " cont
+            if (cont ~ /check-[a-z0-9-]+\.(sh|py)/) guarded = guarded " " cont
         }
         if (in_d) dblock = dblock " " line
     }
@@ -126,7 +126,7 @@ BAD=$(find "$SRC" -type f -name '*.nv' ! -name '*_test.nv' | sort | xargs awk -v
         } else {
             g = guarded
             n = 0
-            while (match(g, /check-[a-z0-9-]+\.sh/)) {
+            while (match(g, /check-[a-z0-9-]+\.(sh|py)/)) {
                 gname = substr(g, RSTART, RLENGTH)
                 if (!(gname in GUARDS))
                     say("\x27Guarded by\x27 называет " gname ", а такого стража нет в scripts/guards — механизм выдуман")
@@ -145,7 +145,7 @@ if [ -n "$BAD" ]; then
     printf '%s\n' "$BAD" >&2
     echo "  В первых 40 строках три строки: '// Donor: <кто> <сущность> — взято/не взято'," >&2
     echo "  '// Role: <место в карте слоёв, класс задачи>', '// Used by: <кто читает, на каком этапе>'," >&2
-    echo "  '// Guarded by: <check-*.sh, тесты — кто автоматически ловит неверное использование>'." >&2
+    echo "  '// Guarded by: <check-*.sh или check-*.py, тесты — кто автоматически ловит неверное использование>'." >&2
     echo "  Донора нет — честно: '// Donor: none — <причина>'; Role и Used by нужны всё равно." >&2
     exit 1
 fi

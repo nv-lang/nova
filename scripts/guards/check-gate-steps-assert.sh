@@ -119,7 +119,9 @@ fi
 # из 46 стражей строку не печатали три — два починены тут же, третий (см.
 # EXEMPT) законно ничего не проверяет.
 MUTE=""
-for g in "$ROOT"/scripts/guards/check-*.sh "$ROOT"/scripts/guards/*ratchet*.sh; do
+# Расширение НЕ часть личности стража: с 2026-08-19 они переезжают на
+# python (П14), и глоб по .sh молча перестал бы судить переехавших.
+for g in "$ROOT"/scripts/guards/check-*.sh "$ROOT"/scripts/guards/check-*.py "$ROOT"/scripts/guards/*ratchet*.sh; do
     [ -f "$g" ] || continue
     b="$(basename "$g")"
     [ "$b" = "$EXEMPT" ] && continue

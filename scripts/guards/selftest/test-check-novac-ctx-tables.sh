@@ -1,5 +1,5 @@
 #!/bin/sh
-# Самотест check-novac-ctx-tables.sh (П16: обязан доказать, что ловит).
+# Самотест check-novac-ctx-tables.py (П16: обязан доказать, что ловит).
 #
 # ПОДЛОЖКА. У стража два шва — $2 (путь к sem.nv) и $3 (путь к плану),
 # поэтому настоящее дерево не нужно: каждый случай — своя пара крошечных
@@ -7,14 +7,14 @@
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-ctx-tables.sh"
+G="$GD/check-novac-ctx-tables.py"
 T="${TMPDIR:-/tmp}/novac-ctx-tables-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" "$2" "${3:-}" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" "$2" "${3:-}" > "$T/out" 2> "$T/err"; }
 
 mk_chan() { # $1 file, rest are CheckOut field names
     f="$1"; shift
@@ -125,10 +125,10 @@ run "$T/absent.nv" "$T/plan1.md"
 grep -q "судить нечего" "$T/out" && ok "нет sem.nv — судить нечего" || bad "нет sem.nv: ждали «судить нечего»"
 
 # --- 8. настоящее дерево -------------------------------------------------
-if sh "$G" "$ROOT" >/dev/null 2>&1; then
+if python "$G" "$ROOT" >/dev/null 2>&1; then
     ok "настоящее дерево — зелёное"
 else
-    bad "настоящее дерево покраснело: $(sh "$G" "$ROOT" 2>&1 | head -3)"
+    bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -3)"
 fi
 
 # --- kanal chekera: tot zhe sud dlya vtorogo konteynera --------------------
