@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""scripts/guards/check-novac-gate-budget.py — механизм бюджета времени на месте
-и не выродился (конвенция П33).
+"""scripts/guards/check-gate-budget.py — механизм бюджета времени на месте
+и не выродился (конвенция гейтов и стражей, Г1..Г7).
 
 ЗАЧЕМ. Гейт, который идёт девять минут, не гоняют — а правило, которое не
 гоняют, не правило. 2026-08-19 полный прогон стоил 558с, и виноваты были НЕ
@@ -38,7 +38,7 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
-NAME = "check-novac-gate-budget"
+NAME = "check-gate-budget"
 RE_ROW = re.compile(r"^([a-z]+)[ \t]+([0-9]+)[ \t]*$")
 RE_TIERS = re.compile(r"NOVAC_TIER.*\n?.*?case[^\n]*\n\s*([a-z|]+)\)", re.M)
 
@@ -47,7 +47,7 @@ def main():
     a = sys.argv
     root = pathlib.Path(a[1] if len(a) > 1 else ".").resolve()
     gate = pathlib.Path(a[2]) if len(a) > 2 else root / "scripts" / "gate-novac.sh"
-    budget = root / "scripts" / "guards" / "novac-gate-budget.baseline"
+    budget = root / "scripts" / "guards" / "gate-budget.baseline"
 
     if not gate.is_file():
         print(f"{NAME}: FAIL — нет гейта {gate}: судить бюджет нечему", file=sys.stderr)
@@ -79,7 +79,7 @@ def main():
     text = gate.read_text(encoding="utf-8", errors="replace")
 
     missing = []
-    if "novac-gate-budget.baseline" not in text:
+    if "gate-budget.baseline" not in text:
         missing.append("гейт не читает файл бюджета")
     if not re.search(r"GATE_ELAPSED", text):
         missing.append("гейт не меряет собственное время (нет GATE_ELAPSED)")
@@ -93,7 +93,7 @@ def main():
         for m in missing:
             print(f"  {m}", file=sys.stderr)
         print("  Механизм, который можно вырезать одной строкой и не заметить, — не механизм.", file=sys.stderr)
-        print("  Верни проверку в гейт или объясни в П33, чем она заменена.", file=sys.stderr)
+        print("  Верни проверку в гейт или объясни в Г1..Г7, чем она заменена.", file=sys.stderr)
         return 1
 
     # Ярусы, которые гейт ПРИНИМАЕТ: из его же строки разбора.

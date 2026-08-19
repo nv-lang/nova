@@ -348,7 +348,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагнос�
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
 par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.py" "правило конвенции без названного механизма"
-par_add "$ROOT/scripts/guards/check-novac-gate-budget.py" "механизм бюджета времени гейта выхолощен (П33)"
+par_add "$ROOT/scripts/guards/check-gate-budget.py" "механизм бюджета времени гейта выхолощен (конвенция гейтов, Г4)"
 par_run
 step "novac-lint (свод nv-coding-style по novac/src)"
 guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
@@ -391,13 +391,13 @@ step "novac-registry (реестр стражей: план ↔ файлы ↔ �
 # в цикле «правка → вердикт» он не нужен, перед пушем обязателен.
 if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.py" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
 
-# ── БЮДЖЕТ ЯРУСА (П33): гейт меряет СЕБЯ. ────────────────────────────────
+# ── БЮДЖЕТ ЯРУСА (конвенция гейтов, Г4): гейт меряет СЕБЯ. ────────────────────────────────
 # Гейт, который идёт девять минут, не гоняют — а правило, которое не гоняют, не
 # правило. Цену возвращают не проверки, а форма: процессы на учёт, старты
 # интерпретатора, пересборка без нужды. Здесь она измерена и сравнена с
 # записанным потолком; предел масштабируется калибровкой машины.
 GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
-BUDGET_FILE="$ROOT/scripts/guards/novac-gate-budget.baseline"
+BUDGET_FILE="$ROOT/scripts/guards/gate-budget.baseline"
 BUDGET=""
 if [ -f "$BUDGET_FILE" ]; then
     while read -r _k _v _rest; do
@@ -412,7 +412,7 @@ if [ -n "$BUDGET" ]; then
         echo "  на каждого стража, пересборка без нужды — так уже было (558с, 2026-08-19)." >&2
         echo "  Если работа честно выросла — подними число в $BUDGET_FILE ЗАМЕРОМ и тем же" >&2
         echo "  слиянием, назвав, чем она выросла." >&2
-        fail "ярус $NOVAC_TIER вышел за бюджет времени (П33)"
+        fail "ярус $NOVAC_TIER вышел за бюджет времени (конвенция гейтов, Г4)"
     else
         echo "novac-gate ok: ярус $NOVAC_TIER — ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с"
     fi

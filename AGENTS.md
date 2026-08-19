@@ -265,6 +265,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 | [docs/plans/README.md](docs/plans/README.md) | Index of all plans |
 | [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md) | Registry of floating `[M-…]` followup markers **not** tied to a plan (codegen / perf / debug-info backlog). Plan-bound markers live in their plan's Followups section. |
 | [docs/dev/test-conventions.md](docs/dev/test-conventions.md) | EXPECT markers, test runner flags |
+| [docs/dev/gate-guard-conventions.md](docs/dev/gate-guard-conventions.md) | **Writing gates and guards** — what a check may cost, tiers, the time budget |
 | [docs/dev/module-conventions.md](docs/dev/module-conventions.md) | **Designing any Nova module (std/app/third-party) + C integration** — effect-family architecture (mockable plumbing + type-method facade), value/must-consume types, structured `Result` errors, byte-first, the `extern "C"` `ffi.nv` layer (CStr vs `(*u8,len)`, errno, value-records), `#cfg` platform-split. (`extern "nova"`/runtime park-wake/`#stable` are std-runtime-only — marked in §Применимость.) Complements [ffi-cookbook.md](docs/guide/ffi-cookbook.md) (FFI mechanics) and [nv-coding-style.md](docs/dev/nv-coding-style.md) (`.nv` style). |
 | [docs/dev/simplifications.md](docs/dev/simplifications.md) | History of removed complexity |
 | [compiler-codegen/README.md](compiler-codegen/README.md) | Compiler internals, build options |
