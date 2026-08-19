@@ -221,4 +221,15 @@ no_caveat=35
 #   Blast radius measured at ZERO: no hits across std, examples, novac or
 #   the whole conformance corpus; conformance 820/0, lint 1461/0, crate
 #   1250/0. Its sibling #572 was probed the same hour and is ALIVE.
-blockers=52
+# 2026-08-19, No.674 -- 52 -> 51. TWELFTH stale row of the day, and the one
+#   that proves the guard's stated boundary rather than its failure.
+#   Both rules are enforced, verified by RUNNING: `_y` used after an
+#   underscore binding gives [E_UNDERSCORE_NAME_USED], and `Ok(_)` over a
+#   linear payload gives [E_LINEAR_PAYLOAD_DISCARDED].
+#   They landed in `95c5655e8 lang(D461)`, which names 674 NEITHER in its
+#   subject NOR anywhere in its body -- checked by grep. So
+#   check-fixed-but-open could not have linked them by any mechanism; that
+#   is the boundary No.731 wrote down on the day it was built, now met in
+#   the wild. What found this row was the DISCIPLINE of running the
+#   carrier first, not a scanner.
+blockers=51
