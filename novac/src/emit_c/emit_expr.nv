@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{FnLookup, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
+import ../sem.{FnLookup, UNKNOWN_TYPE, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
 import ../builtins.{EQUAL_METHOD, ENTRY_FN, PRINT_FN, bool_c_literal}
 
 
@@ -154,6 +154,17 @@ fn c_unary_form(op UnOp) -> str {
 /// Is this operator a comparison? Derived from the decision (P22: derived is
 /// a function, not a second table), and exhaustive so a new operator must
 /// answer here too.
+
+/// The lookup key of the synthesised `equal` call: receiver, then one unknown
+/// argument. A named builder rather than a literal vector at the call site, so
+/// the shape of a key lives in one place per module.
+fn equal_key(lhs_t int) -> []int {
+    mut out = []int.new()
+    out.push(lhs_t)
+    out.push(UNKNOWN_TYPE)
+    out
+}
+
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
 fn Emitter mut @emit_expr(e Node) -> () {
     ro k = e.kind_of()
@@ -273,7 +284,11 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // The row, then the ONE door -- the same path an ordinary method
             // call takes. Spelling the name here would be a second decision
             // about a symbol the registry already knows.
-            match @ctx.fns.lookup(lhs_t, EQUAL_METHOD) {
+            // The key of a two-parameter call: the receiver in position zero
+            // and the right-hand side after it — the same shape check builds,
+            // asked at the same door. The right side's type is not read here:
+            // `equal` takes its own type, so the position is left unknown.
+            match @ctx.fns.lookup(EQUAL_METHOD, equal_key(lhs_t)) {
                 FnFound(row) => @body.append(c_callable(@ctx, row, no_args()))
                 FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_args()))
                 FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")

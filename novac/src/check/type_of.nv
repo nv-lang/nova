@@ -21,6 +21,28 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
+/// The lookup key of a call whose every position CAN be typed: the receiver in
+/// position zero, then one type per written argument.
+///
+/// The same shape `check` builds with `UNKNOWN_TYPE` in the argument slots --
+/// same door, same order: one builder per stage of KNOWLEDGE, not one per kind
+/// of call. `from` is the index of the first argument child.
+fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope) -> []int {
+    mut out = []int.new()
+    out.push(recv_t)
+    mut i = 0
+    for c in kids {
+        if i >= from && is_expr_kind(c.kind_of()) {
+            out.push(type_of(c, ctx, scope))
+        } else {
+            // Syntax, not an argument: the argument cursor stays put while the
+            // child cursor advances.
+        }
+        i += 1
+    }
+    out
+}
+
 /// Type of an expression over the tiny registry lattice. Every kind is
 /// judged positively; the residual is an ice, never an int (#652 class).
 #realtime nogc
@@ -53,24 +75,20 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // compiler does not know std method names, it reads them. Only
         // what check has already accepted reaches here, so a rejection
         // here is an ice (a poisoning-discipline violation).
-        ro recv_t = type_of(kids[0], ctx, scope)
-        match ctx.fns.lookup(recv_t, mname) {
+        // The key is built the SAME way a free call builds it: the receiver
+        // stands in position zero because plan 273 §4.4 puts it there, and the
+        // arguments follow. Here every position CAN be typed, so the door does
+        // the narrowing itself and there is no separate narrowing step to keep
+        // in sync (the language overloads on parameters -- the pair
+        // (receiver, name) was never enough: `str.contains` has both
+        // `(needle str)` and `(c char)`).
+        ro key = typed_call_key(kids, 3, type_of(kids[0], ctx, scope), ctx, scope)
+        match ctx.fns.lookup(mname, key) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
-            // The set narrows BY ARGUMENT TYPES -- the language overloads on
-            // parameters, so the pair (receiver, name) was never enough, and
-            // now that check types the arguments it can finish the job
-            // (274.3/C9, brought forward because the full primitive set let a
-            // second std signature into the table: `str.contains` has both
-            // `(needle str)` and `(c char)`, and until `char` existed the
-            // type system filtered the second one out by accident).
-            FnOverloaded(first) => {
-                ro chosen = narrow_overload(kids, ctx, scope, first, recv_t)
-                if chosen >= 0 { return ctx.fns.rows[chosen].ret_id }
-                // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user
-                // wrote that matches none or several candidates is a USER
-                // situation; check reports it once it owns the candidate set.
-                ice("check: overload set not narrowed past check")
-            }
+            // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote
+            // that fits several candidates is a USER situation; check reports
+            // it once it owns the candidate set.
+            FnOverloaded(_) => { ice("check: overload set still ambiguous with every argument typed") }
             // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
             FnUnknown => { ice("check: method not in the read declarations past check") }
         }

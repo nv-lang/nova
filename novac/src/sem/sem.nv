@@ -261,6 +261,19 @@ export type Prims value {
     f64_id int /// Type id of `f64`.
 }
 
+/// A position whose type the caller cannot state yet.
+///
+/// `check` walks the tree before local typing (274.3/C9), so at a call site it
+/// knows the arity and often the receiver's type, but not the arguments'. A
+/// position carrying this value fits ANY parameter: refusing what cannot be
+/// judged would be a guess in the other direction.
+///
+/// It is a named sentinel, not a value of the type space, and it is written
+/// down as one. The form it wants to be is `Option[int]` — that is wave 3 of
+/// the plan ("Option instead of -1"), and it will replace this constant
+/// together with the other twelve.
+export const UNKNOWN_TYPE = -1
+
 /// How a callable lookup turned out. A sum, not an int code: "not found"
 /// and "more than one candidate" are different answers, and both must be
 /// representable (П13.5; a silent int default is the №652 class).
@@ -324,7 +337,12 @@ export type FnDef value {
 /// about the CALLABLE. One bool on FnDef expresses exactly that and nothing
 /// illegal: there is no way to say "the third one". Parameters go back to
 /// being plain type ids, and the receiver is `params[param_off]` when
-/// `has_recv` — read by the one function `FnTable.recv_of`.
+/// `has_recv` — a fact of the DECLARATION: the author wrote this callable with
+/// a receiver. Resolution does not read it and must not: a method IS a function
+/// whose first parameter is the receiver (plan 273 §4.4), so `@fits` compares
+/// positions and nothing else (owner, 2026-08-19). Kept because it is not
+/// derivable from the parameter list, and a diagnostic that wants to say "this
+/// is a method, call it as `x.f()`" has nowhere else to read it from.
 
 /// THE callable registry: file functions and the method signatures READ
 /// from std declarations live in the SAME rows (П5: std names are data,
@@ -358,44 +376,35 @@ export type FnTable {
 export fn FnTable.new() -> FnTable =>
     { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables) }
 
-/// The receiver's type id of a row, or -1 when the callable is a free
-/// function. This is the ONE place that knows the receiver is the first
-/// parameter — everything else asks here, so the plan 273 form stays a fact
-/// of the data and not a convention people must remember.
-#realtime nogc
-export fn FnTable @recv_of(row int) -> int {
-    ro fd = @rows[row]
-    if !fd.has_recv {
-        return -1
-    } else {
-        // The mark says parameter zero IS the receiver; without it the
-        // callable simply has no receiver, and -1 says so.
-    }
-    // A receiver IS the first parameter (plan 273), so "marked as having one
-    // and holding none" is a broken registry, not a shape to tolerate. It
-    // returned -1 here until 2026-08-19, which turned a bug into a silent
-    // "no receiver" and let it travel (owner's review).
-    assert(fd.param_cnt >= 1, "sem: a callable marked with a receiver has no parameters")
-    @params[fd.param_off]
-}
-
-/// Row of this exact (receiver, name), or -1 — the FIRST one when a name is
-/// declared more than once for one receiver. Ambiguity is judged by
-/// `@lookup`, which counts the chain.
+/// Does this row take a call with these argument types?
 ///
-/// Resolution BY RECEIVER is not a violation of the plan 273 form, it is how
-/// a dot-call resolves in this language and in every reference: rustc lowers
-/// a method to a function whose first input is `self` and still probes by
-/// the type of the receiver expression. 273 unifies the representation and
-/// the passes; it does not change what `x.f()` means.
+/// ONE rule for every callable: the arity first, then each parameter against
+/// the argument standing in the same position. A receiver is position ZERO and
+/// nothing else — plan 273 §4.4 fixes it there — so `x.f(a)` asks with the
+/// types of `[x, a]` exactly as `f(x, a)` would. There is no receiver-shaped
+/// question anywhere in this table any more: it was the last one (owner,
+/// 2026-08-19, after the same correction landed in the mangling).
+///
+/// A position the caller cannot type yet is passed as -1 and fits anything.
+/// `check` still lacks local types in some places (274.3/C9), and refusing
+/// what it cannot judge would be a guess in the other direction. ARITY,
+/// however, is always known at a call site, so it discriminates from today.
 #realtime nogc
-export fn FnTable @row_of(recv_id int, name str) -> int {
-    mut r = @heads.find(name)
-    while r >= 0 {
-        if @recv_of(r) == recv_id { return r }
-        r = @rows[r].next_row
+fn FnTable @fits(row int, arg_ids []int) -> bool {
+    ro fd = @rows[row]
+    if fd.param_cnt != arg_ids.len() {
+        return false
+    } else {
+        // Same arity: the positions can be compared one by one below.
     }
-    -1
+    for i in 0..fd.param_cnt {
+        if arg_ids[i] >= 0 && @params[fd.param_off + i] != arg_ids[i] {
+            return false
+        } else {
+            // Either this position is not typed yet (UNKNOWN_TYPE), or it matches.
+        }
+    }
+    true
 }
 
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT
@@ -414,48 +423,50 @@ export fn FnTable mut @add(name str, ret_id int, has_recv bool, foreign bool, pa
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv, foreign, next_row: head })
 }
 
-/// Whether a callable with this name exists for SOME receiver at all.
-/// Free functions are deliberately NOT an answer here: the question is
-/// about METHOD names, and `foo()` being declared says nothing about
-/// `x.foo()` being legal. Weaker than the exact (receiver, name) and used
-/// exactly where the exact answer is impossible: `check` walks the tree
-/// without locals, so it does not yet know the receiver's type. A typo in
-/// the name is caught here; a receiver mismatch (`p.contains(..)` on a
-/// record) stays finding C9 of plan 274.3 — it closes in wave 3, when
-/// check, not the emitter, gets local typing.
+/// Whether a callable with this name exists at all.
+///
+/// The weakest question there is, and deliberately so: `check` walks the tree
+/// before local typing, so at that point it has neither the receiver's type nor
+/// the arguments'. A typo in the NAME is caught here; WHICH callable runs is
+/// settled later by `@lookup`, which asks with types.
+///
+/// Until 2026-08-19 this answered only about names that had a receiver — a
+/// receiver-shaped question in a form that has no receivers. Under plan 273 a
+/// method IS a function whose first parameter is the receiver, so "is there a
+/// callable called this" is the whole question, and `x.f()` failing to match
+/// any row is reported by the typed pass, not guessed here.
 #realtime nogc
 export fn FnTable @has_name(name str) -> bool {
-    mut r = @heads.find(name)
-    while r >= 0 {
-        if @recv_of(r) >= 0 { return true }
-        r = @rows[r].next_row
-    }
-    false
+    @heads.find(name) >= 0
 }
 
-/// The candidate row for this (receiver, name) — or why there is none to
-/// name. A free function asks with recv_id = -1, through the same door.
-/// Counts the chain instead of trusting a flag: more than one row for one
-/// pair is an overload SET, and its first row is handed back so the caller
-/// can enumerate the set without searching again.
+/// The candidate row for this call — or why there is none to name.
+///
+/// ONE DOOR, and it knows nothing about receivers: `x.f(a)` asks with the types
+/// of `[x, a]`, `f(a)` asks with `[a]`, and both take the same path through the
+/// same code. Counts the chain instead of trusting a flag: more than one row
+/// fitting one call is an overload SET, and its first row is handed back so the
+/// caller can enumerate the set without searching again.
 #realtime nogc
-export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
+export fn FnTable @lookup(name str, arg_ids []int) -> FnLookup {
     mut first = -1
     mut found = 0
     mut r = @heads.find(name)
     while r >= 0 {
         ro row = r
         r = @rows[row].next_row
-        if @recv_of(row) != recv_id { continue }
+        if !@fits(row, arg_ids) { continue }
         found += 1
-        // Only the FIRST row of the set is handed back (candidates_from walks
-        // on from it); later members are counted, not remembered.
+        // Only the FIRST fitting row is handed back (candidates_from walks on
+        // from it); later members are counted, not remembered.
         if found > 1 { continue }
         first = row
     }
     match found {
         0 => FnLookup.FnUnknown
         1 => FnLookup.FnFound(first)
+        // Any count above one: the set is enumerated by `candidates_from`,
+        // and the caller decides whether it can narrow it.
         _ => FnLookup.FnOverloaded(first)
     }
 }
@@ -466,13 +477,13 @@ export fn FnTable @lookup(recv_id int, name str) -> FnLookup {
 /// functions that ASK the table; this one is given its starting row and only
 /// walks). Every reference prints the set rather than the first member:
 /// rustc lists the candidate impls, C++ prints the candidate functions.
-export fn candidates_from(fns FnTable, first int, recv_id int) -> []int {
+export fn candidates_from(fns FnTable, first int, arg_ids []int) -> []int {
     mut out = []int.new()
     mut r = first
     while r >= 0 {
         ro row = r
         r = fns.rows[row].next_row
-        if fns.recv_of(row) != recv_id { continue }
+        if !fns.fits(row, arg_ids) { continue }
         out.push(row)
     }
     out

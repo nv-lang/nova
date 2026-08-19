@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, UNKNOWN_TYPE, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -179,6 +179,49 @@ fn Checker mut @type_block(b Node) -> () {
     @scope.release(mark)
 }
 
+/// The lookup key of a method call: the receiver's type in position ZERO, then
+/// one slot per written argument.
+///
+/// Plan 273 §4.4 fixes the receiver at position zero, so a method call and a
+/// free call build the SAME kind of key and ask the SAME door — the only
+/// difference is that one of them has a position zero to fill. There is no
+/// receiver-shaped path left in resolution (owner, 2026-08-19).
+///
+/// Argument positions are `UNKNOWN_TYPE`: `check` walks the tree before local
+/// typing (274.3/C9) and cannot type them yet. ARITY, though, is known here and
+/// discriminates from today — `f()` and `f(a)` stopped being one question.
+fn method_call_key(kids []Node, recv_t int) -> []int {
+    mut out = []int.new()
+    out.push(recv_t)
+    out.append(unknown_args(kids, 3))
+    out
+}
+
+/// The lookup key of a free call: one slot per written argument, no position
+/// zero. Same shape, same door, one position fewer.
+fn free_call_key(kids []Node) -> []int {
+    unknown_args(kids, 1)
+}
+
+/// One `UNKNOWN_TYPE` slot per argument child from `from` on. Children before
+/// `from` are syntax — the callee, or the receiver, the dot and the name — and
+/// a punctuation leaf is no argument.
+fn unknown_args(kids []Node, from int) -> []int {
+    mut out = []int.new()
+    mut i = 0
+    for c in kids {
+        if i >= from && is_expr_kind(c.kind_of()) {
+            out.push(UNKNOWN_TYPE)
+        } else {
+            // Syntax, not an argument: the argument cursor stays put while the
+            // child cursor advances.
+        }
+        i += 1
+    }
+    out
+}
+
+
 /// One statement. A kind the subset does not know is NOT typed and NOT iced:
 /// the emitter refuses it at its own door, and a second death here would only
 /// move the message.
@@ -296,7 +339,7 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t int) -> () {
     match kids[2] {
         Branch { .. } => {}
         Leaf(t) => {
-            match @ctx.fns.lookup(recv_t, t.text) {
+            match @ctx.fns.lookup(t.text, method_call_key(kids, recv_t)) {
                 FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
                 FnUnknown => @refuse(t,
                     "outside the subset: this type has no such method in the declarations novac was handed")
@@ -765,7 +808,7 @@ fn Checker mut @type_expr(e Node) -> () {
                 // (owner's review 2026-08-19). The callable registry knows the
                 // whole set; narrowing by argument types arrives with E2-b3, and
                 // until then an ambiguous name is REFUSED rather than guessed.
-                match @ctx.fns.lookup(-1, cname) {
+                match @ctx.fns.lookup(cname, free_call_key(kids)) {
                     FnFound(row) => @chan.record_callee(e.id_of(), DefKind.DefFn, row)
                     FnOverloaded(_) => @report_first_leaf_of(kids,
                         "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
@@ -901,57 +944,4 @@ fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
 /// Record a node's type through the channel's one writer door.
 fn Checker mut @record(n Node, t int) -> () {
     @chan.record_type(n.id_of(), t)
-}
-
-/// The one candidate whose parameters match the call's arguments, or -1.
-///
-/// Overloading in Nova is by parameters (D84), so a set is narrowed by the
-/// ARGUMENT TYPES and by nothing else here: no ranking, no "most specific"
-/// -- either exactly one candidate takes these arguments or the caller
-/// reports the situation. That is the same shape D464 gives bounds (a filter,
-/// not an ordering).
-fn narrow_overload(kids []Node, ctx Ctx, scope Scope, first int, recv_t int) -> int {
-    mut chosen = -1
-    mut hits = 0
-    for row in candidates_from(ctx.fns, first, recv_t) {
-        if !candidate_takes(kids, ctx, scope, row) { continue }
-        chosen = row
-        hits += 1
-    }
-    if hits == 1 { return chosen }
-    -1
-}
-
-/// Does this candidate take exactly the arguments written at the call site?
-/// The receiver is `params[param_off]` (plan 273), so the arguments start one
-/// past it.
-///
-/// EXACT arity is correct only while the table holds no DEFAULTED parameter
-/// (owner's note 2026-08-17: "we do have parameters with default values").
-/// std has them -- `str @to_int(radix int = 10)` -- and a call that omits a
-/// defaulted argument passes FEWER arguments than the row has parameters, so
-/// this test would reject a valid candidate. It does not bite today because
-/// the parser refuses a default in the subset, so such a signature never
-/// enters the table; the moment defaults are parsed, this comparison must
-/// become "at least the required count, at most the declared one", and the
-/// row must carry how many parameters are required. Recorded in the plan for
-/// E2-b3 rather than left as a surprise.
-fn candidate_takes(kids []Node, ctx Ctx, scope Scope, row int) -> bool {
-    ro fd = ctx.fns.rows[row]
-    mut i = 0
-    mut argn = 0
-    for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) {
-            ro slot = fd.param_off + 1 + argn
-            if argn + 1 >= fd.param_cnt { return false }
-            if ctx.fns.params[slot] != type_of(c, ctx, scope) { return false }
-            argn += 1
-        } else {
-            // The receiver, the dot and the method name are not arguments,
-            // and a punctuation leaf is no expression: the argument cursor
-            // stays where it is while the child cursor advances.
-        }
-        i += 1
-    }
-    argn + 1 == fd.param_cnt
 }
