@@ -267,7 +267,7 @@ par_add "$ROOT/scripts/guards/check-novac-file-size.py" "файл novac длин
 par_add "$ROOT/scripts/guards/check-novac-atomics-door.py" "атомики/TLS мимо одной двери (274 §8.1)"
 par_add "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "строковый ключ таблицы вне names (архитектура §4а, К2)"
 par_add "$ROOT/scripts/guards/check-novac-no-global-state.sh" "глобальное изменяемое состояние в novac (274 §4 п.5)"
-par_add "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
+par_add "$ROOT/scripts/guards/check-novac-frontend-shape.py" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
 par_run
 
 # ═══ НАБОР ОКНА 274 — влит слиянием 2026-08-16 вместе с файлами ═══
@@ -296,7 +296,7 @@ par_add "$ROOT/scripts/guards/check-novac-module-donor.sh" "модуль novac �
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.sh" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.sh" "у канала чекера второй писатель или вывод типа ниже чекера"
-par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.sh" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
+par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.py" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
 par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.sh" "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
 par_add "$ROOT/scripts/guards/check-novac-pch.sh" "PCH исчез из горячего пути (274.2 §1а)"
 par_add "$ROOT/scripts/guards/check-novac-line-length.sh" "строка длиннее 120 символов вне исключений (П29)"

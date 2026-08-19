@@ -54,7 +54,7 @@ mk g6 <<'EOF'
 /// Donor: Roslyn green tree — full-fidelity, no red tree.
 /// Role: layer 2, the syntax tree everyone walks.
 /// Used by: parse builds, check walks.
-/// Guarded by: check-novac-frontend-shape.sh.
+/// Guarded by: check-novac-frontend-shape.py.
 module a
 EOF
 run "$T/g6" && ok "форма /// Donor: принимается" || bad "/// форма покраснела: $(cat "$T/err")"

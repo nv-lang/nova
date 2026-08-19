@@ -1,16 +1,16 @@
 #!/bin/sh
-# Самотест check-novac-match-exhaustive.sh (П16). Шов $2 — сканируемая директория.
+# Самотест check-novac-match-exhaustive.py (П16). Шов $2 — сканируемая директория.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
-G="$GD/check-novac-match-exhaustive.sh"
+G="$GD/check-novac-match-exhaustive.py"
 T="${TMPDIR:-/tmp}/novac-match-exh-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
-run() { sh "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
+run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
 # подложка: сумма из трёх вариантов и match по ней
 mk() { d="$T/$1"; mkdir -p "$d/m"; shift; printf '%s\n' "$@" > "$d/m/m.nv"; echo "$d"; }
