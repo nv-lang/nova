@@ -63,12 +63,13 @@ def main():
 
     if not os.path.isfile(path):
         w("MISSING %s\n" % TARGET.replace(os.sep, "/"))
-        w("dup_verdict=-1\ndup_status=-1\ndup_route=-1\n")
+        w("dup_verdict=-1\ndup_status=-1\ndup_route=-1\nverdict_no_status=-1\n")
         return 1
 
     dup_v = 0
     dup_s = 0
     dup_r = 0
+    no_status = 0
     for line in io.open(path, encoding="utf-8", errors="replace"):
         m = ROW.match(line)
         if not m:
@@ -93,9 +94,20 @@ def main():
         if nr > 1:
             dup_r += 1
             w("row %s: %d markers 'CHINITSYA' (route)\n" % (num, nr))
+        # ВЕРДИКТ БЕЗ СТАТУСА — строка, про которую машина не знает НИЧЕГО.
+        # Страж релиза считает такую ОТКРЫТОЙ: выбор безопасный, но
+        # заглавное число блокеров начинает включать строки, про которые
+        # не написано ничего. Замер 2026-08-19: таких было ДЕСЯТЬ (№381,
+        # №441, №450, №467, №470, №471, №476, №496, №498, №500) — и
+        # обнаружилось это тем, что ДВА СКАНЕРА РАЗОШЛИСЬ в числе
+        # блокеров: 55 против 35.
+        if nv >= 1 and ns == 0:
+            no_status += 1
+            w("row %s: verdict without a status\n" % num)
     w("dup_verdict=%d\n" % dup_v)
     w("dup_status=%d\n" % dup_s)
     w("dup_route=%d\n" % dup_r)
+    w("verdict_no_status=%d\n" % no_status)
     return 0
 
 

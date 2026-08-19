@@ -19,6 +19,10 @@ mkdir -p "$TMP/scripts/guards" "$TMP/docs/plans"
 cp "$HERE/../registry-verdict-scan.py" "$TMP/scripts/guards/"
 
 REG="$TMP/docs/plans/221.1-bug-sweep.md"
+# Baza novoy proverki (verdikt bez statusa) zhivet v proveryaemom dereve:
+# bez neyo strazh chestno otkazyvaetsya, i samotest lovil by ne to.
+NSB="$TMP/scripts/guards/verdict-no-status.baseline"
+printf 'rows=0' > "$NSB"
 mk() { printf '%s\n' "$@" > "$REG"; }
 run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
 
@@ -93,6 +97,26 @@ io.open(p, "w", encoding="utf-8", newline="\n").write(
     % (CH, CH, BL, ST))
 PY
 check "dva marshruta -- krasneet" "$(run)" "1"
+
+echo "== verdikt bez statusa =="
+# Stroka, obyavivshaya verdikt, obyazana obyavit i status: inache strazh
+# reliza schitaet eyo otkrytoy po umolchaniyu, a napisano nichego.
+# Perevody strok sobirayutsya iz chr(10): literalnyy escape uezzhaet
+# cherez obolochku, i piton vnutri heredoc stanovitsya nevernym molcha.
+python - "$REG" <<'PY2'
+import io, sys
+p = sys.argv[1]
+BL = u"\u0411\u041b\u041e\u041a\u0418\u0420\u0423\u0415\u0422 \u0422\u0415\u0413:"
+ST = u"\u0421\u0442\u0430\u0442\u0443\u0441:"
+LF = chr(10)
+rows = (u'| 1 | K1 | text. ' + BL + u' DA. |' + LF
+        + u'| 2 | K1 | text. ' + BL + u' NET. ' + ST + u' OTKRYT |' + LF)
+io.open(p, 'w', encoding='utf-8', newline=LF).write(rows)
+PY2
+printf 'rows=0' > "$NSB"
+check "verdikt bez statusa -- krasneet" "$(run)" "1"
+printf 'rows=1' > "$NSB"
+check "ta zhe stroka v baze -- zeleno" "$(run)" "0"
 
 echo "== ne vret o srede =="
 rm -f "$REG"
