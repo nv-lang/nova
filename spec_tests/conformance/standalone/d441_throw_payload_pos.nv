@@ -1,0 +1,43 @@
+// EXPECT_STDOUT d441 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №441, КОНТРОЛЬ НА ЗАКОННЫЕ ФОРМЫ. Проверка «объявленное
+// против брошенного» обязана МОЛЧАТЬ там, где всё в порядке.
+//
+// ЗДЕСЬ ДВА СЛУЧАЯ, и второй важнее первого. (1) Бросается РОВНО
+// объявленный тип — очевидный случай. (2) Бросается ВАРИАНТ объявленной
+// суммы (`Fail[D441ParseErr]`, а летит `D441BadChar`) — и это самая частая
+// форма во всём дереве: замер по std и конформансу дал 48 таких бросков
+// против 34 бросков «ровно объявленного». Проверка, отвергающая вариант
+// суммы, отвергла бы БОЛЬШИНСТВО законного кода — потому она и стоит
+// здесь фикстурой, а не оговоркой в чьей-то голове.
+//
+// Ровно на этом случае споткнулась первая, черновая оценка радиуса: она
+// не разрешала вариант в его сумму и насчитала 64 «несоответствия» там,
+// где их не было ни одного.
+
+module standalone.d441_throw_payload_pos
+
+type D441ParseErr enum
+    | D441BadChar { at int }
+    | D441BadEof { at int }
+
+type D441PlainErr { msg str }
+
+fn throws_exact() Fail[D441PlainErr] -> () {
+    throw D441PlainErr { msg: "exact declared type" }
+}
+
+fn throws_variant() Fail[D441ParseErr] -> () {
+    throw D441BadChar { at: 3 }
+}
+
+fn main() Io -> () {
+    with Fail = effect Fail { fail(_msg) -> never { interrupt () } } {
+        throws_exact()
+    }
+    with Fail = effect Fail { fail(_msg) -> never { interrupt () } } {
+        throws_variant()
+    }
+    println("d441 ok")
+}

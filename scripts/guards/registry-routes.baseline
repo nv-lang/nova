@@ -259,4 +259,28 @@ no_caveat=35
 #   destructures `With { body, .. }`. Its probe could not fail either --
 #   the control outside a handler was also silent -- so no observable hole
 #   can be named there and no edit is made without a measurement.
-blockers=50
+# 2026-08-19, No.441 -- 50 -> 49. The checker never compared the DECLARED
+#   failure payload with the THROWN one -- not weakly, not at all.
+#   Control first: `Fail[CommitErr]` throwing `WorkErr` gave PASS: 1
+#   FAIL: 0, and so did the same function throwing `CommitErr`. Nothing
+#   was comparing them.
+#   The spec already carried the rule (handler chosen BY VARIANT TYPE;
+#   `Fail[E']` compatible when E is a subset of E'), so this enforces
+#   what was written and needed no D-amendment.
+#   Radius measured BEFORE any compiler code, with a static estimate over
+#   the .nv sources -- and its history matters more than its result: 64
+#   suspects, then 36, then 16, every cut being a fix to MY OWN estimator
+#   (it did not resolve a variant to its sum; then it kept one owner per
+#   variant name while `UnexpectedChar` belongs to two). The residue was
+#   estimator gaps and constructor calls the check does not judge. NOT ONE
+#   real mismatch exists in the tree -- which is what made the check
+#   landable at all.
+#   Narrow by construction: only a syntactically visible thrown type (a
+#   record literal) is judged; `throw e` and `throw V(...)` are not, and a
+#   variant of the declared sum is legal.
+#   check-bare-type-lookups (the No.705 ratchet) caught my own patch at 20
+#   against a baseline of 16. Fixed on the merits rather than by raising
+#   the baseline: both name resolutions moved to `types_get_here`, and the
+#   whole-table scan was dropped together with the part of the check it
+#   served. Back to 16.
+blockers=49

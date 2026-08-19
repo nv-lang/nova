@@ -3664,6 +3664,21 @@ impl<'c, 'a> Drop for FileScope<'c, 'a> {
     }
 }
 
+/// [#441] RAII-страж объявленной нагрузки `Fail[E]` — тот же приём, что у
+/// `FileScope` выше. Состояние снимается САМО: иначе ранний `return`
+/// внутри проверки оставил бы чужую нагрузку висеть на следующей функции,
+/// и отказ приехал бы в чужой адрес.
+struct FailPayloadScope<'c, 'a> {
+    ctx: &'c TypeCheckCtx<'a>,
+    prev: Option<String>,
+}
+
+impl<'c, 'a> Drop for FailPayloadScope<'c, 'a> {
+    fn drop(&mut self) {
+        *self.ctx.current_fail_payload.borrow_mut() = self.prev.take();
+    }
+}
+
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
     arity: HashMap<String, ArityInfo>,
@@ -3807,6 +3822,10 @@ struct TypeCheckCtx<'a> {
     /// `types_get_here`. Замер площадок, которым это нужно, —
     /// docs/plans/repro/p705/README.md (23 из 71).
     current_file: std::cell::Cell<Option<crate::diag::FileId>>,
+    /// [#441] Объявленная нагрузка `Fail[E]` той функции, чьё тело
+    /// проверяется сейчас. `None` означает «не судим» — см.
+    /// `declared_fail_payload`, там перечислены все случаи воздержания.
+    current_fail_payload: std::cell::RefCell<Option<String>>,
     /// Plan 81 Ф.2: префиксы импортированных модулей (alias + последний
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
@@ -4851,6 +4870,7 @@ impl<'a> TypeCheckCtx<'a> {
         TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
+            current_fail_payload: std::cell::RefCell::new(None),
             import_prefix_to_module_last,
             entry_imported_modules,
             entry_file_ids,
@@ -4949,6 +4969,102 @@ impl<'a> TypeCheckCtx<'a> {
         let prev = self.current_file.get();
         self.current_file.set(Some(file_id));
         FileScope { ctx: self, prev }
+    }
+
+    /// [#441] Объявленная нагрузка отказа: `Fail[E]` → `Some("E")`.
+    ///
+    /// Возвращает `None` — то есть «не судим» — во ВСЕХ спорных случаях,
+    /// и список тут важнее самой функции:
+    ///   * голый `Fail` без аргумента — по D65 принимает любую нагрузку;
+    ///   * `Fail[E]`, где `E` не разрешается в ОБЪЯВЛЕННЫЙ тип — это
+    ///     generic-параметр функции, сравнивать по имени нечего;
+    ///   * нагрузка не запись и не сумма (алиас, протокол) — форма, про
+    ///     которую эта проверка ничего не знает, и молчание честнее.
+    fn declared_fail_payload(&self, effects: &[TypeRef]) -> Option<String> {
+        for e in effects {
+            let TypeRef::Named { path, generics, .. } = e else { continue };
+            if path.len() != 1 || path[0] != "Fail" {
+                continue;
+            }
+            if generics.len() != 1 {
+                return None;
+            }
+            let TypeRef::Named { path: p, generics: g, .. } = &generics[0] else {
+                return None;
+            };
+            if !g.is_empty() {
+                return None;
+            }
+            let name = p.last()?.clone();
+            let decl = self.types_get_here(&name)?;
+            return match decl.kind {
+                TypeDeclKind::Record(_) | TypeDeclKind::Sum(_) => Some(name),
+                _ => None,
+            };
+        }
+        None
+    }
+
+    /// [#441] Ставит нагрузку на время проверки тела и снимает на выходе.
+    fn enter_fail_payload(&self, effects: &[TypeRef], span: Span) -> FailPayloadScope<'_, 'a> {
+        let next = {
+            let _fs = self.enter_file(span.file_id);
+            self.declared_fail_payload(effects)
+        };
+        let prev = self.current_fail_payload.replace(next);
+        FailPayloadScope { ctx: self, prev }
+    }
+
+    /// [#441] Брошенное значение обязано укладываться в объявленную
+    /// нагрузку: либо это сам `E`, либо ВАРИАНТ `E`, если `E` — сумма
+    /// (`spec/decisions/03-syntax.md`: активный handler выбирается ПО ТИПУ
+    /// ВАРИАНТА, и там же `Fail[E']` с совместимым `E ⊆ E'`).
+    ///
+    /// ЧТО ЭТА ПРОВЕРКА НЕ СУДИТ, и почему это сказано здесь, а не в
+    /// реестре: тип броска берётся СИНТАКСИЧЕСКИ — только запись
+    /// `X { .. }`. `throw e` над переменной не судится вовсе: без вывода
+    /// типа тут остаётся гадать, а ложный отказ дороже пропуска. Имя, не
+    /// известное этому CU, тоже не судится — оно может быть вариантом
+    /// суммы из соседнего модуля.
+    fn check_throw_payload(&self, value: &Expr, errors: &mut Vec<Diagnostic>) {
+        let Some(declared) = self.current_fail_payload.borrow().clone() else {
+            return;
+        };
+        let ExprKind::RecordLit { type_name: Some(path), .. } = &value.kind else {
+            return;
+        };
+        let Some(thrown) = path.last() else { return };
+        if *thrown == declared {
+            return;
+        }
+        let _fs = self.enter_file(value.span.file_id);
+        if let Some(decl) = self.types_get_here(&declared) {
+            if let TypeDeclKind::Sum(variants) = &decl.kind {
+                if variants.iter().any(|v| v.name == *thrown) {
+                    return;
+                }
+            }
+        }
+        // Имя, которое здесь не объявлено, НЕ судим: это может быть
+        // вариант суммы из соседнего модуля. Проверять «вариант хоть
+        // какой-нибудь суммы» пришлось бы сплошным чтением карты типов —
+        // ровно тем, что запрещает храповик №705: голое чтение не знает,
+        // какой файл проверяется, и в folder-CU достанет чужой тип.
+        if self.types_get_here(thrown).is_none() {
+            return;
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_THROW_TYPE_MISMATCH] бросается `{}`, а функция объявила \
+                 `Fail[{}]` — это разные типы, и обработчик отказа выбирается \
+                 по ТИПУ. До этой проверки такой файл проходил `nova check` \
+                 кодом 0, а собранная программа умирала на `unhandled Fail`. \
+                 Либо бросайте `{}` (или его вариант, если это сумма), либо \
+                 объявите `Fail[{}]`",
+                thrown, declared, declared, thrown,
+            ),
+            value.span,
+        ));
     }
 
     // `#[track_caller]` пробрасывается по ЦЕПОЧКЕ: без него трасса
@@ -8399,6 +8515,8 @@ impl<'a> TypeCheckCtx<'a> {
             let mut s = self.mut_ref_param_names.borrow_mut();
             s.clear();
         }
+        // [#441] Нагрузка `Fail[E]` этой функции — на время её тела.
+        let _fail_payload = self.enter_fail_payload(&fd.effects, fd.span);
         match &fd.body {
             FnBody::Expr(e) => {
                 self.f1_expr(e, &gs, &mut scope, errors);
@@ -9154,6 +9272,7 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Throw { value, .. } => {
                 self.f1_expr(value, gs, scope, errors);
                 self.f4_check_value(value, scope, errors);
+                self.check_throw_payload(value, errors);
             }
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
             Stmt::Defer { body, .. } => {
@@ -12255,7 +12374,10 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(s) = start { self.f1_expr(s, gs, scope, errors); }
                 if let Some(e) = end { self.f1_expr(e, gs, scope, errors); }
             }
-            ExprKind::Throw(inner) => self.f1_expr(inner, gs, scope, errors),
+            ExprKind::Throw(inner) => {
+                self.f1_expr(inner, gs, scope, errors);
+                self.check_throw_payload(inner, errors);
+            }
             ExprKind::Interrupt(opt) => {
                 if let Some(e) = opt {
                     self.f1_expr(e, gs, scope, errors);
@@ -12318,6 +12440,10 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // [#441] У вложенной сигнатуры СВОЙ ряд эффектов: нагрузка внешней
+        // функции сюда не распространяется, иначе бросок внутри замыкания
+        // судился бы чужим объявлением.
+        let _fail_payload = self.enter_fail_payload(&sb.effects, sb.span);
         match &sb.body {
             FnBody::Expr(e) => {
                 self.f1_expr(e, gs, scope, errors);

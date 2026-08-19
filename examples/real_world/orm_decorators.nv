@@ -62,8 +62,7 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
             ro table_part = rest.until(" WHERE ")
             ro where_part = rest.after(" WHERE ")
             ro rewritten Sql = {
-                template: "UPDATE ${table_part} " +
-                        "SET deleted_at = NOW() WHERE ${where_part}",
+                template: "UPDATE ${table_part} SET deleted_at = NOW() WHERE ${where_part}",
                 args: q.args,
             }
             real.exec(rewritten)
