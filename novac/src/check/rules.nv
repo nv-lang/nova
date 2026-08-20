@@ -44,13 +44,30 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
             if at > 1 {
                 match kids[at] {
                     Leaf(t) => {
-                        ro is_form = t.kind == TokenKind.LBracket ||
-                            t.kind == TokenKind.EmptyBrackets ||
-                            t.kind == TokenKind.Star ||
-                            t.kind == TokenKind.KwRo ||
-                            t.kind == TokenKind.KwMut ||
-                            t.kind == TokenKind.KwFn ||
-                            t.kind == TokenKind.LParen
+                        // EXHAUSTIVE, not a chain of `||` (owner's question
+                        // 2026-08-20): a disjunction over a closed set answers
+                        // "no" SILENTLY, so a new TokenKind that starts a type
+                        // form would slip through here and be found weeks
+                        // later. A match makes it an error at this line -- the
+                        // same reason lex.nv's three delta functions list
+                        // every kind (P21, P31).
+                        ro is_form = match t.kind {
+                            // These START a type FORM the subset does not read
+                            // in a parameter that already carries a mode.
+                            LBracket | EmptyBrackets | Star | KwRo | KwMut | KwFn | LParen => true
+                            // Everything else cannot start one: a keyword of a
+                            // declaration or statement, a literal, an operator,
+                            // a separator, or the file's end.
+                            KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
+                            KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern |
+                            KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
+                            RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
+                            Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
+                            Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
+                            MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
+                            PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis |
+                            Colon | At | Arrow | ErrorTok | Eof => false
+                        }
                         if is_form {
                             @report_first_leaf_of(kids, TYPE_FORM_MSG)
                         } else {
