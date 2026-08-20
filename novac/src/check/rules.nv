@@ -624,6 +624,38 @@ fn Checker mut @report_if_generic_decl(kids []Node) -> () {
     }
 }
 
+/// An `extern "ABI" fn` declaration: READ by the parser since 2026-08-20,
+/// refused here by name.
+///
+/// The form is the language's (D282, plan 91.12 F.-1) and std's whole FFI layer
+/// is written in it. What novac does not have is the EMISSION: an extern
+/// declaration says "the body is a C or runtime symbol", and nothing in the
+/// subset emits a call to one. Refusing the DECLARATION rather than its calls
+/// is deliberate -- the declaration is where the reader wrote the form, and one
+/// diagnostic at the form beats one per call site.
+///
+/// Answers `true` when it reported, so the caller can skip the rules that judge
+/// PARTS of a declaration novac will not compile at all: a second diagnostic
+/// about a part of a refused form is the cascade the no-cascade guard forbids.
+fn Checker mut @report_if_extern_decl(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                if t.kind == TokenKind.KwExtern {
+                    @refuse(t,
+                        "outside the subset: an `extern` declaration is read, but novac emits no FFI call yet")
+                    return true
+                } else {
+                    // Another leaf of the same declaration: `fn`, the name,
+                    // the ABI string. Only the keyword marks the form.
+                }
+            }
+            Branch { .. } => {}
+        }
+    }
+    false
+}
+
 /// Every fn except main must declare `-> T` in the subset.
 fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
     if kids.len() < 2 { return }

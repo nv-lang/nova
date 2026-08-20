@@ -162,7 +162,8 @@ ro TERMINATORS = []TokenKind.of(
     TokenKind.KwFn, TokenKind.KwType, TokenKind.KwModule, TokenKind.Eof)
 
 // Where a TOP-LEVEL junk run stops: the next declaration of the file.
-ro TOP_LEVEL_STOPS = []TokenKind.of(TokenKind.KwFn, TokenKind.KwModule, TokenKind.KwType)
+ro TOP_LEVEL_STOPS = []TokenKind.of(TokenKind.KwFn, TokenKind.KwModule, TokenKind.KwType,
+                                    TokenKind.KwExtern)
 
 // Where junk INSIDE a fn signature stops: the body, the expression arrow,
 // or the next declaration.
@@ -203,9 +204,11 @@ export fn parse(toks []Token) -> Node
         // sum, so the honest form is: ask once, compare a value.
         ro k = p.peek()
         if k == TokenKind.KwFn {
-            items.push(p.fn_decl())
+            items.push(p.fn_decl([]Node.new()))
         } else if k == TokenKind.KwType {
             items.push(p.type_decl())
+        } else if k == TokenKind.KwExtern {
+            items.push(p.extern_decl())
         } else if k == TokenKind.KwExport {
             items.push(p.export_decl())
         } else if k == TokenKind.KwImport || k == TokenKind.KwUse {
@@ -385,8 +388,22 @@ fn Cursor mut @module_decl() -> Node {
 }
 
 /// Parse `fn name(params) -> T { body }` or `=> expr`, with junk recovery.
-fn Cursor mut @fn_decl() -> Node {
-    mut kids = []Node.of(@take()) // KwFn
+///
+/// `lead` are the leaves that stand BEFORE the `fn` keyword and belong to the
+/// same declaration -- today the `extern "ABI" [unsafe]` run. They are children
+/// of this node rather than of a wrapper: the oracle models the ABI as a tag on
+/// the same item (`FnDecl.extern_abi`), so every reader of a FnDecl keeps
+/// working and the name is still the first identifier leaf. Empty for a plain
+/// declaration; the door takes it explicitly, because a second door differing
+/// only in a default argument is the shape П18 refuses.
+fn Cursor mut @fn_decl(lead []Node) -> Node {
+    // A FRESH vector, not `lead` rebound: `lead` arrives as a `ro` parameter,
+    // and laundering it through a mut binding is what D246 forbids -- the
+    // caller would see writes it never asked for. The run is at most three
+    // leaves, so the copy is a door call and not a loop (P32).
+    mut kids = []Node.new()
+    kids.append(lead)
+    kids.push(@take()) // KwFn
     // Method declaration `fn <Recv> @<name>(...)`: the receiver is a
     // separate node, the name is read after '@'. This form is not for the
     // subset (novac does not declare methods), but for READING std

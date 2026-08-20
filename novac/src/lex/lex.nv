@@ -61,6 +61,8 @@ export type TokenKind enum
     | KwExport
     | KwTest
     | KwElse
+    | KwExtern
+    | KwUnsafe
     | Hash
     | Ident
     | IntLit
@@ -197,7 +199,8 @@ export fn paren_delta(k TokenKind) -> int {
         LParen => 1
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | Hash | Ident | IntLit | FloatLit |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        IntLit | FloatLit |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -212,7 +215,8 @@ export fn bracket_delta(k TokenKind) -> int {
         LBracket => 1
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | Hash | Ident | IntLit | FloatLit |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        IntLit | FloatLit |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -228,7 +232,8 @@ export fn brace_delta(k TokenKind) -> int {
         LBrace => 1
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | Hash | Ident | IntLit | FloatLit |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        IntLit | FloatLit |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -263,6 +268,13 @@ fn keyword_kind(t str) -> TokenKind => match t {
     "use" => TokenKind.KwUse
     "export" => TokenKind.KwExport
     "test" => TokenKind.KwTest
+    // The FFI words (D282, plan 91.12 F.-1): `extern "nova" fn` and
+    // `extern "C" fn`, with `unsafe` allowed between the ABI and `fn`. Until
+    // 2026-08-20 neither was a keyword, so the whole FFI layer of std answered
+    // "syntax error: this is not a form of the language" -- about a form the
+    // language has. A missing keyword does not stay missing quietly.
+    "extern" => TokenKind.KwExtern
+    "unsafe" => TokenKind.KwUnsafe
     // `else` was not a keyword until 2026-08-18, and the miss wore a
     // disguise: `if c { } else { }` was refused with "record constructor
     // only as a binding initializer", because the brace after the

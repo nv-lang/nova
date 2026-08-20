@@ -34,7 +34,11 @@ fn Cursor mut @export_decl() -> Node {
     mut kids = []Node.of(@take()) // KwExport
     ro k = @peek()
     if k == TokenKind.KwFn {
-        kids.push(@fn_decl())
+        kids.push(@fn_decl([]Node.new()))
+    } else if k == TokenKind.KwExtern {
+        // `export extern "nova" unsafe fn RawMem.copy(...)` -- std writes it
+        // this way, so the wrapper has to know the form (nv-coding-style §18).
+        kids.push(@extern_decl())
     } else if k == TokenKind.KwType {
         kids.push(@type_decl())
     } else if k == TokenKind.KwImport || k == TokenKind.KwUse {
@@ -46,6 +50,35 @@ fn Cursor mut @export_decl() -> Node {
         kids.push(@node(NodeKind.Err, []Node.of(@missing())))
     }
     @node(NodeKind.ExportDecl, kids)
+}
+
+/// `extern "nova" fn ...` / `extern "C" unsafe fn ...` -- the FFI declaration
+/// form (D282, plan 91.12 F.-1).
+///
+/// The ABI string and the optional `unsafe` become LEAVES OF THE FnDecl, not a
+/// wrapper node: the oracle keeps the ABI as a tag on the same item
+/// (`FnDecl.extern_abi`), so no reader of a FnDecl has to learn a new shape and
+/// no new NodeKind appears. WHICH ABI is legal (`"nova"` or `"C"`) is not asked
+/// here -- the parser reads the LANGUAGE, and every judgement is check's
+/// (S9.4). A declaration in this form has no body, which this door already
+/// reads: `@fn_decl` treats a missing brace as a real form.
+///
+/// Until 2026-08-20 the word was not even a keyword, so the entire FFI layer of
+/// std was answered with "this is not a form of the language" -- the worst
+/// member of class A in the inventory (§9.4а): a refusal naming a false cause.
+fn Cursor mut @extern_decl() -> Node {
+    mut lead = []Node.of(@take()) // KwExtern
+    @push_if(lead, TokenKind.StrLit)
+    @push_if(lead, TokenKind.KwUnsafe)
+    if @peek() == TokenKind.KwFn {
+        return @fn_decl(lead)
+    } else {
+        // `extern` before something that is not `fn`. The leaves are in the
+        // tree (nothing is lost) and check has the span: the oracle allows
+        // `type` here too, and that form arrives with the type work.
+        lead.push(@node(NodeKind.Err, []Node.of(@missing())))
+        return @node(NodeKind.Err, lead)
+    }
 }
 
 /// `import a.b.c` / `import a.b.{X, Y}` / `use a.b.{X}`.

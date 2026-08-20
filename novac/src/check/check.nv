@@ -202,6 +202,17 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                 }
                 Call => @report_if_ordered_args(children)
                 FnDecl => {
+                    if @report_if_extern_decl(children) {
+                        // The whole FORM is refused, so the rules below have
+                        // nothing left to judge: they ask about the return type
+                        // and the tail of a declaration novac will not compile,
+                        // and the walk of the children would name every unknown
+                        // FFI type on top of that. One cause, one diagnostic.
+                        return
+                    } else {
+                        // An ordinary declaration: the three shape rules below
+                        // are its business as before.
+                    }
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
