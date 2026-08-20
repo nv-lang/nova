@@ -280,6 +280,25 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
 /// matches `StringBuilder.@append` and the cross-language `append`/`addAll`
 /// convention (Python/Swift/Java); a move-merge that empties `other` is
 /// intentionally not offered (footgun: silently destroys the argument).
+// [реестр 221.1 №381] Фасадная перегрузка для `str` на байтовом векторе.
+//
+// ПОЧЕМУ ПЕРЕГРУЗКА, А НЕ `#impl(AsSlice[u8])` У `str`. Протокол `AsSlice[T]`
+// требует пару `@ptr()` + `@len()` (`prelude/protocols.nv`). Дать `str` метод
+// `@len()` нельзя: от этого имени ушли СОЗНАТЕЛЬНО в пользу `@byte_len()` —
+// у строки длина в байтах и в символах не совпадают, и одно короткое `len`
+// на двоих врёт. Перегрузка даёт удобство вызова, не трогая имён `str`.
+//
+// СТОИТ НОЛЬ: `str @bytes()` — не копия, а вид над тем же указателем
+// (`[]u8.new(@ptr, @byte_len())`, `runtime/string/core.nv`). Ровно этим
+// приёмом уже пользуется `StringBuilder mut @append(s str)`.
+//
+// ЗАЧЕМ ЭТО РЕЕСТРУ: пока перегрузки не было, `v.append(some_str)` держался
+// на НЕэнфорсенном бáунде — negodный тип проходил `nova check` молча (№381).
+// С перегрузкой строка попадает в СВОЮ дверь, и энфорс бáунда можно включать
+// без миграции: голую строку в generic-`append` не передаёт ни одно место
+// дерева (замер 2026-08-20).
+export fn []u8 mut @append(s str) -> @ { @append(s.bytes()) }
+
 export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
     ro m = other.len()
     if m > 0 {
