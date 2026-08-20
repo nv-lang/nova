@@ -128,37 +128,17 @@ export fn c_callable(ctx Ctx, row int, subst []int) -> str
         // Every other callable is named by the scheme below; the entry
         // point is the one whose symbol the RUNTIME dictates.
     }
-    if fd.foreign {
-        // An EXTERNAL declaration: novac was handed this callable's SIGNATURE
-        // and not its body. That is an ordinary, permanent notion of separate
-        // compilation, not a state to grow out of -- every compiler that can be
-        // handed an interface has it.
-        //
-        // The name of an external symbol follows the scheme of whoever PRODUCES
-        // it, and the build says who that is. std's objects are produced by the
-        // existing toolchain today, so its scheme is used here. When novac
-        // compiles std -- which is the goal, and compatibility with the oracle
-        // is NOT (owner, 2026-08-19: "you compile std yourself, we are not and
-        // will not be compatible with it, it has too many bugs") -- those rows
-        // stop being external and the ordinary scheme below applies. Same rule,
-        // different answer; nothing here is temporary.
-        //
-        // The producer's scheme is written from the first parameter's type --
-        // ITS business, not a receiver path of ours: here the first parameter is
-        // read as a parameter.
-        assert(fd.param_cnt >= 1, "mangle: a foreign callable with no parameters has no oracle spelling")
-        return oracle_symbol(ctx, ctx.fns.params[fd.param_off], fd.name)
-    } else {
-        // Ours: one scheme for every callable, below.
-    }
     // ONE scheme for every callable of ours. A receiver is parameter zero and
     // gets no special treatment: plan 273 says a method IS a function whose
     // first parameter is marked the receiver, so the name has no `method` in it
     // and no branch on `has_recv`. Overloading is by parameter types (and the
     // oracle accepts a difference in the return type alone), so both are here.
-    mut s = "novac_fn_${fd.name}"
+    consume s = StringBuilder.new(cap: 64)
+    s.append("novac_fn_")
+    s.append(fd.name)
     for pt in ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt] {
-        s = "${s}__${type_tag(ctx, pt)}"
+        s.append("__")
+        s.append(type_tag(ctx, pt, subst))
     }
     // The RETURN type belongs in the name too: the oracle accepts two
     // callables that differ only by it (probed 2026-08-19), so leaving it
@@ -166,44 +146,33 @@ export fn c_callable(ctx Ctx, row int, subst []int) -> str
     // absent only for the -1 sentinel, which is legal for the entry point
     // alone and answered above.
     if fd.ret_id >= 0 {
-        s = "${s}__to_${type_tag(ctx, fd.ret_id)}"
+        s.append("__to_")
+        s.append(type_tag(ctx, fd.ret_id, subst))
     } else {
         // No declared return: check refuses this everywhere but `main`,
         // and `main` never reaches here.
     }
-    // ONLY a generic call has these: `subst` is the substitution of the
-    // declaration's type parameters, empty for every ordinary callable.
-    // They are what makes `id[int]` and `id[str]` two C functions.
+    // A generic call carries substitution arguments that may not appear in
+    // the parameter or return types (e.g. a parameterless generic). The
+    // suffix makes `id[int]` and `id[str]` two C functions even when the
+    // parameters already disambiguate — harmless redundancy.
     for a in subst {
-        s = "${s}__inst_${type_tag(ctx, a)}"
+        s.append("__")
+        s.append(type_tag(ctx, a, subst))
     }
     s
 }
-/// The ORACLE's spelling of a method entry point -- a symbol novac did not
-/// choose and must reproduce. NOT a second door: `c_callable` is the door,
-/// and this is how it writes a FOREIGN name. Also used by the emitter for the
-/// `==`-on-strings call it synthesises, which no tree node carries.
-fn oracle_symbol(ctx Ctx, first_param_t int, name str) -> str {
-    ro td = ctx.types[first_param_t]
-    match td.kind {
-        // ONE arm, not three: the three kinds spell the name identically, and
-        // writing it three times is one decision recorded thrice -- the second
-        // door in miniature (owner, 2026-08-19, looking at the function I had
-        // just renamed without seeing it).
-        TkPrim | TkRecord | TkSum => { return "Nova_${td.name}_method_${name}" }
-        TkApp => { ice("mangle: oracle symbol on an applied first parameter — the instance door arrives with E2-b2") }
-        TkParam => { ice("mangle: oracle symbol on a type parameter — resolution happens on the head, not here") }
-        TkInfer => { ice("mangle: oracle symbol on an inference variable — a variable escaped its body") }
-    }
-}
-
 /// An identifier-safe tag for a type, for use INSIDE a C name.
 ///
 /// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
 /// star is not a letter. The tag answers a different question -- "which type is
 /// this, spelled so it can sit in an identifier" -- and the two must not be
 /// conflated, or the first pointer instance emits a name C refuses to parse.
-fn type_tag(ctx Ctx, t int) -> str
+///
+/// `subst` is the substitution of the declaration's type parameters: when a
+/// parameter is `TkParam` with index `i`, `subst[i]` is the concrete type.
+/// Empty for every ordinary callable.
+fn type_tag(ctx Ctx, t int, subst []int) -> str
     requires t >= 0 && t < ctx.types.len(), "mangle: type_tag of a type id outside the registry"
 {
     ro td = ctx.types[t]
@@ -212,7 +181,14 @@ fn type_tag(ctx Ctx, t int) -> str
         TkRecord => td.name
         TkSum => td.name
         TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
-        TkParam => ice("mangle: type_tag of a type parameter — a parameter is not an instance")
+        TkParam => {
+            // A type parameter resolved through the substitution: the index
+            // from the interner maps directly into `subst`.
+            ro idx = ctx.tys.rows[td.ty_id].head_id
+            assert(idx >= 0 && idx < subst.len(),
+                "mangle: type parameter index outside the substitution — generic without a substitution")
+            type_tag(ctx, subst[idx], subst)
+        }
         TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
     }
 }

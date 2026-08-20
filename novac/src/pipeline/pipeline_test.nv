@@ -71,9 +71,19 @@ test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08
     assert(n_diags("fn main() { mut i") == 1)
 }
 
-test "E2 strings surface is clean: ro, while, subset methods" {
+test "E2 strings surface: the shapes are in, a std method with no compiled body is refused" {
+    // `byte_len`, `to_ascii_upper`, `starts_with` are declared in std, and their
+    // BODIES live in std's own Nova source -- which novac does not compile yet.
+    // Every C name is ours now (the oracle's spelling was removed on 2026-08-20
+    // with the `foreign` branch), so a call to a body novac does not emit would
+    // name a symbol that exists nowhere. The subset says that instead, and the
+    // corpus baseline was lowered 11/5 -> 10/4 in the same wave.
     ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
-    assert(n_diags(src) == 0)
+    assert(n_diags(src) == 1)
+    // The SHAPES are still in the subset: the same `ro` and `while` without a
+    // std body are clean, so the refusal above is about the missing body and
+    // not about the form.
+    assert(n_diags("fn main() { mut i = 0\n while i < 1 { i += 1 }\n println(i) }") == 0)
 }
 
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {

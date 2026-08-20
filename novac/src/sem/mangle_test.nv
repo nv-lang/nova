@@ -12,6 +12,7 @@
 
 module novac.sem
 import ../tree.{Node, NodeKind, branch}
+import ../builtins.{TypeKind}
 
 /// An empty file node: these tests need a Ctx with the primitives seeded and
 /// nothing else. Building it here keeps `sem` from importing the parser -- the
@@ -21,24 +22,24 @@ fn empty_file() -> Node => branch(0, NodeKind.File, []Node.new())
 
 test "a name with no parameters is the plain form" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("used", ctx.prims.int_id, false, false, []int.new(), []str.new())
+    ctx.fns.add("used", ctx.prims.int_id, false, []int.new(), []str.new())
     assert(c_callable(ctx, ctx.fns.rows.len() - 1, []int.new()) == "novac_fn_used__to_nova_int")
 }
 
 test "PARAMETERS are in the name: two overloads cannot collide" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id), []str.new())
+    ctx.fns.add("describe", ctx.prims.int_id, false, []int.of(ctx.prims.int_id), []str.new())
     ro by_int = ctx.fns.rows.len() - 1
-    ctx.fns.add("describe", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id), []str.new())
+    ctx.fns.add("describe", ctx.prims.int_id, false, []int.of(ctx.prims.str_id), []str.new())
     ro by_str = ctx.fns.rows.len() - 1
     assert(c_callable(ctx, by_int, []int.new()) != c_callable(ctx, by_str, []int.new()))
 }
 
 test "arity is in the name too" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("pair", ctx.prims.int_id, false, false, []int.of(ctx.prims.int_id), []str.new())
+    ctx.fns.add("pair", ctx.prims.int_id, false, []int.of(ctx.prims.int_id), []str.new())
     ro one = ctx.fns.rows.len() - 1
-    ctx.fns.add("pair", ctx.prims.int_id, false, false,
+    ctx.fns.add("pair", ctx.prims.int_id, false,
         []int.of(ctx.prims.int_id, ctx.prims.int_id), []str.new())
     ro two = ctx.fns.rows.len() - 1
     assert(c_callable(ctx, one, []int.new()) != c_callable(ctx, two, []int.new()))
@@ -48,30 +49,39 @@ test "the entry point answers to the RUNTIME, and one place knows it" {
     // No `is_entry` flag threaded through every call site: the row carries the
     // name, and the door decides what that name means (owner, 2026-08-19).
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("main", ctx.prims.int_id, false, false, []int.new(), []str.new())
+    ctx.fns.add("main", ctx.prims.int_id, false, []int.new(), []str.new())
     assert(c_callable(ctx, ctx.fns.rows.len() - 1, []int.new()) == "nova_fn_main_impl")
 }
 
 test "instance arguments distinguish two instantiations of one callable" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("hold", ctx.prims.int_id, false, false, []int.new(), []str.new())
+    ctx.fns.add("hold", ctx.prims.int_id, false, []int.new(), []str.new())
     ro row = ctx.fns.rows.len() - 1
+    // A parameterless generic: the substitution suffix is the ONLY
+    // disambiguation — without it, both names would be `novac_fn_hold`.
     ro a = c_callable(ctx, row, []int.of(ctx.prims.int_id))
     ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id))
     assert(a != b)
     assert(a != c_callable(ctx, row, []int.new()))
 }
 
-test "a FOREIGN row answers in the oracle's namespace, ours does not" {
-    // The exception is not "method" -- plan 273 made a method a function whose
-    // first parameter is the receiver -- it is ORIGIN: a symbol novac did not
-    // choose. Asserted as a RELATION, because writing the oracle's spelling
-    // here would be a second place deciding it (P24).
+test "a generic callable's parameters carry the substituted types" {
     mut ctx = collect_types(empty_file())
-    ctx.fns.add("len", ctx.prims.int_id, true, true, []int.of(ctx.prims.str_id), []str.new())
-    ro foreign_row = ctx.fns.rows.len() - 1
-    ctx.fns.add("len", ctx.prims.int_id, false, false, []int.of(ctx.prims.str_id), []str.new())
-    ro our_row = ctx.fns.rows.len() - 1
-    assert(c_callable(ctx, foreign_row, []int.new()) != c_callable(ctx, our_row, []int.new()))
-    assert(c_callable(ctx, our_row, []int.new()) == "novac_fn_len__nova_str__to_nova_int")
+    // fn id[T](x T) -> T  — register TkParam in the type registry so that
+    // c_callable can look it up via ctx.types[t]. fns.params stores TypeDef ids,
+    // not interner TyRow ids — the two spaces are different.
+    ro tparam_tyrow = ctx.tys.param(0)
+    ro tparam_id = ctx.types.len()
+    ctx.types.push(TypeDef { kind: TypeKind.TkParam, ty_id: tparam_tyrow, name: "T", row_off: 0, row_cnt: 0 })
+    ctx.fns.add("id", tparam_id, false, []int.of(tparam_id), []str.of("T"))
+    ro row = ctx.fns.rows.len() - 1
+    // subst = [int]: TkParam(0) -> int
+    ro a = c_callable(ctx, row, []int.of(ctx.prims.int_id))
+    // subst = [str]: TkParam(0) -> str
+    ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id))
+    // Both differ from the bare name (empty subst would ICE on TkParam)
+    assert(a != b)
+    // The parameter type appears in the name through substitution
+    assert(a == "novac_fn_id__nova_int__to_nova_int__nova_int")
+    assert(b == "novac_fn_id__nova_str__to_nova_str__nova_str")
 }

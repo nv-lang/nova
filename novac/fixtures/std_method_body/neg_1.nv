@@ -1,0 +1,18 @@
+module std_method_body.neg_1
+
+// ONE seeded cause: `byte_len` is a std method whose SIGNATURE novac read and
+// whose BODY it does not compile, so the call names no symbol. Every C name is
+// ours (there is no foreign spelling any more), so the subset says this by
+// name instead of emitting C that cannot link.
+//
+// The local below is the CASCADE probe, and it is the point of this fixture:
+// until 2026-08-20 the gate "was anything refused?" asked the file's whole
+// diagnostic count, so a refusal HERE made `@type_bind` skip its `@scope.bind`
+// in `main`, and `n` came back as a second, false diagnostic -- "unknown name"
+// about a name that is bound one line above.
+fn width(s str) -> int => s.byte_len()
+
+fn main() {
+    ro n = 1
+    println(n)
+}
