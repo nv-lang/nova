@@ -115,7 +115,7 @@ fn Checker mut @type_fn(f Node) -> () {
     mut name_at = -1
     mut ki = 0
     for c in kids {
-        ro is_name = ki > 0 && c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident
+        ro is_name = ki > 0 && c.is_ident()
         name_at = if name_at < 0 && is_name { ki } else { name_at }
         ki += 1
     }
@@ -357,7 +357,7 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row int, slot int) -> bool 
     // whole workaround.
     ro tnode = pk[tat]
     ro nnode = pk[nat]
-    if tnode.kind_of() != NodeKind.LeafNode || leaf_kind(tnode) != TokenKind.Ident {
+    if !tnode.is_ident() {
         return true
     } else {
         // A plain identifier stands where the type belongs: it can be resolved.

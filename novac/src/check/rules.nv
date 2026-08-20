@@ -584,7 +584,7 @@ fn Checker mut @report_if_misplaced_generics(kids []Node) -> () {
             // A receiver is present (the position is then correct), or this
             // child is not a generics node standing before the name.
         }
-        seen_name = seen_name || (i > 0 && ck == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident)
+        seen_name = seen_name || (i > 0 && c.is_ident())
         i += 1
     }
 }

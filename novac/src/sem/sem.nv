@@ -637,7 +637,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
             // branch is an ice -- which is exactly what it became, on EVERY
             // file, because std declarations go through this door.
             for rc in branch_children(c) {
-                ro is_name = rc.kind_of() == NodeKind.LeafNode && leaf_kind(rc) == TokenKind.Ident
+                ro is_name = rc.is_ident()
                 if is_name && recv_name == "" {
                     recv_name = leaf_text(rc)
                 } else {

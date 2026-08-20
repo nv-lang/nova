@@ -288,6 +288,34 @@ export fn Node @id_of() -> int {
     }
 }
 
+/// Is this node an IDENTIFIER leaf?
+///
+/// One question, one door. It stood as two conditions -- "a leaf" and "of kind
+/// Ident" -- in six places across four modules, and half of them then took
+/// `leaf_text` of the same node, so one question occupied three lines
+/// (owner's note 2026-08-20).
+#realtime nogc
+export fn Node @is_ident() -> bool {
+    match @ {
+        Leaf(t) => t.kind == TokenKind.Ident
+        Branch { .. } => false
+    }
+}
+
+/// The identifier this node spells, or None when it is not an identifier leaf.
+///
+/// `Option`, not an empty string: an empty string is a SENTINEL, and a sentinel
+/// standing for "not that shape" is the class this compiler keeps removing
+/// (#652, the silent int default). A caller that genuinely wants the empty
+/// string still writes `?? ""` and says so.
+#realtime nogc
+export fn Node @ident_str() -> Option[str] {
+    match @ {
+        Leaf(t) => if t.kind == TokenKind.Ident { Some(t.text) } else { None }
+        Branch { .. } => None
+    }
+}
+
 /// Build a leaf node from a token.
 export fn leaf(t Token) -> Node => Node.Leaf(t)
 

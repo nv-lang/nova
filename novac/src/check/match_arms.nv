@@ -78,9 +78,12 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
         if has_guard { continue }
         ro pat = branch_children(ak[0])
         if pat.len() < 1 { continue }
-        ro p0 = pat[0]
-        if leaf_kind(p0) != TokenKind.Ident { continue }
-        ro d = @ctx.defs.find(leaf_text(p0))
+        // `is_ident` and not `ident_str` HERE: the answer to "not an
+        // identifier" is `continue`, and `continue` is not an expression, so
+        // the Option form would have to be a manual match -- which the linter
+        // reads as drift from `X ?? D` (W_MANUAL_COALESCE), and rightly.
+        if !pat[0].is_ident() { continue }
+        ro d = @ctx.defs.find(leaf_text(pat[0]))
         if d < 0 {
             // `_` or a plain binder: it matches anything, so the match is
             // exhaustive whatever the variants are.
@@ -192,17 +195,16 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
             // Punctuation leaves of the pattern name no binder; a guard says
             // it without branching on a variant test (no-default-branch keeps
             // that shape for `match`).
-            // Asked ONCE and named: the branch then tests a bool, not a
-            // variant, which is what the no-default-branch rule reserves for
-            // `match` (a TokenKind match here would need a wildcard, and the
-            // same rule forbids that on a closed sum).
-            ro binds_name = pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident
-            if binds_name {
-                @scope.bind(leaf_text(pj), @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi])
-                pi += 1
-            } else {
-                // The pattern's parentheses and commas are leaves too: they
-                // bind nothing, and the payload cursor must not move.
+            // The test and the TEXT are one question, so one door answers
+            // both: `ident_str` gives the name or None, and None is exactly
+            // the pattern's parentheses and commas -- leaves that bind
+            // nothing, so the payload cursor must not move.
+            match pj.ident_str() {
+                Some(binder) => {
+                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi])
+                    pi += 1
+                }
+                None => {}
             }
             j += 1
         }

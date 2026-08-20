@@ -526,17 +526,13 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t int) -> () {
             // [LEGACY-#676] var-index-method: same workaround as in
             // collect_types: variable-index receiver miscompiles.
             ro pj = pat[j]
-            // Punctuation leaves of the pattern -- '(' ',' ')' -- name no
-            // binder. A guard says that once and leaves the collecting
-            // unnested; an `else` here would be a branch on a VARIANT test,
-            // which the no-default-branch rule reserves for `match`.
-            ro is_binder = pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident
-            if is_binder {
-                binders.push(leaf_text(pj))
-            } else {
-                // Punctuation of the pattern -- '(' ',' ')' -- names no
-                // binder. The walk cannot `continue` here: `j += 1` below
-                // is what advances it.
+            // The test and the TEXT are one question: `ident_str` answers
+            // both, and None is the pattern's punctuation -- '(' ',' ')' --
+            // which names no binder. The walk cannot `continue` on None:
+            // `j += 1` below is what advances it.
+            match pj.ident_str() {
+                Some(binder) => binders.push(binder)
+                None => {}
             }
             j += 1
         }
