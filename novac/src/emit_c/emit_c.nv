@@ -344,13 +344,24 @@ fn Emitter mut @emit_fn(f Node) -> () {
         @body.append(c_type(@ctx, ret))
         @body.append(" ${c_callable(@ctx, fn_row, no_subst())}(")
         mut first = true
+        mut slot = 0
+        ro fd = @ctx.fns.rows[fn_row]
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
             ro pk = branch_children(c)
             ro pname = leaf_text(pk[0])
-            ro has_type_leaf = pk.len() > 1 && pk[1].kind_of() == NodeKind.LeafNode
-            ro is_named_type = has_type_leaf && leaf_kind(pk[1]) == TokenKind.Ident
-            ro ptype = if is_named_type { @ctx.defs.type_id_of(leaf_text(pk[1])) } else { -1 }
+            // The TYPE comes from the ROW, not from the name resolved a second
+            // time. The registry decided it while collecting; asking `defs`
+            // again was a second door to one decision, and it answered
+            // DIFFERENTLY for `x T` -- a type parameter is no name in `defs`,
+            // so the answer was -1 and the assert below fired on a declaration
+            // that is perfectly well typed (found 2026-08-20, when an instance
+            // first needed emitting). Position is the whole mapping: plan 273
+            // §4.4 fixes a parameter's slot, and the count is asserted after
+            // the loop rather than assumed.
+            assert(slot < fd.param_cnt, "emit: more parameter nodes than the row records")
+            ro ptype = @ctx.fns.params[fd.param_off + slot]
+            slot += 1
             assert(ptype >= 0, "emit: param without a type past check — no silent int default (#652 class)")
             @body.append(if first { "" } else { ", " })
             @body.append(c_type(@ctx, ptype))
@@ -358,6 +369,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
             @body.append(pname)
             first = false
         }
+        assert(slot == fd.param_cnt, "emit: the row records parameters the declaration does not write")
         @body.append(if first { "void" } else { "" })
         @body.append(") {\n")
     }
