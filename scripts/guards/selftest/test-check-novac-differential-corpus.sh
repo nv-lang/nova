@@ -172,6 +172,40 @@ check "NOVAC_CORPUS=0 — зелёный, раннер не зовётся" \
       "$(NOVAC_CORPUS=0 sh "$G" "$FIX" "$BIN" > "$TMP/out" 2> "$TMP/err"; echo $?)" "0"
 has "$TMP/out" 'корпусная часть пропущена' "пропуск назван строкой"
 
+echo "== монотонность САМОГО файла базы: откат обязан быть ОБЪЯВЛЕН =="
+# Блок стража сверяет базу с версией в HEAD, поэтому подложке нужен git —
+# без него он молча пропускался, и правило стояло без доказательства
+# (2026-08-20). Репозиторий одноразовый, конфиг НЕ трогаем: имя и почта
+# передаются -c на команду.
+mkrc 0    # блок выключателей оставил обманку с кодом 1: раннер обязан пройти
+GIT="git -C $FIX -c user.name=selftest -c user.email=selftest@example.invalid"
+$GIT init -q >/dev/null 2>&1
+mkbase 11 5
+$GIT add -f scripts/guards/novac-corpus.baseline >/dev/null 2>&1
+$GIT commit -q -m base >/dev/null 2>&1
+if $GIT show HEAD:scripts/guards/novac-corpus.baseline >/dev/null 2>&1; then
+    corpus_out 11 5 68000
+    check "база == HEAD, прогон == база — зелёный" "$(run)" "0"
+
+    # Опущена рукой, без строки: главный случай правила.
+    mkbase 10 4; corpus_out 10 4 68000
+    check "база опущена БЕЗ строки RATCHET-DOWN — красный" "$(run)" "1"
+    has "$TMP/err" 'ОПУЩЕНА рукой' "красный назван (опущена рукой)"
+    has "$TMP/err" 'RATCHET-DOWN' "красный показывает, как объявляют законно"
+
+    # ЦЕНТРАЛЬНЫЙ случай: строка есть, но про ДРУГОЙ переход. Маркер не должен
+    # работать наперёд, иначе одна строка разрешает все будущие откаты.
+    printf 'contract-match 10\nbehavior-match 4\n# RATCHET-DOWN contract-match 9 -> 8 (чужой переход)\n' > "$BASE"
+    check "строка RATCHET-DOWN про ДРУГИЕ числа — красный" "$(run)" "1"
+
+    # Объявлен именно этот переход — законно, и страж говорит это вслух.
+    printf 'contract-match 10\nbehavior-match 4\n# RATCHET-DOWN contract-match 11 -> 10 (тот самый)\n# RATCHET-DOWN behavior-match 5 -> 4 (тот самый)\n' > "$BASE"
+    check "оба перехода объявлены — зелёный" "$(run)" "0"
+    has "$TMP/out" 'откат объявлен' "законный откат назван строкой в выводе"
+else
+    bad "подложке не удалось завести git — случай отката не доказан"
+fi
+
 echo "итог: $PASS ok, $FAIL FAIL"
 if [ "$FAIL" -eq 0 ]; then
     echo "test-check-novac-differential-corpus ok: $PASS/$PASS"

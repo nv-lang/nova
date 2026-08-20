@@ -30,7 +30,13 @@ NAME = "check-novac-no-silent-skip"
 RE_WALK = re.compile(r"^fn Checker mut @type_[a-z_]*\(")
 RE_FN = re.compile(r"^fn |^export fn ")
 RE_RETURN = re.compile(r"(^|[^a-zA-Z_])return([^a-zA-Z_]|$)")
-RE_DECISION = re.compile(r"@refuse\(|@report_|ice\(|@out\.len\(\) > 0")
+# `@out.len() > <метка>` — тоже РЕШЕНИЕ: выход стоит сразу за отказом, поданным
+# одним вызовом глубже. Сравнение с МЕТКОЙ, а не с нулём, появилось 2026-08-20:
+# файловый счётчик отвечал «отказали ли ЭТОТ оператор» результатом обо всём
+# файле, и после первого отказа `@type_bind` пропускал `@scope.bind` -- каждое
+# дальнейшее имя выходило «unknown name». Обе формы здесь законны, но новая
+# обязательна для нового кода, и от возврата старой держит фикстура каскада.
+RE_DECISION = re.compile(r"@refuse\(|@report_|ice\(|@out\.len\(\) > (?:0|[a-z_][a-z_0-9]*)")
 
 
 def main():
