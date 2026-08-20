@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{FnLookup, UNKNOWN_TYPE, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
 import ../builtins.{EQUAL_METHOD, ENTRY_FN, PRINT_FN, bool_c_literal}
 
 
@@ -225,19 +225,18 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(")")
     } else if k == NodeKind.Call {
         ro kids = branch_children(e)
-        ro cname = call_callee_text(kids)
-        // ONE lookup, then the kind decides (owner's correction 2026-08-14).
-        ro d = @ctx.defs.find(cname)
-        assert(d >= 0, "emit: call target not in the registry (#652 class)")
-        ro { kind: def_kind, payload: def_payload } = @ctx.defs.rows[d]
-        if def_kind == DefKind.DefVariant {
-            // Variant constructor call -> the maker.
-            ro vrow = def_payload
-            @body.append("${c_maker(@ctx, vrow)}(")
-        } else if def_kind == DefKind.DefFn {
-            @body.append("${c_callable(@ctx, def_payload, no_subst())}(")
-        } else {
-            ice("emit_c: call target is neither a variant nor a fn")
+        // THE ROW THE CHECKER DECIDED ON, exactly as the MethodCall branch
+        // above: after the checker, nobody infers. This branch used to ask
+        // `defs` by the bare NAME instead -- a registry that lives by
+        // last-write-wins -- so with two candidates the emission named a
+        // different row than the one check had resolved. Measured 2026-08-20:
+        // `byte_len("abc")` was recorded against `str @byte_len()` and emitted
+        // as the file's two-parameter `byte_len`, one string argument and all.
+        ro cr = @out.callee_of(e.id_of())
+        match cr.kind {
+            DefVariant => @body.append("${c_maker(@ctx, cr.target_row)}(")
+            DefFn => @body.append("${c_callable(@ctx, cr.target_row, no_subst())}(")
+            DefType => ice("emit_c: a type in call position reached the emitter")
         }
         mut first = true
         for c in kids {
@@ -288,7 +287,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // and the right-hand side after it — the same shape check builds,
             // asked at the same door. The right side's type is not read here:
             // `equal` takes its own type, so the position is left unknown.
-            match @ctx.fns.lookup(EQUAL_METHOD, equal_key(lhs_t)) {
+            match @ctx.fns.lookup(EQUAL_METHOD, equal_key(lhs_t), CallForm.MethodCall) {
                 FnFound(row) => @body.append(c_callable(@ctx, row, no_subst()))
                 FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_subst()))
                 FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")

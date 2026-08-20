@@ -295,6 +295,23 @@ export type Prims value {
 /// together with the other twelve.
 export const UNKNOWN_TYPE = -1
 
+/// WHICH FORM the author wrote at the call site: `f(x)` or `x.f()`.
+///
+/// Not a privilege of the receiver and not a second table (plan 273 stands: a
+/// method IS a function whose first parameter is the receiver, in ONE registry).
+/// It is a fact about the CALL: the language does not let a method be called in
+/// free form, so resolution must know which form is being resolved. Measured
+/// 2026-08-20 -- without it `byte_len("abc")` matched `str @byte_len()` by
+/// arity alone, novac accepted a program the oracle refuses, and the emission
+/// passed one string to a two-parameter function.
+///
+/// The row already carried the datum this compares against: `has_recv`, which
+/// had no reader at all until now, and §10.3в said why it was kept -- "not
+/// derivable from the parameter list".
+export type CallForm enum
+    | FreeCall /// `f(x)`: only a callable declared without a receiver can answer
+    | MethodCall /// `x.f(y)`: only a callable declared WITH a receiver can answer
+
 /// How a callable lookup turned out. A sum, not an int code: "not found"
 /// and "more than one candidate" are different answers, and both must be
 /// representable (П13.5; a silent int default is the №652 class).
@@ -433,8 +450,22 @@ export fn FnTable @compiles_body(row int) -> bool => row < @own_cnt
 /// what it cannot judge would be a guess in the other direction. ARITY,
 /// however, is always known at a call site, so it discriminates from today.
 #realtime nogc
-fn FnTable @fits(row int, arg_ids []int) -> bool {
+fn FnTable @fits(row int, arg_ids []int, form CallForm) -> bool {
     ro fd = @rows[row]
+    // THE FORM FIRST. A free call cannot reach a callable declared with a
+    // receiver, and a method call cannot reach one declared without: the
+    // language keeps the two spellings apart, so resolution does too. Without
+    // this an arity coincidence was enough -- `byte_len("abc")` found
+    // `str @byte_len()` (probe 2026-08-20).
+    ro wants_recv = match form {
+        FreeCall => false
+        MethodCall => true
+    }
+    if fd.has_recv != wants_recv {
+        return false
+    } else {
+        // The declaration was written in the form the call site uses.
+    }
     if fd.param_cnt != arg_ids.len() {
         return false
     } else {
@@ -519,14 +550,14 @@ export fn FnTable @has_name(name str) -> bool {
 /// fitting one call is an overload SET, and its first row is handed back so the
 /// caller can enumerate the set without searching again.
 #realtime nogc
-export fn FnTable @lookup(name str, arg_ids []int) -> FnLookup {
+export fn FnTable @lookup(name str, arg_ids []int, form CallForm) -> FnLookup {
     mut first = -1
     mut found = 0
     mut r = @heads.find(name)
     while r >= 0 {
         ro row = r
         r = @rows[row].next_row
-        if !@fits(row, arg_ids) { continue }
+        if !@fits(row, arg_ids, form) { continue }
         found += 1
         // Only the FIRST fitting row is handed back (candidates_from walks on
         // from it); later members are counted, not remembered.
@@ -548,13 +579,13 @@ export fn FnTable @lookup(name str, arg_ids []int) -> FnLookup {
 /// functions that ASK the table; this one is given its starting row and only
 /// walks). Every reference prints the set rather than the first member:
 /// rustc lists the candidate impls, C++ prints the candidate functions.
-export fn candidates_from(fns FnTable, first int, arg_ids []int) -> []int {
+export fn candidates_from(fns FnTable, first int, arg_ids []int, form CallForm) -> []int {
     mut out = []int.new()
     mut r = first
     while r >= 0 {
         ro row = r
         r = fns.rows[row].next_row
-        if !fns.fits(row, arg_ids) { continue }
+        if !fns.fits(row, arg_ids, form) { continue }
         out.push(row)
     }
     out

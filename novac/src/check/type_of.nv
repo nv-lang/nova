@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -83,7 +83,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // (receiver, name) was never enough: `str.contains` has both
         // `(needle str)` and `(c char)`).
         ro key = typed_call_key(kids, 3, type_of(kids[0], ctx, scope), ctx, scope)
-        match ctx.fns.lookup(mname, key) {
+        match ctx.fns.lookup(mname, key, CallForm.MethodCall) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
             // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote
             // that fits several candidates is a USER situation; check reports

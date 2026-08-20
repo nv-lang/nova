@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -507,7 +507,8 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t int) -> () {
     }
     match kids[2] {
         Branch { .. } => {}
-        Leaf(t) => @judge_method_lookup(e, t, @ctx.fns.lookup(t.text, method_call_key(kids, recv_t)))
+        Leaf(t) => @judge_method_lookup(e, t,
+            @ctx.fns.lookup(t.text, method_call_key(kids, recv_t), CallForm.MethodCall))
     }
 }
 
@@ -831,12 +832,23 @@ fn Checker mut @type_expr(e Node) -> () {
                 // (owner's review 2026-08-19). The callable registry knows the
                 // whole set; narrowing by argument types arrives with E2-b3, and
                 // until then an ambiguous name is REFUSED rather than guessed.
-                match @ctx.fns.lookup(cname, free_call_key(kids)) {
+                // FreeCall: a callable declared WITH a receiver must not
+                // answer `f(x)`. Until 2026-08-20 the form was not part of the
+                // query, and `byte_len("abc")` reached `str @byte_len()` by
+                // arity alone -- accepted here, refused by the oracle, and
+                // emitted as one string argument to a two-parameter function.
+                match @ctx.fns.lookup(cname, free_call_key(kids), CallForm.FreeCall) {
                     FnFound(row) => @record_free_callee(e, kids, row)
                     FnOverloaded(_) => @report_first_leaf_of(kids,
                         "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
-                    FnUnknown => @report_first_leaf_of(kids,
-                        "outside the subset: this name is not a callable novac knows")
+                    // The NAME may well be known -- what did not fit is the
+                    // count of arguments, and the refusal says which (D420:
+                    // name the cause you established, not the nearest one).
+                    FnUnknown => @report_first_leaf_of(kids, if @ctx.fns.has_name(cname) {
+                        "outside the subset: no function of this name takes this many arguments"
+                    } else {
+                        "outside the subset: this name is not a callable novac knows"
+                    })
                 }
             }
             // A type name in call position is not a callee: the lattice
