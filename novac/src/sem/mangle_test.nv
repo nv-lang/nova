@@ -11,8 +11,9 @@
 // `novac_user_describe`. Invalid C from a valid program, with no diagnostic.
 
 module novac.sem
-import ../tree.{Node, NodeKind, branch}
+import ../tree.{Node, NodeKind, branch, leaf}
 import ../builtins.{TypeKind}
+import ../lex.{Token, TokenKind}
 
 /// An empty file node: these tests need a Ctx with the primitives seeded and
 /// nothing else. Building it here keeps `sem` from importing the parser -- the
@@ -63,6 +64,56 @@ test "instance arguments distinguish two instantiations of one callable" {
     ro b = c_callable(ctx, row, []int.of(ctx.prims.str_id))
     assert(a != b)
     assert(a != c_callable(ctx, row, []int.new()))
+}
+
+/// `fn id[T](x T) -> T` as a TREE, built by hand for the same reason
+/// `empty_file` is: the architecture table has no edge sem -> parse, and a test
+/// is not a licence to add one. The shape is the collector's contract -- the
+/// name is child one, the type parameters live in a Generics branch, a Param
+/// holds (name, type), a RetType holds (arrow, type).
+fn tok(k TokenKind, s str) -> Token => { kind: k, leading: "", text: s }
+
+fn generic_id_file() -> Node {
+    ro gen = branch(1, NodeKind.Generics, []Node.of(leaf(tok(TokenKind.Ident, "T"))))
+    ro par = branch(2, NodeKind.Param,
+        []Node.of(leaf(tok(TokenKind.Ident, "x")), leaf(tok(TokenKind.Ident, "T"))))
+    ro ret = branch(3, NodeKind.RetType,
+        []Node.of(leaf(tok(TokenKind.Arrow, "->")), leaf(tok(TokenKind.Ident, "T"))))
+    ro decl = branch(4, NodeKind.FnDecl,
+        []Node.of(leaf(tok(TokenKind.KwFn, "fn")), leaf(tok(TokenKind.Ident, "id")), gen, par, ret))
+    branch(5, NodeKind.File, []Node.of(decl))
+}
+
+test "the COLLECTOR gives a type parameter a type, so an instance can be named" {
+    // The measurement that made this wave (2026-08-20). Before it, `x T` and
+    // `-> T` both held the -1 sentinel -- the name `T` was asked of the
+    // registry, which does not have it -- so nothing downstream could say what
+    // an instance of this callable is called. `type_tag` had been taught to
+    // substitute a `TkParam`, and there was nothing for it to substitute.
+    //
+    // Donor: rustc `TyKind::Param` -- a parameter is known by its INDEX in its
+    // owner's generics, so one row per index is shared by every declaration.
+    // This test would not merely fail before the change: `c_callable` would die
+    // on `type_tag`'s precondition, because -1 is no type id at all.
+    mut ctx = collect_types(generic_id_file())
+    match ctx.defs.fn_row("id") {
+        None => assert(false)
+        Some(row) => {
+            assert(ctx.fns.rows[row].tparam_cnt == 1)
+            // Parameter AND return resolve to the same parameter row, and it is
+            // a real type of kind TkParam -- not the -1 sentinel.
+            ro pt = ctx.fns.params[ctx.fns.rows[row].param_off]
+            assert(pt >= 0)
+            assert(ctx.types[pt].kind == TypeKind.TkParam)
+            assert(ctx.fns.rows[row].ret_id == pt)
+            // And the instance is nameable: the substitution decides both the
+            // parameter and the return in the emitted name.
+            ro at_int = c_callable(ctx, row, []int.of(ctx.prims.int_id))
+            assert(at_int == "novac_fn_id__nova_int__to_nova_int__nova_int")
+            ro at_str = c_callable(ctx, row, []int.of(ctx.prims.str_id))
+            assert(at_str == "novac_fn_id__nova_str__to_nova_str__nova_str")
+        }
+    }
 }
 
 test "a generic callable's parameters carry the substituted types" {

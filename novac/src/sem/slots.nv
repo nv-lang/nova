@@ -181,6 +181,26 @@ export fn call_callee_text(kids []Node) -> str {
     }
 }
 
+/// Which slot of `tps` this type name binds, or None when it is not a type
+/// parameter of the declaration.
+///
+/// The question is asked while COLLECTING, before the callable has a row, so it
+/// cannot go through `FnTable.tparam_index` -- same question, one step earlier,
+/// and the list is the declaration's own arity (never the registry's size).
+#realtime nogc
+export fn tparam_slot(name str, tps []str) -> Option[int] {
+    for i in 0..tps.len() {
+        // BINDER-OK: the set is this declaration's own type parameters, so it
+        // is bounded by its arity and not by any registry.
+        if tps[i] == name {
+            return Some(i)
+        } else {
+            // Not this slot; the next may bind the name.
+        }
+    }
+    None
+}
+
 /// The identifier NAMES a `Generics` node holds, in source order.
 ///
 /// ONE question with one answer, asked from both ends of the mapping: a

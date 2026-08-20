@@ -639,12 +639,13 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
             for rc in branch_children(c) {
                 ro is_name = rc.kind_of() == NodeKind.LeafNode && leaf_kind(rc) == TokenKind.Ident
                 if is_name && recv_name == "" {
-            recv_name = leaf_text(rc)
-        } else {
-            // Either the name is already found, or this leaf is not one: the
-            // FIRST identifier under the receiver group is the name, and what
-            // follows belongs to its type arguments.
-        }
+                    recv_name = leaf_text(rc)
+                } else {
+                    // Either the name is already found, or this leaf is not
+                    // one: the FIRST identifier under the receiver group is
+                    // the name, and what follows belongs to its type
+                    // arguments.
+                }
             }
         } else if ck == NodeKind.RetType {
             ro rk = branch_children(c)
@@ -710,6 +711,9 @@ export fn collect_types(file Node) -> Ctx {
     // order; the seed hands the ACTUAL ids back (CommonTypes model). The
     // universe ordinal is the interner's head for a primitive.
     mut seeded = []int.new()
+    // TypeDef row per type-parameter INDEX, built on demand by the fn branch
+    // below and shared by every declaration (see the comment there).
+    mut param_rows = []int.new()
     mut ordinal = 0
     for bt in builtin_types() {
         seeded.push(seed(types, defs, tys, bt.name, ordinal))
@@ -839,6 +843,26 @@ export fn collect_types(file Node) -> Ctx {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }
             if fk[1].kind_of() != NodeKind.LeafNode { continue }
+            // THIS declaration's type parameters, and a TYPE for each slot it
+            // binds (E2-b2; donor: rustc `TyKind::Param`, a parameter is known
+            // by its INDEX in its owner's generics, not by its name). One row
+            // per index, shared by every declaration: a parameter means
+            // nothing outside a substitution, and the substitution belongs to
+            // the CALL. The row is added only for an index above those already
+            // built -- pushing an index twice would get a deduplicated term
+            // from the interner and break the ty_id == row invariant asserted
+            // at the end of this walk.
+            ro tps = generic_names(fk)
+            mut pslot = param_rows.len()
+            while pslot < tps.len() {
+                // The name is the INDEX, never `T`: one shared row must not
+                // claim one declaration's spelling. The true spelling lives
+                // per row in `FnTable.tparams`, read by `tparam_index`.
+                types.push(TypeDef { kind: TypeKind.TkParam, ty_id: tys.param(pslot),
+                                     name: "#${pslot}", row_off: 0, row_cnt: 0 })
+                param_rows.push(types.len() - 1)
+                pslot += 1
+            }
             // UNKNOWN_TYPE = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on it as the second floor —
             // never a silent int (#652 class).
@@ -847,7 +871,13 @@ export fn collect_types(file Node) -> Ctx {
                 if r.kind_of() != NodeKind.RetType { continue }
                 ro rk = branch_children(r)
                 if rk.len() < 2 || rk[1].kind_of() != NodeKind.LeafNode { continue }
-                ret = defs.type_id(leaf_text(rk[1])) ?? UNKNOWN_TYPE
+                ro rname = leaf_text(rk[1])
+                ret = match tparam_slot(rname, tps) {
+                    // `-> T` names a type PARAMETER of this declaration, and
+                    // that is a type -- the whole point of the row above.
+                    Some(slot) => param_rows[slot]
+                    None => defs.type_id(rname) ?? UNKNOWN_TYPE
+                }
             }
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
@@ -865,10 +895,16 @@ export fn collect_types(file Node) -> Ctx {
                     continue
                 }
                 // An unknown type is STORED as UNKNOWN_TYPE and said so:
-                // collection is tolerant, and check is the judge.
-                param_ids.push(defs.type_id(leaf_text(pk[1])) ?? UNKNOWN_TYPE)
+                // collection is tolerant, and check is the judge. A type
+                // PARAMETER of this declaration is not unknown -- it is the
+                // row built above.
+                ro pname = leaf_text(pk[1])
+                param_ids.push(match tparam_slot(pname, tps) {
+                    Some(slot) => param_rows[slot]
+                    None => defs.type_id(pname) ?? UNKNOWN_TYPE
+                })
             }
-            fns.add(fname, ret, false, param_ids, generic_names(fk))
+            fns.add(fname, ret, false, param_ids, tps)
             ro frow = fns.rows.len() - 1
             defs.add(fname, DefKind.DefFn, frow)
             // The DECLARATION's own row, keyed by its node. Asking `defs` by

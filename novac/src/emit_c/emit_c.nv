@@ -137,7 +137,13 @@ fn Emitter mut @emit_type_decls() -> () {
             TkRecord => @emit_record_decl(t)
             TkSum => @emit_sum_decl(t)
             TkApp => ice("emit_c: declaration of an applied type — instances are emitted by mono, E2-b2")
-            TkParam => ice("emit_c: declaration of a type parameter — nothing to declare, and nothing should ask")
+            // A type parameter DECLARES nothing: it has no layout until a
+            // substitution names one, and the instance that carries the
+            // substitution is emitted as its own function (E2-b2). The row
+            // exists from 2026-08-20, when a parameter became a real type, so
+            // this arm went from "cannot happen" to "nothing to do" -- and it
+            // says which, rather than icing on a legal registry.
+            TkParam => {}
             TkInfer => ice("emit_c: declaration of an inference variable — a variable escaped its body")
         }
     }

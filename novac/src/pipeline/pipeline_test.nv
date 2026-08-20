@@ -86,6 +86,12 @@ test "E2 strings surface: the shapes are in, a std method with no compiled body 
     assert(n_diags("fn main() { mut i = 0\n while i < 1 { i += 1 }\n println(i) }") == 0)
 }
 
+test "a generic call is refused for the reason that is left, not the one that is closed" {
+    // One diagnostic: the substitution is read and legal, the parameter is a
+    // type -- what is missing is an emitted instance of the body (E2-b2 step 4).
+    assert(n_diags("fn id[T](x T) -> T => x\nfn main() { println(id[int](4)) }") == 1)
+}
+
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
     ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
     assert(n_diags(src) == 0)
