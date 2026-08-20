@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -89,11 +89,7 @@ fn Checker mut @type_fn(f Node) -> () {
     // any `fn Account @tag()` in a user file killed the whole check with
     // "sem: leaf_text on a branch node" -- a crash on correct input, which is
     // worse than any refusal (P12: a user error leaves through a diagnostic).
-    mut has_recv = false
-    for c in kids {
-        has_recv = has_recv || c.kind_of() == NodeKind.Recv
-    }
-    if has_recv {
+    if declares_receiver(kids) {
         @report_first_leaf_of(kids, METHOD_DECL_MSG)
         return
     } else {

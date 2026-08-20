@@ -21,7 +21,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, DefKind, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, DefKind, declares_receiver, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 
 /// [name, type-ident, ...] — the second child must be an Ident leaf. Whether
@@ -571,10 +571,7 @@ fn Checker mut @report_if_misplaced_generics(kids []Node) -> () {
     // declarations against 18 free ones, and the mixed shape never (measured
     // 2026-08-17, owner's observation). Reported first so the reader learns
     // the POSITION is wrong, not that generics are unsupported.
-    mut has_recv = false
-    for c in kids {
-        has_recv = has_recv || c.kind_of() == NodeKind.Recv
-    }
+    ro has_recv = declares_receiver(kids)
     mut seen_name = false
     mut i = 0
     for c in kids {

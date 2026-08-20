@@ -181,6 +181,25 @@ export fn call_callee_text(kids []Node) -> str {
     }
 }
 
+/// Does this declaration write a RECEIVER -- is it a method?
+///
+/// The parser puts a `Recv` branch where a free function has its name leaf, so
+/// the question is "is one of these children a Recv" and the answer arrives at
+/// the first one. Two walks asked it separately until 2026-08-20 (typing, to
+/// refuse a method declaration before `leaf_text` meets a branch and ices; and
+/// the generics-position rule, to tell `fn[T] []T @map` from `fn box[T]`) --
+/// one question, so one door.
+#realtime nogc
+export fn declares_receiver(kids []Node) -> bool {
+    for c in kids {
+        // The prevailing shape for "skip what is not my kind": a negated test
+        // with a terminator, and no `else` doing work on a closed set (P21).
+        if c.kind_of() != NodeKind.Recv { continue }
+        return true
+    }
+    false
+}
+
 /// Which slot of `tps` this type name binds, or None when it is not a type
 /// parameter of the declaration.
 ///
