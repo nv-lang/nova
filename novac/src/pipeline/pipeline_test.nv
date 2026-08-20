@@ -14,6 +14,13 @@
 
 module novac.pipeline
 
+import ../tree.{Node, NodeKind}
+import ../parse.{parse}
+import ../sem.{branch_children, leaf_text}
+import ../source.{SourceText}
+import ../diag.{ice}
+import ../check.{check_instance}
+
 // The std signatures these tests need, handed in the way the driver hands
 // them: as TEXT through the one door. Inline and tiny on purpose — the
 // tests stay hermetic (no filesystem, no path, no std dir) and still exercise
@@ -84,6 +91,44 @@ test "E2 strings surface: the shapes are in, a std method with no compiled body 
     // std body are clean, so the refusal above is about the missing body and
     // not about the form.
     assert(n_diags("fn main() { mut i = 0\n while i < 1 { i += 1 }\n println(i) }") == 0)
+}
+
+/// The `fn id[T](x T) -> T => x` declaration of this source, by name.
+fn generic_decl_of(tree Node, want str) -> Node {
+    for c in branch_children(tree) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        ro kids = branch_children(c)
+        if kids.len() < 2 { continue }
+        if kids[1].kind_of() != NodeKind.LeafNode { continue }
+        if leaf_text(kids[1]) == want { return c }
+    }
+    ice("pipeline_test: the fixture lost its declaration")
+}
+
+test "an instance types its body under the substitution, in its own channel (E2-b2)" {
+    // Go stenciling: ONE copy of the body per instance, each typed on its own.
+    // The assertion is on what the channel HOLDS, not on silence -- before
+    // 2026-08-20 a generic body was not typed at all, and "no diagnostics"
+    // would have passed while nothing whatever had happened.
+    ro src = "fn twice[T](x T) -> T => x + x\nfn main() { println(1) }"
+    ro tree = parse(tokens_of(src))
+    ro ctx = context(tree, std_decls())
+    ro decl = generic_decl_of(tree, "twice")
+    ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx,
+        []int.of(ctx.prims.int_id), tree.id_of() + 1)
+    assert(diags.len() == 0)
+    // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
+    // A bare name would prove nothing here -- the channel deliberately does
+    // not record one (the lattice reads it from the scope), so the assertion
+    // stands on an expression whose type the channel DOES carry.
+    ro kids = branch_children(decl)
+    mut body_t = -1
+    for c in kids {
+        if c.kind_of() != NodeKind.FnExprBody { continue }
+        ro ek = branch_children(c)
+        body_t = chan.type_of(ek[ek.len() - 1].id_of())
+    }
+    assert(body_t == ctx.prims.int_id)
 }
 
 test "a generic call is refused for the reason that is left, not the one that is closed" {

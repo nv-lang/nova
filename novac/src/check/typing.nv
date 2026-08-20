@@ -27,7 +27,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
@@ -105,9 +105,11 @@ fn Checker mut @type_fn(f Node) -> () {
     // this same walk once an instance is created with its type arguments
     // (plan 274 E2-b2, donor: Go stenciling). The SIGNATURE is already
     // collected, so calls can be resolved and refused by name meanwhile.
-    if @is_generic_decl(f) {
-        // SILENT-OK: the body of a generic declaration is typed per INSTANCE,
-        // not here; its signature is already collected, so nothing is lost.
+    if @is_generic_decl(f) && @substs.len() == 0 {
+        // SILENT-OK: the body of a generic declaration is typed per
+        // INSTANCE, and this run carries no substitution to type it under.
+        // Its signature is collected already, so nothing is lost --
+        // `check_instance` types the body once per instance (E2-b2).
         return
     } else {
         // Not generic: types are known now, so the walk proceeds.
@@ -127,10 +129,23 @@ fn Checker mut @type_fn(f Node) -> () {
     }
     ro name = leaf_text(kids[name_at])
     @scope = Scope.new()
+    ro row = match decl_fn_row(f, @ctx) {
+        None => {
+            // SILENT-OK: the registry recorded no row for this
+            // declaration, which means it is malformed, and the subset walk
+            // refused it before this pass ran. There is no row to read
+            // parameter types from, so there is nothing here to type.
+            return
+        }
+        Some(r) => r
+    }
     if name != ENTRY_FN {
+        mut slot = 0
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
-            if @bind_param(branch_children(c)) {
+            ro at = slot
+            slot += 1
+            if @bind_param(branch_children(c), row, at) {
                 // Bound, or a shape this walk does not judge: either way the
                 // next parameter is the next question.
             } else {
@@ -302,17 +317,39 @@ fn unknown_args(kids []Node, from int) -> []int {
 /// `pk[1]` read the MODE as the name and the name as the type the moment a
 /// parameter is written `fn take(mut v int)`, and the failure wore a lie for a
 /// face: `int` refused as a type novac does not know.
-fn Checker mut @bind_param(pk []Node) -> bool {
+fn Checker mut @bind_param(pk []Node, row int, slot int) -> bool {
     match param_type_at(pk) {
         // No type declared: a recovery shape the parse already refused, and
         // there is nothing here to look up.
         None => true
-        Some(tat) => @bind_typed_param(pk, tat)
+        Some(tat) => @bind_typed_param(pk, tat, row, slot)
     }
 }
 
+/// This type with the instance's substitution applied: a type PARAMETER becomes
+/// the concrete type standing in its slot, everything else is itself.
+///
+/// ONE place applies a substitution inside check, exactly as one place applies
+/// it inside the mangler (`type_tag`). An empty substitution is the ordinary
+/// run over a file, where a parameter cannot appear in a typed body at all --
+/// `type_fn` skips a generic declaration when there is nothing to substitute.
+fn Checker @concrete(t int) -> int {
+    if t < 0 || t >= @ctx.types.len() { return t }
+    if @ctx.types[t].kind != TypeKind.TkParam { return t }
+    ro slot = @ctx.tys.head_of(@ctx.types[t].ty_id)
+    if slot < 0 || slot >= @substs.len() {
+        // A parameter with no argument in this substitution: the arity was
+        // judged at the call site, so reaching here means the instance was
+        // built wrong -- an invariant, not a user mistake.
+        ice("check: a type parameter outside the instance's substitution")
+    } else {
+        // The slot the call filled: that concrete type IS this body's type here.
+    }
+    @substs[slot]
+}
+
 /// The same parameter, with the slot of its type already located.
-fn Checker mut @bind_typed_param(pk []Node, tat int) -> bool {
+fn Checker mut @bind_typed_param(pk []Node, tat int, row int, slot int) -> bool {
     // `param_type_at` locates the type AFTER the name, so a located type means
     // the name was located too; its absence here is a broken invariant.
     ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
@@ -336,7 +373,13 @@ fn Checker mut @bind_typed_param(pk []Node, tat int) -> bool {
     // dropped by the collector, and then die as an ICE -- a compiler-bug
     // message on valid Nova the oracle accepts. A narrow subset is legitimate;
     // a subset whose boundary is an ice is not.
-    ro pt = @ctx.defs.type_id(leaf_text(tnode)) ?? UNKNOWN_TYPE
+    // The TYPE comes from the ROW, and the substitution is applied to it. The
+    // name was resolved here a second time until 2026-08-20 -- the same second
+    // door the emitter had -- and it answered UNKNOWN for `x T`, refusing a
+    // parameter whose type the registry holds. Position is the mapping: plan
+    // 273 §4.4 fixes the slot.
+    ro fd = @ctx.fns.rows[row]
+    ro pt = if slot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + slot]) } else { UNKNOWN_TYPE }
     if pt == UNKNOWN_TYPE {
         match tnode {
             Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")

@@ -65,6 +65,12 @@ type Checker {
     /// (P18/P14): a table allocated per binding turns an O(1) question into an
     /// allocation on the hot path of every `ro`/`mut` in the file.
     self_probe NameTable
+    /// The instance's substitution: `substs[i]` is the concrete type standing
+    /// in type-parameter slot `i`. EMPTY for an ordinary run over a file, and
+    /// that emptiness is what tells `type_fn` to skip a generic body -- there
+    /// is nothing to type it under. One copy of the body is typed per
+    /// instance (Go stenciling), so nothing here is parametric afterwards.
+    substs []int
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -99,6 +105,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         out: []Diagnostic.new(),
         chan: CheckOut.new(file.id_of() + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        substs: []int.new(),
     }
     c.walk(file)
     if c.out.len() == 0 {
@@ -111,6 +118,33 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         // ice today ([LEGACY-#700-user-error-as-ice until:E2b3]), so the refusals already
         // collected ARE the verdict, and the channel goes back as the walk left it.
     }
+    (c.out, c.chan)
+}
+
+/// Type ONE declaration under a substitution -- one instance of a generic
+/// callable (E2-b2; donor: Go stenciling, one copy of the body per instance,
+/// each typed on its own).
+///
+/// WHY A SEPARATE CHANNEL. The channel is keyed by `NodeId`: one node, one
+/// type. Two instances of one body cannot both live in it, and the alternative
+/// -- keeping the body's types parametric and substituting in every reader --
+/// spreads one decision across every consumer of the channel (P18). So each
+/// instance gets its own channel, sized like the file's, and the emitter reads
+/// the one belonging to the instance it emits.
+///
+/// `cap` is the file's node capacity, not the declaration's: node ids are
+/// handed out per FILE, so a declaration's nodes sit anywhere in that range.
+export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []int, cap int) -> ([]Diagnostic, CheckOut)
+    requires cap > 0, "check: an instance channel needs the file's node capacity"
+{
+    mut c = Checker {
+        src, ctx,
+        out: []Diagnostic.new(),
+        chan: CheckOut.new(cap),
+        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        substs,
+    }
+    c.type_fn(decl)
     (c.out, c.chan)
 }
 

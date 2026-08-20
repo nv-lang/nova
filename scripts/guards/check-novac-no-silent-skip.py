@@ -86,7 +86,10 @@ def main():
                 continue
             if RE_RETURN.search(body):
                 nret += 1
-                window = hist[-3:]
+                # ШЕСТЬ строк, не три (2026-08-20): на трёх честная причина
+                # не умещалась, и маркер приходилось вписывать в середину
+                # фразы — механизм торговал ясностью за свою простоту.
+                window = hist[-6:]
                 okay = "SILENT-OK:" in raw or any("SILENT-OK:" in h for h in window)
                 cand = " ".join([raw] + list(reversed(window)))
                 if RE_DECISION.search(cand):
