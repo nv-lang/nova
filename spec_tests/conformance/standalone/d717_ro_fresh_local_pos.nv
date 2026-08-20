@@ -1,0 +1,48 @@
+// EXPECT_STDOUT d717 taken=2 built=3 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №717, КОНТРОЛЬ НА ЗАКОННУЮ ФОРМУ — и он здесь важнее
+// отрицательной фикстуры, потому что об эту форму разбилась первая попытка.
+//
+// ЧТО ПИНЯЕТСЯ. Проверка «`ro` утекает через возврат» обязана молчать, когда
+// немутабельная локаль связана со СВЕЖИМ значением, а не с чужим псевдонимом.
+// Первая правка судила возврат по `ro_binding_names` — набору «привязка
+// немутабельна», — и дала 773 отказа в std при каноне 26: `ro removed =
+// <снятый элемент>` в нём неотличим от `ro al = v` над ro-параметром. Пример
+// из std, отвергавшийся тогда: `collections/vec/mutate.nv` возвращает
+// `removed` — свежее снятое значение, ничей не псевдоним.
+//
+// ЗДЕСЬ ТРИ ЗАКОННЫХ СЛУЧАЯ СРАЗУ:
+//   (1) локаль от ВЫЗОВА — `ro taken = pop_last(v)`;
+//   (2) локаль от КОНСТРУКТОРА — `ro built = Vec[int].of(...)`;
+//   (3) цепочка немутабельных локалей поверх свежего значения.
+// Все три обязаны пройти молча и исполниться.
+//
+// Парная отрицательная — `neg/d717_ro_leak_via_local_neg.nv`.
+
+module standalone.d717_ro_fresh_local_pos
+
+fn pop_last(v []int) -> int {
+    if v.len() == 0 {
+        return 0
+    }
+    v[v.len() - 1]
+}
+
+fn takes_fresh_from_call(v []int) -> int {
+    ro taken = pop_last(v)
+    taken
+}
+
+fn builds_fresh_vec() -> []int {
+    ro built = Vec[int].of(1, 2, 3)
+    ro alias_of_fresh = built
+    alias_of_fresh
+}
+
+fn main() Io -> () {
+    ro src = Vec[int].of(7, 2)
+    ro taken = takes_fresh_from_call(src)
+    ro made = builds_fresh_vec()
+    println("d717 taken=${taken} built=${made.len()} ok")
+}

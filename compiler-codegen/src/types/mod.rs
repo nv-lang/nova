@@ -3917,6 +3917,24 @@ struct TypeCheckCtx<'a> {
     /// Закрывает D175 §«binding dominates» — Rust-style rule.
     /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
     ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// [#717, вариант «в»] ПРОИСХОЖДЕНИЕ, а не мутабельность: имена, которые
+    /// ПСЕВДОНИМЯТ `ro`-источник.
+    ///
+    /// `ro_binding_names` выше отвечает на вопрос «привязка немутабельна» и
+    /// принимает ЛЮБОЙ немутабельный `let`, чем бы он ни был инициализирован.
+    /// Для проверки «`ro` утекает через возврат» это не тот вопрос: `ro removed
+    /// = <свежее значение>` немутабелен и при этом ничей не псевдоним. Замер
+    /// 2026-08-19: судить возврат по `ro_binding_names` — 773 отказа в std при
+    /// каноне 26, то есть проверка перестаёт быть проверкой.
+    ///
+    /// Сюда попадают: (1) не-`mut`, не-`consume` параметры — по D176 параметр
+    /// псевдонимит значение вызывающего; (2) `let`, чей инициализатор — ГОЛОЕ
+    /// имя, уже состоящее в этом наборе. Всё прочее (вызов, литерал,
+    /// конструктор) — свежее значение и НЕ вступает.
+    ro_source_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// [#717] Происхождение на ВЫХОДЕ последнего разобранного блока — см.
+    /// дыру (3): хвост судится после того, как блок вернул свои наборы.
+    ro_src_at_block_exit: std::cell::RefCell<std::collections::HashSet<String>>,
     /// №309/№317 (221.1, окно p-ovl-channel): mirror of `ro_binding_names`
     /// for `consume`-bound identifiers — set of local names whose CURRENT
     /// binding was introduced via `consume x = ...` (`LetDecl.consume`) or a
@@ -4882,6 +4900,8 @@ impl<'a> TypeCheckCtx<'a> {
             current_fn_generics: std::cell::RefCell::new(Vec::new()),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
+            ro_source_names: std::cell::RefCell::new(std::collections::HashSet::new()),
+            ro_src_at_block_exit: std::cell::RefCell::new(std::collections::HashSet::new()),
             consume_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             mut_ref_param_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             user_shadowed_generic_types,
@@ -8473,6 +8493,9 @@ impl<'a> TypeCheckCtx<'a> {
         };
         let ro_snap_fn: std::collections::HashSet<String> =
             self.ro_binding_names.borrow().clone();
+        // [#717] набор ПРОИСХОЖДЕНИЯ живёт по тем же правилам области видимости.
+        let ro_src_snap_fn: std::collections::HashSet<String> =
+            self.ro_source_names.borrow().clone();
         if is_entry_fn {
             for p in &fd.params {
                 // Add non-mut, non-consume params to ro_binding_names so
@@ -8487,6 +8510,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // (`=> args` — variadic passthrough as `Self`).
                 if !p.is_mut && !p.consume && !p.is_variadic {
                     self.ro_binding_names.borrow_mut().insert(p.name.clone());
+                    // [#717] параметр без `mut` ПСЕВДОНИМИТ значение вызывающего
+                    // (D176) — это и есть корень происхождения.
+                    self.ro_source_names.borrow_mut().insert(p.name.clone());
                 }
             }
         }
@@ -8556,7 +8582,16 @@ impl<'a> TypeCheckCtx<'a> {
                         // dedicated block above `check_closure_scalar_return`'s definition).
                         self.check_closure_scalar_return(trailing, ret, errors);
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
-                        self.check_ro_launder_return(trailing, ret, &scope, errors);
+                        // [#717] дыра (3) ПОРЯДОК: `f1_block` уже вернул свои наборы,
+                        // и локали стали невидимы. Ставим происхождение блока на
+                        // время проверки хвоста — область видимости от этого не меняется.
+                        {
+                            let saved = self
+                                .ro_source_names
+                                .replace(self.ro_src_at_block_exit.borrow().clone());
+                            self.check_ro_launder_return(trailing, ret, &scope, errors);
+                            *self.ro_source_names.borrow_mut() = saved;
+                        }
                         self.materialize_literal_coercion(trailing, ret);
                         // №658: implicit tail return — same fill as the
                         // arrow-body site above.
@@ -8619,6 +8654,7 @@ impl<'a> TypeCheckCtx<'a> {
         // added — function scopes are independent; param names from one fn
         // must not bleed into the next fn's checks.
         *self.ro_binding_names.borrow_mut() = ro_snap_fn;
+        *self.ro_source_names.borrow_mut() = ro_src_snap_fn;
         // №309/№317: restore consume_binding_names symmetrically.
         *self.consume_binding_names.borrow_mut() = consume_snap_fn;
         // Plan 172.5 (D326 R10): restore the enclosing fn's mut-ref-param set.
@@ -8651,6 +8687,8 @@ impl<'a> TypeCheckCtx<'a> {
         // entries it added. Outer scopes are preserved (transitivity D175).
         let ro_snapshot: std::collections::HashSet<String> =
             self.ro_binding_names.borrow().clone();
+        let ro_src_snapshot: std::collections::HashSet<String> =
+            self.ro_source_names.borrow().clone();
         // №309/№317: same block-scope snapshot/restore for consume_binding_names.
         let consume_snapshot: std::collections::HashSet<String> =
             self.consume_binding_names.borrow().clone();
@@ -8671,7 +8709,13 @@ impl<'a> TypeCheckCtx<'a> {
                 None => { scope.remove(&n); }
             }
         }
+        // [#717] дыра (3) ПОРЯДОК: хвост блока принадлежит ЭТОМУ блоку, а
+        // проверка хвоста тела функции идёт уже ПОСЛЕ восстановления —
+        // сохраняем происхождение до восстановления, чтобы судить хвост его
+        // же именами.
+        *self.ro_src_at_block_exit.borrow_mut() = self.ro_source_names.borrow().clone();
         *self.ro_binding_names.borrow_mut() = ro_snapshot;
+        *self.ro_source_names.borrow_mut() = ro_src_snapshot;
         *self.consume_binding_names.borrow_mut() = consume_snapshot;
     }
 
@@ -8948,6 +8992,21 @@ impl<'a> TypeCheckCtx<'a> {
                     let mut set = self.ro_binding_names.borrow_mut();
                     set.remove(&name);
                     if !d.mutable {
+                        set.insert(name);
+                    }
+                }
+                // [#717] ПРОИСХОЖДЕНИЕ: имя вступает в набор только если
+                // инициализатор — ГОЛОЕ имя, уже состоящее в нём. Вызов,
+                // литерал, конструктор дают СВЕЖЕЕ значение и не вступают
+                // (иначе `ro removed = <снятый элемент>` считался бы утечкой —
+                // замер 2026-08-19 дал ровно это, 773 отказа).
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    let aliases_ro_source = !d.mutable
+                        && matches!(&d.value.kind, ExprKind::Ident(src)
+                            if self.ro_source_names.borrow().contains(src));
+                    let mut set = self.ro_source_names.borrow_mut();
+                    set.remove(&name);
+                    if aliases_ro_source {
                         set.insert(name);
                     }
                 }
@@ -19292,7 +19351,12 @@ impl<'a> TypeCheckCtx<'a> {
         if let ExprKind::Ident(name) = &value.kind {
             let is_scalar = self.infer_expr_type(value, scope)
                 .map_or(false, |t| is_fully_stack_value(&t, &self.types));
-            if !is_scalar && self.ro_binding_names.borrow().contains(name) {
+            // [#717] Спрашиваем ПРОИСХОЖДЕНИЕ, а не мутабельность привязки.
+            // `ro_binding_names` держит ВСЯКИЙ немутабельный `let`, поэтому по
+            // нему `ro removed = <свежее значение>` неотличим от `ro al = v` над
+            // ro-параметром; замер 2026-08-19: 773 отказа в std при каноне 26.
+            // `ro_source_names` содержит только псевдонимы ro-источников.
+            if !is_scalar && self.ro_source_names.borrow().contains(name) {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_READONLY_COERCE] возврат `{name}` — источник связан как `ro` \
