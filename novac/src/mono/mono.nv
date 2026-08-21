@@ -20,13 +20,39 @@ import ../sem.{decl_fn_row, Ctx, CheckOut, DefKind, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
 import ../diag.{ice}
 
-/// Which fn rows are reachable from the roots.
+/// ONE instance of a generic callable: which row, under which substitution.
 ///
-/// A Vec of flags indexed by the row, not a set of names: the row IS the
-/// identity of a callable in this compiler, and asking by name here would be
-/// the second door to a decision the registry already made.
+/// The key of the reachable set for a generic callable is NOT the row -- plan
+/// 274 E2-b2 says it is `(DeclId, substs)`, because `id[int]` and `id[str]`
+/// are two C functions and one row. The substitution lives in `Reach.subst`,
+/// a flat pool addressed by the range, exactly as every other range in this
+/// compiler (`FnDef.param_off/cnt`, `SubstRef.arg_off/cnt`): a range is one
+/// value, so it is one row and cannot desynchronize with itself.
+export type Instance value {
+    row int /// the generic callable's row in FnTable
+    subst_off int /// its first substitution argument in `Reach.subst`
+    subst_cnt int /// how many arguments -- equal to the declaration's tparam_cnt
+}
+
+/// Which callables are reachable from the roots.
+///
+/// TWO sets, because there are two kinds of answer and one of them is not a
+/// flag. A plain callable is reached or not: a bool per row, and the row IS
+/// its identity. A GENERIC callable is reached PER SUBSTITUTION, so its
+/// element is an `Instance`; a flag on the row could not tell `id[int]` from
+/// `id[str]`, which is the whole point of E2-b2.
 export type Reach {
-    seen []bool /// indexed by fn row; true = reached from a root
+    seen []bool /// indexed by fn row; true = a NON-generic callable reached from a root
+    inst []Instance /// generic callables reached, one element per substitution
+    subst []int /// flat pool of substitution arguments, addressed by Instance
+}
+
+/// Is this row generic -- does the declaration bind type parameters?
+#realtime nogc
+fn is_generic(ctx Ctx, row int) -> bool {
+    if row < 0 { return false }
+    if row >= ctx.fns.rows.len() { return false }
+    ctx.fns.rows[row].tparam_cnt > 0
 }
 
 /// Is this fn row reached from a root? Tolerant on purpose: the emitter asks
@@ -73,12 +99,14 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         seen.push(false)
         i += 1
     }
+    mut inst = []Instance.new()
+    mut subst = []int.new()
 
     match entry_row(ctx) {
         // No entry point in this file: nothing is reachable, and that is an
         // ANSWER, not a hole -- check refuses such a file by name long before
         // the emitter is asked anything.
-        None => { return Reach { seen } }
+        None => { return Reach { seen, inst, subst } }
         Some(root) => {
             if root < seen.len() {
                 seen[root] = true
@@ -106,12 +134,18 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
                     } else {
                         // The row addresses the flag vector, so it can be read.
                     }
-                    if !seen[row] {
+                    // REACHED means either "this plain callable is called" or
+                    // "this generic one is instantiated": a generic row never
+                    // enters `seen` (it is not emitted as one function), so
+                    // without the second half its body's callees would never
+                    // be walked and whatever it calls would go unemitted.
+                    ro reached = seen[row] || has_row_instance(inst, row)
+                    if !reached {
                         continue
                     } else {
-                        // Already reached: its callees are worth walking.
+                        // Reached: its callees are worth walking.
                     }
-                    if mark_callees(c, ctx, out, seen) {
+                    if mark_callees(c, ctx, out, seen, inst, subst) {
                         grew = true
                     } else {
                         // This body added nothing new this round; the loop
@@ -122,7 +156,48 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         }
     }
 
-    Reach { seen }
+    Reach { seen, inst, subst }
+}
+
+/// Is this exact instance (row + substitution) missing from the set being
+/// built? Asked over the vectors the walk is still filling, because a `Reach`
+/// does not exist until the walk ends -- and no second door asks it of a
+/// finished set, because the emitter WALKS `Reach.inst` rather than querying
+/// it (a door with no caller is the trap this plan already fell into once).
+///
+/// A linear walk, and that is the honest form here: the set holds ONE element
+/// per instantiation of the file, so its size is single digits. A hash on
+/// three integers would cost more to write than the walk costs to run, and the
+/// day a file has hundreds of instances the fix is a real index, not a guess
+/// made now.
+#realtime nogc
+fn instance_absent(inst []Instance, subst []int, row int, args []int) -> bool {
+    for it in inst {
+        if it.row != row { continue }
+        if it.subst_cnt != args.len() { continue }
+        mut same = true
+        for i in 0..args.len() {
+            if subst[it.subst_off + i] != args[i] {
+                same = false
+            } else {
+                // Equal in this slot: nothing to record, the verdict is what
+                // the remaining slots say.
+            }
+        }
+        if same { return false }
+    }
+    true
+}
+
+/// Is any instance of this row in the set yet? Asked by the fixpoint, which
+/// walks a generic body once the FIRST instance of it appears -- the callees
+/// of the body are the same set whichever substitution reached it.
+#realtime nogc
+fn has_row_instance(inst []Instance, row int) -> bool {
+    for it in inst {
+        if it.row == row { return true }
+    }
+    false
 }
 
 /// The row of the entry point, or None when this file declares none.
@@ -130,7 +205,8 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
 fn entry_row(ctx Ctx) -> Option[int] => ctx.defs.fn_row(ENTRY_FN)
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
-fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool) -> bool {
+fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
+                mut subst []int) -> bool {
     mut grew = false
     ro id = n.id_of()
     if id >= 0 && out.has_callee(id) {
@@ -142,7 +218,20 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool) -> bool {
         match cr.kind {
             DefFn => {
                 ro row = cr.target_row
-                if row >= 0 && row < seen.len() && !seen[row] {
+                if is_generic(ctx, row) {
+                    // A GENERIC callee is reached per SUBSTITUTION: the element
+                    // of the set is the instance, and the same call written
+                    // twice adds nothing while two type arguments add two.
+                    ro args = out.callee_subst_of(id)
+                    if instance_absent(inst, subst, row, args) {
+                        ro off = subst.len()
+                        subst.append(args)
+                        inst.push(Instance { row, subst_off: off, subst_cnt: args.len() })
+                        grew = true
+                    } else {
+                        // This exact instance is already in the set.
+                    }
+                } else if row >= 0 && row < seen.len() && !seen[row] {
                     seen[row] = true
                     grew = true
                 } else {
@@ -159,7 +248,7 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool) -> bool {
     }
     if n.kind_of() == NodeKind.LeafNode { return grew }
     for c in branch_children(n) {
-        if mark_callees(c, ctx, out, seen) {
+        if mark_callees(c, ctx, out, seen, inst, subst) {
             grew = true
         } else {
             // Nothing new under this child.

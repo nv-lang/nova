@@ -234,6 +234,24 @@ export fn CheckOut @has_subst(id int) -> bool
     }
 }
 
+/// The substitution a CALL was written with -- a VIEW into the pool, not a
+/// copy (the arguments live once).
+///
+/// `subst_of` answers about an INSTANTIATION node; this one answers about a
+/// CALL, whose range lives inside its `CalleeRef`. Two questions, two doors,
+/// because a node is one or the other by construction and mixing them would
+/// mean asking "which kind are you" at every use.
+export fn CheckOut @callee_subst_of(id int) -> ro []int
+    requires id >= 0 && id < @res.len(), "sem: callee_subst_of outside this file's id space"
+{
+    ro cr = match @res[id] {
+        Callee(c) => c
+        Unresolved => ice("sem: callee_subst_of on a node with nothing recorded")
+        Subst(_) => ice("sem: callee_subst_of on a node recorded as an instantiation")
+    }
+    @subst_args[cr.subst_off..cr.subst_off + cr.subst_cnt]
+}
+
 /// The substitution of a node; asking about a node that has none is an ice
 /// (ask `has_subst` first).
 export fn CheckOut @subst_of(id int) -> ro []int

@@ -244,11 +244,13 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row int) -> () {
     }
     // The substitution is READ and checked, and since 2026-08-20 a type
     // PARAMETER is a real type, so `-> T` has an id and the mangler can name
-    // an instance. What is still missing is the INSTANCE ITSELF: typing runs
-    // once per declaration and skips a generic body, so nothing types that
-    // body under a substitution and nothing emits it. Recording the call would
-    // therefore name a C function no one defines -- the dangling-symbol class
-    // this compiler just spent a wave removing.
+    // an instance. What is still missing is the WIRING: `check_instance` types
+    // one body under one substitution and `mono` keys the reachable set by
+    // `(row, substs)`, but the pipeline does not yet walk that set, ask for
+    // each instance's channel and hand it to the emitter -- so no instance is
+    // emitted. Recording the call would therefore name a C function no one
+    // defines -- the dangling-symbol class this compiler just spent a wave
+    // removing.
     //
     // The message says THAT, and not the reason that has been closed: a
     // diagnostic naming a cause which no longer holds sends the reader to fix
