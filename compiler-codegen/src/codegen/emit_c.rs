@@ -21625,6 +21625,66 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// for V1). On hitting the cap we fall back to `(l == r)` so codegen always
     /// terminates and produces *some* expression; non-cyclic schemas are finite
     /// and never reach the cap.
+    /// Registry #744 (K1): is `s` a C operand that can be pasted more than once
+    /// with no cost and nothing observable? Only a bare identifier qualifies.
+    /// A cast, a member read or a call is re-executed on every paste, and the
+    /// call case is the defect itself.
+    fn eq_operand_is_bare_ident(s: &str) -> bool {
+        let s = s.trim();
+        !s.is_empty()
+            && s.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// Registry #744: `NOVA_KILL_744=1` restores the pre-fix emission (both
+    /// operands pasted into every clause). The acceptance baseline is taken with
+    /// this switch on the SAME binary, never with a second build -- same rule and
+    /// same shape as `NOVA_KILL_D55NT` (types/mod.rs).
+    fn eq_single_eval_disabled() -> bool {
+        std::env::var("NOVA_KILL_744").map(|v| v == "1").unwrap_or(false)
+    }
+
+    /// Registry #744 (K1): evaluate each side of a structural `==` exactly once.
+    ///
+    /// `emit_field_eq` builds `tag_eq && (tag != A || payload_A_eq) && ...`, and
+    /// both operands are C TEXT, so every clause re-emits them verbatim. A call on
+    /// either side therefore ran once per clause that survived short-circuiting --
+    /// twice for a matching payload variant, once for a non-matching one. That
+    /// duplicates side effects, not merely allocation, so it is a behaviour bug.
+    ///
+    /// Fix: bind each side to a temp and compare the temps. The DECLARATION is
+    /// hoisted -- side-effect-free, hence safe to lift out of any surrounding
+    /// short-circuit -- while the ASSIGNMENT stays inside the expression via the
+    /// comma operator, so `cond && (x == f())` still does not call `f` when `cond`
+    /// is false. Returns the two operand texts to compare, plus the comma prefix
+    /// the caller wraps around the finished comparison.
+    fn eq_materialize(&mut self, ty: &str, l: &str, r: &str) -> (String, String, String) {
+        let t = ty.trim().to_string();
+        // Not declarable as a plain local: empty, void, or a function/array type.
+        let undeclarable = t.is_empty() || t == "void" || t.contains('(') || t.contains('[');
+        if Self::eq_single_eval_disabled() || undeclarable {
+            return (l.to_string(), r.to_string(), String::new());
+        }
+        let mut pre = String::new();
+        let lt = if Self::eq_operand_is_bare_ident(l) {
+            l.to_string()
+        } else {
+            let tmp = self.fresh_tmp_named("eq");
+            self.line(&format!("{} {};", t, tmp));
+            pre.push_str(&format!("{} = ({}), ", tmp, l));
+            tmp
+        };
+        let rt = if Self::eq_operand_is_bare_ident(r) {
+            r.to_string()
+        } else {
+            let tmp = self.fresh_tmp_named("eq");
+            self.line(&format!("{} {};", t, tmp));
+            pre.push_str(&format!("{} = ({}), ", tmp, r));
+            tmp
+        };
+        (lt, rt, pre)
+    }
+
     fn emit_field_eq(&self, c_type: &str, l: &str, r: &str, depth: usize) -> String {
         const MAX_EQ_DEPTH: usize = 32;
         let cty = c_type.trim();
@@ -35746,7 +35806,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let struct_ty = if lty.starts_with("_NovaTuple") { lty.clone() } else { rty.clone() };
                     match op {
                         BinOp::Eq | BinOp::Neq => {
-                            let eq = self.emit_field_eq(&struct_ty, &l, &r, 0);
+                            let (l744, r744, pre744) = self.eq_materialize(&struct_ty, &l, &r);
+                            let eq = format!("{}{}", pre744, self.emit_field_eq(&struct_ty, &l744, &r744, 0));
                             return Ok(match op {
                                 BinOp::Eq  => format!("({})", eq),
                                 BinOp::Neq => format!("(!({}))", eq),
@@ -35800,7 +35861,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // @equal fallback: field-by-field structural comparison.
                         if matches!(op, BinOp::Eq | BinOp::Neq) {
-                            let eq = self.emit_field_eq(tuple_ty, &l, &r, 0);
+                            let (l744, r744, pre744) = self.eq_materialize(tuple_ty, &l, &r);
+                            let eq = format!("{}{}", pre744, self.emit_field_eq(tuple_ty, &l744, &r744, 0));
                             return Ok(match op {
                                 BinOp::Eq  => format!("({})", eq),
                                 BinOp::Neq => format!("(!({}))", eq),
@@ -35851,7 +35913,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     } else {
                         &rty
                     };
-                    let eq = self.emit_field_eq(value_ty, &l, &r, 0);
+                    let (l744, r744, pre744) = self.eq_materialize(value_ty, &l, &r);
+                    let eq = format!("{}{}", pre744, self.emit_field_eq(value_ty, &l744, &r744, 0));
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
                         BinOp::Neq => format!("(!({}))", eq),
@@ -36020,7 +36083,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    let eq = self.emit_field_eq(&res_ty, &l2, &r2, 0);
+                    let (l744, r744, pre744) = self.eq_materialize(&res_ty, &l2, &r2);
+                    let eq = format!("{}{}", pre744, self.emit_field_eq(&res_ty, &l744, &r744, 0));
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
                         BinOp::Neq => format!("(!({}))", eq),
@@ -36184,7 +36248,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // emit_field_eq на полном `Nova_X*` пройдёт ту же
                         // tag+payload рекурсию (см. helper), reusing @equal/@eq/
                         // @compare когда они есть на самом sum-типе.
-                        let eq = self.emit_field_eq(&sty, &l, &r, 0);
+                        let (l744, r744, pre744) = self.eq_materialize(&sty, &l, &r);
+                        let eq = format!("{}{}", pre744, self.emit_field_eq(&sty, &l744, &r744, 0));
                         return match op {
                             BinOp::Eq  => Ok(format!("({})", eq)),
                             BinOp::Neq => Ok(format!("(!({}))", eq)),
