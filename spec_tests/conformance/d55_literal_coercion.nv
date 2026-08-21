@@ -2,10 +2,12 @@
 // Покрыто: (2) record-coercion (анонимный {field:val} получает тип T), (4) numeric literal coercion
 // (int-литерал принят без `as` если влезает в диапазон). (1) sum-coercion (D55.1) —
 // Plan 200 (sql-autoconv, 2026-07-12) закрыл ранее задокументированный
-// компилятор-gap: «обёртка ровно в один совпадающий unary-вариант» теперь
-// работает и для литералов, и для переменных (не только для literal'ов),
-// а также единообразно для newtype (`type X Y`) — см. D55 amend §«Obvious
-// single-wrapper coercion». Покрывает и array-literal element-позицию
+// компилятор-gap: «обёртка ровно в один совпадающий unary-вариант» работает
+// и для литералов, и для переменных — см. D55 amend §«Obvious single-wrapper
+// coercion». АМЕНДМЕНТ 2026-08-21 (решение владельца) сузил NEWTYPE-половину
+// этого правила до нетипизированных констант: в сумму коэрсия выводит тег
+// (кандидат один), в newtype она придумывала бы утверждение, ради требования
+// которого newtype и заводят. Сумма — без изменений. Покрывает и array-literal element-позицию
 // (`[]SumType`), и call-arg позицию (в т.ч. desugar'енный tag-template
 // D48 `` sql`${expr}` ``, тест — std/data/sql_test.nv).
 module spec_tests.conformance
@@ -47,12 +49,19 @@ test "sum-coercion: явный конструктор не двойно обор
     ro v D55Sum = D55Sum.I(5)
     match v { D55Sum.I(n) => assert(n == 5), _ => assert(false) }
 }
-test "newtype-coercion: литерал И переменная → newtype без `as` (D55 amend, D52 open question closed)" {
+test "newtype-coercion: КОНСТАНТА → newtype без `as`; переменная требует явного (D55 amend 2026-08-21)" {
     ro a D55UserId = 100
-    ro n = 100
-    ro b D55UserId = n
+    ro b D55UserId = 40 + 60
     assert((a as int) == 100)
     assert((b as int) == 100)
+    // Переменная больше НЕ оборачивается сама — граница взята у Go, на который
+    // ссылается D52. Обе явные формы законны и проверяются здесь же, потому
+    // что диагностика отказа адресует именно к ним.
+    ro n = 100
+    ro c D55UserId = D55UserId(n)
+    ro d D55UserId = n as D55UserId
+    assert((c as int) == 100)
+    assert((d as int) == 100)
 }
 
 // Plan 208 Ф.3 (owner instruction 2026-07-16): str-литерал → `[]u8` coercion

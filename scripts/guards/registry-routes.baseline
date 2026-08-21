@@ -323,4 +323,18 @@ no_caveat=34
 #   `println("at = ", rows.get(1))` passes check and dies in C. Both
 #   halves reproduce with no newtype in the file, which is what the probe
 #   was actually about.
-blockers=50
+# 2026-08-21, No.743 withdrawn -- 50 -> 49. The growth an hour earlier was
+#   MINE and it was a DUPLICATE: No.670 has owned this class since
+#   2026-08-15 (print does not ask whether the type has a representation),
+#   already carries the tag verdict and already routes to window D1 with
+#   No.584 and No.634. I filed a second row because I searched the
+#   registry for the C-level symptom (`NovaOpt_nova_int`) and not for the
+#   behaviour (a pointer printed as a number), which is how a duplicate
+#   gets past a registry with 699 rows.
+#   The measurement itself was NOT wasted and is folded into No.670: the
+#   silent half is alive in the MULTIARG form on a type that HAS a derived
+#   Debug, while interpolation of the same value in the same program is
+#   correct. No.670's 2026-08-19 recheck concluded "the silence is gone"
+#   after re-running only the interpolation form -- so the duplicate row
+#   was wrong, and the recheck it contradicted was incomplete.
+blockers=49

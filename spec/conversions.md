@@ -292,6 +292,26 @@ ro u UserId = 42 as UserId
 ro n int = u as int            // 42
 ```
 
+**The implicit half and its boundary (D55 amend, 2026-08-21).** At a position
+with an explicit expected type a newtype wraps itself -- but for an UNTYPED
+CONSTANT only. A typed variable needs the explicit form; the boundary is Go's,
+which D52 cites when recommending the form.
+
+```nova
+type Row int
+ro a Row = 100                 // ok -- a constant
+ro b Row = 40 + 60             // ok -- constant arithmetic
+ro n = 100
+ro c Row = n                   // ERROR E7301 -- a typed variable
+ro d Row = Row(n)              // ok
+ro e Row = n as Row            // ok
+```
+
+Sums are untouched: `SqlValue.I(x)` is still inserted for a variable -- there
+the compiler DERIVES the only matching variant instead of inventing the author's
+claim. For the old softness on your own newtype, declare it as a
+[`#coerce`](decisions/02-types.md#d429) pair.
+
 ---
 
 ## Sum-variant ↔ int (discriminant)
