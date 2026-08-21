@@ -50,14 +50,75 @@ module novac.sem
 
 import ../diag.{ice}
 
-/// What a resolved `Call` targets -- the same two answers the name registry
-/// gives, kept as a pair so the emitter reads a DECISION instead of repeating
-/// the lookup by name. `target_row < 0` means "nothing recorded here".
+/// WHAT a resolved call targets, and the target CARRIES ITS OWN ROW.
+///
+/// Until 2026-08-21 this was a pair, `kind DefKind` beside `target_row int`,
+/// and the int was POLYMORPHIC by the kind: a callable row for a function, a
+/// variant row for a variant, an interned type id for a construction. The
+/// owner's question was "why is it not `FnRow`" -- and the answer is that
+/// `FnRow` would be a LIE on two of the three arms: `c_maker` would then be
+/// handed a `FnRow` holding a variant row, which is precisely the confusion
+/// the wrapper exists to make impossible.
+///
+/// So the payload moves INSIDE the discriminant, where each space gets its own
+/// type. This is the same argument this file already won once: `callees` and
+/// `substs` were two parallel vectors held apart by a runtime walk, and became
+/// `Resolution`, a sum, because a sum does not need the walk -- the forbidden
+/// state cannot be built. Here the forbidden state is "a variant row read as a
+/// callable row", and after this it cannot be built either.
+export type CalleeTarget enum
+    | CalleeFn(FnRow)
+    | CalleeVariant(int)
+    | CalleeCtor(int)
+
+/// What a resolved `Call` targets, plus the type arguments it was written with
+/// -- so the emitter reads a DECISION instead of repeating the lookup by name.
 export type CalleeRef value {
-    kind DefKind /// Which table `row` indexes -- the registry's own sum, not a second encoding of the answer
-    target_row int /// Row in the table `kind` names (fns row for DefFn, variant row for DefVariant)
+    target CalleeTarget /// WHICH callable, variant or type -- each in its own space, because the sum carries the row
     subst_off int /// First type argument of this call in `subst_args`; 0 with subst_cnt 0 = not generic
     subst_cnt int /// How many type arguments the call was written with; 0 = a plain call
+}
+
+/// Do two decisions name the SAME target? Asked by the one writer, to hold
+/// "a call is resolved once" -- and asked with a nested match rather than `==`
+/// because the arms live in three different index spaces and comparing across
+/// them is exactly the question this sum answers with "never".
+#realtime nogc
+fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
+    match a {
+        CalleeFn(x) => {
+            match b {
+                CalleeFn(y) => raw_row(x) == raw_row(y)
+                CalleeVariant(_) => false
+                CalleeCtor(_) => false
+            }
+        }
+        CalleeVariant(x) => {
+            match b {
+                CalleeVariant(y) => x == y
+                CalleeFn(_) => false
+                CalleeCtor(_) => false
+            }
+        }
+        CalleeCtor(x) => {
+            match b {
+                CalleeCtor(y) => x == y
+                CalleeFn(_) => false
+                CalleeVariant(_) => false
+            }
+        }
+    }
+}
+
+/// Is this target an actual row, in whichever space it lives? Absence is not a
+/// decision, and the writer refuses to record one.
+#realtime nogc
+fn target_present(t CalleeTarget) -> bool {
+    match t {
+        CalleeFn(r) => raw_row(r) >= 0
+        CalleeVariant(v) => v >= 0
+        CalleeCtor(id) => id >= 0
+    }
 }
 
 /// Where a substitution's arguments live in the pool. A range is ONE value,
@@ -142,13 +203,13 @@ export fn CheckOut mut @record_type(id int, t int) -> ()
 }
 
 /// Record the decided target of a call.
-export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int, subst []int) -> ()
+export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []int) -> ()
     requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
-    requires target_row >= 0, "sem: channel callee write with no row — absence is not a decision"
+    requires target_present(target), "sem: channel callee write with no row — absence is not a decision"
 {
     match @res[id] {
         Unresolved => {}
-        Callee(prev) => assert(prev.target_row == target_row && prev.kind == kind,
+        Callee(prev) => assert(same_target(prev.target, target),
             "sem: a call was resolved twice to different targets")
         Subst(_) => ice("sem: record_callee on a node already recorded as an instantiation")
     }
@@ -157,7 +218,7 @@ export fn CheckOut mut @record_callee(id int, kind DefKind, target_row int, subs
     // _defs + node_args); here they live in one row, so they cannot disagree.
     ro subst_off = @subst_args.len()
     @subst_args.append(subst)
-    @res[id] = Resolution.Callee(CalleeRef { kind, target_row, subst_off, subst_cnt: subst.len() })
+    @res[id] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len() })
 }
 
 /// Record the substitution instantiating a generic at a NON-call node (record
@@ -231,6 +292,24 @@ export fn CheckOut @has_subst(id int) -> bool
         Subst(_) => true
         Unresolved => false
         Callee(_) => false
+    }
+}
+
+/// The CALLABLE row of this reference -- for the readers that already know the
+/// target is a function and would otherwise write a match with two dead arms
+/// (the method-call emission: a method IS a function, D273).
+///
+/// A reader that branches on the target three ways does NOT come here: it
+/// matches the sum and binds the row in its own arm, which is one question
+/// instead of two. So this door exists for the single-arm case, and the arms it
+/// cannot answer are an ice rather than a `requires`, because after the payload
+/// moved into the sum the wrong call is no longer a state to forbid -- it is a
+/// shape the type carries.
+export fn CalleeRef @callable_row() -> FnRow {
+    match @target {
+        CalleeFn(r) => r
+        CalleeVariant(_) => ice("sem: the callable row of a variant reference — a variant row is not a callable row")
+        CalleeCtor(_) => ice("sem: the callable row of a construction — a type id is not a callable row")
     }
 }
 

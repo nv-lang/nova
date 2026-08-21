@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, FnLookup, UNKNOWN_TYPE, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
+import ../sem.{ArgSpec, ArgClass, CallForm, FnLookup, UNKNOWN_TYPE, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
 import ../builtins.{EQUAL_METHOD, ENTRY_FN, PRINT_FN, bool_c_literal}
 
 
@@ -219,7 +219,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
         // carries an empty one, so there is no branch here to get wrong.
-        @body.append(c_callable(@ctx, cr.target_row, @out.callee_subst_of(e.id_of())))
+        @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         @body.append("(")
         @emit_expr(kids[0])
         mut i = 0
@@ -240,16 +240,21 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `byte_len("abc")` was recorded against `str @byte_len()` and emitted
         // as the file's two-parameter `byte_len`, one string argument and all.
         ro cr = @out.callee_of(e.id_of())
-        match cr.kind {
-            DefVariant => @body.append("${c_maker(@ctx, cr.target_row)}(")
-            DefFn => @body.append("${c_callable(@ctx, cr.target_row, @out.callee_subst_of(e.id_of()))}(")
+        // The target CARRIES its row, so each arm reads a row of its own
+        // space: `c_maker` gets a variant row, `c_callable` a callable row, and
+        // neither can be handed the other's (owner's question 2026-08-21 --
+        // "why is `target_row` not `FnRow`": because it was three spaces in one
+        // int, and the answer is a sum, not a wrapper).
+        match cr.target {
+            CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}(")
+            CalleeFn(row) => @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
             // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
             // its representation at runtime -- zero cost, D-newtype. So the
             // emission is the ARGUMENT and nothing else: no wrapper, no cast
             // (C needs none between a typedef and its underlying type). The
             // oracle writes a redundant cast here; the shape of our emission is
             // ours (274 section 7.0) as long as the behaviour is identical.
-            DefType => {
+            CalleeCtor(_) => {
                 for c in kids {
                     if !is_expr_kind(c.kind_of()) { continue }
                     @emit_expr(c)

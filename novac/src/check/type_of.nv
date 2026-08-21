@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, DefKind, ParamMode, UNKNOWN_TYPE, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, DefKind, raw_row, ParamMode, UNKNOWN_TYPE, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -280,15 +280,16 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
             // overloads it answers with the last. The channel holds the
             // decision, and reading it here is what makes a generic call
             // answerable at all -- its substitution rides in the same record.
-            ro row = if chan.has_callee(e.id_of()) { chan.callee_of(e.id_of()).target_row } else { def.payload }
+            ro nid = e.id_of()
+            ro row = if chan.has_callee(nid) { raw_row(chan.callee_of(nid).callable_row()) } else { def.payload }
             ro ret = ctx.fns.rows[row].ret_id
             assert(ret >= 0, "check: call of a fn without a declared return type (#652 class)")
             // A generic callee returns `-> T`: the concrete type is the one
             // this CALL's substitution puts in that slot, through the one door
             // that applies a substitution. An ordinary call carries an empty
             // substitution and the return type is already itself.
-            if chan.has_callee(e.id_of()) {
-                return subst_type(ctx, ret, chan.callee_subst_of(e.id_of()))
+            if chan.has_callee(nid) {
+                return subst_type(ctx, ret, chan.callee_subst_of(nid))
             } else {
                 // Nothing recorded for this node: the walk has not resolved
                 // this call yet (the diagnostics path asks the lattice while
@@ -300,7 +301,16 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
         // which type when it judged the form -- so the answer is a READ, not a
         // second decision. Before 2026-08-21 this line iced: an internal
         // compiler error printed at `Row(7)`, a legal form of the language.
-        if chan.has_callee(e.id_of()) { return chan.callee_of(e.id_of()).target_row }
+        if chan.has_callee(e.id_of()) {
+            // The type the construction builds -- read from the arm that HOLDS
+            // it. The other two arms cannot be here (the kind was judged
+            // above), and they say so instead of being swallowed by a `_`.
+            return match chan.callee_of(e.id_of()).target {
+                CalleeCtor(id) => id
+                CalleeFn(_) => ice("check: a type in call position recorded as a function call")
+                CalleeVariant(_) => ice("check: a type in call position recorded as a variant construction")
+            }
+        }
         // Nothing recorded: the form was refused (a record's positional
         // construction, a wrong arity), and a refused node has no type.
         ice("check: a type in call position with no construction recorded -- the refusal should have stopped this walk")

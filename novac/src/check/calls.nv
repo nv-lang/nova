@@ -28,7 +28,7 @@ module novac.check
 import ../tree.{Node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
+import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, CalleeTarget, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -140,7 +140,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id int) -> () {
     } else {
         // The representation: the construction is legal and gets recorded.
     }
-    @chan.record_callee(e.id_of(), DefKind.DefType, type_id, []int.new())
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []int.new())
 }
 
 /// A GENERIC candidate cannot fit an exact key: until the turbofish
@@ -188,7 +188,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             @report_first_leaf_of(kids,
                 "outside the subset: type arguments on a function that declares none")
         } else {
-            @chan.record_callee(e.id_of(), DefKind.DefFn, raw_row(row), []int.new())
+            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []int.new())
         }
         return
     } else {
@@ -251,5 +251,5 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
     // line was a refusal, because recording a call whose instance nobody
     // emitted would have named a symbol that exists nowhere.
-    @chan.record_callee(e.id_of(), DefKind.DefFn, raw_row(row), ids)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids)
 }

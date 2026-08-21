@@ -207,7 +207,7 @@ export fn DefTable @find(name str) -> int => @names.find(name)
 /// copies (emit_c and mono, body for body) until 2026-08-18, which is what
 /// a missing door looks like from the inside: each author writes the five
 /// lines rather than finding a name they cannot guess.
-export fn decl_fn_row(f Node, ctx Ctx) -> Option[int] {
+export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
     ro id = f.id_of()
     if id < 0 || id >= ctx.fn_decl_rows.len() {
         // A node from ANOTHER parse -- the declarations handed to novac have
@@ -216,8 +216,10 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[int] {
     } else {
         // The id addresses this file's table, so the slot answers directly.
     }
+    // [LEGACY-#676] var-index-method: a method on a variable-index element
+    // resolves through the CONTAINER, so the row comes out by binding first.
     ro row = ctx.fn_decl_rows[id]
-    if row < 0 {
+    if raw_row(row) < 0 {
         // The table is a DENSE int vector and stores -1 for "no row" — that is
         // a representation choice and it stays. The DOOR answers in the
         // language's terms, so no caller has to know the storage (wave 3,
@@ -226,6 +228,9 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[int] {
     } else {
         // A real row: the node owns a callable.
     }
+    // The vector holds ROWS since 2026-08-21 (the owner's second question of
+    // the day): `no_row()` is the absence, and the door answers `None` for it,
+    // so no caller sees the sentinel at all.
     Some(row)
 }
 
@@ -239,7 +244,7 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[int] {
 /// the name does not exist, the next author writes their own. That is how
 /// second doors get in, and the answer is not vigilance but a door.
 #realtime nogc
-export fn DefTable @fn_row(name str) -> Option[int] {
+export fn DefTable @fn_row(name str) -> Option[FnRow] {
     ro d = @find(name)
     if d < 0 {
         return None
@@ -254,7 +259,9 @@ export fn DefTable @fn_row(name str) -> Option[int] {
         // The name is a type or a variant, not a callable: the caller asked
         // for a fn row, and None says honestly that there is none.
     }
-    Some(row)
+    // `payload` is polymorphic by `kind` -- the crossing into the row space is
+    // named HERE, where the kind has just been established.
+    Some(FnRow(row))
 }
 
 /// Type by name during COLLECTION: None if the name is unknown or not a
@@ -413,7 +420,7 @@ export type Ctx {
     fields FieldTable /// Record fields, addressed through the owner type.
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
     payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
-    fn_decl_rows []int /// NodeId of a FnDecl -> its row in `fns`; -1 = none. See below.
+    fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
 }
 
@@ -463,7 +470,7 @@ export fn collect_types(file Node) -> Ctx {
     mut variant_rows = []VariantDef.new()
     mut payload_types = []int.new()
     mut fns = FnTable.new()
-    mut fn_decl_rows = []int.new()
+    mut fn_decl_rows = []FnRow.new()
     // First pass: register every type NAME (id = order of appearance after
     // the primitives), so later rows can reference any type of the file
     // regardless of declaration order. TypeDef records are BUILT on the
@@ -707,8 +714,8 @@ export fn collect_types(file Node) -> Ctx {
             // and the emitter wrote two C functions with one name, carrying the
             // other overload's parameter types (owner's review 2026-08-19).
             ro did = c.id_of()
-            while fn_decl_rows.len() <= did { fn_decl_rows.push(-1) }
-            fn_decl_rows[did] = frow
+            while fn_decl_rows.len() <= did { fn_decl_rows.push(no_row()) }
+            fn_decl_rows[did] = FnRow(frow)
         } else {
             // Every other top-level node -- the module declaration, imports,
             // and recovery Err branches -- declares neither a type nor a

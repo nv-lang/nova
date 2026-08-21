@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, CalleeTarget, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -72,7 +72,7 @@ fn Checker @is_generic_decl(f Node) -> bool {
     match decl_fn_row(f, @ctx) {
         // No row: this node is not a callable of this file.
         None => false
-        Some(row) => @ctx.fns.rows[row].tparam_cnt > 0
+        Some(row) => @ctx.fns.rows[raw_row(row)].tparam_cnt > 0
     }
 }
 
@@ -241,7 +241,7 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
 /// `pk[1]` read the MODE as the name and the name as the type the moment a
 /// parameter is written `fn take(mut v int)`, and the failure wore a lie for a
 /// face: `int` refused as a type novac does not know.
-fn Checker mut @bind_param(pk []Node, row int, slot int) -> bool {
+fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
     match param_type_at(pk) {
         // No type declared: a recovery shape the parse already refused, and
         // there is nothing here to look up.
@@ -263,7 +263,7 @@ fn Checker mut @bind_param(pk []Node, row int, slot int) -> bool {
 fn Checker @concrete(t int) -> int => subst_type(@ctx, t, @substs)
 
 /// The same parameter, with the slot of its type already located.
-fn Checker mut @bind_typed_param(pk []Node, tat int, row int, slot int) -> bool {
+fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> bool {
     // `param_type_at` locates the type AFTER the name, so a located type means
     // the name was located too; its absence here is a broken invariant.
     ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
@@ -292,7 +292,7 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row int, slot int) -> bool 
     // door the emitter had -- and it answered UNKNOWN for `x T`, refusing a
     // parameter whose type the registry holds. Position is the mapping: plan
     // 273 §4.4 fixes the slot.
-    ro fd = @ctx.fns.rows[row]
+    ro fd = @ctx.fns.rows[raw_row(row)]
     ro pt = if slot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + slot].type_id) } else { UNKNOWN_TYPE }
     if pt == UNKNOWN_TYPE {
         match tnode {
@@ -460,11 +460,12 @@ fn Checker mut @judge_method_lookup(e Node, t Token, found FnLookup) -> () {
             "outside the subset: this method name is overloaded and novac does not type arguments yet")
         FnFound(row) => {
             if @ctx.fns.compiles_body(row) {
-                // `target_row` in the channel is POLYMORPHIC by its own doc (a
-                // fn row for DefFn, a variant row for DefVariant, a type id for
-                // a construction), so it stays a bare int and the unwrap
-                // happens here -- the same rule `Def.payload` lives by.
-                @chan.record_callee(e.id_of(), DefKind.DefFn, raw_row(row), []int.new())
+                // The target carries its OWN row: no unwrap here, and no
+                // `DefKind` beside it. Until 2026-08-21 this line handed the
+                // channel a bare int whose meaning depended on a second
+                // argument -- the pair that made a variant row indistinguishable
+                // from a callable one.
+                @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []int.new())
             } else {
                 @refuse(t,
                     "outside the subset: novac read this method's signature but compiles no body for it yet")
@@ -771,7 +772,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // construction, so a fourth DefKind cannot slip past silently.
         ro def = @ctx.defs.rows[d]
         match def.kind {
-            DefVariant => @chan.record_callee(e.id_of(), def.kind, def.payload, []int.new())
+            DefVariant => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(def.payload), []int.new())
             DefFn => {
                 // NOT `def.payload`: `defs` is keyed by the bare name and lives
                 // by last-write-wins, so with two overloads it answers with the

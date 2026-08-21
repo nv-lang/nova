@@ -16,7 +16,7 @@
 module novac.mono
 
 import ../tree.{Node, NodeKind}
-import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, DefKind, ParamDef, branch_children, leaf_text}
+import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
 import ../diag.{ice}
 
@@ -35,7 +35,7 @@ import ../diag.{ice}
 /// the one door that applies a substitution -- and the emitter reads type ids
 /// like any other.
 export type Instance value {
-    row int /// the generic callable's row in FnTable
+    row FnRow /// the generic callable's row in FnTable
     subst_off int /// its first substitution argument in `Reach.subst`
     subst_cnt int /// how many arguments -- equal to the declaration's tparam_cnt
     ptype_off int /// its first CONCRETE parameter type in `Reach.ptypes`
@@ -75,19 +75,21 @@ export fn Reach @ptypes_of(it Instance) -> ro []ParamDef =>
 
 /// Is this row generic -- does the declaration bind type parameters?
 #realtime nogc
-fn is_generic(ctx Ctx, row int) -> bool {
-    if row < 0 { return false }
-    if row >= ctx.fns.rows.len() { return false }
-    ctx.fns.rows[row].tparam_cnt > 0
+fn is_generic(ctx Ctx, row FnRow) -> bool {
+    ro r = raw_row(row)
+    if r < 0 { return false }
+    if r >= ctx.fns.rows.len() { return false }
+    ctx.fns.rows[r].tparam_cnt > 0
 }
 
 /// Is this fn row reached from a root? Tolerant on purpose: the emitter asks
 /// about every fn it walks, including rows that belong to std method
 /// signatures rather than to this file.
-export fn Reach @has(row int) -> bool {
-    if row < 0 { return false }
-    if row >= @seen.len() { return false }
-    @seen[row]
+export fn Reach @has(row FnRow) -> bool {
+    ro r = raw_row(row)
+    if r < 0 { return false }
+    if r >= @seen.len() { return false }
+    @seen[r]
 }
 
 /// How many rows the set holds -- for the one line the pipeline prints.
@@ -156,7 +158,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
                 // file: there is nothing to walk from.
                 None => continue
                 Some(row) => {
-                    if row >= seen.len() {
+                    if raw_row(row) >= seen.len() {
                         continue
                     } else {
                         // The row addresses the flag vector, so it can be read.
@@ -166,7 +168,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
                     // enters `seen` (it is not emitted as one function), so
                     // without the second half its body's callees would never
                     // be walked and whatever it calls would go unemitted.
-                    ro reached = seen[row] || has_row_instance(inst, row)
+                    ro reached = seen[raw_row(row)] || has_row_instance(inst, row)
                     if !reached {
                         continue
                     } else {
@@ -198,9 +200,9 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
 /// day a file has hundreds of instances the fix is a real index, not a guess
 /// made now.
 #realtime nogc
-fn instance_absent(inst []Instance, subst []int, row int, args []int) -> bool {
+fn instance_absent(inst []Instance, subst []int, row FnRow, args []int) -> bool {
     for it in inst {
-        if it.row != row { continue }
+        if raw_row(it.row) != raw_row(row) { continue }
         if it.subst_cnt != args.len() { continue }
         mut same = true
         for i in 0..args.len() {
@@ -220,9 +222,9 @@ fn instance_absent(inst []Instance, subst []int, row int, args []int) -> bool {
 /// walks a generic body once the FIRST instance of it appears -- the callees
 /// of the body are the same set whichever substitution reached it.
 #realtime nogc
-fn has_row_instance(inst []Instance, row int) -> bool {
+fn has_row_instance(inst []Instance, row FnRow) -> bool {
     for it in inst {
-        if it.row == row { return true }
+        if raw_row(it.row) == raw_row(row) { return true }
     }
     false
 }
@@ -242,9 +244,8 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
         // a type is emitted by its own door, and the fn set says nothing about
         // it. A `_` arm here would swallow whatever kind the registry grows
         // next, and the collector would silently stop reaching it.
-        match cr.kind {
-            DefFn => {
-                ro row = cr.target_row
+        match cr.target {
+            CalleeFn(row) => {
                 if is_generic(ctx, row) {
                     // A GENERIC callee is reached per SUBSTITUTION: the element
                     // of the set is the instance, and the same call written
@@ -257,7 +258,7 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                         // the pool: this is mono's own work, and doing it here
                         // is what keeps every backend free of substitution.
                         ro poff = ptypes.len()
-                        ro fd = ctx.fns.rows[row]
+                        ro fd = ctx.fns.rows[raw_row(row)]
                         for p in 0..fd.param_cnt {
                             // The type is REWRITTEN, the mode is CARRIED: an
                             // instance's parameter is as mutable as the
@@ -274,16 +275,16 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                     } else {
                         // This exact instance is already in the set.
                     }
-                } else if row >= 0 && row < seen.len() && !seen[row] {
-                    seen[row] = true
+                } else if raw_row(row) >= 0 && raw_row(row) < seen.len() && !seen[raw_row(row)] {
+                    seen[raw_row(row)] = true
                     grew = true
                 } else {
                     // Already reached, or a row this file's table does not
                     // hold: reaching it twice is not news either way.
                 }
             }
-            DefVariant => {}
-            DefType => {}
+            CalleeVariant(_) => {}
+            CalleeCtor(_) => {}
         }
     } else {
         // Not a call, or a call check never resolved -- the refusal for the
