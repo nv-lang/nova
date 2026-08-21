@@ -418,11 +418,107 @@ export fn generic_names(kids []Node) -> []str {
     mut out = []str.new()
     for c in kids {
         if c.kind_of() != NodeKind.Generics { continue }
-        for g in branch_children(c) {
-            if g.kind_of() != NodeKind.LeafNode { continue }
-            if leaf_kind(g) != TokenKind.Ident { continue }
+        out.append(names_of_generics(branch_children(c)))
+    }
+    out
+}
+
+/// The NAMES a generics list binds -- one per entry, and the entry's BOUND is
+/// not one of them.
+///
+/// `[T]` binds T. `[T Compare]` binds T and CONSTRAINS it; `[K Equal + Hash, V]`
+/// binds K and V. Until 2026-08-21 this walk took every identifier leaf, so a
+/// bound was counted as a second type parameter: `fn pick[T Compare](a T)` was
+/// registered as binding TWO, and the honest call `pick[int](3)` came back "the
+/// call gives a different number of type arguments than the declaration binds"
+/// -- a refusal that was a lie about a legal program, and the only way to
+/// satisfy the count was to write nonsense (`pick[int, Compare]`).
+///
+/// The rule is positional and needs no knowledge of protocol names: the FIRST
+/// identifier of each comma-separated entry is the parameter, everything after
+/// it inside that entry is its bound.
+export fn names_of_generics(gk []Node) -> []str {
+    mut out = []str.new()
+    mut expect_name = true
+    for g in gk {
+        if g.kind_of() != NodeKind.LeafNode { continue }
+        ro k = leaf_kind(g)
+        if k == TokenKind.Comma {
+            // A new entry begins: its first identifier is a parameter again.
+            expect_name = true
+            continue
+        }
+        if k != TokenKind.Ident { continue }
+        if expect_name {
             out.push(leaf_text(g))
+            expect_name = false
+        } else {
+            // Inside an entry after its name: this is the BOUND (`Compare`, or
+            // `Equal + Hash` -- the `+` is punctuation and never a name).
         }
     }
     out
+}
+
+/// Does a generics list constrain a parameter to be MUST-CONSUME
+/// (`[T consume]`, `[T consume Compare]`)?
+///
+/// The full form of an entry is `T [consume] [Protocol + Protocol ...]` (owner,
+/// 2026-08-21; measured: the oracle accepts `fn take[T consume](consume a T)
+/// -> T => a`, and on a body that does NOT consume it answers
+/// `[D156-strict-forget]` -- so the word constrains the PARAMETER, it is not a
+/// protocol name). Two questions and two doors, because the two carry different
+/// refusals: linearity is a whole gap of novac (D133/D156 are not tracked at
+/// all), a protocol bound waits for dispatch (D122, E2-b3). One message for both
+/// would name a cause that was not established (the D420 class).
+export fn generics_have_consume(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        for g in branch_children(c) {
+            if g.kind_of() != NodeKind.LeafNode { continue }
+            if leaf_kind(g) != TokenKind.Ident { continue }
+            if is_contextual_mode_word(leaf_text(g)) { return true }
+        }
+    }
+    false
+}
+
+/// Does a generics list write a PROTOCOL bound (`[T Compare]`,
+/// `[K Equal + Hash]`)?
+///
+/// Counted positionally: one identifier per entry is the bare shape, and the
+/// mode word is not a bound -- so what is left over after the names and the mode
+/// words is a protocol.
+export fn generics_have_protocol_bound(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        ro gk = branch_children(c)
+        mut extra = 0
+        mut entries = 1
+        mut expect_name = true
+        for g in gk {
+            if g.kind_of() != NodeKind.LeafNode { continue }
+            ro k = leaf_kind(g)
+            if k == TokenKind.Comma {
+                entries += 1
+                expect_name = true
+                continue
+            }
+            if k != TokenKind.Ident { continue }
+            if expect_name {
+                expect_name = false
+                continue
+            }
+            // After the name inside one entry: a mode word constrains
+            // linearity, anything else is a protocol.
+            if !is_contextual_mode_word(leaf_text(g)) {
+                extra += 1
+            } else {
+                // The mode word: it constrains LINEARITY, not dispatch, and the
+                // door above answers about that separately.
+            }
+        }
+        if extra > 0 { return true }
+    }
+    false
 }

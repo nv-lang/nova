@@ -226,6 +226,49 @@ fn main() { ro c = Cel { v: 1.0 }
     assert(diags[0].message.contains("compiles no body"))
 }
 
+test "a BOUND is not a type parameter: the arity is ONE, not two" {
+    // Until 2026-08-21 the collector took every identifier of a generics list,
+    // so `[T Compare]` registered TWO parameters and the honest call
+    // `pick[int](3)` was refused as "a different number of type arguments" -- a
+    // lie about a legal program, and the only way to satisfy the count was to
+    // write `pick[int, Compare]`.
+    ro src = "fn pick[T Compare](a T) -> T => a
+fn main() { println(1) }"
+    ro tree = parse(tokens_of(src))
+    ro ctx = context(tree, std_decls())
+    match ctx.defs.fn_row("pick") {
+        None => assert(false)
+        Some(row) => assert(ctx.fns.rows[row].tparam_cnt == 1)
+    }
+}
+
+test "the two CONSTRAINTS of a generics entry get two different refusals" {
+    // The full form of an entry is `T [consume] [Protocol + ...]` (owner,
+    // 2026-08-21). `[T consume]` constrains LINEARITY -- measured: the oracle
+    // accepts `fn take[T consume](consume a T) -> T => a`, and answers
+    // `[D156-strict-forget]` when the body does not consume -- while
+    // `[T Compare]` constrains DISPATCH. novac has neither, and one message for
+    // both would name a cause it never established.
+    ro lin = compile("fn take[T consume](consume a T) -> T => a
+fn main() { println(1) }", std_decls())
+    assert(lin.len() == 1)
+    assert(lin[0].message.contains("must-consume"))
+    ro proto = compile("fn take[T Compare](a T) -> int => 1
+fn main() { println(1) }", std_decls())
+    assert(proto.len() == 1)
+    assert(proto[0].message.contains("protocol"))
+}
+
+test "a bound is refused BY NAME, and once" {
+    // novac neither dispatches a protocol nor verifies a constraint (both
+    // arrive with E2-b3), and compiling the generic as if the bound were not
+    // written would accept what the oracle rejects. One cause, one diagnostic.
+    ro diags = compile("fn pick[T Compare](a T) -> T => a
+fn main() { println(1) }", std_decls())
+    assert(diags.len() == 1)
+    assert(diags[0].message.contains("bound on a type parameter"))
+}
+
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
     ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
     assert(n_diags(src) == 0)

@@ -21,7 +21,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, DefKind, declares_receiver, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, DefKind, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 
 
 /// [name, type-ident, ...] — the second child must be an Ident leaf. Whether
@@ -587,6 +587,30 @@ fn Checker mut @report_if_misplaced_generics(kids []Node) -> () {
         seen_name = seen_name || (i > 0 && c.is_ident())
         i += 1
     }
+    // A BOUND is refused by name. novac neither dispatches a protocol nor
+    // verifies a constraint -- both arrive with E2-b3 -- and compiling
+    // `fn pick[T Compare](a T)` as if the bound were not written would ACCEPT
+    // programs the oracle rejects: the over-acceptance direction, the dangerous
+    // one. Until 2026-08-21 the bound was worse than unjudged: the collector
+    // counted it as a second type PARAMETER, so `pick[int](3)` was refused with
+    // "the call gives a different number of type arguments than the declaration
+    // binds" -- a lie about a legal program.
+    // The full form of an entry is `T [consume] [Protocol + ...]`, and the two
+    // constraints get two refusals: linearity is a gap of novac as a whole
+    // (D133/D156 are not tracked anywhere), a protocol bound waits for dispatch
+    // (D122, E2-b3). Naming one cause for both would name a cause that was not
+    // established.
+    if generics_have_consume(kids) {
+        @report_first_leaf_of(kids, GENERIC_CONSUME_MSG)
+        return
+    } else {
+        // No linearity constraint written.
+    }
+    if generics_have_protocol_bound(kids) {
+        @report_first_leaf_of(kids, GENERIC_BOUND_MSG)
+    } else {
+        // Nothing but names: that is what E2-b2 compiles.
+    }
 }
 
 /// The BLANKET refusal — for declarations where type parameters are not in the
@@ -691,6 +715,12 @@ fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
 /// Type parameters in the wrong PLACE -- a different mistake from type
 /// parameters not being compiled yet, and the message must not confuse them.
 const GENERIC_POSITION_MSG = "type parameters before the name belong to a method receiver; a free function declares them after its name"
+
+/// A BOUND on a type parameter (`[T Compare]`, `[K Equal + Hash]`).
+const GENERIC_BOUND_MSG = "outside the subset: a bound on a type parameter dispatches through a protocol (D122), and that arrives with E2-b3 -- the parameter itself is compiled, the constraint is not"
+
+/// A LINEARITY constraint on a type parameter (`[T consume]`).
+const GENERIC_CONSUME_MSG = "outside the subset: a generic over a must-consume type (`[T consume]`) needs linearity, and novac tracks none yet (D133/D156) -- the parameter itself is compiled, the obligation is not"
 
 /// One text for both doors (fn and type): the reader must not have to
 /// wonder whether two wordings mean two different limits.
