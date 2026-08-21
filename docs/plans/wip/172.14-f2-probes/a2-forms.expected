@@ -1,0 +1,13 @@
+[a2-sumrec] sum=FArr variants=2 recursive=1 payloadless=0 vnames=YA,YB
+[a2-sumrec] sum=FDirect variants=2 recursive=1 payloadless=0 vnames=DA,DB
+[a2-sumrec] sum=FHeapRec variants=2 recursive=0 payloadless=0 vnames=HA,HB
+[a2-sumrec] sum=FMutA variants=2 recursive=1 payloadless=0 vnames=MA,MAEnd
+[a2-sumrec] sum=FMutB variants=2 recursive=1 payloadless=0 vnames=MB,MBEnd
+[a2-sumrec] sum=FMutVal variants=2 recursive=1 payloadless=0 vnames=QA,QB
+[a2-sumrec] sum=FOpt variants=2 recursive=1 payloadless=0 vnames=OA,OB
+[a2-sumrec] sum=FPlain variants=3 recursive=0 payloadless=1 vnames=PA,PB,PC
+[a2-sumrec] sum=FPtr variants=2 recursive=0 payloadless=0 vnames=XA,XB
+[a2-sumrec] sum=FSlice variants=2 recursive=0 payloadless=0 vnames=SA,SB
+[a2-sumrec] sum=FStr variants=2 recursive=0 payloadless=0 vnames=TA,TB
+[a2-sumrec] sum=FValRec variants=2 recursive=1 payloadless=0 vnames=WA,WB
+[a2-sumrec] sum=FVec variants=2 recursive=0 payloadless=0 vnames=VA,VB

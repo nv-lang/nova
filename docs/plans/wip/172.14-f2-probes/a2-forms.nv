@@ -1,0 +1,64 @@
+// Plan 172.14 F.2 atom A2 -- forms probe for `sum_is_recursive`.
+//
+// Every declaration below pins ONE edge rule of the detector. The verdict is
+// taken by RUNNING detect mode, never by reading the walk:
+//
+//   nova.exe check docs/plans/wip/172.14-f2-probes/a2-forms.nv   \
+//     with NOVA_DETECT_SUMREC=1, then grep -E '\[a2-sumrec\] sum=F[A-Z]'
+//
+// Compare against a2-forms.expected; any drift is a detector change.
+// Prelude sums are reported too, so the grep is anchored on `F` followed by an
+// UPPERCASE letter: every subject here is named that way, while the prelude's
+// own F-names (FloatKind, FmtKind) have a lowercase second letter and drop out.
+//
+// The pairs matter more than the individual rows: (FVec, FOpt) is the whole
+// point of the atom. A `Vec` element sits behind a pointer and breaks a layout
+// cycle, while `Option` is a by-value `NovaOpt_T` and does NOT -- so
+// `type N enum Leaf | Node(Option[N])` must stay on the heap even though it
+// "looks boxed". Likewise (FHeapRec, FValRec): the same shape through a heap
+// record is finite, through a value record is not.
+
+// (1) direct recursion
+type FDirect enum DA(FDirect) | DB
+
+// (2) mutual recursion through another sum
+type FMutA enum MA(FMutB) | MAEnd
+type FMutB enum MB(FMutA) | MBEnd
+
+// (3) Vec breaks the cycle
+type FVec enum VA(Vec[FVec]) | VB
+
+// (4) slice breaks the cycle
+type FSlice enum SA([]FSlice) | SB
+
+// (5) str is a finite leaf
+type FStr enum TA(str) | TB
+
+// (6) Option[Self] does NOT break the cycle
+type FOpt enum OA(Option[FOpt]) | OB
+
+// (7) heap record is a pointer, breaks the cycle
+type FHeapRec enum HA(HeapBox) | HB
+type HeapBox { ro back FHeapRec }
+
+// (8) value record is inline, does NOT break
+type FValRec enum WA(ValBox) | WB
+type ValBox value { ro back FValRec }
+
+// (9) mutual through a value record and back
+type FMutVal enum QA(QBox) | QB
+type QBox value { ro q FMutVal }
+
+// (10) raw pointer is indirection, breaks the cycle
+type FPtr enum XA(*FPtr) | XB
+
+// (11) fixed array is n inline copies, does NOT break
+type FArr enum YA(YBox) | YB
+type YBox value { ro cells [2]FArr }
+
+// (12) no recursion at all, payload-less
+type FPlain enum PA | PB | PC
+
+fn main() {
+    print("a2-forms")
+}
