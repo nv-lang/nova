@@ -1,10 +1,13 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
+> **Улики переехали 2026-08-21.** Пробы этого окна лежали в `scratch_p248/` в корне репозитория; страж `check-repo-root-clean` краснел на этом, и по правилу №695 их дом — `docs/plans/repro/`, а суффикс `.nv.txt` держит их вне раннера и линта. Теперь они в `docs/plans/repro/p248/<имя>.nv.txt`. Прозаические ссылки ниже обновлены; пути ВНУТРИ процитированного вывода компилятора оставлены дословно — это цитата, а не ссылка.
+
 # p248-nocopy — разведка форм записи «нельзя копировать» (пробы, без правок компилятора)
 
 **Окно:** p248-nocopy. **Модель:** sonnet. **Характер:** ЧИСТАЯ РАЗВЕДКА —
 компилятор/std/спека/полярис НЕ тронуты ни строкой. Все выводы — дословные
 вердикты `nova check`/`nova build`/`nova test` на пробных файлах в
-`scratch_p248/` (в этом же worktree, не в основном дереве).
+`docs/plans/repro/p248/` (в этом же worktree, не в основном дереве).
 
 Контекст: `docs/plans/248-shared-handles-linearity.md`, раздел «ВЫВОД ФАЗЫ
 (2026-08-05)» — нужна точка **слабее аффинности**: копировать нельзя, но ни
@@ -69,14 +72,14 @@ newtype-форма / `external`).
 
 ## Шаг 2 — пробы форм
 
-Все пробы — `scratch_p248/<имя>/probe.nv`, каждая в своём каталоге (иначе
+Все пробы — `docs/plans/repro/p248/<имя>.nv.txt`, каждая в своём каталоге (иначе
 `nova check`/`test` тянет ВСЕ файлы каталога как peer-модули — проверено на
 собственной ошибке, см. ниже). Дословные вердикты `nova check`
 (`nova-cli/target/release/nova.exe` из главного репо, компилятор не менялся).
 
 ### 2.1 — новый модификатор рядом с `consume`/`value`
 
-`type Handle nocopy value { x int }` (`scratch_p248/p1_modifier/probe.nv`):
+`type Handle nocopy value { x int }` (`docs/plans/repro/p248/p1_modifier.nv.txt`):
 
 ```
 scratch_p248/p1_modifier\probe.nv:3:20: error: expected fn / type / let / const / test, got identifier
@@ -85,7 +88,7 @@ scratch_p248/p1_modifier\probe.nv:3:20: error: expected fn / type / let / const 
 ```
 
 `type Handle nocopy { x int }` (без `value`,
-`scratch_p248/p1b_alone/probe.nv`):
+`docs/plans/repro/p248/p1b_alone.nv.txt`):
 
 ```
 scratch_p248/p1b_alone\probe.nv:3:20: error: expected fn / type / let / const / test, got `{`
@@ -102,7 +105,7 @@ scratch_p248/p1b_alone\probe.nv:3:20: error: expected fn / type / let / const / 
 
 ### 2.2 — атрибут перед типом с выдуманным именем
 
-`#nocopy` + `type Handle { x int }` (`scratch_p248/p2_attr/probe.nv`):
+`#nocopy` + `type Handle { x int }` (`docs/plans/repro/p248/p2_attr.nv.txt`):
 
 ```
 scratch_p248/p2_attr\probe.nv:3:1: error: expected fn / type / let / const / test, got `#`
@@ -122,7 +125,7 @@ scratch_p248/p2_attr\probe.nv:3:1: error: expected fn / type / let / const / tes
 закрытия внутри):
 
 **(a) связывание БЕЗ `consume`** (`ro h = Handle { x: 1 }`,
-`scratch_p248/p3a_affine_nokw/probe.nv`):
+`docs/plans/repro/p248/p3a_affine_nokw.nv.txt`):
 
 ```
 scratch_p248/p3a_affine_nokw\probe.nv:9:5: error: [E_CONSUME_KEYWORD_MISSING]
@@ -137,7 +140,7 @@ scratch_p248/p3a_affine_nokw\probe.nv:9:5: error: [E_CONSUME_KEYWORD_MISSING]
 ```
 
 **(b) связывание С `consume`** (`consume h = Handle { x: 1 }`,
-`scratch_p248/p3b_affine_kw/probe.nv`):
+`docs/plans/repro/p248/p3b_affine_kw.nv.txt`):
 
 ```
 ok: scratch_p248/p3b_affine_kw\probe.nv
@@ -154,7 +157,7 @@ PASS: 1  FAIL: 0
 ### 2.4 — линейный тип (`consume value`) БЕЗ единого consume-метода
 
 `type Handle consume value { x int }`, ни `@close`, ни `@cleanup`, биндинг
-`consume h = Handle { x: 1 }` (`scratch_p248/p3c_linear_nokw/probe.nv`):
+`consume h = Handle { x: 1 }` (`docs/plans/repro/p248/p3c_linear_nokw.nv.txt`):
 
 ```
 scratch_p248/p3c_linear_nokw\probe.nv:3:1: error: [D133-empty-consume]
@@ -214,7 +217,7 @@ bound'ом в корпусе. Единственная смежная форма
 обобщённом ТИПЕ (T приходит от типа-носителя, без bound-протокола), не
 свободная функция с `[T Bound]`.
 
-**Проба** (`scratch_p248/p4_generic_extern_bound/probe.nv`):
+**Проба** (`docs/plans/repro/p248/p4_generic_extern_bound.nv.txt`):
 
 ```nova
 extern "nova" fn[T Ints] nova_probe_double(x T) -> T
