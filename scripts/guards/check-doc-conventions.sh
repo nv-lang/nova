@@ -99,18 +99,26 @@ if [ -d "$spec_dir" ]; then
     shopt -s nullglob
     for enf in "$spec_dir"/*.md; do
         case "$enf" in *.ru.md) continue ;; esac
-        base="$(basename "$enf" .md)"
+        # basename как bash-подстановка, не форк (план 275-Ф.1, гейт-стоимость:
+        # basename+head+3 grep на файл были доминирующим временем секции).
+        base="${enf##*/}"; base="${base%.md}"
         ruf="$spec_dir/$base.ru.md"
         [ -f "$ruf" ] || continue  # нет ru-оригинала — это ловит check-doc-language-pairs.sh
         spec_pairs_checked=$((spec_pairs_checked + 1))
-        head15="$(head -15 "$enf")"
+        fname="${enf##*/}"
+        # Один awk вместо head+3 grep: те же три условия за один проход по
+        # первым 15 строкам файла (exit после FNR>15 всё равно доходит до END).
+        read -r has_header has_rev has_date < <(awk '
+            FNR > 15 { exit }
+            index($0, "Informative translation; the Russian text is normative.") > 0 { hh = 1 }
+            $0 ~ /source_rev:[[:space:]]*[[:alnum:]]/ { hr = 1 }
+            $0 ~ /source_date:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}/ { hd = 1 }
+            END { printf "%d %d %d\n", hh+0, hr+0, hd+0 }
+        ' "$enf")
         ok=1
-        echo "$head15" | grep -qF "Informative translation; the Russian text is normative." \
-            || { red "spec/$(basename "$enf"): нет шапки «Informative translation; the Russian text is normative.» в первых 15 строках"; ok=0; }
-        echo "$head15" | grep -qE 'source_rev:[[:space:]]*[[:alnum:]]' \
-            || { red "spec/$(basename "$enf"): нет frontmatter source_rev: в первых 15 строках"; ok=0; }
-        echo "$head15" | grep -qE 'source_date:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}' \
-            || { red "spec/$(basename "$enf"): нет frontmatter source_date: (YYYY-MM-DD) в первых 15 строках"; ok=0; }
+        [ "$has_header" = "1" ] || { red "spec/$fname: нет шапки «Informative translation; the Russian text is normative.» в первых 15 строках"; ok=0; }
+        [ "$has_rev" = "1" ] || { red "spec/$fname: нет frontmatter source_rev: в первых 15 строках"; ok=0; }
+        [ "$has_date" = "1" ] || { red "spec/$fname: нет frontmatter source_date: (YYYY-MM-DD) в первых 15 строках"; ok=0; }
         [ "$ok" -eq 0 ] && spec_violations=$((spec_violations + 1))
     done
     shopt -u nullglob
@@ -132,7 +140,10 @@ if [ -f "$published_list" ]; then
     pair_violations=0
     while IFS= read -r raw || [ -n "$raw" ]; do
         line="${raw%%#*}"
-        line="$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+        # Обрезка пробелов bash-подстановкой вместо форка sed НА КАЖДУЮ строку
+        # (план 275-Ф.1, гейт-стоимость).
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
         [ -z "$line" ] && continue
         pair_count=$((pair_count + 1))
         en="$guide_dir/$line.md"
@@ -161,7 +172,8 @@ discovered_guide_pairs=""
 if [ -d "$guide_dir" ]; then
     shopt -s nullglob
     for enf in "$guide_dir"/*.md; do
-        base="$(basename "$enf" .md)"
+        # basename как bash-подстановка, не форк (план 275-Ф.1, гейт-стоимость).
+        base="${enf##*/}"; base="${base%.md}"
         case "$base" in *.ru) continue ;; esac
         ruf="$guide_dir/$base.ru.md"
         [ -f "$ruf" ] || continue
@@ -200,7 +212,7 @@ if [ -n "$DIFF_BASE" ] && git -C "$ROOT" cat-file -e "$DIFF_BASE^{commit}" >/dev
         shopt -s nullglob
         for enf in "$spec_dir"/*.md; do
             case "$enf" in *.ru.md) continue ;; esac
-            base="$(basename "$enf" .md)"
+            base="${enf##*/}"; base="${base%.md}"
             [ -f "$spec_dir/$base.md" ] || continue
             check_pair_same_commit "spec/$base.ru.md" "spec/$base.md" "$base"
         done
@@ -242,8 +254,12 @@ ratchet_check() {  # key current_value description
 plans_dir="$ROOT/docs/plans"
 plan_missing_status=0
 if [ -d "$plans_dir" ]; then
+    # `sed 's#.*/##'` вместо `xargs -n1 basename` (план 275-Ф.1, гейт-стоимость):
+    # 466 файлов без **Статус:** на момент замера — 466 форков внешнего
+    # basename на КАЖДОЕ имя, доминирующие расходы стража (~30-40с из ~42с).
+    # sed делает то же самое ОДНИМ процессом на весь список.
     plan_missing_status=$(grep -L -E '^\*\*Статус:\*\*' "$plans_dir"/*.md 2>/dev/null \
-        | xargs -n1 basename 2>/dev/null \
+        | sed 's#.*/##' \
         | grep -vE '^(README\.md|STATUS\.md)$' \
         | grep -vE '(-notes|-progress|-execution-plan|-session[^.]*|-history)\.md$' \
         | grep -cE '^[0-9]')
@@ -284,19 +300,25 @@ ratchet_check plans_links "$plans_links" "кликабельные ссылки 
 # ---------------------------------------------------------------------
 # 5. code_block_identity (ratchet): байт-идентичность ```-фенсов пар.
 # ---------------------------------------------------------------------
-extract_code_fences() {  # file
-    awk '/^```/{c++; next} c%2==1{print}' "$1" 2>/dev/null
+# fences_match: ОДИН awk на пару вместо ДВУХ (extract_code_fences на каждую
+# сторону + сравнение строк в bash) — план 275-Ф.1, гейт-стоимость: при ~35
+# парах это было 70 форков awk, доминирующие расходы секции (~5с из ~21с).
+# awk сам читает ОБА файла (два позиционных аргумента, FNR==1 отличает
+# файл от файла) и сравнивает извлечённые фенсы построчно, не выходя из
+# процесса — исход тот же самый (байт-в-байт список строк внутри нечётных
+# ```-блоков), только за один форк, а не за два плюс сравнение в bash.
+fences_match() {  # file1 file2 -> exit 0 если фенсы совпадают, 1 если нет
+    awk '
+        FNR == 1 { fidx++ }
+        /^```/ { c[fidx]++; next }
+        { if (c[fidx] % 2 == 1) buf[fidx] = buf[fidx] $0 "\n" }
+        END { exit (buf[1] == buf[2]) ? 0 : 1 }
+    ' "$1" "$2" 2>/dev/null
 }
 code_block_mismatch_pairs=0
 mismatch_names=""
 for name in $discovered_guide_pairs; do
-    # №321: сравнение В ПАМЯТИ, без временных файлов. Прежняя схема делала
-    # по два mktemp на пару (52 файла за прогон) и на Windows/MSYS давала
-    # гонку: страж на НЕИЗМЕННОМ дереве отвечал по-разному от прогона к
-    # прогону. Командная подстановка детерминирована и не зависит от ФС.
-    fences_en="$(extract_code_fences "$guide_dir/$name.md")"
-    fences_ru="$(extract_code_fences "$guide_dir/$name.ru.md")"
-    if [ "$fences_en" != "$fences_ru" ]; then
+    if ! fences_match "$guide_dir/$name.md" "$guide_dir/$name.ru.md"; then
         code_block_mismatch_pairs=$((code_block_mismatch_pairs + 1))
         mismatch_names="$mismatch_names docs/guide/$name"
     fi
@@ -305,12 +327,10 @@ if [ -d "$spec_dir" ]; then
     shopt -s nullglob
     for enf in "$spec_dir"/*.md; do
         case "$enf" in *.ru.md) continue ;; esac
-        base="$(basename "$enf" .md)"
+        base="${enf##*/}"; base="${base%.md}"
         ruf="$spec_dir/$base.ru.md"
         [ -f "$ruf" ] || continue
-        fences_en="$(extract_code_fences "$enf")"
-        fences_ru="$(extract_code_fences "$ruf")"
-        if [ "$fences_en" != "$fences_ru" ]; then
+        if ! fences_match "$enf" "$ruf"; then
             code_block_mismatch_pairs=$((code_block_mismatch_pairs + 1))
             mismatch_names="$mismatch_names spec/$base"
         fi
@@ -408,22 +428,9 @@ check_mixed() {  # file
         END{print c+0}' "$1")
     if [ "$n" -gt 1 ]; then
         mixed_language_files=$((mixed_language_files + 1))
-        mixed_names="$mixed_names $(basename "$1")($n)"
+        mixed_names="$mixed_names ${1##*/}($n)"
     fi
 }
-check_mixed "$ROOT/README.md"
-if [ -d "$guide_dir" ]; then
-    for f in "$guide_dir"/*.md; do
-        case "$f" in *.ru.md) continue ;; esac
-        check_mixed "$f"
-    done
-fi
-if [ -d "$spec_dir" ]; then
-    for f in "$spec_dir"/*.md; do
-        case "$f" in *.ru.md) continue ;; esac
-        check_mixed "$f"
-    done
-fi
 # ---------------------------------------------------------------------
 # 7б. code_comment_ru (ratchet): русские комментарии ВНУТРИ ```-блоков
 #     английских файлов. Класс, который правило байт-идентичности сторон
@@ -434,29 +441,57 @@ fi
 # ---------------------------------------------------------------------
 code_comment_ru_files=0
 ccru_names=""
-check_ccru() {  # file
+# README и guide-файлы проверяются ОБОИМИ правилами (7 и 7б) — раньше это
+# было ДВА форка awk на файл (check_mixed + check_ccru), один проход по
+# файлу каждый. План 275-Ф.1 (гейт-стоимость): при ~30 guide-файлах + README
+# это было ~62 форка awk, вторая по весу статья расходов стража (~3.6с из
+# ~21с). Один awk считает ОБА счётчика за ОДИН проход по строкам — состояние
+# `f` (внутри/вне фенса) то же самое, что было у двух раздельных скриптов,
+# просто ветвление на f/!f сведено в один if/else вместо двух независимых
+# фильтров `f{next}` / `!f{next}` в двух процессах. spec-файлы (правило 7б
+# на них не действует) по-прежнему идут через check_mixed в одиночку.
+check_mixed_and_ccru() {  # file
     [ -f "$1" ] || return 0
-    # Пометки фаз планов («Ф.4», «Ф.6а») — идентификаторы-адреса, а не проза:
-    # законны и внутри примеров, как и в тексте вне блоков.
-    n=$(awk '
-        /^```/{f=!f; next}
-        !f {next}
+    read -r n_out n_in < <(awk '
+        /^```/ { f = !f; next }
         {
-            line=$0
-            gsub(/Ф\.[0-9]+[^ ,)\]]*/, "", line)
-            if (line ~ /[\xd0-\xd1]/) c++
+            if (!f) {
+                line = $0
+                gsub(/\]\([^)]*\)/, "]", line)
+                gsub(/`[^`]*`/, "", line)
+                gsub(/Ф\.[0-9]+[^ ,)\]]*/, "", line)
+                gsub(/[A-Za-z0-9_]+-амендмент/, "", line)
+                gsub(/§[0-9]+[^ ,)\]]*/, "", line)
+                gsub(/Русский/, "", line)
+                if (line ~ /[\xd0-\xd1]/) c_out++
+            } else {
+                line2 = $0
+                gsub(/Ф\.[0-9]+[^ ,)\]]*/, "", line2)
+                if (line2 ~ /[\xd0-\xd1]/) c_in++
+            }
         }
-        END{print c+0}' "$1")
-    if [ "$n" -gt 0 ]; then
+        END { printf "%d %d\n", c_out+0, c_in+0 }
+    ' "$1")
+    if [ "$n_out" -gt 1 ]; then
+        mixed_language_files=$((mixed_language_files + 1))
+        mixed_names="$mixed_names ${1##*/}($n_out)"
+    fi
+    if [ "$n_in" -gt 0 ]; then
         code_comment_ru_files=$((code_comment_ru_files + 1))
-        ccru_names="$ccru_names $(basename "$1")($n)"
+        ccru_names="$ccru_names ${1##*/}($n_in)"
     fi
 }
-check_ccru "$ROOT/README.md"
+check_mixed_and_ccru "$ROOT/README.md"
 if [ -d "$guide_dir" ]; then
     for f in "$guide_dir"/*.md; do
         case "$f" in *.ru.md) continue ;; esac
-        check_ccru "$f"
+        check_mixed_and_ccru "$f"
+    done
+fi
+if [ -d "$spec_dir" ]; then
+    for f in "$spec_dir"/*.md; do
+        case "$f" in *.ru.md) continue ;; esac
+        check_mixed "$f"
     done
 fi
 [ -n "$ccru_names" ] && info "doc-conventions: русские комментарии в примерах английских страниц:$ccru_names"
