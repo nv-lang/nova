@@ -1,0 +1,141 @@
+import std.time.duration
+// Plan 172.14 F.2, atom A1 -- Nova-level half of the GC-truth measurement.
+//
+// The C harness (gc-inline-ptr-experiment.c) settles the regions that are
+// plain memory. This file covers the ones only Nova can produce: a value
+// struct carrying an inline GC pointer on a real generated stack frame, the
+// same inside a Vec backing buffer, and -- the one that matters -- the same
+// living across a suspension point on a FIBER stack, which is off the OS
+// stack and is only scanned because fiber_arena_win.c registers a custom
+// push_other_roots callback.
+//
+// `Held` is the stand-in for a stack-resident sum: it lowers to
+// `struct NovaValue_Held { nova_int tag; Nova_Blob* p; }` -- a tag word plus
+// an inline pointer to a GC object, which is exactly the layout F.2 would
+// give a non-recursive sum whose active variant carries a reference.
+//
+// Method, following the house pattern of spec_tests/conformance/gc_forced_collect.nv:
+// build a payload that is NOT an interned literal, drop every other route to
+// it, churn the heap hard, force full collections, and then check the payload
+// is intact. A collected object's block gets recycled by the churn, so
+// clobbered fields are the collection signal.
+//
+// NOT VACUOUS -- see NEGATIVE CONTROL below: the same churn and the same
+// integrity check, applied to a buffer whose only reference is an integer,
+// does report loss. Without that control a green run here would mean nothing.
+
+type Blob { mut a int, mut b int, mut c int, mut d int }
+
+// The shape under test: tag + inline GC pointer, by value.
+type Held value { ro tag int, ro p Blob }
+
+fn churn(rounds int, per int) -> int {
+    mut acc = 0
+    mut k = 0
+    while k < rounds {
+        mut garbage []str = []
+        mut j = 0
+        while j < per {
+            garbage.push("garbage_${j}_${k}")
+            j = j + 1
+        }
+        acc = acc + garbage.len()
+        gc.collect()
+        k = k + 1
+    }
+    acc
+}
+
+// The pointer must die with this frame; only the integer escapes.
+unsafe fn hide64() -> int {
+    ro raw = RawMem.alloc(64)
+    RawMem.fill(raw, 0xA5, 64)
+    raw as int
+}
+
+fn main() {
+    // ---- R1n: plain stack frame ----
+    ro h = Held { tag: 7, p: Blob { a: 1000, b: 1001, c: 1002, d: 1003 } }
+    ro c1 = churn(3, 1500)
+    ro ok1 = h.p().a() == 1000 && h.p().b() == 1001
+        && h.p().c() == 1002 && h.p().d() == 1003
+    print("R1n stack frame, inline ptr survives   -> ${ok1} (churned ${c1})")
+
+    // ---- R5n: inside a Vec backing buffer ----
+    mut v []Held = []
+    mut i = 0
+    while i < 64 {
+        v.push(Held { tag: i, p: Blob { a: 5000 + i, b: 1, c: 2, d: 3 } })
+        i = i + 1
+    }
+    ro c2 = churn(3, 1500)
+    mut okv = true
+    mut q = 0
+    while q < 64 {
+        ro e = v[q]
+        ro b = e.p()
+        if b.a() != 5000 + q { okv = false }
+        q = q + 1
+    }
+    print("R5n Vec element, inline ptr survives   -> ${okv} (churned ${c2})")
+
+    // ---- NEGATIVE CONTROL: address kept only as an integer ----
+    // A GC buffer whose sole reference is an `int` is invisible to the
+    // conservative scan, exactly like the XOR'd control in the C harness.
+    // If this reports "survived", the detector is blind and every other line
+    // above is worthless.
+    // Two things are needed to genuinely hide an address here, and the first
+    // attempt at this control got both wrong -- it reported 200/200 intact,
+    // i.e. proved nothing:
+    //   1. the pointer must not survive as a POINTER in any live frame, so the
+    //      allocation happens in a helper whose frame dies before the churn
+    //      and only the integer comes back;
+    //   2. the integer must be OBFUSCATED. A conservative collector does not
+    //      read Nova's static types: a bare `int` holding an address, sitting
+    //      in a GC-scanned `Vec[int]` backing buffer, is indistinguishable
+    //      from a pointer and retains its target. XOR breaks that.
+    // 64-byte blocks, so the string churn reuses the same size class; a 4 KiB
+    // block would likely never be recycled and would survive for the wrong
+    // reason.
+    mut ctl_alive = 0
+    mut ctl_total = 0
+    unsafe {
+        mut addrs []int = []
+        mut z = 0
+        while z < 200 {
+            addrs.push(hide64() ^ 0x5DEECE66D)
+            z = z + 1
+        }
+        ro c3 = churn(4, 2000)
+        ro probe = RawMem.alloc(64)
+        RawMem.fill(probe, 0xA5, 64)
+        mut w = 0
+        while w < 200 {
+            ro back = (addrs[w] ^ 0x5DEECE66D) as *mut u8
+            if RawMem.compare(back, probe, 64) == 0 { ctl_alive = ctl_alive + 1 }
+            ctl_total = ctl_total + 1
+            w = w + 1
+        }
+        print("CONTROL hidden-as-int: intact ${ctl_alive} / ${ctl_total} (churned ${c3})")
+    }
+
+    // ---- Rfn: across a suspension point on a fiber stack ----
+    mut ok_f = AtomicBool.new(false)
+    supervised {
+        spawn {
+            ro fh = Held { tag: 9, p: Blob { a: 7000, b: 7001, c: 7002, d: 7003 } }
+            // Park. The frame holding `fh` now lives on a suspended fiber
+            // stack, off the OS stack.
+            20.to_millis().sleep()
+            ro good = fh.p().a() == 7000 && fh.p().b() == 7001
+                && fh.p().c() == 7002 && fh.p().d() == 7003
+            ok_f.store(good)
+        }
+        spawn {
+            // Collect while the other fiber is parked.
+            2.to_millis().sleep()
+            ro _c = churn(4, 1500)
+        }
+    }
+    print("Rfn fiber stack, inline ptr survives   -> ${ok_f.load()}")
+}

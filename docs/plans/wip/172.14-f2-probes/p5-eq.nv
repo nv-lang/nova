@@ -1,0 +1,35 @@
+type Shape enum
+    | Circle(f64)
+    | Rect(f64, f64)
+
+type Tagged enum
+    | Text(str)
+    | Num(int)
+    | Blank
+
+type Colour enum Red | Green | Blue
+
+fn main() {
+    ro c1 = Circle(1.0)
+    ro c2 = Circle(2.0)
+    ro c3 = Circle(1.0)
+    ro r1 = Rect(1.0, 2.0)
+    ro r2 = Rect(1.0, 3.0)
+    print("Circle(1)==Circle(2) -> ${c1 == c2}")
+    print("Circle(1)==Circle(1) -> ${c1 == c3}")
+    print("Circle(1)==Rect      -> ${c1 == r1}")
+    print("Rect(1,2)==Rect(1,3) -> ${r1 == r2}")
+    ro t1 = Text("one")
+    ro t2 = Text("two")
+    ro t3 = Text("one")
+    print("Text(one)==Text(two) -> ${t1 == t2}")
+    print("Text(one)==Text(one) -> ${t1 == t3}")
+    print("Text(one)==literal   -> ${t1 == Text("two")}")
+    ro n1 = Num(5)
+    print("Num(5)==Num(5)       -> ${n1 == Num(5)}")
+    print("Num(5)==Num(6)       -> ${n1 == Num(6)}")
+    print("Num(5)==Blank        -> ${n1 == Blank}")
+    ro k = Red
+    print("Red==Red             -> ${k == Red}")
+    print("Red==Green           -> ${k == Green}")
+}

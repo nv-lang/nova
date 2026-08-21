@@ -1,0 +1,23 @@
+type Colour enum Red | Green | Blue
+
+fn pick_sum(i int) -> Colour {
+    if i % 3 == 0 { return Red }
+    if i % 3 == 1 { return Green }
+    Blue
+}
+
+fn main() {
+    ro n = 20000000
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        ro c = pick_sum(i)
+        match c {
+            Red => { acc = acc + 1 }
+            Green => { acc = acc + 2 }
+            Blue => { acc = acc + 3 }
+        }
+        i = i + 1
+    }
+    print("sum ${acc}")
+}
