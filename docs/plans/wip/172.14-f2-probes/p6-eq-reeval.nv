@@ -1,0 +1,26 @@
+type Tagged enum
+    | Text(str)
+    | Num(int)
+    | Blank
+
+fn bump(mut log Vec[int], v int) -> Tagged {
+    log.push(v)
+    Num(v)
+}
+
+fn main() {
+    mut log = Vec[int].new(4)
+    ro n1 = Num(5)
+    ro r = n1 == bump(log, 5)
+    print("result=${r} rhs_evaluated=${log.len()} times")
+
+    mut log2 = Vec[int].new(4)
+    ro t1 = Text("one")
+    ro r2 = t1 == Text("one")
+    print("text result=${r2}")
+
+    mut log3 = Vec[int].new(4)
+    ro b = Blank
+    ro r3 = b == bump(log3, 9)
+    print("blank result=${r3} rhs_evaluated=${log3.len()} times")
+}
