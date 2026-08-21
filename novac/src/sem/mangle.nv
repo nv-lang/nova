@@ -136,9 +136,10 @@ export fn c_callable(ctx Ctx, row int, subst []int) -> str
     consume s = StringBuilder.new(cap: 64)
     s.append("novac_fn_")
     s.append(fd.name)
-    for pt in ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt] {
+    for p in ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt] {
         s.append("__")
-        s.append(type_tag(ctx, pt, subst))
+        s.append(mode_tag(p.mode))
+        s.append(type_tag(ctx, p.type_id, subst))
     }
     // The RETURN type belongs in the name too: the oracle accepts two
     // callables that differ only by it (probed 2026-08-19), so leaving it
@@ -190,6 +191,28 @@ export fn subst_type(ctx Ctx, t int, subst []int) -> int {
         TkPrim | TkRecord | TkSum | TkApp | TkInfer => {}
     }
     t
+}
+
+/// The MODE of a parameter, inside a C name.
+///
+/// A parameter's mode is an axis of OVERLOADING (P14), so two callables of one
+/// name differing only by a mode are two C functions -- and until 2026-08-21
+/// they were one: `fn tag(c Cel)` beside `fn tag(mut c Cel)` emitted
+/// `novac_fn_tag__Cel__to_nova_int` twice and clang refused the unit. The same
+/// class the parameter TYPES closed on 2026-08-19, one axis later.
+///
+/// `ro` is UNMARKED on purpose: it is the default of the language, so every
+/// name of mode-free code is exactly what it was, and no baseline moves for a
+/// change that does not concern it.
+///
+/// Letters, not the language's words: the C name is OURS (274 section 7.0), and
+/// the spelling of a mode belongs to `builtins` alone (P5). `m_`/`c_` are
+/// fragments this door invents, like `__to_`.
+#realtime nogc
+fn mode_tag(m ParamMode) -> str => match m {
+    ModeRo => ""
+    ModeMut => "m_"
+    ModeConsume => "c_"
 }
 
 /// An identifier-safe tag for a type, for use INSIDE a C name.

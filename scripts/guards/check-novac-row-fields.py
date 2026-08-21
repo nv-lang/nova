@@ -64,7 +64,7 @@ def main():
     else:
         s = root / "novac" / "src"
         sem_files = [s / "sem" / "sem.nv", s / "sem" / "channel.nv", s / "sem" / "coerce.nv",
-                     s / "types" / "types.nv"]
+                     s / "sem" / "callables.nv", s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"
 

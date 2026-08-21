@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, DefKind, ParamMode, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -27,9 +27,13 @@ import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, b
 /// The same shape `check` builds with `UNKNOWN_TYPE` in the argument slots --
 /// same door, same order: one builder per stage of KNOWLEDGE, not one per kind
 /// of call. `from` is the index of the first argument child.
-fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope, chan CheckOut) -> []int {
-    mut out = []int.new()
-    out.push(recv_t)
+fn typed_call_key(kids []Node, from int, recv Node, recv_t int, ctx Ctx, scope Scope,
+                  chan CheckOut) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    // The receiver is parameter zero (plan 273), so it carries a CLASS like any
+    // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
+    // the precedent the whole mode axis generalizes from (P14 rule 2).
+    out.push(ArgSpec { type_id: recv_t, cls: arg_class(recv, scope) })
     out.append(typed_args(kids, from, ctx, scope, chan))
     out
 }
@@ -42,12 +46,12 @@ fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope, chan 
 /// A free call's key is exactly this, with no position zero; a method call's is
 /// this after the receiver. One rule, two callers, so the two spellings of a
 /// call cannot start disagreeing about what a key is.
-fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []int {
-    mut out = []int.new()
+fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []ArgSpec {
+    mut out = []ArgSpec.new()
     mut i = 0
     for c in kids {
         if i >= from && is_expr_kind(c.kind_of()) {
-            out.push(type_of(c, ctx, scope, chan))
+            out.push(ArgSpec { type_id: type_of(c, ctx, scope, chan), cls: arg_class(c, scope) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -55,6 +59,36 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []i
         i += 1
     }
     out
+}
+
+/// WHAT this argument is, for rule P14: a place, a temporary, or a promise.
+///
+/// The classes are decided by the SHAPE of the expression and, for a name, by
+/// how it was bound -- which is why the scope carries the mode. An owned
+/// temporary is a value nobody else holds: a literal, a call result, a
+/// constructor, the value of an operator or of a `match`. A name answers with
+/// its binding. A FIELD or an index of something is judged conservatively as
+/// `ro`: it is a place, but whether it is a MUTABLE place is a question about
+/// its owner, and answering it wrongly would hand a caller a write it never
+/// asked for -- `ro` is the class every mode accepts, so a conservative answer
+/// costs specificity and never correctness.
+#realtime nogc
+fn arg_class(e Node, scope Scope) -> ArgClass {
+    ro k = e.kind_of()
+    if k == NodeKind.Name {
+        ro nm = expr_leaf_name(e)
+        // `true`/`false` are literals wearing a name: they are bound nowhere,
+        // and a temporary is exactly what they are.
+        if !scope.is_bound(nm) { return ArgClass.ArgOwnedTemp }
+        return match scope.mode_of_name(nm) {
+            ModeRo => ArgClass.ArgRo
+            ModeMut => ArgClass.ArgMut
+            ModeConsume => ArgClass.ArgConsume
+        }
+    }
+    if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
+    if k == NodeKind.FieldAccess { return ArgClass.ArgRo }
+    ArgClass.ArgOwnedTemp
 }
 
 /// Type of an expression over the tiny registry lattice. Every kind is
@@ -105,7 +139,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
         // in sync (the language overloads on parameters -- the pair
         // (receiver, name) was never enough: `str.contains` has both
         // `(needle str)` and `(c char)`).
-        ro key = typed_call_key(kids, 3, type_of(kids[0], ctx, scope, chan), ctx, scope, chan)
+        ro key = typed_call_key(kids, 3, kids[0], type_of(kids[0], ctx, scope, chan), ctx, scope, chan)
         match ctx.fns.lookup(mname, key, CallForm.MethodCall) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
             // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote

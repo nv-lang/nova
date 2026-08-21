@@ -78,6 +78,94 @@ export type TypeDef value {
     row_cnt int /// How many rows; 0 for primitives.
 }
 
+/// The MODE of a parameter: the third axis of mutability -- and an axis of
+/// OVERLOADING.
+///
+/// `fn f(x T)`, `fn f(mut x T)` and `fn f(consume x T)` are three legal
+/// callables of ONE name (10-overloading.md, the 2026-07-06 amendment to the
+/// D326 revision, rule P13), and which one a call selects is decided by WHAT
+/// the argument is, not by its type. The receiver is parameter zero (plan 273),
+/// so the same axis answers `@m` / `mut @m` / `consume @m` -- which is how std
+/// declares `Vec[T] @ptr() -> *T` beside `Vec[T] mut @ptr() -> *mut T`.
+export type ParamMode enum
+    | ModeRo /// the default: a read-only view, nothing is written through it
+    | ModeMut /// mutation the caller sees (in-out)
+    | ModeConsume /// ownership transfer; `consume` implies `mut`
+
+/// How SPECIFIC a mode is when several candidates fit (P14 filter 4:
+/// `consume` beats `mut` beats `ro`).
+///
+/// A number and not a comparison chain: the winner is the row with the highest
+/// TOTAL over its positions, and a tie is refused as ambiguous rather than
+/// broken by an order nobody declared.
+#realtime nogc
+export fn ParamMode @specificity() -> int => match @ {
+    ModeRo => 0
+    ModeMut => 1
+    ModeConsume => 2
+}
+
+/// One parameter of a callable: its type AND its mode, in one row.
+///
+/// Two parallel vectors would admit a state the language does not have -- a
+/// mode out of step with its type -- and this plan has paid for that shape
+/// twice already (P23). A range of these rows is one range.
+export type ParamDef value {
+    type_id int /// the parameter's type; -1 = unreadable, and backends ice on it rather than invent one
+    mode ParamMode /// as written; `ModeRo` when the declaration writes nothing
+}
+
+/// WHAT an argument IS at a call site -- the classes rule P14 filters on.
+///
+/// Not its type: `tag(r)` and `tag(m)` have the same argument type and select
+/// different callables. That is the whole point of the axis, and it is why the
+/// checker has to know how a name was BOUND, not only what it holds.
+export type ArgClass enum
+    | ArgRo /// a `ro` binding, or a place novac judges conservatively
+    | ArgMut /// a `mut` binding -- a mutable place
+    | ArgOwnedTemp /// an owned temporary: a call result, a literal, a constructor
+    | ArgConsume /// a binding declared `consume` -- its form IS the promise
+
+/// One argument of a call: its type and its class.
+export type ArgSpec value {
+    type_id int /// the argument's type, or UNKNOWN_TYPE while the position is not typed
+    cls ArgClass /// which class P14 filters this position by
+}
+
+/// Rule P14: may a parameter of this MODE take an argument of this CLASS?
+///
+/// The rule as the spec states it, arm by arm:
+///   * `ro` takes ANYTHING -- it promises nothing about the value's future, so
+///     it is always applicable and always least specific;
+///   * `mut` needs a mutable PLACE. An owned temporary has nowhere to write
+///     back to (D133: an rvalue into a mut view is an error) and a `ro`
+///     binding forbids the write;
+///   * `consume` moves ownership, so it takes a temporary (nobody else holds
+///     it) or a binding DECLARED `consume`. Never a live `ro`/`mut` binding:
+///     silent consumption of a binding not declared for it is exactly what the
+///     rule refuses;
+///
+/// The axis has exactly three modes. `uninit` is not one of them: measured
+/// 2026-08-21, the oracle refuses `fn f(uninit v T)` outright and reads
+/// `fn f(v uninit T)` as a TYPE -- so it belongs to the type and to a pointer's
+/// pointee (`*mut uninit T`), never to this rule.
+#realtime nogc
+export fn mode_admits(m ParamMode, c ArgClass) -> bool => match m {
+    ModeRo => true
+    ModeMut => match c {
+        ArgMut => true
+        ArgConsume => true
+        ArgRo => false
+        ArgOwnedTemp => false
+    }
+    ModeConsume => match c {
+        ArgOwnedTemp => true
+        ArgConsume => true
+        ArgRo => false
+        ArgMut => false
+    }
+}
+
 /// One top-level declaration of the unified name registry: what a name IS.
 export type Def value {
     kind DefKind /// What this name is — drives the payload's meaning.
@@ -312,284 +400,6 @@ export type CallForm enum
     | FreeCall /// `f(x)`: only a callable declared without a receiver can answer
     | MethodCall /// `x.f(y)`: only a callable declared WITH a receiver can answer
 
-/// How a callable lookup turned out. A sum, not an int code: "not found"
-/// and "more than one candidate" are different answers, and both must be
-/// representable (П13.5; a silent int default is the №652 class).
-///
-/// EVERY variant carries a ROW, never a type id (owner's review 2026-08-16).
-/// Two reasons. First, the pair (receiver, name) does NOT determine a return
-/// type while the language overloads on PARAMETERS: two callables can share
-/// the pair and differ in their parameters, so a door that answered with a
-/// type would be claiming more than it can know. It answers with the
-/// candidate instead, and the caller reads `ret_id` off the row once the
-/// candidate is settled. Second, a row gives the caller the parameters too,
-/// which is exactly what choosing between overloads needs.
-///
-/// `FnOverloaded` is not "ambiguous": it means the set has more than one
-/// member and picking needs the ARGUMENT types, which `check` will have when
-/// it gets local typing (274.3 wave 3, finding C9). Today novac refuses such
-/// a call honestly rather than guessing. The payload is the FIRST row of the
-/// set — the whole set is `candidates_from`, which is not a door and may
-/// allocate; the door itself stays allocation-free (П18).
-export type FnLookup enum
-    | FnFound(int)
-    | FnUnknown
-    | FnOverloaded(int)
-
-/// One callable — plan 273 form: a method IS a function whose first
-/// parameter is the receiver, so there is ONE row shape for both.
-///
-/// The receiver is NOT a field of this row (owner's check 2026-08-16: "in
-/// plan 273 the receiver is a parameter like all the others — are you sure
-/// you should be matching on it?"). It is `params[param_off]` of a method,
-/// and the row says only WHETHER the first parameter is a receiver. The
-/// earlier shape kept `recv_id` and stored no other parameter at all:
-/// `harvest_fn` validated the parameter types and then threw them away, so
-/// the receiver was not "a parameter like the others" — it was the only
-/// parameter novac remembered. Keeping them all is also what overload
-/// resolution needs later; today it is what makes the form honest.
-export type FnDef value {
-    name str /// name as written in the declaration
-    ret_id int /// return type id; -1 = none declared (legal for main only)
-    param_off int /// first parameter of this callable in FnTable.params
-    param_cnt int /// how many parameters, INCLUDING the receiver when there is one
-    has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
-    tparam_off int /// start of this callable's type parameters in FnTable.tparams
-    tparam_cnt int /// how many type parameters it declares; 0 = not generic
-    next_row int /// next row carrying the SAME name, or -1; see FnTable
-}
-
-/// WHERE THE RECEIVER MARK LIVES, and why it is one bit on the callable
-/// rather than a flag on each parameter (owner, 2026-08-16, twice).
-///
-/// First reading: a bool on the function looked like a privileged fact about
-/// one element stored on the container, so the mark moved onto the parameter
-/// (`ParamDef.is_recv`). That was worse, and the owner said why: a per
-/// parameter flag ADMITS STATES THE LANGUAGE FORBIDS — "the third parameter
-/// is the receiver", "two receivers" — and the invariant then rests on
-/// discipline instead of on construction.
-///
-/// The resolution: the POSITION is not data. Plan 273 §4.4 fixes it — "the
-/// receiver is the first parameter, on the first step without exceptions" —
-/// so position is a rule of the language, not a fact of this file. The only
-/// datum left is WHETHER a receiver is there, which is a zero-or-one fact
-/// about the CALLABLE. One bool on FnDef expresses exactly that and nothing
-/// illegal: there is no way to say "the third one". Parameters go back to
-/// being plain type ids, and the receiver is `params[param_off]` when
-/// `has_recv` — a fact of the DECLARATION: the author wrote this callable with
-/// a receiver. Resolution does not read it and must not: a method IS a function
-/// whose first parameter is the receiver (plan 273 §4.4), so `@fits` compares
-/// positions and nothing else (owner, 2026-08-19). Kept because it is not
-/// derivable from the parameter list, and a diagnostic that wants to say "this
-/// is a method, call it as `x.f()`" has nowhere else to read it from.
-
-/// THE callable registry: file functions and the method signatures READ
-/// from std declarations live in the SAME rows (П5: std names are data,
-/// not compiler knowledge).
-///
-/// The door takes the NAME only, and rows sharing a name form a chain
-/// through `next_row`; the receiver is compared as an INTEGER while walking
-/// it. The first shape built the key as text ("${recv}.${name}") — the
-/// owner's question 2026-08-16 ("what if there is no receiver?") holds,
-/// since a free function keys as -1 and type ids are never negative, but the
-/// shape was wrong for two better reasons: it allocated and formatted a
-/// string on EVERY lookup, in the hottest path there is (П14), and it
-/// encoded structure into text right after the architecture spent a whole
-/// rule on "identity is not a name" (§4а). A chain costs one integer compare
-/// per candidate and allocates nothing; chains are 1-3 long because they
-/// only hold callables that literally share a name.
-///
-/// EVERY declaration gets its own row, including a second one for the same
-/// (receiver, name). The first shape kept a `dup` flag on the winner and
-/// DROPPED the loser — so the compiler knew an overload existed but could no
-/// longer say which signatures collided, and no diagnostic could ever name
-/// them (owner's review 2026-08-16). Ambiguity is now a property of the
-/// chain, not a flag on a row.
-export type FnTable {
-    tparams []str /// type-parameter NAMES of every callable, grouped by tparam_off/cnt
-    rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
-    params []int /// parameter type ids of every callable, addressed by FnDef.param_off/param_cnt
-    heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
-    own_cnt int /// how many LEADING rows this file declared; the rest are signatures read from declarations
-}
-
-/// An empty callable registry.
-export fn FnTable.new() -> FnTable =>
-    { rows: []FnDef.new(), params: []int.new(), heads: NameTable.new(NamespaceId.NsCallables),
-      tparams: []str.new(), own_cnt: 0 }
-
-/// Does novac compile this callable's BODY?
-///
-/// The file's own callables are registered by `collect_types`, the signatures of
-/// std methods by `harvest_methods` AFTER it, so the file's rows are a PREFIX
-/// and the boundary is ONE number. A bit per row would admit "the third row is
-/// theirs, the fourth is ours" -- a state that cannot occur; the same argument
-/// put the receiver mark on the callable instead of on each parameter (§10.3в).
-/// Nor is this a derived field on a ROW (П22): it is a fact about the TABLE,
-/// like its length, answered in O(1).
-///
-/// WHY CHECK ASKS AT ALL. Every C name is ours now (owner, 2026-08-20: there is
-/// no `foreign` in that sense -- Nova's external declarations are
-/// `extern "C" fn` / `extern "nova" fn`, and they say so IN THE SOURCE). A call
-/// to a body novac does not emit therefore names a symbol that exists nowhere,
-/// so the subset declines it by name instead of emitting C that cannot link.
-#realtime nogc
-export fn FnTable @compiles_body(row int) -> bool => row < @own_cnt
-
-/// Does this row take a call with these argument types?
-///
-/// ONE rule for every callable: the arity first, then each parameter against
-/// the argument standing in the same position. A receiver is position ZERO and
-/// nothing else — plan 273 §4.4 fixes it there — so `x.f(a)` asks with the
-/// types of `[x, a]` exactly as `f(x, a)` would. There is no receiver-shaped
-/// question anywhere in this table any more: it was the last one (owner,
-/// 2026-08-19, after the same correction landed in the mangling).
-///
-/// A position the caller cannot type yet is passed as -1 and fits anything.
-/// `check` still lacks local types in some places (274.3/C9), and refusing
-/// what it cannot judge would be a guess in the other direction. ARITY,
-/// however, is always known at a call site, so it discriminates from today.
-#realtime nogc
-fn FnTable @fits(row int, arg_ids []int, form CallForm) -> bool {
-    ro fd = @rows[row]
-    // THE FORM FIRST. A free call cannot reach a callable declared with a
-    // receiver, and a method call cannot reach one declared without: the
-    // language keeps the two spellings apart, so resolution does too. Without
-    // this an arity coincidence was enough -- `byte_len("abc")` found
-    // `str @byte_len()` (probe 2026-08-20).
-    ro wants_recv = match form {
-        FreeCall => false
-        MethodCall => true
-    }
-    if fd.has_recv != wants_recv {
-        return false
-    } else {
-        // The declaration was written in the form the call site uses.
-    }
-    if fd.param_cnt != arg_ids.len() {
-        return false
-    } else {
-        // Same arity: the positions can be compared one by one below.
-    }
-    for i in 0..fd.param_cnt {
-        if arg_ids[i] >= 0 && @params[fd.param_off + i] != arg_ids[i] {
-            return false
-        } else {
-            // Either this position is not typed yet (UNKNOWN_TYPE), or it matches.
-        }
-    }
-    true
-}
-
-/// Which substitution slot this name binds in this callable, or None when the
-/// name is not one of its type parameters.
-///
-/// A type parameter is a BINDER, and its identity inside the declaration is its
-/// NAME — the same reading `Scope.bind(name, type)` gives a local. The index is
-/// the slot: `fn f[T, U]` binds T to 0 and U to 1, and a call's type arguments
-/// stand in the same order (plan 274 E2-b2: turbofish is mandatory, so the
-/// order is the whole mapping).
-#realtime nogc
-export fn FnTable @tparam_index(row int, name str) -> Option[int] {
-    ro fd = @rows[row]
-    for i in 0..fd.tparam_cnt {
-        // BINDER-OK: a type parameter is a binder of THIS declaration, so the
-        // set is bounded by its own arity, not by the registry.
-        if @tparams[fd.tparam_off + i] == name {
-            return Some(i)
-        } else {
-            // Not this slot; the next one may bind the name.
-        }
-    }
-    None
-}
-
-
-/// Register one callable. A repeat (receiver, name) is NOT merged and NOT
-/// dropped: it becomes its own row in the same chain, so the collision stays
-/// describable. Silent choosing between overloads is not allowed anywhere.
-/// `param_ids` carries the receiver FIRST when `has_recv` — the plan 273
-/// order (§4.4 fixes the position, so the caller has no other place to put
-/// it, and no way to name a second one).
-export fn FnTable mut @add(name str, ret_id int, has_recv bool, param_ids []int,
-                          tparam_names []str) -> () {
-    ro head = @heads.find(name)
-    ro off = @params.len()
-    // Whole slice at once: std does the copy (nv-coding-style section 18a --
-    // a counted push loop is the red flag it names).
-    @params.append(param_ids)
-    @heads.put(name, @rows.len())
-    ro toff = @tparams.len()
-    @tparams.append(tparam_names)
-    @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
-                       tparam_off: toff, tparam_cnt: tparam_names.len(), next_row: head })
-}
-
-/// Whether a callable with this name exists at all.
-///
-/// The weakest question there is, and deliberately so: `check` walks the tree
-/// before local typing, so at that point it has neither the receiver's type nor
-/// the arguments'. A typo in the NAME is caught here; WHICH callable runs is
-/// settled later by `@lookup`, which asks with types.
-///
-/// Until 2026-08-19 this answered only about names that had a receiver — a
-/// receiver-shaped question in a form that has no receivers. Under plan 273 a
-/// method IS a function whose first parameter is the receiver, so "is there a
-/// callable called this" is the whole question, and `x.f()` failing to match
-/// any row is reported by the typed pass, not guessed here.
-#realtime nogc
-export fn FnTable @has_name(name str) -> bool {
-    @heads.find(name) >= 0
-}
-
-/// The candidate row for this call — or why there is none to name.
-///
-/// ONE DOOR, and it knows nothing about receivers: `x.f(a)` asks with the types
-/// of `[x, a]`, `f(a)` asks with `[a]`, and both take the same path through the
-/// same code. Counts the chain instead of trusting a flag: more than one row
-/// fitting one call is an overload SET, and its first row is handed back so the
-/// caller can enumerate the set without searching again.
-#realtime nogc
-export fn FnTable @lookup(name str, arg_ids []int, form CallForm) -> FnLookup {
-    mut first = -1
-    mut found = 0
-    mut r = @heads.find(name)
-    while r >= 0 {
-        ro row = r
-        r = @rows[row].next_row
-        if !@fits(row, arg_ids, form) { continue }
-        found += 1
-        // Only the FIRST fitting row is handed back (candidates_from walks on
-        // from it); later members are counted, not remembered.
-        if found > 1 { continue }
-        first = row
-    }
-    match found {
-        0 => FnLookup.FnUnknown
-        1 => FnLookup.FnFound(first)
-        // Any count above one: the set is enumerated by `candidates_from`,
-        // and the caller decides whether it can narrow it.
-        _ => FnLookup.FnOverloaded(first)
-    }
-}
-
-/// Every candidate of an overload set, starting from the row `lookup` handed
-/// back. NOT a door: it allocates, and it may — it runs once, when a
-/// diagnostic is being built, never in the hot path (П18 draws the line at
-/// functions that ASK the table; this one is given its starting row and only
-/// walks). Every reference prints the set rather than the first member:
-/// rustc lists the candidate impls, C++ prints the candidate functions.
-export fn candidates_from(fns FnTable, first int, arg_ids []int, form CallForm) -> []int {
-    mut out = []int.new()
-    mut r = first
-    while r >= 0 {
-        ro row = r
-        r = fns.rows[row].next_row
-        if !fns.fits(row, arg_ids, form) { continue }
-        out.push(row)
-    }
-    out
-}
 
 /// File-level semantic context. Row STORAGE is flat id-indexed vectors of
 /// VALUE row records (rustc IndexVec camp; the architecture's "storage
@@ -811,7 +621,7 @@ export fn collect_types(file Node) -> Ctx {
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
-            mut param_ids = []int.new()
+            mut param_ids = []ParamDef.new()
             for pn in fk {
                 if pn.kind_of() != NodeKind.Param { continue }
                 ro pk = branch_children(pn)
@@ -831,7 +641,7 @@ export fn collect_types(file Node) -> Ctx {
                     // the E2 subset does not read) keeps the -1 sentinel: the
                     // slot must still exist so param_off/param_cnt line up, and
                     // backends ice on -1 rather than invent a type (#652).
-                    param_ids.push(-1)
+                    param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
                     continue
                 }
                 // [LEGACY-#676] var-index-method: same binding hop as in
@@ -839,7 +649,7 @@ export fn collect_types(file Node) -> Ctx {
                 // through the CONTAINER.
                 ro tnode = pk[tat]
                 if tnode.kind_of() != NodeKind.LeafNode {
-                    param_ids.push(-1)
+                    param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
                     continue
                 }
                 // An unknown type is STORED as UNKNOWN_TYPE and said so:
@@ -847,10 +657,14 @@ export fn collect_types(file Node) -> Ctx {
                 // PARAMETER of this declaration is not unknown -- it is the
                 // row built above.
                 ro pname = leaf_text(tnode)
-                param_ids.push(match tparam_slot(pname, tps) {
+                ro pt = match tparam_slot(pname, tps) {
                     Some(slot) => param_rows[slot]
                     None => defs.type_id(pname) ?? UNKNOWN_TYPE
-                })
+                }
+                // Type AND mode in one row: the mode is an axis of overloading
+                // (P14), so a collector that dropped it would make `f(x T)` and
+                // `f(mut x T)` one callable twice over.
+                param_ids.push(ParamDef { type_id: pt, mode: param_mode_at(pk) })
             }
             fns.add(fname, ret, false, param_ids, tps)
             ro frow = fns.rows.len() - 1

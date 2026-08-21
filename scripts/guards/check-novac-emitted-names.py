@@ -37,7 +37,14 @@ ALLOWED_PREFIX = ("Nova_", "nova_", "novac_", "NOVAC_", "_novac_")
 ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).
-                 "__", "__to_"}
+                 "__", "__to_",
+                 # MODE marks of a parameter inside the name (P14: a mode is an
+                 # axis of overloading, so two same-named callables differing
+                 # only by a mode are two C functions). Letters, not the
+                 # language's words: the C name is ours (274 section 7.0) and a
+                 # mode's spelling lives only in builtins (P5). `ro` carries no
+                 # mark at all -- it is the default, so no earlier name moved.
+                 "m_", "c_"}
 
 
 def main():

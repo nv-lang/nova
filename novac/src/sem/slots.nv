@@ -93,7 +93,6 @@ export fn decl_name_at(kids []Node) -> Option[int] {
 ///     mut v int       legal -- and the one std actually uses, 131 times
 ///     consume v int   legal -- 4 times in std
 ///     ro v int        parses, then E_REDUNDANT_PARAM_RO (`ro` is default)
-///     uninit v int    parses
 ///     own v int       "expected `,`, got identifier" -- NOT a mode
 ///     zzz v int       the same, so the set is closed, not open
 ///
@@ -101,6 +100,16 @@ export fn decl_name_at(kids []Node) -> Option[int] {
 /// mine, and they were wrong the same way twice in one shift: the grep behind
 /// the measurement matched only BRACKETED error codes, and this diagnostic
 /// carries none. A measurement is only as good as what it agrees to see.
+///
+/// THE TABLE ABOVE CARRIED A FOURTH ROW, `uninit v int`, and it was wrong the
+/// same way -- re-measured 2026-08-21 on the owner's question ("what does
+/// `uninit` combine with?"): the oracle answers "expected identifier, got
+/// `uninit`" to `fn f(uninit v int)` and ACCEPTS `fn f(v uninit int)`. So
+/// `uninit` is no mode at all: it qualifies the TYPE (`uninit T`, MaybeUninit)
+/// and a pointer's pointee, and THERE it combines with a mode -- `*mut uninit T`
+/// (amendment 2026-08-05, No 358). The axis is three: ro, mut, consume. Had the
+/// wrong row stayed, novac would ACCEPT a parameter form the language refuses --
+/// the over-acceptance direction, the dangerous one.
 ///
 /// The CONTEXTUAL half of the set moved to `builtins` on 2026-08-21, where
 /// every string name of the language lives (P5): the parser needs the same
@@ -111,6 +120,91 @@ export fn decl_name_at(kids []Node) -> Option[int] {
 /// `KwMut`/`KwRo`, and the only caller asks this AFTER establishing that the
 /// leaf is an identifier -- so a keyword never reaches it.
 fn is_param_mode(word str) -> bool => is_contextual_mode_word(word)
+
+/// The MODE this parameter declares -- `ModeRo` when it writes none, which is
+/// the language's default (D32/D246: a bare parameter IS the read-only view).
+///
+/// Read from the leaves before the NAME, because that is where a mode stands.
+/// The set is closed (see `is_param_mode` above), so an unrecognised word is
+/// not a mode and this door says `ModeRo` about it -- the shape itself is
+/// refused elsewhere, and guessing a mode here would be worse than either.
+export fn param_mode_at(pk []Node) -> ParamMode {
+    match param_name_at(pk) {
+        // No name: a recovery shape. Nothing is written, so nothing is claimed.
+        None => ModeRo
+        Some(n) => mode_before(pk, n)
+    }
+}
+
+/// The mode word standing before slot `n`, as a mode.
+fn mode_before(pk []Node, n int) -> ParamMode {
+    mut i = 0
+    for c in pk {
+        if i >= n { return ModeRo }
+        // A keyword mode answers by its token KIND, a contextual one by its
+        // spelling -- the same split the parser reads it with, because the
+        // lexer owns `mut`/`ro` and `builtins` owns the contextual words (P5).
+        ro k = leaf_kind(c)
+        if k == TokenKind.KwMut { return ModeMut }
+        if k == TokenKind.KwRo { return ModeRo }
+        if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(c)) { return ModeConsume }
+        i += 1
+    }
+    ModeRo
+}
+
+/// The MODE a BINDING statement declares: `ro x = …`, `mut x = …`,
+/// `consume x = …`.
+///
+/// The keyword is the statement's first leaf, and it is a KEYWORD for two of
+/// the three -- so the question is answered by the same split as everywhere
+/// else: token kind for `mut`/`ro`, spelling for `consume` (P5 keeps the
+/// spelling in `builtins`).
+export fn bind_mode_at(kids []Node) -> ParamMode {
+    if kids.len() == 0 { return ModeRo }
+    ro head = kids[0]
+    ro k = leaf_kind(head)
+    if k == TokenKind.KwMut { return ModeMut }
+    if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(head)) { return ModeConsume }
+    // `ro` and anything else: read-only is the language's default, and a
+    // statement whose head is neither was refused by the subset walk.
+    ModeRo
+}
+
+/// The MODE of the RECEIVER of a method declaration -- parameter zero's mode
+/// (plan 273), which is what makes `@ptr()` and `mut @ptr()` two selectable
+/// callables (P14).
+///
+/// Read from the receiver GROUP, after its type: `fn Vec[T] mut @ptr()` puts
+/// the qualifier between the type reference and the `@`. A declaration with no
+/// receiver has no receiver mode, and `ModeRo` is the honest answer -- the
+/// caller only asks when `has_recv`.
+export fn recv_mode_at(kids []Node) -> ParamMode {
+    for c in kids {
+        if c.kind_of() != NodeKind.Recv { continue }
+        return mode_after_first_ident(branch_children(c))
+    }
+    ModeRo
+}
+
+/// The mode word standing AFTER the first identifier of a receiver group.
+///
+/// After, because the first identifier is the receiver's TYPE: a type named
+/// `consume` would otherwise be read as a qualifier of itself.
+fn mode_after_first_ident(rk []Node) -> ParamMode {
+    mut seen_type = false
+    for c in rk {
+        if !seen_type {
+            seen_type = c.is_ident()
+            continue
+        }
+        ro k = leaf_kind(c)
+        if k == TokenKind.KwMut { return ModeMut }
+        if k == TokenKind.KwRo { return ModeRo }
+        if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(c)) { return ModeConsume }
+    }
+    ModeRo
+}
 
 /// The first node of the parameter's TYPE, or None when it declares none.
 export fn param_type_at(pk []Node) -> Option[int] {

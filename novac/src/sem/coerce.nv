@@ -87,6 +87,6 @@ fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row int) -> ()
         // A no-parameter method with a declared return: the source form D429
         // V1 admits, and both ends of the pair are right here.
     }
-    coerces.push(CoercePair { from_id: fns.params[fd.param_off], to_id: fd.ret_id, via_row })
+    coerces.push(CoercePair { from_id: fns.params[fd.param_off].type_id, to_id: fd.ret_id, via_row })
 }
 

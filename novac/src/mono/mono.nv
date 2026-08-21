@@ -16,7 +16,7 @@
 module novac.mono
 
 import ../tree.{Node, NodeKind}
-import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, DefKind, branch_children, leaf_text}
+import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, DefKind, ParamDef, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
 import ../diag.{ice}
 
@@ -54,7 +54,7 @@ export type Reach {
     seen []bool /// indexed by fn row; true = a NON-generic callable reached from a root
     inst []Instance /// generic callables reached, one element per substitution
     subst []int /// flat pool of substitution arguments, addressed by Instance
-    ptypes []int /// flat pool of CONCRETE parameter types, addressed by Instance
+    ptypes []ParamDef /// flat pool of instance parameters -- CONCRETE type plus the declared mode, addressed by Instance
 }
 
 /// The instances the walk found: one element per `(row, substitution)`.
@@ -70,7 +70,7 @@ export fn Reach @subst_of(it Instance) -> ro []int =>
     @subst[it.subst_off..it.subst_off + it.subst_cnt]
 
 /// The CONCRETE parameter types of one instance, in declaration order.
-export fn Reach @ptypes_of(it Instance) -> ro []int =>
+export fn Reach @ptypes_of(it Instance) -> ro []ParamDef =>
     @ptypes[it.ptype_off..it.ptype_off + it.ptype_cnt]
 
 /// Is this row generic -- does the declaration bind type parameters?
@@ -127,7 +127,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     }
     mut inst = []Instance.new()
     mut subst = []int.new()
-    mut ptypes = []int.new()
+    mut ptypes = []ParamDef.new()
 
     match entry_row(ctx) {
         // No entry point in this file: nothing is reachable, and that is an
@@ -233,7 +233,7 @@ fn entry_row(ctx Ctx) -> Option[int] => ctx.defs.fn_row(ENTRY_FN)
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
-                mut subst []int, mut ptypes []int) -> bool {
+                mut subst []int, mut ptypes []ParamDef) -> bool {
     mut grew = false
     ro id = n.id_of()
     if id >= 0 && out.has_callee(id) {
@@ -259,7 +259,13 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                         ro poff = ptypes.len()
                         ro fd = ctx.fns.rows[row]
                         for p in 0..fd.param_cnt {
-                            ptypes.push(subst_type(ctx, ctx.fns.params[fd.param_off + p], args))
+                            // The type is REWRITTEN, the mode is CARRIED: an
+                            // instance's parameter is as mutable as the
+                            // declaration wrote it, and the backend must read
+                            // both from one row.
+                            ro pd = ctx.fns.params[fd.param_off + p]
+                            ptypes.push(ParamDef { type_id: subst_type(ctx, pd.type_id, args),
+                                                   mode: pd.mode })
                         }
                         inst.push(Instance { row, subst_off: off, subst_cnt: args.len(),
                                              ptype_off: poff, ptype_cnt: fd.param_cnt,

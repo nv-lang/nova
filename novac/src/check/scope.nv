@@ -16,6 +16,7 @@
 module novac.check
 
 import ../names.{NameTable, NamespaceId}
+import ../sem.{ParamMode}
 
 // ---- the type lattice: the checker's own, not the registry's --------------
 //
@@ -35,8 +36,8 @@ import ../names.{NameTable, NamespaceId}
 /// binding — one record, they only travel together. Shadowing = last bind
 /// wins (the door's put overwrites).
 type Scope {
-    names NameTable /// name -> row in `types` (NsLocals namespace).
-    types []int /// Type id of each binding row.
+    names NameTable /// name -> row in `binds` (NsLocals namespace).
+    binds []Binding /// What each binding row holds: its type AND how it was bound.
     /// The undo trail: for every binding made, the row its name pointed at
     /// BEFORE. Leaving a block restores them, which is what makes a block a
     /// scope. Donor: rustc `Rib` (a scope is a frame you push and pop) and
@@ -54,20 +55,32 @@ type Scope {
 fn Scope.new() -> Scope =>
     {
         names: NameTable.new(NamespaceId.NsLocals),
-        types: []int.new(),
+        binds: []Binding.new(),
         shadowed: []int.new(),
         shadowed_names: []str.new(),
     }
 
-/// Bind `name` to type id `t` (shadowing allowed).
-fn Scope mut @bind(name str, t int) -> () {
+/// One local binding: its type and the MODE it was bound with.
+///
+/// The mode is here because rule P14 selects an overload by WHAT an argument
+/// is, not by its type: `tag(m)` picks `fn tag(mut c Cel)` and `tag(r)` picks
+/// `fn tag(c Cel)` while both arguments have type `Cel`. So the checker has to
+/// remember HOW a name was bound, and a binding is (type, mode) in one row for
+/// the same reason a parameter is.
+type Binding value {
+    type_id int /// the type this name holds
+    mode ParamMode /// `ro` / `mut` / `consume`, as the binding was written
+}
+
+/// Bind `name` to type id `t`, bound as `mode` (shadowing allowed).
+fn Scope mut @bind(name str, t int, mode ParamMode) -> () {
     // Remember what this name meant before, so leaving the block can put it
     // back. A name bound for the first time remembers -1, which the door
     // reads as "unbound" -- the same sentinel `find` already returns.
     @shadowed_names.push(name)
     @shadowed.push(@names.find(name))
-    @names.put(name, @types.len())
-    @types.push(t)
+    @names.put(name, @binds.len())
+    @binds.push(Binding { type_id: t, mode })
 }
 
 /// Where the scope is right now. Entering a block takes a mark; leaving it
@@ -108,5 +121,14 @@ fn Scope @type_of_name(name str) -> int {
     ro row = @names.find(name)
     // [LEGACY-#700-user-error-as-ice until:E2b3] an unbound name is a USER error.
     assert(row >= 0, "check: unbound name — resolve is check's ground, no silent int default (#652 class)")
-    @types[row]
+    @binds[row].type_id
+}
+
+/// How this name was BOUND -- the half of a binding rule P14 reads. An unbound
+/// name is the same ice as above: the walk refuses it long before this is asked.
+#realtime nogc
+fn Scope @mode_of_name(name str) -> ParamMode {
+    ro row = @names.find(name)
+    assert(row >= 0, "check: mode of an unbound name - resolve is check's ground")
+    @binds[row].mode
 }

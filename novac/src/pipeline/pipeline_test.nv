@@ -189,15 +189,25 @@ test "an argument that coerces (D429) is refused for the RIGHT reason" {
     assert(!plain[0].message.contains("#coerce"))
 }
 
-test "a receiver MODE keeps a declaration readable (`consume` was invisible)" {
-    // Until 2026-08-21 the parser read exactly `mut` as a receiver qualifier, so
-    // every `consume` method of std -- including both finalize-lane `#coerce`
-    // pairs -- fell through to the free-function shape and harvested NO row.
-    // The signature is read now, and the refusal is about the missing body.
-    ro src = "type Cel { v f64 }\nfn main() { ro c = Cel { v: 1.5 }\n println(c.into_f64()) }"
-    ro diags = compile(src, []str.of("fn Cel consume @into_f64() -> f64 => 0.0\n"))
-    assert(diags.len() == 1)
-    assert(diags[0].message.contains("compiles no body"))
+test "a receiver MODE is read AND judged: a consuming method needs a consuming place" {
+    // Two halves of one rule, and the second half moved this contract on
+    // 2026-08-21 (P14: the receiver is parameter zero, so its mode filters the
+    // call like any other position).
+    //
+    // Until then the parser read exactly `mut` as a receiver qualifier, so every
+    // `consume` method of std -- including both finalize-lane `#coerce` pairs --
+    // fell through to the free-function shape and harvested NO row at all.
+    ro decls = []str.of("fn Cel consume @into_f64() -> f64 => 0.0\n")
+    // A `consume` receiver does not take a `ro` binding: nothing fits, so the
+    // refusal is about the call, not about a missing body.
+    ro on_ro = compile("type Cel { v f64 }\nfn main() { ro c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
+    assert(on_ro.len() == 1)
+    assert(!on_ro[0].message.contains("compiles no body"))
+    // A `consume` BINDING is the place it does take -- the signature IS found,
+    // and what novac lacks is the method's body.
+    ro on_consume = compile("type Cel { v f64 }\nfn main() { consume c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
+    assert(on_consume.len() == 1)
+    assert(on_consume[0].message.contains("compiles no body"))
 }
 
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {

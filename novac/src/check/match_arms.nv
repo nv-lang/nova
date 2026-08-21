@@ -201,7 +201,10 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
             // nothing, so the payload cursor must not move.
             match pj.ident_str() {
                 Some(binder) => {
-                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi])
+                    // A payload binder holds a value of the arm, read-only:
+                    // nothing in the subset writes through it.
+                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi],
+                                ParamMode.ModeRo)
                     pi += 1
                 }
                 None => {}
@@ -209,7 +212,8 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
             j += 1
         }
     } else if is_ident && leaf_text(p0) != "_" {
-        @scope.bind(leaf_text(p0), scr_t)
+        // The scrutinee under a new name: the arm reads it, so `ro`.
+        @scope.bind(leaf_text(p0), scr_t, ParamMode.ModeRo)
     } else {
         // `_` and a non-identifier head bind nothing by definition: an arm
         // sees the scrutinee only through a name, and there is no name here.

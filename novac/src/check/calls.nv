@@ -27,7 +27,7 @@ module novac.check
 
 import ../tree.{Node}
 import ../diag.{ice}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_row, subst_type, generic_names, is_expr_kind, branch_children}
+import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_row, subst_type, generic_names, is_expr_kind, branch_children}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -35,19 +35,19 @@ import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_
 /// The UNTYPED key is now the DIAGNOSTIC's tool rather than resolution's: it
 /// answers "does any row of this name take this many arguments", which is what
 /// separates a wrong arity from a wrong type when the typed key fit nothing.
-fn free_call_key(kids []Node) -> []int {
-    unknown_args(kids, 1)
+fn free_call_key(kids []Node, scope Scope) -> []ArgSpec {
+    unknown_args(kids, 1, scope)
 }
 
 /// The TYPED key of a free call: one slot per argument, each its own type.
-fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut) -> []int {
+fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut) -> []ArgSpec {
     typed_args(kids, 1, ctx, scope, chan)
 }
 
 /// Name a free call's refusal precisely: unknown name, wrong arity, or a type
 /// that does not fit -- and in the last case, whether D429 makes the call legal
 /// Nova that novac merely cannot emit yet.
-fn Checker mut @refuse_free_call(kids []Node, cname str, key []int) -> () {
+fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     if !@ctx.fns.has_name(cname) {
         @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
         return
@@ -56,7 +56,7 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []int) -> () {
     }
     // The same question with the TYPES removed: if nothing fits by arity
     // alone, the arity is the cause and the types never mattered.
-    match @ctx.fns.lookup(cname, free_call_key(kids), CallForm.FreeCall) {
+    match @ctx.fns.lookup(cname, free_call_key(kids, @scope), CallForm.FreeCall) {
         FnUnknown => @report_first_leaf_of(kids,
             "outside the subset: no function of this name takes this many arguments")
         // Several rows take this many arguments and none of them fits the
@@ -70,12 +70,12 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []int) -> () {
 
 /// The one candidate of this arity did not fit: name the FIRST position whose
 /// type differs, and say when a `#coerce` pair (D429) makes the call legal.
-fn Checker mut @refuse_arg_type(kids []Node, row int, key []int) -> () {
+fn Checker mut @refuse_arg_type(kids []Node, row int, key []ArgSpec) -> () {
     ro fd = @ctx.fns.rows[row]
     for i in 0..key.len() {
         ro want = @ctx.fns.params[fd.param_off + i]
-        if want == key[i] { continue }
-        match coerce_row(@ctx, key[i], want) {
+        if want.type_id == key[i].type_id { continue }
+        match coerce_row(@ctx, key[i].type_id, want.type_id) {
             // D429: a pair IS declared for this position, so the call is legal
             // Nova -- the value coerces through that method. What novac lacks
             // is the emission: R7 makes the insertion a call to the declared
@@ -104,8 +104,8 @@ fn Checker mut @refuse_arg_type(kids []Node, row int, key []int) -> () {
 /// under the substitution in `record_free_callee`, where the substitution
 /// exists. A PLAIN row of the right arity that the exact key rejected is not
 /// accepted here: its types are the cause, and the refusal says so.
-fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []int) -> () {
-    match @ctx.fns.lookup(cname, free_call_key(kids), CallForm.FreeCall) {
+fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
+    match @ctx.fns.lookup(cname, free_call_key(kids, @scope), CallForm.FreeCall) {
         FnFound(row) => {
             if @ctx.fns.rows[row].tparam_cnt > 0 {
                 @record_free_callee(e, kids, row, key)
@@ -131,7 +131,7 @@ fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []
 /// `assert(ret >= 0)` and turned a user mistake into an internal compiler
 /// error — the exact class P12 forbids (measured by the step-1 probe,
 /// 2026-08-19).
-fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []int) -> () {
+fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []ArgSpec) -> () {
     ro want = @ctx.fns.rows[row].tparam_cnt
     ro given = generic_names(kids)
     if want == 0 {
@@ -190,7 +190,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []int) -> (
     // refused instead of being emitted as an int function taking a string.
     ro fd = @ctx.fns.rows[row]
     for i in 0..key.len() {
-        if subst_type(@ctx, @ctx.fns.params[fd.param_off + i], ids) == key[i] { continue }
+        if subst_type(@ctx, @ctx.fns.params[fd.param_off + i].type_id, ids) == key[i].type_id { continue }
         @report_first_leaf_of(kids,
             "outside the subset: this argument's type is not the one the instance declares under these type arguments")
         return

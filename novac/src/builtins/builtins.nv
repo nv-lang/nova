@@ -66,7 +66,7 @@ export const EQUAL_METHOD = "equal"
 /// the word that declares them.
 export const COERCE_ATTR = "coerce"
 
-/// The CONTEXTUAL mode words of the language -- the ones a token kind cannot
+/// The CONTEXTUAL mode word of the language -- the one a token kind cannot
 /// answer for.
 ///
 /// A mode qualifies a parameter (`mut v int`) and a receiver
@@ -74,14 +74,27 @@ export const COERCE_ATTR = "coerce"
 /// against the oracle rather than assumed; the measurement and what it cost are
 /// written out at `sem/slots.nv`'s `is_param_mode`.
 ///
-/// Only two of the four live here. `mut` and `ro` are KEYWORDS: the lexer owns
-/// those spellings and hands out `KwMut`/`KwRo`, so a reader asks the token
-/// kind and repeating the words here would be the copy P5 exists to prevent.
-/// `consume` and `uninit` are ordinary identifiers to the lexer, so only their
-/// spelling identifies them -- and a spelling of the language lives HERE, which
-/// is why the parser has an edge to this module at all.
-export fn is_contextual_mode_word(word str) -> bool =>
-    word == "consume" || word == "uninit"
+/// The axis is exactly THREE modes -- `ro`, `mut`, `consume` -- and only one of
+/// them lives here. `mut` and `ro` are KEYWORDS: the lexer owns those spellings
+/// and hands out `KwMut`/`KwRo`, so a reader asks the token kind and repeating
+/// the words here would be the copy P5 exists to prevent. `consume` is an
+/// ordinary identifier to the lexer, so only its spelling identifies it -- and a
+/// spelling of the language lives HERE, which is why the parser has an edge to
+/// this module at all.
+///
+/// `uninit` is NOT here, and that is a measurement of 2026-08-21, not a taste:
+/// the oracle answers "expected identifier, got `uninit`" to `fn f(uninit v T)`
+/// and accepts `fn f(v uninit T)`. It is a qualifier of the TYPE (`uninit T`,
+/// the MaybeUninit wrapper) and of a pointer's pointee, where it does combine
+/// with a mode -- `*mut uninit T` (D-amendment 2026-08-05, No 358: a bare
+/// `*uninit T` is not writable). Treating it as a mode would have made novac
+/// ACCEPT a parameter form the language does not have.
+export fn is_contextual_mode_word(word str) -> bool => word == CONSUME_MODE
+
+/// The mode that takes ownership. Named because two readers tell it apart from
+/// the other contextual word (`uninit` promises a write, `consume` a move), and
+/// a name of the language may be spelled in ONE place (P5).
+export const CONSUME_MODE = "consume"
 
 /// One pre-declared type of the universe: (source name, runtime C spelling).
 /// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a

@@ -693,9 +693,19 @@ fn Cursor mut @stmt() -> Node {
         }
         return @node(NodeKind.RetStmt, kids)
     }
-    if @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo {
-        // One BindStmt for both: the first leaf keeps KwMut/KwRo, C locals
-        // are identical either way (the oracle emits no const).
+    // `consume x = …` is a BINDING too, and its keyword is a contextual word
+    // rather than a token kind -- so the head is asked BY MECHANISM, exactly as
+    // a parameter's mode is (`@at_mode_word`). It joins the pair here because
+    // the mode of a binding is what rule P14 filters a call by: until
+    // 2026-08-21 novac did not read the form at all, and the refusal that came
+    // out said "unknown name" about the USE -- blaming the reader for a form
+    // the parser had silently dropped.
+    ro binds_here = @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
+        (@peek() == TokenKind.Ident && is_contextual_mode_word(@peek_text()) &&
+         @peek(skip: 1) == TokenKind.Ident)
+    if binds_here {
+        // One BindStmt for all three: the first leaf keeps the keyword, C
+        // locals are identical either way (the oracle emits no const).
         mut kids = []Node.of(@take())
         @push_if(kids, TokenKind.Ident)
         // A DECLARED type: `ro x int = 1`. It stands between the name and the
