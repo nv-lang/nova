@@ -283,8 +283,8 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
 {
     match ctx.tys.kind_of(t) {
         TkPrim => prim_c_name(ctx.tys.head_of(t))
-        TkRecord => decl_of_ty(ctx, t).name
-        TkSum => decl_of_ty(ctx, t).name
+        // A record and a sum are named the same way: one case.
+        TkRecord | TkSum => decl_of_ty(ctx, t).name
         // The newtype's OWN name, never the representation's: `f(Row)` and
         // `f(int)` are two callables, and the C name is what keeps them apart.
         TkNewtype => decl_of_ty(ctx, t).name

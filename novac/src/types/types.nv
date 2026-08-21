@@ -252,10 +252,11 @@ export fn Interner @decl_head_of(t TyId) -> DeclId
 {
     ro row = @rows[raw_ty(t)]
     match row.kind {
-        TkRecord => DeclId(row.head_id)
-        TkSum => DeclId(row.head_id)
-        TkApp => DeclId(row.head_id)
-        TkNewtype => DeclId(row.head_id)
+        // The NOMINAL kinds are one case, not four: each of them names a
+        // declaration, and that is the whole rule.
+        TkRecord | TkSum | TkApp | TkNewtype => DeclId(row.head_id)
+        // The other three are three DIFFERENT things, so they stay three arms:
+        // the refusal names WHAT was found instead of a declaration.
         TkPrim => ice("types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
         TkParam => ice("types: a type PARAMETER names no declaration -- its head is a slot index")
         TkInfer => ice("types: an inference variable names no declaration -- its head is a vid")

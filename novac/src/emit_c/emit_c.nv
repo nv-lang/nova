@@ -594,8 +594,7 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId) -> () {
         if d >= 0 {
             vrow = match @ctx.defs.rows[d].target {
                 DefVariant(row) => row
-                DefType(_) => no_vrow()
-                DefFn(_) => no_vrow()
+                DefType(_) | DefFn(_) => no_vrow()
             }
         } else {
             // A name the registry never saw is a fresh binder, and -1 is what

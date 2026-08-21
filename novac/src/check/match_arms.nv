@@ -103,8 +103,8 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
             DefVariant(vrow) => {
                 covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
             }
-            DefType(_) => return
-            DefFn(_) => return
+            // Not a variant at all: an exhaustiveness count learns nothing.
+            DefType(_) | DefFn(_) => return
         }
     }
     if covered >= td.row_cnt { return }
@@ -200,8 +200,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     ro vrow = if d >= 0 {
         match @ctx.defs.rows[d].target {
             DefVariant(row) => row
-            DefType(_) => no_vrow()
-            DefFn(_) => no_vrow()
+            DefType(_) | DefFn(_) => no_vrow()
         }
     } else {
         no_vrow()

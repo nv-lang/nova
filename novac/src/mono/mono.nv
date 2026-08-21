@@ -284,8 +284,10 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                     // hold: reaching it twice is not news either way.
                 }
             }
-            CalleeVariant(_) => {}
-            CalleeCtor(_) => {}
+            // Neither is a callable, so the fn set says nothing about either:
+            // one case, and it is NOT a wildcard -- a fourth kind of target
+            // would still have to come here and say what it does (P21).
+            CalleeVariant(_) | CalleeCtor(_) => {}
         }
     } else {
         // Not a call, or a call check never resolved -- the refusal for the

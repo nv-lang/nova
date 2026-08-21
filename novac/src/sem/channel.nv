@@ -87,25 +87,31 @@ export type CalleeRef value {
 #realtime nogc
 fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
     match a {
+        // The OR-pattern is the COMPACT exhaustive form, and the reason it is
+        // used instead of `_ => false` is the whole point of P21 (owner's
+        // question 2026-08-22, "why not `_`?"): a wildcard that produces a
+        // VALUE swallows the arm this sum does not have yet -- a fourth kind of
+        // target would silently answer "not the same" and the channel's
+        // once-only invariant would stop holding. A comment cannot notice a
+        // fourth arm; the compiler can, and an OR-pattern keeps it able to
+        // while costing one line instead of three. (`_` stays legal where it is
+        // a REFUSAL -- `ice`/`@refuse` cannot be silently wrong.)
         CalleeFn(x) => {
             match b {
                 CalleeFn(y) => x == y
-                CalleeVariant(_) => false
-                CalleeCtor(_) => false
+                CalleeVariant(_) | CalleeCtor(_) => false
             }
         }
         CalleeVariant(x) => {
             match b {
                 CalleeVariant(y) => x == y
-                CalleeFn(_) => false
-                CalleeCtor(_) => false
+                CalleeFn(_) | CalleeCtor(_) => false
             }
         }
         CalleeCtor(x) => {
             match b {
                 CalleeCtor(y) => x == y
-                CalleeFn(_) => false
-                CalleeVariant(_) => false
+                CalleeFn(_) | CalleeVariant(_) => false
             }
         }
     }
@@ -277,8 +283,7 @@ export fn CheckOut @has_callee(id int) -> bool
 {
     match @res[id] {
         Callee(_) => true
-        Unresolved => false
-        Subst(_) => false
+        Unresolved | Subst(_) => false
     }
 }
 
@@ -291,8 +296,7 @@ export fn CheckOut @has_subst(id int) -> bool
 {
     match @res[id] {
         Subst(_) => true
-        Unresolved => false
-        Callee(_) => false
+        Unresolved | Callee(_) => false
     }
 }
 

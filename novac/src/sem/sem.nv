@@ -262,8 +262,8 @@ export fn DefTable @fn_row(name str) -> Option[FnRow] {
     // says so honestly -- the caller asked a tolerant question.
     match @rows[d].target {
         DefFn(row) => Some(row)
-        DefType(_) => None
-        DefVariant(_) => None
+        // A type or a variant is not a callable: one answer, one arm.
+        DefType(_) | DefVariant(_) => None
     }
 }
 
@@ -283,8 +283,8 @@ export fn DefTable @type_decl(name str) -> Option[DeclId] {
     }
     match @rows[d].target {
         DefType(decl) => Some(decl)
-        DefVariant(_) => None
-        DefFn(_) => None
+        // A variant or a callable is not a type, and that is ONE answer.
+        DefVariant(_) | DefFn(_) => None
     }
 }
 
