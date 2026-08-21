@@ -22,6 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../diag.{ice}
+import ../builtins.{is_contextual_mode_word}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
 /// punctuation. Its last child is not always the body.
@@ -100,8 +101,16 @@ export fn decl_name_at(kids []Node) -> Option[int] {
 /// mine, and they were wrong the same way twice in one shift: the grep behind
 /// the measurement matched only BRACKETED error codes, and this diagnostic
 /// carries none. A measurement is only as good as what it agrees to see.
-fn is_param_mode(word str) -> bool =>
-    word == "mut" || word == "ro" || word == "consume" || word == "uninit"
+///
+/// The CONTEXTUAL half of the set moved to `builtins` on 2026-08-21, where
+/// every string name of the language lives (P5): the parser needs the same
+/// words to read a qualified receiver, and a second copy of a closed set is how
+/// the two start disagreeing about what the language spells.
+///
+/// The keyword half needs no answer here at all: `mut` and `ro` lex as
+/// `KwMut`/`KwRo`, and the only caller asks this AFTER establishing that the
+/// leaf is an identifier -- so a keyword never reaches it.
+fn is_param_mode(word str) -> bool => is_contextual_mode_word(word)
 
 /// The first node of the parameter's TYPE, or None when it declares none.
 export fn param_type_at(pk []Node) -> Option[int] {

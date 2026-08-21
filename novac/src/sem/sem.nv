@@ -55,7 +55,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
-import ../builtins.{TypeKind, builtin_types}
+import ../builtins.{TypeKind, builtin_types, COERCE_ATTR}
 import ../types.{Interner}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
@@ -595,6 +595,7 @@ export fn candidates_from(fns FnTable, first int, arg_ids []int, form CallForm) 
 /// VALUE row records (rustc IndexVec camp; the architecture's "storage
 /// reference"); every name -> id step goes through a table door.
 export type Ctx {
+    coerces []CoercePair /// Implicit conversions declared with `#coerce` (D429), read from declarations.
     types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
     tys Interner /// THE type interner (layer 4): every Ty of this file is a row here; identity is the id (E2-b1).
     prims Prims /// Type ids of the primitives (the CommonTypes model).
@@ -624,9 +625,9 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
 /// does not become a subset method and gets an honest rejection at the
 /// point of use. Overloads (two signatures for one (receiver, name))
 /// are marked and also rejected — silent choosing is not allowed.
-fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable) -> () {
+fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) -> () {
     for d in decls {
-        harvest_in(d, defs, fns)
+        harvest_in(d, defs, fns, coerces)
     }
 }
 
@@ -636,7 +637,7 @@ fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable) -> () {
 /// tail of the file). Until recovery is fixed in wave 2, signature
 /// collection must not depend on it: a declaration is found wherever
 /// it ended up.
-fn harvest_in(n Node, defs DefTable, mut fns FnTable) -> () {
+fn harvest_in(n Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
@@ -644,8 +645,32 @@ fn harvest_in(n Node, defs DefTable, mut fns FnTable) -> () {
                 harvest_fn(children, defs, fns)
                 return
             }
+            // An attribute is the declaration's PREVIOUS SIBLING, not its
+            // child: the parser reads `#coerce` as a top-level node of its own
+            // (newlines are trivia, so the attribute line ends where the next
+            // declaration keyword begins). So the relation "this attribute
+            // belongs to what follows" is a property of THIS walk, and it is
+            // one bool wide.
+            mut coerce_next = false
             for c in children {
-                harvest_in(c, defs, fns)
+                if c.kind_of() == NodeKind.AttrDecl {
+                    coerce_next = attr_names(c, COERCE_ATTR)
+                    continue
+                }
+                // Not an attribute: whatever a previous one marked is decided
+                // below. No `else` -- the branch above ENDS in `continue`, and
+                // a variant test whose else does the work is what P21 refuses.
+                ro before = fns.rows.len()
+                harvest_in(c, defs, fns, coerces)
+                if coerce_next && fns.rows.len() > before {
+                    harvest_coerce_pair(fns, coerces, fns.rows.len() - 1)
+                } else {
+                    // Either no attribute stood here, or the declaration under
+                    // it entered no row -- a signature whose types novac does
+                    // not know is not taken (see harvest_fn), and a pair to a
+                    // row that does not exist would be a pair to nothing.
+                }
+                coerce_next = false
             }
         }
     }
@@ -728,7 +753,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
 /// Build the semantic context: the file's types + methods from declarations.
 export fn collect(file Node, decls []Node) -> Ctx {
     mut ctx = collect_types(file)
-    harvest_methods(decls, ctx.defs, ctx.fns)
+    harvest_methods(decls, ctx.defs, ctx.fns, ctx.coerces)
     ctx
 }
 
@@ -969,5 +994,6 @@ export fn collect_types(file Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.own_cnt = own.rows.len()
-    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own }
+    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
+          coerces: []CoercePair.new() }
 }

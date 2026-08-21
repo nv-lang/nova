@@ -59,6 +59,30 @@ export const PRINT_FN = "println"
 /// registry is asked for the row under this name.
 export const EQUAL_METHOD = "equal"
 
+/// The attribute that declares an implicit conversion (D429): `#coerce` on a
+/// no-parameter method makes `receiver -> return` an implicit pair. A NAME OF
+/// THE LANGUAGE, so it lives here and nowhere else (P5) -- D429 is emphatic
+/// that not one pair may be hard-coded in a compiler, and the same holds for
+/// the word that declares them.
+export const COERCE_ATTR = "coerce"
+
+/// The CONTEXTUAL mode words of the language -- the ones a token kind cannot
+/// answer for.
+///
+/// A mode qualifies a parameter (`mut v int`) and a receiver
+/// (`fn StringBuilder consume @into_str()`). The set is closed and measured
+/// against the oracle rather than assumed; the measurement and what it cost are
+/// written out at `sem/slots.nv`'s `is_param_mode`.
+///
+/// Only two of the four live here. `mut` and `ro` are KEYWORDS: the lexer owns
+/// those spellings and hands out `KwMut`/`KwRo`, so a reader asks the token
+/// kind and repeating the words here would be the copy P5 exists to prevent.
+/// `consume` and `uninit` are ordinary identifiers to the lexer, so only their
+/// spelling identifies them -- and a spelling of the language lives HERE, which
+/// is why the parser has an edge to this module at all.
+export fn is_contextual_mode_word(word str) -> bool =>
+    word == "consume" || word == "uninit"
+
 /// One pre-declared type of the universe: (source name, runtime C spelling).
 /// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a
 /// fact, not a mangling result; everything non-primitive goes through the

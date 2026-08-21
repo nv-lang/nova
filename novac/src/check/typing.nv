@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -186,79 +186,6 @@ fn Checker mut @type_block(b Node) -> () {
     @scope.release(mark)
 }
 
-/// Record the callee of a free call — or refuse it, when the callable is
-/// GENERIC and its type arguments are not read yet.
-///
-/// A generic row carries an unknown return type by construction: its `-> T`
-/// names a type PARAMETER, not a type. Until E2-b2 step 2 reads the turbofish
-/// and records the substitution, a call to such a row must leave through a
-/// DIAGNOSTIC: without this the first generic call reached `type_of`, hit
-/// `assert(ret >= 0)` and turned a user mistake into an internal compiler
-/// error — the exact class P12 forbids (measured by the step-1 probe,
-/// 2026-08-19).
-fn Checker mut @record_free_callee(e Node, kids []Node, row int) -> () {
-    ro want = @ctx.fns.rows[row].tparam_cnt
-    ro given = generic_names(kids)
-    if want == 0 {
-        if given.len() > 0 {
-            @report_first_leaf_of(kids,
-                "outside the subset: type arguments on a function that declares none")
-        } else {
-            @chan.record_callee(e.id_of(), DefKind.DefFn, row, []int.new())
-        }
-        return
-    } else {
-        // A generic callable: the turbofish decides which instance is meant.
-    }
-    if given.len() == 0 {
-        // No inference in E2-b2 BY DESIGN (plan 274): the turbofish is the
-        // whole mapping, so its absence is a refusal and not a guess.
-        @report_first_leaf_of(kids,
-            "outside the subset: this function is generic, so the call needs explicit type arguments -- novac infers none")
-        return
-    } else {
-        // Written explicitly; the count and the names are next.
-    }
-    if given.len() != want {
-        @report_first_leaf_of(kids,
-            "outside the subset: the call gives a different number of type arguments than the declaration binds")
-        return
-    } else {
-        // As many arguments as the declaration binds: each is resolved below.
-    }
-    mut ids = []int.new()
-    for name in given {
-        ids.push(@ctx.defs.type_id(name) ?? UNKNOWN_TYPE)
-    }
-    // WHERE the call sits decides which refusal. Inside a generic body -- and
-    // this run carries a substitution exactly then -- an unresolved type
-    // argument is `inner[T](x)`: the name is a type parameter of the enclosing
-    // declaration, and novac neither composes one substitution with another nor
-    // infers. Saying "novac does not know this type" there sends the reader to
-    // hunt a typo in correct code, which is the D420 class.
-    for id in ids {
-        if id == UNKNOWN_TYPE {
-            @report_first_leaf_of(kids, if @substs.len() > 0 {
-                "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)"
-            } else {
-                "outside the subset: a type argument names a type novac does not know"
-            })
-            return
-        } else {
-            // A type the registry knows: it can stand in the substitution.
-        }
-    }
-    // The substitution is read, judged and RECORDED -- the call names the
-    // instance `(row, ids)`, and from here the chain is closed: mono keys the
-    // reachable set by that pair, the pipeline types the body once per
-    // instance through `check_instance`, and the emitter writes one C function
-    // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
-    // line was a refusal, because recording a call whose instance nobody
-    // emitted would have named a symbol that exists nowhere.
-    @chan.record_callee(e.id_of(), DefKind.DefFn, row, ids)
-}
-
-
 /// The lookup key of a method call: the receiver's type in position ZERO, then
 /// one slot per written argument.
 ///
@@ -275,12 +202,6 @@ fn method_call_key(kids []Node, recv_t int) -> []int {
     out.push(recv_t)
     out.append(unknown_args(kids, 3))
     out
-}
-
-/// The lookup key of a free call: one slot per written argument, no position
-/// zero. Same shape, same door, one position fewer.
-fn free_call_key(kids []Node) -> []int {
-    unknown_args(kids, 1)
 }
 
 /// One `UNKNOWN_TYPE` slot per argument child from `from` on. Children before
@@ -809,6 +730,24 @@ fn Checker mut @type_expr(e Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows in an expression (println is a statement here, not a value)")
             return
         }
+        // ARGUMENTS FIRST, since 2026-08-21. The key of a call IS its argument
+        // types -- Nova overloads by parameters (D84) -- and a key of unknowns
+        // matches by ARITY ALONE. Measured live: `show(c)` with `fn show(x f64)`
+        // and `c` a record was accepted, and the emitter wrote
+        // `novac_fn_show__nova_f64__to_nova_f64(c)` -- a struct pointer where a
+        // double is declared. Invalid C from a program the oracle refuses,
+        // which is the worst direction a divergence can point.
+        //
+        // The walk is also what VERIFIES each argument (names, fields, methods
+        // exist), and only a verified expression may be handed to the lattice,
+        // whose miss is an ice until #700. So a refusal inside an argument stops
+        // the resolution: the type it would answer with is not trustworthy.
+        ro before = @out.len()
+        for c in kids {
+            if !is_expr_kind(c.kind_of()) { continue }
+            @type_expr(c)
+        }
+        if @out.len() > before { return }
         // `d < 0` returned above, so the row exists: the old `if d >= 0` here
         // was a condition that could not be false -- it read as a decision
         // and was none. What the kind decides is a match, exhaustive by
@@ -828,28 +767,22 @@ fn Checker mut @type_expr(e Node) -> () {
                 // query, and `byte_len("abc")` reached `str @byte_len()` by
                 // arity alone -- accepted here, refused by the oracle, and
                 // emitted as one string argument to a two-parameter function.
-                match @ctx.fns.lookup(cname, free_call_key(kids), CallForm.FreeCall) {
-                    FnFound(row) => @record_free_callee(e, kids, row)
+                ro key = typed_free_key(kids, @ctx, @scope, @chan)
+                match @ctx.fns.lookup(cname, key, CallForm.FreeCall) {
+                    FnFound(row) => @record_free_callee(e, kids, row, key)
                     FnOverloaded(_) => @report_first_leaf_of(kids,
                         "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
-                    // The NAME may well be known -- what did not fit is the
-                    // count of arguments, and the refusal says which (D420:
-                    // name the cause you established, not the nearest one).
-                    FnUnknown => @report_first_leaf_of(kids, if @ctx.fns.has_name(cname) {
-                        "outside the subset: no function of this name takes this many arguments"
-                    } else {
-                        "outside the subset: this name is not a callable novac knows"
-                    })
+                    // The name may be known and the arity may match: what did
+                    // not fit is then a TYPE, and the refusal says which of the
+                    // three it is (D420: name the cause you established, not
+                    // the nearest one).
+                    FnUnknown => @resolve_generic_or_refuse(e, kids, cname, key)
                 }
             }
             // A type name in call position is not a callee: the lattice
             // judges that shape and ices on it, and the channel holds
             // answers, so there is nothing to record here.
             DefType => {}
-        }
-        for c in kids {
-            if !is_expr_kind(c.kind_of()) { continue }
-            @type_expr(c)
         }
     } else if k == NodeKind.Paren {
         // The parser builds `( expr )` with three children ALWAYS (the

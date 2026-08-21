@@ -17,7 +17,13 @@
 # builtins 9 -> 10 (2026-08-19): `EQUAL_METHOD` — имя метода языка, к
 # которому сводится `==`. Живёт здесь по П5: эмиттер не пишет std-имена
 # сам, он спрашивает реестр по имени языка.
-builtins 10
+# builtins 10 -> 12 (2026-08-21): `COERCE_ATTR` (слово атрибута D429) и
+# `is_contextual_mode_word` (контекстные слова режимов). Оба — ИМЕНА ЯЗЫКА, и по
+# П5 у них один дом. Второй завёл ребро `parse -> builtins`: режим ресивера
+# читает парсер, и до 2026-08-21 он знал ровно `mut` — все `consume`-методы std
+# были для novac невидимы. Заодно снялась третья копия набора: параметрический
+# режим в parse.nv сравнивал те же четыре слова руками.
+builtins 12
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -111,7 +117,13 @@ pipeline 2
 # is this declaration's name" -- the first identifier leaf, not child one,
 # because a Generics branch or a receiver group stands between; the typing walk
 # had that loop written out and the emitter was about to write it a third time.
-sem 67
+# sem 67 -> 69 (2026-08-21, D429): `CoercePair` and `coerce_row` -- the registry
+# of DECLARED implicit conversions and the one door that asks it ("what turns
+# this type into that one"). Наружу нужны потому, что спрашивает их CHECK: пара
+# делает вызов ЗАКОННОЙ Nova, и отказ обязан назвать причину «novac не эмитит
+# тело метода», а не «ничего не подходит». Пары читаются из ДЕКЛАРАЦИЙ -- D429
+# запрещает хардкодить хотя бы одну, и слово атрибута живёт в builtins (П5).
+sem 69
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `report_method_error` / clang `Sema::NoteAllOverloadCandidates`
+// for "a refusal names the candidate set, not the nearest guess"; rustc
+// `FnCtxt::check_argument_types` for the order (arguments are typed, THEN the
+// callee is resolved). NOT taken: inference (E2-b3) and any tie-break -- D429
+// R5 says exact wins and ambiguity is an error, never a preference.
+// Role: layer 7 -- resolving a free CALL: the key it is looked up by, and the name of its refusal.
+// Used by: typing.nv (the one caller); the module tests judge the messages through compile().
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv crossed 1000 lines), the pipeline module
+// tests, check-novac-no-cascade.sh (one cause, one diagnostic).
+// novac/src/check/calls.nv -- how a free call is resolved and how its refusal
+// is named.
+//
+// A co-equal file of the `check` module, cut along MEANING: "which callable is
+// this call" and "why does none fit" is one question with several answers, and
+// each answer must name the cause it established rather than the nearest one
+// (D420). typing.nv crossed the thousand-line limit when the typed key arrived,
+// which is what made the seam visible rather than what created it.
+//
+// The RULE the order encodes: the key of a call is its argument TYPES, because
+// Nova overloads by parameters (D84). A key of unknowns matches by arity alone,
+// and that was live until 2026-08-21: `show(c)` with `fn show(x f64)` and a
+// record argument was accepted, and the emitter wrote a struct pointer where a
+// double was declared.
+
+module novac.check
+
+import ../tree.{Node}
+import ../diag.{ice}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_row, subst_type, generic_names, is_expr_kind, branch_children}
+
+/// The lookup key of a free call: one slot per written argument, no position
+/// zero. Same shape, same door, one position fewer.
+///
+/// The UNTYPED key is now the DIAGNOSTIC's tool rather than resolution's: it
+/// answers "does any row of this name take this many arguments", which is what
+/// separates a wrong arity from a wrong type when the typed key fit nothing.
+fn free_call_key(kids []Node) -> []int {
+    unknown_args(kids, 1)
+}
+
+/// The TYPED key of a free call: one slot per argument, each its own type.
+fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut) -> []int {
+    typed_args(kids, 1, ctx, scope, chan)
+}
+
+/// Name a free call's refusal precisely: unknown name, wrong arity, or a type
+/// that does not fit -- and in the last case, whether D429 makes the call legal
+/// Nova that novac merely cannot emit yet.
+fn Checker mut @refuse_free_call(kids []Node, cname str, key []int) -> () {
+    if !@ctx.fns.has_name(cname) {
+        @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
+        return
+    } else {
+        // The name is known, so the cause is the shape of the call.
+    }
+    // The same question with the TYPES removed: if nothing fits by arity
+    // alone, the arity is the cause and the types never mattered.
+    match @ctx.fns.lookup(cname, free_call_key(kids), CallForm.FreeCall) {
+        FnUnknown => @report_first_leaf_of(kids,
+            "outside the subset: no function of this name takes this many arguments")
+        // Several rows take this many arguments and none of them fits the
+        // types. Naming a position would mean naming ONE candidate as the
+        // intended one, and which was intended is exactly what is unknown.
+        FnOverloaded(_) => @report_first_leaf_of(kids,
+            "outside the subset: no overload of this name accepts these argument types")
+        FnFound(row) => @refuse_arg_type(kids, row, key)
+    }
+}
+
+/// The one candidate of this arity did not fit: name the FIRST position whose
+/// type differs, and say when a `#coerce` pair (D429) makes the call legal.
+fn Checker mut @refuse_arg_type(kids []Node, row int, key []int) -> () {
+    ro fd = @ctx.fns.rows[row]
+    for i in 0..key.len() {
+        ro want = @ctx.fns.params[fd.param_off + i]
+        if want == key[i] { continue }
+        match coerce_row(@ctx, key[i], want) {
+            // D429: a pair IS declared for this position, so the call is legal
+            // Nova -- the value coerces through that method. What novac lacks
+            // is the emission: R7 makes the insertion a call to the declared
+            // function, and novac compiles no method body yet, so emitting it
+            // would name a C symbol that exists nowhere.
+            Some(_) => @report_first_leaf_of(kids,
+                "outside the subset: this argument coerces through a `#coerce` method (D429), and novac does not compile a method body yet")
+            None => @report_first_leaf_of(kids,
+                "outside the subset: this argument's type is not the one this function declares here")
+        }
+        return
+    }
+    // Every position matched, so `fits` refused for a reason positions cannot
+    // explain -- and it judges only the form, the arity and the positions.
+    ice("check: a candidate of the right arity refused with every position matching")
+}
+
+
+/// A GENERIC candidate cannot fit an exact key: until the turbofish
+/// substitutes them, its parameters ARE type parameters, so `dbl[int]` and
+/// `dbl[str]` both declare `x T` and no argument type can equal that.
+///
+/// So the stages are separate BY CONSTRUCTION, which is R5 in its own shape:
+/// the exact key decides first, and only what it leaves unresolved is offered
+/// to a generic row -- picked by arity here, and judged position by position
+/// under the substitution in `record_free_callee`, where the substitution
+/// exists. A PLAIN row of the right arity that the exact key rejected is not
+/// accepted here: its types are the cause, and the refusal says so.
+fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []int) -> () {
+    match @ctx.fns.lookup(cname, free_call_key(kids), CallForm.FreeCall) {
+        FnFound(row) => {
+            if @ctx.fns.rows[row].tparam_cnt > 0 {
+                @record_free_callee(e, kids, row, key)
+            } else {
+                @refuse_free_call(kids, cname, key)
+            }
+        }
+        // No row of this arity, or several: either way the refusal door names
+        // which of the causes holds -- it asks the same questions again and
+        // answers with the one it establishes.
+        FnUnknown => @refuse_free_call(kids, cname, key)
+        FnOverloaded(_) => @refuse_free_call(kids, cname, key)
+    }
+}
+
+/// Record the callee of a free call — or refuse it, when the callable is
+/// GENERIC and its type arguments are not read yet.
+///
+/// A generic row carries an unknown return type by construction: its `-> T`
+/// names a type PARAMETER, not a type. Until E2-b2 step 2 reads the turbofish
+/// and records the substitution, a call to such a row must leave through a
+/// DIAGNOSTIC: without this the first generic call reached `type_of`, hit
+/// `assert(ret >= 0)` and turned a user mistake into an internal compiler
+/// error — the exact class P12 forbids (measured by the step-1 probe,
+/// 2026-08-19).
+fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []int) -> () {
+    ro want = @ctx.fns.rows[row].tparam_cnt
+    ro given = generic_names(kids)
+    if want == 0 {
+        if given.len() > 0 {
+            @report_first_leaf_of(kids,
+                "outside the subset: type arguments on a function that declares none")
+        } else {
+            @chan.record_callee(e.id_of(), DefKind.DefFn, row, []int.new())
+        }
+        return
+    } else {
+        // A generic callable: the turbofish decides which instance is meant.
+    }
+    if given.len() == 0 {
+        // No inference in E2-b2 BY DESIGN (plan 274): the turbofish is the
+        // whole mapping, so its absence is a refusal and not a guess.
+        @report_first_leaf_of(kids,
+            "outside the subset: this function is generic, so the call needs explicit type arguments -- novac infers none")
+        return
+    } else {
+        // Written explicitly; the count and the names are next.
+    }
+    if given.len() != want {
+        @report_first_leaf_of(kids,
+            "outside the subset: the call gives a different number of type arguments than the declaration binds")
+        return
+    } else {
+        // As many arguments as the declaration binds: each is resolved below.
+    }
+    mut ids = []int.new()
+    for name in given {
+        ids.push(@ctx.defs.type_id(name) ?? UNKNOWN_TYPE)
+    }
+    // WHERE the call sits decides which refusal. Inside a generic body -- and
+    // this run carries a substitution exactly then -- an unresolved type
+    // argument is `inner[T](x)`: the name is a type parameter of the enclosing
+    // declaration, and novac neither composes one substitution with another nor
+    // infers. Saying "novac does not know this type" there sends the reader to
+    // hunt a typo in correct code, which is the D420 class.
+    for id in ids {
+        if id == UNKNOWN_TYPE {
+            @report_first_leaf_of(kids, if @substs.len() > 0 {
+                "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)"
+            } else {
+                "outside the subset: a type argument names a type novac does not know"
+            })
+            return
+        } else {
+            // A type the registry knows: it can stand in the substitution.
+        }
+    }
+    // THE ARGUMENTS, judged under the substitution. A generic row's parameters
+    // are type PARAMETERS, so the lookup could not compare them: `dbl[int]`
+    // and `dbl[str]` declare the same `x T`. Both halves are known only HERE --
+    // the substitution was just read -- so this is where `dbl[int]("s")` is
+    // refused instead of being emitted as an int function taking a string.
+    ro fd = @ctx.fns.rows[row]
+    for i in 0..key.len() {
+        if subst_type(@ctx, @ctx.fns.params[fd.param_off + i], ids) == key[i] { continue }
+        @report_first_leaf_of(kids,
+            "outside the subset: this argument's type is not the one the instance declares under these type arguments")
+        return
+    }
+    // The substitution is read, judged and RECORDED -- the call names the
+    // instance `(row, ids)`, and from here the chain is closed: mono keys the
+    // reachable set by that pair, the pipeline types the body once per
+    // instance through `check_instance`, and the emitter writes one C function
+    // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
+    // line was a refusal, because recording a call whose instance nobody
+    // emitted would have named a symbol that exists nowhere.
+    @chan.record_callee(e.id_of(), DefKind.DefFn, row, ids)
+}

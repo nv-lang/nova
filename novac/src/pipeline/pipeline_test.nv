@@ -154,6 +154,52 @@ test "a generic call without type arguments is refused, and says so (no inferenc
     assert(n_diags("fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl(4)) }") == 1)
 }
 
+/// A declaration text carrying a `#coerce` pair, handed in the way the driver
+/// hands std declarations. The pair CANNOT come from the compiled file: novac
+/// compiles no method body, so the declaration is where D429 pairs live for it.
+fn coerce_decls() -> []str =>
+    []str.of("#coerce\nfn Cel consume @into_f64() -> f64 => 0.0\n")
+
+/// The file both coerce tests judge: a record where an `f64` is declared.
+fn coerce_src() -> str =>
+    "type Cel { v f64 }\nfn show(x f64) -> f64 => x\nfn main() { ro c = Cel { v: 1.5 }\n println(show(c)) }"
+
+test "a wrong-typed argument is REFUSED, not emitted (the key is the types, D84)" {
+    // The regression this test exists for: with no pair declared, novac used to
+    // ACCEPT this file and emit `novac_fn_show__nova_f64__to_nova_f64(c)` -- a
+    // struct pointer where a double is declared. The call was looked up with
+    // UNKNOWN_TYPE in every argument slot, so only the arity was compared.
+    assert(compile(coerce_src(), std_decls()).len() == 1)
+}
+
+test "an argument that coerces (D429) is refused for the RIGHT reason" {
+    // With the pair declared, the same file is legal Nova -- the oracle compiles
+    // it and prints 1.5. What novac lacks is the emission: R7 makes the
+    // insertion a call to the declared method, and novac compiles no method
+    // body yet. So the refusal names THAT, and not "nothing fits" -- which is
+    // the difference between a boundary and a lie about the program.
+    ro diags = compile(coerce_src(), coerce_decls())
+    assert(diags.len() == 1)
+    assert(diags[0].message.contains("#coerce"))
+    // And the pair is read from the DECLARATION, not known by the compiler: the
+    // same file with the same declaration minus the attribute is refused as an
+    // ordinary type mismatch, with no mention of D429.
+    ro plain = compile(coerce_src(), []str.of("fn Cel consume @into_f64() -> f64 => 0.0\n"))
+    assert(plain.len() == 1)
+    assert(!plain[0].message.contains("#coerce"))
+}
+
+test "a receiver MODE keeps a declaration readable (`consume` was invisible)" {
+    // Until 2026-08-21 the parser read exactly `mut` as a receiver qualifier, so
+    // every `consume` method of std -- including both finalize-lane `#coerce`
+    // pairs -- fell through to the free-function shape and harvested NO row.
+    // The signature is read now, and the refusal is about the missing body.
+    ro src = "type Cel { v f64 }\nfn main() { ro c = Cel { v: 1.5 }\n println(c.into_f64()) }"
+    ro diags = compile(src, []str.of("fn Cel consume @into_f64() -> f64 => 0.0\n"))
+    assert(diags.len() == 1)
+    assert(diags[0].message.contains("compiles no body"))
+}
+
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
     ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
     assert(n_diags(src) == 0)

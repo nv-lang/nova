@@ -32,6 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
+import ../builtins.{is_contextual_mode_word}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -91,6 +92,18 @@ fn Cursor @peek_text(skip int = 0) -> str {
     if @i + skip >= @toks.len() { return "" }
     @toks[@i + skip].text
 }
+
+/// Is a parameter/receiver MODE standing at the cursor?
+///
+/// Asked BY MECHANISM, which is the whole reason this is a door: `mut` and `ro`
+/// are keywords and answer by their token KIND, `consume` and `uninit` are
+/// ordinary identifiers and answer by their SPELLING -- which lives in
+/// `builtins` (P5), never here. The two positions that need this question, a
+/// parameter and a qualified receiver, used to answer it with two hand-written
+/// copies of the four words.
+fn Cursor @at_mode_word() -> bool =>
+    @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
+        (@peek() == TokenKind.Ident && is_contextual_mode_word(@peek_text()))
 
 /// Take the token if it is the one wanted, and say ONCE what it means when it
 /// is not.
@@ -439,10 +452,22 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
     // Receiver or free function? The two only differ AFTER the name and its
     // brackets, so the pieces are held aside and the `@` (or `.`) decides.
     head.append(@type_ref())
-    // `fn Account mut @bump()` -- the receiver may be qualified. Without this
-    // the `mut` broke the form apart and the refusal blamed a missing return
-    // type on a signature that declares one (2026-08-17).
-    if @peek() == TokenKind.KwMut && @peek(skip: 1) == TokenKind.At {
+    // `fn Account mut @bump()`, `fn StringBuilder consume @into_str()` -- the
+    // receiver may be qualified by ANY mode word, and the set is asked of the
+    // one module that spells the language (P5).
+    //
+    // Until 2026-08-21 this read exactly `mut`, so every `consume` method of std
+    // was INVISIBLE to novac: the declaration fell through to the free-function
+    // shape and harvested no row at all. Measured on the real std pair
+    // `#coerce fn StringBuilder consume @into_str() -> str` -- which is how the
+    // finalize lane of D429 came to be missing from the registry entirely.
+    //
+    // The mode is recognised by its SPELLING, not its token kind: `mut`/`ro` are
+    // keywords and `consume`/`uninit` are contextual words. Requiring the NEXT
+    // token to be the receiver mark keeps a TYPE named `consume` safe -- there
+    // the word is consumed by `@type_ref` above and this test never sees it.
+    ro next_is_mark = @peek(skip: 1) == TokenKind.At || @peek(skip: 1) == TokenKind.Dot
+    if @at_mode_word() && next_is_mark {
         head.push(@take())
     } else {
         // Either the receiver is unqualified or this is a free function. A
@@ -484,14 +509,13 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
         // A parameter MODE stands before the name: `fn take(consume v int)`.
         // It is not a keyword in this lexer, so it is recognised by spelling
         // and kept as a leaf -- the tree is lossless and check judges it.
-        // The mode set is closed and measured (sem.is_param_mode): `mut`,
-        // `ro`, `consume`, `uninit`. An arbitrary word here is not a mode --
-        // the oracle answers "expected `,`, got identifier" -- so the parser
-        // must not treat every leading identifier as one.
-        ro pmode = @peek_text()
-        ro is_mode = pmode == "mut" || pmode == "ro" ||
-            pmode == "consume" || pmode == "uninit"
-        ro mode_ahead = is_mode && @peek(skip: 1) == TokenKind.Ident
+        // The mode set is closed and measured (`sem.is_param_mode`). An
+        // arbitrary word here is not a mode -- the oracle answers
+        // "expected `,`, got identifier" -- so the parser must not treat every
+        // leading identifier as one. ONE door answers "is a mode here", for the
+        // parameter position and the receiver position alike: the four words
+        // used to be spelled out twice in this file (P5, found 2026-08-21).
+        ro mode_ahead = @at_mode_word() && @peek(skip: 1) == TokenKind.Ident
         if mode_ahead {
             pk.push(@take())
         } else {

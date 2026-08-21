@@ -30,6 +30,20 @@ import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, b
 fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope, chan CheckOut) -> []int {
     mut out = []int.new()
     out.push(recv_t)
+    out.append(typed_args(kids, from, ctx, scope, chan))
+    out
+}
+
+/// One slot per written argument, each carrying its TYPE. The typed twin of
+/// `unknown_args`, and the same walk: children before `from` are syntax -- the
+/// callee, or the receiver, the dot and the name -- and a punctuation leaf is
+/// no argument.
+///
+/// A free call's key is exactly this, with no position zero; a method call's is
+/// this after the receiver. One rule, two callers, so the two spellings of a
+/// call cannot start disagreeing about what a key is.
+fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []int {
+    mut out = []int.new()
     mut i = 0
     for c in kids {
         if i >= from && is_expr_kind(c.kind_of()) {
