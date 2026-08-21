@@ -3,3 +3,4 @@ fn_decl
 call
 int_arith
 str_lit
+generic_call

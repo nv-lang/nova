@@ -27,9 +27,9 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -111,19 +111,16 @@ fn Checker mut @type_fn(f Node) -> () {
         // Not generic: types are known now, so the walk proceeds.
     }
     // The name is the first identifier LEAF, not a fixed index: `fn[T] name`
-    // puts a Generics branch in between.
-    mut name_at = -1
-    mut ki = 0
-    for c in kids {
-        ro is_name = ki > 0 && c.is_ident()
-        name_at = if name_at < 0 && is_name { ki } else { name_at }
-        ki += 1
+    // puts a Generics branch in between. The rule lives in ONE door since
+    // 2026-08-21 -- this walk had it written out, and the emitter needed the
+    // same answer for an instance.
+    ro name = match decl_name_at(kids) {
+        None => {
+            @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+            return
+        }
+        Some(at) => leaf_text(kids[at])
     }
-    if name_at < 0 {
-        @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
-        return
-    }
-    ro name = leaf_text(kids[name_at])
     @scope = Scope.new()
     ro row = match decl_fn_row(f, @ctx) {
         None => {
@@ -233,30 +230,32 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row int) -> () {
     for name in given {
         ids.push(@ctx.defs.type_id(name) ?? UNKNOWN_TYPE)
     }
+    // WHERE the call sits decides which refusal. Inside a generic body -- and
+    // this run carries a substitution exactly then -- an unresolved type
+    // argument is `inner[T](x)`: the name is a type parameter of the enclosing
+    // declaration, and novac neither composes one substitution with another nor
+    // infers. Saying "novac does not know this type" there sends the reader to
+    // hunt a typo in correct code, which is the D420 class.
     for id in ids {
         if id == UNKNOWN_TYPE {
-            @report_first_leaf_of(kids,
-                "outside the subset: a type argument names a type novac does not know")
+            @report_first_leaf_of(kids, if @substs.len() > 0 {
+                "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)"
+            } else {
+                "outside the subset: a type argument names a type novac does not know"
+            })
             return
         } else {
             // A type the registry knows: it can stand in the substitution.
         }
     }
-    // The substitution is READ and checked, and since 2026-08-20 a type
-    // PARAMETER is a real type, so `-> T` has an id and the mangler can name
-    // an instance. What is still missing is the WIRING: `check_instance` types
-    // one body under one substitution and `mono` keys the reachable set by
-    // `(row, substs)`, but the pipeline does not yet walk that set, ask for
-    // each instance's channel and hand it to the emitter -- so no instance is
-    // emitted. Recording the call would therefore name a C function no one
-    // defines -- the dangling-symbol class this compiler just spent a wave
-    // removing.
-    //
-    // The message says THAT, and not the reason that has been closed: a
-    // diagnostic naming a cause which no longer holds sends the reader to fix
-    // something that is already right (the D420 class).
-    @report_first_leaf_of(kids,
-        "outside the subset: type arguments are read, but no instance of a generic body is emitted yet")
+    // The substitution is read, judged and RECORDED -- the call names the
+    // instance `(row, ids)`, and from here the chain is closed: mono keys the
+    // reachable set by that pair, the pipeline types the body once per
+    // instance through `check_instance`, and the emitter writes one C function
+    // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
+    // line was a refusal, because recording a call whose instance nobody
+    // emitted would have named a symbol that exists nowhere.
+    @chan.record_callee(e.id_of(), DefKind.DefFn, row, ids)
 }
 
 
@@ -327,24 +326,14 @@ fn Checker mut @bind_param(pk []Node, row int, slot int) -> bool {
 /// This type with the instance's substitution applied: a type PARAMETER becomes
 /// the concrete type standing in its slot, everything else is itself.
 ///
-/// ONE place applies a substitution inside check, exactly as one place applies
-/// it inside the mangler (`type_tag`). An empty substitution is the ordinary
-/// run over a file, where a parameter cannot appear in a typed body at all --
-/// `type_fn` skips a generic declaration when there is nothing to substitute.
-fn Checker @concrete(t int) -> int {
-    if t < 0 || t >= @ctx.types.len() { return t }
-    if @ctx.types[t].kind != TypeKind.TkParam { return t }
-    ro slot = @ctx.tys.head_of(@ctx.types[t].ty_id)
-    if slot < 0 || slot >= @substs.len() {
-        // A parameter with no argument in this substitution: the arity was
-        // judged at the call site, so reaching here means the instance was
-        // built wrong -- an invariant, not a user mistake.
-        ice("check: a type parameter outside the instance's substitution")
-    } else {
-        // The slot the call filled: that concrete type IS this body's type here.
-    }
-    @substs[slot]
-}
+/// ONE place applies a substitution, and since 2026-08-21 it is literally one:
+/// `sem.subst_type`. This method used to carry its own copy of the rule beside
+/// the mangler's, and the copies differed in what they did with a parameter
+/// outside the substitution -- the shape P18 is about. An empty substitution is
+/// the ordinary run over a file, where a parameter cannot appear in a typed
+/// body at all: `type_fn` skips a generic declaration when there is nothing to
+/// substitute.
+fn Checker @concrete(t int) -> int => subst_type(@ctx, t, @substs)
 
 /// The same parameter, with the slot of its type already located.
 fn Checker mut @bind_typed_param(pk []Node, tat int, row int, slot int) -> bool {
@@ -458,7 +447,7 @@ fn Checker mut @type_stmt(st Node) -> () {
         // only READ it. The MARK, not the file's count: a refusal in an
         // earlier declaration is not this assignment's business.
         if @out.len() > before { return }
-        @record(kids[2], type_of(kids[2], @ctx, @scope))
+        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         // A head this short was already refused by the subset walk; the same
@@ -566,7 +555,7 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // answers, not decoration. A numeric literal does get asked, so
             // the shape test below is on the literal's own token.
             if leaf_kind(branch_children(c)[0]) == TokenKind.StrLit { continue }
-            @record(c, type_of(c, @ctx, @scope))
+            @record(c, type_of(c, @ctx, @scope, @chan))
         } else if is_expr_kind(ck) {
             // Children FIRST: the walk is what verifies that every name and
             // field in this argument exists, and only a verified expression
@@ -579,7 +568,7 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // `@scope.bind` -- every later name came out "unknown" (probe
             // 2026-08-20). The question is about THIS expression.
             if @out.len() > before { return }
-            ro at = type_of(c, @ctx, @scope)
+            ro at = type_of(c, @ctx, @scope, @chan)
             // The printer set is int/str/bool/f64. Every other primitive is
             // NAMEABLE (the universe holds all fifteen) but not yet
             // printable, and that boundary belongs here -- the emitter's ice
@@ -645,7 +634,7 @@ fn Checker mut @type_bind(st Node) -> () {
         @report_first_leaf_of([]Node.of(init), SELF_INIT_MSG)
         return
     }
-    ro vtype = type_of(init, @ctx, @scope)
+    ro vtype = type_of(init, @ctx, @scope, @chan)
     @record(init, vtype)
     if ik == NodeKind.MatchExpr {
         @type_match(init)
@@ -759,7 +748,7 @@ fn Checker mut @type_expr(e Node) -> () {
         if @out.len() > before { return }
         // Same first floor for a field: the owner is known now, so "this type
         // has no such field" is answerable here, at the field's own position.
-        ro owner = type_of(kids[0], @ctx, @scope)
+        ro owner = type_of(kids[0], @ctx, @scope, @chan)
         match kids[2] {
             Leaf(t) => {
                 if !@ctx.fields.has_field(owner, t.text) {
@@ -780,7 +769,7 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         @type_expr(kids[0])
         if @out.len() == 0 {
-            ro recv_t = type_of(kids[0], @ctx, @scope)
+            ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
             @record(kids[0], recv_t)
             // The DECISION, not a hint: which row this method call goes to.
             // Until 2026-08-18 nobody made it -- check only asked whether the
@@ -879,7 +868,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // `@scope.bind` -- every later name came out "unknown" (probe
         // 2026-08-20). The question is about THIS expression.
         if @out.len() > before { return }
-        @record(e, type_of(e, @ctx, @scope))
+        @record(e, type_of(e, @ctx, @scope, @chan))
     } else if k == NodeKind.Unary {
         // Same reasoning: the parser builds `op operand`, two children, always.
         ro kids = branch_children(e)
@@ -892,7 +881,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // 2026-08-20). The question is about THIS expression.
         if @out.len() > before { return }
         if @report_if_unary_needs_protocol(kids) { return }
-        @record(e, type_of(e, @ctx, @scope))
+        @record(e, type_of(e, @ctx, @scope, @chan))
     } else if k == NodeKind.Bin {
         // And again: `left op right`, three children, by construction.
         ro kids = branch_children(e)
@@ -912,9 +901,9 @@ fn Checker mut @type_expr(e Node) -> () {
         // The OPERANDS' types are recorded too: equality on `str` is a method
         // call, not a C operator, so the emitter must know what it compares —
         // and it may only READ that, never work it out (the channel rule).
-        @record(kids[0], type_of(kids[0], @ctx, @scope))
-        @record(kids[2], type_of(kids[2], @ctx, @scope))
-        @record(e, type_of(e, @ctx, @scope))
+        @record(kids[0], type_of(kids[0], @ctx, @scope, @chan))
+        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
+        @record(e, type_of(e, @ctx, @scope, @chan))
     } else {
         // The kinds `is_expr_kind` admits and this chain does not name are
         // Lit and MatchExpr, and neither has work HERE: a literal's type is
@@ -936,8 +925,8 @@ fn Checker mut @type_expr(e Node) -> () {
 /// level down, and not a silently wrong primitive emission.
 /// Returns whether it refused.
 fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
-    ro lt = type_of(kids[0], @ctx, @scope)
-    ro rt = type_of(kids[2], @ctx, @scope)
+    ro lt = type_of(kids[0], @ctx, @scope, @chan)
+    ro rt = type_of(kids[2], @ctx, @scope, @chan)
     ro op = bin_op_of(leaf_kind(kids[1]))
     ro numeric = @is_numeric(lt) && @is_numeric(rt)
     ro ints = lt == @ctx.prims.int_id && rt == @ctx.prims.int_id
@@ -980,7 +969,7 @@ fn Checker @is_primitive(t int) -> bool =>
 /// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
 /// and is refused at the operator's own position. Returns whether it refused.
 fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
-    ro t = type_of(kids[1], @ctx, @scope)
+    ro t = type_of(kids[1], @ctx, @scope, @chan)
     match un_op_of(leaf_kind(kids[0])) {
         Not => { if t == @ctx.prims.bool_id { return false } }
         Negate => { if @is_numeric(t) { return false } }

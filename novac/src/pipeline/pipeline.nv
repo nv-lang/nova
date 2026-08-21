@@ -43,11 +43,12 @@ fn tokens_of(text str) -> []Token {
 import ../source.{SourceText}
 import ../lex.{lex, reserialize, Token}
 import ../parse.{parse}
-import ../tree.{Node}
-import ../check.{check}
-import ../diag.{Diagnostic}
-import ../emit_c.{emit}
-import ../sem.{Ctx, collect}
+import ../tree.{Node, NodeKind}
+import ../check.{check, check_instance}
+import ../diag.{Diagnostic, ice}
+import ../emit_c.{emit, Instantiation}
+import ../mono.{Reach, reachable}
+import ../sem.{Ctx, collect, decl_fn_row, branch_children}
 
 /// A file's semantic context: the file's types + method signatures, READ
 /// from the declarations passed in. The compiler does not walk the
@@ -67,8 +68,64 @@ fn context(tree Node, decl_texts []str) -> Ctx {
 export fn compile(text str, decl_texts []str) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro (diags, _) = check(tree, src, context(tree, decl_texts))
-    diags
+    ro ctx = context(tree, decl_texts)
+    ro (diags, chan) = check(tree, src, ctx)
+    if diags.len() > 0 { return diags }
+    // A generic body's mistakes exist only once an INSTANCE does, so `check`
+    // runs the same instances the emitter will. Otherwise a file passes check
+    // and is refused by emit: two verdicts about one file, which is the shape
+    // this compiler exists to stop repeating.
+    ro (idiags, _) = instances_of(tree, src, ctx, reachable(tree, ctx, chan))
+    idiags
+}
+
+/// The declaration of a row, in THIS file. `None` when the row belongs
+/// elsewhere -- a std signature, whose body novac does not compile.
+fn decl_of_row(tree Node, ctx Ctx, row int) -> Option[Node] {
+    for c in branch_children(tree) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        match decl_fn_row(c, ctx) {
+            // Not a callable of this file: nothing to compare against.
+            None => {}
+            Some(r) => {
+                if r == row {
+                    return Some(c)
+                } else {
+                    // Another callable's declaration: keep looking.
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The instances this file needs, each typed under its own substitution.
+///
+/// THE E2-b2 wiring, and it lives here because pass order lives here (274 p6):
+/// mono decides WHICH instances exist, `check_instance` types each body under
+/// its substitution into its OWN channel (Go stenciling), and the emitter
+/// renders one C function per element. Neither check nor the emitter may call
+/// the other, so the walk over the set belongs to the one module that calls
+/// phases.
+fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnostic, []Instantiation) {
+    mut diags = []Diagnostic.new()
+    mut insts = []Instantiation.new()
+    // Node ids are handed out per FILE and the root takes the last one, so the
+    // root's id plus one IS the file's node capacity -- what an instance
+    // channel must be sized to, because a declaration's nodes sit anywhere in
+    // that range.
+    ro cap = tree.id_of() + 1
+    for it in reach.instances() {
+        // mono instantiated a row this file does not declare: a call to a body
+        // novac does not compile is refused BY NAME in check, so reaching here
+        // is a broken invariant rather than a program shape.
+        ro decl = decl_of_row(tree, ctx, it.row) ?? ice("pipeline: an instance of a row this file does not declare")
+        ro (idiags, ichan) = check_instance(decl, src, ctx, reach.subst_of(it), cap)
+        diags.append(idiags)
+        insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
+                                   ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan })
+    }
+    (diags, insts)
 }
 
 /// Emit C for a CLEAN e1 file. Contract: call only when compile() returned
@@ -83,7 +140,14 @@ export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) {
     if diags.len() > 0 {
         return (diags, "")
     }
+    // WHICH callables exist is mono's decision, and it is taken once, here:
+    // the emitter is handed the answer, not the collector (E2-b2).
+    ro reach = reachable(tree, ctx, chan)
+    ro (idiags, insts) = instances_of(tree, src, ctx, reach)
+    if idiags.len() > 0 {
+        return (idiags, "")
+    }
     // The emitter is handed the checker's channel, not the checker: it reads
     // decisions and cannot ask for a new one (E2-b1).
-    (diags, emit(tree, ctx, chan))
+    (diags, emit(tree, ctx, chan, reach, insts))
 }

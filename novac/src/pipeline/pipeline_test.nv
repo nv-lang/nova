@@ -131,10 +131,27 @@ test "an instance types its body under the substitution, in its own channel (E2-
     assert(body_t == ctx.prims.int_id)
 }
 
-test "a generic call is refused for the reason that is left, not the one that is closed" {
-    // One diagnostic: the substitution is read and legal, the parameter is a
-    // type -- what is missing is an emitted instance of the body (E2-b2 step 4).
-    assert(n_diags("fn id[T](x T) -> T => x\nfn main() { println(id[int](4)) }") == 1)
+test "a generic call is COMPILED: two instances, two C functions (E2-b2)" {
+    // The acceptance of E2-b2, and it is asserted on the emission rather than
+    // on silence: `dbl[int]` and `dbl[f64]` are two C functions of one body,
+    // each named by its substitution through `c_callable`.
+    ro src = "fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl[int](21))\n println(dbl[f64](1.5)) }"
+    ro (diags, c) = compile_to_c(src, std_decls())
+    assert(diags.len() == 0)
+    assert(c.contains("dbl__nova_int__to_nova_int__nova_int"))
+    assert(c.contains("dbl__nova_f64__to_nova_f64__nova_f64"))
+    // The generic body itself is NOT emitted as a function of its own: there is
+    // no such C function, only its instances. A `dbl(` substring would match
+    // the instances too, so the assertion is on the SIGNATURE the template
+    // would have had -- a bare `T` parameter, which has no C spelling at all.
+    assert(!c.contains("dbl(nova_int"))
+}
+
+test "a generic call without type arguments is refused, and says so (no inference in E2-b2)" {
+    // By design, not by omission: the turbofish IS the mapping at this stage,
+    // so its absence is a refusal that names itself. The oracle infers here --
+    // a deliberate divergence, recorded in docs/dev/novac-divergences.md.
+    assert(n_diags("fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl(4)) }") == 1)
 }
 
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {

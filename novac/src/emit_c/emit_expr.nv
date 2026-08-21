@@ -212,7 +212,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The ROW the checker decided on, not a name rebuilt from the receiver's
         // type: after the checker, nobody infers.
         ro cr = @out.callee_of(e.id_of())
-        @body.append(c_callable(@ctx, cr.target_row, no_subst()))
+        // The SUBSTITUTION comes from the same record as the row: one question
+        // ("which instance does this call name"), one read. An ordinary call
+        // carries an empty one, so there is no branch here to get wrong.
+        @body.append(c_callable(@ctx, cr.target_row, @out.callee_subst_of(e.id_of())))
         @body.append("(")
         @emit_expr(kids[0])
         mut i = 0
@@ -235,7 +238,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro cr = @out.callee_of(e.id_of())
         match cr.kind {
             DefVariant => @body.append("${c_maker(@ctx, cr.target_row)}(")
-            DefFn => @body.append("${c_callable(@ctx, cr.target_row, no_subst())}(")
+            DefFn => @body.append("${c_callable(@ctx, cr.target_row, @out.callee_subst_of(e.id_of()))}(")
             DefType => ice("emit_c: a type in call position reached the emitter")
         }
         mut first = true

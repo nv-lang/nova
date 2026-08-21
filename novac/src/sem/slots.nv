@@ -67,6 +67,25 @@ export fn param_name_at(pk []Node) -> Option[int] {
     None
 }
 
+/// The NAME slot of a fn DECLARATION: the first identifier leaf after the
+/// `fn` keyword.
+///
+/// Not child one. A `Generics` branch stands between for `fn twice[T]`, and a
+/// receiver group does for a method -- and `leaf_text` on a branch is an ice,
+/// which is how this rule was learned. The rule itself was then written out a
+/// second time in the typing walk and was about to be written a third in the
+/// emitter, which is what P18 calls a door: one question, one place.
+export fn decl_name_at(kids []Node) -> Option[int] {
+    mut i = 0
+    for c in kids {
+        // Index zero is the `fn` keyword -- a keyword is no identifier, so the
+        // test excludes it by construction rather than by counting.
+        if i > 0 && c.is_ident() { return Some(i) }
+        i += 1
+    }
+    None
+}
+
 /// The parameter MODES, and the set is measured rather than assumed
 /// (2026-08-17, after the owner asked why only `consume` was skipped):
 ///

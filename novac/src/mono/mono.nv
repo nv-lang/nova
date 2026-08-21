@@ -16,7 +16,7 @@
 module novac.mono
 
 import ../tree.{Node, NodeKind}
-import ../sem.{decl_fn_row, Ctx, CheckOut, DefKind, branch_children, leaf_text}
+import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, DefKind, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
 import ../diag.{ice}
 
@@ -28,10 +28,19 @@ import ../diag.{ice}
 /// a flat pool addressed by the range, exactly as every other range in this
 /// compiler (`FnDef.param_off/cnt`, `SubstRef.arg_off/cnt`): a range is one
 /// value, so it is one row and cannot desynchronize with itself.
+/// Its parameter and return types are CONCRETE, rewritten here. That is not a
+/// convenience for the backend, it is the architecture's boundary
+/// (novac-architecture.md): "a substitution needed in the emitter means mono
+/// did not finish its work". So mono finishes it -- through `sem.subst_type`,
+/// the one door that applies a substitution -- and the emitter reads type ids
+/// like any other.
 export type Instance value {
     row int /// the generic callable's row in FnTable
     subst_off int /// its first substitution argument in `Reach.subst`
     subst_cnt int /// how many arguments -- equal to the declaration's tparam_cnt
+    ptype_off int /// its first CONCRETE parameter type in `Reach.ptypes`
+    ptype_cnt int /// how many parameters -- equal to the row's param_cnt
+    ret_id int /// its CONCRETE return type
 }
 
 /// Which callables are reachable from the roots.
@@ -45,7 +54,24 @@ export type Reach {
     seen []bool /// indexed by fn row; true = a NON-generic callable reached from a root
     inst []Instance /// generic callables reached, one element per substitution
     subst []int /// flat pool of substitution arguments, addressed by Instance
+    ptypes []int /// flat pool of CONCRETE parameter types, addressed by Instance
 }
+
+/// The instances the walk found: one element per `(row, substitution)`.
+///
+/// The pipeline WALKS this vector -- it types each instance's body and hands
+/// the emitter one function per element. No door asks "is this instance in the
+/// set": the walk below asks that of itself while building, and an exported
+/// question with no caller is a door this plan has already written twice.
+export fn Reach @instances() -> ro []Instance => @inst
+
+/// The substitution of one instance -- a VIEW into the pool, not a copy.
+export fn Reach @subst_of(it Instance) -> ro []int =>
+    @subst[it.subst_off..it.subst_off + it.subst_cnt]
+
+/// The CONCRETE parameter types of one instance, in declaration order.
+export fn Reach @ptypes_of(it Instance) -> ro []int =>
+    @ptypes[it.ptype_off..it.ptype_off + it.ptype_cnt]
 
 /// Is this row generic -- does the declaration bind type parameters?
 #realtime nogc
@@ -101,12 +127,13 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     }
     mut inst = []Instance.new()
     mut subst = []int.new()
+    mut ptypes = []int.new()
 
     match entry_row(ctx) {
         // No entry point in this file: nothing is reachable, and that is an
         // ANSWER, not a hole -- check refuses such a file by name long before
         // the emitter is asked anything.
-        None => { return Reach { seen, inst, subst } }
+        None => { return Reach { seen, inst, subst, ptypes } }
         Some(root) => {
             if root < seen.len() {
                 seen[root] = true
@@ -145,7 +172,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
                     } else {
                         // Reached: its callees are worth walking.
                     }
-                    if mark_callees(c, ctx, out, seen, inst, subst) {
+                    if mark_callees(c, ctx, out, seen, inst, subst, ptypes) {
                         grew = true
                     } else {
                         // This body added nothing new this round; the loop
@@ -156,7 +183,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         }
     }
 
-    Reach { seen, inst, subst }
+    Reach { seen, inst, subst, ptypes }
 }
 
 /// Is this exact instance (row + substitution) missing from the set being
@@ -206,7 +233,7 @@ fn entry_row(ctx Ctx) -> Option[int] => ctx.defs.fn_row(ENTRY_FN)
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
-                mut subst []int) -> bool {
+                mut subst []int, mut ptypes []int) -> bool {
     mut grew = false
     ro id = n.id_of()
     if id >= 0 && out.has_callee(id) {
@@ -226,7 +253,17 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                     if instance_absent(inst, subst, row, args) {
                         ro off = subst.len()
                         subst.append(args)
-                        inst.push(Instance { row, subst_off: off, subst_cnt: args.len() })
+                        // The instance's types are REWRITTEN here, once, into
+                        // the pool: this is mono's own work, and doing it here
+                        // is what keeps every backend free of substitution.
+                        ro poff = ptypes.len()
+                        ro fd = ctx.fns.rows[row]
+                        for p in 0..fd.param_cnt {
+                            ptypes.push(subst_type(ctx, ctx.fns.params[fd.param_off + p], args))
+                        }
+                        inst.push(Instance { row, subst_off: off, subst_cnt: args.len(),
+                                             ptype_off: poff, ptype_cnt: fd.param_cnt,
+                                             ret_id: subst_type(ctx, fd.ret_id, args) })
                         grew = true
                     } else {
                         // This exact instance is already in the set.
@@ -248,7 +285,7 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
     }
     if n.kind_of() == NodeKind.LeafNode { return grew }
     for c in branch_children(n) {
-        if mark_callees(c, ctx, out, seen, inst, subst) {
+        if mark_callees(c, ctx, out, seen, inst, subst, ptypes) {
             grew = true
         } else {
             // Nothing new under this child.

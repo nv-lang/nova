@@ -24,7 +24,13 @@ builtins 10
 # каждый отдельно, а сам `check` не знает ни про mono, ни про эмиссию.
 check 2
 diag 6
-emit_c 1
+# emit_c 1 -> 2 (2026-08-21, E2-b2): `Instantiation` -- one already-typed
+# instance crossing the pipeline -> emitter boundary as DATA (declaration,
+# row, substitution, CONCRETE types, its own channel). It must be public
+# because the PIPELINE builds these values: mono decides which instances
+# exist, check types each body, and the emitter renders them -- so the type
+# of that hand-off belongs to the module that receives it.
+emit_c 2
 # lex 4 -> 6 (2026-08-18): paren_delta и bracket_delta — таблица глубины
 # скобок вышла наружу как ОДНА дверь вместо трёх if-цепочек в парсере
 # (владелец: «в match»). Наружу они обязаны выйти потому, что TokenKind
@@ -47,7 +53,13 @@ main 0
 # поле нечитаемо. Вопрос «этот инстанс уже в множестве» дверью наружу НЕ вышел:
 # спрашивает его только сам обход, пока строит множество, а эмиттер обходит
 # вектор, а не опрашивает его — дверь без вызывающего здесь уже была ошибкой.
-mono 5
+# mono 5 -> 8 (2026-08-21, E2-b2): three doors the PIPELINE calls --
+# `instances` (the vector it walks), `subst_of` and `ptypes_of` (views into
+# the pools, per instance). All three have a named caller by construction:
+# the pipeline types one body per element and hands the emitter the result.
+# The parameter and return types they answer with are CONCRETE, rewritten in
+# mono -- the architecture's boundary, so no backend substitutes.
+mono 8
 names 6
 parse 1
 pipeline 2
@@ -92,7 +104,14 @@ pipeline 2
 # достижимого ключуется `(строка, подстановка)`, и аргументы лежат в канале, в
 # `CalleeRef.subst_off/cnt`. Дверей две, а не одна: `subst_of` отвечает про узел
 # ИНСТАНЦИИРОВАНИЯ, эта — про вызов, и узел по построению либо тот, либо этот.
-sem 65
+# sem 65 -> 67 (2026-08-21, E2-b2): `subst_type` and `decl_name_at`. Both
+# REMOVE copies instead of adding rules. `subst_type` is THE door that applies
+# a substitution: the rule lived inside `type_tag` and again in check as
+# `Checker.concrete`, and mono wanted it third. `decl_name_at` answers "where
+# is this declaration's name" -- the first identifier leaf, not child one,
+# because a Generics branch or a receiver group stands between; the typing walk
+# had that loop written out and the emitter was about to write it a third time.
+sem 67
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

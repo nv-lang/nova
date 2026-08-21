@@ -1,0 +1,18 @@
+module generic_call.pos_1
+
+// TWO instances of ONE body: `dbl[int]` and `dbl[f64]` become two C functions,
+// each typed under its own substitution (E2-b2, donor: Go stenciling).
+//
+// The body does arithmetic ON the parameter, and that is the point of the
+// fixture: a body ignoring `x` would pass while nothing whatever had been
+// substituted, which is the weak-fixture class (registry #465). Here the
+// emission has to substitute `T` in the signature, in the mangled name and in
+// the operand types -- `+` on int is the checked helper, on f64 it is the raw C
+// operator, so a substitution that silently answered "int" would print a
+// different number.
+fn dbl[T](x T) -> T => x + x
+
+fn main() {
+    println(dbl[int](21))
+    println(dbl[f64](1.5))
+}

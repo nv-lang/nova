@@ -162,6 +162,36 @@ export fn c_callable(ctx Ctx, row int, subst []int) -> str
     }
     s
 }
+/// The concrete type a declaration's type stands for under a substitution:
+/// `TkParam(i)` becomes `subst[i]`, and every other type is already itself.
+///
+/// THE one door for applying a substitution, and it became one only when a
+/// THIRD caller wanted it: the rule lived here inside `type_tag` and again in
+/// `check` as `Checker.concrete`, which is how one rule starts being two
+/// (P18). `mono` rewrites an instance's parameter and return types with it, so
+/// no backend ever substitutes -- the architecture's own boundary
+/// (novac-architecture.md: a substitution needed in the emitter means mono did
+/// not finish its work).
+export fn subst_type(ctx Ctx, t int, subst []int) -> int {
+    if t < 0 || t >= ctx.types.len() { return t }
+    ro td = ctx.types[t]
+    match td.kind {
+        TkParam => {
+            // The parameter's index comes from the interner term, and it
+            // addresses the substitution directly.
+            ro idx = ctx.tys.head_of(td.ty_id)
+            assert(idx >= 0 && idx < subst.len(),
+                "mangle: a type parameter outside the substitution — a generic asked without one")
+            return subst[idx]
+        }
+        // Every other kind is already a type: a substitution has nothing to
+        // rewrite in it. Named one by one rather than through a wildcard --
+        // a new kind must come here and say what it does (P21).
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer => {}
+    }
+    t
+}
+
 /// An identifier-safe tag for a type, for use INSIDE a C name.
 ///
 /// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
@@ -181,14 +211,10 @@ fn type_tag(ctx Ctx, t int, subst []int) -> str
         TkRecord => td.name
         TkSum => td.name
         TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
-        TkParam => {
-            // A type parameter resolved through the substitution: the index
-            // from the interner maps directly into `subst`.
-            ro idx = ctx.tys.rows[td.ty_id].head_id
-            assert(idx >= 0 && idx < subst.len(),
-                "mangle: type parameter index outside the substitution — generic without a substitution")
-            type_tag(ctx, subst[idx], subst)
-        }
+        // A type parameter resolved through the substitution -- by the ONE
+        // door that applies one, so the mangler and mono cannot disagree about
+        // what `T` stands for.
+        TkParam => type_tag(ctx, subst_type(ctx, t, subst), subst)
         TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
     }
 }

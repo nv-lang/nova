@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -27,13 +27,13 @@ import ../sem.{CallForm, Ctx, CheckOut, DefKind, arm_body_at, candidates_from, b
 /// The same shape `check` builds with `UNKNOWN_TYPE` in the argument slots --
 /// same door, same order: one builder per stage of KNOWLEDGE, not one per kind
 /// of call. `from` is the index of the first argument child.
-fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope) -> []int {
+fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope, chan CheckOut) -> []int {
     mut out = []int.new()
     out.push(recv_t)
     mut i = 0
     for c in kids {
         if i >= from && is_expr_kind(c.kind_of()) {
-            out.push(type_of(c, ctx, scope))
+            out.push(type_of(c, ctx, scope, chan))
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -45,8 +45,17 @@ fn typed_call_key(kids []Node, from int, recv_t int, ctx Ctx, scope Scope) -> []
 
 /// Type of an expression over the tiny registry lattice. Every kind is
 /// judged positively; the residual is an ice, never an int (#652 class).
+///
+/// `chan` is the channel THIS run is filling, and the lattice reads it for one
+/// question only: a generic call's `-> T` names a type PARAMETER, and which
+/// type that parameter stands for is a property of the CALL, recorded when the
+/// callee was resolved. Reading it here is not a second opinion -- it is the
+/// checker's own record, and the walk records a callee before it ever asks
+/// about the node above it (E2-b2). Without it the lattice answered `TkParam`
+/// for `id[int](4)`, and every consumer downstream -- the printer set, the
+/// operator rules, a binding's type -- judged a parameter instead of an int.
 #realtime nogc
-fn type_of(e Node, ctx Ctx, scope Scope) -> int {
+fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
     ro k = e.kind_of()
     if k == NodeKind.Lit {
         // A negated literal is [Minus, lit] — judge the LAST leaf.
@@ -82,7 +91,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // in sync (the language overloads on parameters -- the pair
         // (receiver, name) was never enough: `str.contains` has both
         // `(needle str)` and `(c char)`).
-        ro key = typed_call_key(kids, 3, type_of(kids[0], ctx, scope), ctx, scope)
+        ro key = typed_call_key(kids, 3, type_of(kids[0], ctx, scope, chan), ctx, scope, chan)
         match ctx.fns.lookup(mname, key, CallForm.MethodCall) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
             // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote
@@ -96,7 +105,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     if k == NodeKind.FieldAccess {
         ro kids = branch_children(e)
         assert(kids.len() >= 3, "check: field access without a name")
-        ro recv_t = type_of(kids[0], ctx, scope)
+        ro recv_t = type_of(kids[0], ctx, scope, chan)
         return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
     }
     if k == NodeKind.RecordCtor {
@@ -107,7 +116,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         // Anonymous `{ ...src, ... }`: the record type is the spread's.
         for c in kids {
             if c.kind_of() == NodeKind.CtorSpread {
-                return type_of(branch_children(c)[1], ctx, scope)
+                return type_of(branch_children(c)[1], ctx, scope, chan)
             }
         }
         ice("check: anonymous constructor without a spread")
@@ -115,11 +124,11 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
     if k == NodeKind.Paren {
         // Parens carry no meaning of their own: the type is the inner
         // expression's, and the emitter reprints them for grouping.
-        return type_of(branch_children(e)[1], ctx, scope)
+        return type_of(branch_children(e)[1], ctx, scope, chan)
     }
     if k == NodeKind.Unary {
         ro kids = branch_children(e)
-        ro operand = type_of(kids[1], ctx, scope)
+        ro operand = type_of(kids[1], ctx, scope, chan)
         // `!` is strictly logical on bool and is NOT overloadable
         // (D46 AMEND 2026-08-02, @not retracted), so its answer is bool and
         // nothing else. `-` and `~` keep the operand's type (@neg / @bitnot
@@ -144,8 +153,8 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
             Range => { ice("check: a range is not an expression outside a for-head") }
             Add | Sub | Mul | Div | Modulo => {}
         }
-        ro lt = type_of(kids[0], ctx, scope)
-        ro rt = type_of(kids[2], ctx, scope)
+        ro lt = type_of(kids[0], ctx, scope, chan)
+        ro rt = type_of(kids[2], ctx, scope, chan)
         if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }
         // Both sides must be PROVEN int — arithmetic on str/bool/records is
         // not a silent int (#652 class), it is an invariant break here.
@@ -165,7 +174,7 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
                 // unknown type travelled on, which is the same shape the
                 // sibling case below already refuses out loud.
                 ro at = arm_body_at(ak) ?? ice("check: a match arm with no body reached type_of")
-                return type_of(ak[at], ctx, scope)
+                return type_of(ak[at], ctx, scope, chan)
             }
         }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
@@ -180,8 +189,25 @@ fn type_of(e Node, ctx Ctx, scope Scope) -> int {
         ro def = ctx.defs.rows[d]
         if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
         if def.kind == DefKind.DefFn {
-            ro ret = ctx.fns.rows[def.payload].ret_id
+            // The ROW the checker resolved, when it recorded one: `defs` is
+            // keyed by the bare name and lives by last-write-wins, so with two
+            // overloads it answers with the last. The channel holds the
+            // decision, and reading it here is what makes a generic call
+            // answerable at all -- its substitution rides in the same record.
+            ro row = if chan.has_callee(e.id_of()) { chan.callee_of(e.id_of()).target_row } else { def.payload }
+            ro ret = ctx.fns.rows[row].ret_id
             assert(ret >= 0, "check: call of a fn without a declared return type (#652 class)")
+            // A generic callee returns `-> T`: the concrete type is the one
+            // this CALL's substitution puts in that slot, through the one door
+            // that applies a substitution. An ordinary call carries an empty
+            // substitution and the return type is already itself.
+            if chan.has_callee(e.id_of()) {
+                return subst_type(ctx, ret, chan.callee_subst_of(e.id_of()))
+            } else {
+                // Nothing recorded for this node: the walk has not resolved
+                // this call yet (the diagnostics path asks the lattice while
+                // narrowing), so the row's own return type is the answer.
+            }
             return ret
         }
         ice("check: call target is a type, not a callable (#652 class)")

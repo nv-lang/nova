@@ -35,7 +35,7 @@ fn Checker mut @type_match(m Node) -> () {
     ro scr = kids[1]
     @type_expr(scr)
     if @out.len() > 0 { return }
-    ro scr_t = type_of(scr, @ctx, @scope)
+    ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
     mut first_t = None
     for c in kids {
@@ -226,7 +226,7 @@ fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
     @type_expr(body)
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
-    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope)) } else { None }
+    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope, @chan)) } else { None }
     @scope.release(mark)
     body_t
 }
