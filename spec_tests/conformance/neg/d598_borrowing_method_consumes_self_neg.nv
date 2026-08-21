@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR E_BORROWING_METHOD_CONSUMES_SELF
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №598. Заимствующий метод не может потребить СВОЙ ЖЕ приёмник.
+//
+// ЧТО БЫЛО. Обещание системы `consume` — «отдал один раз» — обходилось одной
+// строкой: потребляющий вызов переносился ВНУТРЬ заимствующего метода.
+// `fn Box @peek() -> int => @take()` при `fn Box consume @take()` собиралось
+// молча, и `b.peek()` дважды плюс `b.take()` печатали `first=7 second=7
+// third=7` — одно значение отдано ТРИЖДЫ, без единого слова компилятора.
+//
+// ПОЧЕМУ ПРОВЕРКА НЕ СРАБАТЫВАЛА: линейность отслеживается по ИМЕНАМ
+// биндингов, а `@` имени не имеет — потребление приёмника не попадало ни в
+// одно состояние. Правило владельца («зовёшь `consume @method()` — сам обязан
+// быть `consume`») было записано, но не энфорсилось.
+//
+// Контроль на законные формы — `standalone/d598_consume_method_chain_pos.nv`:
+// потребляющий метод, зовущий потребляющий, остаётся законным, и заимствующий,
+// зовущий заимствующий, — тоже.
+
+module neg.d598_borrowing_method_consumes_self_neg
+
+type Box consume { v int }
+
+fn Box consume @take() -> int => @v
+
+// nova:expect E_BORROWING_METHOD_CONSUMES_SELF -- заимствующий метод зовёт `consume`-метод на себе
+fn Box @peek() -> int => @take()
+
+fn probe() -> int {
+    consume b = Box { v: 7 }
+    b.peek()
+}

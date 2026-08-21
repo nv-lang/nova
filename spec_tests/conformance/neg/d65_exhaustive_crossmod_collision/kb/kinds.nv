@@ -1,0 +1,13 @@
+module kb.kinds
+
+// ЧУЖОЙ модуль, ТО ЖЕ имя типа. Именно эта форма (коллизия через импорт из
+// другого МОДУЛЯ, а не между файлами одной папки) наблюдалась на
+// `std/src/io/error.nv`.
+type XKind enum Left | Right
+
+export fn describe_b(k XKind) -> int {
+    match k {
+        Left => 10
+        Right => 20
+    }
+}

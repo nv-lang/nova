@@ -1,0 +1,33 @@
+// p238-paths probe 06: CLOSURE SENT THROUGH A CHANNEL. D441 §3(б) documents
+// a mechanism for exactly this ("Отправка в канал... value, если резолвится
+// к замыканию тем же путём, что (а), проверяется идентично") but ALSO
+// documents that "живых нарушителей класса (б) на момент замера №150 не
+// найдено... но механизм универсален с (а)" — i.e. the mechanism was
+// written but never exercised by a real violation. This probe is the direct
+// test: a `ro`-bound closure literal with a mut capture is sent down a
+// channel; the receiving side (a spawned fiber) receives and calls it,
+// racing against the sender's own continued use of the same captured
+// state. `Sender`/`Receiver` are themselves on the D415 share whitelist
+// (channel ENDS are safe to alias) — the question is whether the VALUE
+// travelling through the channel is still checked.
+
+module p238paths.p06_channel_send_closure
+
+fn main() {
+    mut acc = Vec[int].new()
+    ro push = || { acc.push(1) }
+
+    ro (tx, rx) = Channel[fn() -> ()].new(4)
+    tx.send(push)
+    tx.close()
+
+    supervised {
+        spawn {
+            while Some(f) = rx.recv() {
+                f()
+            }
+        }
+    }
+
+    acc.push(2)
+}

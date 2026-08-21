@@ -1,0 +1,28 @@
+// p238-paths probe 02: TWO-HOP PARAMETER PASSING. `mut_capture_transitive_
+// via_param_neg.nv` (existing conformance fixture, D441 §3(a)) proves ONE
+// hop is caught: closure literal created in `main`, passed AS DATA into a
+// function whose OWN body spawns it. This probe adds a SECOND hop: `main`
+// passes the closure into `middle_hop`, which merely forwards it (as a
+// plain named-identifier argument, not a literal) into `inner_spawn`, which
+// is the one that actually spawns it. D441 §5 documents "2+ хопа не
+// отслеживаются" as an honest, undefended limit of the one-hop
+// literal/snapshot tracing machine (`ScopeBinding.closure_free_vars`) — this
+// probe is a direct test of that documented boundary, not a new hypothesis.
+
+module p238paths.p02_two_hop_param
+
+fn inner_spawn(f fn() -> ()) {
+    supervised {
+        spawn { f() }
+    }
+}
+
+fn middle_hop(f fn() -> ()) {
+    inner_spawn(f)
+}
+
+fn main() {
+    mut acc = Vec[int].new()
+    ro push = || { acc.push(1) }
+    middle_hop(push)
+}

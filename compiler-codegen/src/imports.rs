@@ -4002,6 +4002,12 @@ mod entry_folder_module_tests {
     fn nested_dependency_replace_is_ignored_root_scope_only() {
         let root = unique_tmp("p204scope");
         let proj = root.join("proj");
+        // `proj/` — общий корень для соседних пакетов, связанных `path = "../b"`.
+        // Без маркера репозитория проверка D420 (переехавшая в `sync`/`load_pins`
+        // с №460) считает такую связь выходом за границу репы и валит разрешение
+        // до того, как тест доберётся до своего предмета — области видимости
+        // `[replace]`. Настоящий git не нужен: проверяется наличие `.git`.
+        std::fs::create_dir_all(proj.join(".git")).unwrap();
 
         let app_dir = proj.join("app");
         write_file(
@@ -4081,6 +4087,9 @@ mod entry_folder_module_tests {
     fn root_replace_overrides_transitive_same_named_dep() {
         let root = unique_tmp("p204scope3");
         let proj = root.join("proj");
+        // См. соседний тест: `proj/` обязан выглядеть репозиторием, иначе D420
+        // отвергает `path = "../b"` раньше, чем проверяется предмет теста.
+        std::fs::create_dir_all(proj.join(".git")).unwrap();
 
         let app_dir = proj.join("app");
         write_file(

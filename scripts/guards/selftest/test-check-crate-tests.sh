@@ -18,16 +18,18 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$3', got '$2')"; 
 run() { NOVA_CRATE_TESTS_CMD="$1" bash "$G" "$ROOT" >/dev/null 2>&1; echo $?; }
 
 echo "== propuskaet =="
+# Число обязано перекрывать САМЫЙ БОЛЬШОЙ порог из списка крейтов (1200 у
+# compiler-codegen): подстава отдаёт одну строку на всех.
 check "zelenyi nabor" \
-  "$(run "echo 'test result: ok. 433 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out'")" "0"
+  "$(run "echo 'test result: ok. 1300 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out'")" "0"
 check "neskol'ko celey summiruyutsya" \
-  "$(run "printf 'test result: ok. 200 passed; 0 failed\ntest result: ok. 233 passed; 0 failed\n'")" "0"
+  "$(run "printf 'test result: ok. 700 passed; 0 failed\ntest result: ok. 600 passed; 0 failed\n'")" "0"
 check "zelenyi s ignored" \
-  "$(run "echo 'test result: ok. 433 passed; 0 failed; 2 ignored'")" "0"
+  "$(run "echo 'test result: ok. 1300 passed; 0 failed; 2 ignored'")" "0"
 
 echo "== krasneet =="
 check "odin upavshiy sredi zelenyh" \
-  "$(run "printf 'test result: ok. 400 passed; 0 failed\ntest result: FAILED. 33 passed; 1 failed\n'")" "1"
+  "$(run "printf 'test result: ok. 1300 passed; 0 failed\ntest result: FAILED. 33 passed; 1 failed\n'")" "1"
 check "mnogo upavshih" \
   "$(run "echo 'test result: FAILED. 400 passed; 33 failed'")" "1"
 check "molchanie -- ne 'proshlo'" \
@@ -40,11 +42,12 @@ check "padenie komandy bez stroki verdikta" \
   "$(run "echo 'error: could not compile' ; exit 101")" "1"
 
 echo "== granica minimuma =="
-# Порог задан per-crate; 300 для nova-lsp — первый крейт в списке.
+# Порог задан per-crate, и подстава общая на всех, поэтому граница здесь —
+# САМЫЙ БОЛЬШОЙ порог (1200, compiler-codegen).
 check "rovno na poroge -- propuskaetsya" \
-  "$(run "echo 'test result: ok. 300 passed; 0 failed'")" "0"
+  "$(run "echo 'test result: ok. 1200 passed; 0 failed'")" "0"
 check "na odin nizhe poroga -- krasneet" \
-  "$(run "echo 'test result: ok. 299 passed; 0 failed'")" "1"
+  "$(run "echo 'test result: ok. 1199 passed; 0 failed'")" "1"
 
 echo "== realnost =="
 # Страж обязан судить НАСТОЯЩИЕ наборы, а не только подставу: без этого

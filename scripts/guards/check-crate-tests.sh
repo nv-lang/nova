@@ -25,10 +25,15 @@
 # 0 failed` — это молчание, и оно обязано быть красным (класс F1, реестр №645).
 # Отдельно требуется N в сотнях: пустой набор тоже даёт «ok».
 #
-# ЧТО НЕ ПОКРЫТО, ЯВНО. `compiler-codegen` (39 интеграционных целей) сюда НЕ
-# включён: его набор не измерен по времени, а страж, добавляющий гейту
-# неизвестно сколько, — это не страж, а рулетка. Остаётся работой в №723.
-# Молчаливого сокращения охвата здесь нет: список крейтов виден ниже.
+# ПРО СТЕК, потому что без него набор compiler-codegen НЕ ЗАПУСКАЕТСЯ ВОВСЕ:
+# тестовому потоку не везде хватает 2 МБ по умолчанию, и прогон падает
+# `STATUS_STACK_OVERFLOW` через полминуты. Сам компилятор в LSP по той же
+# причине ходит через `run_with_large_stack`. `RUST_MIN_STACK` задаётся ниже.
+#
+# ЧТО НЕ ПОКРЫТО, ЯВНО: интеграционные цели `compiler-codegen` (39 файлов в
+# `tests/`) — здесь гоняется только `--lib`. Не измерены по времени, а шаг
+# гейта неизвестной длительности — это не страж, а рулетка. Остаётся работой
+# в №723; молчаливого сокращения охвата нет, список целей виден ниже.
 #
 # ПОЧЕМУ У nova-lsp ТОЛЬКО `--lib`. Двоичные цели линкуются в тот же
 # `nova-lsp.exe`, который держит открытым работающий редактор; линковка тогда
@@ -46,7 +51,7 @@ NAME="check-crate-tests"
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
 # крейт:аргументы cargo:минимум ожидаемых тестов
-SUITES="nova-lsp:--lib:300 nova-cli::150"
+SUITES="nova-lsp:--lib:300 nova-cli::150 compiler-codegen:--lib:1200"
 
 fail_hard() {
     echo "$NAME: FAIL — $1" >&2
@@ -66,7 +71,10 @@ for suite in $SUITES; do
         OUT=$(eval "$NOVA_CRATE_TESTS_CMD" 2>&1)
     elif command -v cargo >/dev/null 2>&1; then
         # shellcheck disable=SC2086
-        OUT=$(cd "$ROOT/$CRATE" && cargo test --release --no-fail-fast $ARGS 2>&1)
+        # RUST_MIN_STACK — не украшение: без него compiler-codegen падает
+        # переполнением стека, не дойдя до конца (см. шапку).
+        OUT=$(cd "$ROOT/$CRATE" \
+              && RUST_MIN_STACK=134217728 cargo test --release --no-fail-fast $ARGS 2>&1)
     else
         echo "$NAME ok: cargo недоступен — судить нечем"
         exit 0
@@ -103,5 +111,5 @@ for suite in $SUITES; do
     TOTAL=$((TOTAL + PASSED))
 done
 
-echo "$NAME ok: наборы Rust-крейтов зелёные целиком ($TOTAL тестов; compiler-codegen не покрыт — №723)"
+echo "$NAME ok: наборы Rust-крейтов зелёные целиком ($TOTAL тестов)"
 exit 0

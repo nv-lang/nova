@@ -1,0 +1,3 @@
+module scratch_p248.p1b_alone
+
+type Handle nocopy { x int }

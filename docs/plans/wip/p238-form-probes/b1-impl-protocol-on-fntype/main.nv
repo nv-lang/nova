@@ -1,0 +1,8 @@
+export type Safe protocol {
+    @dummy() -> ()
+}
+
+export fn fn(int) -> int @dummy() -> () => ()
+
+// honesty control
+export fn honesty_control() -> int => undefined_identifier_zzz

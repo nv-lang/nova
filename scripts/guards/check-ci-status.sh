@@ -31,7 +31,11 @@
 # ЧТО ДЕЛАЕТ: спрашивает GitHub про прогоны на текущем `origin/main` (или на
 # хеше из аргумента) и печатает вердикт рядом с локальным. Три исхода:
 #   OK    — на хеше есть прогоны и все завершившиеся зелёные;
-#   RED   — есть хотя бы один `failure`/`cancelled`/`timed_out`;
+#   RED   — есть хотя бы один `failure`/`timed_out`/`startup_failure`,
+#           либо `cancelled` БЕЗ более нового прогона того же задания;
+#           отмена по ВЫТЕСНЕНИЮ (пришёл пуш новее, группа параллелизма
+#           сняла очередь) отказом не считается — 2026-08-19 она
+#           случалась на каждом втором пуше подряд;
 #   STALE — прогонов на хеше НЕТ вовсе, а с момента коммита прошло больше
 #           NOVA_CI_STALE_MIN минут (по умолчанию 20). Это и есть случай
 #           «пуш прошёл, CI не отреагировал».
@@ -140,14 +144,37 @@ except Exception:
 mine=[r for r in runs if r.get('headSha','').startswith(sha[:9])]
 if not mine:
     print('NONE|'); raise SystemExit
-red=[r for r in mine if r.get('conclusion') in ('failure','cancelled','timed_out','startup_failure')]
+# ОТМЕНА ПО ВЫТЕСНЕНИЮ — НЕ ОТКАЗ. У 'nova-gate' задана группа
+# параллелизма, и при частых пушах GitHub отменяет СТОЯЩИЙ В ОЧЕРЕДИ
+# прогон, когда приходит более новый. Считать это красным значит ронять
+# отправки по причине, которой нет, — а ложный красный останавливает
+# всех (довод №703). Отмена красна ТОЛЬКО если более нового прогона
+# ТОГО ЖЕ задания не появилось: тогда её кто-то снял намеренно.
+def _newer_exists(r):
+    nm, ts = r.get('name'), r.get('createdAt', '')
+    return any(o.get('name') == nm and o.get('createdAt', '') > ts
+               for o in runs)
+hard=[r for r in mine if r.get('conclusion') in ('failure','timed_out','startup_failure')]
+canc=[r for r in mine if r.get('conclusion') == 'cancelled']
+# Снятый прогон НЕ отказ и НЕ зелёное — это ОТСУТСТВИЕ вердикта, и
+# называется оно теперь своим именем (второй носитель №735): три
+# подряд отмены crate-tests 2026-08-19 были сняты из ОЧЕРЕДИ, не
+# начав ни одного шага, а страж объявлял их красными.
+red=hard
+noverdict=[r for r in canc if not _newer_exists(r)]
+superseded=[r for r in canc if _newer_exists(r)]
 run=[r for r in mine if r.get('status') != 'completed']
 if red:
     print('RED|' + ', '.join(sorted({r['name'] for r in red})))
+elif noverdict:
+    print('NOVERDICT|' + ', '.join(sorted({r['name'] for r in noverdict})))
 elif run:
     print('RUNNING|' + ', '.join(sorted({r['name'] for r in run})))
 else:
-    print('OK|' + str(len(mine)))
+    tail = ''
+    if superseded:
+        tail = ' (+%d superseded)' % len(superseded)
+    print('OK|' + str(len(mine)) + tail)
 " "$SHA" 2>/dev/null)"
 
 KIND="${VERDICT%%|*}"
@@ -160,6 +187,21 @@ case "$KIND" in
         ;;
     RUNNING)
         say "идёт — на $SHORT ещё выполняются: $DETAIL"
+        exit 0
+        ;;
+    NOVERDICT)
+        say "НЕТ ВЕРДИКТА на $SHORT: прогон СНЯТ, не дав результата — $DETAIL"
+        say "  снятый прогон — это ОТСУТСТВИЕ вердикта, а не отказ. Назвать"
+        say "  его красным значило бы утверждать причину, которой никто не"
+        say "  устанавливал (№735, родня №727: диагностика обязана называть"
+        say "  ту причину, которую установила)."
+        say "  ЗАМЕР 2026-08-19: три подряд отмены crate-tests, у всех"
+        say "  startedAt == createdAt и снятие через 45-48 минут после"
+        say "  постановки, при том что зелёный прогон того же задания идёт"
+        say "  7 минут — их сняли ИЗ ОЧЕРЕДИ, не начав."
+        say "  Отправка всё равно остановлена: отсутствие вердикта — не"
+        say "  разрешение. Получить настоящий: gh run rerun <id>"
+        [ "$STRICT" -eq 1 ] && exit 1
         exit 0
         ;;
     RED)

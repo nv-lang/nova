@@ -212,17 +212,20 @@ export fn StringBuilder mut @write(bytes []u8) -> () { @buf.append(bytes) }
 // `#coerce`: declares the implicit finalize-lane pair `StringBuilder → str`
 // (owning zero-cost MOVE, receiver disarmed at the insertion point; use-after
 // is a compile error — linearity).
-// [M-174.1-into-str-unchecked-legacy-array-codegen-gap] обход: the zero-copy
-// steal path (`@buf.into_str_unchecked()`) mis-codegens here — this file is
-// `#no_prelude` and so `@buf` uses the LEGACY `NovaArray` representation
-// (prelude.nv: "#no_prelude units keep the legacy NovaArray path"), for which
-// the new consume-method dispatch doesn't wire correctly (generates a C body
-// returning `int` instead of `nova_str` — CC-FAIL). Falls back to the
-// non-consuming copy path (`to_str_unchecked`) until that gap is closed (see
-// backlog-followups.md marker); correctness is unaffected, only the
-// zero-copy-reuse optimization is foregone for this legacy-array call site.
+// [M-174.1-into-str-unchecked-legacy-array-codegen-gap] — ОБХОД СНЯТ 2026-08-20,
+// ЗАМЕРОМ, А НЕ ЧТЕНИЕМ. Обход стоял с плана 174.1: путь кражи буфера
+// (`@buf.into_str_unchecked()`) мискодогенился в этом `#no_prelude`-юните
+// (легаси-`NovaArray`, consume-method dispatch давал тело, возвращающее `int`
+// вместо `nova_str` — CC-FAIL), и дверь молча откатывалась на КОПИЮ
+// (`to_str_unchecked`). Причина исчезла: путь возвращён и прогнан —
+// `nova check std/src` канон (FAIL 26), `nova test std/src/runtime` PASS 5
+// FAIL 0, страж `check-std-test-baseline` без новых отказов, конформанс
+// PASS 827 FAIL 0. Это самая горячая финализация строк в std (csv, sql,
+// Vec-протоколы, интерполяция) — копия платилась на каждом вызове.
+// УРОК ДЛЯ СЛЕДУЮЩЕГО: обход, чья причина не проверяется, живёт дольше
+// причины. Пометка обхода обязана нести способ ПРОВЕРИТЬ, что он ещё нужен.
 #coerce
-export fn StringBuilder consume @into_str() -> str => unsafe { @buf.to_str_unchecked() }
+export fn StringBuilder consume @into_str() -> str => unsafe { @buf.into_str_unchecked() }
 
 // Checked twin of `@into_str()` — validates UTF-8 instead of assuming it.
 // Delegates to `[]u8 @to_str()` (std/runtime/string/core.nv).

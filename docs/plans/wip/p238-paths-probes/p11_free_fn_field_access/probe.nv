@@ -1,0 +1,32 @@
+// p238-paths probe 11: PUBLIC FIELD READ+CALLED BY A FREE FUNCTION, NOT A
+// METHOD OF THE OWNING TYPE. D441 §3(г)/S1a's write-site taint discovery
+// (`spawn_tainted_fields_of_module`) is described as scanning "по всем
+// МЕТОДАМ (`Item::Fn` с `receiver`)" for `(TypeName, field)` pairs whose
+// value is called inside a fiber boundary. This probe drives the boundary
+// from a FREE function (`run_hook`, no receiver) that reads
+// `bus.hooks[0]` and spawns it directly — the struct type itself has NO
+// method that ever touches `hooks` inside a boundary, only ITS OWN
+// constructor writes the field (a record literal, the shape already proven
+// caught by the `field_sink_call_*` family) — so the only thing tested here
+// is whether a boundary-use OUTSIDE any method of the type is discovered by
+// the same per-module taint pass.
+
+module p238paths.p11_free_fn_field_access
+
+type EventBus { hooks Vec[fn() -> ()] }
+
+fn EventBus.new(f fn() -> ()) -> EventBus => { hooks: Vec[fn() -> ()].of(f) }
+
+fn run_hook(bus EventBus) {
+    supervised {
+        spawn {
+            (bus.hooks[0])()
+        }
+    }
+}
+
+fn main() {
+    mut order = Vec[int].new()
+    ro bus = EventBus.new(|| { order.push(1) })
+    run_hook(bus)
+}

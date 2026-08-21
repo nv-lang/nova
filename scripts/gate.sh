@@ -199,6 +199,9 @@ step "форма записей реестра (класс, приоритет, 
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
 step "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
 guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
+step "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
+guard "$ROOT/scripts/guards/check-guard-external-caller.py" "$ROOT" \
+    || fail "стражей без внешнего вызывающего стало больше (docs/dev/gate-guard-conventions.md, Г8)"
 
 guard "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 
@@ -246,6 +249,12 @@ step 'retracted-try-semantics (снятая трактовка `?` в доке �
 guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
 step "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
+step "registry-single-verdict (одна строка — один вердикт и статус — №730)"
+guard "$ROOT/scripts/guards/check-registry-single-verdict.sh" "$ROOT" || fail "в реестре строка с ДВУМЯ вердиктами или статусами: сканеры читают первое вхождение, дописки идут в хвост — заглавные числа релиза начинают врать в обе стороны (№730)"
+step "fixed-but-open (правка слита — строка не числится открытой — №731)"
+guard "$ROOT/scripts/guards/check-fixed-but-open.sh" "$ROOT" || fail "в реестре строка со СЛИТОЙ правкой стоит OPEN: план показывает работу, которой нет, и блокеры тега завышены — четыре БЛОКИРУЮЩИХ строки (№711, №714, №719, №720) стояли так при приколотой фикстуре (№731); либо закрой строку по ЗАМЕРУ, либо впиши номер в scripts/guards/fixed-but-open.baseline с причиной"
+step "bare-type-lookups (чтения карты типов голым именем не растут — №705)"
+guard "$ROOT/scripts/guards/check-bare-type-lookups.sh" "$ROOT" || fail "прибавилось чтений карты типов чекера ГОЛЫМ именем: карта коллидирует между модулями last-write-wins, и класс на этом возвращался четырежды (196.7, №696, №705, №729) — разрешай по файлу места использования, types_get_for_file(name, id)"
 step "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
 guard "$ROOT/scripts/guards/check-mixed-eol.sh" "$ROOT" || fail "смешанные окончания строк: построчные и побайтные счётчики расходятся, git этого не видит (core.autocrlf), лечится перевыкладкой файла, а не коммитом"
 step "crate-tests (собственные наборы nova-lsp и nova-cli — №723)"
@@ -291,6 +300,14 @@ step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фи
 TFC_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
     || fail "test-fixture-coverage: не вычислить diff-base (см. scripts/tools/require-diff-base.sh) — rule5/rule1 не могут выполниться"
 guard "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
+step "diag-fixture-coverage (кодов диагностик без neg-фикстуры не прибавляется — №639)"
+guard "$ROOT/scripts/guards/check-diag-fixture-coverage.sh" "$ROOT" || fail "прибавилось кодов диагностики без neg-фикстуры: правило 5 работает ПО ДИФФУ и про накопленное не знает ничего — замер 2026-08-19: из 421 кода без фикстуры 210 (№639); новая диагностика обязана приезжать со своей neg-фикстурой, обе формы записи кода считаются одинаково"
+step "test-env-races (одну переменную среды правит не больше одного теста — №733)"
+guard "$ROOT/scripts/guards/check-test-env-races.sh" "$ROOT" || fail "два теста правят ОДНУ переменную среды, а тесты Rust идут ПАРАЛЛЕЛЬНО в ОДНОМ процессе: зелёное становится вопросом планировщика (№733 — `march_flag_default` упал на CI, пройдя локально); решение — в чистую функцию, чтение среды — РОВНО ОДНОМУ тесту"
+step "generic-static (статик не живёт внутри generic-функции — №736)"
+guard "$ROOT/scripts/guards/check-generic-static.sh" "$ROOT" || fail "`static` внутри generic-функции: Rust инстанцирует его НА КАЖДУЮ мономорфизацию, и мьютекс, заведённый там ради сериализации, НЕ СЕРИАЛИЗУЕТ НИЧЕГО (№736: у каждого из семи тестов SCC-кэша был СВОЙ мьютекс, и CI дал (0,3) вместо (0,1)); вынеси статик на уровень модуля"
+step "std-module-coverage (модулей std без единого теста не прибавляется — №471)"
+guard "$ROOT/scripts/guards/check-std-module-coverage.sh" "$ROOT" || fail "прибавилось модулей std БЕЗ ЕДИНОГО теста: база известных отказов сторожит ПАДАЮЩИЕ тесты и слепа к ОТСУТСТВУЮЩИМ — непокрытость выглядит как исправность (№471); тест клади РЯДОМ с модулем, как требует конвенция std"
 
 step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
 # НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
@@ -605,6 +622,56 @@ echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
 # вернётся — чинить, а не заносить в исключения.
 [ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
+
+step "conformance-full (лейны panic/exit/timeout — их не гонял НИКТО)"
+# ЗАЧЕМ. Мега-CU выше идёт с `--positive --compile-error`. Фикстуры с
+# `EXPECT_RUNTIME_PANIC` (32), `EXPECT_EXIT_CODE` (6) и `EXPECT_TIMEOUT_MS` (16)
+# в эти лейны не попадают — храповик SKIP (№453б) лишь СЧИТАЛ их пропущенными и
+# ни разу не проверял. Двадцать семь поставляемых проверок не исполнял никто.
+#
+# ПОЧЕМУ `--full`, А НЕ ПЕРЕЧИСЛЕНИЕ ЛЕЙНОВ. Перечень отстанет от корпуса ровно
+# так же, как отстал этот: новый вид `EXPECT_*` тихо не попадёт ни в один лейн и
+# снова станет невидимым. `--full` значит «всё», и новый вид покрывается сам.
+# Цена — повтор позитивного лейна, ~150 с на сорокаминутном гейте.
+#
+# ПОЧЕМУ СВЕРКА МНОЖЕСТВА, А НЕ ЧИСЛА. Храповик «не больше N красных» пропустил
+# бы подмену одного красного другим — страж ни о чём (класс F1, №645). Поэтому
+# сверяются ИМЕНА, а список красных явный и с причинами.
+FULL_LOG="${TMPDIR:-/tmp}/gate_full_$$.log"
+FULL_KNOWN="$ROOT/scripts/guards/conformance-known-red.list"
+"$NOVA" test --full --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$FULL_LOG" 2>&1
+FULL_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
+echo "conformance-full :: $FULL_LINE"
+echo "$FULL_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
+    || fail "conformance-full: строки PASS/FAIL нет вовсе (краш её не печатает — см. $FULL_LOG)"
+
+# Имена упавших. Маркеры перечислены явно; если какой-то вид отказа сюда не
+# попал — это ловится самопроверкой ниже, а не проходит молча.
+FULL_BAD=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" \
+    | grep -E "^(NEG-[A-Z-]+|CC-FAIL|RUN-FAIL|CODEGEN-FAIL|MISMATCH|TIMEOUT|FAIL) +spec_tests/" \
+    | awk '{print $2}' | sort -u)
+FULL_BAD_N=$(printf '%s' "$FULL_BAD" | grep -c . || true)
+FULL_FAIL_N=$(echo "$FULL_LINE" | grep -oE "FAIL: [0-9]+" | grep -oE "[0-9]+" | head -1)
+[ -n "$FULL_FAIL_N" ] || FULL_FAIL_N=0
+
+# САМОПРОВЕРКА: сколько сказал итог — столько имён и обязано извлечься. Иначе
+# шаг сверяет НЕ ТО и «зелено» означает «не смог назвать».
+[ "$FULL_BAD_N" -eq "$FULL_FAIL_N" ] \
+    || fail "conformance-full: итог сообщает FAIL: $FULL_FAIL_N, а по именам извлеклось $FULL_BAD_N — вид отказа не разобран, шаг сверял бы не то (см. $FULL_LOG и список маркеров в gate.sh)"
+
+FULL_EXP=$(grep -vE '^\s*#' "$FULL_KNOWN" 2>/dev/null | awk '{print $1}' | grep -E '^spec_tests/' | sort -u)
+FULL_NEW=$(comm -23 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+FULL_GONE=$(comm -13 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+
+if [ -n "$FULL_NEW" ]; then
+    printf '%s\n' "$FULL_NEW" | head -10 >&2
+    fail "conformance-full: красная фикстура вне списка известных ($FULL_KNOWN). Это лейн, который до 2026-08-19 не гонял никто — чини дефект, а не заноси в список; занесение только с номером строки реестра и причиной."
+fi
+if [ -n "$FULL_GONE" ]; then
+    echo "  ЗАМЕТКА: позеленели и могут уйти из $FULL_KNOWN:" >&2
+    printf '  %s\n' "$FULL_GONE" >&2
+fi
+echo "conformance-full ok: красных ровно столько и ровно тех, что в списке"
 
 step "check std/src (byte-canon)"
 STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/${ESC}\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)

@@ -1,0 +1,40 @@
+// EXPECT_COMPILE_ERROR E_THROW_TYPE_MISMATCH
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №441. Функция объявляет `Fail[CommitErr]`, а бросает
+// `WorkErr`. Чекер обязан это отвергнуть.
+//
+// ЧТО БЫЛО ДО ПРАВКИ: `nova check` давал `PASS: 1  FAIL: 0`, а собранная
+// программа умирала в рантайме — `nova: unhandled Fail: <WorkErr>`, код
+// возврата 101. Объявление типа отказа существовало, обработчик отказа
+// выбирается ПО ТИПУ, но сверки объявленного с фактическим не было ни в
+// одном проходе.
+//
+// ЧЕМ ИЗМЕРЕНО, а не предположено. Две пробы на одном бинаре, различие в
+// одном имени: `throw CommitErr {...}` при `Fail[CommitErr]` — `PASS: 1
+// FAIL: 0` (законно и обязано проходить); `throw WorkErr {...}` при том же
+// объявлении — тоже `PASS: 1  FAIL: 0`. То есть сравнения не было вовсе, а
+// не было «слабым».
+//
+// ОСНОВАНИЕ В СПЕКЕ, а не новое правило: `spec/decisions/03-syntax.md`
+// говорит про активный `Fail[...]`-handler, выбираемый ПО ТИПУ ВАРИАНТА, и
+// про совместимость `Fail[E']` с `E ⊆ E'`. Проверка принуждает уже
+// записанное, поэтому D-амендмент не требовался.
+//
+// Контроль на ЗАКОННЫЕ формы (точный тип И вариант объявленной суммы —
+// обе обязаны проходить и исполняться) — `standalone/d441_throw_payload_pos.nv`.
+
+module neg.d441_throw_type_mismatch_neg
+
+type CommitErr { msg str }
+
+type WorkErr { msg str }
+
+fn thrower() Fail[CommitErr] -> () {
+    // nova:expect E_THROW_TYPE_MISMATCH -- объявлен `Fail[CommitErr]`, бросается `WorkErr`
+    throw WorkErr { msg: "declared CommitErr, thrown WorkErr" }
+}
+
+fn probe() Fail -> () {
+    thrower()
+}

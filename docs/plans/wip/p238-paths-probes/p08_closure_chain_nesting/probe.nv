@@ -1,0 +1,24 @@
+// p238-paths probe 08: NESTED CLOSURE LITERAL (curry). A closure literal
+// bound directly at `ro make_adder = || { || { acc.push(1) } }` is ITSELF
+// captured by `spawn`, then called twice (`(make_adder())()`) to reach the
+// INNER closure. Unlike probes 01/05 (which launder through a function
+// return or an `Option`), here the whole thing is still ONE literal at ONE
+// `ro`-declare site, so ordinary free-variable computation should see
+// `acc` as a free variable of the OUTER literal (nested closures'
+// unbound names bubble up). Included as a confirmatory boundary check: if
+// this were NOT caught, `#3(a)`'s one-hop literal tracing would be broken
+// even for the simplest case; if it IS caught, that pins down that mere
+// curry-nesting is not by itself an escape route — only crossing a
+// function-return or container/Option boundary is.
+
+module p238paths.p08_closure_chain_nesting
+
+fn main() {
+    mut acc = Vec[int].new()
+    ro make_adder = || { || { acc.push(1) } }
+    supervised {
+        spawn {
+            (make_adder())()
+        }
+    }
+}

@@ -808,6 +808,37 @@ pub fn check_no_committed_replace(m: &Manifest, toml_path: &Path) -> Result<(), 
 /// `path` в `[replace]` (только в НЕкоммитящемся `nova.override.toml`) законен
 /// по D420 и сюда не попадает: `[replace]` в коммитящемся манифесте ловит
 /// `check_no_committed_replace` выше.
+/// №727: почему зависимость сочтена «не из этой репы» — человеческим языком и
+/// БЕЗ вранья.
+///
+/// Предикат ниже схлопывает ТРИ разных случая в один `false`, и до 2026-08-18
+/// все три объяснялись одной фразой «путь выходит за границу git-репозитория».
+/// Для проекта, который вообще не под git, это утверждение ЛОЖНО: границы,
+/// которую якобы пересекли, там не существует. Диагностика, говорящая больше,
+/// чем проверила, отправляет читателя искать поломку, которой нет.
+///
+/// САМО ПРАВИЛО НЕ ТРОГАЕТСЯ, и это проверено, а не предположено: на рабочей
+/// области вне git с ВЛОЖЕННОЙ зависимостью `check` выходит нулём с одним
+/// предупреждением, а `build` и `test` про зависимости молчат — жёсткий отказ
+/// не воспроизводится ни на одной из трёх команд. Значит менять политику D420
+/// не за чем; неверна фраза, и меняется она.
+fn cross_repo_reason(manifest_dir: &Path, dep_dir: &Path) -> &'static str {
+    match (git_repo_root(manifest_dir), git_repo_root(dep_dir)) {
+        (Some(_), Some(_)) => {
+            "путь ведёт в СОСЕДНИЙ git-репозиторий, на чистом клоне он не разрешится"
+        }
+        (None, None) => {
+            "ни манифест, ни цель не под git — подтвердить, что путь придёт вместе с клоном, нечем"
+        }
+        (Some(_), None) => {
+            "цель не под git — подтвердить, что она придёт вместе с клоном манифеста, нечем"
+        }
+        (None, Some(_)) => {
+            "манифест не под git — подтвердить, что цель придёт вместе с ним, нечем"
+        }
+    }
+}
+
 pub fn check_no_cross_repo_path_deps(m: &Manifest, toml_path: &Path) -> Result<(), String> {
     for d in &m.dependencies {
         if let DepSource::Path(rel) = &d.source {
@@ -819,13 +850,14 @@ pub fn check_no_cross_repo_path_deps(m: &Manifest, toml_path: &Path) -> Result<(
             if !same_repo {
                 return Err(format!(
                     "[E_DEP_PATH_OUTSIDE_REPO] зависимость `{}` объявлена голым \
-                     `path = \"{}\"` в [dependencies] ({}) — путь выходит за \
-                     границу git-репозитория, на чистом клоне не разрешится\n  \
+                     `path = \"{}\"` в [dependencies] ({}) — {}\n  \
                      fix: релизная форма — `{} = {{ git = \"...\", version = \
                      \"x.y\" }}` в [dependencies]; локальный путь — в \
                      `[replace] {} = {{ path = \"{}\" }}` внутри nova.override.toml \
                      (не коммитится). См. D420 (spec/decisions/09-tooling.md).",
-                    d.name, rel, toml_path.display(), d.name, d.name, rel,
+                    d.name, rel, toml_path.display(),
+                    cross_repo_reason(&m.manifest_dir, &dep_dir),
+                    d.name, d.name, rel,
                 ));
             }
         }
@@ -869,13 +901,14 @@ pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning>
                     code: "W_DEP_PATH_NO_RELEASE",
                     message: format!(
                         "зависимость `{}` объявлена голым `path` в [dependencies] \
-                         ({}) — путь выходит за границу git-репозитория, нет \
-                         публикуемого источника (версия/git)\n    \
+                         ({}) — {}; публикуемого источника (версия/git) нет\n    \
                          подсказка: релизная форма — `{} = {{ git = \"...\", \
                          version = \"x.y\" }}` в [dependencies], а `path` — в \
                          `[replace] {} = {{ path = \"...\" }}` (nova.override.toml) \
                          для локальной разработки",
-                        d.name, toml_path.display(), d.name, d.name,
+                        d.name, toml_path.display(),
+                        cross_repo_reason(&m.manifest_dir, &dep_dir),
+                        d.name, d.name,
                     ),
                 });
             }
@@ -1622,9 +1655,26 @@ mod parse_tests {
 
     /// Helper: записывает text в tempfile под name, возвращает (path, dir).
     /// Использует unique временную директорию, чтобы тесты не интерферировали.
+    /// Временный каталог для одного вызова.
+    ///
+    /// К имени и PID добавляется АТОМАРНЫЙ СЧЁТЧИК, и это не украшение.
+    /// Тесты Rust идут параллельно в ОДНОМ процессе, поэтому `process::id()`
+    /// у них общий: два вызова с одинаковым `name` получали ОДИН каталог и
+    /// ОДИН `nova.toml`, а значит гонялись друг с другом. Именно так
+    /// 2026-08-19 упал на CI `read_std_key_absent` — три теста передавали
+    /// имя `"nova.toml"`, один писал манифест С ключом `std`, другой ждал
+    /// его отсутствия. Локально гонка выигрывалась.
+    ///
+    /// Счётчик убирает КЛАСС: совпасть два вызова больше не могут, как бы их
+    /// ни назвали. Переименование трёх вызовов починило бы случай и оставило
+    /// грабли следующему (родня №733 — там общим ресурсом была переменная
+    /// среды, здесь путь).
     fn write_toml(name: &str, text: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("nova_manifest_test_{}_{}", name,
-            std::process::id()));
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let uniq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("nova_manifest_test_{}_{}_{}", name,
+            std::process::id(), uniq));
         std::fs::create_dir_all(&dir).expect("mkdir tempdir");
         let toml_path = dir.join("nova.toml");
         let mut f = std::fs::File::create(&toml_path).expect("create toml");

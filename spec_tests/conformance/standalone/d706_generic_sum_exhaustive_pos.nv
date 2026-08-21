@@ -1,0 +1,57 @@
+// EXPECT_STDOUT d706 a=7 b=2 c=3 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №706, КОНТРОЛЬ НА ЗАКОННУЮ ФОРМУ. Разбор, покрывающий ВСЕ
+// варианты generic-суммы, обязан проходить и исполняться — иначе правка
+// хуже своего отсутствия.
+//
+// ЗДЕСЬ ПИНЯЕТСЯ ИМЕННО ТО, ЧТО РИСКОВАЛО СЛОМАТЬСЯ. Проверка снималась
+// у ВСЯКОГО типа с аргументами, то есть у `Option[T]` и `Result[T, E]`
+// тоже; включив её, легко начать отвергать рабочий код. Поэтому в
+// фикстуре три случая сразу:
+//   (1) полный разбор собственной generic-суммы;
+//   (2) полный разбор `Option[int]` — прелюдный тип с параметром;
+//   (3) разбор с `_`-армом, который обязан закрывать остаток.
+// Все три законны и обязаны пройти молча.
+
+module standalone.d706_generic_sum_exhaustive_pos
+
+type D706PGen[T] enum
+    | D706PA(T)
+    | D706PB
+    | D706PC
+
+fn full_match(k D706PGen[int]) -> int {
+    match k {
+        D706PA(x) => x
+        D706PB    => 2
+        D706PC    => 3
+    }
+}
+
+fn option_match(o Option[int]) -> int {
+    match o {
+        Some(x) => x * 2 + 1
+        None    => 0
+    }
+}
+
+fn wildcard_match(k D706PGen[int]) -> int {
+    match k {
+        D706PA(x) => x
+        _         => 9
+    }
+}
+
+fn main() Io -> () {
+    ro a = full_match(D706PGen[int].D706PA(7))
+    ro b = full_match(D706PGen[int].D706PB)
+    ro c = full_match(D706PGen[int].D706PC)
+    ro d = option_match(Some(5))
+    ro e = wildcard_match(D706PGen[int].D706PB)
+    ro guard = d + e
+    if guard != 20 {
+        println("d706 unexpected guard=${guard}")
+    }
+    println("d706 a=${a} b=${b} c=${c} ok")
+}

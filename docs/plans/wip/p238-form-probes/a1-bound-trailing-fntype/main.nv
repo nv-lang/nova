@@ -1,0 +1,10 @@
+export type Safe protocol {
+    @dummy() -> ()
+}
+
+export fn register(f fn(int) -> int Safe) -> () {
+    ()
+}
+
+// honesty control: deliberate unrelated type error further down the file
+export fn honesty_control() -> int => undefined_identifier_zzz

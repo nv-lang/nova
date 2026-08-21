@@ -737,12 +737,20 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
 
 // ---------- build invocation ----------
 
+/// Выбор `-march`. Решение отделено от ЧТЕНИЯ СРЕДЫ намеренно.
+///
+/// Было одной функцией, и два теста на неё гоняли одну и ту же переменную
+/// процесса `NOVA_MARCH_NATIVE`. Тесты Rust идут ПАРАЛЛЕЛЬНО в одном
+/// процессе, то есть `march_flag_default` мог прочитать значение, которое
+/// в тот же миг выставил `march_flag_native_env`. Локально гонка
+/// выигрывалась, на CI (2026-08-19, ubuntu-latest) проиграла — и это первый
+/// раз, когда её вообще было видно: набор крейта до №723 не гонял никто.
+fn march_flag_for(native: bool) -> &'static str {
+    if native { "native" } else { "x86-64-v3" }
+}
+
 fn march_flag() -> String {
-    if std::env::var("NOVA_MARCH_NATIVE").as_deref() == Ok("1") {
-        "native".to_string()
-    } else {
-        "x86-64-v3".to_string()
-    }
+    march_flag_for(std::env::var("NOVA_MARCH_NATIVE").as_deref() == Ok("1")).to_string()
 }
 
 /// Plan 22 Ф.6 production: decode bytes от child-process'а (stdout/stderr
@@ -8416,17 +8424,26 @@ mod tests {
         assert_eq!(display_name(path, cwd), "std/checksums/fnv");
     }
 
+    // Решение — чистой функцией: два теста ниже не трогают среду вовсе и
+    // потому не могут мешать ни друг другу, ни соседям по процессу.
     #[test]
     fn march_flag_default() {
-        std::env::remove_var("NOVA_MARCH_NATIVE");
-        assert_eq!(march_flag(), "x86-64-v3");
+        assert_eq!(march_flag_for(false), "x86-64-v3");
     }
 
     #[test]
     fn march_flag_native_env() {
+        assert_eq!(march_flag_for(true), "native");
+    }
+
+    /// Среду читает РОВНО ОДИН тест — иначе возвращается та самая гонка.
+    /// Обе стороны проверяются здесь последовательно, в известном порядке.
+    #[test]
+    fn march_flag_reads_the_environment() {
         std::env::set_var("NOVA_MARCH_NATIVE", "1");
         assert_eq!(march_flag(), "native");
         std::env::remove_var("NOVA_MARCH_NATIVE");
+        assert_eq!(march_flag(), "x86-64-v3");
     }
 
     #[test]

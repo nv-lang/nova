@@ -1,0 +1,37 @@
+// p238-paths probe 05: CLOSURE INSIDE Option, RETURNED, MATCHED, SPAWNED.
+// `m107_supervised_spawn_option_fn_match_bind_call.nv` (existing conformance
+// fixture) proves `match opt { Some(hook) => { ...hook(x)... } }` under
+// `spawn` is fine WHEN the `Option[fn...]`-bearing value is produced and
+// consumed by the SAME fiber (fresh in-fiber local, never captured from an
+// outer scope) — its own comment says the M:N share-ness checker "cannot
+// prove a captured Option[fn...]-bearing struct safe to alias across a
+// spawn boundary" and sidesteps the question rather than answering it. This
+// probe asks the actual question: a function returns `Option[fn()->()]`
+// wrapping a closure with a mut capture; the CALLER stores the Option in a
+// `ro` binding OUTSIDE any fiber, then unwraps and calls it from several
+// concurrent fibers. The closure literal is buried behind a `Some(...)`
+// constructor call and a function return — two layers the literal/snapshot
+// tracing (`ScopeBinding.closure_free_vars`, recorded only for bare
+// closure-literal or plain-identifier RHS at `let`/`ro`-time) does not
+// documented as reaching through.
+
+module p238paths.p05_option_wrapped_closure
+
+fn make_handler() -> Option[fn() -> ()] {
+    mut acc = Vec[int].new()
+    Some(|| { acc.push(1) })
+}
+
+fn main() {
+    ro maybe = make_handler()
+    supervised {
+        for _ in 0..4 {
+            spawn {
+                match maybe {
+                    Some(f) => { f() }
+                    None => {}
+                }
+            }
+        }
+    }
+}

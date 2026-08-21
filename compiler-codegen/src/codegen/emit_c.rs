@@ -1057,6 +1057,20 @@ pub struct CEmitter {
     /// Используется в for-in для Iter[T] dispatch: проверяем
     /// `all_methods.contains((iter_struct, "next"))`.
     all_methods: HashSet<(String, String)>,
+    /// №634: пары `(тип, метод)`, чей `@display`/`@debug` объявлен В ФОРМЕ
+    /// D422 — ровно один параметр типа `Fmt`.
+    ///
+    /// `all_methods` ключуется ИМЕНЕМ, и этого оказалось мало: семь методов
+    /// `std/time/civil` пережили миграцию D422 в старой форме
+    /// `(mut w Write)`, а интерполяция звала их, передавая `Nova_FmtCtx*` в
+    /// функцию с параметром `Nova_StringBuilder*`. Голая `${date}` падала
+    /// нарушением доступа, не напечатав ни байта, при зелёном `nova check`
+    /// и зелёном `nova build`.
+    ///
+    /// Сверки в чекере НЕ ХВАТАЕТ, и это проверено контролем: лазейка D410
+    /// (`T.to_str()`) отвечает «Display есть» и глушит диагностику, а
+    /// эмиссия всё равно зовёт метод. Поэтому требование стоит и здесь.
+    fmt_shaped_display: HashSet<(String, String)>,
     /// Типы-ресиверы, у которых есть ХОТЬ ОДИН метод. `all_methods`
     /// ключуется парой, поэтому вопрос «есть ли у типа методы вообще»
     /// отвечался перебором всего множества — на каждом сайте вызова
@@ -2637,6 +2651,7 @@ impl CEmitter {
             c_literal_extern_fns: HashSet::new(),
             embed_fields: BTreeMap::new(),
             all_methods: HashSet::new(),
+            fmt_shaped_display: HashSet::new(),
             all_method_recv_types: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
@@ -8225,6 +8240,15 @@ impl CEmitter {
                     );
                     // Plan 06 Ф.1: multi-key для for-in Iter[T] dispatch.
                     self.all_methods.insert((recv.type_name.clone(), f.name.clone()));
+                    // №634: запоминаем ФОРМУ `display`/`debug` рядом с именем.
+                    if (f.name == "display" || f.name == "debug")
+                        && f.params.len() == 1
+                        && matches!(&f.params[0].ty, crate::ast::TypeRef::Named { path, .. }
+                            if path.last().map_or(false, |s| s == "Fmt"))
+                    {
+                        self.fmt_shaped_display
+                            .insert((recv.type_name.clone(), f.name.clone()));
+                    }
                     self.all_method_recv_types.insert(recv.type_name.clone());
                     // Plan 11 Ф.1: register signature в multi-overload registry.
                     // param_c_types — C-типы параметров без receiver'а.
@@ -36636,6 +36660,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Member { obj, name } => {
+                // №716: `Option[int].None` — безнагрузочный вариант, пришедший
+                // как `Member{Index}` (парсер откатил turbofish, потому что за
+                // `]` не последовала скобка). Снимаем квалификатор и эмитим как
+                // голый вариант — прежде здесь печаталось `((Option)[nv_int]->None)`.
+                if let Some(bare_ctor) = self.qualified_variant_ctor_as_bare(expr) {
+                    return self.emit_expr(&bare_ctor);
+                }
                 // Plan 11 Ф.4: method values (bound / unbound).
                 // `obj.@method` — bound method value (закрывает `obj` как self).
                 // `Type.@method` — unbound method value (fn-pointer, явный self).
@@ -39529,6 +39560,61 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+
+    /// №716: `SumType[Args].Variant` → голый `Variant`, если `Variant`
+    /// действительно вариант этой суммы.
+    ///
+    /// ЗАЧЕМ. Квалифицированный конструктор generic-суммы приходил в эмиссию
+    /// двумя РАЗНЫМИ узлами, и ни один из них не разбирался как конструктор:
+    /// парсер признаёт turbofish только если после `]` идёт `(`, поэтому
+    /// `Option[int].Some(10)` даёт `Member{TurboFish}`, а `Option[int].None`
+    /// откатывается в `Member{Index}`. Обе формы доезжали до терминальных
+    /// fallback'ов и печатали имена ИЗ ИСХОДНИКА прямо в Си:
+    /// `Option->Some(...)` и `((Option)[nv_int]->None)` — то есть валидный на
+    /// вид код, ссылающийся на несуществующие идентификаторы.
+    ///
+    /// ПОЧЕМУ ПЕРЕПИСЫВАНИЕМ, А НЕ НОВОЙ ВЕТКОЙ ЭМИССИИ. Голая форма
+    /// (`Some(10)`) уже работает целиком: канал `resolved_variant_ctors`, выбор
+    /// моно-инстанса по ожидаемому типу, эмиссия тега. Дублировать это значило
+    /// бы завести второй источник правды — ровно то, против чего план 196.
+    /// Тот же приём дважды применён выше по файлу (`variant_chain_as_member`,
+    /// `assoc_const_chain_as_member`).
+    ///
+    /// ПРЕДИКАТ УЗКИЙ: только если `V` числится вариантом суммы `T` в реестре
+    /// схем. `Type[T].method(...)` — статический метод, не вариант, — под него
+    /// не подпадает и идёт прежним путём.
+    fn qualified_variant_ctor_as_bare(&self, e: &Expr) -> Option<Expr> {
+        let ExprKind::Member { obj, name } = &e.kind else { return None };
+        if name.starts_with('@') {
+            return None;
+        }
+        // База: `T[Args]` в любой из двух форм, которыми её отдаёт парсер.
+        let base_ident = match &obj.kind {
+            ExprKind::TurboFish { base, .. } => &base.kind,
+            ExprKind::Index { obj: inner, .. } => &inner.kind,
+            _ => return None,
+        };
+        let ExprKind::Ident(type_name) = base_ident else { return None };
+        // `V` обязан быть вариантом ИМЕННО этой суммы. Кандидаты приходят и
+        // моно-именами (`Option____nova_int`) — сравниваем по базе.
+        let is_variant_of = self
+            .sum_schema_registry
+            .variant_sum_candidates(name)
+            .into_iter()
+            .any(|c| c.split("____").next() == Some(type_name.as_str()));
+        if !is_variant_of {
+            return None;
+        }
+        // Идентификатор выражения СОХРАНЯЕТСЯ: по нему ходит канал
+        // `resolved_variant_ctors`, и потеря id увела бы разбор в эвристики.
+        Some(Expr {
+            kind: ExprKind::Ident(name.clone()),
+            span: e.span,
+            id: e.id,
+            debug_only: e.debug_only,
+        })
+    }
+
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
         // [M-176-xmod-payload-variant-ctor]: a nullary-variant method chain
         // collapsed by the parser into a flat 3-part Path
@@ -39549,6 +39635,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // equivalent Member form and re-enter — see `assoc_const_chain_as_member`.
         if let Some(member_func) = self.assoc_const_chain_as_member(func) {
             return self.emit_call(&member_func, args, call_id);
+        }
+        // №716: `Option[int].Some(10)` — квалифицированный конструктор варианта
+        // generic-суммы. Снимаем квалификатор и переисполняем: голая форма уже
+        // умеет и канал, и выбор моно-инстанса по ожидаемому типу.
+        if let Some(bare_ctor) = self.qualified_variant_ctor_as_bare(func) {
+            return self.emit_call(&bare_ctor, args, call_id);
         }
         // Plan 184 Р10: a value/primitive `mut x T` free-fn param uses the
         // by-pointer in-out ABI (`T*`). Wrap the matching call args in `RefArg`
@@ -39914,6 +40006,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //
         // Если fn НЕ variadic, но args содержит `Spread` — compile error.
         let variadic_arity: Option<usize> = self.debt_lookup_variadic_arity(func);
+        // №726: подавление относится к решению ОДНОГО вызова, и снимается сразу
+        // после того, как решение принято.
+        //
+        // Флаг поднимается ниже перед рекурсией в `emit_call` с уже собранными
+        // аргументами — иначе тот же вызов перемаршрутизировался бы снова, без
+        // конца. Но оставаясь поднятым на всю эмиссию, он доставался и
+        // АРГУМЕНТАМ: вложенный `Vec[int].of(1,2,3)` внутри аргументов внешнего
+        // `.of` не упаковывался и уходил в Си тремя голыми аргументами при
+        // сигнатуре с одним. Пользователь при этом видел не диагностику Nova, а
+        // ошибку clang с внутренними именами.
+        let variadic_suppressed =
+            std::mem::replace(&mut self.suppress_variadic_routing, false);
         if let Some(regular_arity) = variadic_arity {
             // Гард: больше regular args чем у fn — undefined behavior.
             // (variadic-args начинаются с regular_arity-индекса.)
@@ -39950,7 +40054,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return result;
         }
         // Non-variadic call: spread args не разрешены.
-        if !self.suppress_variadic_routing {
+        // Смотрим на СОХРАНЁННОЕ значение (№726): запрет относится к этому же
+        // вызову, а не к вложенным, у которых своя собственная маршрутизация.
+        if !variadic_suppressed {
             for a in args {
                 if a.is_spread() {
                     return Err(format!(
@@ -48519,8 +48625,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             | "nova_f64" | "nova_f32" | "nova_int")
                     {
                         let arg_type = self.channel_named_type(e.id).unwrap_or_else(|| Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty));
+                        // №634: метод годится ТОЛЬКО в форме D422.
+                        // Иначе (старая `(mut w Write)`) вызов передал бы
+                        // `FmtCtx` туда, где ждут `Write`, — SEGV у
+                        // пользователя при зелёной сборке. Не годится —
+                        // уходим на честный путь `to_str` ниже.
                         let has_explicit = self.all_methods
-                            .contains(&(arg_type.clone(), method_name.to_string()));
+                            .contains(&(arg_type.clone(), method_name.to_string()))
+                            && self.fmt_shaped_display
+                                .contains(&(arg_type.clone(), method_name.to_string()));
                         let method_c_fn: Option<String> = if has_explicit {
                             let safe = Self::sanitize_c_for_ident(&arg_type);
                             Some(format!("Nova_{}_method_{}", safe, method_name))
@@ -51974,7 +52087,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // primitive_unchanged`/`_named_tuple_heap_box`). `nova_int`
             // needs no hint to resolve — it IS the element type already.
             "nova_int"  => "nova_int",
-            _ => match self.current_array_elem_hint.as_deref().unwrap_or_else(|| panic!("[P67] nova_int collapse")) {
+            // №723-хвост (2026-08-18): здесь стояла паника `[P67] nova_int
+            // collapse`. Ветка достижима, когда элемент не примитивен И
+            // контекст не дал подсказку; отказ A8 двумя десятками строк ниже
+            // написан ровно для этого случая, так что ICE подменял собой уже
+            // готовую диагностику. Возвращаем её — и с НАСТОЯЩИМ именем типа
+            // элемента, а не с подставленным `nova_int`.
+            _ => match self.current_array_elem_hint.as_deref() {
+                None => return Err(format!(
+                    "[Plan172.12-A8] `[]T` array literal with element `{}` needs the \
+                     `collections` prelude facade (Vec[T] backing, D239 []T ≡ Vec[T]) — \
+                     this compilation unit's `#prelude(...)` doesn't include it, and no \
+                     element-type hint reached the literal. Add `collections` to the \
+                     `#prelude(...)` attribute (see \
+                     [M-partial-prelude-primitive-method-registry]).",
+                    first_item_ty)),
+                Some(hint) => match hint {
                 "nova_str"  => "nova_str",
                 "nova_bool" => "nova_bool",
                 "nova_f64"  => "nova_f64",
@@ -51992,6 +52120,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "uint64_t"  => "uint64_t",
                 "void_p"    => "void_p",
                 _           => "nova_int",
+                },
             },
         }};
         // Plan 172.12 A8: the legacy `NovaArray_<T>*` runtime (array.h
@@ -61960,9 +62089,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
         if std::env::var_os("NOVA_CH2_TRACE").is_some() {
             if let ExprKind::Index { .. } = &expr.kind {
-                if let Some(rt) = self.resolved_types.get(&expr.id) {
-                    eprintln!("[CH2-IDX] id={:?} rt={:?} lower={:?}",
-                        expr.id, rt, self.resolved_type_to_c(rt));
+                // №676: трассировка обязана печатать И ПРОМАХ. Печатая только
+                // попадания, она отвечала на вопрос «что в канале», тогда как
+                // спрашивают «есть ли там хоть что-нибудь» — а именно пустой
+                // канал и разбирается.
+                match self.resolved_types.get(&expr.id) {
+                    Some(rt) => eprintln!("[CH2-IDX] HIT  id={:?} rt={:?} lower={:?}",
+                        expr.id, rt, self.resolved_type_to_c(rt)),
+                    None => eprintln!("[CH2-IDX] MISS id={:?} id_set={}",
+                        expr.id, expr.id.is_set()),
                 }
             }
         }
@@ -65843,8 +65978,18 @@ mod receiver_c_type_coverage_tests {
         ];
         for (recv, want) in cases {
             assert_eq!(e.receiver_c_type(recv, false), *want, "receiver_c_type({:?}, false)", recv);
-            // Primitives are by-value receivers (D35 v2) — recv_mutable is a no-op.
-            assert_eq!(e.receiver_c_type(recv, true), *want, "receiver_c_type({:?}, true)", recv);
+            // R5 + решение владельца 2026-08-09 (закрывает №468): `mut @` ≡
+            // `mut ref @` ВСЕГДА по указателю, любого размера — примитивы
+            // включительно. Прежняя формулировка («примитивы по значению,
+            // recv_mutable — no-op») описывала июльскую конвенцию и с тех пор
+            // снята. Утверждение не удаляется, а переписывается: удалить
+            // значило бы тихо расстегнуть ABI, закреплённый №468.
+            assert_eq!(
+                e.receiver_c_type(recv, true),
+                format!("{}*", want),
+                "receiver_c_type({:?}, true)",
+                recv
+            );
         }
     }
 
@@ -66262,60 +66407,55 @@ mod array_lit_named_tuple_box_tests {
         }
     }
 
+    /// Без фасада `collections` эмиссия литерала массива обязана ОТКАЗАТЬ
+    /// ВНЯТНО — и это единственный инвариант, который здесь ещё существует.
+    ///
+    /// Прежняя пара тестов закрепляла легаси-боксинг `NovaArray_<T>*`
+    /// (`nova_alloc(sizeof(...))` + `nova_array_push_nova_int`). Plan 172.12 A8
+    /// снял его 2026-07-09: `[]T` подпёрт `Vec[T]` (D239), а для любого
+    /// элемента кроме `void_p` путь возвращает `Err` РАНЬШЕ, чем доходит до
+    /// боксинга. Тесты проверяли недостижимый код и держались на голом
+    /// `CEmitter::new()`, где `Vec`-шаблон не зарегистрирован вовсе, поэтому
+    /// современный путь `try_emit_typed_vec_literal` не запускался никогда.
+    ///
+    /// НАСТОЯЩИЙ инвариант — «структура переживает литерал массива» — стережёт
+    /// теперь сквозная фикстура `spec_tests/conformance/
+    /// d215_named_tuple_in_array_literal.nv`: она идёт по живому конвейеру и
+    /// читает поля обратно, а не смотрит на строку в приватном эмиттере.
     #[test]
-    fn emit_array_lit_named_tuple_heap_box() {
-        // Plan 128.1 Ф.2 PRIMARY FIX (codegen). `[Vec3(1.0, 2.0, 3.0)]` где
-        // Vec3 = NamedTuple. infer_expr_c_type(Vec3(...)) = "NovaTuple_Vec3"
-        // (value struct, no pointer). Без fix'а array-lit storage (elem_ty =
-        // nova_int) попытался бы push'нуть raw compound literal в
-        // NovaArray_nova_int — invalid C cast.
-        //
-        // Post-fix: needs_heap_alloc match'ит NovaTuple_* → emit'ит
-        //   NovaTuple_Vec3* tmp = (NovaTuple_Vec3*)nova_alloc(sizeof(NovaTuple_Vec3));
-        //   *tmp = Vec3(...);
-        //   nova_array_push_nova_int(arr, (nova_int)(tmp));
+    fn emit_array_lit_without_collections_facade_refuses_legibly() {
+        // (1) Элемент — именованный кортеж. До 2026-08-18 здесь была ПАНИКА
+        // `[P67] nova_int collapse`: ICE подменял собой отказ, написанный для
+        // этого самого случая двумя десятками строк ниже.
         let mut e = CEmitter::new();
-        // Register NamedTuple alias so infer_expr_c_type(Vec3(...)) returns
-        // "NovaTuple_Vec3" via the type_aliases path (см. emit_c.rs:28787).
         e.type_aliases.insert("Vec3".into(), "NovaTuple_Vec3".into());
         let elem = call(ident("Vec3"), vec![float_lit(1.0), float_lit(2.0), float_lit(3.0)]);
-        let elems = vec![ArrayElem::Item(elem)];
-        let before_out = e.out.clone();
-        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
-        let emitted = &e.out[before_out.len()..];
-        // Verify heap-alloc path was taken: must contain nova_alloc(sizeof(NovaTuple_Vec3)).
-        assert!(emitted.contains("nova_alloc(sizeof(NovaTuple_Vec3))"),
-            "Plan 128.1 Ф.2: NamedTuple element must heap-alloc via \
-             nova_alloc(sizeof(NovaTuple_Vec3)); emitted:\n{}", emitted);
-        // And use the NovaArray_nova_int storage (boxed via pointer-stomp).
-        assert!(emitted.contains("NovaArray_nova_int"),
-            "NamedTuple element stored в boxed NovaArray_nova_int; emitted:\n{}",
-            emitted);
-        assert!(emitted.contains("nova_array_push_nova_int"),
-            "must push as nova_int (pointer-stomp); emitted:\n{}", emitted);
-    }
+        let err = e.emit_array_lit(&vec![ArrayElem::Item(elem)])
+            .expect_err("без фасада `collections` эмиссия обязана отказать, а не выдать код");
+        assert!(err.contains("[Plan172.12-A8]"),
+            "отказ обязан назвать A8, иначе его не с чем связать; получено:\n{}", err);
+        assert!(err.contains("NovaTuple_Vec3"),
+            "отказ обязан назвать НАСТОЯЩИЙ тип элемента, а не подставленный \
+             `nova_int`; получено:\n{}", err);
 
-    #[test]
-    fn emit_array_lit_int_primitive_unchanged() {
-        // Regression guard: primitive `nova_int` element (`[1, 2, 3]`)
-        // must NOT take heap-alloc path — primitives store inline в
-        // NovaArray_nova_int. Без guard'а слишком широкий whitelist
-        // (e.g. accidentally matching int prefix) сломал бы baseline.
-        let mut e = CEmitter::new();
-        let elems = vec![
+        // (2) Примитивный элемент — тот же отказ, тот же текст. Проверяется
+        // отдельно: примитив идёт по другой ветке разбора типа элемента.
+        let mut e2 = CEmitter::new();
+        let ints = vec![
             ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
             ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET, debug_only: false }),
         ];
-        let before_out = e.out.clone();
-        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
-        let emitted = &e.out[before_out.len()..];
-        // Must NOT call nova_alloc (no heap-box) for primitive ints.
-        assert!(!emitted.contains("nova_alloc(sizeof("),
-            "Plan 128.1 Ф.2 REGRESSION: primitive int элементы НЕ должны \
-             heap-alloc'аться; emitted:\n{}", emitted);
-        assert!(emitted.contains("NovaArray_nova_int"),
-            "int storage must remain NovaArray_nova_int; emitted:\n{}",
-            emitted);
+        let err2 = e2.emit_array_lit(&ints)
+            .expect_err("примитивный элемент без фасада — тот же отказ");
+        assert!(err2.contains("[Plan172.12-A8]"),
+            "получено:\n{}", err2);
+
+        // (3) И ни один отказ не смеет тянуть за собой снятый рантайм: в
+        // сообщении нечего искать, но и в выводе не должно остаться следов.
+        assert!(!e.out.contains("nova_array_push_nova_int"),
+            "снятый рантайм не должен эмититься даже частично:\n{}", e.out);
+        assert!(!e2.out.contains("nova_array_push_nova_int"),
+            "снятый рантайм не должен эмититься даже частично:\n{}", e2.out);
     }
 
     #[test]

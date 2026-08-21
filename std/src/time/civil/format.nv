@@ -259,29 +259,29 @@ export fn str @to_date_with(f DateTimeFormat) -> Result[Date, ParseDateTimeError
 
 /// Display: the ISO form.
 #stable(since = "0.1")
-export fn Date @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
+export fn Date @display(mut f Fmt) -> () { f.write(@to_iso().bytes()) }
 
 /// Display: the ISO form.
 #stable(since = "0.1")
-export fn TimeOfDay @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
+export fn TimeOfDay @display(mut f Fmt) -> () { f.write(@to_iso().bytes()) }
 
 /// Display: the ISO form.
 #stable(since = "0.1")
-export fn DateTime @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
+export fn DateTime @display(mut f Fmt) -> () { f.write(@to_iso().bytes()) }
 
 /// Display: the ISO/RFC-9557 form.
 #stable(since = "0.1")
-export fn ZonedDateTime @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
+export fn ZonedDateTime @display(mut f Fmt) -> () { f.write(@to_iso().bytes()) }
 
 /// Display: ISO PnYnMnD.
 #stable(since = "0.1")
-export fn Period @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
+export fn Period @display(mut f Fmt) -> () { f.write(@to_iso().bytes()) }
 
 /// Display: Z / ±HH:MM[:SS].
 #stable(since = "0.1")
-export fn Offset @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
+export fn Offset @display(mut f Fmt) -> () { f.write(@to_iso().bytes()) }
 
 /// Display: RFC-3339 UTC — the full-datetime view of `Timestamp` (closes
 /// dependency 175: no longer a raw count of nanoseconds).
 #stable(since = "0.1")
-export fn Timestamp @display(mut w Write) -> () { w.write(@to_rfc3339().bytes()) }
+export fn Timestamp @display(mut f Fmt) -> () { f.write(@to_rfc3339().bytes()) }

@@ -75,8 +75,19 @@ BAD_MARKERS=""
 if [ "${#scan_paths[@]}" -gt 0 ]; then
     # -H: force filename prefix even for a single matched file (default grep
     # behaviour omits it for one file — would hide WHICH doc is at fault).
+    #
+    # `docs/dev/agent-memory/**` ИСКЛЮЧЕНА 2026-08-21, и вот почему. Это
+    # ДОСЛОВНАЯ выгрузка рабочей памяти агента (перенесена 2026-08-20), а не
+    # документация: её собственный README говорит, что она не спека, не план и
+    # не норма, и что при расхождении прав репозиторий. Одна запись цитирует
+    # маркер `EXPECT_SLOW`, которого в языке нет, — и ось 1 покраснела на
+    # ровном месте: страж прочёл летопись как поучение. Редактировать выгрузку
+    # нельзя (дословность — весь её смысл), поднимать базу — нельзя тем более
+    # (это узаконило бы рост). Значит верно сузить периметр: маркеру в
+    # летописи никто не следует, ему следуют в доке и в фикстурах.
     BAD_MARKERS=$(find "${scan_paths[@]}" -type f -name '*.md' -print0 2>/dev/null \
             | xargs -0 grep -HnoE 'EXPECT_[A-Z_]+' 2>/dev/null \
+            | grep -v '/docs/dev/agent-memory/' \
             | grep -vE ":($KNOWN)\$")
 fi
 unknown_markers=0

@@ -1,0 +1,24 @@
+// p238-paths probe 04: MODULE-LEVEL MUTABLE STATE. Tests whether Nova even
+// HAS a top-level `mut` binding outside any function, and if so, whether a
+// direct capture of it inside `spawn`, from a DIFFERENT function than the
+// one that "declares" it, is checked by the same lexical scan that catches
+// ordinary local captures. If Nova has no module-level mutable storage at
+// all, this path does not exist and the probe will fail as a SYNTAX/
+// resolution error rather than a capture-check verdict — that outcome is
+// itself the answer (path closed by language design, not by the checker).
+
+module p238paths.p04_module_global_mut
+
+mut counter = 0
+
+fn bump_from_fiber() {
+    supervised {
+        spawn {
+            counter = counter + 1
+        }
+    }
+}
+
+fn main() {
+    bump_from_fiber()
+}
