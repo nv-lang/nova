@@ -30,7 +30,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{COERCE_ATTR}
+import ../builtins.{COERCE_ATTR, SELF_TYPE}
 
 /// Collect method signatures from READ declarations (`fn <Recv>
 /// @<name>() -> R`). Only signatures where BOTH the receiver AND the
@@ -131,7 +131,14 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     }
     if recv_name == "" || mname == "" || ret_name == "" { return }
     ro recv_t = defs.type_id(recv_name) ?? UNKNOWN_TYPE
-    ro ret_t = defs.type_id(ret_name) ?? UNKNOWN_TYPE
+    // `Self` is the RECEIVER's type, spelled by its role instead of its name.
+    // It is not in `defs` and never will be -- it names no declaration -- so a
+    // door that only asked the registry dropped the WHOLE signature: measured
+    // 2026-08-21 on `fn Cel @twin() -> Self`, and std spells it 264 times in 50
+    // files. Same silent-drop class as the receiver mode two waves earlier: the
+    // signature vanished, and the refusal at the use site said "no such method"
+    // about a method std declares.
+    ro ret_t = if ret_name == SELF_TYPE { recv_t } else { defs.type_id(ret_name) ?? UNKNOWN_TYPE }
     if recv_t == UNKNOWN_TYPE || ret_t == UNKNOWN_TYPE { return }
     // A signature is valid only if ALL its types are known, including
     // its parameters. Otherwise std overloads would land in the table
@@ -170,7 +177,10 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         // which is how this line was caught the moment it was written).
         ro tnode = pk[tat]
         if tnode.kind_of() != NodeKind.LeafNode { return }
-        ro pt = defs.type_id(leaf_text(tnode)) ?? UNKNOWN_TYPE
+        ro pname = leaf_text(tnode)
+        // A PARAMETER may be `Self` too (`fn T @merge(other Self)`), and it
+        // means the same thing: the receiver's type.
+        ro pt = if pname == SELF_TYPE { recv_t } else { defs.type_id(pname) ?? UNKNOWN_TYPE }
         if pt == UNKNOWN_TYPE { return }
         // The MODE travels with the type: it is an axis of overloading (P14),
         // so a signature read without it would make `@ptr()` and `mut @ptr()`

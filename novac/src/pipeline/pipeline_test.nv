@@ -210,6 +210,22 @@ test "a receiver MODE is read AND judged: a consuming method needs a consuming p
     assert(on_consume[0].message.contains("compiles no body"))
 }
 
+test "`Self` in a declaration is the RECEIVER's type, not a missing one" {
+    // `Self` names no declaration and is in no registry, so a door that only
+    // asked `defs` dropped the WHOLE signature -- and the refusal at the use
+    // site then said "no such method" about a method std declares. std spells
+    // `Self` 264 times across 50 files (measured 2026-08-21).
+    ro decls = []str.of("fn Cel @twin() -> Self => 0
+")
+    ro src = "type Cel { v f64 }
+fn main() { ro c = Cel { v: 1.0 }
+ println(c.twin().v) }"
+    ro diags = compile(src, decls)
+    assert(diags.len() == 1)
+    // Read, and refused for the reason that is left: novac emits no method body.
+    assert(diags[0].message.contains("compiles no body"))
+}
+
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
     ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
     assert(n_diags(src) == 0)
