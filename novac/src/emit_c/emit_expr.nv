@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, FnLookup, UNKNOWN_TYPE, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
+import ../sem.{ArgSpec, ArgClass, CallForm, FnLookup, UNKNOWN_TYPE, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, DefKind, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker}
 import ../builtins.{EQUAL_METHOD, ENTRY_FN, PRINT_FN, bool_c_literal}
 
 
@@ -243,7 +243,19 @@ fn Emitter mut @emit_expr(e Node) -> () {
         match cr.kind {
             DefVariant => @body.append("${c_maker(@ctx, cr.target_row)}(")
             DefFn => @body.append("${c_callable(@ctx, cr.target_row, @out.callee_subst_of(e.id_of()))}(")
-            DefType => ice("emit_c: a type in call position reached the emitter")
+            // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
+            // its representation at runtime -- zero cost, D-newtype. So the
+            // emission is the ARGUMENT and nothing else: no wrapper, no cast
+            // (C needs none between a typedef and its underlying type). The
+            // oracle writes a redundant cast here; the shape of our emission is
+            // ours (274 section 7.0) as long as the behaviour is identical.
+            DefType => {
+                for c in kids {
+                    if !is_expr_kind(c.kind_of()) { continue }
+                    @emit_expr(c)
+                }
+                return
+            }
         }
         mut first = true
         for c in kids {
@@ -363,7 +375,10 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
         } else if is_expr_kind(ck) {
             // Dispatch on the registry — the oracle prints each argument
             // with its own printer, newline once at the end.
-            ro at = @out.type_of(c.id_of())
+            // The CARRIER, not the declared type: a newtype prints as what it
+            // holds, and the channel keeps the declared type because that is
+            // what resolution needs. Two questions, two doors.
+            ro at = carrier_of(@ctx, @out.type_of(c.id_of()))
             if at == @ctx.prims.str_id {
                 @body.append("    nova_print_str(")
             } else if at == @ctx.prims.bool_id {

@@ -30,6 +30,50 @@ module novac.sem
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, prim_c_name}
 
+/// The REPRESENTATION of a newtype: the type it is laid out as.
+///
+/// One level, never a chain: `type A B` over `type B int` gives `A` the
+/// representation `B`, and asking again peels the next. Callers that need the
+/// LAYOUT ask through `c_type`, which recurses, so no caller has to know how
+/// deep it goes. The representation rides in the interner's args -- the same
+/// pool an application's arguments use, because it IS an argument of the term.
+export fn representation_of(ctx Ctx, t int) -> int
+    requires t >= 0 && t < ctx.types.len(), "mangle: representation asked for a type outside the registry"
+{
+    ro td = ctx.types[t]
+    assert(ctx.tys.arg_count(td.ty_id) == 1,
+        "mangle: a newtype term without exactly one representation argument")
+    ctx.tys.arg(td.ty_id, 0)
+}
+
+/// The type a value is CARRIED as: newtypes peeled, everything else itself.
+///
+/// A newtype is distinct for RESOLUTION and identical for REPRESENTATION, so the
+/// two questions get two doors: `type_tag` keeps the distinction in a C name,
+/// and this one answers "what does the runtime actually hold". The printer asks
+/// it -- `println(Row(7))` prints 7, which is what the oracle does -- and so
+/// does any consumer that cares about the value rather than the name.
+///
+/// A loop and not one step: `type A B` over `type B int` peels twice.
+export fn carrier_of(ctx Ctx, t int) -> int {
+    mut cur = t
+    // Bounded by the number of declarations: each step moves to the
+    // representation of a DIFFERENT declaration, and a cycle among them is a
+    // shape the checker refuses before this door is ever asked.
+    mut steps = 0
+    while steps <= ctx.types.len() {
+        if cur < 0 || cur >= ctx.types.len() { return cur }
+        ro is_new = match ctx.types[cur].kind {
+            TkNewtype => true
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
+        }
+        if !is_new { return cur }
+        cur = representation_of(ctx, cur)
+        steps += 1
+    }
+    ice("mangle: a newtype chain longer than the registry -- a cycle reached the carrier door")
+}
+
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t int) -> str {
@@ -39,6 +83,12 @@ export fn c_type(ctx Ctx, t int) -> str {
             TkPrim => { return prim_c_name(ctx.tys.head_of(td.ty_id)) } // universe fact by ordinal, read off the term
             TkRecord => { return "Nova_${td.name}*" }
             TkSum => { return "Nova_${td.name}*" }
+            // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
+            // its C spelling is the representation's -- zero cost, and what the
+            // oracle emits too (`typedef nova_int Nova_Row;` and then a plain
+            // `nova_int` local; measured 2026-08-21). The DISTINCTION lives in
+            // the registry and in `type_tag`, never in the layout.
+            TkNewtype => { return c_type(ctx, representation_of(ctx, t)) }
             TkApp => { ice("mangle: c_type of an applied type — the instance door arrives with E2-b2") }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
@@ -68,6 +118,9 @@ export fn c_struct(ctx Ctx, t int) -> str {
         TkPrim => { ice("mangle: a primitive has no struct name") }
         TkRecord => { return "Nova_${td.name}" }
         TkSum => { return "Nova_${td.name}" }
+        // Same rule as `c_type`: the STRUCT of a newtype is the
+        // representation's, because that is what it is laid out as.
+        TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }
         TkApp => { ice("mangle: struct name of an applied type — the instance door arrives with E2-b2") }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
@@ -188,7 +241,7 @@ export fn subst_type(ctx Ctx, t int, subst []int) -> int {
         // Every other kind is already a type: a substitution has nothing to
         // rewrite in it. Named one by one rather than through a wildcard --
         // a new kind must come here and say what it does (P21).
-        TkPrim | TkRecord | TkSum | TkApp | TkInfer => {}
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype => {}
     }
     t
 }
@@ -233,6 +286,9 @@ fn type_tag(ctx Ctx, t int, subst []int) -> str
         TkPrim => prim_c_name(ctx.tys.head_of(td.ty_id))
         TkRecord => td.name
         TkSum => td.name
+        // The newtype's OWN name, never the representation's: `f(Row)` and
+        // `f(int)` are two callables, and the C name is what keeps them apart.
+        TkNewtype => td.name
         TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
         // A type parameter resolved through the substitution -- by the ONE
         // door that applies one, so the mangler and mono cannot disagree about

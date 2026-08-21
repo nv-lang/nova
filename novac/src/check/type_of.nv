@@ -258,7 +258,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
             }
             return ret
         }
-        ice("check: call target is a type, not a callable (#652 class)")
+        // A TYPE in call position CONSTRUCTS a value, and the checker recorded
+        // which type when it judged the form -- so the answer is a READ, not a
+        // second decision. Before 2026-08-21 this line iced: an internal
+        // compiler error printed at `Row(7)`, a legal form of the language.
+        if chan.has_callee(e.id_of()) { return chan.callee_of(e.id_of()).target_row }
+        // Nothing recorded: the form was refused (a record's positional
+        // construction, a wrong arity), and a refused node has no type.
+        ice("check: a type in call position with no construction recorded -- the refusal should have stopped this walk")
     }
     ice("check: expression kind without a type rule — no silent int default (#652 class)")
 }

@@ -512,8 +512,40 @@ export fn collect_types(file Node) -> Ctx {
                 fields.add(owner_id, leaf_text(fk[0]), ft)
                 cnt += 1
             }
-            ro rec_ty = tys.record(owner_id)
-            types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: rec_ty, name: tname, row_off: off, row_cnt: cnt })
+            // A NEWTYPE or an ALIAS instead of a record: the declaration's tail
+            // is a TYPE REFERENCE (`type Row int`, `type Row alias int`). The
+            // two are told apart HERE, not in the parser: the shape is the
+            // same, the meaning is not -- a newtype is a DISTINCT type over
+            // that representation, an alias is the very same type under a
+            // second name (the oracle enforces the distinction: `Row` into an
+            // `int` parameter is E7301, measured 2026-08-21).
+            match repr_of_decl(c, defs) {
+                None => {
+                    // A record: its fields were just collected above.
+                    ro rec_ty = tys.record(owner_id)
+                    types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: rec_ty, name: tname,
+                                         row_off: off, row_cnt: cnt })
+                }
+                Some(spec) => {
+                    if spec.is_alias {
+                        // AN ALIAS IS NOT A TYPE, and this is the one place that
+                        // may say so: the name resolves to the representation's
+                        // id, and nothing else in the compiler ever learns that
+                        // a second name existed. A row of its own would BE a
+                        // distinct type -- exactly what an alias must not be.
+                        defs.add(tname, DefKind.DefType, spec.under_id)
+                        // The id space stays dense: no row was pushed, so the
+                        // next declaration still owns `types.len()`.
+                        continue
+                    } else {
+                        // A newtype: its own row, its own name, the
+                        // representation in the term.
+                    }
+                    types.push(TypeDef { kind: TypeKind.TkNewtype,
+                                         ty_id: tys.newtype(owner_id, spec.under_id),
+                                         name: tname, row_off: 0, row_cnt: 0 })
+                }
+            }
         } else if k == NodeKind.SumDecl {
             ro skids = branch_children(c)
             if skids.len() < 2 { continue }

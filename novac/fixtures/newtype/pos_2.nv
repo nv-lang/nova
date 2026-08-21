@@ -1,0 +1,22 @@
+module newtype.pos_2
+
+// The ALIAS form of the same declaration -- and it means the OPPOSITE of a
+// newtype: `type Count alias int` is `int` under a second name, not a distinct
+// type over it. So the alias is transparent everywhere: a value of the
+// underlying type goes into an `alias`-typed position and back with no
+// conversion, because there is nothing to convert.
+//
+// One parser branch reads both tails (the `alias` word is kept as a leaf, the
+// tree stays lossless) and `sem` tells them apart -- the shape is the same, the
+// meaning is not. An alias registers NO row of its own: the name resolves to the
+// representation's id, and nothing downstream ever learns a second name existed.
+// A row of its own would BE a distinct type, which is exactly what an alias must
+// not be.
+type Count alias int
+
+fn bump(v int) -> int => v + 1
+
+fn main() {
+    ro c = 41
+    println(bump(c))
+}

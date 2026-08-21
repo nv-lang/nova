@@ -38,6 +38,7 @@ export type TypeKind enum
     | TkApp /// a type constructor applied to arguments: Vec[int] (E2-b1)
     | TkParam /// a type parameter of the enclosing declaration, by index (E2-b1)
     | TkInfer /// an inference variable, alive only inside one body (E2-b1)
+    | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
 
 /// How many kinds there are. The interner's bucket arithmetic multiplies by
 /// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
@@ -45,7 +46,7 @@ export type TypeKind enum
 /// first thing to drift when a kind is added). Every dispatch on TypeKind is
 /// an exhaustive match, so a seventh kind is a compile error at each site —
 /// and this constant is the ONE place a match cannot reach, hence the note.
-export const TYPE_KIND_COUNT = 6
+export const TYPE_KIND_COUNT = 7
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"
@@ -90,6 +91,16 @@ export const COERCE_ATTR = "coerce"
 /// `*uninit T` is not writable). Treating it as a mode would have made novac
 /// ACCEPT a parameter form the language does not have.
 export fn is_contextual_mode_word(word str) -> bool => word == CONSUME_MODE
+
+/// The word that turns a type declaration into an ALIAS rather than a newtype:
+/// `type Row alias int` is `int` under a second name, while `type Row int` is a
+/// DISTINCT type over the same representation (measured by the integrator
+/// 2026-08-21: the oracle enforces the distinction -- `Row` into an `int`
+/// parameter is E7301).
+///
+/// A NAME OF THE LANGUAGE, so it lives here (P5), next to `enum` -- the other
+/// word that decides what a `type` declaration means.
+export const ALIAS_MARKER = "alias"
 
 /// The RECEIVER's own type, spelled by its role: `fn T @twin() -> Self`.
 ///

@@ -22,7 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{is_contextual_mode_word}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
 /// punctuation. Its last child is not always the body.
@@ -151,6 +151,61 @@ fn mode_before(pk []Node, n int) -> ParamMode {
         i += 1
     }
     ModeRo
+}
+
+/// What the TAIL of a type declaration says, when it is a type reference:
+/// which type, and whether the declaration is an ALIAS of it or a NEWTYPE over
+/// it.
+///
+/// One record and not two answers, because the two travel together: a caller
+/// that got the id without the alias bit would have to ask a second door to
+/// know what to do with it.
+export type ReprSpec value {
+    under_id int /// the representation's type id
+    is_alias bool /// `type Row alias int` -- the same type under a second name
+}
+
+/// The representation a type declaration names, or None when it declares a
+/// RECORD (a brace body) or names a type novac does not know.
+///
+/// The tail is read by SHAPE: a `Field` child means a record, an `alias` word
+/// means an alias, and a lone identifier is the representation. Until
+/// 2026-08-21 the parser did not read this tail at all and `type Row int` came
+/// back "this is not a form of the language" -- about a form the language has
+/// and the oracle compiles.
+export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
+    mut marks_alias = false
+    mut under = UNKNOWN_TYPE
+    mut seen_name = false
+    for c in branch_children(decl) {
+        // A record declares FIELDS: then the tail is not a representation at
+        // all, and this door answers None.
+        if c.kind_of() == NodeKind.Field { return None }
+        if !c.is_ident() { continue }
+        ro word = leaf_text(c)
+        if !seen_name {
+            // The FIRST identifier is the DECLARED name. It must be skipped by
+            // position rather than by lookup: the name is already in the
+            // registry (the first pass put it there), so asking the registry
+            // would answer with the declaration's own id and make every
+            // newtype a newtype over itself.
+            seen_name = true
+            continue
+        }
+        if word == ALIAS_MARKER {
+            marks_alias = true
+            continue
+        }
+        if under == UNKNOWN_TYPE {
+            under = defs.type_id(word) ?? UNKNOWN_TYPE
+        } else {
+            // The representation is already found: a further identifier belongs
+            // to a form this door does not read (type arguments), and the
+            // declaration is judged elsewhere.
+        }
+    }
+    if under == UNKNOWN_TYPE { return None }
+    Some(ReprSpec { under_id: under, is_alias: marks_alias })
 }
 
 /// The MODE a BINDING statement declares: `ro x = …`, `mut x = …`,

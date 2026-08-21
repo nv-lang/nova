@@ -84,6 +84,7 @@ fn kind_ordinal(k TypeKind) -> int {
         TkApp => 3
         TkParam => 4
         TkInfer => 5
+        TkNewtype => 6
     }
 }
 
@@ -156,6 +157,16 @@ export fn Interner mut @sum(decl_id int) -> int => @intern(TypeKind.TkSum, decl_
 export fn Interner mut @app(decl_id int, args []int) -> int => @intern(TypeKind.TkApp, decl_id, args)
 
 /// The i-th type parameter of the enclosing declaration.
+/// A NEWTYPE over `under`: a DISTINCT nominal type whose representation is that
+/// type (`type Row int`). The representation rides in the args, exactly as an
+/// application's arguments do -- one pool, one shape, and the door below reads
+/// it back.
+export fn Interner mut @newtype(decl_id int, under int) -> int =>
+    @intern(TypeKind.TkNewtype, decl_id, []int.of(under))
+
+/// A type PARAMETER by its index in the owner's generics (donor: rustc
+/// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
+/// have an id at all.
 export fn Interner mut @param(index int) -> int => @intern(TypeKind.TkParam, index, []int.new())
 
 /// A fresh inference variable. Distinct vids never merge here — union-find
@@ -214,6 +225,9 @@ export fn Interner @is_concrete(t int) -> bool {
         TkSum => { return true }
         TkParam => { return false }
         TkInfer => { return false }
+        // A NEWTYPE is concrete exactly when its representation is: the type is
+        // distinct, the layout is the representation's (zero cost).
+        TkNewtype => { return @is_concrete(@args[row.arg_off]) }
         TkApp => {
             for i in 0..row.arg_cnt {
                 if !@is_concrete(@args[row.arg_off + i]) { return false }
@@ -238,6 +252,12 @@ export fn Interner mut @subst(t int, args []int) -> int {
         TkRecord => { return t }
         TkSum => { return t }
         TkInfer => { return t }
+        // A NEWTYPE is nominal: its identity does not depend on a
+        // substitution, and its representation cannot mention a parameter
+        // while the subset has no generic newtypes. When it does, the
+        // representation substitutes exactly as an application's arguments do,
+        // and this arm grows the same three lines.
+        TkNewtype => { return t }
         TkParam => {
             if row.head_id < 0 || row.head_id >= args.len() {
                 ice("types: subst with a partial argument vector — a Param has no argument")

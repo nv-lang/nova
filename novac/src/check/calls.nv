@@ -27,7 +27,8 @@ module novac.check
 
 import ../tree.{Node}
 import ../diag.{ice}
-import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_row, subst_type, generic_names, is_expr_kind, branch_children}
+import ../builtins.{TypeKind}
+import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -93,6 +94,54 @@ fn Checker mut @refuse_arg_type(kids []Node, row int, key []ArgSpec) -> () {
     ice("check: a candidate of the right arity refused with every position matching")
 }
 
+
+/// A TYPE in call position: the construction of a NEWTYPE, or an honest refusal.
+///
+/// The subset knows one construction by call: `Row(7)` for `type Row int`. The
+/// decision goes into the channel as a callee of kind `DefType` whose row is the
+/// TYPE -- the emitter then knows it writes the argument and nothing else,
+/// because a newtype IS its representation at runtime (zero cost).
+///
+/// Everything else is refused by NAME: a record positional form the oracle
+/// accepts but novac does not emit, a sum's name, an arity that is not one, or
+/// an argument whose type is not the representation. Until 2026-08-21 all of it
+/// reached the lattice and came out as an ice -- "internal compiler error" shown
+/// to someone who wrote a legal program.
+fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id int) -> () {
+    if type_id < 0 || type_id >= @ctx.types.len() {
+        @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
+        return
+    } else {
+        // A type the registry holds: which KIND decides the rest.
+    }
+    ro is_newtype = match @ctx.types[type_id].kind {
+        TkNewtype => true
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
+    }
+    if !is_newtype {
+        @report_first_leaf_of(kids,
+            "outside the subset: a type in call position constructs a value, and novac compiles that only for a newtype (`type Row int`)")
+        return
+    } else {
+        // A newtype: exactly one argument, of its representation.
+    }
+    ro args = typed_free_key(kids, @ctx, @scope, @chan)
+    if args.len() != 1 {
+        @report_first_leaf_of(kids,
+            "outside the subset: constructing a newtype takes exactly one argument -- its representation")
+        return
+    } else {
+        // One argument: its TYPE decides.
+    }
+    if args[0].type_id != representation_of(@ctx, type_id) {
+        @report_first_leaf_of(kids,
+            "outside the subset: this argument is not the newtype's representation")
+        return
+    } else {
+        // The representation: the construction is legal and gets recorded.
+    }
+    @chan.record_callee(e.id_of(), DefKind.DefType, type_id, []int.new())
+}
 
 /// A GENERIC candidate cannot fit an exact key: until the turbofish
 /// substitutes them, its parameters ARE type parameters, so `dbl[int]` and

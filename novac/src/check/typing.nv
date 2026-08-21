@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, ArgSpec, ArgClass, ParamMode}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, ArgSpec, ArgClass, ParamMode}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -792,10 +792,14 @@ fn Checker mut @type_expr(e Node) -> () {
                     FnUnknown => @resolve_generic_or_refuse(e, kids, cname, key)
                 }
             }
-            // A type name in call position is not a callee: the lattice
-            // judges that shape and ices on it, and the channel holds
-            // answers, so there is nothing to record here.
-            DefType => {}
+            // A TYPE in call position is a CONSTRUCTION, and the subset knows
+            // exactly one: a newtype over a representation (`Row(7)`). Judged
+            // HERE rather than left to the lattice, which used to ice on it --
+            // an internal compiler error printed at a legal form of the
+            // language (the integrator's measurement 2026-08-21). The record
+            // form (`Cel(1.5)`, which the oracle accepts positionally) is
+            // refused BY NAME, because novac emits the brace form only.
+            DefType => @record_newtype_ctor(e, kids, def.payload)
         }
     } else if k == NodeKind.Paren {
         // The parser builds `( expr )` with three children ALWAYS (the
@@ -899,7 +903,12 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
 /// Does the subset know how to print this type? The emitter has one printer
 /// per type and no generic path; a type outside the set is a refusal here,
 /// never an ice there.
-fn Checker @has_printer(t int) -> bool =>
+fn Checker @has_printer(t int) -> bool => @is_printable_carrier(carrier_of(@ctx, t))
+
+/// The printer set, asked of the CARRIER: a newtype prints as what it holds
+/// (`println(Row(7))` prints 7, which is what the oracle does), so the peel
+/// happens once, here, and not at each of the four comparisons.
+fn Checker @is_printable_carrier(t int) -> bool =>
     t == @ctx.prims.int_id || t == @ctx.prims.str_id || t == @ctx.prims.bool_id || t == @ctx.prims.f64_id
 
 /// The two types arithmetic and ordering accept in the subset.

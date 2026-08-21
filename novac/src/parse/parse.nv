@@ -32,7 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
-import ../builtins.{is_contextual_mode_word}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -374,10 +374,30 @@ fn Cursor mut @type_decl() -> Node {
             kids.push(@node(NodeKind.Field, fk))
         }
         @push_if(kids, TokenKind.RBrace)
+    } else if @peek() != TokenKind.Eof && !TOP_LEVEL_STOPS.contains(@peek()) {
+        // A NEWTYPE or an ALIAS: `type Row int`, `type Row alias int`. The tail
+        // is a TYPE REFERENCE, and one branch reads both -- the `alias` word is
+        // kept as a leaf and `sem` tells the two apart (a newtype is a distinct
+        // type, an alias is the same type under a second name).
+        //
+        // Until 2026-08-21 this branch did not exist and the tail fell into the
+        // top-level junk bucket, so `type Row int` came back "this is not a
+        // form of the language" -- about a form the language HAS and the oracle
+        // compiles (measured by the integrator the same day: both spellings
+        // build, run, and enforce the distinction). The plan's own newtype
+        // section was half right: the form was missing from NOVAC, not from
+        // Nova.
+        ro is_alias = @peek() == TokenKind.Ident && @peek_text() == ALIAS_MARKER
+        if is_alias {
+            kids.push(@take())
+        } else {
+            // No `alias` word: the tail is the representation of a NEWTYPE.
+        }
+        kids.append(@type_ref())
     } else {
-        // A non-brace tail is NOT eaten here: the top loop recovers it into
-        // its own Err branch, so the mistake keeps its own diagnostic instead
-        // of being swallowed by this declaration (the doc above).
+        // Nothing follows, or the next token starts another declaration: the
+        // top loop recovers it into its own Err branch, so the mistake keeps
+        // its own diagnostic instead of being swallowed by this one.
     }
     @node(NodeKind.TypeDecl, kids)
 }
