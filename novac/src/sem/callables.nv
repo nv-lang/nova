@@ -157,7 +157,7 @@ export type FnDef value {
 /// chain, not a flag on a row.
 export type FnTable {
     tparams []str /// type-parameter NAMES of every callable, grouped by tparam_off/cnt
-    rows []FnDef /// every callable, in registration order; a row index is what DefKind.DefFn points at
+    rows []FnDef /// every callable, in registration order; a row index is what `DefTarget.DefFn` carries
     params []ParamDef /// parameters of every callable -- type AND mode in one row, addressed by FnDef.param_off/param_cnt
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
     own_cnt int /// how many LEADING rows this file declared; the rest are signatures read from declarations

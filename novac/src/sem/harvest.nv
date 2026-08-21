@@ -76,7 +76,7 @@ fn harvest_in(n Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) 
                 ro before = fns.rows.len()
                 harvest_in(c, defs, fns, coerces)
                 if coerce_next && fns.rows.len() > before {
-                    harvest_coerce_pair(fns, coerces, fns.rows.len() - 1)
+                    harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {
                     // Either no attribute stood here, or the declaration under
                     // it entered no row -- a signature whose types novac does

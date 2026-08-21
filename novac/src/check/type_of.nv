@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, DefKind, raw_row, ParamMode, UNKNOWN_TYPE, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, UNKNOWN_TYPE, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -273,15 +273,15 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
         ro d = ctx.defs.find(call_callee_text(branch_children(e)))
         assert(d >= 0, "check: call target not in the registry — no silent int default (#652 class)")
         ro def = ctx.defs.rows[d]
-        if def.kind == DefKind.DefVariant { return ctx.variant_rows[def.payload].sum_id }
-        if def.kind == DefKind.DefFn {
+        if DefVariant(vrow) = def.target { return ctx.variant_rows[vrow].sum_id }
+        if DefFn(decl_row) = def.target {
             // The ROW the checker resolved, when it recorded one: `defs` is
             // keyed by the bare name and lives by last-write-wins, so with two
             // overloads it answers with the last. The channel holds the
             // decision, and reading it here is what makes a generic call
             // answerable at all -- its substitution rides in the same record.
             ro nid = e.id_of()
-            ro row = if chan.has_callee(nid) { raw_row(chan.callee_of(nid).callable_row()) } else { def.payload }
+            ro row = if chan.has_callee(nid) { raw_row(chan.callee_of(nid).callable_row()) } else { raw_row(decl_row) }
             ro ret = ctx.fns.rows[row].ret_id
             assert(ret >= 0, "check: call of a fn without a declared return type (#652 class)")
             // A generic callee returns `-> T`: the concrete type is the one

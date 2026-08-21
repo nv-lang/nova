@@ -39,7 +39,7 @@ import ../builtins.{COERCE_ATTR}
 export type CoercePair value {
     from_id int /// source type -- the declaring method's receiver
     to_id int /// target type -- its return type
-    via_row int /// the declaring callable's row -- the inserted call names IT (D429 R7)
+    via_row FnRow /// the declaring callable's row -- the inserted call names IT (D429 R7). `FnRow`, not `int`: this IS a row of `Ctx.fns` (`fns.rows[via_row]` two doors down), so the pair carried an untyped index into a typed space until 2026-08-21
 }
 
 /// The row that converts `from` into `to`, or None when no pair is declared.
@@ -49,7 +49,7 @@ export type CoercePair value {
 /// path never touches this table, so the hot resolution does not pay for it.
 /// The comparison is by type ID, not by name; the day a program declares
 /// hundreds of pairs the fix is an index, not a guess made now.
-export fn coerce_row(ctx Ctx, from int, to int) -> Option[int] {
+export fn coerce_row(ctx Ctx, from int, to int) -> Option[FnRow] {
     for p in ctx.coerces {
         if p.from_id == from && p.to_id == to { return Some(p.via_row) }
     }
@@ -79,8 +79,8 @@ fn attr_names(attr Node, word str) -> bool {
 /// R2 (the zero-cost lanes) and R3 (one declaration per pair) are NOT judged
 /// here: the row does not carry parameter modes, so `consume` and `ro` are
 /// invisible to it -- named in plan 274 section 9.1d, not left to be discovered.
-fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row int) -> () {
-    ro fd = fns.rows[via_row]
+fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
+    ro fd = fns.rows[raw_row(via_row)]
     if !fd.has_recv || fd.param_cnt != 1 || fd.ret_id < 0 {
         return
     } else {

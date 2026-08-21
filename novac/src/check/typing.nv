@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, CalleeTarget, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, DefKind, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
+import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, CalleeTarget, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -769,11 +769,11 @@ fn Checker mut @type_expr(e Node) -> () {
         // `d < 0` returned above, so the row exists: the old `if d >= 0` here
         // was a condition that could not be false -- it read as a decision
         // and was none. What the kind decides is a match, exhaustive by
-        // construction, so a fourth DefKind cannot slip past silently.
+        // construction, so a fourth arm of `DefTarget` cannot slip past silently.
         ro def = @ctx.defs.rows[d]
-        match def.kind {
-            DefVariant => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(def.payload), []int.new())
-            DefFn => {
+        match def.target {
+            DefVariant(vrow) => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(vrow), []int.new())
+            DefFn(_) => {
                 // NOT `def.payload`: `defs` is keyed by the bare name and lives
                 // by last-write-wins, so with two overloads it answers with the
                 // LAST one -- `describe(1)` went to the `str` overload, silently
@@ -804,7 +804,7 @@ fn Checker mut @type_expr(e Node) -> () {
             // language (the integrator's measurement 2026-08-21). The record
             // form (`Cel(1.5)`, which the oracle accepts positionally) is
             // refused BY NAME, because novac emits the brace form only.
-            DefType => @record_newtype_ctor(e, kids, def.payload)
+            DefType(id) => @record_newtype_ctor(e, kids, id)
         }
     } else if k == NodeKind.Cast {
         @type_cast(e)
