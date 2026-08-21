@@ -312,4 +312,15 @@ no_caveat=34
 #   recipe for the same count answered 47, missing a verdict written in bold
 #   (No.712, No.713) and reading "POCHINENO" as open (No.694). The recipe was
 #   replaced by a pointer to this core -- one home for one number.
-blockers=49
+# 2026-08-21, No.743 -- 49 -> 50. GROWTH, and honest: a new blocker, found
+#   hours after this same file was lowered 50 -> 49 for a count that was
+#   never measured. Multi-argument `println` has no printability gate on
+#   its arguments. Measured in ONE built and RUN program: with
+#   `#impl(Debug)` on the record, `println("interp = ${p:?}")` prints
+#   `Point { x: 1, y: 2 }` while `println("multiarg = ", p)` prints
+#   2017309056992 -- the raw pointer as an integer, no diagnostic, exit 0.
+#   The same hole with a struct-shaped value is loud instead of silent:
+#   `println("at = ", rows.get(1))` passes check and dies in C. Both
+#   halves reproduce with no newtype in the file, which is what the probe
+#   was actually about.
+blockers=50
