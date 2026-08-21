@@ -196,12 +196,19 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
             marks_alias = true
             continue
         }
-        if under == UNKNOWN_TYPE {
-            under = defs.type_id(word) ?? UNKNOWN_TYPE
+        if under != UNKNOWN_TYPE {
+            // Already found: a further identifier belongs to a form this door
+            // does not read (type arguments), judged elsewhere.
+            continue
+        }
+        // The Option is read AS an Option (the owner's correction 2026-08-21):
+        // `?? UNKNOWN_TYPE` followed by a comparison with the same sentinel is a
+        // detour that turns "absent" into a number to be remembered.
+        if Some(id) = defs.type_id(word) {
+            under = id
         } else {
-            // The representation is already found: a further identifier belongs
-            // to a form this door does not read (type arguments), and the
-            // declaration is judged elsewhere.
+            // A word that names no type novac knows: the declaration is refused
+            // at its own position, not guessed at here.
         }
     }
     if under == UNKNOWN_TYPE { return None }

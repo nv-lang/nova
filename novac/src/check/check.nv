@@ -315,8 +315,12 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     return
                 }
                 Cast => {
-                    @report_first_leaf_of(children, CAST_MSG)
-                    return
+                    // NOT refused by SHAPE any more: whether a cast is inside
+                    // the subset depends on the operand's TYPE -- unwrapping a
+                    // newtype into its representation is the one legal case,
+                    // and only typing knows the type. The refusal moved there
+                    // (`type_cast`), which is also where the reason can be
+                    // named instead of the whole form being turned away.
                 }
                 Param => {
                     // The two forms below are refused whole, and the rules

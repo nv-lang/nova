@@ -265,6 +265,11 @@ fn Emitter mut @emit_expr(e Node) -> () {
             first = false
         }
         @body.append(")")
+    } else if k == NodeKind.Cast {
+        // Unwrapping a newtype is FREE: the value is already the
+        // representation, so the emission is the operand and nothing else. C
+        // needs no cast between a typedef and its underlying type.
+        @emit_expr(branch_children(e)[0])
     } else if k == NodeKind.Paren {
         @body.append("(")
         @emit_expr(branch_children(e)[1])

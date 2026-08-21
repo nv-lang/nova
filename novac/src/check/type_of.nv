@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, DefKind, ParamMode, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, DefKind, ParamMode, UNKNOWN_TYPE, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -89,6 +89,37 @@ fn arg_class(e Node, scope Scope) -> ArgClass {
     if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
     if k == NodeKind.FieldAccess { return ArgClass.ArgRo }
     ArgClass.ArgOwnedTemp
+}
+
+/// The TARGET type of a cast, resolved from the type written after `as`.
+///
+/// The subset's cast targets are plain identifiers (`r as int`), so the last
+/// identifier child IS the type. A target novac does not know is an ice here
+/// and a REFUSAL in the walk -- the walk runs first, so a refused cast never
+/// reaches this door.
+#realtime nogc
+fn cast_target_of(e Node, ctx Ctx) -> int {
+    mut found = UNKNOWN_TYPE
+    for c in branch_children(e) {
+        if !c.is_ident() { continue }
+        // The registry answers with an Option, so the Option is what is read --
+        // not laundered through a sentinel and compared with it a line later.
+        // That detour was here until the owner pointed at it: it turns a real
+        // "absent" into a number somebody must remember to test, which is the
+        // no-silent-default class this compiler exists to refuse.
+        if Some(id) = ctx.defs.type_id(leaf_text(c)) {
+            found = id
+        } else {
+            // Not a type name: an identifier of the cast's own syntax, and the
+            // target is decided by the ones that do resolve.
+        }
+    }
+    if found == UNKNOWN_TYPE {
+        ice("check: a cast whose target type the registry does not know reached the lattice")
+    } else {
+        // A type the registry holds: that is the cast's value type.
+    }
+    found
 }
 
 /// Type of an expression over the tiny registry lattice. Every kind is
@@ -168,6 +199,13 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
             }
         }
         ice("check: anonymous constructor without a spread")
+    }
+    if k == NodeKind.Cast {
+        // The value of a cast is the TARGET type -- resolved by name, because a
+        // cast writes the type it wants. Legality is the WALK's business
+        // (`type_cast`), so by the time the lattice is asked the pair has been
+        // judged and this is the answer it established.
+        return cast_target_of(e, ctx)
     }
     if k == NodeKind.Paren {
         // Parens carry no meaning of their own: the type is the inner

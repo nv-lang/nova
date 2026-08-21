@@ -163,10 +163,10 @@ const ENTRY_C_NAME = "nova_fn_main_impl"
 ///
 /// `args` carries the instance key on top (E2-b2): two instantiations of one
 /// generic callable differ in the same name, after the parameters.
-export fn c_callable(ctx Ctx, row int, subst []int) -> str
-    requires row >= 0 && row < ctx.fns.rows.len(), "mangle: callable row outside the registry"
+export fn c_callable(ctx Ctx, row FnRow, subst []int) -> str
+    requires raw_row(row) >= 0 && raw_row(row) < ctx.fns.rows.len(), "mangle: callable row outside the registry"
 {
-    ro fd = ctx.fns.rows[row]
+    ro fd = ctx.fns.rows[raw_row(row)]
     if fd.name == ENTRY_FN {
         return ENTRY_C_NAME
     } else {

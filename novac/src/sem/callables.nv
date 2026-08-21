@@ -31,6 +31,37 @@ import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 
+/// A ROW of the callable registry -- and a TYPE, not a bare `int`, since
+/// 2026-08-21 (plan 274 section 9.1g; the owner's decision of 2026-08-20).
+///
+/// Three index spaces used to share one `int`: a row of this table, a type id,
+/// and an interner term. Nothing in the compiler told them apart, and they
+/// diverged silently -- this week the emitter asked `defs` for a row BY NAME
+/// (last-write-wins) and got another overload's row, so two declarations emitted
+/// under one C name and clang refused the unit. A newtype makes that a compile
+/// error at the door instead of a defect at the link step.
+///
+/// `-1` still means "no row" in the STORAGE (a dense int vector), and the doors
+/// answer `Option[FnRow]` -- the representation is a choice of this file, the
+/// language of a door is the language of the caller.
+export type FnRow int
+
+/// The row's index, for the ONE thing a row is for: addressing a vector.
+///
+/// A free function and not a method, deliberately: novac compiles no method
+/// BODY yet, and its own source must stay inside what it can read (the whole
+/// reason section 9.1g waited for the newtype form to arrive first). The cast
+/// inside is the language's unwrap, and novac reads exactly that direction --
+/// newtype into its representation -- since the same day.
+export fn raw_row(r FnRow) -> int => r as int
+
+/// "No row", as a ROW rather than as a number the caller must recognise.
+///
+/// The storage keeps `-1` (a dense int vector cannot hold an absence any other
+/// way), and every door that can fail answers `Option[FnRow]`. This is for the
+/// one place in between: a walk that has not found a candidate yet.
+export fn no_row() -> FnRow => FnRow(-1)
+
 /// How a callable lookup turned out. A sum, not an int code: "not found"
 /// and "more than one candidate" are different answers, and both must be
 /// representable (П13.5; a silent int default is the №652 class).
@@ -51,9 +82,9 @@ import ../names.{NameTable, NamespaceId}
 /// set — the whole set is `candidates_from`, which is not a door and may
 /// allocate; the door itself stays allocation-free (П18).
 export type FnLookup enum
-    | FnFound(int)
+    | FnFound(FnRow)
     | FnUnknown
-    | FnOverloaded(int)
+    | FnOverloaded(FnRow)
 
 /// One callable — plan 273 form: a method IS a function whose first
 /// parameter is the receiver, so there is ONE row shape for both.
@@ -75,7 +106,7 @@ export type FnDef value {
     has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
     tparam_off int /// start of this callable's type parameters in FnTable.tparams
     tparam_cnt int /// how many type parameters it declares; 0 = not generic
-    next_row int /// next row carrying the SAME name, or -1; see FnTable
+    next_row FnRow /// next row carrying the SAME name, or `FnRow(-1)`; see FnTable
 }
 
 /// WHERE THE RECEIVER MARK LIVES, and why it is one bit on the callable
@@ -153,7 +184,7 @@ export fn FnTable.new() -> FnTable =>
 /// to a body novac does not emit therefore names a symbol that exists nowhere,
 /// so the subset declines it by name instead of emitting C that cannot link.
 #realtime nogc
-export fn FnTable @compiles_body(row int) -> bool => row < @own_cnt
+export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
 
 /// Does this row take a call with these argument types?
 ///
@@ -169,8 +200,8 @@ export fn FnTable @compiles_body(row int) -> bool => row < @own_cnt
 /// what it cannot judge would be a guess in the other direction. ARITY,
 /// however, is always known at a call site, so it discriminates from today.
 #realtime nogc
-fn FnTable @fits(row int, args []ArgSpec, form CallForm) -> bool {
-    ro fd = @rows[row]
+fn FnTable @fits(row FnRow, args []ArgSpec, form CallForm) -> bool {
+    ro fd = @rows[raw_row(row)]
     // THE FORM FIRST. A free call cannot reach a callable declared with a
     // receiver, and a method call cannot reach one declared without: the
     // language keeps the two spellings apart, so resolution does too. Without
@@ -219,8 +250,8 @@ fn FnTable @fits(row int, args []ArgSpec, form CallForm) -> bool {
 /// varying two parameters oppositely has no winner and the spec says to refuse
 /// rather than choose.
 #realtime nogc
-fn FnTable @specificity_of(row int) -> int {
-    ro fd = @rows[row]
+fn FnTable @specificity_of(row FnRow) -> int {
+    ro fd = @rows[raw_row(row)]
     mut n = 0
     for i in 0..fd.param_cnt {
         n += @params[fd.param_off + i].mode.specificity()
@@ -237,8 +268,8 @@ fn FnTable @specificity_of(row int) -> int {
 /// stand in the same order (plan 274 E2-b2: turbofish is mandatory, so the
 /// order is the whole mapping).
 #realtime nogc
-export fn FnTable @tparam_index(row int, name str) -> Option[int] {
-    ro fd = @rows[row]
+export fn FnTable @tparam_index(row FnRow, name str) -> Option[int] {
+    ro fd = @rows[raw_row(row)]
     for i in 0..fd.tparam_cnt {
         // BINDER-OK: a type parameter is a binder of THIS declaration, so the
         // set is bounded by its own arity, not by the registry.
@@ -260,7 +291,7 @@ export fn FnTable @tparam_index(row int, name str) -> Option[int] {
 /// it, and no way to name a second one).
 export fn FnTable mut @add(name str, ret_id int, has_recv bool, param_ids []ParamDef,
                           tparam_names []str) -> () {
-    ro head = @heads.find(name)
+    ro head = FnRow(@heads.find(name))
     ro off = @params.len()
     // Whole slice at once: std does the copy (nv-coding-style section 18a --
     // a counted push loop is the red flag it names).
@@ -302,16 +333,16 @@ export fn FnTable @has_name(name str) -> bool {
 /// only a TIE at the top is a set -- which is what the spec says to refuse.
 #realtime nogc
 export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
-    mut first = -1
+    mut first = no_row()
     mut best = -1
     mut ties = 0
     mut r = @heads.find(name)
     while r >= 0 {
-        ro row = r
-        r = @rows[row].next_row
+        ro row = FnRow(r)
+        r = raw_row(@rows[r].next_row)
         if !@fits(row, args, form) { continue }
         ro s = @specificity_of(row)
-        if first < 0 {
+        if raw_row(first) < 0 {
             first = row
         } else {
             // A later member of the same chain: the FIRST fitting row is what
@@ -327,7 +358,7 @@ export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
             // that is a DECISION, not a skip.
         }
     }
-    if first < 0 { return FnLookup.FnUnknown }
+    if raw_row(first) < 0 { return FnLookup.FnUnknown }
     if ties > 1 {
         // Two candidates equally specific -- the set varies more than one
         // parameter's mode, and P14 refuses rather than choosing. The caller
@@ -346,11 +377,11 @@ export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
 /// that fitted. Doing it in one pass would mean remembering both the first row
 /// and the best row and then explaining which is which at every call site.
 #realtime nogc
-fn FnTable @most_specific(name str, args []ArgSpec, form CallForm, want int) -> int {
+fn FnTable @most_specific(name str, args []ArgSpec, form CallForm, want int) -> FnRow {
     mut r = @heads.find(name)
     while r >= 0 {
-        ro row = r
-        r = @rows[row].next_row
+        ro row = FnRow(r)
+        r = raw_row(@rows[r].next_row)
         if !@fits(row, args, form) { continue }
         if @specificity_of(row) == want { return row }
     }
@@ -366,14 +397,14 @@ fn FnTable @most_specific(name str, args []ArgSpec, form CallForm, want int) -> 
 /// functions that ASK the table; this one is given its starting row and only
 /// walks). Every reference prints the set rather than the first member:
 /// rustc lists the candidate impls, C++ prints the candidate functions.
-export fn candidates_from(fns FnTable, first int, args []ArgSpec, form CallForm) -> []int {
+export fn candidates_from(fns FnTable, first FnRow, args []ArgSpec, form CallForm) -> []int {
     mut out = []int.new()
-    mut r = first
+    mut r = raw_row(first)
     while r >= 0 {
-        ro row = r
-        r = fns.rows[row].next_row
+        ro row = FnRow(r)
+        r = raw_row(fns.rows[r].next_row)
         if !fns.fits(row, args, form) { continue }
-        out.push(row)
+        out.push(r)
     }
     out
 }

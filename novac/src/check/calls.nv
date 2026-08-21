@@ -28,7 +28,7 @@ module novac.check
 import ../tree.{Node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
+import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, DefKind, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -71,8 +71,8 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 
 /// The one candidate of this arity did not fit: name the FIRST position whose
 /// type differs, and say when a `#coerce` pair (D429) makes the call legal.
-fn Checker mut @refuse_arg_type(kids []Node, row int, key []ArgSpec) -> () {
-    ro fd = @ctx.fns.rows[row]
+fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
+    ro fd = @ctx.fns.rows[raw_row(row)]
     for i in 0..key.len() {
         ro want = @ctx.fns.params[fd.param_off + i]
         if want.type_id == key[i].type_id { continue }
@@ -156,7 +156,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id int) -> () {
 fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
     match @ctx.fns.lookup(cname, free_call_key(kids, @scope), CallForm.FreeCall) {
         FnFound(row) => {
-            if @ctx.fns.rows[row].tparam_cnt > 0 {
+            if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
                 @record_free_callee(e, kids, row, key)
             } else {
                 @refuse_free_call(kids, cname, key)
@@ -180,15 +180,15 @@ fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []
 /// `assert(ret >= 0)` and turned a user mistake into an internal compiler
 /// error — the exact class P12 forbids (measured by the step-1 probe,
 /// 2026-08-19).
-fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []ArgSpec) -> () {
-    ro want = @ctx.fns.rows[row].tparam_cnt
+fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec) -> () {
+    ro want = @ctx.fns.rows[raw_row(row)].tparam_cnt
     ro given = generic_names(kids)
     if want == 0 {
         if given.len() > 0 {
             @report_first_leaf_of(kids,
                 "outside the subset: type arguments on a function that declares none")
         } else {
-            @chan.record_callee(e.id_of(), DefKind.DefFn, row, []int.new())
+            @chan.record_callee(e.id_of(), DefKind.DefFn, raw_row(row), []int.new())
         }
         return
     } else {
@@ -237,7 +237,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []ArgSpec) 
     // and `dbl[str]` declare the same `x T`. Both halves are known only HERE --
     // the substitution was just read -- so this is where `dbl[int]("s")` is
     // refused instead of being emitted as an int function taking a string.
-    ro fd = @ctx.fns.rows[row]
+    ro fd = @ctx.fns.rows[raw_row(row)]
     for i in 0..key.len() {
         if subst_type(@ctx, @ctx.fns.params[fd.param_off + i].type_id, ids) == key[i].type_id { continue }
         @report_first_leaf_of(kids,
@@ -251,5 +251,5 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row int, key []ArgSpec) 
     // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
     // line was a refusal, because recording a call whose instance nobody
     // emitted would have named a symbol that exists nowhere.
-    @chan.record_callee(e.id_of(), DefKind.DefFn, row, ids)
+    @chan.record_callee(e.id_of(), DefKind.DefFn, raw_row(row), ids)
 }

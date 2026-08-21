@@ -371,6 +371,36 @@ type novac does not know». Расхождение СОЗНАТЕЛЬНОЕ и �
 
 Эскалировано интегратору: класс О-1в, канал 196, не отдельный баг.
 
+## НЕСУЩЕСТВУЮЩЕЕ ИМЯ проходит `check` и падает INTERNAL-PANIC в кодогене — класс О-1в, четвёртый носитель (замер 2026-08-21)
+
+```nova
+fn main() {
+    mut x = MISSING_NAME
+    println(1)
+}
+```
+
+`nova check` — **ok**. `nova build`:
+
+```
+codegen error: [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Ident `MISSING_NAME`
+  not in var_types / not a sum-variant — unknown type
+  hint: ... if the import is already present, this is a compiler bug, please report it.
+```
+
+Найдено не пробой ради пробы: я сам написал в исходнике novac имя `NO_ROW`,
+которого не объявил, — чек промолчал, и падение пришло из кодогена. То есть
+самая частая опечатка на свете проходит тайп-чек.
+
+**Почему это хуже трёх предыдущих носителей класса.** Мало того, что чекер
+принимает то, что кодоген отвергает, — сообщение ВИНИТ КОМПИЛЯТОР («this is a
+compiler bug, please report it») в ошибке пользователя. Это класс П12 ровно
+наоборот: пользовательская ошибка уходит внутренней паникой.
+
+**novac строже:** «unknown name: nothing with this name is bound at this point»,
+на позиции самого имени. Верный исход по спеке — `undefined identifier` в чеке.
+Эскалировано интегратору, канал 196.
+
 ## Конструктор newtype: оракул не судит аргумент — класс О-1в, третий носитель (замер 2026-08-21)
 
 ```nova
