@@ -30,6 +30,7 @@ module novac.sem
 import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
+import ../builtins.{ENTRY_FN}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A ROW of the callable registry -- and a TYPE, not a bare `int`, since
@@ -108,6 +109,60 @@ export type FnDef value {
     tparam_off int /// start of this callable's type parameters in FnTable.tparams
     tparam_cnt int /// how many type parameters it declares; 0 = not generic
     next_row FnRow /// next row carrying the SAME name, or `FnRow(-1)`; see FnTable
+}
+
+/// IS THIS ROW THE PROGRAM'S ENTRY POINT? Asked of the ROW, never of the
+/// spelling -- and that distinction is a fix, not a nicety.
+///
+/// The entry point is special for a reason that has nothing to do with novac:
+/// its C symbol is dictated from OUTSIDE. The shell the oracle emits calls
+/// `nova_fn_main_impl()`, so that one name cannot carry parameter types the way
+/// every other name of ours does (274 section 7.0), it may declare no return
+/// type, it is the root of the reachability walk, and its body gets a `(void)`
+/// signature. Four exemptions, all legitimate, all keyed on ONE question.
+///
+/// Until 2026-08-22 that question was `fd.name == ENTRY_FN`, in six places
+/// across four modules -- so EVERY callable spelled `main` inherited all four
+/// exemptions. Measured on two files the oracle accepts:
+///
+///   * `fn main(x int) -> int` beside `fn main()`: `typing` skipped binding the
+///     parameters (they belong to "the entry point", which takes none), so the
+///     body refused its own parameter with "unknown name: nothing with this name
+///     is bound at this point" -- a refusal about a bound name;
+///   * both rows would have been mangled to `nova_fn_main_impl`: two C functions
+///     with one name, the exact collision closed on 2026-08-19 by putting
+///     parameter types INTO the name, reopened here through the one name that
+///     has no parameter types.
+///
+/// So the rule is three facts about the row and not one about the string: the
+/// spelling, no parameters, no receiver. An overload of `main` is an ORDINARY
+/// callable -- Nova allows it, the oracle compiles it, and it gets an ordinary
+/// mangled name.
+#realtime nogc
+export fn is_entry_fn(fd FnDef) -> bool =>
+    fd.name == ENTRY_FN && fd.param_cnt == 0 && !fd.has_recv
+
+/// The same question by ROW, for the readers that hold one.
+#realtime nogc
+export fn FnTable @is_entry_row(row FnRow) -> bool
+    requires raw_row(row) >= 0 && raw_row(row) < @rows.len(), "sem: is_entry_row of a row outside the registry"
+{
+    is_entry_fn(@rows[raw_row(row)])
+}
+
+/// THE entry row of this file, or None -- the root of the reachability walk.
+/// Walks the name chain rather than trusting `defs`, which is keyed by the bare
+/// name and answers with the LAST row of it: with an overload of `main` present,
+/// "the row named main" is not the same question as "the entry point".
+#realtime nogc
+export fn FnTable @entry_row() -> Option[FnRow] {
+    mut r = @heads.find(ENTRY_FN)
+    while r >= 0 {
+        ro row = FnRow(r)
+        r = raw_row(@rows[r].next_row)
+        if @is_entry_row(row) { return Some(row) }
+    }
+    None
 }
 
 /// WHERE THE RECEIVER MARK LIVES, and why it is one bit on the callable

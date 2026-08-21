@@ -133,7 +133,11 @@ fn Checker mut @type_fn(f Node) -> () {
         }
         Some(r) => r
     }
-    if name != ENTRY_FN {
+    // The ROW decides, not the spelling: an overload of `main` binds its
+    // parameters like any other callable. Until 2026-08-22 this read
+    // `name != ENTRY_FN`, so the overload's parameters were never bound and its
+    // body refused its own parameter as an unknown name.
+    if !@ctx.fns.is_entry_row(row) {
         mut slot = 0
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
@@ -150,8 +154,8 @@ fn Checker mut @type_fn(f Node) -> () {
             }
         }
     } else {
-        // ENTRY_FN takes no parameters in the subset, so there is nothing to
-        // bind; its body is typed by the loop below like any other body.
+        // THE entry point takes no parameters, so there is nothing to bind; its
+        // body is typed by the loop below like any other body.
     }
     for c in kids {
         ro ck = c.kind_of()

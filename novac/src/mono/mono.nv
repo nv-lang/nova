@@ -232,7 +232,7 @@ fn has_row_instance(inst []Instance, row FnRow) -> bool {
 
 /// The row of the entry point, or None when this file declares none.
 #realtime nogc
-fn entry_row(ctx Ctx) -> Option[FnRow] => ctx.defs.fn_row(ENTRY_FN)
+fn entry_row(ctx Ctx) -> Option[FnRow] => ctx.fns.entry_row()
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,

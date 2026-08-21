@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, prim_c_name}
+import ../builtins.{prim_c_name}
 import ../types.{TyId, raw_ty, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -173,11 +173,13 @@ export fn c_callable(ctx Ctx, row FnRow, subst []TyId) -> str
     requires raw_row(row) >= 0 && raw_row(row) < ctx.fns.rows.len(), "mangle: callable row outside the registry"
 {
     ro fd = ctx.fns.rows[raw_row(row)]
-    if fd.name == ENTRY_FN {
+    if is_entry_fn(fd) {
         return ENTRY_C_NAME
     } else {
-        // Every other callable is named by the scheme below; the entry
-        // point is the one whose symbol the RUNTIME dictates.
+        // Every other callable is named by the scheme below -- INCLUDING an
+        // overload of `main`, which is an ordinary callable: the entry point is
+        // the row whose symbol the runtime dictates, not every row that shares
+        // its spelling (measured 2026-08-22: both rows got this one symbol).
     }
     // ONE scheme for every callable of ours. A receiver is parameter zero and
     // gets no special treatment: plan 273 says a method IS a function whose
