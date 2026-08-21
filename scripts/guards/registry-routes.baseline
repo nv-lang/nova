@@ -348,4 +348,8 @@ no_caveat=34
 #   before filing -- the window's first version of this finding ("equality
 #   compares tags only") did not reproduce and was withdrawn by the window
 #   itself; what stayed is what a run printed.
-blockers=50
+# 2026-08-22, No.744 CLOSED -- 50 -> 49. The blocker filed hours earlier is
+#   fixed and the fix is proven both ways on one binary with the build cache
+#   cleared: 1 evaluation with the fix, 2 with NOVA_KILL_744=1. Down, as this
+#   file's own rule says a ratchet may only go.
+blockers=49
