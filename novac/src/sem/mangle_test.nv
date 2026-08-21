@@ -108,10 +108,16 @@ test "the COLLECTOR gives a type parameter a type, so an instance can be named" 
             assert(ctx.fns.rows[raw_row(row)].tparam_cnt == 1)
             // Parameter AND return resolve to the same parameter row, and it is
             // a real type of kind TkParam -- not the -1 sentinel.
+            //
+            // WAVE B8 MOVED THIS ASSERT, and the move IS the point. It used to
+            // read `ctx.types[pt].kind` -- the declaration table -- because a
+            // type parameter had a fabricated declaration row named `"#0"`. A
+            // parameter declares nothing, so the row is gone and the KIND now
+            // comes from the interner, which is where a term's kind always was.
             ro pt = ctx.fns.params[ctx.fns.rows[raw_row(row)].param_off].type_id
-            assert(pt >= 0)
-            assert(ctx.types[pt].kind == TypeKind.TkParam)
-            assert(ctx.fns.rows[row].ret_id == pt)
+            assert(is_ty(pt))
+            assert(ctx.tys.kind_of(pt) == TypeKind.TkParam)
+            assert(raw_ty(ctx.fns.rows[raw_row(row)].ret_id) == raw_ty(pt))
             // And the instance is nameable: the substitution decides both the
             // parameter and the return in the emitted name.
             ro at_int = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.int_id))
@@ -124,12 +130,14 @@ test "the COLLECTOR gives a type parameter a type, so an instance can be named" 
 
 test "a generic callable's parameters carry the substituted types" {
     mut ctx = collect_types(empty_file())
-    // fn id[T](x T) -> T  — register TkParam in the type registry so that
-    // c_callable can look it up via ctx.types[t]. fns.params stores TypeDef ids,
-    // not interner TyRow ids — the two spaces are different.
-    ro tparam_tyrow = ctx.tys.param(0)
-    ro tparam_id = TyId(ctx.types.len())
-    ctx.types.push(TypeDef { kind: TypeKind.TkParam, ty_id: tparam_tyrow, name: "T", row_off: 0, row_cnt: 0 })
+    // fn id[T](x T) -> T. WAVE B8: no registry row is pushed here any more.
+    // This test used to fabricate a `TypeDef` for the parameter and note that
+    // "fns.params stores TypeDef ids, not interner TyRow ids -- the two spaces
+    // are different". They ARE two spaces, and that comment was the evidence:
+    // the fabrication existed only because the DECLARATION index was the type
+    // id. Now `tys.param(0)` IS the type, and a parameter declares nothing --
+    // as in every donor.
+    ro tparam_id = ctx.tys.param(0)
     ctx.fns.add("id", tparam_id, false, []ParamDef.of(ro_param(tparam_id)), []str.of("T"))
     ro row = ctx.fns.rows.len() - 1
     // subst = [int]: TkParam(0) -> int

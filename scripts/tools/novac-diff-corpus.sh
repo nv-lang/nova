@@ -107,9 +107,24 @@ eval "cd \"$ROOT\" && timeout 300 \"$NOVAC\" check $(sed 's/^/"/;s/$/"/' "$T/lis
     > "$T/batch.out" 2> "$T/batch.err" </dev/null
 brc=$?
 t_novac=$(( ( $(date +%s%N) - s ) / 1000000 ))
-if [ "$brc" -gt 2 ] || grep -qi "panic" "$T/batch.out" "$T/batch.err" 2>/dev/null; then
+# ДЫРА, ЗАКРЫТАЯ 2026-08-22 (волна В8): пачка, УМЕРШАЯ на середине, читалась как
+# «все остальные файлы приняты». Замер: novac упал на снятом инварианте после
+# третьего файла из 61, вышел с кодом 2 — а условие смотрело `> 2` и слово
+# `panic`, которого в тексте ICE нет («internal compiler error»). Итог: раннер
+# насчитал 10 ЛОЖНЫХ «поведение разошлось», и ни одно из них не было правдой —
+# правдой было, что вердиктов вообще нет. Ложно-зелёное здесь ещё хуже: если бы
+# файлы, которые novac ОТВЕРГАЕТ, были в корпусе «приняли-приняли», гейт бы
+# позеленел на мёртвой пачке.
+#
+# Признак смерти пачки теперь ТРИ, и все три об одном: код выхода не 0/1
+# (novac отвечает 1 «есть диагностики»), слово `panic`, и маркер ICE. Любой из
+# них — откат на пофайловый проход, у которого вердикт на файл свой.
+if [ "$brc" -gt 1 ] \
+    || grep -qi "panic" "$T/batch.out" "$T/batch.err" 2>/dev/null \
+    || grep -q "E_NOVAC_ICE" "$T/batch.out" "$T/batch.err" 2>/dev/null; then
     NOVAC_BATCH=0
     t_novac=0
+    echo "DEBUG batch DEAD rc=$brc (ice=$(grep -c E_NOVAC_ICE "$T/batch.out" 2>/dev/null)) -- per-file fallback" >&2
 else
     cat "$T/batch.out" "$T/batch.err" 2>/dev/null \
         | grep -o '"file":"[^"]*"' | sed 's/.*:"//;s/"$//' | sort -u > "$T/novac_rejected"

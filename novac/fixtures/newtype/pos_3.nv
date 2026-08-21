@@ -1,0 +1,34 @@
+module newtype.pos_3
+
+// AN ALIAS BEFORE ANOTHER TYPE, and this fixture exists because that shape was
+// broken and the refusal LIED.
+//
+// Measured 2026-08-21 (wave B8 of sub-plan 9.1g.1, found while restructuring
+// `collect_types` -- not by a probe, by reading): with `type Count alias int`
+// ahead of `type Cel { v f64 }`, novac refused `c.v` with "unknown field: this
+// type has no field with this name" -- about a field that is right there, on a
+// file the oracle accepts. Delete the alias line and the same file compiled.
+//
+// THE CAUSE was a two-pass registry whose passes could disagree. Pass 1 handed
+// out a declaration id per type NAME; pass 2 pushed the rows. An alias owns no
+// row (it is the same type under a second name, so a row of its own would BE a
+// distinct type) -- but it consumed an id, so every type declared after one had
+// an id one greater than its row index, the `id != types.len()` guard skipped
+// it, and the type silently vanished from the registry.
+//
+// THE FIX is not a better guard: pass 1 now BUILDS the row, so "the id is the
+// row index" holds by construction and there is nothing left to guard. The alias
+// is registered in pass 2, where its representation can be resolved -- it may
+// point at a declaration further down the file.
+//
+// Kept as a fixture because the shape is ordinary: one `alias` anywhere above a
+// record is enough, and a compiler that loses a type here is wrong about
+// everything below it.
+type Count alias int
+
+type Cel { v f64 }
+
+fn main() {
+    ro c = Cel { v: 1.5 }
+    println(c.v)
+}

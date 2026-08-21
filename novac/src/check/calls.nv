@@ -109,7 +109,7 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
 /// reached the lattice and came out as an ice -- "internal compiler error" shown
 /// to someone who wrote a legal program.
 fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
-    if !is_ty(type_id) || raw_ty(type_id) >= @ctx.types.len() {
+    if !is_ty(type_id) {
         @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
         return
     } else {
@@ -213,7 +213,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     }
     mut ids = []TyId.new()
     for name in given {
-        ids.push(@ctx.defs.type_id(name) ?? no_ty())
+        ids.push(@ctx.ty_of_name(name) ?? no_ty())
     }
     // WHERE the call sits decides which refusal. Inside a generic body -- and
     // this run carries a substitution exactly then -- an unresolved type

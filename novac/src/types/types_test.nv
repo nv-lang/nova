@@ -4,11 +4,12 @@
 // concreteness. No oracle, no files, no pipeline.
 
 module novac.types
+import ../names.{DeclId}
 
 test "interning: structurally equal terms get ONE id — equality of ids is equality of types" {
     mut it = Interner.new()
     ro int_t = it.prim(0)
-    ro vec_decl = 7
+    ro vec_decl = DeclId(7)
     ro a = it.app(vec_decl, []TyId.of(int_t))
     ro b = it.app(vec_decl, []TyId.of(int_t))
     assert(raw_ty(a) == raw_ty(b))
@@ -19,7 +20,7 @@ test "interning: different arguments are different types — Vec[int] is not Vec
     mut it = Interner.new()
     ro int_t = it.prim(0)
     ro str_t = it.prim(1)
-    ro vec_decl = 7
+    ro vec_decl = DeclId(7)
     ro vi = it.app(vec_decl, []TyId.of(int_t))
     ro vs = it.app(vec_decl, []TyId.of(str_t))
     assert(raw_ty(vi) != raw_ty(vs))
@@ -30,7 +31,7 @@ test "interning: different arguments are different types — Vec[int] is not Vec
 test "interning: nesting is a term, not a name — Vec[Vec[int]] has one argument which is Vec[int]" {
     mut it = Interner.new()
     ro int_t = it.prim(0)
-    ro vec_decl = 7
+    ro vec_decl = DeclId(7)
     ro vi = it.app(vec_decl, []TyId.of(int_t))
     ro vvi = it.app(vec_decl, []TyId.of(vi))
     assert(it.arg_count(vvi) == 1)
@@ -40,7 +41,7 @@ test "interning: nesting is a term, not a name — Vec[Vec[int]] has one argumen
 
 test "interning: the empty-argument application is the same door as generics" {
     mut it = Interner.new()
-    ro d = 3
+    ro d = DeclId(3)
     ro a = it.app(d, []TyId.new())
     ro b = it.app(d, []TyId.new())
     assert(raw_ty(a) == raw_ty(b))
@@ -60,7 +61,7 @@ test "subst: Param{i} becomes args[i]; nothing else changes; the result is inter
     ro str_t = it.prim(1)
     ro p0 = it.param(0)
     ro p1 = it.param(1)
-    ro pair_decl = 9
+    ro pair_decl = DeclId(9)
     ro pair_p = it.app(pair_decl, []TyId.of(p0, p1)) // Pair[A, B]
     ro pair_c = it.subst(pair_p, []TyId.of(int_t, str_t)) // Pair[int, str]
     assert(raw_ty(it.arg(pair_c, 0)) == raw_ty(int_t))
@@ -74,7 +75,7 @@ test "subst: Param{i} becomes args[i]; nothing else changes; the result is inter
 test "subst: nested — Vec[Param0] with [int] is Vec[int], and it is the interned Vec[int]" {
     mut it = Interner.new()
     ro int_t = it.prim(0)
-    ro vec_decl = 7
+    ro vec_decl = DeclId(7)
     ro p0 = it.param(0)
     ro vp = it.app(vec_decl, []TyId.of(p0))
     ro vi_direct = it.app(vec_decl, []TyId.of(int_t))
@@ -87,7 +88,7 @@ test "concreteness: layout's question — Param and Infer are not concrete, and 
     ro int_t = it.prim(0)
     ro p0 = it.param(0)
     ro v0 = it.infer(0)
-    ro vec_decl = 7
+    ro vec_decl = DeclId(7)
     assert(it.is_concrete(int_t))
     assert(!it.is_concrete(p0))
     assert(!it.is_concrete(v0))
@@ -100,7 +101,7 @@ test "concreteness: layout's question — Param and Infer are not concrete, and 
 
 test "chains: many applications of one head stay distinct and findable" {
     mut it = Interner.new()
-    ro vec_decl = 7
+    ro vec_decl = DeclId(7)
     mut ids = []TyId.new()
     mut i = 0
     while i < 6 {

@@ -29,6 +29,43 @@
 
 module novac.names
 
+/// THE id of a top-level DECLARATION -- a row in `sem.Ctx.types` for a type,
+/// and the stable identity the architecture's layer 3 promises: a name resolves
+/// to a declaration, and the declaration's id does not depend on its position.
+///
+/// It lives HERE and not in `sem` because two modules need it and neither owns
+/// the other: `sem` indexes its declaration table by it, and `types` stores it
+/// as the HEAD of a nominal term (`Record(DeclId)`, `Sum(DeclId)`,
+/// `App(DeclId, args)`) -- exactly rustc's `TyKind::Adt(AdtDef, _)`, Go's
+/// named type pointing at its `TypeName`, Swift's `NominalTypeDecl`. The type
+/// carries the declaration; the declaration does not carry the type.
+///
+/// WHY IT EXISTS AT ALL (wave B8, decision 9.1g.2): until 2026-08-21 the
+/// declaration index WAS the type id, and that conflation cost a fabricated
+/// declaration row -- `collect_types` pushed a `TypeDef` named `"#0"` for a type
+/// PARAMETER, which nobody declares, purely so it could have an index. A
+/// structural type has no declaration; that is why the two spaces are two.
+export type DeclId int
+
+/// The index inside, for the vector this space addresses. The ONE unwrapping
+/// door -- `raw_decl` in an expression says "I am indexing a declaration table".
+#realtime nogc
+export fn raw_decl(d DeclId) -> int => d as int
+
+/// "No declaration", as a value of the space rather than a −1 to be known.
+#realtime nogc
+export fn no_decl() -> DeclId => DeclId(-1)
+
+/// Is this an actual declaration? Asked where absence is a legal answer.
+#realtime nogc
+export fn is_decl(d DeclId) -> bool => raw_decl(d) >= 0
+
+/// [LEGACY-#TBD-newtype-ro-launder] The same declaration, rebuilt -- the oracle
+/// refuses to RETURN a `ro`-bound newtype even over a primitive carrier. Same
+/// defect and same shape as `types.same_ty`; both go when it is fixed.
+#realtime nogc
+export fn same_decl(d DeclId) -> DeclId => DeclId(raw_decl(d))
+
 /// Which namespace a NameTable serves — the key component the string-keys
 /// guard demands (identity is (namespace, name), never a bare name).
 export type NamespaceId enum

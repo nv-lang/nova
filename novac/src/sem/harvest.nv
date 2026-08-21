@@ -39,9 +39,9 @@ import ../types.{TyId, raw_ty, no_ty, is_ty}
 /// does not become a subset method and gets an honest rejection at the
 /// point of use. Overloads (two signatures for one (receiver, name))
 /// are marked and also rejected — silent choosing is not allowed.
-fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) -> () {
+fn harvest_methods(decls []Node, types []TypeDef, defs DefTable, mut fns FnTable, mut coerces []CoercePair) -> () {
     for d in decls {
-        harvest_in(d, defs, fns, coerces)
+        harvest_in(d, types, defs, fns, coerces)
     }
 }
 
@@ -51,12 +51,12 @@ fn harvest_methods(decls []Node, defs DefTable, mut fns FnTable, mut coerces []C
 /// tail of the file). Until recovery is fixed in wave 2, signature
 /// collection must not depend on it: a declaration is found wherever
 /// it ended up.
-fn harvest_in(n Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) -> () {
+fn harvest_in(n Node, types []TypeDef, defs DefTable, mut fns FnTable, mut coerces []CoercePair) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
             if kind == NodeKind.FnDecl {
-                harvest_fn(children, defs, fns)
+                harvest_fn(children, types, defs, fns)
                 return
             }
             // An attribute is the declaration's PREVIOUS SIBLING, not its
@@ -75,7 +75,7 @@ fn harvest_in(n Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) 
                 // below. No `else` -- the branch above ENDS in `continue`, and
                 // a variant test whose else does the work is what P21 refuses.
                 ro before = fns.rows.len()
-                harvest_in(c, defs, fns, coerces)
+                harvest_in(c, types, defs, fns, coerces)
                 if coerce_next && fns.rows.len() > before {
                     harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {
@@ -94,7 +94,7 @@ fn harvest_in(n Node, defs DefTable, mut fns FnTable, mut coerces []CoercePair) 
 /// the receiver AND the return are already known to the registry —
 /// otherwise the method does not enter the subset and gets an
 /// honest rejection at the point of use.
-fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
+fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut fns FnTable) -> () {
     mut recv_name = ""
     mut mname = ""
     mut ret_name = ""
@@ -131,7 +131,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         }
     }
     if recv_name == "" || mname == "" || ret_name == "" { return }
-    ro recv_t = defs.type_id(recv_name) ?? no_ty()
+    ro recv_t = ty_or_none(types, defs, recv_name)
     // `Self` is the RECEIVER's type, spelled by its role instead of its name.
     // It is not in `defs` and never will be -- it names no declaration -- so a
     // door that only asked the registry dropped the WHOLE signature: measured
@@ -139,7 +139,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     // files. Same silent-drop class as the receiver mode two waves earlier: the
     // signature vanished, and the refusal at the use site said "no such method"
     // about a method std declares.
-    ro ret_t = if ret_name == SELF_TYPE { recv_t } else { defs.type_id(ret_name) ?? no_ty() }
+    ro ret_t = if ret_name == SELF_TYPE { recv_t } else { ty_or_none(types, defs, ret_name) }
     if !is_ty(recv_t) || !is_ty(ret_t) { return }
     // A signature is valid only if ALL its types are known, including
     // its parameters. Otherwise std overloads would land in the table
@@ -181,7 +181,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         ro pname = leaf_text(tnode)
         // A PARAMETER may be `Self` too (`fn T @merge(other Self)`), and it
         // means the same thing: the receiver's type.
-        ro pt = if pname == SELF_TYPE { recv_t } else { defs.type_id(pname) ?? no_ty() }
+        ro pt = if pname == SELF_TYPE { recv_t } else { ty_or_none(types, defs, pname) }
         if !is_ty(pt) { return }
         // The MODE travels with the type: it is an axis of overloading (P14),
         // so a signature read without it would make `@ptr()` and `mut @ptr()`

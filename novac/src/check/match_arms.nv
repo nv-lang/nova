@@ -22,7 +22,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
@@ -63,9 +63,15 @@ fn Checker mut @type_match(m Node) -> () {
 /// scan stops there; a guard does NOT count as coverage, because a guard can
 /// be false (the oracle judges it the same way).
 fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
-    if !is_ty(scr_t) || raw_ty(scr_t) >= @ctx.types.len() { return }
-    ro td = @ctx.types[scr_t]
-    if td.kind != TypeKind.TkSum { return }
+    // The KIND comes from the interner, and the bound with it. Until wave B8
+    // this line read `raw_ty(scr_t) >= @ctx.types.len()` -- a bound against the
+    // DECLARATION table, which stopped meaning anything the moment a type id
+    // became an interner row: interner ids run past the declaration count, so
+    // the guard started returning early and this rule stopped judging. That is
+    // how a check gets QUIETER without anyone touching it.
+    if !is_ty(scr_t) { return }
+    if @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
+    ro td = decl_of_ty(@ctx, scr_t)
     if td.row_cnt < 1 { return }
     mut covered = 0
     for c in kids {

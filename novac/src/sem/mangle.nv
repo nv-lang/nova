@@ -39,12 +39,13 @@ import ../types.{TyId, raw_ty, no_ty, is_ty, same_ty}
 /// deep it goes. The representation rides in the interner's args -- the same
 /// pool an application's arguments use, because it IS an argument of the term.
 export fn representation_of(ctx Ctx, t TyId) -> TyId
-    requires t >= 0 && t < ctx.types.len(), "mangle: representation asked for a type outside the registry"
+    requires is_ty(t), "mangle: representation asked for `no type`"
+    requires ctx.tys.arg_count(t) == 1, "mangle: a newtype term without exactly one representation argument"
 {
-    ro td = decl_of_ty(ctx, t)
-    assert(ctx.tys.arg_count(td.ty_id) == 1,
-        "mangle: a newtype term without exactly one representation argument")
-    ctx.tys.arg(td.ty_id, 0)
+    // The TERM answers, not the declaration row: the representation is an
+    // argument of the term itself (wave B8 -- before it, this door went through
+    // the declaration table to read a fact the interner already held).
+    ctx.tys.arg(t, 0)
 }
 
 /// The type a value is CARRIED as: newtypes peeled, everything else itself.
@@ -65,8 +66,8 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
     // shape the checker refuses before this door is ever asked.
     mut steps = 0
     while steps <= ctx.types.len() {
-        if !is_ty(cur) || raw_ty(cur) >= ctx.types.len() { return cur }
-        ro is_new = match decl_of_ty(ctx, cur).kind {
+        if !is_ty(cur) { return cur }
+        ro is_new = match ctx.tys.kind_of(cur) {
             TkNewtype => true
             TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
         }
@@ -80,12 +81,15 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t TyId) -> str {
-    if t >= 0 && t < ctx.types.len() {
-        ro td = decl_of_ty(ctx, t)
-        match td.kind {
-            TkPrim => { return prim_c_name(ctx.tys.head_of(td.ty_id)) } // universe fact by ordinal, read off the term
-            TkRecord => { return "Nova_${td.name}*" }
-            TkSum => { return "Nova_${td.name}*" }
+    if is_ty(t) {
+        // THE KIND COMES FROM THE INTERNER (wave B8). It used to come from the
+        // declaration row, which meant every question about a type went through
+        // the declaration table -- and a PRIMITIVE has no declaration to go
+        // through. The row is reached for below only where the NAME is wanted.
+        match ctx.tys.kind_of(t) {
+            TkPrim => { return prim_c_name(ctx.tys.head_of(t)) } // universe fact by ordinal, read off the term
+            TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}*" }
+            TkSum => { return "Nova_${decl_of_ty(ctx, t).name}*" }
             // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
             // its C spelling is the representation's -- zero cost, and what the
             // oracle emits too (`typedef nova_int Nova_Row;` and then a plain
@@ -108,14 +112,13 @@ export fn c_type(ctx Ctx, t TyId) -> str {
 /// instead of an exhaustive match, so a fourth kind would have been spelled
 /// as a struct in silence (П21).
 export fn c_struct(ctx Ctx, t TyId) -> str {
-    if !is_ty(t) || raw_ty(t) >= ctx.types.len() {
-        ice("mangle: struct name asked for a type id outside the registry")
+    if !is_ty(t) {
+        ice("mangle: struct name asked for `no type`")
     }
-    ro td = decl_of_ty(ctx, t)
-    match td.kind {
+    match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
-        TkRecord => { return "Nova_${td.name}" }
-        TkSum => { return "Nova_${td.name}" }
+        TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}" }
+        TkSum => { return "Nova_${decl_of_ty(ctx, t).name}" }
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.
         TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }
@@ -222,13 +225,12 @@ export fn c_callable(ctx Ctx, row FnRow, subst []TyId) -> str
 /// (novac-architecture.md: a substitution needed in the emitter means mono did
 /// not finish its work).
 export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
-    if !is_ty(t) || raw_ty(t) >= ctx.types.len() { return same_ty(t) }
-    ro td = decl_of_ty(ctx, t)
-    match td.kind {
+    if !is_ty(t) { return same_ty(t) }
+    match ctx.tys.kind_of(t) {
         TkParam => {
             // The parameter's index comes from the interner term, and it
             // addresses the substitution directly.
-            ro idx = ctx.tys.head_of(td.ty_id)
+            ro idx = ctx.tys.head_of(t)
             assert(idx >= 0 && idx < subst.len(),
                 "mangle: a type parameter outside the substitution — a generic asked without one")
             return subst[idx]
@@ -275,16 +277,15 @@ fn mode_tag(m ParamMode) -> str => match m {
 /// parameter is `TkParam` with index `i`, `subst[i]` is the concrete type.
 /// Empty for every ordinary callable.
 fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
-    requires t >= 0 && t < ctx.types.len(), "mangle: type_tag of a type id outside the registry"
+    requires is_ty(t), "mangle: type_tag of `no type`"
 {
-    ro td = decl_of_ty(ctx, t)
-    match td.kind {
-        TkPrim => prim_c_name(ctx.tys.head_of(td.ty_id))
-        TkRecord => td.name
-        TkSum => td.name
+    match ctx.tys.kind_of(t) {
+        TkPrim => prim_c_name(ctx.tys.head_of(t))
+        TkRecord => decl_of_ty(ctx, t).name
+        TkSum => decl_of_ty(ctx, t).name
         // The newtype's OWN name, never the representation's: `f(Row)` and
         // `f(int)` are two callables, and the C name is what keeps them apart.
-        TkNewtype => td.name
+        TkNewtype => decl_of_ty(ctx, t).name
         TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
         // A type parameter resolved through the substitution -- by the ONE
         // door that applies one, so the mangler and mono cannot disagree about

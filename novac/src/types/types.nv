@@ -42,6 +42,7 @@ module novac.types
 
 import ../diag.{ice}
 import ../builtins.{TypeKind, TYPE_KIND_COUNT}
+import ../names.{DeclId, raw_decl}
 
 /// One interned type term. VALUE record: rows sit inline in the vector.
 ///
@@ -190,23 +191,23 @@ export fn Interner mut @intern(kind TypeKind, head_id int, args []TyId) -> TyId 
 export fn Interner mut @prim(ordinal int) -> TyId => @intern(TypeKind.TkPrim, ordinal, []TyId.new())
 
 /// A nominal record declaration, no arguments applied.
-export fn Interner mut @record(decl_id int) -> TyId => @intern(TypeKind.TkRecord, decl_id, []TyId.new())
+export fn Interner mut @record(decl_id DeclId) -> TyId => @intern(TypeKind.TkRecord, raw_decl(decl_id), []TyId.new())
 
 /// A nominal sum declaration, no arguments applied.
-export fn Interner mut @sum(decl_id int) -> TyId => @intern(TypeKind.TkSum, decl_id, []TyId.new())
+export fn Interner mut @sum(decl_id DeclId) -> TyId => @intern(TypeKind.TkSum, raw_decl(decl_id), []TyId.new())
 
 /// A type constructor applied to arguments: Vec[int] is app(vec_decl, [int]).
 /// "No generics" is the empty-argument case of the same door (274.1 section 2b):
 /// there is no separate path for the non-generic world.
-export fn Interner mut @app(decl_id int, args []TyId) -> TyId => @intern(TypeKind.TkApp, decl_id, args)
+export fn Interner mut @app(decl_id DeclId, args []TyId) -> TyId => @intern(TypeKind.TkApp, raw_decl(decl_id), args)
 
 /// The i-th type parameter of the enclosing declaration.
 /// A NEWTYPE over `under`: a DISTINCT nominal type whose representation is that
 /// type (`type Row int`). The representation rides in the args, exactly as an
 /// application's arguments do -- one pool, one shape, and the door below reads
 /// it back.
-export fn Interner mut @newtype(decl_id int, under TyId) -> TyId =>
-    @intern(TypeKind.TkNewtype, decl_id, []TyId.of(under))
+export fn Interner mut @newtype(decl_id DeclId, under TyId) -> TyId =>
+    @intern(TypeKind.TkNewtype, raw_decl(decl_id), []TyId.of(under))
 
 /// A type PARAMETER by its index in the owner's generics (donor: rustc
 /// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
@@ -238,6 +239,27 @@ export fn Interner @head_of(t TyId) -> int
     requires is_ty(t) && raw_ty(t) < @rows.len(), "types: head_of asked for a type id outside the interner"
 {
     @rows[raw_ty(t)].head_id
+}
+
+/// THE DECLARATION a nominal term names -- `head_of` typed as what it means.
+///
+/// `head_id` is polymorphic by kind (a prim ordinal, a parameter index, an
+/// inference vid, a DeclId), so the crossing is CHECKED here instead of implicit:
+/// only the nominal kinds carry a declaration, and the other three say so.
+#realtime nogc
+export fn Interner @decl_head_of(t TyId) -> DeclId
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: decl_head_of asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        TkRecord => DeclId(row.head_id)
+        TkSum => DeclId(row.head_id)
+        TkApp => DeclId(row.head_id)
+        TkNewtype => DeclId(row.head_id)
+        TkPrim => ice("types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
+        TkParam => ice("types: a type PARAMETER names no declaration -- its head is a slot index")
+        TkInfer => ice("types: an inference variable names no declaration -- its head is a vid")
+    }
 }
 
 /// How many arguments an application carries (0 for every other kind).

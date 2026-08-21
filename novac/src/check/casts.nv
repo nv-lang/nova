@@ -79,8 +79,8 @@ fn Checker mut @type_cast(e Node) -> () {
 /// an ANSWER here rather than a broken invariant.
 fn Checker @representation_of_or_self(t TyId) -> TyId {
     // `same_ty` on both hand-backs: [LEGACY-#TBD-newtype-ro-launder].
-    if !is_ty(t) || raw_ty(t) >= @ctx.types.len() { return same_ty(t) }
-    match decl_of_ty(@ctx, t).kind {
+    if !is_ty(t) { return same_ty(t) }
+    match @ctx.tys.kind_of(t) {
         TkNewtype => representation_of(@ctx, t)
         TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => same_ty(t)
     }

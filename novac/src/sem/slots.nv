@@ -23,7 +23,7 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../diag.{ice}
 import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../names.{DeclId, raw_decl, no_decl, is_decl}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
 /// punctuation. Its last child is not always the body.
@@ -162,8 +162,41 @@ fn mode_before(pk []Node, n int) -> ParamMode {
 /// that got the id without the alias bit would have to ask a second door to
 /// know what to do with it.
 export type ReprSpec value {
-    under_id TyId /// the representation's type id
+    under_decl DeclId /// the representation's DECLARATION -- this door has no type table, and a name resolves to a declaration first (wave B8)
     is_alias bool /// `type Row alias int` -- the same type under a second name
+}
+
+/// WHAT a `type` declaration IS, read from the TREE alone.
+///
+/// Separate from `repr_of_decl` for a reason that cost a live defect: the shape
+/// must be known BEFORE any name is resolved. `repr_of_decl` asks the registry
+/// for the representation, so in the first pass -- where the point is to
+/// register names -- it answers None for a forward reference and the caller
+/// concludes "record". The shape does not need a registry: fields versus a type
+/// reference versus the `alias` marker is a question about leaves.
+export type DeclShape enum
+    | ShapeRecord
+    | ShapeNewtype
+    | ShapeAlias
+
+/// The shape of this `type` declaration. No lookups, no registry, no order
+/// dependence.
+export fn shape_of_decl(decl Node) -> DeclShape {
+    mut seen_name = false
+    mut tail_ident = false
+    for c in branch_children(decl) {
+        if c.kind_of() == NodeKind.Field { return DeclShape.ShapeRecord }
+        if !c.is_ident() { continue }
+        if !seen_name {
+            // The FIRST identifier is the declared NAME (position, not lookup --
+            // the same rule `repr_of_decl` lives by).
+            seen_name = true
+            continue
+        }
+        if leaf_text(c) == ALIAS_MARKER { return DeclShape.ShapeAlias }
+        tail_ident = true
+    }
+    if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }
 }
 
 /// The representation a type declaration names, or None when it declares a
@@ -176,7 +209,7 @@ export type ReprSpec value {
 /// and the oracle compiles.
 export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
     mut marks_alias = false
-    mut under = no_ty()
+    mut under = no_decl()
     mut seen_name = false
     for c in branch_children(decl) {
         // A record declares FIELDS: then the tail is not a representation at
@@ -197,7 +230,7 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
             marks_alias = true
             continue
         }
-        if is_ty(under) {
+        if is_decl(under) {
             // Already found: a further identifier belongs to a form this door
             // does not read (type arguments), judged elsewhere.
             continue
@@ -205,15 +238,15 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
         // The Option is read AS an Option (the owner's correction 2026-08-21):
         // `?? no_ty()` followed by a comparison with the same sentinel is a
         // detour that turns "absent" into a number to be remembered.
-        if Some(id) = defs.type_id(word) {
-            under = id
+        if Some(d) = defs.type_decl(word) {
+            under = d
         } else {
             // A word that names no type novac knows: the declaration is refused
             // at its own position, not guessed at here.
         }
     }
-    if !is_ty(under) { return None }
-    Some(ReprSpec { under_id: under, is_alias: marks_alias })
+    if !is_decl(under) { return None }
+    Some(ReprSpec { under_decl: under, is_alias: marks_alias })
 }
 
 /// The MODE a BINDING statement declares: `ro x = …`, `mut x = …`,

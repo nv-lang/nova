@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, CalleeTarget, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
+import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -805,7 +805,7 @@ fn Checker mut @type_expr(e Node) -> () {
             // language (the integrator's measurement 2026-08-21). The record
             // form (`Cel(1.5)`, which the oracle accepts positionally) is
             // refused BY NAME, because novac emits the brace form only.
-            DefType(id) => @record_newtype_ctor(e, kids, id)
+            DefType(decl) => @record_newtype_ctor(e, kids, ty_of_decl(@ctx, decl))
         }
     } else if k == NodeKind.Cast {
         @type_cast(e)

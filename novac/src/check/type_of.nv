@@ -108,7 +108,7 @@ fn cast_target_of(e Node, ctx Ctx) -> TyId {
         // That detour was here until the owner pointed at it: it turns a real
         // "absent" into a number somebody must remember to test, which is the
         // no-silent-default class this compiler exists to refuse.
-        if Some(id) = ctx.defs.type_id(leaf_text(c)) {
+        if Some(id) = ctx.ty_of_name(leaf_text(c)) {
             found = id
         } else {
             // Not a type name: an identifier of the cast's own syntax, and the
@@ -191,7 +191,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
         if kids[0].kind_of() == NodeKind.Name {
-            return ctx.defs.type_id_of(expr_leaf_name(kids[0]))
+            return ctx.ty_of_name_or_ice(expr_leaf_name(kids[0]))
         }
         // Anonymous `{ ...src, ... }`: the record type is the spread's.
         for c in kids {
