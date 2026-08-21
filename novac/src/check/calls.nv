@@ -28,7 +28,8 @@ module novac.check
 import ../tree.{Node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, UNKNOWN_TYPE, CalleeTarget, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
+import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -75,7 +76,7 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
     ro fd = @ctx.fns.rows[raw_row(row)]
     for i in 0..key.len() {
         ro want = @ctx.fns.params[fd.param_off + i]
-        if want.type_id == key[i].type_id { continue }
+        if raw_ty(want.type_id) == raw_ty(key[i].type_id) { continue }
         match coerce_row(@ctx, key[i].type_id, want.type_id) {
             // D429: a pair IS declared for this position, so the call is legal
             // Nova -- the value coerces through that method. What novac lacks
@@ -107,14 +108,14 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
 /// an argument whose type is not the representation. Until 2026-08-21 all of it
 /// reached the lattice and came out as an ice -- "internal compiler error" shown
 /// to someone who wrote a legal program.
-fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id int) -> () {
-    if type_id < 0 || type_id >= @ctx.types.len() {
+fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
+    if !is_ty(type_id) || raw_ty(type_id) >= @ctx.types.len() {
         @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
         return
     } else {
         // A type the registry holds: which KIND decides the rest.
     }
-    ro is_newtype = match @ctx.types[type_id].kind {
+    ro is_newtype = match decl_of_ty(@ctx, type_id).kind {
         TkNewtype => true
         TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
     }
@@ -133,14 +134,14 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id int) -> () {
     } else {
         // One argument: its TYPE decides.
     }
-    if args[0].type_id != representation_of(@ctx, type_id) {
+    if raw_ty(args[0].type_id) != raw_ty(representation_of(@ctx, type_id)) {
         @report_first_leaf_of(kids,
             "outside the subset: this argument is not the newtype's representation")
         return
     } else {
         // The representation: the construction is legal and gets recorded.
     }
-    @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []int.new())
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []TyId.new())
 }
 
 /// A GENERIC candidate cannot fit an exact key: until the turbofish
@@ -188,7 +189,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             @report_first_leaf_of(kids,
                 "outside the subset: type arguments on a function that declares none")
         } else {
-            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []int.new())
+            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new())
         }
         return
     } else {
@@ -210,9 +211,9 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     } else {
         // As many arguments as the declaration binds: each is resolved below.
     }
-    mut ids = []int.new()
+    mut ids = []TyId.new()
     for name in given {
-        ids.push(@ctx.defs.type_id(name) ?? UNKNOWN_TYPE)
+        ids.push(@ctx.defs.type_id(name) ?? no_ty())
     }
     // WHERE the call sits decides which refusal. Inside a generic body -- and
     // this run carries a substitution exactly then -- an unresolved type
@@ -221,7 +222,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // infers. Saying "novac does not know this type" there sends the reader to
     // hunt a typo in correct code, which is the D420 class.
     for id in ids {
-        if id == UNKNOWN_TYPE {
+        if !is_ty(id) {
             @report_first_leaf_of(kids, if @substs.len() > 0 {
                 "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)"
             } else {

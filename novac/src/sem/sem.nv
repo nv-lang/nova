@@ -57,7 +57,7 @@ import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 import ../builtins.{TypeKind, builtin_types, COERCE_ATTR}
-import ../types.{Interner}
+import ../types.{Interner, TyId, raw_ty, no_ty, is_ty}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
 /// a SUM, not int constants (owner 2026-08-14: the language's own type
@@ -71,7 +71,7 @@ import ../types.{Interner}
 /// every reader still says `DefVariant`; what changed is that it now binds the
 /// row it needs instead of reaching for a second field.
 export type DefTarget enum
-    | DefType(int)
+    | DefType(TyId)
     | DefVariant(int)
     | DefFn(FnRow)
 
@@ -81,7 +81,7 @@ export type DefTarget enum
 /// row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
-    ty_id int /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
+    ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum_id).
     row_cnt int /// How many rows; 0 for primitives.
@@ -120,7 +120,7 @@ export fn ParamMode @specificity() -> int => match @ {
 /// mode out of step with its type -- and this plan has paid for that shape
 /// twice already (P23). A range of these rows is one range.
 export type ParamDef value {
-    type_id int /// the parameter's type; -1 = unreadable, and backends ice on it rather than invent one
+    type_id TyId /// the parameter's type; `no_ty()` = unreadable, and backends ice on it rather than invent one
     mode ParamMode /// as written; `ModeRo` when the declaration writes nothing
 }
 
@@ -137,7 +137,7 @@ export type ArgClass enum
 
 /// One argument of a call: its type and its class.
 export type ArgSpec value {
-    type_id int /// the argument's type, or UNKNOWN_TYPE while the position is not typed
+    type_id TyId /// the argument's type, or `no_ty()` while the position is not typed
     cls ArgClass /// which class P14 filters this position by
 }
 
@@ -274,7 +274,7 @@ export fn DefTable @fn_row(name str) -> Option[FnRow] {
 /// rule "a type in type position must be declared"); sem invents
 /// nothing — it just does not register what it did not understand.
 #realtime nogc
-export fn DefTable @type_id(name str) -> Option[int] {
+export fn DefTable @type_id(name str) -> Option[TyId] {
     ro d = @names.find(name)
     if d < 0 {
         return None
@@ -291,7 +291,7 @@ export fn DefTable @type_id(name str) -> Option[int] {
 /// Resolve `name` in TYPE POSITION (params, fields, returns, constructor
 /// heads): ONE lookup, then the kind must be a type. NO SILENT DEFAULT.
 #realtime nogc
-export fn DefTable @type_id_of(name str) -> int {
+export fn DefTable @type_id_of(name str) -> TyId {
     ro d = @names.find(name)
     assert(d >= 0, "sem: type name not in the registry — no silent int default (#652 class)")
     // The refusal is an ice per ARM rather than one assert over a tag: each
@@ -307,8 +307,8 @@ export fn DefTable @type_id_of(name str) -> int {
 /// One record field; a field row is this record's index in Ctx.field_rows.
 export type FieldDef value {
     name str /// Field spelling; the backend uses it for the member name verbatim.
-    type_id int /// The field's type id.
-    owner_id int /// Owning type id; the door takes the NAME and compares this as an integer.
+    type_id TyId /// The field's type id.
+    owner_id TyId /// Owning type id; the door takes the NAME and compares this as a type id.
     next_row int /// Next row carrying the SAME field name, or -1; see FieldTable.
 }
 
@@ -331,7 +331,7 @@ export fn FieldTable.new() -> FieldTable =>
     { names: NameTable.new(NamespaceId.NsFields), rows: []FieldDef.new() }
 
 /// Register one field of `owner_id`, keeping the same-name chain linked.
-export fn FieldTable mut @add(owner_id int, name str, type_id int) -> () {
+export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
     ro head = @names.find(name)
     @names.put(name, @rows.len())
     @rows.push(FieldDef { name, type_id, owner_id, next_row: head })
@@ -340,7 +340,7 @@ export fn FieldTable mut @add(owner_id int, name str, type_id int) -> () {
 /// Does `owner_id` have a field named `fname`? The tolerant half again:
 /// `check` asks first, so a misspelled field is a diagnostic, not an ice.
 #realtime nogc
-export fn FieldTable @has_field(owner_id int, fname str) -> bool {
+export fn FieldTable @has_field(owner_id TyId, fname str) -> bool {
     mut r = @names.find(fname)
     while r >= 0 {
         ro fd = @rows[r]
@@ -352,7 +352,7 @@ export fn FieldTable @has_field(owner_id int, fname str) -> bool {
 
 /// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
 #realtime nogc
-export fn FieldTable @field_type(owner_id int, fname str) -> int {
+export fn FieldTable @field_type(owner_id TyId, fname str) -> TyId {
     mut r = @names.find(fname)
     while r >= 0 {
         ro fd = @rows[r]
@@ -367,7 +367,7 @@ export fn FieldTable @field_type(owner_id int, fname str) -> int {
 
 /// One sum_id variant; a variant row is this record's index in Ctx.variant_rows.
 export type VariantDef value {
-    sum_id int /// Owning sum's type id (backends derive the tag name from it).
+    sum_id TyId /// Owning sum's type id (backends derive the tag name from it).
     name str /// Variant spelling; backends derive maker names from it.
     payload_off int /// First payload row in Ctx.payload_types.
     payload_cnt int /// How many payload fields.
@@ -377,10 +377,10 @@ export type VariantDef value {
 /// (owner 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
 /// out and everything compares against these fields).
 export type Prims value {
-    int_id int /// Type id of `int`.
-    str_id int /// Type id of `str`.
-    bool_id int /// Type id of `bool`.
-    f64_id int /// Type id of `f64`.
+    int_id TyId /// Type id of `int`.
+    str_id TyId /// Type id of `str`.
+    bool_id TyId /// Type id of `bool`.
+    f64_id TyId /// Type id of `f64`.
 }
 
 /// A position whose type the caller cannot state yet.
@@ -390,11 +390,12 @@ export type Prims value {
 /// position carrying this value fits ANY parameter: refusing what cannot be
 /// judged would be a guess in the other direction.
 ///
-/// It is a named sentinel, not a value of the type space, and it is written
-/// down as one. The form it wants to be is `Option[int]` — that is wave 3 of
-/// the plan ("Option instead of -1"), and it will replace this constant
-/// together with the other twelve.
-export const UNKNOWN_TYPE = -1
+// `no_ty()` lived here until 2026-08-21 and is gone with its reason: it was
+// `-1` under a name, in a module that does not own the space. The interner owns
+// type ids, so the interner says what "no type" is -- `types.no_ty()` -- and
+// `is_ty` asks the question that `== UNKNOWN_TYPE` used to ask by comparing a
+// sentinel the caller had to know (the same correction the owner made about
+// `?? no_ty()` two waves earlier).
 
 /// WHICH FORM the author wrote at the call site: `f(x)` or `x.f()`.
 ///
@@ -425,19 +426,51 @@ export type Ctx {
     defs DefTable /// THE unified top-level name registry (types, variants, fns).
     fields FieldTable /// Record fields, addressed through the owner type.
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
-    payload_types []int /// Variant payload rows: type ids, grouped via VariantDef.
+    payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
 /// together; the ACTUAL id flows back to the caller (never hard-coded).
-fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> int {
+fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> TyId {
     ro id = types.len()
     ro ty_id = tys.prim(ordinal)
     types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, row_off: 0, row_cnt: 0 })
     defs.add(name, DefTarget.DefType(id))
     id
+}
+
+/// THE DECLARATION ROW of a type -- ONE door where ten bare indexings stood.
+///
+/// AND THE PLACE WHERE A FINDING IS RECORDED, because wrapping the type-id space
+/// on 2026-08-21 turned a comment into a type-level fact: there are TWO spaces
+/// here, not one.
+///
+///   * what FLOWS through the compiler -- `ParamDef.type_id`, `FnDef.ret_id`,
+///     `Prims`, `CheckOut.types`, every `TyId` below -- is the index of a row in
+///     `Ctx.types`, handed out by `seed` and by `collect_types`;
+///   * `TypeDef.ty_id` is something else: the INTERNER's row for the same
+///     declaration's term, and its own doc calls itself "the E2-b1 seam --
+///     consumers migrate to it one by one".
+///
+/// For primitives, records and sums the two coincide, because `collect_types`
+/// pushes one registry row per interned term in the same order. For `TkParam`
+/// rows they DELIBERATELY differ, and `mangle_test` says so out loud: "fns.params
+/// stores TypeDef ids, not interner TyRow ids -- the two spaces are different".
+/// So an assert here would fire on a legal registry, and this door does NOT
+/// assert: it reads, and it NAMES what it is reading.
+///
+/// Which space should carry the wrapper is a decision about the seam itself
+/// (migrate consumers to interner ids, per the architecture's layer 4, or keep
+/// the declaration index as the identity and give the interner row its own
+/// name). That is the owner's call and a wave of its own -- recorded in sub-plan
+/// 9.1g.1 rather than settled here by whoever typed the field first.
+export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
+    requires is_ty(t), "sem: the declaration of `no type` -- absence has no row"
+    requires raw_ty(t) < ctx.types.len(), "sem: type id outside this file's declaration table"
+{
+    ctx.types[raw_ty(t)]
 }
 
 /// Build the semantic context of one checked file: its own types and
@@ -462,10 +495,10 @@ export fn collect_types(file Node) -> Ctx {
     // Pre-declared types come from the ONE builtins table (P5), in Prims
     // order; the seed hands the ACTUAL ids back (CommonTypes model). The
     // universe ordinal is the interner's head for a primitive.
-    mut seeded = []int.new()
+    mut seeded = []TyId.new()
     // TypeDef row per type-parameter INDEX, built on demand by the fn branch
     // below and shared by every declaration (see the comment there).
-    mut param_rows = []int.new()
+    mut param_rows = []TyId.new()
     mut ordinal = 0
     for bt in builtin_types() {
         seeded.push(seed(types, defs, tys, bt.name, ordinal))
@@ -474,7 +507,7 @@ export fn collect_types(file Node) -> Ctx {
     ro prims = Prims { int_id: seeded[0], str_id: seeded[1], bool_id: seeded[2], f64_id: seeded[3] }
     mut fields = FieldTable.new()
     mut variant_rows = []VariantDef.new()
-    mut payload_types = []int.new()
+    mut payload_types = []TyId.new()
     mut fns = FnTable.new()
     mut fn_decl_rows = []FnRow.new()
     // First pass: register every type NAME (id = order of appearance after
@@ -497,7 +530,7 @@ export fn collect_types(file Node) -> Ctx {
         // duplicate is check's job (a later wave); sem's job is to
         // not build a second truth for one name.
         if defs.type_id(leaf_text(nk[1])).is_some() { continue }
-        defs.add(leaf_text(nk[1]), DefTarget.DefType(next_id))
+        defs.add(leaf_text(nk[1]), DefTarget.DefType(TyId(next_id)))
         next_id += 1
     }
     for c in branch_children(file) {
@@ -507,12 +540,12 @@ export fn collect_types(file Node) -> Ctx {
             if tkids.len() < 2 { continue }
             if tkids[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(tkids[1])
-            ro owner_id = defs.type_id(tname) ?? UNKNOWN_TYPE
-            if owner_id == UNKNOWN_TYPE { continue }
+            ro owner_id = defs.type_id(tname) ?? no_ty()
+            if !is_ty(owner_id) { continue }
             // Only the declaration that OWNS the id builds the row: a later
             // duplicate resolves to the same id and must not push a second
             // row for it (that is what broke the ty_id == index invariant).
-            if owner_id != types.len() { continue }
+            if raw_ty(owner_id) != types.len() { continue }
             ro off = fields.rows.len()
             mut cnt = 0
             for f in branch_children(c) {
@@ -520,8 +553,8 @@ export fn collect_types(file Node) -> Ctx {
                 ro fk = branch_children(f)
                 if fk.len() < 2 { continue }
                 if fk[0].kind_of() != NodeKind.LeafNode || fk[1].kind_of() != NodeKind.LeafNode { continue }
-                ro ft = defs.type_id(leaf_text(fk[1])) ?? UNKNOWN_TYPE
-                if ft == UNKNOWN_TYPE { continue }
+                ro ft = defs.type_id(leaf_text(fk[1])) ?? no_ty()
+                if !is_ty(ft) { continue }
                 fields.add(owner_id, leaf_text(fk[0]), ft)
                 cnt += 1
             }
@@ -535,7 +568,15 @@ export fn collect_types(file Node) -> Ctx {
             match repr_of_decl(c, defs) {
                 None => {
                     // A record: its fields were just collected above.
-                    ro rec_ty = tys.record(owner_id)
+                    // `raw_ty` HERE, and it is a real crossing rather than
+                    // noise: the interner's head for a nominal kind is a
+                    // DeclId -- an index into `Ctx.types` -- which equals the
+                    // TyId only by the invariant this loop maintains two lines
+                    // up (`raw_ty(owner_id) != types.len()` skips the
+                    // duplicate). DeclId is its own space and is not wrapped
+                    // yet; it is wave B8 of sub-plan 9.1g.1, and until then the
+                    // unwrap is where the two spaces meet.
+                    ro rec_ty = tys.record(raw_ty(owner_id))
                     types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: rec_ty, name: tname,
                                          row_off: off, row_cnt: cnt })
                 }
@@ -555,7 +596,7 @@ export fn collect_types(file Node) -> Ctx {
                         // representation in the term.
                     }
                     types.push(TypeDef { kind: TypeKind.TkNewtype,
-                                         ty_id: tys.newtype(owner_id, spec.under_id),
+                                         ty_id: tys.newtype(raw_ty(owner_id), spec.under_id),
                                          name: tname, row_off: 0, row_cnt: 0 })
                 }
             }
@@ -564,8 +605,8 @@ export fn collect_types(file Node) -> Ctx {
             if skids.len() < 2 { continue }
             if skids[1].kind_of() != NodeKind.LeafNode { continue }
             ro sname = leaf_text(skids[1])
-            ro sum_id = defs.type_id(sname) ?? UNKNOWN_TYPE
-            if sum_id == UNKNOWN_TYPE { continue }
+            ro sum_id = defs.type_id(sname) ?? no_ty()
+            if !is_ty(sum_id) { continue }
             if sum_id != types.len() { continue } // same rule as for records
             ro off = variant_rows.len()
             mut vcnt = 0
@@ -613,15 +654,15 @@ export fn collect_types(file Node) -> Ctx {
                         j += 1
                         if pj.kind_of() != NodeKind.LeafNode { continue }
                         if leaf_kind(pj) != TokenKind.Ident { continue }
-                        ro pt = defs.type_id(leaf_text(pj)) ?? UNKNOWN_TYPE
-                        if pt == UNKNOWN_TYPE { continue }
+                        ro pt = defs.type_id(leaf_text(pj)) ?? no_ty()
+                        if !is_ty(pt) { continue }
                         payload_types.push(pt)
                         pcnt += 1
                     }
                 variant_rows.push(VariantDef { sum_id, name: vname, payload_off: poff, payload_cnt: pcnt })
                 vcnt += 1
             }
-            ro sum_ty = tys.sum(sum_id)
+            ro sum_ty = tys.sum(raw_ty(sum_id))
             types.push(TypeDef { kind: TypeKind.TkSum, ty_id: sum_ty, name: sname, row_off: off, row_cnt: vcnt })
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
@@ -644,13 +685,13 @@ export fn collect_types(file Node) -> Ctx {
                 // per row in `FnTable.tparams`, read by `tparam_index`.
                 types.push(TypeDef { kind: TypeKind.TkParam, ty_id: tys.param(pslot),
                                      name: "#${pslot}", row_off: 0, row_cnt: 0 })
-                param_rows.push(types.len() - 1)
+                param_rows.push(TyId(types.len() - 1))
                 pslot += 1
             }
-            // UNKNOWN_TYPE = no declared return. Legal ONLY for main (check
+            // no_ty() = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on it as the second floor —
             // never a silent int (#652 class).
-            mut ret = UNKNOWN_TYPE
+            mut ret = no_ty()
             for r in fk {
                 if r.kind_of() != NodeKind.RetType { continue }
                 ro rk = branch_children(r)
@@ -660,7 +701,7 @@ export fn collect_types(file Node) -> Ctx {
                     // `-> T` names a type PARAMETER of this declaration, and
                     // that is a type -- the whole point of the row above.
                     Some(slot) => param_rows[slot]
-                    None => defs.type_id(rname) ?? UNKNOWN_TYPE
+                    None => defs.type_id(rname) ?? no_ty()
                 }
             }
             // A file function is a callable with no receiver (plan 273):
@@ -697,14 +738,14 @@ export fn collect_types(file Node) -> Ctx {
                     param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
                     continue
                 }
-                // An unknown type is STORED as UNKNOWN_TYPE and said so:
+                // An unknown type is STORED as no_ty() and said so:
                 // collection is tolerant, and check is the judge. A type
                 // PARAMETER of this declaration is not unknown -- it is the
                 // row built above.
                 ro pname = leaf_text(tnode)
                 ro pt = match tparam_slot(pname, tps) {
                     Some(slot) => param_rows[slot]
-                    None => defs.type_id(pname) ?? UNKNOWN_TYPE
+                    None => defs.type_id(pname) ?? no_ty()
                 }
                 // Type AND mode in one row: the mode is an axis of overloading
                 // (P14), so a collector that dropped it would make `f(x T)` and

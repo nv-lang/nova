@@ -29,6 +29,7 @@ module novac.sem
 
 import ../tree.{Node}
 import ../builtins.{COERCE_ATTR}
+import ../types.{TyId, raw_ty}
 
 /// ONE declared implicit conversion (D429 V1, form-source): the pair and the
 /// function that performs it.
@@ -37,8 +38,8 @@ import ../builtins.{COERCE_ATTR}
 /// D429 is explicit that no pair may be hard-coded, and the attribute's own
 /// word lives in `builtins` for the same reason (P5).
 export type CoercePair value {
-    from_id int /// source type -- the declaring method's receiver
-    to_id int /// target type -- its return type
+    from_id TyId /// source type -- the declaring method's receiver
+    to_id TyId /// target type -- its return type
     via_row FnRow /// the declaring callable's row -- the inserted call names IT (D429 R7). `FnRow`, not `int`: this IS a row of `Ctx.fns` (`fns.rows[via_row]` two doors down), so the pair carried an untyped index into a typed space until 2026-08-21
 }
 
@@ -49,9 +50,9 @@ export type CoercePair value {
 /// path never touches this table, so the hot resolution does not pay for it.
 /// The comparison is by type ID, not by name; the day a program declares
 /// hundreds of pairs the fix is an index, not a guess made now.
-export fn coerce_row(ctx Ctx, from int, to int) -> Option[FnRow] {
+export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
     for p in ctx.coerces {
-        if p.from_id == from && p.to_id == to { return Some(p.via_row) }
+        if raw_ty(p.from_id) == raw_ty(from) && raw_ty(p.to_id) == raw_ty(to) { return Some(p.via_row) }
     }
     None
 }

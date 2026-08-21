@@ -40,6 +40,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// State of one check run: the source (for positions), the semantic context
 /// and the diagnostics collected so far. A receiver, not a triple of
@@ -70,7 +71,7 @@ type Checker {
     /// that emptiness is what tells `type_fn` to skip a generic body -- there
     /// is nothing to type it under. One copy of the body is typed per
     /// instance (Go stenciling), so nothing here is parametric afterwards.
-    substs []int
+    substs []TyId
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -105,7 +106,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         out: []Diagnostic.new(),
         chan: CheckOut.new(file.id_of() + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
-        substs: []int.new(),
+        substs: []TyId.new(),
     }
     c.walk(file)
     if c.out.len() == 0 {
@@ -134,7 +135,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
 ///
 /// `cap` is the file's node capacity, not the declaration's: node ids are
 /// handed out per FILE, so a declaration's nodes sit anywhere in that range.
-export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []int, cap int) -> ([]Diagnostic, CheckOut)
+export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap int) -> ([]Diagnostic, CheckOut)
     requires cap > 0, "check: an instance channel needs the file's node capacity"
 {
     mut c = Checker {

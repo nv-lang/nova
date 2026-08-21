@@ -19,15 +19,16 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, UNKNOWN_TYPE, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
 ///
-/// The same shape `check` builds with `UNKNOWN_TYPE` in the argument slots --
+/// The same shape `check` builds with `no_ty()` in the argument slots --
 /// same door, same order: one builder per stage of KNOWLEDGE, not one per kind
 /// of call. `from` is the index of the first argument child.
-fn typed_call_key(kids []Node, from int, recv Node, recv_t int, ctx Ctx, scope Scope,
+fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope Scope,
                   chan CheckOut) -> []ArgSpec {
     mut out = []ArgSpec.new()
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
@@ -98,8 +99,8 @@ fn arg_class(e Node, scope Scope) -> ArgClass {
 /// and a REFUSAL in the walk -- the walk runs first, so a refused cast never
 /// reaches this door.
 #realtime nogc
-fn cast_target_of(e Node, ctx Ctx) -> int {
-    mut found = UNKNOWN_TYPE
+fn cast_target_of(e Node, ctx Ctx) -> TyId {
+    mut found = no_ty()
     for c in branch_children(e) {
         if !c.is_ident() { continue }
         // The registry answers with an Option, so the Option is what is read --
@@ -114,7 +115,7 @@ fn cast_target_of(e Node, ctx Ctx) -> int {
             // target is decided by the ones that do resolve.
         }
     }
-    if found == UNKNOWN_TYPE {
+    if !is_ty(found) {
         ice("check: a cast whose target type the registry does not know reached the lattice")
     } else {
         // A type the registry holds: that is the cast's value type.
@@ -134,7 +135,7 @@ fn cast_target_of(e Node, ctx Ctx) -> int {
 /// for `id[int](4)`, and every consumer downstream -- the printer set, the
 /// operator rules, a binding's type -- judged a parameter instead of an int.
 #realtime nogc
-fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> int {
+fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     ro k = e.kind_of()
     if k == NodeKind.Lit {
         // A negated literal is [Minus, lit] — judge the LAST leaf.

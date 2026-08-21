@@ -31,6 +31,7 @@ module novac.sem
 
 import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, SELF_TYPE}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// Collect method signatures from READ declarations (`fn <Recv>
 /// @<name>() -> R`). Only signatures where BOTH the receiver AND the
@@ -130,7 +131,7 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         }
     }
     if recv_name == "" || mname == "" || ret_name == "" { return }
-    ro recv_t = defs.type_id(recv_name) ?? UNKNOWN_TYPE
+    ro recv_t = defs.type_id(recv_name) ?? no_ty()
     // `Self` is the RECEIVER's type, spelled by its role instead of its name.
     // It is not in `defs` and never will be -- it names no declaration -- so a
     // door that only asked the registry dropped the WHOLE signature: measured
@@ -138,8 +139,8 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
     // files. Same silent-drop class as the receiver mode two waves earlier: the
     // signature vanished, and the refusal at the use site said "no such method"
     // about a method std declares.
-    ro ret_t = if ret_name == SELF_TYPE { recv_t } else { defs.type_id(ret_name) ?? UNKNOWN_TYPE }
-    if recv_t == UNKNOWN_TYPE || ret_t == UNKNOWN_TYPE { return }
+    ro ret_t = if ret_name == SELF_TYPE { recv_t } else { defs.type_id(ret_name) ?? no_ty() }
+    if !is_ty(recv_t) || !is_ty(ret_t) { return }
     // A signature is valid only if ALL its types are known, including
     // its parameters. Otherwise std overloads would land in the table
     // as "one name twice" and get rejected as ambiguous: `str` has both
@@ -180,8 +181,8 @@ fn harvest_fn(kids []Node, defs DefTable, mut fns FnTable) -> () {
         ro pname = leaf_text(tnode)
         // A PARAMETER may be `Self` too (`fn T @merge(other Self)`), and it
         // means the same thing: the receiver's type.
-        ro pt = if pname == SELF_TYPE { recv_t } else { defs.type_id(pname) ?? UNKNOWN_TYPE }
-        if pt == UNKNOWN_TYPE { return }
+        ro pt = if pname == SELF_TYPE { recv_t } else { defs.type_id(pname) ?? no_ty() }
+        if !is_ty(pt) { return }
         // The MODE travels with the type: it is an axis of overloading (P14),
         // so a signature read without it would make `@ptr()` and `mut @ptr()`
         // one row twice over.

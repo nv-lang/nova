@@ -29,7 +29,8 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, UNKNOWN_TYPE, CalleeTarget, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
+import ../sem.{CallForm, FnLookup, CalleeTarget, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -194,10 +195,10 @@ fn Checker mut @type_block(b Node) -> () {
 /// difference is that one of them has a position zero to fill. There is no
 /// receiver-shaped path left in resolution (owner, 2026-08-19).
 ///
-/// Argument positions are `UNKNOWN_TYPE`: `check` walks the tree before local
+/// Argument positions are `no_ty()`: `check` walks the tree before local
 /// typing (274.3/C9) and cannot type them yet. ARITY, though, is known here and
 /// discriminates from today — `f()` and `f(a)` stopped being one question.
-fn Checker @method_call_key(kids []Node, recv_t int) -> []ArgSpec {
+fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
     mut out = []ArgSpec.new()
     // The receiver is parameter zero (plan 273) and carries a CLASS: `mut b`
     // then `b.m()` selects the `mut @m` overload, which is the precedent the
@@ -207,7 +208,7 @@ fn Checker @method_call_key(kids []Node, recv_t int) -> []ArgSpec {
     out
 }
 
-/// One `UNKNOWN_TYPE` slot per argument child from `from` on. Children before
+/// One `no_ty()` slot per argument child from `from` on. Children before
 /// `from` are syntax — the callee, or the receiver, the dot and the name — and
 /// a punctuation leaf is no argument.
 fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
@@ -218,7 +219,7 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
             // The TYPE is what this key leaves unknown -- the CLASS is not: what
             // an argument IS depends on its shape and its binding, both of which
             // are known before any typing happens.
-            out.push(ArgSpec { type_id: UNKNOWN_TYPE, cls: arg_class(c, scope) })
+            out.push(ArgSpec { type_id: no_ty(), cls: arg_class(c, scope) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -260,7 +261,7 @@ fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
 /// the ordinary run over a file, where a parameter cannot appear in a typed
 /// body at all: `type_fn` skips a generic declaration when there is nothing to
 /// substitute.
-fn Checker @concrete(t int) -> int => subst_type(@ctx, t, @substs)
+fn Checker @concrete(t TyId) -> TyId => subst_type(@ctx, t, @substs)
 
 /// The same parameter, with the slot of its type already located.
 fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> bool {
@@ -293,8 +294,8 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // parameter whose type the registry holds. Position is the mapping: plan
     // 273 §4.4 fixes the slot.
     ro fd = @ctx.fns.rows[raw_row(row)]
-    ro pt = if slot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + slot].type_id) } else { UNKNOWN_TYPE }
-    if pt == UNKNOWN_TYPE {
+    ro pt = if slot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + slot].type_id) } else { no_ty() }
+    if !is_ty(pt) {
         match tnode {
             Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
             Branch { .. } => {}
@@ -420,7 +421,7 @@ fn Checker mut @type_stmt(st Node) -> () {
 /// Overload sets are NOT narrowed here -- that arrives with E2-b3 and needs
 /// argument types. An overloaded name is refused BY NAME instead of being
 /// guessed, because guessing is how the wrong entry point gets emitted.
-fn Checker mut @record_method_callee(e Node, kids []Node, recv_t int) -> () {
+fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
     if kids.len() < 3 {
         return
     } else {
@@ -465,7 +466,7 @@ fn Checker mut @judge_method_lookup(e Node, t Token, found FnLookup) -> () {
                 // channel a bare int whose meaning depended on a second
                 // argument -- the pair that made a variant row indistinguishable
                 // from a callable one.
-                @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []int.new())
+                @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new())
             } else {
                 @refuse(t,
                     "outside the subset: novac read this method's signature but compiles no body for it yet")
@@ -772,7 +773,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // construction, so a fourth arm of `DefTarget` cannot slip past silently.
         ro def = @ctx.defs.rows[d]
         match def.target {
-            DefVariant(vrow) => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(vrow), []int.new())
+            DefVariant(vrow) => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(vrow), []TyId.new())
             DefFn(_) => {
                 // NOT `def.payload`: `defs` is keyed by the bare name and lives
                 // by last-write-wins, so with two overloads it answers with the
@@ -910,22 +911,25 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
 /// Does the subset know how to print this type? The emitter has one printer
 /// per type and no generic path; a type outside the set is a refusal here,
 /// never an ice there.
-fn Checker @has_printer(t int) -> bool => @is_printable_carrier(carrier_of(@ctx, t))
+fn Checker @has_printer(t TyId) -> bool => @is_printable_carrier(carrier_of(@ctx, t))
 
 /// The printer set, asked of the CARRIER: a newtype prints as what it holds
 /// (`println(Row(7))` prints 7, which is what the oracle does), so the peel
 /// happens once, here, and not at each of the four comparisons.
-fn Checker @is_printable_carrier(t int) -> bool =>
-    t == @ctx.prims.int_id || t == @ctx.prims.str_id || t == @ctx.prims.bool_id || t == @ctx.prims.f64_id
+fn Checker @is_printable_carrier(t TyId) -> bool =>
+    raw_ty(t) == raw_ty(@ctx.prims.int_id) || raw_ty(t) == raw_ty(@ctx.prims.str_id) ||
+    raw_ty(t) == raw_ty(@ctx.prims.bool_id) || raw_ty(t) == raw_ty(@ctx.prims.f64_id)
 
 /// The two types arithmetic and ordering accept in the subset.
-fn Checker @is_numeric(t int) -> bool => t == @ctx.prims.int_id || t == @ctx.prims.f64_id
+fn Checker @is_numeric(t TyId) -> bool =>
+    raw_ty(t) == raw_ty(@ctx.prims.int_id) || raw_ty(t) == raw_ty(@ctx.prims.f64_id)
 
 /// Every primitive of novac's universe -- equality accepts any of them, as
 /// long as both sides are the SAME one (mixed-type equality is a conversion
 /// question the subset does not answer).
-fn Checker @is_primitive(t int) -> bool =>
-    t == @ctx.prims.int_id || t == @ctx.prims.f64_id || t == @ctx.prims.bool_id || t == @ctx.prims.str_id
+fn Checker @is_primitive(t TyId) -> bool =>
+    raw_ty(t) == raw_ty(@ctx.prims.int_id) || raw_ty(t) == raw_ty(@ctx.prims.f64_id) ||
+    raw_ty(t) == raw_ty(@ctx.prims.bool_id) || raw_ty(t) == raw_ty(@ctx.prims.str_id)
 
 /// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
 /// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
@@ -945,6 +949,6 @@ fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
 }
 
 /// Record a node's type through the channel's one writer door.
-fn Checker mut @record(n Node, t int) -> () {
+fn Checker mut @record(n Node, t TyId) -> () {
     @chan.record_type(n.id_of(), t)
 }

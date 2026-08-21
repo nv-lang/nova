@@ -30,6 +30,7 @@ module novac.sem
 import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A ROW of the callable registry -- and a TYPE, not a bare `int`, since
 /// 2026-08-21 (plan 274 section 9.1g; the owner's decision of 2026-08-20).
@@ -79,7 +80,7 @@ export fn no_row() -> FnRow => FnRow(-1)
 /// member and picking needs the ARGUMENT types, which `check` will have when
 /// it gets local typing (274.3 wave 3, finding C9). Today novac refuses such
 /// a call honestly rather than guessing. The payload is the FIRST row of the
-/// set — the whole set is `candidates_from`, which is not a door and may
+/// set — naming the whole set needs a door this file does not have yet (see the
 /// allocate; the door itself stays allocation-free (П18).
 export type FnLookup enum
     | FnFound(FnRow)
@@ -100,7 +101,7 @@ export type FnLookup enum
 /// resolution needs later; today it is what makes the form honest.
 export type FnDef value {
     name str /// name as written in the declaration
-    ret_id int /// return type id; -1 = none declared (legal for main only)
+    ret_id TyId /// return type id; `no_ty()` = none declared (legal for main only)
     param_off int /// first parameter of this callable in FnTable.params
     param_cnt int /// how many parameters, INCLUDING the receiver when there is one
     has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
@@ -226,7 +227,7 @@ fn FnTable @fits(row FnRow, args []ArgSpec, form CallForm) -> bool {
         if args[i].type_id >= 0 && p.type_id != args[i].type_id {
             return false
         } else {
-            // Either this position is not typed yet (UNKNOWN_TYPE), or it matches.
+            // Either this position is not typed yet (no_ty()), or it matches.
         }
         // THE MODE, by rule P14. A parameter's mode is an axis of overloading,
         // not decoration: `tag(r)` and `tag(m)` carry the same TYPE and select
@@ -289,7 +290,7 @@ export fn FnTable @tparam_index(row FnRow, name str) -> Option[int] {
 /// `param_ids` carries the receiver FIRST when `has_recv` — the plan 273
 /// order (§4.4 fixes the position, so the caller has no other place to put
 /// it, and no way to name a second one).
-export fn FnTable mut @add(name str, ret_id int, has_recv bool, param_ids []ParamDef,
+export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []ParamDef,
                           tparam_names []str) -> () {
     ro head = FnRow(@heads.find(name))
     ro off = @params.len()
@@ -346,7 +347,7 @@ export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
             first = row
         } else {
             // A later member of the same chain: the FIRST fitting row is what
-            // `candidates_from` walks on from, so it is remembered once.
+            // a future candidate-set door would walk on from, so it is kept once.
         }
         if s > best {
             best = s
@@ -391,20 +392,15 @@ fn FnTable @most_specific(name str, args []ArgSpec, form CallForm, want int) -> 
     ice("sem: the most specific candidate vanished between two walks of one chain")
 }
 
-/// Every candidate of an overload set, starting from the row `lookup` handed
-/// back. NOT a door: it allocates, and it may — it runs once, when a
-/// diagnostic is being built, never in the hot path (П18 draws the line at
-/// functions that ASK the table; this one is given its starting row and only
-/// walks). Every reference prints the set rather than the first member:
-/// rustc lists the candidate impls, C++ prints the candidate functions.
-export fn candidates_from(fns FnTable, first FnRow, args []ArgSpec, form CallForm) -> []int {
-    mut out = []int.new()
-    mut r = raw_row(first)
-    while r >= 0 {
-        ro row = FnRow(r)
-        r = raw_row(fns.rows[r].next_row)
-        if !fns.fits(row, args, form) { continue }
-        out.push(r)
-    }
-    out
-}
+// `candidates_from` lived here until 2026-08-21 and is gone with TWO reasons,
+// both found because wrapping the type-id space made me read every door of this
+// file. It was EXPORTED and imported by three files -- and CALLED BY NOBODY.
+// And it was WRONG: it advanced the chain cursor and then pushed the ADVANCED
+// value, so the "candidate set" it built held each candidate's SUCCESSOR and,
+// on the last one, -1. Nothing ever printed a wrong list only because nothing
+// ever printed a list. A door with no caller is deleted, not typed: handing
+// `[]FnRow` to dead code would have made the defect look reviewed. When a
+// refusal really needs to name the whole candidate set (D420; rustc lists the
+// candidate impls, clang the candidate functions), it comes back with a test
+// that reads the rows back.
+

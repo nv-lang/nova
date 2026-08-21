@@ -21,7 +21,8 @@ module novac.check
 
 import ../tree.{Node}
 import ../builtins.{TypeKind}
-import ../sem.{Ctx, UNKNOWN_TYPE, carrier_of, representation_of, branch_children}
+import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children}
+import ../types.{TyId, raw_ty, no_ty, is_ty, same_ty}
 
 /// A CAST, and the one shape the subset compiles: unwrapping a NEWTYPE into its
 /// representation (`r as int` for `type Row int`).
@@ -50,7 +51,7 @@ fn Checker mut @type_cast(e Node) -> () {
     if @out.len() > before { return }
     ro from = type_of(kids[0], @ctx, @scope, @chan)
     ro target = cast_target_of(e, @ctx)
-    if target == UNKNOWN_TYPE {
+    if !is_ty(target) {
         @report_first_leaf_of(kids, "outside the subset: a cast to a type novac does not know")
         return
     } else {
@@ -76,11 +77,12 @@ fn Checker mut @type_cast(e Node) -> () {
 /// A TOLERANT half beside `representation_of`, which asserts: the cast rule asks
 /// about a type that may well be an ordinary one, and "it is not a newtype" is
 /// an ANSWER here rather than a broken invariant.
-fn Checker @representation_of_or_self(t int) -> int {
-    if t < 0 || t >= @ctx.types.len() { return t }
-    match @ctx.types[t].kind {
+fn Checker @representation_of_or_self(t TyId) -> TyId {
+    // `same_ty` on both hand-backs: [LEGACY-#TBD-newtype-ro-launder].
+    if !is_ty(t) || raw_ty(t) >= @ctx.types.len() { return same_ty(t) }
+    match decl_of_ty(@ctx, t).kind {
         TkNewtype => representation_of(@ctx, t)
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => t
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => same_ty(t)
     }
 }
 

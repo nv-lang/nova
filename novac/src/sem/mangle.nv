@@ -29,6 +29,7 @@ module novac.sem
 
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, prim_c_name}
+import ../types.{TyId, raw_ty, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
 ///
@@ -37,10 +38,10 @@ import ../builtins.{ENTRY_FN, prim_c_name}
 /// LAYOUT ask through `c_type`, which recurses, so no caller has to know how
 /// deep it goes. The representation rides in the interner's args -- the same
 /// pool an application's arguments use, because it IS an argument of the term.
-export fn representation_of(ctx Ctx, t int) -> int
+export fn representation_of(ctx Ctx, t TyId) -> TyId
     requires t >= 0 && t < ctx.types.len(), "mangle: representation asked for a type outside the registry"
 {
-    ro td = ctx.types[t]
+    ro td = decl_of_ty(ctx, t)
     assert(ctx.tys.arg_count(td.ty_id) == 1,
         "mangle: a newtype term without exactly one representation argument")
     ctx.tys.arg(td.ty_id, 0)
@@ -55,15 +56,17 @@ export fn representation_of(ctx Ctx, t int) -> int
 /// does any consumer that cares about the value rather than the name.
 ///
 /// A loop and not one step: `type A B` over `type B int` peels twice.
-export fn carrier_of(ctx Ctx, t int) -> int {
-    mut cur = t
+export fn carrier_of(ctx Ctx, t TyId) -> TyId {
+    // `same_ty`, not `t`: assigning a `ro`-bound newtype into a `mut` binding is
+    // the same refusal as returning one ([LEGACY-#TBD-newtype-ro-launder]).
+    mut cur = same_ty(t)
     // Bounded by the number of declarations: each step moves to the
     // representation of a DIFFERENT declaration, and a cycle among them is a
     // shape the checker refuses before this door is ever asked.
     mut steps = 0
     while steps <= ctx.types.len() {
-        if cur < 0 || cur >= ctx.types.len() { return cur }
-        ro is_new = match ctx.types[cur].kind {
+        if !is_ty(cur) || raw_ty(cur) >= ctx.types.len() { return cur }
+        ro is_new = match decl_of_ty(ctx, cur).kind {
             TkNewtype => true
             TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
         }
@@ -76,9 +79,9 @@ export fn carrier_of(ctx Ctx, t int) -> int {
 
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
-export fn c_type(ctx Ctx, t int) -> str {
+export fn c_type(ctx Ctx, t TyId) -> str {
     if t >= 0 && t < ctx.types.len() {
-        ro td = ctx.types[t]
+        ro td = decl_of_ty(ctx, t)
         match td.kind {
             TkPrim => { return prim_c_name(ctx.tys.head_of(td.ty_id)) } // universe fact by ordinal, read off the term
             TkRecord => { return "Nova_${td.name}*" }
@@ -104,11 +107,11 @@ export fn c_type(ctx Ctx, t int) -> str {
 /// panic instead of an honest `ice`, and the kind was tested by an if
 /// instead of an exhaustive match, so a fourth kind would have been spelled
 /// as a struct in silence (П21).
-export fn c_struct(ctx Ctx, t int) -> str {
-    if t < 0 || t >= ctx.types.len() {
+export fn c_struct(ctx Ctx, t TyId) -> str {
+    if !is_ty(t) || raw_ty(t) >= ctx.types.len() {
         ice("mangle: struct name asked for a type id outside the registry")
     }
-    ro td = ctx.types[t]
+    ro td = decl_of_ty(ctx, t)
     match td.kind {
         TkPrim => { ice("mangle: a primitive has no struct name") }
         TkRecord => { return "Nova_${td.name}" }
@@ -126,13 +129,13 @@ export fn c_struct(ctx Ctx, t int) -> str {
 /// (novac's own namespace for user sums — the oracle's NOVA_TAG_ is its).
 export fn c_tag(ctx Ctx, vrow int) -> str {
     ro vd = ctx.variant_rows[vrow]
-    "NOVAC_TAG_${ctx.types[vd.sum_id].name}_${vd.name}"
+    "NOVAC_TAG_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
 export fn c_maker(ctx Ctx, vrow int) -> str {
     ro vd = ctx.variant_rows[vrow]
-    "novac_make_${ctx.types[vd.sum_id].name}_${vd.name}"
+    "novac_make_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// The RUNTIME's entry slot. Not ours to choose: the shell calls this exact
@@ -163,7 +166,7 @@ const ENTRY_C_NAME = "nova_fn_main_impl"
 ///
 /// `args` carries the instance key on top (E2-b2): two instantiations of one
 /// generic callable differ in the same name, after the parameters.
-export fn c_callable(ctx Ctx, row FnRow, subst []int) -> str
+export fn c_callable(ctx Ctx, row FnRow, subst []TyId) -> str
     requires raw_row(row) >= 0 && raw_row(row) < ctx.fns.rows.len(), "mangle: callable row outside the registry"
 {
     ro fd = ctx.fns.rows[raw_row(row)]
@@ -218,9 +221,9 @@ export fn c_callable(ctx Ctx, row FnRow, subst []int) -> str
 /// no backend ever substitutes -- the architecture's own boundary
 /// (novac-architecture.md: a substitution needed in the emitter means mono did
 /// not finish its work).
-export fn subst_type(ctx Ctx, t int, subst []int) -> int {
-    if t < 0 || t >= ctx.types.len() { return t }
-    ro td = ctx.types[t]
+export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
+    if !is_ty(t) || raw_ty(t) >= ctx.types.len() { return same_ty(t) }
+    ro td = decl_of_ty(ctx, t)
     match td.kind {
         TkParam => {
             // The parameter's index comes from the interner term, and it
@@ -235,7 +238,8 @@ export fn subst_type(ctx Ctx, t int, subst []int) -> int {
         // a new kind must come here and say what it does (P21).
         TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype => {}
     }
-    t
+    // `same_ty`, not `t`: [LEGACY-#TBD-newtype-ro-launder].
+    same_ty(t)
 }
 
 /// The MODE of a parameter, inside a C name.
@@ -270,10 +274,10 @@ fn mode_tag(m ParamMode) -> str => match m {
 /// `subst` is the substitution of the declaration's type parameters: when a
 /// parameter is `TkParam` with index `i`, `subst[i]` is the concrete type.
 /// Empty for every ordinary callable.
-fn type_tag(ctx Ctx, t int, subst []int) -> str
+fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
     requires t >= 0 && t < ctx.types.len(), "mangle: type_tag of a type id outside the registry"
 {
-    ro td = ctx.types[t]
+    ro td = decl_of_ty(ctx, t)
     match td.kind {
         TkPrim => prim_c_name(ctx.tys.head_of(td.ty_id))
         TkRecord => td.name

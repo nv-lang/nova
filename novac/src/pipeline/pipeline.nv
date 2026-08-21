@@ -49,6 +49,7 @@ import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation}
 import ../mono.{Reach, reachable}
 import ../sem.{Ctx, collect, decl_fn_row, branch_children}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A file's semantic context: the file's types + method signatures, READ
 /// from the declarations passed in. The compiler does not walk the
@@ -81,7 +82,7 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic {
 
 /// The declaration of a row, in THIS file. `None` when the row belongs
 /// elsewhere -- a std signature, whose body novac does not compile.
-fn decl_of_row(tree Node, ctx Ctx, row int) -> Option[Node] {
+fn decl_of_row(tree Node, ctx Ctx, row FnRow) -> Option[Node] {
     for c in branch_children(tree) {
         if c.kind_of() != NodeKind.FnDecl { continue }
         match decl_fn_row(c, ctx) {

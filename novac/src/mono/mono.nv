@@ -18,6 +18,7 @@ module novac.mono
 import ../tree.{Node, NodeKind}
 import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 import ../diag.{ice}
 
 /// ONE instance of a generic callable: which row, under which substitution.
@@ -40,7 +41,7 @@ export type Instance value {
     subst_cnt int /// how many arguments -- equal to the declaration's tparam_cnt
     ptype_off int /// its first CONCRETE parameter type in `Reach.ptypes`
     ptype_cnt int /// how many parameters -- equal to the row's param_cnt
-    ret_id int /// its CONCRETE return type
+    ret_id TyId /// its CONCRETE return type
 }
 
 /// Which callables are reachable from the roots.
@@ -53,7 +54,7 @@ export type Instance value {
 export type Reach {
     seen []bool /// indexed by fn row; true = a NON-generic callable reached from a root
     inst []Instance /// generic callables reached, one element per substitution
-    subst []int /// flat pool of substitution arguments, addressed by Instance
+    subst []TyId /// flat pool of substitution arguments, addressed by Instance
     ptypes []ParamDef /// flat pool of instance parameters -- CONCRETE type plus the declared mode, addressed by Instance
 }
 
@@ -66,7 +67,7 @@ export type Reach {
 export fn Reach @instances() -> ro []Instance => @inst
 
 /// The substitution of one instance -- a VIEW into the pool, not a copy.
-export fn Reach @subst_of(it Instance) -> ro []int =>
+export fn Reach @subst_of(it Instance) -> ro []TyId =>
     @subst[it.subst_off..it.subst_off + it.subst_cnt]
 
 /// The CONCRETE parameter types of one instance, in declaration order.
@@ -128,7 +129,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         i += 1
     }
     mut inst = []Instance.new()
-    mut subst = []int.new()
+    mut subst = []TyId.new()
     mut ptypes = []ParamDef.new()
 
     match entry_row(ctx) {
@@ -200,13 +201,13 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
 /// day a file has hundreds of instances the fix is a real index, not a guess
 /// made now.
 #realtime nogc
-fn instance_absent(inst []Instance, subst []int, row FnRow, args []int) -> bool {
+fn instance_absent(inst []Instance, subst []TyId, row FnRow, args []TyId) -> bool {
     for it in inst {
         if raw_row(it.row) != raw_row(row) { continue }
         if it.subst_cnt != args.len() { continue }
         mut same = true
         for i in 0..args.len() {
-            if subst[it.subst_off + i] != args[i] {
+            if raw_ty(subst[it.subst_off + i]) != raw_ty(args[i]) {
                 same = false
             } else {
                 // Equal in this slot: nothing to record, the verdict is what
@@ -231,11 +232,11 @@ fn has_row_instance(inst []Instance, row FnRow) -> bool {
 
 /// The row of the entry point, or None when this file declares none.
 #realtime nogc
-fn entry_row(ctx Ctx) -> Option[int] => ctx.defs.fn_row(ENTRY_FN)
+fn entry_row(ctx Ctx) -> Option[FnRow] => ctx.defs.fn_row(ENTRY_FN)
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
-                mut subst []int, mut ptypes []ParamDef) -> bool {
+                mut subst []TyId, mut ptypes []ParamDef) -> bool {
     mut grew = false
     ro id = n.id_of()
     if id >= 0 && out.has_callee(id) {

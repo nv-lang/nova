@@ -20,6 +20,7 @@ import ../sem.{branch_children, leaf_text}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 // The std signatures these tests need, handed in the way the driver hands
 // them: as TEXT through the one door. Inline and tiny on purpose — the
@@ -115,7 +116,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     ro ctx = context(tree, std_decls())
     ro decl = generic_decl_of(tree, "twice")
     ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx,
-        []int.of(ctx.prims.int_id), tree.id_of() + 1)
+        []TyId.of(ctx.prims.int_id), tree.id_of() + 1)
     assert(diags.len() == 0)
     // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
     // A bare name would prove nothing here -- the channel deliberately does
@@ -168,7 +169,7 @@ test "a wrong-typed argument is REFUSED, not emitted (the key is the types, D84)
     // The regression this test exists for: with no pair declared, novac used to
     // ACCEPT this file and emit `novac_fn_show__nova_f64__to_nova_f64(c)` -- a
     // struct pointer where a double is declared. The call was looked up with
-    // UNKNOWN_TYPE in every argument slot, so only the arity was compared.
+    // no_ty() in every argument slot, so only the arity was compared.
     assert(compile(coerce_src(), std_decls()).len() == 1)
 }
 

@@ -49,6 +49,7 @@
 module novac.sem
 
 import ../diag.{ice}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// WHAT a resolved call targets, and the target CARRIES ITS OWN ROW.
 ///
@@ -69,7 +70,7 @@ import ../diag.{ice}
 export type CalleeTarget enum
     | CalleeFn(FnRow)
     | CalleeVariant(int)
-    | CalleeCtor(int)
+    | CalleeCtor(TyId)
 
 /// What a resolved `Call` targets, plus the type arguments it was written with
 /// -- so the emitter reads a DECISION instead of repeating the lookup by name.
@@ -102,7 +103,7 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         }
         CalleeCtor(x) => {
             match b {
-                CalleeCtor(y) => x == y
+                CalleeCtor(y) => raw_ty(x) == raw_ty(y)
                 CalleeFn(_) => false
                 CalleeVariant(_) => false
             }
@@ -117,7 +118,7 @@ fn target_present(t CalleeTarget) -> bool {
     match t {
         CalleeFn(r) => raw_row(r) >= 0
         CalleeVariant(v) => v >= 0
-        CalleeCtor(id) => id >= 0
+        CalleeCtor(id) => is_ty(id)
     }
 }
 
@@ -170,9 +171,9 @@ export type Resolution enum
 /// THE checker's channel: what the checker decided, read by everyone after it
 /// and re-derived by no one.
 export type CheckOut {
-    types []int /// resolved_types: NodeId -> interned type id; -1 = not recorded.
+    types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
     res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
-    subst_args []int /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
+    subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
 }
 
 /// An empty channel sized for a file of `node_count` branch nodes. The size
@@ -180,13 +181,13 @@ export type CheckOut {
 /// to name (a declaration tree's node keyed into the user file's channel, for
 /// instance -- each parse has its OWN id space).
 export fn CheckOut.new(node_count int) -> CheckOut {
-    mut types = []int.new()
+    mut types = []TyId.new()
     mut res = []Resolution.new()
     for _ in 0..node_count {
-        types.push(-1)
+        types.push(no_ty())
         res.push(Resolution.Unresolved)
     }
-    CheckOut { types, res, subst_args: []int.new() }
+    CheckOut { types, res, subst_args: []TyId.new() }
 }
 
 /// Record the type of a node. Writing a DIFFERENT answer over an existing one
@@ -194,16 +195,16 @@ export fn CheckOut.new(node_count int) -> CheckOut {
 /// exists to cure, and it must not be curable by ordering. Writing the SAME
 /// answer twice is legal -- the emitter asks for a binding's initializer type
 /// and then emits that same expression, and both paths mean one fact.
-export fn CheckOut mut @record_type(id int, t int) -> ()
+export fn CheckOut mut @record_type(id int, t TyId) -> ()
     requires id >= 0 && id < @types.len(), "sem: channel asked about a node outside this file's id space"
 {
     ro prev = @types[id]
-    assert(prev < 0 || prev == t, "sem: a node was typed twice with different answers")
+    assert(!is_ty(prev) || raw_ty(prev) == raw_ty(t), "sem: a node was typed twice with different answers")
     @types[id] = t
 }
 
 /// Record the decided target of a call.
-export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []int) -> ()
+export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []TyId) -> ()
     requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
     requires target_present(target), "sem: channel callee write with no row — absence is not a decision"
 {
@@ -226,7 +227,7 @@ export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []int) 
 /// The first writer arrives with E2-b2; the table, the door and the
 /// disjointness invariant exist now, because the invariant is what makes the
 /// two tables two rather than one habit.
-export fn CheckOut mut @record_subst(id int, args []int) -> ()
+export fn CheckOut mut @record_subst(id int, args []TyId) -> ()
     requires id >= 0 && id < @res.len(), "sem: subst_of asked about a node outside this file's id space"
 {
     // The two exclusions that used to be `requires` over two tables are now ONE
@@ -247,11 +248,11 @@ export fn CheckOut mut @record_subst(id int, args []int) -> ()
 /// myself", which is the branch that made two answers possible in the first
 /// place (plan 196's lesson).
 #realtime nogc
-export fn CheckOut @type_of(id int) -> int
+export fn CheckOut @type_of(id int) -> TyId
     requires id >= 0 && id < @types.len(), "sem: channel asked about a node outside this file's id space"
 {
     ro t = @types[id]
-    assert(t >= 0, "sem: no type recorded for this node — a hole in the checker's channel")
+    assert(is_ty(t), "sem: no type recorded for this node — a hole in the checker's channel")
     t
 }
 
@@ -320,7 +321,7 @@ export fn CalleeRef @callable_row() -> FnRow {
 /// CALL, whose range lives inside its `CalleeRef`. Two questions, two doors,
 /// because a node is one or the other by construction and mixing them would
 /// mean asking "which kind are you" at every use.
-export fn CheckOut @callee_subst_of(id int) -> ro []int
+export fn CheckOut @callee_subst_of(id int) -> ro []TyId
     requires id >= 0 && id < @res.len(), "sem: callee_subst_of outside this file's id space"
 {
     ro cr = match @res[id] {
@@ -333,7 +334,7 @@ export fn CheckOut @callee_subst_of(id int) -> ro []int
 
 /// The substitution of a node; asking about a node that has none is an ice
 /// (ask `has_subst` first).
-export fn CheckOut @subst_of(id int) -> ro []int
+export fn CheckOut @subst_of(id int) -> ro []TyId
     requires id >= 0 && id < @res.len(), "sem: subst_of asked about a node outside this file's id space"
 {
     ro sr = match @res[id] {

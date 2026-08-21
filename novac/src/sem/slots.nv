@@ -23,6 +23,7 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../diag.{ice}
 import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
 /// punctuation. Its last child is not always the body.
@@ -161,7 +162,7 @@ fn mode_before(pk []Node, n int) -> ParamMode {
 /// that got the id without the alias bit would have to ask a second door to
 /// know what to do with it.
 export type ReprSpec value {
-    under_id int /// the representation's type id
+    under_id TyId /// the representation's type id
     is_alias bool /// `type Row alias int` -- the same type under a second name
 }
 
@@ -175,7 +176,7 @@ export type ReprSpec value {
 /// and the oracle compiles.
 export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
     mut marks_alias = false
-    mut under = UNKNOWN_TYPE
+    mut under = no_ty()
     mut seen_name = false
     for c in branch_children(decl) {
         // A record declares FIELDS: then the tail is not a representation at
@@ -196,13 +197,13 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
             marks_alias = true
             continue
         }
-        if under != UNKNOWN_TYPE {
+        if is_ty(under) {
             // Already found: a further identifier belongs to a form this door
             // does not read (type arguments), judged elsewhere.
             continue
         }
         // The Option is read AS an Option (the owner's correction 2026-08-21):
-        // `?? UNKNOWN_TYPE` followed by a comparison with the same sentinel is a
+        // `?? no_ty()` followed by a comparison with the same sentinel is a
         // detour that turns "absent" into a number to be remembered.
         if Some(id) = defs.type_id(word) {
             under = id
@@ -211,7 +212,7 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
             // at its own position, not guessed at here.
         }
     }
-    if under == UNKNOWN_TYPE { return None }
+    if !is_ty(under) { return None }
     Some(ReprSpec { under_id: under, is_alias: marks_alias })
 }
 

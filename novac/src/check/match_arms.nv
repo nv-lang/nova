@@ -22,7 +22,8 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, UNKNOWN_TYPE, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
@@ -61,8 +62,8 @@ fn Checker mut @type_match(m Node) -> () {
 /// A wildcard or a plain binder arm covers everything by construction, so the
 /// scan stops there; a guard does NOT count as coverage, because a guard can
 /// be false (the oracle judges it the same way).
-fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
-    if scr_t < 0 || scr_t >= @ctx.types.len() { return }
+fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
+    if !is_ty(scr_t) || raw_ty(scr_t) >= @ctx.types.len() { return }
     ro td = @ctx.types[scr_t]
     if td.kind != TypeKind.TkSum { return }
     if td.row_cnt < 1 { return }
@@ -137,7 +138,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t int) -> () {
 /// arm whose body the walk refused has no type to compare, and before the first
 /// such arm there is nothing to compare AGAINST — two facts that shared the
 /// value -1 until 2026-08-19 and were told apart by their position in the code.
-fn Checker mut @fold_arm_type(arm Node, scr_t int, first Option[int]) -> Option[int] {
+fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId]) -> Option[TyId] {
     match @type_arm(arm, scr_t) {
         // The arm reported a diagnostic: it has no type to offer.
         None => first
@@ -146,7 +147,7 @@ fn Checker mut @fold_arm_type(arm Node, scr_t int, first Option[int]) -> Option[
 }
 
 /// The same fold once THIS arm has a type: agree with the first one or report.
-fn Checker mut @agree_arm_type(arm Node, at int, first Option[int]) -> Option[int] {
+fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId]) -> Option[TyId] {
     match first {
         // The first arm with a type sets what the rest must match.
         None => Some(at)
@@ -171,7 +172,7 @@ fn Checker mut @agree_arm_type(arm Node, at int, first Option[int]) -> Option[in
 /// the arm-agreement rule (F36) asked for it after the walk, outside the
 /// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
 /// diagnostic -- the binders were gone by then.
-fn Checker mut @type_arm(arm Node, scr_t int) -> Option[int] {
+fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // An arm's binders live in the arm and nowhere else.
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
