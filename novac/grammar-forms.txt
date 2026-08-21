@@ -4,3 +4,4 @@ call
 int_arith
 str_lit
 generic_call
+param_mode
