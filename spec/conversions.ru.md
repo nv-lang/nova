@@ -289,10 +289,10 @@ Go, на который ссылается D52.
 
 ```nova
 type Row int
-ro a Row = 100                 // ok — константа
-ro b Row = 40 + 60             // ok — арифметика констант
+ro a Row = 100                 // ok -- a constant
+ro b Row = 40 + 60             // ok -- constant arithmetic
 ro n = 100
-ro c Row = n                   // ОШИБКА E7301 — типизированная переменная
+ro c Row = n                   // ERROR E7301 -- a typed variable
 ro d Row = Row(n)              // ok
 ro e Row = n as Row            // ok
 ```
