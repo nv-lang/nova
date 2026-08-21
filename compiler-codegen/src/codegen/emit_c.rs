@@ -11981,10 +11981,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             unreachable!("resolve_fn_typeref always returns Func or None")
         };
         let ptys: Vec<String> = fp.iter()
-            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e| self.record_strict_error("nested fn-return signature: parameter type", &e)))
             .collect();
         let rty = match rt2.as_ref() {
-            Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()),
+            Some(t) => self.type_ref_to_c(t).unwrap_or_else(|e| self.record_strict_error("nested fn-return signature: return type", &e)),
             None => "nova_unit".to_string(),
         };
         Some((ptys, rty))
@@ -15923,14 +15923,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // further change needed there).
         let param_c_types: Vec<(String, bool)> = fn_decl.params.iter()
             .map(|p| {
-                let base = self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into());
-                if Self::param_is_inout_ptr(p, &base) {
+                let base = self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback("#blocking fn parameter type", &e))?;
+                Ok(if Self::param_is_inout_ptr(p, &base) {
                     (format!("{}*", base), true)
                 } else {
                     (base, false)
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, String>>()?;
 
         let result_ty = self.return_type_c(&fn_decl)?;
         let has_result = result_ty != "nova_unit";
@@ -19414,7 +19414,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .collect()
         } else {
             f.params.iter()
-                .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+                .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|e| self.record_strict_error("method-mangling parameter type", &e)))
                 .collect()
         }
     }
@@ -24823,7 +24823,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let TypeRef::Func { params: fp, return_type: Some(ret_ty_ref), .. } = &param.ty {
                     if let ExprKind::ClosureLight { params: cl_params, body } = &arg.expr().kind {
                         let fp_tys: Vec<String> = fp.iter()
-                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e| self.record_strict_error("instance-call subst: closure parameter type", &e)))
                             .collect();
                         let mut ovr = self.closure_param_type_overrides.borrow_mut();
                         let saved_cl: Vec<(String, Option<String>)> = cl_params.iter().zip(fp_tys.iter())
@@ -28768,10 +28768,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
                     let crate::ast::TypeRef::Func { params: fp, return_type: fn_ret, .. } = &_ft else { unreachable!() };
                     let param_c_tys: Vec<String> = fp.iter()
-                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
+                        .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback("fn-typed parameter signature: parameter type", &e)))
+                        .collect::<Result<Vec<_>, String>>()?;
                     let ret_c = match fn_ret {
-                        Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                        Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback("fn-typed parameter signature: return type", &e))?,
                         None => "nova_unit".into(),
                     };
                     fn_sigs_seed_saved.push((p.name.clone(), self.fn_param_sigs.get(&p.name).cloned()));
@@ -33435,7 +33435,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.fn_newtype_sigs.get(elem_name.as_str()).cloned().map(|f| {
                                         if let TypeRef::Func { params: fp, return_type, .. } = f {
                                             let ptys: Vec<String> = fp.iter()
-                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".to_string()))
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e| self.record_strict_error("vec element fn-newtype signature: parameter type", &e)))
                                                 .collect();
                                             let rty = return_type.as_ref()
                                                 .and_then(|t| self.type_ref_to_c(t).ok())
@@ -40410,10 +40410,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.fn_newtype_sigs.get(recv_ty.as_str()).cloned()
                 {
                     let param_tys: Vec<String> = fp.iter()
-                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
+                        .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback("fn-newtype self-call: parameter type", &e)))
+                        .collect::<Result<Vec<_>, String>>()?;
                     let ret_ty = match &return_type {
-                        Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                        Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback("fn-newtype self-call: return type", &e))?,
                         None => "nova_unit".to_string(),
                     };
                     return self.emit_clos_call_dispatch("(*nova_self)", &param_tys, &ret_ty, args);
@@ -46100,8 +46100,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                         // Substituted closure param types (T → element_c).
                                         let inner_ptys: Vec<String> = fp.iter()
-                                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                                            .collect();
+                                            .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback("closure argument signature: parameter type", &e)))
+                                            .collect::<Result<Vec<_>, String>>()?;
                                         let inner_ret = match return_type.as_ref() {
                                             Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()),
                                             None => "nova_unit".into(),
@@ -54920,9 +54920,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         let param_cs: Vec<String> = params
             .iter()
-            .map(|p| self.type_ref_to_c(p).unwrap_or_else(|_| "nova_int".to_string()))
+            .map(|p| self.type_ref_to_c(p).unwrap_or_else(|e| self.record_strict_error("closure struct signature: parameter type", &e)))
             .collect();
-        let ret_c = self.type_ref_to_c(&ret).unwrap_or_else(|_| "nova_int".to_string());
+        let ret_c = self.type_ref_to_c(&ret).unwrap_or_else(|e| self.record_strict_error("closure struct signature: return type", &e));
         Some(format!("{}*", Self::clos_struct_name(&param_cs, &ret_c)))
     }
 
@@ -59480,7 +59480,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(recv_ty) = &self.current_receiver_type {
                             if let Some(TypeRef::Func { return_type, .. }) = self.fn_newtype_sigs.get(recv_ty.as_str()) {
                                 return match return_type.as_ref() {
-                                    Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                                    Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|e| self.record_strict_error("fn-newtype self-call return-type inference", &e)),
                                     None => "nova_unit".to_string(),
                                 };
                             }
@@ -60627,7 +60627,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 ExprKind::ClosureLight { params: cl_params, body } => {
                                                     // Bind closure params so body inference can resolve them.
                                                     let fp_tys: Vec<String> = fp.iter()
-                                                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|e| self.record_strict_error("closure parameter binding for return inference", &e)))
                                                         .collect();
                                                     let mut ovr = self.closure_param_type_overrides.borrow_mut();
                                                     let saved_cl: Vec<(String, Option<String>)> = cl_params.iter().zip(fp_tys.iter())

@@ -1,110 +1,138 @@
 #!/usr/bin/env bash
-# Plan 70 Ф.2 — Internal lint guard: forbid NEW silent nova_int fallback
-# patterns in compiler-codegen source.
+# Plan 70 Ф.2 — страж: НОВЫЙ молчаливый откат к `nova_int` в кодогене запрещён.
 #
-# Rationale:
-#   Plan 70 (см. docs/plans/70-no-silent-nova-int-fallback.md) elimin'ит
-#   silent miscompilation от `type_ref_to_c(...).unwrap_or_else(|_| "nova_int")`
-#   паттерна. Этот скрипт — CI gate против регресса: добавление нового сайта
-#   silent fallback'а должно fail'ить lint.
+# ЗАЧЕМ. Форма `self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int")` означает:
+# преобразование типа НЕ УДАЛОСЬ, и вместо отказа выпускается ЗАПАСНОЙ тип.
+# Получается молча неверный Си без единой диагностики — для record/str/float/
+# bool это неверный вывод в рантайме, а не ошибка сборки (см.
+# docs/plans/70-no-silent-nova-int-fallback.md).
 #
-# Existing (legitimate) sites:
-#   - Cat B (intentional erasure): inline-документированы с rationale,
-#     listed в docs/dev/codegen-erasure-sites.md.
-#   - Cat C/D (categorical mappings / method dispatch wildcards):
-#     "_ => nova_int" в match по method-name на известный receiver type.
-#   - Cat B (erased_type_ref_c / erase_unk wrappers).
+# КАНОН ЗАМЕНЫ (обе функции живут в compiler-codegen/src/codegen/emit_c.rs):
+#   * функция возвращает Result  →  .map_err(|e| self.err_no_int_fallback(ctx, &e))?
+#   * каскад закрыт (Option/String/замыкание) →
+#                                  .unwrap_or_else(|e| self.record_strict_error(ctx, &e))
 #
-# Все остальные silent fallback'и должны использовать:
-#   - `err_no_int_fallback(context, cause)` + `?` для functions возвращающих Result
-#   - `record_strict_error(context, cause)` для cascade-blocked sites
+# ЗАМЕР 2026-08-19 и ЧТО С НИМ СДЕЛАНО (окно №740, 2026-08-21):
+#   было 21 площадка при базе 7 — все одной формы: выпуск СИГНАТУРЫ (параметры
+#   + возврат) из `TypeRef::Func`, то есть указатели на функции и замыкания.
+#   ПЯТНАДЦАТЬ переведены на канон; шесть оставлены НАМЕРЕННО (ниже).
 #
-# Usage:
-#   ./scripts/guards/lint-no-silent-int-fallback.sh           # default scan
-#   ./scripts/guards/lint-no-silent-int-fallback.sh --strict  # fail on ANY match
+# ИСКЛЮЧЕНИЕ ПО ФОРМЕ — `erase_unk(...)` (4 площадки в emit_c.rs, около строк
+# 20920/20923/28909/28912). `erase_unk` нормализует unknown→nova_int ради
+# consistent pointer-stomping в erased generics: строгий режим ЗДЕСЬ сломал бы
+# erased dispatch, а «нарушение» — namespace squat той же обёртки. Считать их
+# базой нельзя: база — это долг, а это не долг. Поэтому они вычитаются ПО
+# ФОРМЕ, и счёт снова сходится с тем, что видно глазом.
+#   Цена исключения названа вслух: НОВЫЙ откат, завёрнутый в `erase_unk`, страж
+#   не увидит. Обёртка узкая и живёт в одном файле — это принято сознательно.
 #
-# Exit:
-#   0 — no new violations beyond baseline
-#   1 — new violation detected (CI fail)
+# БАЗА A1 = 2 — `erased_type_ref_c` (emit_c.rs, ~20636 и ~20650, оба с
+# инлайн-пометкой «Plan 70 Cat B (intentional erasure)»). Тот же класс, что
+# `erase_unk`, но по форме от обычной площадки неотличим, поэтому база, а не
+# вычет. ЗАМЕРЕНО, а не предположено: перевод этих двух на
+# `record_strict_error` дал `PASS 586 / FAIL 323` на spec_tests/conformance
+# (E7001 «erased type-ref default arm» на всём, что трогает erased generics)
+# против `PASS 854 / FAIL 1` без них. Правка откачена, пометки Cat B на месте.
 #
-# Plan 231 (docs/plans/231-bug-cycle-exit.md) folds this ratchet-style
-# guard into the broader "machine enforcement of norms" program (track Д)
-# alongside arch-ratchet.sh/hardcode-audit.sh — baseline-diff-must-be-
-# justified-inline is the same pattern as scripts/arch-ratchet.baseline.
-# NOTE (verified 2026-07-27): NOT currently invoked by scripts/gate.sh or
-# any .github/workflows/*.yml — run it manually when touching Cat A1/A2
-# sites (compiler-conventions.md), it is not yet wired into an automatic
-# gate.
+# ЧЕГО СТРАЖ НЕ ЛОВИТ (честно, чтобы не выяснилось через месяц): молчаливый
+# откат В ДРУГОЙ ФОРМЕ. Соседи переведённых площадок несут `.ok()` +
+# `unwrap_or_else(|| "nova_int")` (emit_c.rs ~33380) и откат к `"nova_unit"` /
+# `"void*"` (~46041, ~20646) — та же болезнь, другая запись, регексп по строке
+# их не видит.
+#
+# Использование:
+#   scripts/guards/lint-no-silent-int-fallback.sh [КОРЕНЬ]
+# Самотест — scripts/guards/selftest/test-lint-no-silent-int-fallback.sh
+# Вызывающий — scripts/gate.sh, шаг «no-silent-int-fallback» (конвенция
+# docs/dev/gate-guard-conventions.md, Г8: до 2026-08-21 этого стража не звал
+# НИКТО — ни gate.sh, ни CI).
+#
+# Выход: 0 — нового долга нет; 1 — счёт вырос над базой.
 
-set -euo pipefail
+set -uo pipefail
+export LC_ALL=C
 
-# Baseline count of legitimate sites — must be UPDATED when adding new
-# Cat B / Cat D sites with proper documentation. Bump baseline после
-# adding inline-doc + entry в docs/dev/codegen-erasure-sites.md.
-BASELINE_TYPE_REF_TO_C_UNWRAP_OR=7   # type_ref_to_c(...).unwrap_or_else(|_| "nova_int")
-                                     # Cat B: B1 (2720), B4 (5934), B5 (5948),
-                                     # B6 (6149), B7 (6152), B8 (8311), B9 (8314).
-                                     # B2/B3 (5846/5867) — Cat A2 wildcard pattern.
-                                     # B10 (7051) — Cat A2 wildcard pattern.
-BASELINE_WILDCARD_NOVA_INT=26        # _ => "nova_int" (Cat B/D legitimate)
-                                     # Cat B: B2 (5846), B3 (5867), B10 (7051),
-                                     # B11 (19493), B12 (~19437 wildcard variant),
-                                     # B13 (18382). Plus ~18 Cat D dispatch wildcards.
-                                     # Cat D: D1/D2 in sum_schema_registry.rs (Plan 62.A.bis,
-                                     #   type_ref_to_c_minimal — schema-registration only).
+NAME="lint-no-silent-int-fallback"
 
-# Script lives in scripts/guards/ — repo root is two levels up.
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
-CODEGEN_SRC="${PROJECT_ROOT}/compiler-codegen/src"
+# База A1 — см. блок «БАЗА A1» выше. Опускать можно (и нужно) вместе с
+# правкой, поднимать — нельзя.
+BASELINE_A1=2
+# База A2: `_ => "nova_int"` — Cat B/D (категориальные отображения и
+# wildcard'ы диспетчеризации по имени метода на известном получателе).
+# 2026-08-21: фактический счёт 14 при базе 26 — база опущена до факта тем же
+# слиянием. Двенадцать пустых мест в базе означали двенадцать молчаливых
+# откатов, которые прошли бы незамеченными.
+BASELINE_A2=14
 
-# Pattern 1: type_ref_to_c result with silent nova_int fallback
-count_a1=$(grep -rE 'type_ref_to_c\([^)]*\)\.unwrap_or_else\(\|_\| "nova_int"' "$CODEGEN_SRC" | wc -l)
+ROOT="${1:-}"
+case "$ROOT" in
+    ''|-*) ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)" ;;
+esac
+CODEGEN_SRC="$ROOT/compiler-codegen/src"
 
-# Pattern 2: wildcard match arm with silent nova_int
-count_a2=$(grep -rnE '_ => "nova_int"' "$CODEGEN_SRC" | wc -l)
+if [ ! -d "$CODEGEN_SRC" ]; then
+    echo "$NAME: FAIL — нет каталога $CODEGEN_SRC (корень задан как '$ROOT')" >&2
+    exit 1
+fi
 
-echo "Plan 70 lint scan (against $CODEGEN_SRC):"
-echo "  Cat A1 (type_ref_to_c silent fallback): $count_a1 (baseline $BASELINE_TYPE_REF_TO_C_UNWRAP_OR)"
-echo "  Cat A2 (wildcard _ => nova_int):        $count_a2 (baseline $BASELINE_WILDCARD_NOVA_INT)"
+PAT_A1='type_ref_to_c\([^)]*\)\.unwrap_or_else\(\|_\| "nova_int"'
+PAT_A2='_ => "nova_int"'
+
+raw_a1="$(grep -rnE "$PAT_A1" "$CODEGEN_SRC" || true)"
+hits_a1="$(printf '%s\n' "$raw_a1" | grep -v 'erase_unk(' || true)"
+skipped_a1="$(printf '%s\n' "$raw_a1" | grep -c 'erase_unk(' || true)"
+hits_a2="$(grep -rnE "$PAT_A2" "$CODEGEN_SRC" || true)"
+
+nlines() { # печатает число НЕПУСТЫХ строк на stdin
+    grep -c . || true
+}
+count_a1="$(printf '%s\n' "$hits_a1" | nlines)"
+count_a2="$(printf '%s\n' "$hits_a2" | nlines)"
+
+echo "$NAME: разбор $CODEGEN_SRC"
+echo "  Cat A1 (type_ref_to_c → молчаливый nova_int): $count_a1 (база $BASELINE_A1;"
+echo "          не считаны как намеренные обёртки erase_unk: $skipped_a1)"
+echo "  Cat A2 (wildcard _ => nova_int):              $count_a2 (база $BASELINE_A2)"
 
 exit_code=0
 
-if [ "$count_a1" -gt "$BASELINE_TYPE_REF_TO_C_UNWRAP_OR" ]; then
-    delta=$((count_a1 - BASELINE_TYPE_REF_TO_C_UNWRAP_OR))
+if [ "$count_a1" -gt "$BASELINE_A1" ]; then
     echo
-    echo "ERROR: Cat A1 count ($count_a1) exceeds baseline ($BASELINE_TYPE_REF_TO_C_UNWRAP_OR) by $delta."
-    echo "       New silent type_ref_to_c fallback site(s) introduced."
+    echo "$NAME: FAIL — Cat A1 ($count_a1) больше базы ($BASELINE_A1) на $((count_a1 - BASELINE_A1))."
+    echo "       Заведена новая площадка молчаливого отката к nova_int."
     echo
-    echo "Use instead:"
-    echo "  - For functions returning Result<_, String>:"
+    echo "Канон замены:"
+    echo "  - функция возвращает Result<_, String>:"
     echo "      .map_err(|e| self.err_no_int_fallback(\"context\", &e))?"
-    echo "  - For cascade-blocked sites (no Result return):"
+    echo "  - каскад закрыт (Option/String/замыкание):"
     echo "      .unwrap_or_else(|e| self.record_strict_error(\"context\", &e))"
     echo
-    echo "Current violations:"
-    grep -rnE 'type_ref_to_c\([^)]*\)\.unwrap_or_else\(\|_\| "nova_int"' "$CODEGEN_SRC"
+    echo "Площадки:"
+    printf '%s\n' "$hits_a1"
     exit_code=1
 fi
 
-if [ "$count_a2" -gt "$BASELINE_WILDCARD_NOVA_INT" ]; then
-    delta=$((count_a2 - BASELINE_WILDCARD_NOVA_INT))
+if [ "$count_a2" -gt "$BASELINE_A2" ]; then
     echo
-    echo "ERROR: Cat A2 count ($count_a2) exceeds baseline ($BASELINE_WILDCARD_NOVA_INT) by $delta."
-    echo "       New '_ => \"nova_int\"' wildcard introduced."
+    echo "$NAME: FAIL — Cat A2 ($count_a2) больше базы ($BASELINE_A2) на $((count_a2 - BASELINE_A2))."
+    echo "       Заведён новый wildcard '_ => \"nova_int\"'."
     echo
-    echo "If intentional (Cat B erasure or Cat D dispatch fallback):"
-    echo "  1. Add inline comment: // Plan 70 Cat B/D: <rationale>"
-    echo "  2. Add entry to docs/dev/codegen-erasure-sites.md"
-    echo "  3. Bump BASELINE_WILDCARD_NOVA_INT in this script"
+    echo "Если намеренно (Cat B erasure или Cat D dispatch):"
+    echo "  1. инлайн-пометка: // Plan 70 Cat B/D: <причина>"
+    echo "  2. запись в docs/dev/codegen-erasure-sites.md"
+    echo "  3. поднять BASELINE_A2 в этом файле — вместе с (1) и (2), не отдельно"
     echo
-    echo "If silent fallback for unknown type:"
-    echo "  Convert to explicit match arms or use record_strict_error."
+    printf '%s\n' "$hits_a2"
     exit_code=1
 fi
 
-if [ "$exit_code" -eq 0 ]; then
-    echo
-    echo "OK — no new silent fallback violations."
+if [ "$exit_code" -ne 0 ]; then
+    exit 1
 fi
 
-exit "$exit_code"
+note=""
+if [ "$count_a1" -lt "$BASELINE_A1" ] || [ "$count_a2" -lt "$BASELINE_A2" ]; then
+    note=" — ЗАМЕТКА: счёт ниже базы, опусти базу тем же слиянием (иначе рост до прежней цифры пройдёт молча)"
+fi
+echo "$NAME ok: молчаливых откатов к nova_int сверх базы нет (A1 $count_a1/$BASELINE_A1, A2 $count_a2/$BASELINE_A2)$note"
+exit 0

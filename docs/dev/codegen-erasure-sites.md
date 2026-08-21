@@ -13,6 +13,42 @@
 
 ---
 
+## Update 2026-08-21 — Cat A1 cleared, baseline is now 2 (+4 excluded by form)
+
+Window №740 (registry 221.1) converted **15** of the 21 Cat A1 sites the lint
+guard was reporting onto the canonical strict helpers
+(`err_no_int_fallback(...)?` where the enclosing fn returns `Result`,
+`record_strict_error(...)` where the cascade is closed). What is left is Cat B
+only, and the guard now says so:
+
+* **B6–B9 (`erase_unk` wrappers)** — `emit_c.rs` ~20920, ~20923, ~28909,
+  ~28912. Excluded **by form**: the guard drops every A1 hit whose line also
+  contains `erase_unk(`. They are not debt, so they must not sit in a baseline
+  that debt is measured against. Cost of the exclusion, stated out loud: a NEW
+  silent fallback wrapped in `erase_unk` is invisible to the guard.
+* **B4/B5 (`erased_type_ref_c`)** — `emit_c.rs` ~20636 and ~20650 (the old
+  5934/5948 line numbers in the sections below are from 2026-05-18 and have
+  drifted). Same class as B6–B9, but a line-local regexp cannot tell them from
+  an ordinary site, so they stay as **baseline = 2**.
+
+**Measured, not assumed.** Converting B4/B5 to `record_strict_error` was tried
+on a live build: `spec_tests/conformance` went to `PASS 586 / FAIL 323`
+(E7001 «erased type-ref default arm» on everything touching erased generics)
+against `PASS 854 / FAIL 1` without them. The change was reverted; the two
+inline Cat B markers stand.
+
+**Blind spots of the guard's regexp** (same disease, different spelling, not
+counted anywhere): `.ok()` + `unwrap_or_else(|| "nova_int")` (`emit_c.rs`
+~33380) and fallbacks to `"nova_unit"` / `"void*"` (~46041, ~20646).
+
+The guard also gained an external caller (`scripts/gate.sh`, step
+`no-silent-int-fallback`) and a selftest
+(`scripts/guards/selftest/test-lint-no-silent-int-fallback.sh`) — until
+2026-08-21 nobody ran it at all, which is how the count drifted 7 → 21
+unnoticed (gate-guard conventions, Г8).
+
+---
+
 ## Категории erasure
 
 | Cat | Pattern | Семантика | Действие при добавлении нового |
