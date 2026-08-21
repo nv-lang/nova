@@ -60,11 +60,6 @@ export fn no_decl() -> DeclId => DeclId(-1)
 #realtime nogc
 export fn is_decl(d DeclId) -> bool => raw_decl(d) >= 0
 
-/// [LEGACY-#TBD-newtype-ro-launder] The same declaration, rebuilt -- the oracle
-/// refuses to RETURN a `ro`-bound newtype even over a primitive carrier. Same
-/// defect and same shape as `types.same_ty`; both go when it is fixed.
-#realtime nogc
-export fn same_decl(d DeclId) -> DeclId => DeclId(raw_decl(d))
 
 /// Which namespace a NameTable serves — the key component the string-keys
 /// guard demands (identity is (namespace, name), never a bare name).

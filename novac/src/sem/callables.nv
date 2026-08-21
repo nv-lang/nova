@@ -33,6 +33,49 @@ import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
+// WHY `VariantRow` LIVES IN THIS FILE and not beside `VariantDef`, where it
+// belongs by subject: THE ORACLE'S EMISSION DEPENDS ON DECLARATION ORDER. A
+// newtype used by a sum arm is emitted as a boxed `struct Nova_X*` unless its own
+// declaration was emitted FIRST -- and then it collides with its own
+// `typedef nova_int Nova_X` and the C unit is refused. Isolated to twelve lines
+// (2026-08-22): one file, sum above newtype fails, newtype above sum compiles.
+//
+// Inside one module the same rule runs over FILES, in their order: `VariantRow`
+// feeds two sums -- `DefTarget` in sem.nv and `CalleeTarget` in channel.nv -- so
+// it has to be declared in the file that comes before both, and that is this one.
+// `FnRow`, `TyId` and `DeclId` never met the defect because they already sit in
+// files (or modules) emitted earlier.
+//
+// So this POSITION is a workaround under [LEGACY-#TBD-newtype-order-in-sum-arm],
+// not a decision about where the type belongs. When the oracle stops caring
+// about declaration order, it moves next to `VariantDef`.
+
+/// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since
+/// wave B2 (2026-08-22), and the last bare `int` in the arms of `DefTarget` and
+/// `CalleeTarget`.
+///
+/// Its neighbours were wrapped first for a reason the plan states: one wrapped
+/// space protects only against itself, and this one shares its arms with two
+/// others. `DefVariant(int)` beside `DefFn(FnRow)` and `DefType(DeclId)` meant
+/// the sum still admitted "a variant row where a callable row belongs" through
+/// the one arm that had no type.
+export type VariantRow int
+
+/// The index inside -- the ONE unwrapping door for this space.
+#realtime nogc
+export fn raw_vrow(v VariantRow) -> int => v as int
+
+/// "No variant", as a value rather than a −1 the caller has to know. The
+/// pattern-head walk needs it: most heads are binders and name no variant.
+#realtime nogc
+export fn no_vrow() -> VariantRow => VariantRow(-1)
+
+/// Does this name a variant at all? Asked where "no" is a legal answer.
+#realtime nogc
+export fn is_vrow(v VariantRow) -> bool => raw_vrow(v) >= 0
+
+
+
 /// A ROW of the callable registry -- and a TYPE, not a bare `int`, since
 /// 2026-08-21 (plan 274 section 9.1g; the owner's decision of 2026-08-20).
 ///

@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
@@ -274,7 +274,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ro d = ctx.defs.find(call_callee_text(branch_children(e)))
         assert(d >= 0, "check: call target not in the registry — no silent int default (#652 class)")
         ro def = ctx.defs.rows[d]
-        if DefVariant(vrow) = def.target { return ctx.variant_rows[vrow].sum_id }
+        if DefVariant(vrow) = def.target { return ctx.variant_rows[raw_vrow(vrow)].sum_id }
         if DefFn(decl_row) = def.target {
             // The ROW the checker resolved, when it recorded one: `defs` is
             // keyed by the bare name and lives by last-write-wins, so with two

@@ -130,14 +130,14 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
 
 /// C name of a sum's tag constant for a variant: `NOVAC_TAG_<Sum>_<Variant>`
 /// (novac's own namespace for user sums — the oracle's NOVA_TAG_ is its).
-export fn c_tag(ctx Ctx, vrow int) -> str {
-    ro vd = ctx.variant_rows[vrow]
+export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
+    ro vd = ctx.variant_rows[raw_vrow(vrow)]
     "NOVAC_TAG_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
-export fn c_maker(ctx Ctx, vrow int) -> str {
-    ro vd = ctx.variant_rows[vrow]
+export fn c_maker(ctx Ctx, vrow VariantRow) -> str {
+    ro vd = ctx.variant_rows[raw_vrow(vrow)]
     "novac_make_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 

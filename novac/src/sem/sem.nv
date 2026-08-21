@@ -72,7 +72,7 @@ import ../types.{Interner, TyId, raw_ty, no_ty, is_ty}
 /// row it needs instead of reaching for a second field.
 export type DefTarget enum
     | DefType(DeclId)
-    | DefVariant(int)
+    | DefVariant(VariantRow)
     | DefFn(FnRow)
 
 /// One type of the file registry; a type id is this record's interned
@@ -737,7 +737,7 @@ export fn collect_types(file Node) -> Ctx {
                     }
                     if name_at < 0 { continue }
                     ro vname = leaf_text(vk[name_at])
-                    defs.add(vname, DefTarget.DefVariant(variant_rows.len()))
+                    defs.add(vname, DefTarget.DefVariant(VariantRow(variant_rows.len())))
                     ro poff = payload_types.len()
                     mut pcnt = 0
                     // payload type names sit between '(' and ')'

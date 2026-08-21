@@ -22,7 +22,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
@@ -101,7 +101,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         // and an exhaustiveness count learns nothing from them.
         match @ctx.defs.rows[d].target {
             DefVariant(vrow) => {
-                covered += if @ctx.variant_rows[vrow].sum_id == scr_t { 1 } else { 0 }
+                covered += if raw_ty(@ctx.variant_rows[raw_vrow(vrow)].sum_id) == raw_ty(scr_t) { 1 } else { 0 }
             }
             DefType(_) => return
             DefFn(_) => return
@@ -200,13 +200,13 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     ro vrow = if d >= 0 {
         match @ctx.defs.rows[d].target {
             DefVariant(row) => row
-            DefType(_) => -1
-            DefFn(_) => -1
+            DefType(_) => no_vrow()
+            DefFn(_) => no_vrow()
         }
     } else {
-        -1
+        no_vrow()
     }
-    if vrow >= 0 {
+    if is_vrow(vrow) {
         mut pi = 0
         mut j = 2
         while j < pat.len() {
@@ -224,7 +224,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
                 Some(binder) => {
                     // A payload binder holds a value of the arm, read-only:
                     // nothing in the subset writes through it.
-                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[vrow].payload_off + pi],
+                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[raw_vrow(vrow)].payload_off + pi],
                                 ParamMode.ModeRo)
                     pi += 1
                 }

@@ -69,7 +69,7 @@ import ../types.{TyId, raw_ty, no_ty, is_ty}
 /// callable row", and after this it cannot be built either.
 export type CalleeTarget enum
     | CalleeFn(FnRow)
-    | CalleeVariant(int)
+    | CalleeVariant(VariantRow)
     | CalleeCtor(TyId)
 
 /// What a resolved `Call` targets, plus the type arguments it was written with
@@ -96,7 +96,7 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         }
         CalleeVariant(x) => {
             match b {
-                CalleeVariant(y) => x == y
+                CalleeVariant(y) => raw_vrow(x) == raw_vrow(y)
                 CalleeFn(_) => false
                 CalleeCtor(_) => false
             }
@@ -117,7 +117,7 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
 fn target_present(t CalleeTarget) -> bool {
     match t {
         CalleeFn(r) => raw_row(r) >= 0
-        CalleeVariant(v) => v >= 0
+        CalleeVariant(v) => is_vrow(v)
         CalleeCtor(id) => is_ty(id)
     }
 }
