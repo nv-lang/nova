@@ -66,6 +66,36 @@ def load_pairs(path):
     return pairs
 
 
+
+def _rel(root, path):
+    """Path relative to the repo root, in git's spelling (forward slashes)."""
+    return os.path.relpath(path, root).replace(os.sep, u"/")
+
+
+def _project_files(root):
+    """Repo-relative paths git considers project text, in ONE process.
+
+    `--cached --others --exclude-standard` = tracked plus untracked-but-not-
+    ignored. Membership in this set IS the perimeter test, so no second walk is
+    needed. Asking git per file (`check-ignore`) would be a process per element
+    -- rule G2 of the gate/guard convention, the very thing this atom removes.
+
+    `None` means "git did not answer" and the caller must then judge
+    EVERYTHING: an empty or failed answer is not permission to check less.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "ls-files", "--cached", "--others",
+             "--exclude-standard", "-z"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    known = frozenset(p for p in out.stdout.split("\0") if p)
+    return known or None
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
@@ -106,6 +136,7 @@ def main():
 
     w = sys.stdout.write
     total = 0
+    project = _project_files(root)
     for zone in LIVE_ZONES:
         base = os.path.join(root, *zone.split(u"/"))
         if not os.path.isdir(base):
@@ -116,11 +147,33 @@ def main():
                 if not fn.endswith(EXTS) or fn in SKIP_FILES:
                     continue
                 p = os.path.join(dirpath, fn)
+                # ПЕРИМЕТР (план 275 Ф.1): файл, который git ИГНОРИРУЕТ, —
+                # это вывод сборки, а не текст проекта, и ни одно правило о
+                # снятых именах к нему не относится. Замер 2026-08-21: в
+                # главном дереве живые зоны несут 1614 файлов / 153 МБ против
+                # 1046 / 30.6 МБ в свежем worktree, и вся разница — 540
+                # сгенерированных `.c` на 122.9 МБ (git отслеживает из них
+                # 20). Пропуск НЕ ослабляет проверку: неотслеживаемый, но и
+                # НЕ игнорируемый файл (написанный, ещё не добавленный)
+                # по-прежнему судится — отсеивается ровно то, что .gitignore
+                # уже объявил выводом.
+                if project is not None and _rel(root, p) not in project:
+                    continue
                 try:
-                    lines = io.open(p, encoding="utf-8",
-                                    errors="replace").read().split(u"\n")
+                    text = io.open(p, encoding="utf-8",
+                                   errors="replace").read()
                 except Exception:
                     continue
+                # ФАЙЛОВЫЙ ОТСЕВ (план 275 Ф.1). Альтернация по КАЖДОЙ строке
+                # спрашивает одно и то же у миллиона строк, тогда как у
+                # подавляющего большинства файлов ответ «снятых имён нет
+                # вовсе» получается ОДНИМ поиском по всему тексту. Строчный
+                # цикл ниже не тронут — он по-прежнему определяет, какая пара
+                # сработала и не стоит ли строка под исключением, — просто до
+                # него доходят только файлы, где есть что искать.
+                if not combined.search(text):
+                    continue
+                lines = text.split(u"\n")
                 rel = os.path.relpath(p, root).replace(os.sep, u"/")
                 # Исключение БЛОЧНОЕ: амендмент пишется цитатным блоком,
                 # где слово-признак стоит в ПЕРВОЙ строке, а снятое имя
