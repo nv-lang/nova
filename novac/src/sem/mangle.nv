@@ -95,11 +95,6 @@ export fn c_type(ctx Ctx, t int) -> str {
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
-    // [LEGACY-#677] never-in-tail: `ice() -> never` as the tail of a `-> str`
-    // fn MIScompiles in the oracle, so the unreachable value stays. Removing
-    // it passes `check` (tried 2026-08-16) — and that proves nothing, because
-    // #677 is a codegen bug, not a checker one. It goes when #677 closes.
-    ""
 }
 
 /// C name of a user type's struct (no pointer): `Nova_<name>`.
@@ -125,9 +120,6 @@ export fn c_struct(ctx Ctx, t int) -> str {
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
     }
-    // [LEGACY-#677] never-in-tail: same unreachable pacifier as in c_type —
-    // one arm ends in `ice() -> never`, which is the miscompiling shape.
-    ""
 }
 
 /// C name of a sum's tag constant for a variant: `NOVAC_TAG_<Sum>_<Variant>`
