@@ -133,7 +133,15 @@ no_route=0
 #   Условие самой записи («включать нельзя, пока дорожка красна больше чем
 #   №692») выполнено: PASS 840 / FAIL 1 / SKIP 57.
 # 2026-08-19, No.471 -- no_caveat 36 -> 35 with the same closure.
-no_caveat=35
+# 2026-08-21 -- no_caveat 35 -> 34. Measured, not attributed: the core
+#   prints 34 on HEAD content and 34 on the working tree, so some row
+#   gained its carrier caveat in an earlier wave and the ratchet was left
+#   where it was. Third stale number in this one file today (blockers,
+#   incomplete_entries, this) -- the pattern is not carelessness about
+#   any single count, it is that lowering a ratchet has no external
+#   caller either: the guard prints the drop and passes, and a passing
+#   step is one nobody reads. Rule G8 applies to the baselines too.
+no_caveat=34
 # №728 (`type Bytes []u8` молча значит newtype над `u8`) — новый блокер,
 #   найден 2026-08-18 по дороге к №723. Скобка после имени типа — список
 #   generic-параметров (D52), и парсер принимает его пустым без
@@ -293,4 +301,15 @@ no_caveat=35
 #   script. The count did not rise because the tree got worse today; it rose
 #   because someone finally looked. Hiding that by leaving the ratchet at 49
 #   would be the exact dishonesty these baselines exist to prevent.
-blockers=50
+# 2026-08-21, No.740 -- 50 -> 49. NOT a closure: the ratchet was set one too
+#   high on the day it was written. Measured with the guard's own core against
+#   the registry AS OF THAT COMMIT -- `registry-routes-scan.py` printed
+#   blockers=49 there, and prints 49 today; the 50 was a hand count that no
+#   scanner ever produced. A baseline nobody re-measures is a number that
+#   drifts from the thing it guards, which is the failure this file exists to
+#   record rather than repeat.
+#   Same session found the mirror of it in the handoff prompt: its hand-rolled
+#   recipe for the same count answered 47, missing a verdict written in bold
+#   (No.712, No.713) and reading "POCHINENO" as open (No.694). The recipe was
+#   replaced by a pointer to this core -- one home for one number.
+blockers=49
