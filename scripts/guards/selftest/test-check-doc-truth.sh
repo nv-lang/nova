@@ -26,6 +26,7 @@ mkdir -p "$T/scripts/guards" "$T/docs/dev" "$T/docs/guide" "$T/nova-cli/target/r
 # страж должен видеть baseline и бинарь ФИКСТУРЫ, не реальной репы, поэтому
 # копируем стража и (один раз, ОСЬ 2 нужен реальный бинарь) собранный nova.
 cp "$G" "$T/scripts/guards/"
+cp "$ROOT/scripts/guards/doc-truth-cmd-scan.py" "$T/scripts/guards/"
 TG="$T/scripts/guards/check-doc-truth.sh"
 
 REAL_BIN=""

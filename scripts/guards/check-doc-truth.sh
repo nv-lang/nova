@@ -111,22 +111,6 @@ else
     CACHE_DIR="${TMPDIR:-/tmp}/nova-doctruth-help-$BIN_TS"
     mkdir -p "$CACHE_DIR" 2>/dev/null
 
-    help_for() { # subcommand -> stdout: help text; сохраняет exit-код в parallel-файл
-        local sub="$1" key
-        key="${sub//[^a-zA-Z0-9]/_}"
-        local hf="$CACHE_DIR/$key.help" xf="$CACHE_DIR/$key.exit"
-        if [ ! -f "$hf" ]; then
-            "$BIN" "$sub" --help > "$hf" 2>&1
-            echo "$?" > "$xf"
-        fi
-        cat "$hf"
-    }
-    exit_for() {
-        local sub="$1" key
-        key="${sub//[^a-zA-Z0-9]/_}"
-        cat "$CACHE_DIR/$key.exit" 2>/dev/null || echo 1
-    }
-
     # ОСЬ 2 сканирует УЖЕ ИНОЙ, УЖЕ пределы (задание владельца): AGENTS.md +
     # docs/dev/** — БЕЗ docs/guide/**. docs/guide/nova-cli(.ru).md — большой
     # CLI-референс с сотнями usage-синтаксис-строк вида
@@ -144,90 +128,28 @@ else
             infence && /^(nova |nova-cli\/target\/release\/nova )/ { print FILENAME ":" FNR ":" $0 }
         ')
 
-    while IFS= read -r cand; do
-        [ -z "$cand" ] && continue
-        file="${cand%%:*}"
-        rest="${cand#*:}"
-        lineno="${rest%%:*}"
-        line="${rest#*:}"
-        stripped=$(printf '%s' "$line" | sed -E 's/[[:space:]]+#.*$//')
+    # ТЕЛО ЦИКЛА (разбор строки, SKIP-классификация, `nova <sub> --help`,
+    # флаг-карта, сверка) вынесено в питон-ядро doc-truth-cmd-scan.py: bash
+    # версия форкала sed/grep/printf по 5-10 раз НА КАЖДОГО из ~234
+    # кандидатов — доминирующие расходы стража (план 275-Ф.1, профиль
+    # показал ~30-40с из ~45с полного прогона). Кандидаты и их порядок —
+    # ПРЕЖНИЕ (та же find+awk-связка выше, не тронута: порядок обхода
+    # файловой системы — не то, чем стоит рисковать ради скорости).
+    PY_TMP="$CACHE_DIR/.doctruth-pyout.$$"
+    printf '%s\n' "$CANDIDATES" | python "$SCRIPT_DIR/doc-truth-cmd-scan.py" "$BIN" "$CACHE_DIR" > "$PY_TMP"
+    PY_RC=$?
+    if [ "$PY_RC" -ne 0 ]; then
+        echo "check-doc-truth: FAIL — ядро doc-truth-cmd-scan.py не отработало (rc=$PY_RC)" >&2
+        rm -f "$PY_TMP"
+        exit 1
+    fi
 
-        if printf '%s' "$stripped" | grep -qE '<[^>]+>|path/to/'; then
-            skipped_commands=$((skipped_commands + 1))
-            echo "SKIP(placeholder) $file:$lineno: $line" >&2
-            continue
-        fi
-        if printf '%s' "$stripped" | grep -qE '[|;]|>|\\$'; then
-            skipped_commands=$((skipped_commands + 1))
-            echo "SKIP(shell-construct) $file:$lineno: $line" >&2
-            continue
-        fi
-
-        read -ra tok <<< "$stripped"
-        sub="${tok[1]:-}"
-        if [ -z "$sub" ]; then
-            skipped_commands=$((skipped_commands + 1))
-            echo "SKIP(no-subcommand) $file:$lineno: $line" >&2
-            continue
-        fi
-
-        help_for "$sub" >/dev/null   # populates .help/.exit cache on first sight of $sub
-        if [ "$(exit_for "$sub")" != "0" ]; then
-            unrunnable_commands=$((unrunnable_commands + 1))
-            BAD_COMMANDS="${BAD_COMMANDS}${file}:${lineno}: unknown-subcommand '${sub}' -- ${line}\n"
-            continue
-        fi
-
-        # Флаг-карта и требуемость позиционника — считаются ОДИН РАЗ на
-        # подкоманду и кэшируются (иначе N команд одной подкоманды пересчитывают
-        # одно и то же — доминирующие расходы при большом корпусе доков).
-        key="${sub//[^a-zA-Z0-9]/_}"
-        af_f="$CACHE_DIR/$key.allflags" vf_f="$CACHE_DIR/$key.valflags" req_f="$CACHE_DIR/$key.required"
-        if [ ! -f "$af_f" ]; then
-            HELP=$(help_for "$sub")
-            printf '%s\n' "$HELP" | grep -oE '^ {2,}--[a-zA-Z][a-zA-Z0-9-]* <[A-Z_]+>' | sed -E 's/^ *(--[a-zA-Z0-9-]+).*/\1/' | sort -u > "$vf_f"
-            BOOL_FLAGS=$(printf '%s\n' "$HELP" | grep -oE '^ {2,}--[a-zA-Z][a-zA-Z0-9-]*$' | sed -E 's/^ *//' | sort -u)
-            printf '%s\n%s\n' "$(cat "$vf_f")" "$BOOL_FLAGS" | grep -v '^$' | sort -u > "$af_f"
-            ARGS_BLOCK=$(printf '%s\n' "$HELP" | awk '/^Arguments:/{f=1;next}/^Options:/{f=0}f')
-            req=0
-            printf '%s\n' "$ARGS_BLOCK" | grep -qE '^ *<[A-Za-z_]+>' && req=1
-            printf '%s\n' "$ARGS_BLOCK" | grep -qi 'required\|at least one' && req=1
-            echo "$req" > "$req_f"
-        fi
-        VALUE_FLAGS=$(cat "$vf_f")
-        ALL_FLAGS=$(cat "$af_f")
-        required=$(cat "$req_f")
-
-        problem=""
-        has_positional=0
-        skip_next=0
-        for ((i = 2; i < ${#tok[@]}; i++)); do
-            t="${tok[$i]}"
-            if [ "$skip_next" = "1" ]; then
-                skip_next=0
-                continue
-            fi
-            if [[ "$t" == --* ]]; then
-                fname="${t%%=*}"
-                if ! printf '%s\n' "$ALL_FLAGS" | grep -qxF -- "$fname"; then
-                    problem="${problem}unknown-flag(${fname}) "
-                elif printf '%s\n' "$VALUE_FLAGS" | grep -qxF -- "$fname" && [[ "$t" != *=* ]]; then
-                    skip_next=1
-                fi
-            else
-                has_positional=1
-            fi
-        done
-
-        if [ "$required" = "1" ] && [ "$has_positional" = "0" ]; then
-            problem="${problem}missing-required-positional "
-        fi
-
-        if [ -n "$problem" ]; then
-            unrunnable_commands=$((unrunnable_commands + 1))
-            BAD_COMMANDS="${BAD_COMMANDS}${file}:${lineno}: ${problem}-- ${line}\n"
-        fi
-    done <<< "$CANDIDATES"
+    skipped_commands=$(sed -n 's/^skipped_commands=//p' "$PY_TMP")
+    unrunnable_commands=$(sed -n 's/^unrunnable_commands=//p' "$PY_TMP")
+    BAD_COMMANDS=$(sed -n 's/^BADCMD://p' "$PY_TMP")
+    rm -f "$PY_TMP"
+    case "$skipped_commands" in ''|*[!0-9]*) echo "check-doc-truth: FAIL — ядро не вернуло skipped_commands" >&2; exit 1;; esac
+    case "$unrunnable_commands" in ''|*[!0-9]*) echo "check-doc-truth: FAIL — ядро не вернуло unrunnable_commands" >&2; exit 1;; esac
 fi
 
 # ---------- вердикт (храповик, две метрики) ----------
@@ -255,7 +177,7 @@ if [ -n "$BAD_MARKERS" ]; then
 fi
 if [ -n "$BAD_COMMANDS" ]; then
     echo "check-doc-truth: КОМАНДЫ, которые не запустятся как написаны:" >&2
-    printf '%b' "$BAD_COMMANDS" | sed 's/^/    /' >&2
+    printf '%s\n' "$BAD_COMMANDS" | sed 's/^/    /' >&2
 fi
 [ -n "$BIN" ] && echo "check-doc-truth: команд из code-fence всего проверено; пропущено (плейсхолдер/shell-конструкция)=$skipped_commands"
 
