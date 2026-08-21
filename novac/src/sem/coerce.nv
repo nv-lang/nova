@@ -52,7 +52,7 @@ export type CoercePair value {
 /// hundreds of pairs the fix is an index, not a guess made now.
 export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
     for p in ctx.coerces {
-        if raw_ty(p.from_id) == raw_ty(from) && raw_ty(p.to_id) == raw_ty(to) { return Some(p.via_row) }
+        if p.from_id == from && p.to_id == to { return Some(p.via_row) }
     }
     None
 }

@@ -89,21 +89,21 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
     match a {
         CalleeFn(x) => {
             match b {
-                CalleeFn(y) => raw_row(x) == raw_row(y)
+                CalleeFn(y) => x == y
                 CalleeVariant(_) => false
                 CalleeCtor(_) => false
             }
         }
         CalleeVariant(x) => {
             match b {
-                CalleeVariant(y) => raw_vrow(x) == raw_vrow(y)
+                CalleeVariant(y) => x == y
                 CalleeFn(_) => false
                 CalleeCtor(_) => false
             }
         }
         CalleeCtor(x) => {
             match b {
-                CalleeCtor(y) => raw_ty(x) == raw_ty(y)
+                CalleeCtor(y) => x == y
                 CalleeFn(_) => false
                 CalleeVariant(_) => false
             }
@@ -199,7 +199,7 @@ export fn CheckOut mut @record_type(id int, t TyId) -> ()
     requires id >= 0 && id < @types.len(), "sem: channel asked about a node outside this file's id space"
 {
     ro prev = @types[id]
-    assert(!is_ty(prev) || raw_ty(prev) == raw_ty(t), "sem: a node was typed twice with different answers")
+    assert(!is_ty(prev) || prev == t, "sem: a node was typed twice with different answers")
     @types[id] = t
 }
 

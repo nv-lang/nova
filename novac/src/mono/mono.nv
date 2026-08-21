@@ -203,11 +203,11 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
 #realtime nogc
 fn instance_absent(inst []Instance, subst []TyId, row FnRow, args []TyId) -> bool {
     for it in inst {
-        if raw_row(it.row) != raw_row(row) { continue }
+        if it.row != row { continue }
         if it.subst_cnt != args.len() { continue }
         mut same = true
         for i in 0..args.len() {
-            if raw_ty(subst[it.subst_off + i]) != raw_ty(args[i]) {
+            if subst[it.subst_off + i] != args[i] {
                 same = false
             } else {
                 // Equal in this slot: nothing to record, the verdict is what
@@ -225,7 +225,7 @@ fn instance_absent(inst []Instance, subst []TyId, row FnRow, args []TyId) -> boo
 #realtime nogc
 fn has_row_instance(inst []Instance, row FnRow) -> bool {
     for it in inst {
-        if raw_row(it.row) == raw_row(row) { return true }
+        if it.row == row { return true }
     }
     false
 }

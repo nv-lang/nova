@@ -12,7 +12,7 @@ test "interning: structurally equal terms get ONE id — equality of ids is equa
     ro vec_decl = DeclId(7)
     ro a = it.app(vec_decl, []TyId.of(int_t))
     ro b = it.app(vec_decl, []TyId.of(int_t))
-    assert(raw_ty(a) == raw_ty(b))
+    assert(a == b)
     assert(it.rows.len() == 2) // int, Vec[int] — the second app did not add a row
 }
 
@@ -23,9 +23,9 @@ test "interning: different arguments are different types — Vec[int] is not Vec
     ro vec_decl = DeclId(7)
     ro vi = it.app(vec_decl, []TyId.of(int_t))
     ro vs = it.app(vec_decl, []TyId.of(str_t))
-    assert(raw_ty(vi) != raw_ty(vs))
+    assert(vi != vs)
     assert(it.head_of(vi) == it.head_of(vs)) // same constructor …
-    assert(raw_ty(it.arg(vi, 0)) != raw_ty(it.arg(vs, 0))) // … different arguments
+    assert(it.arg(vi, 0) != it.arg(vs, 0)) // … different arguments
 }
 
 test "interning: nesting is a term, not a name — Vec[Vec[int]] has one argument which is Vec[int]" {
@@ -35,8 +35,8 @@ test "interning: nesting is a term, not a name — Vec[Vec[int]] has one argumen
     ro vi = it.app(vec_decl, []TyId.of(int_t))
     ro vvi = it.app(vec_decl, []TyId.of(vi))
     assert(it.arg_count(vvi) == 1)
-    assert(raw_ty(it.arg(vvi, 0)) == raw_ty(vi))
-    assert(raw_ty(vvi) != raw_ty(vi))
+    assert(it.arg(vvi, 0) == vi)
+    assert(vvi != vi)
 }
 
 test "interning: the empty-argument application is the same door as generics" {
@@ -44,7 +44,7 @@ test "interning: the empty-argument application is the same door as generics" {
     ro d = DeclId(3)
     ro a = it.app(d, []TyId.new())
     ro b = it.app(d, []TyId.new())
-    assert(raw_ty(a) == raw_ty(b))
+    assert(a == b)
     assert(it.arg_count(a) == 0)
 }
 
@@ -52,7 +52,7 @@ test "identity: a record and a sum with the same DeclId are still different type
     mut it = Interner.new()
     ro r = it.record(5)
     ro s = it.sum(5)
-    assert(raw_ty(r) != raw_ty(s))
+    assert(r != s)
 }
 
 test "subst: Param{i} becomes args[i]; nothing else changes; the result is interned" {
@@ -64,8 +64,8 @@ test "subst: Param{i} becomes args[i]; nothing else changes; the result is inter
     ro pair_decl = DeclId(9)
     ro pair_p = it.app(pair_decl, []TyId.of(p0, p1)) // Pair[A, B]
     ro pair_c = it.subst(pair_p, []TyId.of(int_t, str_t)) // Pair[int, str]
-    assert(raw_ty(it.arg(pair_c, 0)) == raw_ty(int_t))
-    assert(raw_ty(it.arg(pair_c, 1)) == raw_ty(str_t))
+    assert(it.arg(pair_c, 0) == int_t)
+    assert(it.arg(pair_c, 1) == str_t)
     // interned: substituting again gives the SAME id
     assert(raw_ty(it.subst(pair_p, []TyId.of(int_t, str_t))) == raw_ty(pair_c))
     // a term without Param is returned unchanged, same id
@@ -80,7 +80,7 @@ test "subst: nested — Vec[Param0] with [int] is Vec[int], and it is the intern
     ro vp = it.app(vec_decl, []TyId.of(p0))
     ro vi_direct = it.app(vec_decl, []TyId.of(int_t))
     ro vi_subst = it.subst(vp, []TyId.of(int_t))
-    assert(raw_ty(vi_subst) == raw_ty(vi_direct))
+    assert(vi_subst == vi_direct)
 }
 
 test "concreteness: layout's question — Param and Infer are not concrete, and it is deep" {

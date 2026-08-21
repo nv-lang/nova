@@ -921,19 +921,19 @@ fn Checker @has_printer(t TyId) -> bool => @is_printable_carrier(carrier_of(@ctx
 /// (`println(Row(7))` prints 7, which is what the oracle does), so the peel
 /// happens once, here, and not at each of the four comparisons.
 fn Checker @is_printable_carrier(t TyId) -> bool =>
-    raw_ty(t) == raw_ty(@ctx.prims.int_id) || raw_ty(t) == raw_ty(@ctx.prims.str_id) ||
-    raw_ty(t) == raw_ty(@ctx.prims.bool_id) || raw_ty(t) == raw_ty(@ctx.prims.f64_id)
+    t == @ctx.prims.int_id || t == @ctx.prims.str_id ||
+    t == @ctx.prims.bool_id || t == @ctx.prims.f64_id
 
 /// The two types arithmetic and ordering accept in the subset.
 fn Checker @is_numeric(t TyId) -> bool =>
-    raw_ty(t) == raw_ty(@ctx.prims.int_id) || raw_ty(t) == raw_ty(@ctx.prims.f64_id)
+    t == @ctx.prims.int_id || t == @ctx.prims.f64_id
 
 /// Every primitive of novac's universe -- equality accepts any of them, as
 /// long as both sides are the SAME one (mixed-type equality is a conversion
 /// question the subset does not answer).
 fn Checker @is_primitive(t TyId) -> bool =>
-    raw_ty(t) == raw_ty(@ctx.prims.int_id) || raw_ty(t) == raw_ty(@ctx.prims.f64_id) ||
-    raw_ty(t) == raw_ty(@ctx.prims.bool_id) || raw_ty(t) == raw_ty(@ctx.prims.str_id)
+    t == @ctx.prims.int_id || t == @ctx.prims.f64_id ||
+    t == @ctx.prims.bool_id || t == @ctx.prims.str_id
 
 /// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
 /// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)

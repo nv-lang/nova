@@ -117,7 +117,7 @@ test "the COLLECTOR gives a type parameter a type, so an instance can be named" 
             ro pt = ctx.fns.params[ctx.fns.rows[raw_row(row)].param_off].type_id
             assert(is_ty(pt))
             assert(ctx.tys.kind_of(pt) == TypeKind.TkParam)
-            assert(raw_ty(ctx.fns.rows[raw_row(row)].ret_id) == raw_ty(pt))
+            assert(ctx.fns.rows[raw_row(row)].ret_id == pt)
             // And the instance is nameable: the substitution decides both the
             // parameter and the return in the emitted name.
             ro at_int = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.int_id))

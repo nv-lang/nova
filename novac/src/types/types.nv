@@ -339,7 +339,7 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
                 ro s = @subst(a, args)
                 // A flag that only ever turns on is an expression (P31): the branch
         // that would say "still equal, nothing changes" carries no work.
-        changed = changed || raw_ty(s) != raw_ty(a)
+        changed = changed || s != a
                 new_args.push(s)
             }
             if !changed { return same_ty(t) }

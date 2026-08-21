@@ -101,7 +101,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         // and an exhaustiveness count learns nothing from them.
         match @ctx.defs.rows[d].target {
             DefVariant(vrow) => {
-                covered += if raw_ty(@ctx.variant_rows[raw_vrow(vrow)].sum_id) == raw_ty(scr_t) { 1 } else { 0 }
+                covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
             }
             DefType(_) => return
             DefFn(_) => return

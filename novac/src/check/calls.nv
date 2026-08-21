@@ -76,7 +76,7 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
     ro fd = @ctx.fns.rows[raw_row(row)]
     for i in 0..key.len() {
         ro want = @ctx.fns.params[fd.param_off + i]
-        if raw_ty(want.type_id) == raw_ty(key[i].type_id) { continue }
+        if want.type_id == key[i].type_id { continue }
         match coerce_row(@ctx, key[i].type_id, want.type_id) {
             // D429: a pair IS declared for this position, so the call is legal
             // Nova -- the value coerces through that method. What novac lacks
@@ -134,7 +134,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     } else {
         // One argument: its TYPE decides.
     }
-    if raw_ty(args[0].type_id) != raw_ty(representation_of(@ctx, type_id)) {
+    if args[0].type_id != representation_of(@ctx, type_id) {
         @report_first_leaf_of(kids,
             "outside the subset: this argument is not the newtype's representation")
         return
