@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// D55 amend 2026-08-21 (owner's decision): the NEWTYPE half of the "obvious
+// single-wrapper coercion" applies to untyped constants only. A typed variable
+// (or an expression over one) no longer wraps itself into a newtype — that is
+// the one claim a newtype exists to demand, and a wrapper that puts itself on
+// is not a wrapper. The sum half is untouched: there the compiler DERIVES the
+// only possible tag, here it would INVENT the author's meaning.
+//
+// The boundary is Go's, which D52 cites by name ("привычнее программистам с
+// фоном Go"): an untyped constant converts implicitly, a typed variable does
+// not. Canon forms are in the positive fixture,
+// spec_tests/conformance/d55_literal_coercion.nv — `D55UserId(n)` or
+// `n as D55UserId`.
+module neg.d55_newtype_var_coercion_neg
+
+type NegRow int
+
+fn take_row(r NegRow) -> int => r as int
+
+test "typed variable does not wrap itself into a newtype" {
+    ro n = 100
+    // nova:expect E7301 -- D55 amend 2026-08-21: a typed variable needs `NegRow(n)` or `n as NegRow`
+    ro r NegRow = n
+    assert((r as int) == 100)
+    ro _ = take_row(n)
+}

@@ -19555,8 +19555,22 @@ impl<'a> TypeCheckCtx<'a> {
                     // second int-family variant) or no match (0) → no
                     // auto-wrap, fall through to the direct verdict.
                     if matches.len() == 1 {
-                        let (_, inner_ty) = matches[0];
-                        return self.assignable_direct(expr, inner_ty, expr_gs, exp_gs, scope);
+                        let (target, inner_ty) = matches[0];
+                        // D55 amend 2026-08-21: NEWTYPE-половина — только для
+                        // нетипизированных констант (см. `is_untyped_const_expr`).
+                        // Типизированная переменная или выражение требует
+                        // явного `Row(i)` / `i as Row`. Сумму не трогаем: там
+                        // тег ВЫВОДИТСЯ, здесь утверждение ПРИДУМЫВАЛОСЬ.
+                        //
+                        // НЕ `return` — падаем дальше, к `#coerce`: автор,
+                        // которому нужна прежняя мягкость, объявляет пару сам
+                        // (D429), и этот путь обязан остаться для него живым.
+                        let newtype_refused = matches!(target, WrapTarget::Newtype(_))
+                            && !is_untyped_const_expr(expr)
+                            && !d55_newtype_strict_disabled();
+                        if !newtype_refused {
+                            return self.assignable_direct(expr, inner_ty, expr_gs, exp_gs, scope);
+                        }
                     }
                 }
             }
@@ -25357,6 +25371,49 @@ pub(crate) enum WrapTarget {
 /// any one context's concrete map shape, so BOTH `assignable` — the
 /// ACCEPT side — and the `annotate_sum_wrap` REWRITE pass — the emit side
 /// — call the exact same decision function).
+/// D55 amend 2026-08-21 (решение владельца): «untyped constant» в смысле Go —
+/// единственная форма, которую NEWTYPE-половина single-wrapper коэрсии
+/// продолжает оборачивать сама.
+///
+/// ЗАЧЕМ. Амендмент 2026-07-12 расширил правило с литералов на переменные и
+/// произвольные выражения, и на этом newtype перестал быть обёрткой: в сумму
+/// коэрсия ВЫВОДИТ тег (кандидат ровно один — автор написал бы то же самое), а
+/// в newtype она ПРИДУМЫВАЕТ утверждение «это число — строка реестра», ровно
+/// то, ради требования которого newtype и заводят. Обёртка, которая надевается
+/// сама, не обёртка.
+///
+/// ГРАНИЦА ВЗЯТА У GO, на который D52 ссылается прямо («привычнее
+/// программистам с фоном Go»): неявно конвертируется НЕТИПИЗИРОВАННАЯ
+/// КОНСТАНТА, а типизированная переменная — нет. До этой правки Nova
+/// заимствовала форму, но сдвинула границу: замер 2026-08-21 —
+/// `ro i int = 7; take_row(i)` и даже `take_row(i + 1)` принимались молча.
+///
+/// Константа здесь — литерал, унарный минус/`!`/`~` над константой и
+/// арифметика двух констант (`2 + 3`), то есть в точности то, что автор
+/// написал на месте. `"a${x}b"` константой НЕ считается: строка собирается в
+/// рантайме из значений, и молча стать `Email` она не должна.
+fn is_untyped_const_expr(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::CharLit(_) => true,
+        ExprKind::Unary { operand, .. } => is_untyped_const_expr(operand),
+        ExprKind::Binary { left, right, .. } => {
+            is_untyped_const_expr(left) && is_untyped_const_expr(right)
+        }
+        _ => false,
+    }
+}
+
+/// D55 amend 2026-08-21: выключатель для доказательства правки на ОДНОМ
+/// бинаре (правило приёмки — базовая линия снимается kill-switch'ем, а не
+/// вторым бинарём). `NOVA_KILL_D55NT=1` возвращает поведение до правки.
+fn d55_newtype_strict_disabled() -> bool {
+    std::env::var("NOVA_KILL_D55NT").map(|v| v == "1").unwrap_or(false)
+}
+
 fn single_wrap_candidates(
     lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
     expected: &TypeRef,
@@ -25977,9 +26034,18 @@ fn collect_coerce_pairs(
         // R11: pair already covered by the built-in single-wrapper coercion
         // (newtype-over-I / sum-with-one-unary-I-variant) — reuse the SAME
         // decision function `assignable`'s single-wrap fallback calls.
+        // D55 amend 2026-08-21: NEWTYPE больше не покрыт встроенным механизмом
+        // для типизированных значений — покрыты только константы. Значит пара
+        // `int → Row` БОЛЬШЕ НЕ дубль, и `#coerce` для неё обязан объявляться:
+        // это и есть выход для автора, которому нужна прежняя мягкость. Иначе
+        // правило ужесточили бы, а дверь оставили запертой. Сумма покрыта
+        // по-прежнему целиком — там R11 действует без изменений.
         let wrap_candidates = single_wrap_candidates(lookup, &output_ty);
         if let Some((target, _inner)) = wrap_candidates
             .iter()
+            .filter(|(t, _)| {
+                !matches!(t, WrapTarget::Newtype(_)) || d55_newtype_strict_disabled()
+            })
             .find(|(_, inner)| simple_named_type_name(inner).as_deref() == Some(input_name.as_str()))
         {
             let what = match target {
@@ -49157,7 +49223,9 @@ impl MapLitCtx {
                         // against an EXPLICIT `expected` (not a same-role peer inferred
                         // from an earlier, unannotated element — there is no wrap TARGET
                         // to lift into in that case).
-                        if expected.is_some() && self.is_single_wrap_eligible(&this, prev) {
+                        if expected.is_some()
+                            && self.is_single_wrap_eligible(&this, prev, is_untyped_const_expr(ex))
+                        {
                             continue;
                         }
                         let hint = if role == "value" {
@@ -49193,7 +49261,11 @@ impl MapLitCtx {
     /// single-wrap fallback exactly (`single_wrap_candidates` +
     /// `wrap_kind_of`, exactly-one-match required) — reuses that decision,
     /// does not reimplement it.
-    fn is_single_wrap_eligible(&self, this: &TypeRef, target: &TypeRef) -> bool {
+    /// `value_is_const` — D55 amend 2026-08-21: элемент литерала является
+    /// нетипизированной константой. Newtype-кандидаты учитываются ТОЛЬКО для
+    /// константы, иначе решение здесь разошлось бы с `assignable`, и один и
+    /// тот же `[k: v]` принимался бы в map-литерале и отвергался в аргументе.
+    fn is_single_wrap_eligible(&self, this: &TypeRef, target: &TypeRef, value_is_const: bool) -> bool {
         let lookup = |n: &str| self.wrap_types.get(n).cloned();
         let candidates = single_wrap_candidates(&lookup, target);
         if candidates.is_empty() {
@@ -49202,6 +49274,11 @@ impl MapLitCtx {
         let this_kind = wrap_kind_of(this, &lookup, 0);
         candidates
             .iter()
+            .filter(|(t, _)| {
+                value_is_const
+                    || d55_newtype_strict_disabled()
+                    || !matches!(t, WrapTarget::Newtype(_))
+            })
             .filter(|(_, inner)| wrap_kind_of(inner, &lookup, 0) == this_kind)
             .count()
             == 1
