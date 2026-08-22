@@ -299,6 +299,35 @@ impl CEmitter {
             Self::a4_collect_poisoned_from_resolved(rt, &mut poisoned);
         }
 
+        // (b2) variant-name collisions. When two sums declare the same variant
+        // name, the emitter's variant->sum resolution is first-wins and can name
+        // the WRONG sum for an expression's C type (`find_variant_compat`, and the
+        // `crossmod_samename_method_lastwins` fixture is exactly that shape). While
+        // both sums were heap pointers the emitter papered over it with an explicit
+        // `(Nova_X*)` cast; an inline value cannot be cast that way, so the latent
+        // mis-resolution turns into "assigning to NovaValue_A from NovaValue_B".
+        // Fixing the resolution is not this atom's job, so an ambiguous sum stays
+        // on the heap.
+        {
+            let mut variant_owner: HashMap<String, String> = HashMap::new();
+            for item in &module.items {
+                let Item::Type(t) = item else { continue };
+                let TypeDeclKind::Sum(variants) = &t.kind else { continue };
+                for v in variants {
+                    match variant_owner.get(&v.name) {
+                        Some(prev) if prev != &t.name => {
+                            poisoned.insert(prev.clone());
+                            poisoned.insert(t.name.clone());
+                        }
+                        Some(_) => {}
+                        None => {
+                            variant_owner.insert(v.name.clone(), t.name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
         // (c) candidates.
         for item in &module.items {
             let Item::Type(t) = item else { continue };
@@ -418,6 +447,30 @@ impl CEmitter {
             return format!("NovaValue_{}", sum_name);
         }
         format!("Nova_{}*", sum_name)
+    }
+
+    /// A4: `sum as int` yields the DISCRIMINANT (D52, spec 02-types.md:331).
+    /// The pointer form re-casts and reads `->tag`; an inline value sum reads
+    /// `.tag` off the value with no cast at all. Without this the value form
+    /// falls through to a plain C cast of a struct to an integer, which is not
+    /// C -- caught by `d52_sumint`'s `D52Red as int == 0`.
+    pub(super) fn a4_sum_as_int_cast(
+        &self,
+        inner_c_ty: &str,
+        target_c: &str,
+        v: &str,
+    ) -> Option<String> {
+        let bare = inner_c_ty.strip_prefix("NovaValue_")?;
+        if inner_c_ty.ends_with('*') || !self.value_sum_names.contains(bare) {
+            return None;
+        }
+        if !matches!(target_c,
+            "nova_int" | "int64_t" | "int32_t" | "int16_t" | "int8_t"
+            | "nova_uint" | "uint64_t" | "uint32_t" | "uint16_t" | "nova_byte" | "uint8_t")
+        {
+            return None;
+        }
+        Some(format!("(({})(({}).tag))", target_c, v))
     }
 
     /// A4: an inline payload-less sum IS its tag, so equality is a tag compare on
