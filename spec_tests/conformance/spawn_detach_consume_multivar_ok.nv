@@ -15,26 +15,15 @@ type Mv379Half consume {
 fn Mv379Half.new(id int) -> Mv379Half => { id }
 fn Mv379Half consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
-// #672 form (1) (2026-08-21): the pump helpers below take OWNERSHIP of their
-// arguments, so they owe a release. Until provenance was recorded per
-// binding, a `consume` parameter was freed by the D432 exemption that the
-// codegen does not back for it, and these three helpers leaked silently.
-fn Mv379Half consume @close() -> () => ()
-
 fn mv379_pump2(consume x Mv379Half, consume y Mv379Half) -> () {
     ro _a = x.id
     ro _b = y.id
-    x.close()
-    y.close()
 }
 
 fn mv379_pump3(consume x Mv379Half, consume y Mv379Half, consume z Mv379Half) -> () {
     ro _a = x.id
     ro _b = y.id
     ro _c = z.id
-    x.close()
-    y.close()
-    z.close()
 }
 
 // №TBD fix probe: a consume-param call INSIDE the fiber body, on a binding
@@ -48,7 +37,6 @@ fn mv379_pump3(consume x Mv379Half, consume y Mv379Half, consume z Mv379Half) ->
 // a single-var spawn/detach-consume's captured binding.
 fn mv379_pump1(consume x Mv379Half) -> () {
     ro _a = x.id
-    x.close()
 }
 
 test "spawn consume a, b { ... } — two consume-typed bindings, both moved into the child" {

@@ -3926,29 +3926,6 @@ struct TypeCheckCtx<'a> {
     /// Закрывает D175 §«binding dominates» — Rust-style rule.
     /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
     ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
-    /// №717 (решение владельца 2026-08-21): **`ro` ЗАРАЖАЕТ ТОЛЬКО
-    /// ПО АЛИАСУ.** Здесь лежат ЛОКАЛИ, чьё значение есть ПСЕВДОНИМ
-    /// ro-источника (`ro al = v`, `ro f = v.field`, `ro e = v[i]`) — и
-    /// только они. Локаль, связанная со СВЕЖИМ значением (вызов,
-    /// литерал, конструктор, арифметика) — ОБЫЧНАЯ, сколько бы
-    /// немутабельной ни была её привязка.
-    ///
-    /// Почему это ОТДЕЛЬНОЕ множество, а не `ro_binding_names`: там
-    /// лежат ВСЕ немутабельные привязки. Замер 2026-08-20 это и
-    /// доказал: стоило сделать локали видимыми проверке возврата —
-    /// `nova check std/src` дал `PASS: 3  FAIL: 177`, **773** срабатывания
-    /// `E_READONLY_COERCE` при каноне 26, потому что проверка превращалась
-    /// в «нельзя возвращать ни одну ro-локаль», а `ro x = …` — обычная
-    /// форма записи в Nova (`collections/vec/mutate.nv:133` возвращает
-    /// `removed` — СВЕЖЕЕ снятое значение, ничей не псевдоним).
-    ///
-    /// Живёт на всю ФУНКЦИЮ, а не на блок — и это ЗАКРЫТИЕ ДЫРЫ (3)
-    /// ПОРЯДОК: `f1_block` восстанавливает `ro_binding_names` на выходе
-    /// (и правильно делает), а проверка хвоста идёт ПОСЛЕ него —
-    /// поэтому происхождение биндинга запоминается ОДИН РАЗ, в момент
-    /// заведения, и не зависит от того, кто кого восстанавливает. Тот же
-    /// приём, что и `BindingOrigin` в №672, и это не совпадение.
-    ro_alias_names: std::cell::RefCell<std::collections::HashSet<String>>,
     /// №309/№317 (221.1, окно p-ovl-channel): mirror of `ro_binding_names`
     /// for `consume`-bound identifiers — set of local names whose CURRENT
     /// binding was introduced via `consume x = ...` (`LetDecl.consume`) or a
@@ -4982,7 +4959,6 @@ impl<'a> TypeCheckCtx<'a> {
             current_fn_generics: std::cell::RefCell::new(Vec::new()),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
-            ro_alias_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             consume_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             mut_ref_param_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             user_shadowed_generic_types,
@@ -8774,10 +8750,6 @@ impl<'a> TypeCheckCtx<'a> {
         };
         let ro_snap_fn: std::collections::HashSet<String> =
             self.ro_binding_names.borrow().clone();
-        // №717: алиас-провенанс живёт РОВНО одну функцию: имена
-        // локалей одной функции не должны ничего значить в следующей.
-        let ro_alias_snap_fn: std::collections::HashSet<String> =
-            std::mem::take(&mut *self.ro_alias_names.borrow_mut());
         if is_entry_fn {
             for p in &fd.params {
                 // Add non-mut, non-consume params to ro_binding_names so
@@ -8839,9 +8811,7 @@ impl<'a> TypeCheckCtx<'a> {
                     self.check_closure_scalar_return(e, ret, errors);
                     // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б,
                     // 2026-07-23): 3rd position of the norm — RETURN.
-                    // №717 дыра (2): через хвостовое семейство — хвост ветви
-                    // if/match тоже есть возврат.
-                    self.check_ro_launder_tail(e, ret, &scope, errors);
+                    self.check_ro_launder_return(e, ret, &scope, errors);
                     self.materialize_literal_coercion(e, ret);
                     // №658: return is a DEFINITE expected-type position, but the
                     // return-compat path never runs `assignable` (see the doc
@@ -8863,8 +8833,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // dedicated block above `check_closure_scalar_return`'s definition).
                         self.check_closure_scalar_return(trailing, ret, errors);
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
-                        // №717 дыра (2): см. `check_ro_launder_tail`.
-                        self.check_ro_launder_tail(trailing, ret, &scope, errors);
+                        self.check_ro_launder_return(trailing, ret, &scope, errors);
                         self.materialize_literal_coercion(trailing, ret);
                         // №658: implicit tail return — same fill as the
                         // arrow-body site above.
@@ -8927,8 +8896,6 @@ impl<'a> TypeCheckCtx<'a> {
         // added — function scopes are independent; param names from one fn
         // must not bleed into the next fn's checks.
         *self.ro_binding_names.borrow_mut() = ro_snap_fn;
-        // №717: тот же рубеж для алиас-провенанса.
-        *self.ro_alias_names.borrow_mut() = ro_alias_snap_fn;
         // №309/№317: restore consume_binding_names symmetrically.
         *self.consume_binding_names.borrow_mut() = consume_snap_fn;
         // Plan 172.5 (D326 R10): restore the enclosing fn's mut-ref-param set.
@@ -9259,21 +9226,6 @@ impl<'a> TypeCheckCtx<'a> {
                     set.remove(&name);
                     if !d.mutable {
                         set.insert(name);
-                    }
-                }
-                // №717 (решение владельца 2026-08-21): АЛИАС-ПРОВЕНАНС.
-                // Немутабельная локаль, чьё значение — МЕСТО, укоренённое в
-                // ro-источнике, сама ro. Связанная со свежим значением — нет.
-                // Shadow-семантика та же, что у `ro_binding_names` выше:
-                // каждый `let` замещает прежнюю запись имени.
-                if !provenance_disabled() {
-                    if let Some(name) = pattern_simple_name(&d.pattern) {
-                        let aliases_ro = !d.mutable && self.expr_aliases_ro_source(&d.value);
-                        let mut set = self.ro_alias_names.borrow_mut();
-                        set.remove(&name);
-                        if aliases_ro {
-                            set.insert(name);
-                        }
                     }
                 }
                 // №309/№317 (окно p-ovl-channel): track `consume x = ...`
@@ -19660,62 +19612,11 @@ impl<'a> TypeCheckCtx<'a> {
     /// frozen source. `-> ro T` is exempt (the return itself is frozen
     /// regardless of what's inside). Scalar-primitive exemption applies
     /// identically to the other two positions (see `is_bare_scalar_primitive`).
-    /// №717 (2026-08-21): АЛИАСИРУЕТ ЛИ выражение ro-источник.
-    ///
-    /// Алиас — это МЕСТО (place), укоренённое в ro-имени: само имя,
-    /// его поле, его элемент. ВСЁ ОСТАЛЬНОЕ — СВЕЖЕЕ значение: вызов
-    /// (включая `vec.remove(i)` — тот самый `removed` из замера 2026-08-20),
-    /// литерал, конструктор, арифметика, копия. Именно этот различитель
-    /// и отделяет 26 от 773.
-    fn expr_aliases_ro_source(&self, e: &Expr) -> bool {
-        match &e.kind {
-            ExprKind::Ident(n) => {
-                self.ro_binding_names.borrow().contains(n)
-                    || self.ro_alias_names.borrow().contains(n)
-            }
-            ExprKind::Member { obj, .. } => self.expr_aliases_ro_source(obj),
-            ExprKind::Index { obj, .. } => self.expr_aliases_ro_source(obj),
-            ExprKind::RefArg(inner) => self.expr_aliases_ro_source(inner),
-            _ => false,
-        }
-    }
-
-    /// №717: имя связано с ro-источником — либо это не-`mut` параметр
-    /// (P7 freeze, D176-дефолт), либо локаль-псевдоним ro-источника.
-    fn name_is_ro_source(&self, name: &str) -> bool {
-        if self.ro_binding_names.borrow().contains(name) {
-            return true;
-        }
-        !provenance_disabled() && self.ro_alias_names.borrow().contains(name)
-    }
-
     fn check_ro_launder_return(
         &self,
         value: &Expr,
         ret: &TypeRef,
         scope: &HashMap<String, TypeRef>,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        self.check_ro_launder_return_at(value, ret, scope, false, errors)
-    }
-
-    /// №717 (2026-08-21): `alias_only` — судить ТОЛЬКО локали-псевдонимы
-    /// ro-источника, не трогая не-`mut` ПАРАМЕТРЫ.
-    ///
-    /// Новый обход хвостов ветвей (дыра (2)) несёт НОВОЕ правило —
-    /// алиасное — и НЕ распространяет задним числом СТАРОЕ правило
-    /// (параметр-в-возврате) на позиции, до которых оно раньше не
-    /// доходило. Замер назвал цену такого распространения точно: 27
-    /// срабатываний в std и 3 в nova-http, все — не-`mut` параметр в хвосте
-    /// ветви (`@min`/`@max`/`@clamp`/`@or`/`@fold`/`@plus`), то есть ровно то,
-    /// что решение владельца 2026-08-18 (вариант (в)) велит ВЫВОДИТЬ
-    /// как `ro`, а не отвергать. Вариант (в) в этом окне не реализован.
-    fn check_ro_launder_return_at(
-        &self,
-        value: &Expr,
-        ret: &TypeRef,
-        scope: &HashMap<String, TypeRef>,
-        alias_only: bool,
         errors: &mut Vec<Diagnostic>,
     ) {
         if ret.is_readonly() {
@@ -19724,12 +19625,7 @@ impl<'a> TypeCheckCtx<'a> {
         if let ExprKind::Ident(name) = &value.kind {
             let is_scalar = self.infer_expr_type(value, scope)
                 .map_or(false, |t| is_fully_stack_value(&t, &self.types));
-            let is_ro_source = if alias_only {
-                !provenance_disabled() && self.ro_alias_names.borrow().contains(name)
-            } else {
-                self.name_is_ro_source(name)
-            };
-            if !is_scalar && is_ro_source {
+            if !is_scalar && self.ro_binding_names.borrow().contains(name) {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_READONLY_COERCE] возврат `{name}` — источник связан как `ro` \
@@ -19748,83 +19644,6 @@ impl<'a> TypeCheckCtx<'a> {
                     value.span,
                 ));
             }
-        }
-    }
-
-    /// №717 ДЫРА (2) ОБХОД (2026-08-21): ХВОСТ В ПОЗИЦИИ ЗНАЧЕНИЯ — тоже
-    /// возврат, и его никто не отдавал `check_ro_launder_return`.
-    ///
-    /// `check_ro_launder_return_in_block` УЖЕ обходил `b.trailing`, но отдавал
-    /// его `..._in_expr`, который ищет только ВЛОЖЕННЫЕ `return` внутри
-    /// If/Match/While — голой `Ident`-хвост ветви до проверки не доходил
-    /// вовсе. Дописать вызов в лоб было нельзя: тот же `..._in_block`
-    /// зовётся и для тела `while`, где хвост возвратом НЕ является.
-    /// Ответ — ПОМЕТКА ПОЗИЦИИ: это отдельное семейство, которое зовётся
-    /// ТОЛЬКО от хвоста тела функции и спускается только в те ветвления,
-    /// чей хвост сам стоит в позиции значения (if / match / блок).
-    /// Циклы сюда намеренно НЕ входят.
-    fn check_ro_launder_tail(
-        &self,
-        e: &Expr,
-        ret: &TypeRef,
-        scope: &HashMap<String, TypeRef>,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        self.check_ro_launder_tail_at(e, ret, scope, false, errors)
-    }
-
-    fn check_ro_launder_tail_at(
-        &self,
-        e: &Expr,
-        ret: &TypeRef,
-        scope: &HashMap<String, TypeRef>,
-        in_branch: bool,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        if provenance_disabled() {
-            if !in_branch {
-                self.check_ro_launder_return(e, ret, scope, errors);
-            }
-            return;
-        }
-        match &e.kind {
-            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
-                self.check_ro_launder_tail_block(then, ret, scope, errors);
-                if let Some(eb) = else_ {
-                    match eb {
-                        ElseBranch::Block(b) =>
-                            self.check_ro_launder_tail_block(b, ret, scope, errors),
-                        ElseBranch::If(x) =>
-                            self.check_ro_launder_tail_at(x, ret, scope, true, errors),
-                    }
-                }
-            }
-            ExprKind::Match { arms, .. } => {
-                for arm in arms {
-                    match &arm.body {
-                        MatchArmBody::Expr(x) =>
-                            self.check_ro_launder_tail_at(x, ret, scope, true, errors),
-                        MatchArmBody::Block(b) =>
-                            self.check_ro_launder_tail_block(b, ret, scope, errors),
-                    }
-                }
-            }
-            ExprKind::Block(b) => self.check_ro_launder_tail_block(b, ret, scope, errors),
-            _ => self.check_ro_launder_return_at(e, ret, scope, in_branch, errors),
-        }
-    }
-
-    /// Хвост блока-ветви — всегда ВЕТВЬ (единственный вызов не из ветви —
-    /// это само тело функции, и оно идёт через `check_ro_launder_tail`).
-    fn check_ro_launder_tail_block(
-        &self,
-        b: &Block,
-        ret: &TypeRef,
-        scope: &HashMap<String, TypeRef>,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        if let Some(t) = &b.trailing {
-            self.check_ro_launder_tail_at(t, ret, scope, true, errors);
         }
     }
 
@@ -39044,12 +38863,7 @@ impl LinearityRegistry {
             }
         }
 
-        LinearityRegistry {
-            consume_levels,
-            consume_methods,
-            local_type_names,
-            cleanup_effect_rows,
-        }
+        LinearityRegistry { consume_levels, consume_methods, local_type_names, cleanup_effect_rows }
     }
 
     /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
@@ -40442,132 +40256,6 @@ fn consume_pattern_names_with_mut(p: &Pattern, out: &mut Vec<(String, bool)>) {
     }
 }
 
-/// №672/№717 (2026-08-21): ВЫКЛЮЧАТЕЛЬ обеих правок — один на две,
-/// потому что механизм один (per-binding provenance).
-///
-/// `NOVA_KILL_PROVENANCE=1` возвращает ПРЕЖНЕЕ поведение НА ТОМ ЖЕ
-/// БИНАРЕ: исключение D432 снова раздаётся всем, кроме arm-паттерна
-/// (№667), новые точки заведения обязательств молчат, а ro-алиасное
-/// правило №717 не действует. Нужен ровно для приёмки «доказано в обе
-/// стороны»: каждая новая фикстура под ним обязана краснеть.
-/// №672 форма (5): параметр замыкания / хендлер-опа вместе с тем,
-/// что терял прежний `ctx.declare(p, None)`: ФЛАГ `consume` и ТИП.
-/// Без них не заводилось обязательство даже для строго линейного
-/// типа, и был мёртв D157-запрет view.
-struct ClosureParamInfo {
-    name: String,
-    ty: Option<String>,
-    consume: bool,
-}
-
-impl ClosureParamInfo {
-    /// Из полного `Param` (ClosureFull / Trailing::Fn) — есть и флаг, и тип.
-    fn from_param(pm: &Param) -> Self {
-        ClosureParamInfo {
-            name: pm.name.clone(),
-            ty: typeref_flat_name(&pm.ty),
-            consume: pm.consume,
-        }
-    }
-
-    /// Из опционально типизированного параметра (Lambda / хендлер-оп):
-    /// флага `consume` там нет в грамматике, тип — если написан.
-    fn typed(name: &str, ty: Option<&TypeRef>) -> Self {
-        ClosureParamInfo {
-            name: name.to_string(),
-            ty: ty.and_then(typeref_flat_name),
-            consume: false,
-        }
-    }
-
-    /// Без типа вовсе (`ClosureLight` — `|x| …`, D22-rev: типы там не
-    /// пишутся никогда). Прежнее поведение, честно названное: без
-    /// контекстного вывода типа здесь взять нечего.
-    fn untyped(name: &str) -> Self {
-        ClosureParamInfo { name: name.to_string(), ty: None, consume: false }
-    }
-}
-
-/// Плоское имя типа (односегментный `Named`) — та же best-effort
-/// форма, что уже используется для параметров функций (`pty`).
-fn typeref_flat_name(t: &TypeRef) -> Option<String> {
-    match t {
-        TypeRef::Named { path, .. } if path.len() == 1 => Some(path[0].clone()),
-        TypeRef::Readonly(inner, _) => typeref_flat_name(inner),
-        _ => None,
-    }
-}
-
-fn provenance_disabled() -> bool {
-    use std::sync::OnceLock;
-    static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| {
-        std::env::var("NOVA_KILL_PROVENANCE")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
-    })
-}
-
-/// №672 (реестр 221.1, решение владельца 2026-08-21):
-/// **PER-BINDING PROVENANCE** — ПРОИСХОЖДЕНИЕ обязательства потребления.
-///
-/// До него исключение D432 (авто-`@cleanup` снимает обязательство)
-/// раздавалось ПО ФОРМЕ ЗАПИСИ, через транзиентный флаг
-/// `arm_pattern_exit_check`: флаг взводился вокруг ОДНОГО вызова
-/// `check_obligations_at_exit` (arm-паттерн, №667), а остальные четыре
-/// формы биндинга шли мимо него и молча освобождались исключением,
-/// которого кодоген не подкрепляет — ресурс тёк без единого слова.
-///
-/// Теперь происхождение записывается НА КАЖДОМ БИНДИНГЕ в момент
-/// заведения (`declare_consume_binding`), и исключение D432 §2 спрашивает
-/// ИМЕННО его: `auto_cleanup_qualifies()` ниже — ЗЕРКАЛО
-/// одноимённого метода кодогена (`emit_c.rs::auto_cleanup_qualifies`:
-/// `decl.consume && matches!(decl.pattern, Pattern::Ident{..})`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BindingOrigin {
-    /// `consume X = e;` — bare `Stmt::Let` с `Pattern::Ident`. ЕДИНСТВЕННАЯ
-    /// форма, под которую кодоген реально армит `DeferEntry` с
-    /// авто-`@cleanup` (D432 §2) — и потому единственная, которую
-    /// исключение освобождает.
-    BareLet,
-    /// Форма (1) №672: `fn eat(consume r T)` — consume-параметр.
-    /// Вызывающий дизармит СВОЙ флаг при передаче, вызываемый не
-    /// чистит никогда — значит освобождать нельзя.
-    FnParam,
-    /// Форма (2) и arm-паттерн №667: биндинг из паттерна
-    /// (`Ok(consume r) => …`, `while Some(consume r) = …`).
-    Pattern,
-    /// Форма (4) №672: `consume out = consume s { … }` — результат-
-    /// биндинг consume-области (`Stmt::ConsumeScope`).
-    ConsumeScopeResult,
-    /// Форма (5) №672: параметр замыкания / хендлер-опа.
-    ClosureParam,
-    /// `for consume x in …` — переменная consume-цикла (D156).
-    /// В пятёрку №672 не входит, но кодоген её тоже не армит.
-    LoopVar,
-}
-
-impl BindingOrigin {
-    /// ЗЕРКАЛО `emit_c.rs::auto_cleanup_qualifies`: только bare
-    /// `Stmt::Let` с `Pattern::Ident` получает от кодогена авто-cleanup,
-    /// значит только она освобождается исключением D432 §2.
-    fn auto_cleanup_qualifies(self) -> bool {
-        matches!(self, BindingOrigin::BareLet)
-    }
-
-    /// Текст для диагностики: чем заведён биндинг.
-    fn describe(self) -> &'static str {
-        match self {
-            BindingOrigin::BareLet => "consume-биндинг `consume X = …`",
-            BindingOrigin::FnParam => "consume-параметр функции",
-            BindingOrigin::Pattern => "биндинг из паттерна",
-            BindingOrigin::ConsumeScopeResult => "результат-биндинг consume-области",
-            BindingOrigin::ClosureParam => "параметр замыкания / хендлер-опа",
-            BindingOrigin::LoopVar => "переменная `for consume`-цикла",
-        }
-    }
-}
-
 /// Flow-context consume-анализа одной функции / теста.
 struct ConsumeCtx<'a> {
     reg: &'a ConsumeRegistry,
@@ -40628,12 +40316,6 @@ struct ConsumeCtx<'a> {
     /// `check_d162_coverage` which runs AFTER `consume_walk_block` has already
     /// cleared `consume_obligations` for satisfied obligations.
     all_declared_consume: HashSet<String>,
-    /// №672 (2026-08-21): PER-BINDING PROVENANCE — чем заведено каждое
-    /// обязательство из `consume_obligations`. Заполняется РОВНО в
-    /// `declare_consume_binding` (единственная точка заведения),
-    /// читается РОВНО в `check_obligations_at_exit` — там, где раньше
-    /// спрашивался транзиентный `arm_pattern_exit_check`.
-    binding_origin: HashMap<String, BindingOrigin>,
     /// Plan 100.1 (D133 / D5): состояние consume-полей receiver'а.
     /// Ключ — имя поля (без "@."), значение — VarState.
     /// Для consume-методов: поля должны быть Consumed на exit'е.
@@ -40726,6 +40408,17 @@ struct ConsumeCtx<'a> {
     /// проверка молча пропускается (см. PROGRESS-p315.md «Known scope
     /// narrowing»).
     current_fn_effects: Option<&'a [TypeRef]>,
+    /// #667 (2026-08-15): true ONLY while `check_and_clear_arm_pattern_obligations`
+    /// runs the exit-check for a match arm's OWN pattern bindings
+    /// (`Ok(consume r) => { .. }`). D432 auto-cleanup covers bare
+    /// `consume X = e;` bindings only (D432 s.2: destructuring/pattern bindings
+    /// stay under plain D133) -- the codegen never emits an auto-cleanup for a
+    /// pattern binding, so exempting it here as `is_auto_cleanup_eligible` was
+    /// a checker/codegen split: the resource silently leaked with no
+    /// diagnostic (probe: `Ok(consume r) => { assert(r.tag == 4) }` compiled;
+    /// ResourceTrace counted zero cleanups). Under this flag the exemption is
+    /// off and a Live pattern binding is D133-not-consumed with a hint.
+    arm_pattern_exit_check: bool,
     /// #671 (2026-08-15): имена вариантов сумм, ПРИНИМАЮЩИХ аргументы
     /// (tuple/record-payload), плюс builtin `Ok`/`Err`/`Some`. Конструктор
     /// варианта ЗАБИРАЕТ владение аргументом (`Ok(r)` кладёт `r` в payload и
@@ -40772,7 +40465,6 @@ impl<'a> ConsumeCtx<'a> {
             aliases: HashMap::new(),
             consume_obligations: HashSet::new(),
             all_declared_consume: HashSet::new(),
-            binding_origin: HashMap::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
             view_params: HashSet::new(),
@@ -40787,6 +40479,7 @@ impl<'a> ConsumeCtx<'a> {
             guard_violations: Vec::new(),
             coerce_consumed_via: HashMap::new(),
             current_fn_effects: None,
+            arm_pattern_exit_check: false,
             variant_ctor_names: collect_variant_ctor_names(module),
             module,
         }
@@ -41397,30 +41090,12 @@ impl<'a> ConsumeCtx<'a> {
 
     /// Зарегистрировать `consume tx = ...` binding — tx обязан быть
     /// Consumed до scope-exit.
-    ///
-    /// №672 (2026-08-21): `origin` — ПРОИСХОЖДЕНИЕ биндинга, единственное
-    /// место, где оно записывается. Параметр ОБЯЗАТЕЛЬНЫЙ и без дефолта
-    /// намеренно: новая точка заведения обязана НАЗВАТЬ свою форму,
-    /// а не молча унаследовать исключение D432 — именно так пять форм
-    /// и текли молча.
-    fn declare_consume_binding(&mut self, name: &str, ty: Option<String>, origin: BindingOrigin) {
+    fn declare_consume_binding(&mut self, name: &str, ty: Option<String>) {
         if name == "_" { return; }
         self.declare(name, ty);
         self.consume_obligations.insert(name.to_string());
         // Plan 100.8 (D166): also track in all_declared_consume (never cleared).
         self.all_declared_consume.insert(name.to_string());
-        self.binding_origin.insert(name.to_string(), origin);
-    }
-
-    /// №672: происхождение обязательства. Дефолт `BareLet` —
-    /// консервативный: неизвестное происхождение ведёт себя КАК РАНЬШЕ
-    /// (освобождается), то есть молчаливого пути, который я пропустил бы,
-    /// новых ложных отказов не даёт.
-    fn origin_of(&self, name: &str) -> BindingOrigin {
-        self.binding_origin.get(name)
-            .or_else(|| self.binding_origin.get(&self.canonical(name)))
-            .copied()
-            .unwrap_or(BindingOrigin::BareLet)
     }
 
     /// Plan 181 (D347) R2 [M-181-same-scope-rebinding]: a same-scope re-binding
@@ -41509,11 +41184,7 @@ impl<'a> ConsumeCtx<'a> {
         if closure_name == "_" { return; }
         // Consume-closure само является consume-obligation: если не invoked
         // до scope-exit → D133-not-consumed error.
-        self.declare_consume_binding(
-            closure_name,
-            Some("__consume_closure__".to_string()),
-            BindingOrigin::BareLet,
-        );
+        self.declare_consume_binding(closure_name, Some("__consume_closure__".to_string()));
         self.consume_closures.insert(closure_name.to_string(), captured);
     }
 
@@ -41580,21 +41251,10 @@ impl<'a> ConsumeCtx<'a> {
             // строгая линейность без изменений (`cleanup_effects` даёт
             // `None` для них).
             let cleanup_row = if is_strict_generic { None } else { self.lin_reg.cleanup_effects(&ty) };
-            // №672 (2026-08-21, решение владельца) — ГЛАВНАЯ СТРОЧКА ПРАВКИ.
-            // Исключение D432 §2 спрашивает ПРОИСХОЖДЕНИЕ биндинга, а не
-            // транзиентный флаг вокруг ОДНОГО вызова (№667). Кодоген
-            // армит авто-`@cleanup` только для bare `Stmt::Let` с `Pattern::Ident`
-            // (`auto_cleanup_qualifies`), значит только такой биндинг вправе
-            // молчать. Остальные четыре формы текли именно здесь.
-            let origin = self.origin_of(name);
-            let d432_exempt = if provenance_disabled() {
-                // Прежнее поведение байт-в-байт: освобождались ВСЕ, кроме
-                // arm-паттерна (тогдашний `arm_pattern_exit_check`).
-                !matches!(origin, BindingOrigin::Pattern)
-            } else {
-                origin.auto_cleanup_qualifies()
-            };
-            let is_auto_cleanup_eligible = cleanup_row.is_some() && d432_exempt;
+            // #667: a match-arm PATTERN binding gets no auto-cleanup from the
+            // codegen (D432 s.2) -- it must be consumed explicitly, like a type
+            // without `@cleanup`. The exemption below is for bare bindings only.
+            let is_auto_cleanup_eligible = cleanup_row.is_some() && !self.arm_pattern_exit_check;
             let leftover_at_exit = matches!(state, Some(VarState::Live) | Some(VarState::MaybeConsumed(_)));
             if is_auto_cleanup_eligible && leftover_at_exit {
                 if let (Some(row), Some(cfe)) = (cleanup_row, self.current_fn_effects) {
@@ -41663,16 +41323,7 @@ impl<'a> ConsumeCtx<'a> {
                              либо `return {}`, либо передайте в consume-param.",
                             code, name, ty, hint, name),
                         exit_span,
-                    ).with_suggestion(suggestion).with_note(
-                        // №672: назвать ПРОИСХОЖДЕНИЕ — иначе читатель ищет
-                        // авто-`@cleanup`, которого для этой формы нет и не
-                        // будет (кодоген армит его только на bare-биндинге).
-                        format!(
-                            "происхождение биндинга: {} — авто-`@cleanup` (D432 §2) \
-                             ставится ТОЛЬКО на bare-биндинг `consume X = e` с \
-                             ident-паттерном, эта форма его не получает",
-                            origin.describe()),
-                    ));
+                    ).with_suggestion(suggestion));
                 }
                 Some(VarState::MaybeConsumed(at)) => {
                     let methods = self.lin_reg.consume_methods_for(&ty);
@@ -43250,10 +42901,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                                 typeref_contains_consume_generic(&p.ty, &g_set)
                             }).cloned()
                         });
-                        ctx.declare_consume_binding(&p.name, pty, BindingOrigin::FnParam);
+                        ctx.declare_consume_binding(&p.name, pty);
                     } else if p.consume {
                         // Explicit `consume` param: consume-obligation.
-                        ctx.declare_consume_binding(&p.name, pty, BindingOrigin::FnParam);
+                        ctx.declare_consume_binding(&p.name, pty);
                     } else {
                         // Plan 100.3 (D157): non-consume param of consume type
                         // → view-param. Can read fields, call non-consume methods,
@@ -43945,7 +43596,7 @@ fn consume_require_pattern_binding(
         return;
     }
     if is_consume {
-        ctx.declare_consume_binding(name, ty, BindingOrigin::Pattern);
+        ctx.declare_consume_binding(name, ty);
         // D180: consume-биндинг уже mut-capable.
         ctx.local_mut.insert(name.to_string(), true);
         return;
@@ -44188,12 +43839,11 @@ fn check_and_clear_arm_pattern_obligations(
     let full_obligations = std::mem::replace(
         &mut ctx.consume_obligations,
         new_obligations.iter().cloned().collect());
-    // #667 -> №672 (2026-08-21): pattern-биндинги проверяются БЕЗ
-    // исключения D432, и теперь это следует из их ПРОИСХОЖДЕНИЯ
-    // (`BindingOrigin::Pattern`), а не из транзиентного флага вокруг этого
-    // единственного вызова — флаг и был тем, что оставило четыре
-    // другие формы биндинга молчать.
+    // #667: pattern bindings are exit-checked WITHOUT the D432 auto-cleanup
+    // exemption (see `arm_pattern_exit_check` doc).
+    ctx.arm_pattern_exit_check = true;
     ctx.check_obligations_at_exit(exit_span, errors);
+    ctx.arm_pattern_exit_check = false;
     ctx.consume_obligations = full_obligations;
     for n in &new_obligations {
         ctx.consume_obligations.remove(n);
@@ -44517,17 +44167,6 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 }));
             }
 
-            // №672 (2026-08-21): ПРОИСХОЖДЕНИЕ этого let-биндинга — ЗЕРКАЛО
-            // `emit_c.rs::auto_cleanup_qualifies`: авто-`@cleanup` кодоген армит
-            // ТОЛЬКО для `decl.consume` с `Pattern::Ident` (D432 §2). Деструктуризация
-            // (`consume (a, b) = …`) авто-cleanup'а НЕ получает — значит и
-            // исключения тоже не получает.
-            let let_origin = if matches!(&decl.pattern, Pattern::Ident { .. }) {
-                BindingOrigin::BareLet
-            } else {
-                BindingOrigin::Pattern
-            };
-
             // Rule 3 (D180): `consume X = consume_var` = move semantics
             // (mark source Consumed, transfer obligation to X).
             if let Some(ref canon) = alias_src {
@@ -44536,7 +44175,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     ctx.mark_consumed(canon, decl.span);
                     ctx.consume_obligations.remove(canon);
                     let ty = ctx.var_types.get(canon).cloned();
-                    ctx.declare_consume_binding(&names[0], ty, let_origin);
+                    ctx.declare_consume_binding(&names[0], ty);
                     // Skip the existing alias/declare path below.
                     return;
                 }
@@ -44637,7 +44276,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     };
                     // Plan 100.1 (D133 / D9): `consume tx = ...` binding.
                     if decl.consume {
-                        ctx.declare_consume_binding(n, t, let_origin);
+                        ctx.declare_consume_binding(n, t);
                     } else if let Some(ref captured) = consume_closure_captured {
                         // Plan 100.3 (D157): consume-closure — declares as consume-obligation.
                         ctx.declare_consume_closure(n, captured.clone());
@@ -44984,11 +44623,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         || ctx.lin_reg.consume_methods.contains_key(t.as_str())
                 });
                 if tail_escape || r.declared_consume {
-                    ctx.declare_consume_binding(
-                        &r.name,
-                        known_result_ty,
-                        BindingOrigin::ConsumeScopeResult,
-                    );
+                    ctx.declare_consume_binding(&r.name, known_result_ty);
                 } else {
                     ctx.declare(&r.name, None);
                 }
@@ -45084,61 +44719,20 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
 
 /// Walk блока изолированно (closure / handler / trailing): состояние
 /// `states` восстанавливается после — consume внутрь наружу не течёт.
-fn consume_walk_isolated_block(ctx: &mut ConsumeCtx, params: &[ClosureParamInfo],
+fn consume_walk_isolated_block(ctx: &mut ConsumeCtx, params: &[String],
                                b: &Block, errors: &mut Vec<Diagnostic>) {
     let saved = ctx.states.clone();
-    let obligations_before = ctx.consume_obligations.clone();
-    for p in params { declare_closure_param(ctx, p); }
+    for p in params { ctx.declare(p, None); }
     consume_walk_block(ctx, b, errors);
-    check_and_clear_closure_param_obligations(ctx, &obligations_before, b.span, errors);
     ctx.states = saved;
 }
 
-fn consume_walk_isolated_expr(ctx: &mut ConsumeCtx, params: &[ClosureParamInfo],
+fn consume_walk_isolated_expr(ctx: &mut ConsumeCtx, params: &[String],
                               e: &Expr, errors: &mut Vec<Diagnostic>) {
     let saved = ctx.states.clone();
-    let obligations_before = ctx.consume_obligations.clone();
-    for p in params { declare_closure_param(ctx, p); }
+    for p in params { ctx.declare(p, None); }
     consume_walk_expr(ctx, e, errors);
-    check_and_clear_closure_param_obligations(ctx, &obligations_before, e.span, errors);
     ctx.states = saved;
-}
-
-/// №672 форма (5): завести параметр замыкания / хендлер-опа ПО ТЕМ ЖЕ
-/// правилам, что и параметр функции (см. `Item::Fn` выше): `consume`
-/// даёт обязательство, must-consume без `consume` даёт view-параметр
-/// (D157), остальное — обычный биндинг С ТИПОМ (раньше тип терялся
-/// всегда, и любой consume-метод на таком имени был невидим).
-fn declare_closure_param(ctx: &mut ConsumeCtx, p: &ClosureParamInfo) {
-    if provenance_disabled() {
-        ctx.declare(&p.name, None);
-        return;
-    }
-    let is_consume_type = p.ty.as_ref()
-        .map(|t| ctx.lin_reg.is_must_consume_name(t))
-        .unwrap_or(false);
-    if p.consume {
-        ctx.declare_consume_binding(&p.name, p.ty.clone(), BindingOrigin::ClosureParam);
-        ctx.local_mut.insert(p.name.clone(), true);
-    } else if is_consume_type {
-        ctx.declare_view_param(&p.name, p.ty.clone());
-    } else {
-        ctx.declare(&p.name, p.ty.clone());
-    }
-}
-
-/// №672 форма (5): exit-check тех и только тех обязательств, которые
-/// завели ПАРАМЕТРЫ ЗАМЫКАНИЯ — тело замыкания есть своя точка
-/// выхода, и проверять их снаружи некому: `ctx.states` здесь
-/// восстанавливается, и имя исчезает. Зеркало
-/// `check_and_clear_arm_pattern_obligations` (№667/[M-176]).
-fn check_and_clear_closure_param_obligations(
-    ctx: &mut ConsumeCtx,
-    obligations_before: &std::collections::HashSet<String>,
-    exit_span: Span,
-    errors: &mut Vec<Diagnostic>,
-) {
-    check_and_clear_arm_pattern_obligations(ctx, obligations_before, exit_span, errors);
 }
 
 /// №379: collect every `(binding-name, span)` along a `spawn`/`detach
@@ -45394,7 +44988,7 @@ fn consume_walk_consume_for(
     // ── Pass 1: discover which outer-scope vars get consumed in body ──
     // (pessimistic: if consumed in body, mark maybe-consumed post-loop)
     for n in loop_var_names {
-        ctx.declare_consume_binding(n, None, BindingOrigin::LoopVar);
+        ctx.declare_consume_binding(n, None);
     }
     let mut throwaway: Vec<Diagnostic> = Vec::new();
     consume_walk_block(ctx, body, &mut throwaway);
@@ -45432,7 +45026,7 @@ fn consume_walk_consume_for(
 
     // ── Pass 2: real walk with error collection ──
     for n in loop_var_names {
-        ctx.declare_consume_binding(n, None, BindingOrigin::LoopVar);
+        ctx.declare_consume_binding(n, None);
     }
     consume_walk_block(ctx, body, errors);
 
@@ -47178,56 +46772,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, cond, errors);
             consume_walk_loop(ctx, &[], body, errors);
         }
-        // №672 форма (2) (2026-08-21): `while Pat = expr { … }`.
-        //
-        // Ветка НЕ проходила через `consume_declare_arm_pattern` вовсе:
-        // `consume_pattern_names` + `ctx.declare(v, None)` — поэтому мертвы
-        // были И D133, И `E_CONSUME_PATTERN_REQUIRED`, а `guard` роняли
-        // молча (use-after-consume в guard'е не проверялся). Теперь ветка —
-        // ЗЕРКАЛО `IfLet` плюс пессимизм цикла: биндинг паттерна СВЕЖИЙ на
-        // каждой итерации, поэтому он exit-чекается на своей точке выхода
-        // (тело), а не размывается в MaybeConsumed вместе с внешними именами.
-        ExprKind::WhileLet { pattern, scrutinee, guard, body, .. } => {
+        ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
             consume_walk_expr(ctx, scrutinee, errors);
-            if provenance_disabled() {
-                let mut names = Vec::new();
-                consume_pattern_names(pattern, &mut names);
-                consume_walk_loop(ctx, &names, body, errors);
-            } else {
-                let scrut = ctx.scrutinee_unwrapped(scrutinee);
-                let saved = ctx.states.clone();
-                let obligations_before_pattern = ctx.consume_obligations.clone();
-                consume_declare_arm_pattern(ctx, pattern, &scrut, errors);
-                // Plan 106 (зеркало IfLet): guard видит биндинги паттерна.
-                if let Some(g) = guard { consume_walk_expr(ctx, g, errors); }
-                let pre_body = ctx.states.clone();
-                // Проход 1 — какие ВНЕШНИЕ имена потребляет тело (ошибки в
-                // throwaway, как в `consume_walk_loop`).
-                let mut throwaway: Vec<Diagnostic> = Vec::new();
-                consume_walk_block(ctx, body, &mut throwaway);
-                let outer_consumed: Vec<String> = saved.keys()
-                    .filter(|k| {
-                        let before = matches!(saved.get(*k),
-                            Some(VarState::Consumed(_)) | Some(VarState::MaybeConsumed(_)));
-                        !before && matches!(ctx.states.get(*k),
-                            Some(VarState::Consumed(_)) | Some(VarState::MaybeConsumed(_)))
-                    })
-                    .cloned()
-                    .collect();
-                // Проход 2 — настоящий walk с диагностиками.
-                ctx.states = pre_body;
-                for k in &outer_consumed {
-                    ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
-                }
-                consume_walk_block(ctx, body, errors);
-                check_and_clear_arm_pattern_obligations(
-                    ctx, &obligations_before_pattern, body.span, errors);
-                // Post-loop: цикл мог не выполниться ни разу.
-                ctx.states = saved;
-                for k in &outer_consumed {
-                    ctx.states.insert(k.clone(), VarState::MaybeConsumed(body.span));
-                }
-            }
+            let mut names = Vec::new();
+            consume_pattern_names(pattern, &mut names);
+            consume_walk_loop(ctx, &names, body, errors);
         }
         ExprKind::Loop { body, .. } => consume_walk_loop(ctx, &[], body, errors),
 
@@ -47415,45 +46964,30 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         }
 
         // ─── Closure / handler — изолированный walk ───
-        //
-        // №672 форма (5) (2026-08-21): раньше сюда уезжали ОДНИ ИМЕНА, и
-        // `ctx.declare(p, None)` терял и флаг `consume`, и тип. Теперь едет
-        // `ClosureParamInfo` — ровно те два факта, которых не хватало.
         ExprKind::Lambda { params, body, .. } => {
-            let ps: Vec<ClosureParamInfo> = params.iter()
-                .map(|p| ClosureParamInfo::typed(&p.name, p.ty.as_ref()))
-                .collect();
-            consume_walk_isolated_expr(ctx, &ps, body, errors);
+            let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_isolated_expr(ctx, &names, body, errors);
         }
         ExprKind::ClosureLight { params, body } => {
-            // D22-rev: у closure-light типов НЕТ в грамматике вовсе — брать
-            // здесь нечего, и это единственная из пяти форм, что остаётся
-            // непокрытой (записано в реестре, а не умолчано).
-            let ps: Vec<ClosureParamInfo> = params.iter()
-                .map(|p| ClosureParamInfo::untyped(&p.name))
-                .collect();
+            let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
             match body {
-                ClosureBody::Expr(ex) => consume_walk_isolated_expr(ctx, &ps, ex, errors),
-                ClosureBody::Block(b) => consume_walk_isolated_block(ctx, &ps, b, errors),
+                ClosureBody::Expr(ex) => consume_walk_isolated_expr(ctx, &names, ex, errors),
+                ClosureBody::Block(b) => consume_walk_isolated_block(ctx, &names, b, errors),
             }
         }
         ExprKind::ClosureFull(sig) => {
-            let ps: Vec<ClosureParamInfo> = sig.params.iter()
-                .map(ClosureParamInfo::from_param)
-                .collect();
-            consume_walk_fnbody_isolated(ctx, &ps, &sig.body, errors);
+            let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
         }
         // Plan 97 Ф.4 (D142): protocol-литерал — consume-walk идентичен.
         ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
             for m in methods {
-                let ps: Vec<ClosureParamInfo> = m.params.iter()
-                    .map(|p| ClosureParamInfo::typed(&p.name, p.ty.as_ref()))
-                    .collect();
+                let names: Vec<String> = m.params.iter().map(|p| p.name.clone()).collect();
                 match &m.body {
                     HandlerMethodBody::Expr(ex) =>
-                        consume_walk_isolated_expr(ctx, &ps, ex, errors),
+                        consume_walk_isolated_expr(ctx, &names, ex, errors),
                     HandlerMethodBody::Block(b) =>
-                        consume_walk_isolated_block(ctx, &ps, b, errors),
+                        consume_walk_isolated_block(ctx, &names, b, errors),
                 }
             }
         }
@@ -47516,21 +47050,17 @@ fn consume_walk_trailing(ctx: &mut ConsumeCtx, t: &Trailing,
     match t {
         Trailing::Block(b) => consume_walk_isolated_block(ctx, &[], b, errors),
         Trailing::Fn(sig) => {
-            let ps: Vec<ClosureParamInfo> = sig.params.iter()
-                .map(ClosureParamInfo::from_param)
-                .collect();
-            consume_walk_fnbody_isolated(ctx, &ps, &sig.body, errors);
+            let names: Vec<String> = sig.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_fnbody_isolated(ctx, &names, &sig.body, errors);
         }
         Trailing::LegacyBlockWithParams(tb) => {
-            let ps: Vec<ClosureParamInfo> = tb.params.iter()
-                .map(|p| ClosureParamInfo::typed(&p.name, p.ty.as_ref()))
-                .collect();
-            consume_walk_isolated_block(ctx, &ps, &tb.body, errors);
+            let names: Vec<String> = tb.params.iter().map(|p| p.name.clone()).collect();
+            consume_walk_isolated_block(ctx, &names, &tb.body, errors);
         }
     }
 }
 
-fn consume_walk_fnbody_isolated(ctx: &mut ConsumeCtx, params: &[ClosureParamInfo],
+fn consume_walk_fnbody_isolated(ctx: &mut ConsumeCtx, params: &[String],
                                 body: &FnBody, errors: &mut Vec<Diagnostic>) {
     match body {
         FnBody::Block(b) => consume_walk_isolated_block(ctx, params, b, errors),
