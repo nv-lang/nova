@@ -1,0 +1,22 @@
+type Colour enum Red | Green | Blue
+
+type Holder { ro c Colour, ro o Option[Colour] }
+
+fn f(o Option[Colour]) -> int {
+    match o {
+        Some(c) => 1
+        None => 0
+    }
+}
+
+fn main() {
+    ro h = Holder { c: Red, o: Some(Green) }
+    ro r Result[Colour, str] = Ok(Blue)
+    ro v = [Red, Green]
+    print("${f(h.o())} ${v.len()}")
+    match r {
+        Ok(c) => print("ok")
+        Err(e) => print("err")
+    }
+    print("${h.c() == Red}")
+}

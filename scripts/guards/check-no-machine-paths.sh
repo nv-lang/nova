@@ -44,18 +44,31 @@ if [ -z "$FILES" ]; then
     echo "$NAME: FAIL — git не отдал списка скриптов под $ROOT" >&2
     exit 1
 fi
-BAD=""
-for f in $FILES; do
-    # строки без ведущего комментария, содержащие путь к машине
-    hits=$(grep -nE '([Dd]:[/\\]+Sources|/d/Sources|/mnt/d/Sources|[Cc]:[/\\]+Users[/\\])' "$ROOT/$f" 2>/dev/null \
-        | grep -vE '^[0-9]+:\s*#' \
-        | grep -vE 'Проверялся|проверялся|# |Prichina:|^[0-9]+:step ' || true)
-    if [ -n "$hits" ]; then
-        BAD="$BAD
-  $f:
-$(printf '%s\n' "$hits" | sed 's/^/    /' | cut -c1-140)"
-    fi
-done
+# ОДИН grep НА ВСЕ ФАЙЛЫ вместо форка grep+grep+printf+sed НА КАЖДЫЙ файл в
+# цикле (план 275-Ф.1, гейт-стоимость — профиль показал ~29с на этом месте
+# при сотнях отслеживаемых скриптов). `-H` держит имя файла в выводе даже
+# когда xargs-пачка ужалась до одного файла (без -H grep одиночного файла
+# молчит об имени — тогда группировка ниже развалилась бы).
+RAW=$(printf '%s\n' "$FILES" | sed "s#^#$ROOT/#" \
+    | xargs -d '\n' -r grep -nHE '([Dd]:[/\\]+Sources|/d/Sources|/mnt/d/Sources|[Cc]:[/\\]+Users[/\\])' 2>/dev/null \
+    | sed "s#^$ROOT/##" \
+    | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' \
+    | grep -vE 'Проверялся|проверялся|# |Prichina:|^[^:]*:[0-9]+:step ')
+# Группировка по файлу — тем же порядком, каким grep выдаёт совпадения
+# (файлы обходятся в порядке $FILES, строки внутри файла — по возрастанию
+# номера), поэтому один проход awk без сортировки воспроизводит ровно то
+# же дерево вывода, что раньше строил цикл на bash.
+BAD=$(printf '%s\n' "$RAW" | awk -F: '
+    NF < 2 { next }
+    {
+        path = $1
+        rest = substr($0, length(path) + 2)
+        if (!started) { print ""; started = 1 }
+        if (path != cur) { print "  " path ":"; cur = path }
+        line = "    " rest
+        if (length(line) > 140) line = substr(line, 1, 140)
+        print line
+    }')
 if [ -n "$BAD" ]; then
     echo "$NAME: FAIL — абсолютный путь к машине в отслеживаемом скрипте (№698):$BAD" >&2
     echo "    Расположение выводится от \$ROOT / git-common-dir / dirname \$0, а не пишется." >&2

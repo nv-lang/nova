@@ -337,4 +337,19 @@ no_caveat=34
 #   correct. No.670's 2026-08-19 recheck concluded "the silence is gone"
 #   after re-running only the interpolation form -- so the duplicate row
 #   was wrong, and the recheck it contradicted was incomplete.
+# 2026-08-22, No.744 -- 49 -> 50. GROWTH by discovery. The right operand of
+#   `==` on a sum is evaluated TWICE when the variant matches: measured in a
+#   built and RUN program with a call counter -- 2 evaluations on a match, 1
+#   on a mismatch (the second clause is short-circuited away). Equality is
+#   emitted as a chain of && clauses and the right expression is substituted
+#   into each one instead of being materialised once, so a side effect there
+#   happens twice. `if next_token() == Tok.Eof` eats two tokens.
+#   Found by the recon window p17214-sum-stack and RE-RUN by the integrator
+#   before filing -- the window's first version of this finding ("equality
+#   compares tags only") did not reproduce and was withdrawn by the window
+#   itself; what stayed is what a run printed.
+# 2026-08-22, No.744 CLOSED -- 50 -> 49. The blocker filed hours earlier is
+#   fixed and the fix is proven both ways on one binary with the build cache
+#   cleared: 1 evaluation with the fix, 2 with NOVA_KILL_744=1. Down, as this
+#   file's own rule says a ratchet may only go.
 blockers=49

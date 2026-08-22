@@ -1,0 +1,46 @@
+// Recon probe: sum placement (Plan 172.14 F.2)
+type Colour enum Red | Green | Blue
+
+type Shape enum
+    | Circle(f64)
+    | Rect(f64, f64)
+
+type Named enum
+    | Tagged { id int, name str }
+    | Blank
+
+type Tree enum
+    | Leaf
+    | Node(int, Tree)
+
+fn area(s Shape) -> f64 {
+    match s {
+        Circle(r) => 3.14 * r * r
+        Rect(w, h) => w * h
+    }
+}
+
+fn depth(t Tree) -> int {
+    match t {
+        Leaf => 0
+        Node(_, sub) => 1 + depth(sub)
+    }
+}
+
+fn main() {
+    ro c Colour = Red
+    ro s Shape = Circle(2.0)
+    ro n Named = Tagged { id: 1, name: "x" }
+    ro t Tree = Node(1, Leaf)
+    ro v = [Red, Green, Blue]
+    print("${area(s)} ${depth(t)} ${v.len()}")
+    match c {
+        Red => print("r")
+        Green => print("g")
+        Blue => print("b")
+    }
+    match n {
+        Tagged { id, name } => print("${id} ${name}")
+        Blank => print("blank")
+    }
+}

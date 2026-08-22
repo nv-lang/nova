@@ -168,6 +168,15 @@ fi
 step "arch-ratchet"
 guard "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 
+# Plan 70 Ф.2: `type_ref_to_c(t).unwrap_or_else(|_| "nova_int")` — преобразование
+# типа не удалось, и вместо отказа выпускается ЗАПАСНОЙ тип: молча неверный Си
+# без единой диагностики. До 2026-08-21 этого стража не звал НИКТО (ни здесь,
+# ни в CI) — и счёт успел уехать 7 → 21, то есть ровно то, против чего он
+# заведён, случилось у него на глазах (конвенция гейтов, Г8).
+step "no-silent-int-fallback (молчаливый откат к nova_int в кодогене)"
+guard "$ROOT/scripts/guards/lint-no-silent-int-fallback.sh" "$ROOT" \
+    || fail "молчаливый откат к nova_int в compiler-codegen сверх базы (Plan 70; канон — err_no_int_fallback/record_strict_error)"
+
 # Реестр 221.1 №138 (урок 2026-07-27): копия рантайма внутри пакетной репы/
 # worktree не под git → её протухание невидимо, и она ШАДОВИТ настоящий
 # рантайм. Реальная цена промаха: полтора часа диагностики «регрессии

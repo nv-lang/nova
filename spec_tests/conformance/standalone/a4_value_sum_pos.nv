@@ -1,0 +1,100 @@
+// EXPECT_STDOUT ctor=red|green|blue eq=true false true match=1 static=green after_gc=green vec=3 vec_eq=true nested=green
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 172.14 Ф.2, атом A4: payload-less нерекурсивная сумма лежит на стеке
+// как `NovaValue_X { tag; }`, а не в куче за `nova_alloc`.
+//
+// Фикстура сторожит ПОВЕДЕНИЕ, а не форму C. Форму видно в снимках, и она уже
+// доказана байт-идентичностью под выключателем; здесь проверяется, что от
+// смены представления не поехало ничего наблюдаемого: конструирование,
+// равенство (и совпадающее, и нет), исчерпывающий `match`, значение в
+// статике, выживание принудительной сборки, и работа рядом с суммой,
+// оставшейся в куче.
+//
+// ПОЧЕМУ ДВА ТИПА. `Colour` — значимая: она нигде не попадает под `Option`,
+// в `Vec` и в erased-позицию, поэтому проходит ограду A4. `Shade` намеренно
+// кладётся в `Vec`, что по построению ограды оставляет её указателем. Оба
+// типа в одном файле — это и проверка того, что ограда работает per-type, а
+// не «всё или ничего»: положи `Colour` в тот же `Vec`, и она уедет в кучу
+// вместе с `Shade`, а фикстура станет вакуумной.
+//
+// ПРО GC. У payload-less суммы внутри нет ни одного указателя, поэтому
+// потерять сборщику нечего, и строки `after_gc` сторожат УТВЕРЖДЕНИЕ из A1.5,
+// а не живой риск: значение в статике переживает принудительный сбор. Живой
+// риск появится в A7, когда в union приедет payload с указателями, — и тогда
+// эта же фикстура расширяется, а не пишется заново.
+//
+// ВЫКЛЮЧАТЕЛЬ. Вывод обязан совпасть с выводом того же файла под
+// `NOVA_KILL_A4=1`; кеш сборки между двумя прогонами обязан сноситься (он
+// ключуется по исходнику, а не по env — правило Г14).
+module standalone.a4_value_sum_pos
+
+type Colour enum Red | Green | Blue
+
+// Оставляется в куче оградой: используется как элемент Vec.
+type Shade enum Dark | Light
+
+// Статик со значимой суммой: под `GC_set_no_dls(1)` сегмент данных не
+// сканируется, корень регистрируется явно (`nova_gc_add_root`).
+ro DEFAULT_COLOUR = Green
+
+fn name_of(c Colour) -> str {
+    match c {
+        Red => "red"
+        Green => "green"
+        Blue => "blue"
+    }
+}
+
+fn rank(c Colour) -> int {
+    match c {
+        Red => 0
+        Green => 1
+        Blue => 2
+    }
+}
+
+fn churn(rounds int, per int) -> int {
+    mut acc = 0
+    for k in 0..rounds {
+        mut garbage []str = []
+        for j in 0..per {
+            garbage.push("garbage_${j}_${k}")
+        }
+        acc += garbage.len()
+        gc.collect()
+    }
+    acc
+}
+
+fn main() {
+    // Конструирование всех трёх вариантов + исчерпывающий match.
+    ro a = Red
+    ro b = Green
+    ro c = Blue
+    print("ctor=${name_of(a)}|${name_of(b)}|${name_of(c)}")
+
+    // Равенство: совпадающее, несовпадающее, и с литералом варианта справа.
+    print(" eq=${b == Green} ${b == Red} ${c == Blue}")
+
+    // match по значению, полученному из функции.
+    print(" match=${rank(b)}")
+
+    // Статик до и после принудительной сборки.
+    print(" static=${name_of(DEFAULT_COLOUR)}")
+    ro _churned = churn(3, 800)
+    print(" after_gc=${name_of(DEFAULT_COLOUR)}")
+
+    // Сумма, оставшаяся в куче оградой Vec, работает рядом без изменений.
+    mut v []Shade = []
+    v.push(Dark)
+    v.push(Light)
+    v.push(Dark)
+    ro first = v[0]
+    print(" vec=${v.len()} vec_eq=${first == Dark}")
+
+    // Значимая сумма как поле обычной записи.
+    print(" nested=${name_of(Holder { tint: Green }.tint())}")
+}
+
+type Holder { ro tint Colour }

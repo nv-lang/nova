@@ -62,22 +62,63 @@ if [ "${#guards[@]}" -eq 0 ]; then
     exit 0
 fi
 
+# ПРЕДВАРИТЕЛЬНЫЙ ПРОХОД (план 275-Ф.1, гейт-стоимость): раньше НА КАЖДЫЙ
+# файл-страж форкались head+grep (шапка), grep (ссылка на план), grep (имя
+# в gate.sh), grep (форма обхода самотестов) — 4-5 процессов на файл, ~90
+# файлов, профиль показал ~22с. Три из четырёх проверок НЕ зависят от
+# конкретного файла (loop_covers — константа для всего прогона) или сводятся
+# к чтению уже загруженного в память текста (wired_directly — просто
+# подстрока в содержимом gate.sh, без нужды перечитывать файл через grep).
+# Единственное, что реально должно смотреть В КАЖДЫЙ файл (шапка + ссылка на
+# план), сведено к ОДНОМУ проходу awk по всем файлам разом.
+GATE_CONTENT=""
+[ -f "$GATE" ] && GATE_CONTENT="$(<"$GATE")"
+loop_covers=0
+grep -qE "selftest/test-\*\.sh|selftest[^\"']*-name '?test-\*\.sh|guards/selftest" \
+    "$GATE" 2>/dev/null && loop_covers=1
+
+declare -A HEADER_LINES HAS_PLAN_REF
+while IFS=$'\t' read -r fpath hc ref; do
+    [ -n "$fpath" ] || continue
+    HEADER_LINES["$fpath"]="$hc"
+    HAS_PLAN_REF["$fpath"]="$ref"
+# ОДИН проход awk по всем стражам (оптимизация main: 90 файлов, каждый форк
+# заметен) И докстринг питоновского стража (правка ветки p274: шапка .py живёт в
+# тройных кавычках, а не в решётках, поэтому счёт только по '^#' объявлял бы
+# каждый порт недокументированным). Слияние 2026-08-22 сохранило ОБА умысла:
+# структуру main и правило ветки. Открывающая строка бывает и с префиксом `u`.
+done < <(awk '
+    FNR == 1 {
+        if (NR > 1) print prevfile "\t" hc "\t" ref
+        prevfile = FILENAME; hc = 0; ref = 0; d = 0
+    }
+    FNR <= 20 {
+        if ($0 ~ /^#/) { hc++ }
+        else if ($0 ~ /^u?"""/) { d = !d; hc++ }
+        else if (d) { hc++ }
+    }
+    /docs\/plans\/|план [0-9]|реестр 221\.1/ { ref = 1 }
+    END { if (prevfile != "") print prevfile "\t" hc "\t" ref }
+' "${guards[@]}")
+
 for g in "${guards[@]}"; do
-    name="$(basename "$g")"; name="${name%.sh}"; name="${name%.py}"
+    # basename как bash-подстановка, а не форк внешней команды (оптимизация
+    # main: 90 файлов, каждый форк заметен). Расширение снимается ОБА: страж
+    # бывает и `.sh`, и `.py`, а имя без расширения — то, чем его называют гейт
+    # и реестр.
+    name="${g##*/}"
+    name="${name%.sh}"
+    name="${name%.py}"
     ok=1
 
-    # 1. Документирован: содержательная шапка + ссылка на план.
-    # Шапка питоновского стража живёт в докстринге, а не в решётках:
-    # считать только '^#' значило бы объявить каждый порт недокументированным.
-    case "$g" in
-        *.py) header_lines="$(head -20 "$g" | awk '/^#/ { c++; next } /^"""/ { d = !d; c++; next } d { c++ } END { print c+0 }')" ;;
-        *)    header_lines="$(head -20 "$g" | grep -c '^#' || true)" ;;
-    esac
+    # 1. Документирован: содержательная шапка + ссылка на план. Считает
+    #    предвычисление выше — оно знает и решётки, и докстринг.
+    header_lines="${HEADER_LINES[$g]:-0}"
     if [ "$header_lines" -lt "$MIN_HEADER_LINES" ]; then
         report "$name: шапка тонкая ($header_lines строк < $MIN_HEADER_LINES) — нужно «зачем / что проверяет / как запускать»"
         ok=0
     fi
-    if ! grep -qE 'docs/plans/|план [0-9]|реестр 221\.1' "$g"; then
+    if [ "${HAS_PLAN_REF[$g]:-0}" -ne 1 ]; then
         report "$name: нет ссылки на план/реестр в шапке"
         ok=0
     fi
@@ -93,10 +134,7 @@ for g in "${guards[@]}"; do
     # Теперь принимается любая форма, называющая каталог самотестов, — это то
     # свойство, которое на самом деле требуется.
     wired_directly=0
-    grep -q "$name" "$GATE" 2>/dev/null && wired_directly=1
-    loop_covers=0
-    grep -qE "selftest/test-\*\.sh|selftest[^\"']*-name '?test-\*\.sh|guards/selftest" \
-        "$GATE" 2>/dev/null && loop_covers=1
+    case "$GATE_CONTENT" in *"$name"*) wired_directly=1 ;; esac
 
     # 3. Проверен: есть самотест.
     selftest="$SELFTEST_DIR/test-$name.sh"

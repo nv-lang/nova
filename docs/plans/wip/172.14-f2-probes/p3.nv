@@ -1,0 +1,19 @@
+type ColourV value { ro t int }
+
+fn pick_val(i int) -> ColourV {
+    ColourV { t: i % 3 }
+}
+
+fn main() {
+    ro n = 20000000
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        ro c = pick_val(i)
+        if c.t() == 0 { acc = acc + 1 }
+        if c.t() == 1 { acc = acc + 2 }
+        if c.t() == 2 { acc = acc + 3 }
+        i = i + 1
+    }
+    print("val ${acc}")
+}

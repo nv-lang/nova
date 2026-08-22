@@ -3701,7 +3701,16 @@ struct TypeCheckCtx<'a> {
     /// `str.m()`/`UserType.m()` (тип ∈ self.types) его не находил → ложный E7320. Примитивы
     /// (int) случайно проходили (их нет в self.types → ранний return). Заполняется здесь,
     /// в `TypeCheckCtx::build` (детекция по `module.items`), независимо от `sig`-реестра.
-    blanket_method_names: HashSet<String>,
+    /// Реестр 221.1 №712 (случай A): множество имён стало КАРТОЙ «имя → тип
+    /// возврата». Значение `Some(tr)` — возврат НЕ упоминает собственных
+    /// generic-параметров метода (`fn[T] T @to_str() -> str`): тип известен
+    /// прямо из объявления, и его можно записать в канал `resolved_types` для
+    /// узла ВЫЗОВА. Значение `None` — случай (B) (`@pipe[U](f fn(T) -> U) -> U`:
+    /// возврат — собственный параметр, нужен настоящий вывод), либо возврата
+    /// нет, либо имя объявлено НЕСКОЛЬКИМИ blanket'ами (например `@to_i128()`
+    /// для `SignedInts` и `UnsignedInts`) — в обоих случаях аннотация не
+    /// выдаётся и поведение остаётся прежним.
+    blanket_method_names: HashMap<String, Option<TypeRef>>,
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: TypeTable<'a>,
@@ -4353,7 +4362,12 @@ impl<'a> TypeCheckCtx<'a> {
         let mut file_local_types: HashMap<crate::diag::FileId, HashMap<String, &'a TypeDecl>> =
             HashMap::new();
         // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
-        let mut blanket_method_names: HashSet<String> = HashSet::new();
+        let mut blanket_method_names: HashMap<String, Option<TypeRef>> = HashMap::new();
+        // No.712 correction: names of CONCRETE (non-blanket) instance methods in
+        // this CU. A blanket name that ALSO names a concrete method somewhere is
+        // ambiguous by name alone, and the channel must stay silent for it --
+        // see the post-processing pass just before `TypeCheckCtx { .. }`.
+        let mut concrete_method_names: HashSet<String> = HashSet::new();
         // [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
         // sum-variant-имена ЛОССЛЕСС (тот же Vec-обход `module.items`, что
         // строит `types` ниже) — параллельно `types`-HashMap, который при
@@ -4376,7 +4390,36 @@ impl<'a> TypeCheckCtx<'a> {
                     // primitives, where the registry keys it under the param `"T"`).
                     if let Some(recv) = &f.receiver {
                         if f.generics.iter().any(|g| g.name == recv.type_name) {
-                            blanket_method_names.insert(f.name.clone());
+                            // №712 (A): рядом с именем кладём тип возврата, но
+                            // ТОЛЬКО когда он не упоминает собственных
+                            // generic-параметров метода — тогда он известен из
+                            // объявления и не требует вывода. `-> @`
+                            // (returns_receiver, D132) исключён: там возврат —
+                            // сам receiver, то есть параметр по определению.
+                            let own: HashSet<String> =
+                                f.generics.iter().map(|g| g.name.clone()).collect();
+                            let ret_a: Option<TypeRef> = if f.returns_receiver {
+                                None
+                            } else {
+                                f.return_type
+                                    .as_ref()
+                                    .filter(|tr| !typeref_mentions_any(tr, &own))
+                                    .cloned()
+                            };
+                            match blanket_method_names.entry(f.name.clone()) {
+                                std::collections::hash_map::Entry::Vacant(v) => {
+                                    v.insert(ret_a);
+                                }
+                                // Имя уже занято другим blanket'ом → отвечать
+                                // одним типом за оба нельзя, канал молчит.
+                                std::collections::hash_map::Entry::Occupied(mut o) => {
+                                    o.insert(None);
+                                }
+                            }
+                        } else {
+                            // No.712: a CONCRETE method -- receiver is a real type,
+                            // not one of the fn's own generics.
+                            concrete_method_names.insert(f.name.clone());
                         }
                     }
                 }
@@ -4867,6 +4910,40 @@ impl<'a> TypeCheckCtx<'a> {
             .filter(|(_, n)| *n > 1)
             .map(|(s, _)| s.to_string())
             .collect();
+        // No.712, THE CORRECTION A RED FLAGSHIP PAID FOR. A blanket's NAME does
+        // not belong to the blanket. `to_str` is at once the prelude blanket
+        // `fn[T] T @to_str() -> str` AND the name of concrete methods with
+        // DIFFERENT returns -- `HeaderValue @to_str() -> Result[str, HttpError]`
+        // (nova-http), `Path @to_str() -> Option[str]` (std/fs). The first
+        // version keyed the annotation on the name alone, so a concrete method
+        // was handed the blanket's return: 17 C errors on the `aggregator`
+        // flagship. The receiver's own type cannot rescue the decision at the
+        // call site -- measured, not assumed: `NOVA_CALL_TRACE` shows the
+        // receiver absent from `scope` at that point for EVERY local receiver
+        // (`obj=i:hv(false)`, `obj=i:k(false)`), which is precisely why the
+        // regular resolver missed and control reached the blanket arm at all.
+        // So the disambiguation is done HERE, once, where the whole CU is in
+        // hand: a blanket name that ANY concrete method also carries -- declared
+        // (`concrete_method_names`, this same `module.items` scan) or synthesized
+        // (`synth_methods`, the auto-derive overlay the resolver itself consults)
+        // -- loses its return type and annotates nothing. The KEY stays in the
+        // map so the E7320 suppression below is untouched.
+        // COST NAMED HONESTLY: an ambiguous name reverts to pre-fix behaviour for
+        // EVERY receiver, including those with no such method of their own. That
+        // is the conservative half of the trade, and it is the right half: a
+        // missing annotation is the old, honest diagnostic; a wrong one is
+        // miscompiled C.
+        for (name, ret) in blanket_method_names.iter_mut() {
+            if ret.is_none() {
+                continue;
+            }
+            let synth_has = synth_methods.values().any(|m| {
+                m.keys().any(|k| k.trim_start_matches('@') == name.as_str())
+            });
+            if concrete_method_names.contains(name.as_str()) || synth_has {
+                *ret = None;
+            }
+        }
         TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
@@ -7111,6 +7188,9 @@ impl<'a> TypeCheckCtx<'a> {
         // size walk degrades gracefully (depth-guard → None, surfaced only when
         // `size_of` forces it); this dedicated check reports it at type-check time.
         self.check_infinite_type(td, errors);
+        // Plan 172.14 F.2 atom A2: detect-only census of sum recursion.
+        // Gated on NOVA_DETECT_SUMREC; contributes nothing to the program.
+        self.detect_sum_recursion(td);
         // Plan 173.3 (D415 §1): `#share` — applicable to kinds that have a
         // concrete (if compiler-opaque) instance identity: Record, NamedTuple,
         // Newtype, Opaque, Sum. NOT applicable to Effect/Protocol/Alias/TypeSet
@@ -7370,6 +7450,203 @@ impl<'a> TypeCheckCtx<'a> {
             "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
                 | "i8" | "u8" | "uint" | "bool" | "char" | "str"
         )
+    }
+
+    /// Plan 172.14 F.2 atom A2 -- would this sum's layout recurse without bound
+    /// if sums were laid out INLINE (a tagged value struct) instead of behind
+    /// `nova_alloc`?
+    ///
+    /// Deliberately NOT `check_infinite_type`. That walk answers a different
+    /// question and cuts sums out of its graph twice on purpose -- as subject
+    /// (`subject_inlineable`) and as edge (`boxed_to_pointer`, "A Sum is ALWAYS
+    /// heap") -- because under today's ABI a sum reference IS a pointer and so
+    /// can never close a value cycle. Placement asks the counterfactual, so the
+    /// sum edge has to be put back; every other rule is kept identical to the
+    /// size walk, so the two cannot drift apart silently.
+    ///
+    /// Edge rules, and the reason for each:
+    ///   sum variant payload ................ INLINE  the hypothesis under test
+    ///   value record / named tuple /
+    ///     newtype / alias field ............ INLINE  laid out in place
+    ///   HEAP record field .................. STOP    is a pointer, stays one
+    ///   `Option[T]` ........................ INLINE  `NovaOpt_T` is a by-value
+    ///                                                struct, so `Option[Self]`
+    ///                                                does NOT break a cycle
+    ///   `Vec`/`HashMap`/`Set`/`Chan`[T] .... STOP    heap buffer behind a ptr
+    ///   `Result[..]` ....................... STOP    `NovaRes_*` is a heap ptr
+    ///   `[]T`, `*T`, `ref T` ............... STOP    pointer, or {ptr,len}
+    ///   `[N]T` ............................. INLINE  n inline copies
+    ///   tuple .............................. INLINE  each element
+    ///   primitive, `str` ................... STOP    finite leaf
+    ///   unresolvable name .................. STOP    cannot prove a cycle
+    ///
+    /// The direction of error matters and is chosen: over-detection is SAFE
+    /// (recursive => stays on the heap => exactly today's behaviour), while
+    /// under-detection is not. The one rule that has to guess -- an unknown
+    /// generic instantiation -- walks BOTH the template body and the type
+    /// arguments, which can only add cycles, never hide one.
+    pub(crate) fn sum_is_recursive(&self, td: &TypeDecl) -> bool {
+        if !matches!(&td.kind, TypeDeclKind::Sum(_)) {
+            return false;
+        }
+        let mut gs: GenericScope = HashMap::new();
+        for g in &td.generics {
+            gs.insert(g.name.clone(), g.clone());
+        }
+        let root = td.name.clone();
+        let mut on_path: HashSet<String> = HashSet::new();
+        on_path.insert(root);
+        for field_ty in Self::sumrec_inline_edges(td) {
+            if self.sumrec_dfs(field_ty, &mut on_path, &gs) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A2: every INLINE-edge `TypeRef` of a decl under the "sums are values"
+    /// hypothesis. Callers reach this only for decls already classified inline.
+    fn sumrec_inline_edges(td: &TypeDecl) -> Vec<&TypeRef> {
+        match &td.kind {
+            TypeDeclKind::Sum(variants) => {
+                let mut out: Vec<&TypeRef> = Vec::new();
+                for v in variants {
+                    match &v.kind {
+                        crate::ast::SumVariantKind::Unit => {}
+                        crate::ast::SumVariantKind::Tuple(tys) => out.extend(tys.iter()),
+                        crate::ast::SumVariantKind::Record(fields) => {
+                            out.extend(fields.iter().map(|f| &f.ty))
+                        }
+                    }
+                }
+                out
+            }
+            TypeDeclKind::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
+            TypeDeclKind::NamedTuple(fields) => fields.iter().map(|f| &f.ty).collect(),
+            TypeDeclKind::Newtype(inner) => vec![inner],
+            TypeDeclKind::Alias(inner) => vec![inner],
+            _ => Vec::new(),
+        }
+    }
+
+    /// A2: container bases whose contents live behind a pointer, so they BREAK a
+    /// layout cycle. `Option` is deliberately absent -- it is by value.
+    #[inline]
+    fn sumrec_is_boxing_container(name: &str) -> bool {
+        matches!(
+            name,
+            "Vec" | "HashMap" | "HashSet" | "Set" | "Map" | "Chan" | "Channel"
+                | "Result" | "Box" | "Rc" | "Arc"
+        )
+    }
+
+    /// A2: DFS half of `sum_is_recursive`. True iff this `TypeRef` reaches, over
+    /// INLINE edges only, some type already on the walk stack.
+    fn sumrec_dfs(
+        &self,
+        t: &TypeRef,
+        on_path: &mut HashSet<String>,
+        gs: &GenericScope,
+    ) -> bool {
+        match t {
+            TypeRef::Named { path, generics, .. } => {
+                let Some(name) = path.last() else { return false };
+                // A bare generic param of the root decl is not a user type.
+                if gs.contains_key(name) {
+                    return false;
+                }
+                if Self::is_primitive_type_name(name) {
+                    return false;
+                }
+                // `Option[T]` is a by-value `NovaOpt_T`: it does NOT break the
+                // cycle, so walk straight into T. This single rule is what most
+                // separates this walk from the size walk, and it is why
+                // `type N enum Leaf | Node(Option[N])` has to stay on the heap.
+                if name == "Option" {
+                    return generics.iter().any(|g| self.sumrec_dfs(g, on_path, gs));
+                }
+                if Self::sumrec_is_boxing_container(name) {
+                    return false;
+                }
+                // Back-edge into a node already on the stack is the cycle. Checked
+                // BEFORE resolution, so a generic self-reference (`LinkedList[T]`
+                // inside `LinkedList`) is caught too.
+                if on_path.contains(name) {
+                    return true;
+                }
+                let Some(decl) = self.types_get_here(name) else { return false };
+                // A heap record reference is a pointer, so the cycle stops here.
+                // This is where this walk agrees with the size walk again.
+                if matches!(&decl.kind, TypeDeclKind::Record(_)) && decl.allocation.is_heap() {
+                    return false;
+                }
+                let inline = matches!(
+                    &decl.kind,
+                    TypeDeclKind::Sum(_)
+                        | TypeDeclKind::Record(_)
+                        | TypeDeclKind::NamedTuple(_)
+                        | TypeDeclKind::Newtype(_)
+                        | TypeDeclKind::Alias(_)
+                );
+                if !inline {
+                    return false;
+                }
+                on_path.insert(name.clone());
+                let mut found = false;
+                for field_ty in Self::sumrec_inline_edges(decl) {
+                    if self.sumrec_dfs(field_ty, on_path, gs) {
+                        found = true;
+                        break;
+                    }
+                }
+                // An unknown generic instantiation can hide a cycle in its type
+                // arguments; walking them can only ADD cycles, never mask one.
+                if !found {
+                    for g in generics {
+                        if self.sumrec_dfs(g, on_path, gs) {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                on_path.remove(name);
+                found
+            }
+            TypeRef::Tuple(elems, _) => elems.iter().any(|e| self.sumrec_dfs(e, on_path, gs)),
+            TypeRef::FixedArray(_, elem, _) => self.sumrec_dfs(elem, on_path, gs),
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _) => self.sumrec_dfs(inner, on_path, gs),
+            // Pointer / ref / slice -- indirection, 8 or 16 bytes. STOP.
+            TypeRef::Pointer(_, _) | TypeRef::Ref(_, _) | TypeRef::Array(_, _) => false,
+            TypeRef::Unit(_) | TypeRef::Func { .. } | TypeRef::Protocol { .. } => false,
+        }
+    }
+
+    /// A2 detect mode. `NOVA_DETECT_SUMREC=1` prints one line per sum declaration
+    /// and changes nothing else -- no diagnostic, no emission, no exit code. The
+    /// corpus census is then taken by grepping these lines, so the number the
+    /// phase leans on comes from a RUN rather than from a script that re-parses
+    /// `.nv` by hand (which is what produced the first, over-approximate count).
+    fn detect_sum_recursion(&self, td: &TypeDecl) {
+        let TypeDeclKind::Sum(variants) = &td.kind else { return };
+        if std::env::var("NOVA_DETECT_SUMREC").map(|v| v != "1").unwrap_or(true) {
+            return;
+        }
+        let payloadless = variants
+            .iter()
+            .all(|v| matches!(v.kind, crate::ast::SumVariantKind::Unit));
+        let mut names: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+        names.sort_unstable();
+        eprintln!(
+            "[a2-sumrec] sum={} file={} variants={} recursive={} payloadless={} vnames={}",
+            td.name,
+            td.span.file_id,
+            variants.len(),
+            if self.sum_is_recursive(td) { 1 } else { 0 },
+            if payloadless { 1 } else { 0 },
+            names.join(","),
+        );
     }
 
     /// Plan 174.3 (D54 §6): validate the operand of `x is T`. `is` is legal on
@@ -10358,6 +10635,62 @@ impl<'a> TypeCheckCtx<'a> {
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     } else if let ExprKind::Member { obj: mo, name: method } = &func.kind {
+                        // [M-blanket-method-resolve] / registry 221.1 No.712, CASE (A).
+                        // A blanket method (`fn[T] T @m(...)`) is accepted by
+                        // `f3_check_member_ctx` through an early `return` -- so that no
+                        // false E7320 fires, since the registry keys it under the
+                        // PARAM name ("T") and not under the concrete receiver type --
+                        // but its RESULT TYPE was never resolved and never reached the
+                        // channel. On a BUILTIN receiver (`5.p712_tag()`) codegen's
+                        // legacy inference coped on its own; on a USER type it did not,
+                        // and `nova build` printed `[INTERNAL-PANIC]
+                        // [E_CODEGEN_TYPE_UNKNOWN] method call return type unknown`.
+                        // THE KEY IS THE CALL's id (`e.id`), not the member's: the
+                        // panic lives in `infer_call_ret_c`, reached from
+                        // `infer_expr_c_type`'s `ExprKind::Call` arm.
+                        // BOUNDARY: case (A) only -- the map yields `Some(tr)` solely
+                        // when the declared return mentions none of the method's OWN
+                        // type-params. Case (B) (`@pipe[U](f fn(T) -> U) -> U`) needs
+                        // real inference from the closure argument and stays silent here.
+                        // ORDER: `or_insert` -- the specialised producers below override
+                        // this annotation with their own `insert`.
+                        // KILL SWITCH `NOVA_KILL_712=1` removes the fix WHOLE
+                        // (lesson of No.711: a partial switch proves the wrong thing).
+                        // No.712 CORRECTION, paid for by a red flagship: the
+                        // decision to annotate must come from RESOLUTION, not from
+                        // the NAME. `to_str` is at once a blanket name and the name
+                        // of CONCRETE methods with DIFFERENT returns --
+                        // `HeaderValue @to_str() -> Result[str, HttpError]`
+                        // (nova-http), `Path @to_str() -> Option[str]` (std/fs).
+                        // The first version keyed on the name alone and handed the
+                        // concrete method the blanket's return: 17 C errors on the
+                        // `aggregator` flagship. The row No.712 had said exactly
+                        // this -- "the key is the CALL, not the member" -- and the
+                        // hole was that only the WRITE used the call id while the
+                        // DECISION still used the name.
+                        // THE DOOR IS THE RESOLVER'S OWN: `t_provides_method`
+                        // (`sig.methods_of` union the synth overlay), the same
+                        // helper the E7320 gate consults -- not a second copy.
+                        // WHERE THE DISAMBIGUATION LIVES: not here. The receiver
+                        // is not in `scope` at this point (that is WHY the regular
+                        // resolver missed and control got here), so the decision is
+                        // made once in `TypeCheckCtx::build` -- an ambiguous blanket
+                        // name carries `None` and annotates nothing. See there.
+                        if e.id.is_set()
+                            && std::env::var_os("NOVA_KILL_712").is_none()
+                        {
+                            if let Some(Some(ret_tr)) =
+                                self.blanket_method_names.get(method.as_str())
+                            {
+                                if !typeref_mentions_any(ret_tr, gs) {
+                                    let rt = ResolvedType::from_type_ref(ret_tr);
+                                    self.resolved_types_buf
+                                        .borrow_mut()
+                                        .entry(e.id)
+                                        .or_insert(rt);
+                                }
+                            }
+                        }
                         // Plan 221.1 №286/№143 (окно p-chan, real Channel[T] mono):
                         // `rx.recv()`/`rx.try_recv()`/`tx.share()` — same producer
                         // logic as `infer_expr_type`'s dedicated Call-arm above
@@ -16135,7 +16468,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if overloads.is_none()
                     && !gs.contains_key(parts[0].as_str())
                     && self.find_method_decl(&parts[0], &parts[1]).is_none()
-                    && !self.blanket_method_names.contains(&parts[1])
+                    && !self.blanket_method_names.contains_key(parts[1].as_str())
                 {
                     if let Some(td) = self.types_get_here(parts[0].as_str()) {
                         // Знание полно только для простых форм: у alias/protocol/
@@ -17061,7 +17394,7 @@ impl<'a> TypeCheckCtx<'a> {
         // per-type resolution below keys on `tname` and would miss it, firing a
         // false [E7320] on `str`/user types (primitives slip through the
         // `self.types.get` early-return). Accept the blanket method here.
-        if self.blanket_method_names.contains(name) {
+        if self.blanket_method_names.contains_key(name) {
             return;
         }
         // [M-198-f4c-1-privfile-type-not-discriminated]: file-aware lookup —
