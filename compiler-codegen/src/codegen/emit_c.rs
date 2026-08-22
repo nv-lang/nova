@@ -21693,7 +21693,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // dropping it turned a silent mis-resolution into a compile error. Value
         // types get no cast (C has no cast to struct type) -- ambiguous sums are
         // kept off the value path by the A4 variant-collision fence instead.
-        let cast = if t.ends_with('*') { format!("({})", t) } else { String::new() };
+        // Gated on A4 so `NOVA_KILL_A4=1` restores the pre-atom text byte for byte:
+        // with A4 off every one of these types is a pointer and the mismatch is a
+        // clang warning, exactly as before; with A4 on it is a hard error.
+        let cast = if t.ends_with('*') && !Self::a4_value_sums_disabled() {
+            format!("({})", t)
+        } else {
+            String::new()
+        };
         let mut pre = String::new();
         let lt = if Self::eq_operand_is_bare_ident(l) {
             l.to_string()

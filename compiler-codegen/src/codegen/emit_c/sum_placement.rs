@@ -64,7 +64,7 @@ impl CEmitter {
     /// (every sum a heap pointer). The acceptance baseline is taken with this
     /// switch on the SAME binary -- same rule and shape as `NOVA_KILL_744` and
     /// `NOVA_KILL_D55NT`.
-    fn a4_value_sums_disabled() -> bool {
+    pub(super) fn a4_value_sums_disabled() -> bool {
         std::env::var("NOVA_KILL_A4").map(|v| v == "1").unwrap_or(false)
     }
 
