@@ -352,4 +352,13 @@ no_caveat=34
 #   fixed and the fix is proven both ways on one binary with the build cache
 #   cleared: 1 evaluation with the fix, 2 with NOVA_KILL_744=1. Down, as this
 #   file's own rule says a ratchet may only go.
-blockers=49
+# 2026-08-23, No.745 FILED -- 49 -> 50, and this is honest growth, not a slip.
+#   CI ran scripts/gate.sh for the first time (plan 275 F.3) and the
+#   panic/exit/timeout lane -- which until today only ever ran on the owner's
+#   Windows box -- came back with two red fixtures on Linux:
+#   standalone/fiber_stack_overflow and standalone/supervised_cancel_double_bind.
+#   Both pass here, measured the same hour. A conformance red on the platform
+#   we ship for blocks the tag until the failure mode is known, so the count
+#   goes UP by one. A number rising because a new judge started judging is the
+#   plan working, not the tree getting worse.
+blockers=50
