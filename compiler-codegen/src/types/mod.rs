@@ -38631,131 +38631,6 @@ struct LinearityRegistry {
     /// в своей сигнатуре — проверяется отдельно (`missing_cleanup_effect_names`
     /// + `check_obligations_at_exit` / `validate_consume_scope_init`).
     cleanup_effect_rows: HashMap<String, Vec<TypeRef>>,
-    /// №672 форма (3) (2026-08-21, уточнено ЗАМЕРОМ по std): имя типа →
-    /// множество его собственных методов, до которых ДОСЯГАЕТ `@cleanup`
-    /// через вызовы `@m()` (транзитивно, включая сам `cleanup`).
-    ///
-    /// Это ТЕРМИНАЛЬНЫЕ ОСВОБОДИТЕЛИ типа. Первая редакция формы (3)
-    /// освобождала только метод с именем `cleanup` — и покрасила
-    /// `File.close` (fs.nv:311) и `TcpStream.close` (tcp.nv:319), то есть ровно
-    /// те два метода, которыми ресурс и освобождается: оба — то, что
-    /// зовёт `@cleanup` своего типа. Отсюда и правило.
-    cleanup_delegates: HashMap<String, HashSet<String>>,
-    /// №672 форма (3): типы, чей `@cleanup` НЕ ДЕЛАЕТ НИЧЕГО
-    /// (пустое тело либо ровно `()`). У такого типа нечего терять —
-    /// значит, нечего и диагностировать. Названо ЗАМЕРОМ по
-    /// conformance: `m666_variant_ctor_moves_consume` и
-    /// `m667_arm_binding_and_variant_ctor_ownership` — оба с пустым cleanup'ом,
-    /// оба про владение, а не про освобождение.
-    cleanup_is_noop: HashSet<String>,
-}
-
-/// №672 форма (3): собрать имена методов, вызванных НА `@` в теле.
-///
-/// Обход НАМЕРЕННО скромный: тела `@cleanup` и его делегатов в
-/// корпусе — одна-две строки (`=> @close()`, `{ @close() }`,
-/// `if … { @close() }`). Пропуск глубоко закопанного вызова даёт ЛИШНИЙ
-/// отказ, а не молчание — то есть ошибка видна, а не скрыта.
-/// №672 форма (3): несёт ли тип хоть где-то внутри must-consume имя.
-/// Нужен только для вопроса «передал ли метод владение дальше», поэтому
-/// обход простой и рекурсивный по контейнерам/кортежам/generic-аргументам.
-fn typeref_contains_must_consume(t: &TypeRef, lin_reg: &LinearityRegistry) -> bool {
-    match t {
-        TypeRef::Named { path, generics, .. } => {
-            if let Some(last) = path.last() {
-                if lin_reg.is_must_consume_name(last) { return true; }
-            }
-            generics.iter().any(|g| typeref_contains_must_consume(g, lin_reg))
-        }
-        TypeRef::Tuple(elems, _) => elems.iter().any(|e| typeref_contains_must_consume(e, lin_reg)),
-        TypeRef::Readonly(inner, _) => typeref_contains_must_consume(inner, lin_reg),
-        _ => false,
-    }
-}
-
-/// №672 форма (3): тело не делает ничего — пустой блок, блок с одним
-/// `()`, либо стрелочное `=> ()`. Намеренно буквально: вопрос здесь
-/// не «что этот код делает», а «написано ли в нём хоть что-нибудь».
-fn fnbody_is_noop(body: &FnBody) -> bool {
-    fn expr_is_unit(e: &Expr) -> bool { matches!(e.kind, ExprKind::UnitLit) }
-    match body {
-        FnBody::External => false,
-        FnBody::Expr(e) => expr_is_unit(e),
-        FnBody::Block(b) => {
-            let stmts_empty = b.stmts.is_empty()
-                || (b.stmts.len() == 1
-                    && matches!(&b.stmts[0], Stmt::Expr(e) if expr_is_unit(e)));
-            let trailing_empty = match &b.trailing {
-                None => true,
-                Some(t) => expr_is_unit(t),
-            };
-            stmts_empty && trailing_empty
-        }
-    }
-}
-
-fn collect_self_method_calls_in_body(body: &FnBody, out: &mut Vec<String>) {
-    match body {
-        FnBody::Block(b) => collect_self_method_calls_in_block(b, out),
-        FnBody::Expr(e) => collect_self_method_calls_in_expr(e, out),
-        FnBody::External => {}
-    }
-}
-
-fn collect_self_method_calls_in_block(b: &Block, out: &mut Vec<String>) {
-    for s in &b.stmts {
-        match s {
-            Stmt::Expr(e) | Stmt::Throw { value: e, .. } =>
-                collect_self_method_calls_in_expr(e, out),
-            Stmt::Return { value: Some(v), .. } =>
-                collect_self_method_calls_in_expr(v, out),
-            Stmt::Let(decl) => collect_self_method_calls_in_expr(&decl.value, out),
-            Stmt::Defer { body, .. } => collect_self_method_calls_in_expr(body, out),
-            _ => {}
-        }
-    }
-    if let Some(t) = &b.trailing { collect_self_method_calls_in_expr(t, out); }
-}
-
-fn collect_self_method_calls_in_expr(e: &Expr, out: &mut Vec<String>) {
-    match &e.kind {
-        ExprKind::Call { func, args, .. } => {
-            if let ExprKind::Member { obj, name } = &func.kind {
-                if matches!(obj.kind, ExprKind::SelfAccess) {
-                    out.push(name.clone());
-                }
-            }
-            collect_self_method_calls_in_expr(func, out);
-            for a in args { collect_self_method_calls_in_expr(a.expr(), out); }
-        }
-        ExprKind::Try(inner) | ExprKind::Bang(inner)
-        | ExprKind::Unary { operand: inner, .. }
-        | ExprKind::Member { obj: inner, .. } =>
-            collect_self_method_calls_in_expr(inner, out),
-        ExprKind::Binary { left, right, .. } => {
-            collect_self_method_calls_in_expr(left, out);
-            collect_self_method_calls_in_expr(right, out);
-        }
-        ExprKind::If { cond, then, else_ } => {
-            collect_self_method_calls_in_expr(cond, out);
-            collect_self_method_calls_in_block(then, out);
-            match else_ {
-                Some(ElseBranch::Block(b)) => collect_self_method_calls_in_block(b, out),
-                Some(ElseBranch::If(x)) => collect_self_method_calls_in_expr(x, out),
-                None => {}
-            }
-        }
-        ExprKind::Match { arms, .. } => {
-            for arm in arms {
-                match &arm.body {
-                    MatchArmBody::Expr(x) => collect_self_method_calls_in_expr(x, out),
-                    MatchArmBody::Block(b) => collect_self_method_calls_in_block(b, out),
-                }
-            }
-        }
-        ExprKind::Block(b) => collect_self_method_calls_in_block(b, out),
-        _ => {}
-    }
 }
 
 impl LinearityRegistry {
@@ -38764,8 +38639,6 @@ impl LinearityRegistry {
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
         let mut local_type_names = HashSet::new();
         let mut cleanup_effect_rows: HashMap<String, Vec<TypeRef>> = HashMap::new();
-        let mut cleanup_delegates: HashMap<String, HashSet<String>> = HashMap::new();
-        let mut cleanup_is_noop: HashSet<String> = HashSet::new();
 
         // Plan 217 §8а п.1 / D432-амендмент 2026-08-04 (№315): `@cleanup`
         // (метод `cleanup` на consume-receiver'е, instance-kind, protocol-
@@ -38838,68 +38711,12 @@ impl LinearityRegistry {
             }
         }
 
-        // №672 форма (3): ТЕРМИНАЛЬНЫЕ ОСВОБОДИТЕЛИ — транзитивное
-        // замыкание вызовов `@m()`, начиная с `@cleanup`. Собирается из
-        // обоих источников методов (локальный модуль + peer-файлы),
-        // чтобы не повторить асимметрию, описанную в шаге 2 выше.
-        {
-            let mut bodies: HashMap<(String, String), &FnBody> = HashMap::new();
-            for item in &module.items {
-                if let Item::Fn(fd) = item {
-                    if let Some(recv) = &fd.receiver {
-                        bodies.insert((recv.type_name.clone(), fd.name.clone()), &fd.body);
-                    }
-                }
-            }
-            for pf in &module.peer_files {
-                for item in &pf.items_here {
-                    if let Item::Fn(fd) = item {
-                        if let Some(recv) = &fd.receiver {
-                            bodies.insert((recv.type_name.clone(), fd.name.clone()), &fd.body);
-                        }
-                    }
-                }
-            }
-            for ty in cleanup_effect_rows.keys() {
-                let mut reached: HashSet<String> = HashSet::new();
-                reached.insert("cleanup".to_string());
-                let mut queue: Vec<String> = vec!["cleanup".to_string()];
-                while let Some(m) = queue.pop() {
-                    let Some(body) = bodies.get(&(ty.clone(), m)) else { continue };
-                    let mut found: Vec<String> = Vec::new();
-                    collect_self_method_calls_in_body(body, &mut found);
-                    for f in found {
-                        if reached.insert(f.clone()) { queue.push(f); }
-                    }
-                }
-                cleanup_delegates.insert(ty.clone(), reached);
-                if bodies.get(&(ty.clone(), "cleanup".to_string()))
-                    .map_or(false, |b| fnbody_is_noop(b))
-                {
-                    cleanup_is_noop.insert(ty.clone());
-                }
-            }
-        }
-
         LinearityRegistry {
             consume_levels,
             consume_methods,
             local_type_names,
             cleanup_effect_rows,
-            cleanup_delegates,
-            cleanup_is_noop,
         }
-    }
-
-    /// №672 форма (3): является ли `method` терминальным освободителем
-    /// типа `ty` — то есть тем, до чего досягает `@cleanup`.
-    fn is_cleanup_delegate(&self, ty: &str, method: &str) -> bool {
-        self.cleanup_delegates.get(ty).map_or(false, |s| s.contains(method))
-    }
-
-    /// №672 форма (3): `@cleanup` этого типа не делает ничего.
-    fn cleanup_does_nothing(&self, ty: &str) -> bool {
-        self.cleanup_is_noop.contains(ty)
     }
 
     /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
@@ -40300,13 +40117,6 @@ fn consume_pattern_names_with_mut(p: &Pattern, out: &mut Vec<(String, bool)>) {
 /// (№667), новые точки заведения обязательств молчат, а ro-алиасное
 /// правило №717 не действует. Нужен ровно для приёмки «доказано в обе
 /// стороны»: каждая новая фикстура под ним обязана краснеть.
-/// №672 форма (3): имя псевдо-биндинга для consume-ресивера.
-/// `@` имени не имеет (см. док к `ConsumeCtx::self_recv`, №598) — и ровно
-/// поэтому потребление приёмника не попадало ни в одно состояние.
-/// Здесь ему даётся имя, невыразимое в исходнике, чтобы оно не столкнулось
-/// ни с одним пользовательским биндингом.
-const SELF_RECEIVER_BINDING: &str = "@";
-
 /// №672 форма (5): параметр замыкания / хендлер-опа вместе с тем,
 /// что терял прежний `ctx.declare(p, None)`: ФЛАГ `consume` и ТИП.
 /// Без них не заводилось обязательство даже для строго линейного
@@ -40391,8 +40201,6 @@ enum BindingOrigin {
     /// Вызывающий дизармит СВОЙ флаг при передаче, вызываемый не
     /// чистит никогда — значит освобождать нельзя.
     FnParam,
-    /// Форма (3) №672: `fn T consume @m()` — consume-ресивер.
-    Receiver,
     /// Форма (2) и arm-паттерн №667: биндинг из паттерна
     /// (`Ok(consume r) => …`, `while Some(consume r) = …`).
     Pattern,
@@ -40419,7 +40227,6 @@ impl BindingOrigin {
         match self {
             BindingOrigin::BareLet => "consume-биндинг `consume X = …`",
             BindingOrigin::FnParam => "consume-параметр функции",
-            BindingOrigin::Receiver => "consume-ресивер метода",
             BindingOrigin::Pattern => "биндинг из паттерна",
             BindingOrigin::ConsumeScopeResult => "результат-биндинг consume-области",
             BindingOrigin::ClosureParam => "параметр замыкания / хендлер-опа",
@@ -41468,15 +41275,6 @@ impl<'a> ConsumeCtx<'a> {
                 // current_fn_effects == None → test/bench ambient context,
                 // deliberately skipped (see ConsumeCtx field doc).
             }
-            // №672 форма (3), уточнено замером: для ПРИЁМНИКА вынос
-            // владения ХОТЯ БЫ НА ОДНОМ пути считается распоряжением.
-            // Носитель: `TcpStream.close` (tcp.nv:319) отдаёт `@` в
-            // `Net.close_stream(@)` только при rc→0 — на другом пути
-            // освобождать нечего намеренно (владелец не последний).
-            // Проба №672 (`@swallow`) не отдаёт ни на одном — и отличается.
-            let receiver_partial_ok = name == SELF_RECEIVER_BINDING
-                && matches!(state, Some(VarState::MaybeConsumed(_)));
-            if receiver_partial_ok { continue; }
             match state {
                 Some(VarState::Live) if is_auto_cleanup_eligible => {}
                 Some(VarState::MaybeConsumed(_)) if is_auto_cleanup_eligible => {}
@@ -43169,48 +42967,6 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                                 break;
                             }
                         }
-                    }
-                    // №672 ФОРМА (3) (решение владельца 2026-08-21):
-                    // CONSUME-РЕСИВЕР, НЕ РАСПОРЯДИВШИЙСЯ СОБОЙ.
-                    //
-                    // `fn R consume @swallow() -> ()` при типе с `@cleanup`
-                    // собирался чисто и не чистил НИЧЕГО: вызывающий дизармил
-                    // свой авто-cleanup при передаче владения, а вызываемый не
-                    // делал с приёмником ничего. `check_fields_at_exit` этот
-                    // случай прямо РАЗРЕШАЛ («record-consume = весь объект
-                    // consumed») — но кто именно освободит объект, там не
-                    // спрашивалось ни у кого.
-                    //
-                    // Обязательство заводится ТОЛЬКО для типов с `@cleanup`:
-                    // ровно там живёт исключение D432, ровно там дыра. Сам
-                    // `@cleanup` освобождён — он и есть терминальный
-                    // освободитель; `-> @` (D409) освобождён — владение
-                    // уезжает обратно вызывающему.
-                    // Три освобождающих признака, и каждый назван ЗАМЕРОМ по std,
-                    // а не придуман заранее:
-                    //   — метод есть делегат `@cleanup` (`File.close`, `TcpStream.close`);
-                    //   — метод возвращает must-consume значение, то есть передаёт
-                    //     владение ДАЛЬШЕ (`TcpStream.into_split -> (TcpReadHalf,
-                    //     TcpWriteHalf)`);
-                    //   — `-> @` (D409): владение едет обратно вызывающему.
-                    // Проба №672 (`fn R consume @swallow() -> ()`) не подходит ни под
-                    // один из трёх — и именно этим отличается от них.
-                    let hands_ownership_on = f.return_type.as_ref().map_or(false, |rt| {
-                        typeref_contains_must_consume(rt, &lin_reg)
-                    });
-                    if recv.consume
-                        && !provenance_disabled()
-                        && !lin_reg.is_cleanup_delegate(&recv.type_name, &f.name)
-                        && !hands_ownership_on
-                        && !f.returns_receiver
-                        && !lin_reg.cleanup_does_nothing(&recv.type_name)
-                        && lin_reg.cleanup_effects(&recv.type_name).is_some()
-                    {
-                        ctx.declare_consume_binding(
-                            SELF_RECEIVER_BINDING,
-                            Some(recv.type_name.clone()),
-                            BindingOrigin::Receiver,
-                        );
                     }
                 }
                 match &f.body {
@@ -45960,15 +45716,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
         | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
-        | ExprKind::Path(_) => {}
-
-        // №672 форма (3): ГОЛЫЙ `@` в позиции ЗНАЧЕНИЯ (`return @`, хвост,
-        // аргумент вызова, поле литерала) — вынос владения приёмником наружу.
-        // Проекция `@.field` сюда НЕ попадает: ветка `Member` ниже намеренно
-        // не спускается в `SelfAccess`-объект (чтение поля владением не
-        // распоряжается). Консервативно в безопасную сторону: лишняя пометка
-        // «распорядился» гасит диагностику, а не выдумывает её.
-        ExprKind::SelfAccess => ctx.mark_consumed(SELF_RECEIVER_BINDING, e.span),
+        | ExprKind::Path(_) | ExprKind::SelfAccess => {}
 
         // ─── Использование переменной ───
         ExprKind::Ident(name) => ctx.use_var(name, e.span, errors),
@@ -46023,19 +45771,6 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         ),
                         e.span,
                     ));
-                }
-            }
-            // №672 форма (3): consume-метод, зовущий НА СЕБЕ другой
-            // consume-метод (в том числе `@cleanup()`), владением
-            // РАСПОРЯДИЛСЯ — обязательство приёмника закрыто. Форма та же,
-            // что ловит №598 выше, только с обратным знаком по `self_recv`.
-            if let (Some((self_ty, true)), ExprKind::Member { obj, name }) =
-                (ctx.self_recv.clone(), &func.kind)
-            {
-                if matches!(obj.kind, ExprKind::SelfAccess)
-                    && ctx.reg.methods.contains(&(self_ty, name.clone()))
-                {
-                    ctx.mark_consumed(SELF_RECEIVER_BINDING, e.span);
                 }
             }
             // #671: конструктор варианта ЗАБИРАЕТ владение своими аргументами
@@ -46884,14 +46619,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         }
 
         // ─── Доступы / операторы ───
-        ExprKind::Member { obj, .. } => {
-            // №672 форма (3): `@.field` — чтение поля, не вынос приёмника.
-            // Спуск в `SelfAccess` был бы no-op'ом до этой правки и стал бы
-            // ложной пометкой «распорядился» после неё.
-            if !matches!(obj.kind, ExprKind::SelfAccess) {
-                consume_walk_expr(ctx, obj, errors);
-            }
-        }
+        ExprKind::Member { obj, .. } => consume_walk_expr(ctx, obj, errors),
         ExprKind::Index { obj, index } => {
             consume_walk_expr(ctx, obj, errors);
             consume_walk_expr(ctx, index, errors);

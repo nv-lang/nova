@@ -17,10 +17,17 @@ type DcamStream consume {
 
 fn DcamStream consume @cleanup(_outcome ScopeOutcome) -> () { () }
 
+// #672 form (1) (2026-08-21): the helper below takes OWNERSHIP, so it owes a
+// release. Before the fix a `consume` parameter was freed by the D432
+// exemption the codegen does not back, and this fixture leaked in silence --
+// it is about the `detach consume` move, and the leak rode along unnoticed.
+fn DcamStream consume @close() -> () { () }
+
 fn dcam_accept(v int) -> Result[DcamStream, str] => Ok(DcamStream { id: v })
 
 fn dcam_handle_connection(consume stream DcamStream) -> () {
     ro _n = stream.id
+    stream.close()
 }
 
 test "detach consume stream { ... } — explicit move, no E_LINEAR_CAPTURE_IN_FIBER" {

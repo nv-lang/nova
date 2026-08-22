@@ -10,7 +10,7 @@
 module spec_tests.conformance
 
 fn m717_fresh_from_call(v []int) -> []int {
-    ro removed = v.slice(0, 1)
+    ro removed = v.clone()
     removed
 }
 
