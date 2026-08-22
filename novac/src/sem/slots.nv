@@ -413,6 +413,30 @@ export fn declares_receiver(kids []Node) -> bool {
     false
 }
 
+/// THE TYPE a type NAME denotes inside a declaration: its own type parameter if
+/// the declaration binds that name, otherwise whatever the registry holds.
+///
+/// WAVE B6 WAS CANCELLED BY THE CRITERION AND BECAME THIS DOOR. The plan said
+/// "wrap the tparam slot, 26 sites". The criterion from wave B4 -- an identity is
+/// STORED -- said no: the slot is never a field of anything. It is produced by
+/// `tparam_slot` and consumed on the next line by `param_rows[slot]`, every time,
+/// which makes it a STEP.
+///
+/// And the step was written out TWICE, verbatim, in `collect_types` -- once for
+/// the return type, once for each parameter. Two copies of one question is what a
+/// missing door looks like from the inside (P18), so the question gets a name and
+/// the slot goes back to being an implementation detail.
+export fn ty_of_type_name(name str, tps []str, param_rows []TyId,
+                          types []TypeDef, defs DefTable) -> TyId {
+    if Some(slot) = tparam_slot(name, tps) {
+        // `-> T` or `x T` names a type PARAMETER of THIS declaration, and that
+        // is a real type: the term the interner made for that slot.
+        param_rows[slot]
+    } else {
+        ty_or_none(types, defs, name)
+    }
+}
+
 /// Which slot of `tps` this type name binds, or None when it is not a type
 /// parameter of the declaration.
 ///

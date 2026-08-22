@@ -402,28 +402,14 @@ fn FnTable @specificity_of(row FnRow) -> int {
     n
 }
 
-/// Which substitution slot this name binds in this callable, or None when the
-/// name is not one of its type parameters.
-///
-/// A type parameter is a BINDER, and its identity inside the declaration is its
-/// NAME — the same reading `Scope.bind(name, type)` gives a local. The index is
-/// the slot: `fn f[T, U]` binds T to 0 and U to 1, and a call's type arguments
-/// stand in the same order (plan 274 E2-b2: turbofish is mandatory, so the
-/// order is the whole mapping).
-#realtime nogc
-export fn FnTable @tparam_index(row FnRow, name str) -> Option[int] {
-    ro fd = @rows[raw_row(row)]
-    for i in 0..fd.tparam_cnt {
-        // BINDER-OK: a type parameter is a binder of THIS declaration, so the
-        // set is bounded by its own arity, not by the registry.
-        if @tparams[fd.tparam_off + i] == name {
-            return Some(i)
-        } else {
-            // Not this slot; the next one may bind the name.
-        }
-    }
-    None
-}
+// `FnTable.tparam_index` lived here until 2026-08-22 and is gone for the reason
+// that removed `candidates_from` and `same_vrow` before it: EXPORTED, and called
+// by nobody. Three of these in one session is a pattern of mine, not an accident
+// -- a door written because it "completes the set" rather than because someone
+// asked the question. The question it answered ("which slot does this name bind
+// in THIS row") is asked one step earlier by `slots.tparam_slot`, which has real
+// callers, and by `sem.ty_of_type_name`, which is what those callers wanted.
+
 
 
 /// Register one callable. A repeat (receiver, name) is NOT merged and NOT

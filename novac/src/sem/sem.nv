@@ -826,12 +826,7 @@ export fn collect_types(file Node) -> Ctx {
                 ro rk = branch_children(r)
                 if rk.len() < 2 || rk[1].kind_of() != NodeKind.LeafNode { continue }
                 ro rname = leaf_text(rk[1])
-                ret = match tparam_slot(rname, tps) {
-                    // `-> T` names a type PARAMETER of this declaration, and
-                    // that is a type -- the whole point of the row above.
-                    Some(slot) => param_rows[slot]
-                    None => ty_or_none(types, defs, rname)
-                }
+                ret = ty_of_type_name(rname, tps, param_rows, types, defs)
             }
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
@@ -872,10 +867,7 @@ export fn collect_types(file Node) -> Ctx {
                 // PARAMETER of this declaration is not unknown -- it is the
                 // row built above.
                 ro pname = leaf_text(tnode)
-                ro pt = match tparam_slot(pname, tps) {
-                    Some(slot) => param_rows[slot]
-                    None => ty_or_none(types, defs, pname)
-                }
+                ro pt = ty_of_type_name(pname, tps, param_rows, types, defs)
                 // Type AND mode in one row: the mode is an axis of overloading
                 // (P14), so a collector that dropped it would make `f(x T)` and
                 // `f(mut x T)` one callable twice over.
