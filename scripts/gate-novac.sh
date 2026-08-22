@@ -259,6 +259,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-crutch.py" "механизм novac 
 par_add "$ROOT/scripts/guards/check-novac-no-unwrap-compare.py" "завёрнутый индекс распакован ради сравнения — обёртка перестала защищать (П19)"
 par_add "$ROOT/scripts/guards/check-novac-cursor-is-range.py" "курсор с шагом один написан вручную вместо диапазона (П32)"
 par_add "$ROOT/scripts/guards/check-novac-wrapper-is-stored.py" "завёрнутое пространство нигде не хранится — обёртка вокруг шага, а не личности (§9.1г.1)"
+par_add "$ROOT/scripts/guards/check-novac-import-exists.py" "импортируется имя, которого нет — оракул этого не сверяет (замер 2026-08-22)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"

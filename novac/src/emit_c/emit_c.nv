@@ -179,7 +179,7 @@ fn Emitter mut @emit_type_decls() -> () {
 }
 
 /// Record: a typedef plus the struct with one member per field row, in the
-/// declaration order the registry stored (TypeDef.row_off/row_cnt).
+/// declaration order the registry stored (the FieldRows arm of TypeDef.rows).
 fn Emitter mut @emit_record_decl(rec_id int) -> () {
     // A DECL index, not a type id -- and since 2026-08-21 the two are told
     // apart: the C name comes from the row's OWN `ty_id` instead of from the
@@ -206,7 +206,7 @@ fn Emitter mut @emit_record_decl(rec_id int) -> () {
 
 /// Sum: tag enum + tagged union + a maker per variant — the oracle's exact
 /// shape (fixed point on match_demo.nv), novac's own namespace. The type's
-/// variant rows are the TypeDef.row_off/cnt range; each variant's payload
+/// variant rows are the TypeDef.rows range (the VariantRows arm); each variant's payload
 /// rows are VariantDef.payload_off/cnt — no filter loops (compile speed first).
 fn Emitter mut @emit_sum_decl(sum_id int) -> () {
     // A DECL index; the C name comes from the row's own type id (see above).

@@ -133,7 +133,8 @@ fn target_present(t CalleeTarget) -> bool {
 /// so it is one row -- not two parallel vectors (owner's review 2026-08-16).
 /// Parallel `off`/`cnt` vectors admit a state the language forbids: two
 /// lengths that disagree. A row cannot desynchronize with itself (P23), and
-/// the registry already spells ranges this way -- `TypeDef.row_off/row_cnt`,
+/// the registry already spells ranges this way -- `TypeDef.rows` (one field since
+/// wave B5, because that pair was polymorphic by kind),
 /// `VariantDef.payload_off/payload_cnt` live inside their row.
 export type SubstRef value {
     arg_off int /// First argument in `subst_args`; -1 = this node instantiates nothing.

@@ -348,10 +348,10 @@ export type FieldDef value {
 /// structure back into a string right after §4а spent a rule on "identity
 /// is not a name"; the chain does the same job with one integer compare per
 /// candidate and no allocation. Rows stay in per-type insertion order, so
-/// TypeDef.row_off/row_cnt still address a contiguous range.
+/// the FieldRows arm of TypeDef.rows still addresses a contiguous range.
 export type FieldTable {
     names NameTable /// field name -> FIRST row with that name (NsFields); FieldDef.next walks the rest.
-    rows []FieldDef /// The field rows, grouped per type via TypeDef.row_off/cnt.
+    rows []FieldDef /// The field rows, grouped per type via TypeDef.rows (the FieldRows arm)
 }
 
 /// Empty field registry with the NsFields namespace.
@@ -453,7 +453,7 @@ export type Ctx {
     prims Prims /// Type ids of the primitives (the CommonTypes model).
     defs DefTable /// THE unified top-level name registry (types, variants, fns).
     fields FieldTable /// Record fields, addressed through the owner type.
-    variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.row_off/cnt.
+    variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.rows (the VariantRows arm)
     payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
