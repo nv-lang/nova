@@ -24,7 +24,7 @@ test "interning: different arguments are different types — Vec[int] is not Vec
     ro vi = it.app(vec_decl, []TyId.of(int_t))
     ro vs = it.app(vec_decl, []TyId.of(str_t))
     assert(vi != vs)
-    assert(it.head_of(vi) == it.head_of(vs)) // same constructor …
+    assert(it.decl_head_of(vi) == it.decl_head_of(vs)) // same constructor …
     assert(it.arg(vi, 0) != it.arg(vs, 0)) // … different arguments
 }
 

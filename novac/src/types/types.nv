@@ -235,10 +235,56 @@ export fn Interner @kind_of(t TyId) -> TypeKind
 /// The head of a type: DeclId for nominal kinds, ordinal for a primitive,
 /// index for a parameter, vid for an inference variable.
 #realtime nogc
-export fn Interner @head_of(t TyId) -> int
+fn Interner @head_of(t TyId) -> int
     requires is_ty(t) && raw_ty(t) < @rows.len(), "types: head_of asked for a type id outside the interner"
 {
     @rows[raw_ty(t)].head_id
+}
+
+/// THE PRIMITIVE'S ORDINAL -- the head of a `TkPrim` term, and the one thing a
+/// primitive's head is.
+///
+/// WAVE B7 SPLIT `head_of` INTO DOORS, one per kind that HAS a reader. The field
+/// is polymorphic by kind (a prim ordinal, a DeclId, a parameter slot, an
+/// inference vid), so a single `head_of` handed every caller a number and left it
+/// to remember which of the four it was holding. That is the same shape as
+/// `Def.payload` and `CalleeRef.target_row`, with one difference that decides the
+/// cure: inside the interner the field is a HASH KEY (`bucket_of` multiplies it),
+/// so it cannot become a sum without turning the lookup into a match. The row
+/// keeps its word; the READERS get names.
+///
+/// Doors exist for the kinds that are actually asked about -- primitive ordinal,
+/// declaration, parameter slot. `TkInfer`'s vid has no reader, so it has no door:
+/// three callerless doors were deleted this session, and adding a fourth "for
+/// symmetry" is the habit that produced them.
+#realtime nogc
+export fn Interner @prim_ordinal_of(t TyId) -> int
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: prim_ordinal_of asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        TkPrim => row.head_id
+        TkRecord | TkSum | TkApp | TkNewtype =>
+            ice("types: the prim ordinal of a NOMINAL term -- its head is a declaration")
+        TkParam => ice("types: the prim ordinal of a type PARAMETER -- its head is a slot index")
+        TkInfer => ice("types: the prim ordinal of an inference variable -- its head is a vid")
+    }
+}
+
+/// THE PARAMETER SLOT -- the head of a `TkParam` term, and what a substitution
+/// indexes with.
+#realtime nogc
+export fn Interner @param_slot_of(t TyId) -> int
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: param_slot_of asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        TkParam => row.head_id
+        TkPrim => ice("types: the parameter slot of a PRIMITIVE -- its head is a universe ordinal")
+        TkRecord | TkSum | TkApp | TkNewtype =>
+            ice("types: the parameter slot of a NOMINAL term -- its head is a declaration")
+        TkInfer => ice("types: the parameter slot of an inference variable -- its head is a vid")
+    }
 }
 
 /// THE DECLARATION a nominal term names -- `head_of` typed as what it means.

@@ -87,7 +87,7 @@ export fn c_type(ctx Ctx, t TyId) -> str {
         // the declaration table -- and a PRIMITIVE has no declaration to go
         // through. The row is reached for below only where the NAME is wanted.
         match ctx.tys.kind_of(t) {
-            TkPrim => { return prim_c_name(ctx.tys.head_of(t)) } // universe fact by ordinal, read off the term
+            TkPrim => { return prim_c_name(ctx.tys.prim_ordinal_of(t)) } // universe fact by ordinal, read off the term
             TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}*" }
             TkSum => { return "Nova_${decl_of_ty(ctx, t).name}*" }
             // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
@@ -232,7 +232,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         TkParam => {
             // The parameter's index comes from the interner term, and it
             // addresses the substitution directly.
-            ro idx = ctx.tys.head_of(t)
+            ro idx = ctx.tys.param_slot_of(t)
             assert(idx >= 0 && idx < subst.len(),
                 "mangle: a type parameter outside the substitution — a generic asked without one")
             return subst[idx]
@@ -282,7 +282,7 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
     requires is_ty(t), "mangle: type_tag of `no type`"
 {
     match ctx.tys.kind_of(t) {
-        TkPrim => prim_c_name(ctx.tys.head_of(t))
+        TkPrim => prim_c_name(ctx.tys.prim_ordinal_of(t))
         // A record and a sum are named the same way: one case.
         TkRecord | TkSum => decl_of_ty(ctx, t).name
         // The newtype's OWN name, never the representation's: `f(Row)` and
