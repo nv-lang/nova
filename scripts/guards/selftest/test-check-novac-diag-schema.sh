@@ -22,14 +22,27 @@ sh "$G" "$FIX" "$TMP/absent" >/dev/null 2>&1
 check "без бинаря — зелёный" "$?" "0"
 
 echo "== валидная диагностика — проходит =="
-mkbin 'echo "[{\"id\":1,\"code\":\"E_X\",\"severity\":\"error\",\"primary\":true,\"message\":\"m\"}]"'
+mkbin 'echo "[{\"id\":1,\"code\":\"E_X\",\"severity\":\"error\",\"primary\":{\"file\":\"x.nv\",\"start\":1,\"end\":2},\"message\":\"m\"}]"'
 check "полные поля" "$(run)" "0"
 
 echo "== ловит =="
 mkbin 'echo "this is not json"'
 check "не-JSON — красный" "$(run)" "1"
-mkbin 'echo "[{\"id\":1,\"severity\":\"error\",\"primary\":true,\"message\":\"m\"}]"'
+mkbin 'echo "[{\"id\":1,\"severity\":\"error\",\"primary\":{\"file\":\"x.nv\",\"start\":1,\"end\":2},\"message\":\"m\"}]"'
 check "нет поля code — красный" "$(run)" "1"
+
+echo "== спан судится по существу (правка 2026-08-17) =="
+mkbin 'echo "[{\"id\":1,\"code\":\"E_X\",\"severity\":\"error\",\"primary\":{},\"message\":\"m\"}]"'
+check "primary без file/start/end — красный" "$(run)" "1"
+
+mkbin 'echo "[{\"id\":1,\"code\":\"E_X\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":1,\"end\":2},\"message\":\"m\"}]"'
+check "пустое имя файла — красный (позиция указывает в никуда)" "$(run)" "1"
+
+mkbin 'echo "[{\"id\":1,\"code\":\"E_X\",\"severity\":\"error\",\"primary\":{\"file\":\"x.nv\",\"start\":9,\"end\":2},\"message\":\"m\"}]"'
+check "конец раньше начала — красный" "$(run)" "1"
+
+mkbin 'echo "[{\"id\":1,\"code\":\"E_X\",\"severity\":\"error\",\"primary\":{\"file\":\"x.nv\",\"start\":-1,\"end\":2},\"message\":\"m\"}]"'
+check "отрицательное начало — красный" "$(run)" "1"
 
 echo "== ноль фикстур — честное «судить нечего» =="
 rm "$FIX/novac/fixtures/neg_probe.nv"

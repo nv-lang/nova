@@ -23,7 +23,14 @@
 #
 # $1 — корень репозитория. Самотест — selftest/test-check-fiber-migration-ordering.sh
 export LC_ALL=C
-ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# Корень приводится к АБСОЛЮТНОМУ пути: относительный `.` уводил поиск
+# бинаря мимо цели, и страж писал «сломан раннер» о здоровом дереве
+# (2026-08-18). Ложная краснота стоит дороже отсутствующей проверки:
+# по ней идут искать поломку, которой нет, и в стража перестают верить.
+# Если cd не удался — значение СОХРАНЯЕТСЯ как было: пустой ROOT судил бы
+# корень файловой системы, а это хуже исходной болезни.
+ROOT="${1:-$(dirname "$0")/../..}"
+ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 NAME=check-fiber-migration-ordering
 SYNC="$ROOT/compiler-codegen/nova_rt/sync.h"
 FIB="$ROOT/compiler-codegen/nova_rt/fibers.h"

@@ -1,0 +1,9 @@
+module m
+
+// Builds while `pick` is UNUSED; add the call in main and the build
+// fails. `nova check` accepts either way.
+fn pick(c bool) -> bool {
+    if c { return true }
+}
+
+fn main() => println(pick(false))

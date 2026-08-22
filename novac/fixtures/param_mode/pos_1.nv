@@ -1,0 +1,25 @@
+module param_mode.pos_1
+
+// A parameter MODE, and the effect is VISIBLE: the program prints 42, byte for
+// byte with the oracle. `mut v int` is what std writes 131 times.
+//
+// The argument is a `mut` BINDING on purpose. A mode is an axis of overloading
+// (P14) and the rule filters per position: a `mut` parameter needs a mutable
+// place, so `ro x = 41; bump(x)` fits nothing and novac refuses it. The oracle
+// is LAXER there for a VALUE type -- it accepts the `ro` binding, because for
+// `int` a `mut` parameter is the callee's own copy rather than an in-out. That
+// corner is the spec's own unfinished pass
+// (`[M-184-value-mut-mode-overload-abi]`), and for a HEAP type the oracle
+// refuses the same shape outright (E_READONLY_COERCE, measured 2026-08-21):
+// novac keeps the rule, and the divergence is registered.
+//
+// novac REFUSED this file entirely until 2026-08-21, and the refusal wore a lie
+// for a face: "novac does not know this type yet", pointing at `int`. Both
+// collectors read a parameter's type by the fixed index `pk[1]`, which is the
+// MODE's slot when a mode is written -- so the NAME was read as the type.
+fn bump(mut v int) -> int => v + 1
+
+fn main() {
+    mut m = 41
+    println(bump(m))
+}

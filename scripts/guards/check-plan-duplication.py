@@ -39,6 +39,12 @@ import os
 import re
 import sys
 
+# Поток вердикта — с LF: python на Windows иначе печатает CRLF там, где shell
+# печатал LF, и вывод молча расходится с shell-редакцией (правило
+# check-guard-honesty, заведено 2026-08-19).
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):

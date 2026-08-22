@@ -1,62 +1,243 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn `LanguageParser` (hand-written recursive descent by token kind;
+// `MissingToken` zero-width leaves; `IsTerminator` stop set; `IsMakingProgress`
+// non-advancement guard; `PeekToken(1)` for `fn Recv @name`) + rustc
+// `Parser::expect_one_of`; Pratt (1973) precedence climbing for binary operators,
+// as rustc spells it in `parse_expr_assoc_with` and Go in `binaryExpr(prec)`, with
+// the powers taken verbatim from the spec's precedence table (03-syntax);
+// Dragon Book (2nd ed.) §4.1.4 panic mode for the junk buckets; Go spec \"Composite literals\" ambiguity rule
+// (go/parser `exprLev`) for
+// no_ctor; rustc `AssocOp::DotDot` for `..` as a binary node; NOT taken: Roslyn
+// incremental reparse.
+// Role: layer 2 — the syntax door with recovery; one seeded mistake yields one Err branch, never a cascade.
+// Used by: pipeline (E1+); the no-cascade and grammar-coverage guards; the LSP at E3 reads the same tree.
+// Guarded by: check-novac-no-cascade.sh (one seeded mistake, one diagnostic), check-novac-grammar-fixture-coverage.sh,
+// novac-fuzz-mutations.sh (recovery never panics or hangs).
+// branch that KEEPS the tokens, so the tree stays byte-exact under any input;
+// NOT taken: Roslyn's incremental reparse (a batch compiler needs none).
 // novac/src/parse — tokens to green tree (architecture §2: module `parse`).
 //
 // E1 subset grammar: module declaration, fn declarations with empty parameter
-// lists, blocks, call expressions, string/int literals, names, left-assoc
-// +-*/ binary chains. Everything else is RECOVERED, never fatal: an
+// lists, blocks, call expressions, string/int literals, names, binary
+// expressions with the spec's precedence (Pratt, see `expr_bp`). Everything else is RECOVERED, never fatal: an
 // unexpected token becomes an Err branch holding exactly that token, and
 // parsing continues with the next one. The parser can therefore never lose a
 // byte and never stop early — the lead invariant holds through the tree:
 //     tree_reserialize(parse(lex(src))) == src, for every input.
 //
-// No Result in signatures (274 §4 п.1): parse always returns a File node.
+// No Result in signatures (274 §4 item 1): parse always returns a File node.
 // Diagnostics for Err nodes are the next slice (edge parse -> diag is in the
 // table; the node IS the representation, the report is separate).
 
 module novac.parse
 
-import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, branch, leaf}
+import ../lex.{Token, TokenKind, brace_delta}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
+import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
+/// The parser's walking state over one Eof-terminated token stream.
 type Cursor {
-    toks []Token
-    i int
+    toks []Token /// the lex output being parsed
+    i int /// next-token index; take() is the only advancer
+    /// Next branch identity. The parser is the ONE pass that sees every node
+    /// exactly once, so it is the honest place to name them (Zig `Ast`,
+    /// Carbon `Parse::Tree`); ids are dense and per-parse, and the checker's
+    /// channel is sized from the last one handed out.
+    next_id int
+    /// Go's composite-literal rule: inside an if/while/for HEAD a record
+    /// constructor is not parsed — `if x {` must read the brace as the
+    /// block, not as `x { ... }`. Set for the head expression only; block
+    /// bodies parse with it clear.
+    no_ctor bool
 }
 
-// Safe past the end: peek answers Eof forever once the stream is exhausted.
-// Together with the advancing take below this kills two latent doors at
-// once (E1 review p.2, 2026-08-14): an unguarded loop can no longer hang on
-// a non-advancing cursor, and recovery that consumes the Eof leaf (its
-// leading carries the file's TAIL trivia) can no longer lead to that trivia
-// being emitted twice -- the final push in parse() is conditional now.
-fn Cursor @peek() -> TokenKind {
-    if @i >= @toks.len() { return TokenKind.Eof }
-    @toks[@i].kind
+/// Build a branch node and give it its identity — the ONE place ids are
+/// handed out, so "dense and in creation order" is a fact of this function
+/// rather than a rule every builder has to remember.
+fn Cursor mut @node(kind NodeKind, children []Node) -> Node {
+    ro id = @next_id
+    @next_id += 1
+    branch(NodeId(id), kind, children)
 }
 
+/// Look ahead `skip` tokens without moving. ONE door, not a family: the
+/// second one (`peek2`) existed only to add 1 to the index, and a third would
+/// have been needed the moment a form is told apart by three tokens --
+/// `recv_ahead` below already needed an arbitrary distance and was scanning
+/// `@toks` by hand, duplicating the bounds check this door owns (owner's
+/// suggestion 2026-08-17).
+///
+/// A defaulted parameter in Nova is passed BY NAME (`@peek(skip: 1)`) --
+/// measured, not assumed: `@peek(1)` is refused outright, the language says a
+/// defaulted parameter travels by name only. That reads better at the call
+/// site than `peek2()` ever did, because the number now says what it counts.
+///
+/// Safe past the end: peek answers Eof forever once the stream is exhausted.
+/// Together with the advancing take below this kills two latent doors at
+/// once (E1 review p.2, 2026-08-14): an unguarded loop can no longer hang on
+/// a non-advancing cursor, and recovery that consumes the Eof leaf (its
+/// leading carries the file's TAIL trivia) can no longer lead to that trivia
+/// being emitted twice -- the final push in parse() is conditional now.
+fn Cursor @peek(skip int = 0) -> TokenKind {
+    if @i + skip >= @toks.len() { return TokenKind.Eof }
+    @toks[@i + skip].kind
+}
+
+/// The TEXT of the token `skip` ahead, empty past the end. Same contract as
+/// @peek, and it exists for the one place where a form is told apart by a
+/// word rather than a token kind: `enum` is not a keyword in this lexer, so
+/// the sum marker arrives as an identifier and has to be recognised by
+/// spelling.
+fn Cursor @peek_text(skip int = 0) -> str {
+    if @i + skip >= @toks.len() { return "" }
+    @toks[@i + skip].text
+}
+
+/// Is a parameter/receiver MODE standing at the cursor?
+///
+/// Asked BY MECHANISM, which is the whole reason this is a door: `mut` and `ro`
+/// are keywords and answer by their token KIND, `consume` and `uninit` are
+/// ordinary identifiers and answer by their SPELLING -- which lives in
+/// `builtins` (P5), never here. The two positions that need this question, a
+/// parameter and a qualified receiver, used to answer it with two hand-written
+/// copies of the four words.
+fn Cursor @at_mode_word() -> bool =>
+    @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
+        (@peek() == TokenKind.Ident && is_contextual_mode_word(@peek_text()))
+
+/// Take the token if it is the one wanted, and say ONCE what it means when it
+/// is not.
+///
+/// The phrase `if @peek() == X { kids.push(@take()) }` stood at fifty-four
+/// places in this parser: every optional comma, closing bracket and keyword.
+/// Each was an incomplete branching (P31) whose missing half means the same
+/// thing everywhere -- the token is optional here, there is nothing to take,
+/// and that is a valid outcome. Fifty-four empty `else` comments would say it
+/// fifty-four times; a named door says it once, and the call site gets
+/// shorter into the bargain.
+fn Cursor mut @push_if(mut kids []Node, k TokenKind) -> () {
+    if @peek() == k {
+        kids.push(@take())
+    } else {
+        // Nothing to take: the token is optional at this position. This is
+        // THE empty branch P31 asks to be named, and it is named here for
+        // every call site at once.
+    }
+}
+
+/// Take the current token as a leaf and advance; the only advancer.
 fn Cursor mut @take() -> Node {
-    // Never hands out the same token twice; the assert makes the contract
-    // loud instead of latent (asserts run in release too -- the language's
-    // stance). Callers that might legitimately stand past the end go
-    // through peek()/at_eof() first, which are safe there.
-    assert(@i < @toks.len())
+    // Past the end of the stream, take() returns an EMPTY leaf and does
+    // NOT move the cursor (274.3/F16, the Roslyn MissingToken model):
+    // there used to be an assert here, and one future recovery edit
+    // turned a truncated file into a process death with no diagnostic.
+    // The empty leaf carries the slice src[n..n] — the positions door
+    // gets a real pointer, not someone else's.
+    if @i >= @toks.len() {
+        ro last = @toks[@toks.len() - 1]
+        return leaf(Token { kind: TokenKind.Eof, leading: "", text: last.text })
+    }
     ro n = leaf(@toks[@i])
     @i += 1
     n
 }
 
+/// A missing token: a ZERO-WIDTH leaf at the position of the current
+/// token (the Roslyn MissingToken model). The cursor does not move,
+/// reserialization does not change (empty text adds nothing), but the
+/// diagnostic gets an exact position — without it, recovery at a
+/// terminator gave an Err with no leaves, that is SILENT acceptance of
+/// broken input (caught by the fuzzer right after terminator input was
+/// added, 274.3/F15).
+fn Cursor @missing() -> Node {
+    if @i >= @toks.len() {
+        ro last = @toks[@toks.len() - 1]
+        return leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: last.text })
+    }
+    ro t = @toks[@i]
+    leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[..0] })
+}
+
+// The three stop sets of recovery, named ONCE each.
+//
+// Reviewer's point 2026-08-17, and the measurement behind it: a junk bucket
+// used to spell its stops as a chain of `peek() != X`, which called the
+// door three or four times PER TOKEN and left the set itself anonymous --
+// while there are three different sets in this parser and each is a
+// decision about where recovery resynchronises. A module-level `ro` is
+// built once at load (the shape `builtins.universe` already uses), and the
+// loop asks `peek()` once.
+//
+// TERMINATORS closes a construct: recovery must NOT eat these, or a stray
+// bracket drags the rest of the file away (274.3/F15).
+ro TERMINATORS = []TokenKind.of(
+    TokenKind.RParen, TokenKind.RBrace, TokenKind.RBracket,
+    TokenKind.KwFn, TokenKind.KwType, TokenKind.KwModule, TokenKind.Eof)
+
+// Where a TOP-LEVEL junk run stops: the next declaration of the file.
+ro TOP_LEVEL_STOPS = []TokenKind.of(TokenKind.KwFn, TokenKind.KwModule, TokenKind.KwType,
+                                    TokenKind.KwExtern)
+
+// Where junk INSIDE a fn signature stops: the body, the expression arrow,
+// or the next declaration.
+ro SIGNATURE_STOPS = []TokenKind.of(
+    TokenKind.LBrace, TokenKind.FatArrow, TokenKind.KwFn, TokenKind.KwModule)
+
+/// Tokens that CLOSE the enclosing construct.
+fn is_terminator(k TokenKind) -> bool => TERMINATORS.contains(k)
+
+/// True once the stream is exhausted.
 fn Cursor @at_eof() -> bool => @peek() == TokenKind.Eof
 
+
+/// Is the cursor at a minus that belongs to a numeric literal? `-1` stays one
+/// literal node (the older shape, and the emitted C constant stays one token);
+/// `-x` becomes a Unary node.
+fn Cursor @minus_before_literal() -> bool =>
+    @peek() == TokenKind.Minus && (@peek(skip: 1) == TokenKind.IntLit || @peek(skip: 1) == TokenKind.FloatLit)
+
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
-export fn parse(toks []Token) -> Node {
-    mut p = Cursor { toks, i: 0 }
+export fn parse(toks []Token) -> Node
+    requires toks.len() > 0, "parse: the token stream is Eof-terminated by lex and can never be empty"
+{
+    mut p = Cursor { toks, i: 0, no_ctor: false, next_id: 0 }
     mut items = []Node.new()
     if p.peek() == TokenKind.KwModule {
         items.push(p.module_decl())
+    } else {
+        // A file may open without a header: the module declaration is an
+        // ITEM like any other, not a frame around the rest, so the loop below
+        // reads the same file with or without it and nothing is missing.
     }
     while !p.at_eof() {
-        if p.peek() == TokenKind.KwFn {
-            items.push(p.fn_decl())
+        // ONE peek per iteration, read into a name (owner's review
+        // 2026-08-17: "so many p.peek() calls"). A `match` over TokenKind
+        // would need a wildcard arm -- the sum has fifty variants and this
+        // dispatch names three -- and P21 forbids a wildcard on a closed
+        // sum, so the honest form is: ask once, compare a value.
+        ro k = p.peek()
+        if k == TokenKind.KwFn {
+            items.push(p.fn_decl([]Node.new()))
+        } else if k == TokenKind.KwType {
+            items.push(p.type_decl())
+        } else if k == TokenKind.KwExtern {
+            items.push(p.extern_decl())
+        } else if k == TokenKind.KwExport {
+            items.push(p.export_decl())
+        } else if k == TokenKind.KwImport || k == TokenKind.KwUse {
+            items.push(p.import_decl())
+        } else if k == TokenKind.Hash {
+            items.push(p.attr_decl())
+        } else if k == TokenKind.KwTest {
+            items.push(p.test_decl())
+        } else if k == TokenKind.KwModule {
+            // A module declaration that is NOT the file header is outside
+            // the language shape — wrap it in Err so check reports it. It
+            // MUST be consumed here: both junk buckets stop at KwModule as
+            // a sync point, so a loop iteration that never eats it does not
+            // advance (fuzzer catch 2026-08-14: a doubled file hung forever
+            // pushing empty Err branches until the GC died).
+            items.push(p.node(NodeKind.Err, []Node.of(p.module_decl())))
         } else {
             // Panic-mode bucket, same rule as inside fn_decl (E1 review p.1,
             // 2026-08-14): a RUN of stray top-level tokens is ONE seeded
@@ -65,11 +246,10 @@ export fn parse(toks []Token) -> Node {
             // produce three diagnostics for one cause, a cascade by the
             // no-cascade guard's own definition).
             mut junk = []Node.new()
-            while !p.at_eof() && p.peek() != TokenKind.KwFn
-                && p.peek() != TokenKind.KwModule {
+            while !p.at_eof() && !TOP_LEVEL_STOPS.contains(p.peek()) {
                 junk.push(p.take())
             }
-            items.push(branch(NodeKind.Err, junk))
+            items.push(p.node(NodeKind.Err, junk))
         }
     }
     // The Eof leaf carries the file's tail trivia -- emit it exactly ONCE.
@@ -78,10 +258,151 @@ export fn parse(toks []Token) -> Node {
     // here would duplicate the tail trivia and break reserialization.
     if p.i < p.toks.len() {
         items.push(p.take())
+    } else {
+        // Recovery already took the Eof leaf into an Err branch, so the tail
+        // trivia it carries is in the tree exactly once. Taking it again is
+        // precisely what would break reserialization.
     }
-    branch(NodeKind.File, items)
+    p.node(NodeKind.File, items)
 }
 
+/// `type Name { field type ... }` — fields are newline-separated pairs of
+/// idents, no commas. `type Name` followed by leading `|` variants is a sum
+/// (the corpus form on the pin; the oracle accepts it — divergence registry,
+/// prediction 1). A non-brace, non-pipe tail falls into the top loop's
+/// recovery on the next token.
+fn Cursor mut @type_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwType
+    @push_if(kids, TokenKind.Ident)
+    if @peek() == TokenKind.LBracket {
+        kids.push(@generics())
+    } else {
+        // The type declares no parameters. ABSENT is not EMPTY here: E2-b2
+        // asks whether a Generics node exists, and a node built over nothing
+        // would answer yes for `type Point`.
+    }
+    // The CANONICAL sum carries the `enum` marker -- `type Color enum` -- and
+    // novac refused it until 2026-08-17: it parsed ONLY the older
+    // pipes-without-marker shape, that is, the spelling the project moved away
+    // from, while rejecting the one the convention requires. Every probe
+    // written the canonical way fell into the junk bucket before reaching any
+    // rule about sums, which is how the missing exhaustiveness check stayed
+    // invisible. The marker is kept in the tree -- the tree is lossless.
+    ro is_sum_marker = @peek() == TokenKind.Ident && @peek_text() == "enum"
+    if is_sum_marker {
+        kids.push(@take())
+        // The first variant may follow the marker directly:
+        // `type Color enum Red(int) | Green(int)`. The pipe loop below cannot
+        // start on it, so it is read here and the loop takes the rest.
+        if @peek() == TokenKind.Ident {
+            mut vk = []Node.of(@take())
+            // A RECORD-form variant: `| Circle { radius f64 }`. Read as a
+            // balanced brace run -- the fields inside are name/type pairs
+            // and the checker walks them. D54 (#719) rules on how such a
+            // variant may be destructured, and a rule cannot land before
+            // the form is read at all.
+            if @peek() == TokenKind.LBrace {
+                mut depth = 0
+                while !@at_eof() {
+                    depth += brace_delta(@peek())
+                    vk.push(@take())
+                    if depth == 0 { break }
+                }
+            } else {
+                // Not a record-form variant: the paren form below answers.
+            }
+            if @peek() == TokenKind.LParen {
+                vk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    vk.push(@take())
+                    @push_if(vk, TokenKind.Comma)
+                }
+                @push_if(vk, TokenKind.RParen)
+            } else {
+                // A variant without a payload is whole as its name alone.
+            }
+            kids.push(@node(NodeKind.Variant, vk))
+        } else {
+            // The marker is followed by `|` or by nothing, so every variant
+            // comes from the pipe loop below and there is no first one here.
+        }
+    } else {
+        // No marker: the older pipes-only sum, or a record type. Both are
+        // read below, and the marker leaf is simply not in the tree.
+    }
+    if @peek() == TokenKind.Pipe {
+        while @peek() == TokenKind.Pipe {
+            mut vk = []Node.of(@take()) // '|'
+            @push_if(vk, TokenKind.Ident)
+            // A RECORD-form variant: `| Circle { radius f64 }`. Read as a
+            // balanced brace run -- the fields inside are name/type pairs
+            // and the checker walks them. D54 (#719) rules on how such a
+            // variant may be destructured, and a rule cannot land before
+            // the form is read at all.
+            if @peek() == TokenKind.LBrace {
+                mut depth = 0
+                while !@at_eof() {
+                    depth += brace_delta(@peek())
+                    vk.push(@take())
+                    if depth == 0 { break }
+                }
+            } else {
+                // Not a record-form variant: the paren form below answers.
+            }
+            if @peek() == TokenKind.LParen {
+                vk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    vk.push(@take()) // payload type name
+                    @push_if(vk, TokenKind.Comma)
+                }
+                @push_if(vk, TokenKind.RParen)
+            } else {
+                // `| Red` carries no payload; an empty paren pair would be a
+                // shape the source never wrote, so nothing is added.
+            }
+            kids.push(@node(NodeKind.Variant, vk))
+        }
+        return @node(NodeKind.SumDecl, kids)
+    }
+    // `type Color enum Red(int)` -- marker present, no pipe followed.
+    if is_sum_marker { return @node(NodeKind.SumDecl, kids) }
+    if @peek() == TokenKind.LBrace {
+        kids.push(@take())
+        while @peek() == TokenKind.Ident {
+            mut fk = []Node.of(@take()) // field name
+            @push_if(fk, TokenKind.Ident) // field type
+            kids.push(@node(NodeKind.Field, fk))
+        }
+        @push_if(kids, TokenKind.RBrace)
+    } else if @peek() != TokenKind.Eof && !TOP_LEVEL_STOPS.contains(@peek()) {
+        // A NEWTYPE or an ALIAS: `type Row int`, `type Row alias int`. The tail
+        // is a TYPE REFERENCE, and one branch reads both -- the `alias` word is
+        // kept as a leaf and `sem` tells the two apart (a newtype is a distinct
+        // type, an alias is the same type under a second name).
+        //
+        // Until 2026-08-21 this branch did not exist and the tail fell into the
+        // top-level junk bucket, so `type Row int` came back "this is not a
+        // form of the language" -- about a form the language HAS and the oracle
+        // compiles (measured by the integrator the same day: both spellings
+        // build, run, and enforce the distinction). The plan's own newtype
+        // section was half right: the form was missing from NOVAC, not from
+        // Nova.
+        ro is_alias = @peek() == TokenKind.Ident && @peek_text() == ALIAS_MARKER
+        if is_alias {
+            kids.push(@take())
+        } else {
+            // No `alias` word: the tail is the representation of a NEWTYPE.
+        }
+        kids.append(@type_ref())
+    } else {
+        // Nothing follows, or the next token starts another declaration: the
+        // top loop recovers it into its own Err branch, so the mistake keeps
+        // its own diagnostic instead of being swallowed by this one.
+    }
+    @node(NodeKind.TypeDecl, kids)
+}
+
+/// Parse `module a.b.c`.
 fn Cursor mut @module_decl() -> Node {
     mut kids = []Node.of(@take()) // KwModule
     if @peek() == TokenKind.Ident {
@@ -90,70 +411,365 @@ fn Cursor mut @module_decl() -> Node {
             kids.push(@take())
             if @peek() == TokenKind.Ident { kids.push(@take()) } else { break }
         }
+    } else {
+        // `module` with no path is broken input, and the tree has to say so:
+        // a ModuleDecl holding only the keyword passed check in SILENCE. The
+        // zero-width leaf gives the refusal a position (274.3/F15).
+        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
     }
-    branch(NodeKind.ModuleDecl, kids)
+    @node(NodeKind.ModuleDecl, kids)
 }
 
-fn Cursor mut @fn_decl() -> Node {
-    mut kids = []Node.of(@take()) // KwFn
-    if @peek() == TokenKind.Ident { kids.push(@take()) }
-    if @peek() == TokenKind.LParen { kids.push(@take()) }
-    if @peek() == TokenKind.RParen { kids.push(@take()) }
-    if @peek() != TokenKind.LBrace {
+/// Parse `fn name(params) -> T { body }` or `=> expr`, with junk recovery.
+///
+/// `lead` are the leaves that stand BEFORE the `fn` keyword and belong to the
+/// same declaration -- today the `extern "ABI" [unsafe]` run. They are children
+/// of this node rather than of a wrapper: the oracle models the ABI as a tag on
+/// the same item (`FnDecl.extern_abi`), so every reader of a FnDecl keeps
+/// working and the name is still the first identifier leaf. Empty for a plain
+/// declaration; the door takes it explicitly, because a second door differing
+/// only in a default argument is the shape П18 refuses.
+fn Cursor mut @fn_decl(lead []Node) -> Node {
+    // A FRESH vector, not `lead` rebound: `lead` arrives as a `ro` parameter,
+    // and laundering it through a mut binding is what D246 forbids -- the
+    // caller would see writes it never asked for. The run is at most three
+    // leaves, so the copy is a door call and not a loop (P32).
+    mut kids = []Node.new()
+    kids.append(lead)
+    kids.push(@take()) // KwFn
+    // Method declaration `fn <Recv> @<name>(...)`: the receiver is a
+    // separate node, the name is read after '@'. This form is not for the
+    // subset (novac does not declare methods), but for READING std
+    // signatures: the subset method table is built from declarations, not
+    // from a list of names in the compiler (П5).
+    // Read once, classify after (owner's question 2026-08-17: is a lookahead
+    // needed here -- no). A lookahead does not move the cursor, so nothing was
+    // ever re-read; what it cost was a SECOND place that had to know what a
+    // bracket run is. Now that knowledge lives only in @generics/@type_ref.
+    // Type parameters can stand in THREE places, and std uses all three:
+    //   fn[T] []T @map[U](f fn(T) -> U) -> []U
+    //   ^^^^^ on the fn   ^^^ on the method name
+    //         ^^^ and the receiver is a type reference, not an identifier
+    // Type parameters written straight after `fn` BELONG TO THE RECEIVER, so
+    // they are held aside and become part of the receiver group -- not pushed
+    // into the declaration's children (owner 2026-08-17). The spec spells the
+    // ownership out: `fn[T] []T @map[U]` binds T for the receiver `[]T` and U
+    // for the method, and std splits the same way -- 55 receiver-form
+    // declarations against 18 free ones written `fn name[T](...)`, and the
+    // mixed shape never.
+    //
+    // Where there is NO receiver, this position is simply wrong, and check
+    // says so by name: the node still reaches the tree (losslessness), it
+    // just reaches it as the free function's own child, where the position
+    // rule finds it.
+    mut head = []Node.new()
+    if @peek() == TokenKind.LBracket {
+        head.push(@generics())
+    } else {
+        // No type parameters before the receiver -- the ordinary case for a
+        // plain fn and for a method on a non-generic type.
+    }
+    // Receiver or free function? The two only differ AFTER the name and its
+    // brackets, so the pieces are held aside and the `@` (or `.`) decides.
+    head.append(@type_ref())
+    // `fn Account mut @bump()`, `fn StringBuilder consume @into_str()` -- the
+    // receiver may be qualified by ANY mode word, and the set is asked of the
+    // one module that spells the language (P5).
+    //
+    // Until 2026-08-21 this read exactly `mut`, so every `consume` method of std
+    // was INVISIBLE to novac: the declaration fell through to the free-function
+    // shape and harvested no row at all. Measured on the real std pair
+    // `#coerce fn StringBuilder consume @into_str() -> str` -- which is how the
+    // finalize lane of D429 came to be missing from the registry entirely.
+    //
+    // The mode is recognised by its SPELLING, not its token kind: `mut`/`ro` are
+    // keywords and `consume`/`uninit` are contextual words. Requiring the NEXT
+    // token to be the receiver mark keeps a TYPE named `consume` safe -- there
+    // the word is consumed by `@type_ref` above and this test never sees it.
+    ro next_is_mark = @peek(skip: 1) == TokenKind.At || @peek(skip: 1) == TokenKind.Dot
+    if @at_mode_word() && next_is_mark {
+        head.push(@take())
+    } else {
+        // Either the receiver is unqualified or this is a free function. A
+        // `mut` that belongs to a PARAMETER is taken inside @type_ref, so
+        // nothing is dropped by leaving it here.
+    }
+    // A receiver is marked EITHER way: `@` for an instance method and `.`
+    // for the static form -- `fn Account.new(...)`, `fn HashMap[K, V].new()`,
+    // `fn[T] []T.job()` (owner 2026-08-17). Reading only `@` made the dot
+    // form swallow its receiver as the function name and drop the rest into
+    // junk, which is how `fn Type.new` came back as two nameless refusals.
+    ro is_recv_mark = @peek() == TokenKind.At || @peek() == TokenKind.Dot
+    if is_recv_mark {
+        head.push(@take()) // '@' or '.'
+        kids.push(@node(NodeKind.Recv, head))
+        @push_if(kids, TokenKind.Ident)
+        if @peek() == TokenKind.LBracket {
+            kids.push(@generics())
+        } else {
+            // The method NAME carries no parameters of its own (`@map` and
+            // not `@map[U]`). This is a different position from the fn-level
+            // list read above, and the two must not be conflated.
+        }
+    } else {
+        kids.append(head)
+    }
+    @push_if(kids, TokenKind.LParen)
+    // A parameter starts with its NAME or with a MODE, and two of the four
+    // modes are KEYWORDS (`mut`, `ro`) rather than identifiers -- entering
+    // the loop only on Ident tore the list apart at the first `mut v int`
+    // and blamed a missing return type on a signature that declares one.
+    while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
+        @peek() == TokenKind.KwRo || @peek() == TokenKind.Ellipsis {
+        mut pk = []Node.new()
+        // A VARIADIC parameter is written `...args []T`, and D69 makes it the
+        // last of the list. The marker is kept as a leaf: WHERE it may stand
+        // is a position rule, and position rules belong to the checker.
+        @push_if(pk, TokenKind.Ellipsis)
+        // A parameter MODE stands before the name: `fn take(consume v int)`.
+        // It is not a keyword in this lexer, so it is recognised by spelling
+        // and kept as a leaf -- the tree is lossless and check judges it.
+        // The mode set is closed and measured (`sem.is_param_mode`). An
+        // arbitrary word here is not a mode -- the oracle answers
+        // "expected `,`, got identifier" -- so the parser must not treat every
+        // leading identifier as one. ONE door answers "is a mode here", for the
+        // parameter position and the receiver position alike: the four words
+        // used to be spelled out twice in this file (P5, found 2026-08-21).
+        ro mode_ahead = @at_mode_word() && @peek(skip: 1) == TokenKind.Ident
+        if mode_ahead {
+            pk.push(@take())
+        } else {
+            // No mode: the ordinary parameter, whose first leaf is its name.
+        }
+        pk.push(@take()) // parameter name
+        // The TYPE is a type reference, not one identifier (owner 2026-08-17).
+        // `Vec[T]`, `[]int`, `fn(int) -> str`, `ro []Vec[T]` all used to break
+        // the parameter list apart here and take the rest of the signature
+        // into the junk bucket with them.
+        pk.append(@type_ref())
+        // A DEFAULT value: `fn bump(v int, by int = 1)`. D102 orders defaulted
+        // parameters after the required ones -- again a position rule -- and
+        // the value itself is an ordinary expression.
+        if @peek() == TokenKind.Assign {
+            pk.push(@take())
+            pk.push(@expr())
+        } else {
+            // No default: an ordinary required parameter.
+        }
+        @push_if(pk, TokenKind.Comma)
+        kids.push(@node(NodeKind.Param, pk))
+    }
+    @push_if(kids, TokenKind.RParen)
+    if @peek() == TokenKind.Arrow {
+        mut rt = []Node.of(@take())
+        rt.append(@type_ref())
+        kids.push(@node(NodeKind.RetType, rt))
+    } else {
+        // No arrow: the signature declares no return type. The RetType node
+        // is ABSENT, not empty, because check refuses the absence by name
+        // (report_if_return_type_undeclared) and has to be able to see it.
+    }
+    if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {
         // Panic-mode bucket (no-cascade guard's catch, 2026-08-14): garbage
-        // between the signature and the block collects into ONE Err branch —
+        // between the signature and the body collects into ONE Err branch —
         // one seeded mistake, one diagnostic — instead of leaking token by
-        // token into the top level.
+        // token into the top level. FatArrow is a body form (`=> expr`),
+        // not junk — the bucket stops on it like on LBrace.
         mut junk = []Node.new()
-        while !@at_eof() && @peek() != TokenKind.LBrace
-            && @peek() != TokenKind.KwFn && @peek() != TokenKind.KwModule {
+        while !@at_eof() && !SIGNATURE_STOPS.contains(@peek()) {
             junk.push(@take())
         }
-        if junk.len() > 0 { kids.push(branch(NodeKind.Err, junk)) }
+        if junk.len() > 0 {
+            kids.push(@node(NodeKind.Err, junk))
+        } else {
+            // The bucket stopped at once (a stop token, or Eof). An Err
+            // branch with no leaves is a diagnostic with no position --
+            // 274.3/F15, silent acceptance -- so no node is built.
+        }
+    } else {
+        // The cursor already stands on a body form, so there is nothing
+        // between the signature and the body to collect. An empty bucket
+        // must not become a node.
     }
-    if @peek() == TokenKind.LBrace { kids.push(@block()) }
-    branch(NodeKind.FnDecl, kids)
+    if @peek() == TokenKind.FatArrow {
+        // Expression-bodied fn: `fn area(...) -> f64 => match ...`
+        mut ek = []Node.of(@take())
+        ek.push(@expr())
+        kids.push(@node(NodeKind.FnExprBody, ek))
+        return @node(NodeKind.FnDecl, kids)
+    }
+    if @peek() == TokenKind.LBrace {
+        kids.push(@block())
+    } else {
+        // A BODILESS declaration is a real form at this door: it also reads
+        // std signatures, where extern and foreign declarations end at the
+        // return type. A missing brace here is not a mistake to name.
+    }
+    @node(NodeKind.FnDecl, kids)
 }
 
+/// The argument list of a call, from the token after `(` to the `)`.
+///
+/// ONE door for BOTH call forms -- the free call in @atom and the method call
+/// in @primary. The two loops were copies of each other, and a copy is a place
+/// where the next form lands in only one of the halves: the named argument
+/// would have arrived for `f(x: 1)` and not for `o.m(x: 1)`.
+fn Cursor mut @call_args(mut kids []Node) -> () {
+    // Inside the parens the head restriction lifts (274.3/F23): the brace the
+    // rule protects is the BODY brace, and it is not in here.
+    ro saved = @no_ctor
+    @no_ctor = false
+    while !@at_eof() && @peek() != TokenKind.RParen {
+        ro before = @i
+        // A NAMED argument is `name: expr`.
+        if @peek() == TokenKind.Ident && @peek(skip: 1) == TokenKind.Colon {
+            mut ak = []Node.of(@take(), @take()) // name, ':'
+            ak.push(@expr())
+            kids.push(@node(NodeKind.NamedArg, ak))
+        } else {
+            // A positional argument: an ordinary expression.
+            kids.push(@expr())
+        }
+        @push_if(kids, TokenKind.Comma)
+        // Non-advancement guard: an Err of zero width would spin here forever.
+        if @i == before { break }
+    }
+    @no_ctor = saved
+    @push_if(kids, TokenKind.RParen)
+}
+
+/// Parse `{ stmt* }`.
 fn Cursor mut @block() -> Node {
     mut kids = []Node.of(@take()) // LBrace
     while !@at_eof() && @peek() != TokenKind.RBrace {
-        kids.push(@expr())
+        // Guard against non-advancement (274.3/F15-F16): recovery can
+        // return a zero-width node without moving the cursor — then the loop
+        // must exit, not spin. This role used to be played by an assert in
+        // take(), which meant death.
+        ro before = @i
+        kids.push(@stmt())
+        if @i == before { break }
     }
-    if @peek() == TokenKind.RBrace { kids.push(@take()) }
-    branch(NodeKind.Block, kids)
+    @push_if(kids, TokenKind.RBrace)
+    @node(NodeKind.Block, kids)
 }
 
-fn is_binop(k TokenKind) -> bool =>
-    k == TokenKind.Plus || k == TokenKind.Minus || k == TokenKind.Star || k == TokenKind.Slash
-
-fn Cursor mut @expr() -> Node {
-    mut left = @primary()
-    while is_binop(@peek()) {
-        ro op = @take()
-        ro right = @primary()
-        left = branch(NodeKind.Bin, []Node.of(left, op, right))
-    }
-    left
+/// Head expression of if/while/for: record constructors OFF for its extent.
+///
+/// SAVE and restore, not set-and-clear (274.3/F23). The old pair wrote `true`
+/// then `false` unconditionally, so a head nested inside another head came
+/// back with the flag already cleared and the outer head started accepting
+/// `{` as a constructor again. Go's composite-literal rule -- which this
+/// implements -- is a STACK discipline in every implementation of it (go/parser
+/// exprLev, rustc restrictions bitflags), for the same reason.
+fn Cursor mut @head_expr() -> Node {
+    ro saved = @no_ctor
+    @no_ctor = true
+    ro e = @expr()
+    @no_ctor = saved
+    e
 }
 
-fn Cursor mut @primary() -> Node {
-    if @peek() == TokenKind.IntLit || @peek() == TokenKind.StrLit {
-        return branch(NodeKind.Lit, []Node.of(@take()))
-    }
-    if @peek() == TokenKind.Ident {
-        ro name = @take()
-        if @peek() == TokenKind.LParen {
-            mut kids = []Node.of(name, @take())
-            while !@at_eof() && @peek() != TokenKind.RParen {
-                kids.push(@expr())
-                if @peek() == TokenKind.Comma { kids.push(@take()) }
-            }
-            if @peek() == TokenKind.RParen { kids.push(@take()) }
-            return branch(NodeKind.Call, kids)
+/// Parse one statement: if/while/return/mut/ro/for, or an expression (assignment).
+fn Cursor mut @stmt() -> Node {
+    if @peek() == TokenKind.KwIf {
+        mut kids = []Node.of(@take())
+        kids.push(@head_expr())
+        if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            // `if cond` with no body: the statement is incomplete and the
+            // tree must SAY so. Without a marker check finds nothing wrong
+            // and the emitter reaches for a third child that is not there.
+            kids.push(@node(NodeKind.Err, []Node.of(@missing())))
         }
-        return branch(NodeKind.Name, []Node.of(name))
+        // `else` and the `else if` chain. Both shapes hang off the SAME
+        // node: [KwIf, cond, block, KwElse, <Block | IfStmt>], so a reader
+        // that knows the first three children keeps working unchanged.
+        if @peek() == TokenKind.KwElse {
+            kids.push(@take())
+            if @peek() == TokenKind.KwIf {
+                kids.push(@stmt())
+            } else if @peek() == TokenKind.LBrace {
+                kids.push(@block())
+            } else {
+                // `else` with neither a block nor a chained `if`: incomplete,
+                // and the tree must SAY so or check finds nothing wrong.
+                kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+            }
+        } else {
+            // No else branch: the if is complete on its own.
+        }
+        return @node(NodeKind.IfStmt, kids)
     }
-    // Recovery: unexpected token — one Err branch, one token, move on.
-    branch(NodeKind.Err, []Node.of(@take()))
+    if @peek() == TokenKind.KwReturn {
+        mut kids = []Node.of(@take())
+        if @peek() != TokenKind.RBrace {
+            kids.push(@expr())
+        } else {
+            // A bare `return` at the end of a block returns unit: the value
+            // is absent, and the emitter writes NOVA_UNIT for a RetStmt of
+            // one child. An expression node here would invent a value.
+        }
+        return @node(NodeKind.RetStmt, kids)
+    }
+    // `consume x = …` is a BINDING too, and its keyword is a contextual word
+    // rather than a token kind -- so the head is asked BY MECHANISM, exactly as
+    // a parameter's mode is (`@at_mode_word`). It joins the pair here because
+    // the mode of a binding is what rule P14 filters a call by: until
+    // 2026-08-21 novac did not read the form at all, and the refusal that came
+    // out said "unknown name" about the USE -- blaming the reader for a form
+    // the parser had silently dropped.
+    ro binds_here = @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
+        (@peek() == TokenKind.Ident && is_contextual_mode_word(@peek_text()) &&
+         @peek(skip: 1) == TokenKind.Ident)
+    if binds_here {
+        // One BindStmt for all three: the first leaf keeps the keyword, C
+        // locals are identical either way (the oracle emits no const).
+        mut kids = []Node.of(@take())
+        @push_if(kids, TokenKind.Ident)
+        // A DECLARED type: `ro x int = 1`. It stands between the name and the
+        // `=`, and reading it here is what keeps `=` from looking absent.
+        if @peek() != TokenKind.Assign {
+            kids.append(@type_ref())
+        } else {
+            // No declared type: the initializer carries it.
+        }
+        @push_if(kids, TokenKind.Assign)
+        kids.push(@expr())
+        return @node(NodeKind.BindStmt, kids)
+    }
+    if @peek() == TokenKind.KwWhile {
+        mut kids = []Node.of(@take())
+        kids.push(@head_expr())
+        if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            // `while cond` with no body: same as the if above -- the marker
+            // is what turns silent acceptance into one honest refusal.
+            kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        }
+        return @node(NodeKind.WhileStmt, kids)
+    }
+    if @peek() == TokenKind.KwFor {
+        mut kids = []Node.of(@take())
+        @push_if(kids, TokenKind.Ident)
+        @push_if(kids, TokenKind.KwIn)
+        kids.push(@head_expr())
+        if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            // `for x in r` with no body: the marker is the only thing that
+            // stops a bodyless loop from reaching the emitter unrefused.
+            kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        }
+        return @node(NodeKind.ForStmt, kids)
+    }
+    ro e = @expr()
+    if is_assign_op(@peek()) {
+        mut kids = []Node.of(e, @take())
+        kids.push(@expr())
+        return @node(NodeKind.AssignStmt, kids)
+    }
+    e
 }

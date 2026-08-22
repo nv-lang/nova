@@ -1,0 +1,12 @@
+module std_method_body.pos_1
+
+// The other side of the same door: no std body is needed, so the call resolves
+// to a callable of THIS file and both compilers accept it. The local is bound
+// and used, which is what the neg fixture claims to be impossible only when a
+// refusal precedes it.
+fn width(s int) -> int => s + 1
+
+fn main() {
+    ro n = width(1)
+    println(n)
+}

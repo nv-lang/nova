@@ -542,8 +542,11 @@ done
 
 step "cargo build --release"
 ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
-NOVA="$ROOT/nova-cli/target/release/nova.exe"
-[ -x "$NOVA" ] || fail "nova.exe not found: $NOVA"
+# Имя бинаря знает ОДНА дверь: на Linux он зовётся `nova`, и жёсткая
+# привязка к `.exe` роняла этот гейт на первой же строке (2026-08-18).
+. "$ROOT/scripts/guards/lib/novac.sh"
+NOVA="$(novac_find_oracle "$ROOT" || true)"
+[ -n "$NOVA" ] || fail "oracle binary not found under $ROOT/nova-cli/target/release"
 
 # РУБЕЖ ПЕРЕД ДОРОГИМ ШАГОМ. Всё выше — дешёвые стражи (секунды); мега-CU
 # идёт около 37 минут. Если дерево не прошло дешёвое, тратить их незачем,

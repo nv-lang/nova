@@ -1,0 +1,921 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `hir::def::Res` (`Res::Def(DefKind, DefId)`, `Res::Local(HirId)` --
+// each arm carrying ITS payload) for `Def{target}` (ONE lookup
+// answers \"what is a name\"), rustc `IndexVec` for flat id-indexed value rows,
+// rustc `CommonTypes` for Prims, Go `types2.collectObjects`/`packageObjects` for
+// the two-pass collect, separate chaining (name -> first row + `next_row`, TAOCP
+// §6.4) for FieldTable/FnTable, Go `types2.lookupFieldOrMethod` / rustc
+// `FnCtxt::check_field` for \"fields only through a receiver\", rustc
+// `method::probe` + `AssocItem.fn_has_self_parameter` for \"receiver = first
+// parameter, resolve by receiver type\", rustc `report_method_error` / clang
+// `Sema::NoteAllOverloadCandidates` for printing the whole candidate set, Zig
+// `InternPool.OptionalIndex` for `-1 = absent`; Donor: none for the harvest rule
+// (a signature enters only when EVERY type is known — the type system filters std
+// overloads, not a name list) and for the tolerant/strict pair
+// `type_id`/`type_id_of` (274.3/F-B4); NOT taken: a uniform DefId (payload is a
+// per-kind ROW), Go `Scope.Insert`→alt / rustc E0428 duplicate diagnostics
+// (DefTable.add is last-put-wins, collect_types first-owns — check's ground), a
+// per-node type table (Go `types2.Info.Types` / rustc `TypeckResults.node_types`)
+// — `type_of` recomputes on demand until check is the single writer at E4 (Go
+// `Checker`→`Info`, rustc typeck→`TypeckResults`), block-scoped ribs.
+// Role: layers 3-4 — the declaration registry (DeclId rows) and, since
+//   E2-b1, the owner of the type interner; the truth
+// every pass below reads.
+// Used by: check and emit_c (E1-E2); mono and layout at E2-b2; becomes the checker's channel writer at E4.
+// Guarded by: check-novac-ctx-tables.py (the set of Ctx tables is declared in plan 10.3b), check-novac-row-fields.py
+// (every row field justified in 10.3v, no derived field), check-novac-ref-field-names.py (_id/_row suffixes),
+// check-novac-resolve-discipline.py (no silent int default), check-novac-no-alloc-in-lookup.py (doors carry #realtime
+// nogc).
+// `IndexVec<Idx, Row>` as flat id-indexed value rows, and the rule that
+// backends CONSUME the registry and none owns it; NOT taken: TyCtxt arenas and
+// the query system (a batch pass builds Ctx once per file).
+// novac/src/sem — the semantic layer of the E2 vertical (architecture §2:
+// the `sem` seat, grown early by the owner's 2026-08-15 review: the type
+// registry, the unified def table and expression typing are NOT backend
+// matter — any backend (C today, libFirm later) consumes them, so they
+// live in ONE place, the rustc_middle model; rustc backends receive types
+// through a shared layer, never own them).
+//
+// E2-TEMPORARY shape, recorded in the edge table: sem is BUILT during the
+// emit phase from the green tree (collect_types) and typing is the tiny
+// registry lattice. At E4 `check` becomes the single writer of sem and the
+// lattice grows into the real type checker; the module seat does not move.
+//
+// Terminology (owner's question 2026-08-15, id vs idx): a TYPE ID is the
+// identifier of a type, IMPLEMENTED as its interned index in Ctx.types —
+// the rustc DefId model (an identifier that happens to be a number). A ROW
+// is an index into one specific row vector and nothing more. Fields say
+// which one they are.
+//
+// No silent type defaults anywhere here (#652 class, owner's rule): every
+// resolve miss is an ice(), every kind is judged positively.
+
+module novac.sem
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
+import ../diag.{ice}
+import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
+import ../builtins.{TypeKind, builtin_types, COERCE_ATTR}
+import ../types.{Interner, TyId, no_ty, is_ty}
+
+/// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
+/// a SUM, not int constants (owner 2026-08-14: the language's own type
+/// safety judges kind dispatch, an arbitrary int cannot leak in).
+/// The payload lives INSIDE the arm (owner's question 2026-08-21, the second
+/// carrier of the same class as `CalleeRef.target_row`): `Def` used to be
+/// `kind DefKind` beside `payload int`, and the int meant a type id, a variant
+/// row or a callable row depending on the neighbouring tag. Three index spaces
+/// in one number is the state this sum makes unbuildable -- `DefFn` carries an
+/// `FnRow` and nothing else can be put there. The ARM NAMES are unchanged, so
+/// every reader still says `DefVariant`; what changed is that it now binds the
+/// row it needs instead of reaching for a second field.
+export type DefTarget enum
+    | DefType(DeclId)
+    | DefVariant(VariantRow)
+    | DefFn(FnRow)
+
+/// WHICH ROWS a type declaration owns, and IN WHICH SPACE.
+///
+/// FOUND BY WAVE B5, and found the way the good ones are: by the type system
+/// refusing to answer. `TypeDef` used to carry `row_off int` + `row_cnt int`, and
+/// its own doc said what they meant -- "first row of this type in Ctx.field_rows
+/// (record) / Ctx.variant_rows (sum)". Two spaces, one pair of numbers, the kind
+/// deciding which: the same disease as `Def{kind,payload}` and
+/// `CalleeRef{kind,target_row}`, both cured the same way earlier this week.
+///
+/// While both spaces were `int` the conflation was invisible. Once `FieldRow` and
+/// `VariantRow` became types, the range could not be typed as EITHER -- and that
+/// is the signal, not an inconvenience: a record's range read as a sum's is a
+/// state that must not be representable.
+///
+/// So the range moves INSIDE the discriminant. A primitive and a newtype own no
+/// rows at all, and `NoRows` says that instead of a zero pair that has to be
+/// interpreted.
+export type TypeRows enum
+    | NoRows
+    | FieldRows(FieldRow, int)
+    | VariantRows(VariantRow, int)
+
+/// One type of the file registry; a type id is this record's interned
+/// index in Ctx.types (see the terminology note above). Registry rows are
+/// VALUE records: a plain record is a GC pointer — one heap allocation per
+/// row; `value` keeps rows inline in the vector buffer.
+export type TypeDef value {
+    kind TypeKind /// Which row table the off/cnt range addresses.
+    ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
+    name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
+    rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
+}
+
+/// The MODE of a parameter: the third axis of mutability -- and an axis of
+/// OVERLOADING.
+///
+/// `fn f(x T)`, `fn f(mut x T)` and `fn f(consume x T)` are three legal
+/// callables of ONE name (10-overloading.md, the 2026-07-06 amendment to the
+/// D326 revision, rule P13), and which one a call selects is decided by WHAT
+/// the argument is, not by its type. The receiver is parameter zero (plan 273),
+/// so the same axis answers `@m` / `mut @m` / `consume @m` -- which is how std
+/// declares `Vec[T] @ptr() -> *T` beside `Vec[T] mut @ptr() -> *mut T`.
+export type ParamMode enum
+    | ModeRo /// the default: a read-only view, nothing is written through it
+    | ModeMut /// mutation the caller sees (in-out)
+    | ModeConsume /// ownership transfer; `consume` implies `mut`
+
+/// How SPECIFIC a mode is when several candidates fit (P14 filter 4:
+/// `consume` beats `mut` beats `ro`).
+///
+/// A number and not a comparison chain: the winner is the row with the highest
+/// TOTAL over its positions, and a tie is refused as ambiguous rather than
+/// broken by an order nobody declared.
+#realtime nogc
+export fn ParamMode @specificity() -> int => match @ {
+    ModeRo => 0
+    ModeMut => 1
+    ModeConsume => 2
+}
+
+/// One parameter of a callable: its type AND its mode, in one row.
+///
+/// Two parallel vectors would admit a state the language does not have -- a
+/// mode out of step with its type -- and this plan has paid for that shape
+/// twice already (P23). A range of these rows is one range.
+export type ParamDef value {
+    type_id TyId /// the parameter's type; `no_ty()` = unreadable, and backends ice on it rather than invent one
+    mode ParamMode /// as written; `ModeRo` when the declaration writes nothing
+}
+
+/// WHAT an argument IS at a call site -- the classes rule P14 filters on.
+///
+/// Not its type: `tag(r)` and `tag(m)` have the same argument type and select
+/// different callables. That is the whole point of the axis, and it is why the
+/// checker has to know how a name was BOUND, not only what it holds.
+export type ArgClass enum
+    | ArgRo /// a `ro` binding, or a place novac judges conservatively
+    | ArgMut /// a `mut` binding -- a mutable place
+    | ArgOwnedTemp /// an owned temporary: a call result, a literal, a constructor
+    | ArgConsume /// a binding declared `consume` -- its form IS the promise
+
+/// One argument of a call: its type and its class.
+export type ArgSpec value {
+    type_id TyId /// the argument's type, or `no_ty()` while the position is not typed
+    cls ArgClass /// which class P14 filters this position by
+}
+
+/// Rule P14: may a parameter of this MODE take an argument of this CLASS?
+///
+/// The rule as the spec states it, arm by arm:
+///   * `ro` takes ANYTHING -- it promises nothing about the value's future, so
+///     it is always applicable and always least specific;
+///   * `mut` needs a mutable PLACE. An owned temporary has nowhere to write
+///     back to (D133: an rvalue into a mut view is an error) and a `ro`
+///     binding forbids the write;
+///   * `consume` moves ownership, so it takes a temporary (nobody else holds
+///     it) or a binding DECLARED `consume`. Never a live `ro`/`mut` binding:
+///     silent consumption of a binding not declared for it is exactly what the
+///     rule refuses;
+///
+/// The axis has exactly three modes. `uninit` is not one of them: measured
+/// 2026-08-21, the oracle refuses `fn f(uninit v T)` outright and reads
+/// `fn f(v uninit T)` as a TYPE -- so it belongs to the type and to a pointer's
+/// pointee (`*mut uninit T`), never to this rule.
+#realtime nogc
+export fn mode_admits(m ParamMode, c ArgClass) -> bool => match m {
+    ModeRo => true
+    ModeMut => match c {
+        ArgMut => true
+        ArgConsume => true
+        ArgRo => false
+        ArgOwnedTemp => false
+    }
+    ModeConsume => match c {
+        ArgOwnedTemp => true
+        ArgConsume => true
+        ArgRo => false
+        ArgMut => false
+    }
+}
+
+/// One top-level declaration of the unified name registry: what a name IS.
+export type Def value {
+    target DefTarget /// What this name IS, carrying the row of its own space: a type id, a variant row (`Ctx.variant_rows`) or a callable row (`Ctx.fns`)
+}
+
+/// THE unified name registry: the O(1) name door and the row it answers
+/// with — one record, because they only ever travel together (owner
+/// 2026-08-15: a pair that always walks in pairs belongs in one record).
+export type DefTable {
+    names NameTable /// name -> row in `rows` (NsDefs namespace).
+    rows []Def /// What each registered name is.
+}
+
+/// Empty registry with the NsDefs namespace.
+export fn DefTable.new() -> DefTable =>
+    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new() }
+
+/// Register one name. LAST PUT WINS, and that is the rule rather than a
+/// shortcut: `collect_types` gives the id to the FIRST declaration that owns
+/// it, so a later duplicate resolves to the same id and pushes no second row.
+/// Judging the duplicate is CHECK's ground — sem builds the picture and does
+/// not refuse; two truths for one name is what this shape prevents.
+export fn DefTable mut @add(name str, target DefTarget) -> () {
+    @names.put(name, @rows.len())
+    @rows.push(Def { target })
+}
+
+/// WHAT this name IS, or None -- the registry's ONE public question.
+///
+/// WAVE B4 EXPECTED A WRAPPER HERE AND FOUND THAT THERE IS NO SPACE TO WRAP.
+/// The plan said "wrap the `defs` row index, 10 sites, and answer `Option[DefRow]`
+/// instead of −1". The measurement said otherwise: every one of the five readers
+/// did `find(name)` and then `rows[d]` on the very next line, and nothing ever
+/// carried the index anywhere. An index that never outlives the indexing it feeds
+/// is not an identity -- it is a step, and typing a step is ceremony.
+///
+/// So the space is DELETED rather than named: the door answers with the ROW. The
+/// −1 goes with it, and so do the five `d >= 0` guards that had to know about it.
+#realtime nogc
+export fn DefTable @def_of(name str) -> Option[Def] {
+    ro d = @names.find(name)
+    if d < 0 { return None }
+    Some(@rows[d])
+}
+
+/// The callable row a DECLARATION NODE owns, or None.
+///
+/// The tree half of the same question. It lived as two identical private
+/// copies (emit_c and mono, body for body) until 2026-08-18, which is what
+/// a missing door looks like from the inside: each author writes the five
+/// lines rather than finding a name they cannot guess.
+export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
+    ro id = f.id_of()
+    if !is_node(id) || raw_node(id) >= ctx.fn_decl_rows.len() {
+        // A node from ANOTHER parse -- the declarations handed to novac have
+        // their own id space -- owns no row in this file's table.
+        return None
+    } else {
+        // The id addresses this file's table, so the slot answers directly.
+    }
+    // [LEGACY-#676] var-index-method: a method on a variable-index element
+    // resolves through the CONTAINER, so the row comes out by binding first.
+    ro row = ctx.fn_decl_rows[id]
+    if raw_row(row) < 0 {
+        // The table is a DENSE int vector and stores -1 for "no row" — that is
+        // a representation choice and it stays. The DOOR answers in the
+        // language's terms, so no caller has to know the storage (wave 3,
+        // "Option instead of -1").
+        return None
+    } else {
+        // A real row: the node owns a callable.
+    }
+    // The vector holds ROWS since 2026-08-21 (the owner's second question of
+    // the day): `no_row()` is the absence, and the door answers `None` for it,
+    // so no caller sees the sentinel at all.
+    Some(row)
+}
+
+/// The CALLABLE row a name owns, or None when the registry knows no such fn.
+///
+/// The registry's own question, and therefore the registry's door. Before
+/// 2026-08-18 it lived nowhere, so every consumer wrote the two-step
+/// (`find` then `rows[..]`) itself: ten sites across three modules, two of them
+/// identical body for body -- and I wrote the second one myself while
+/// commenting that it asked "the same question". A door is found by NAME; if
+/// the name does not exist, the next author writes their own. That is how
+/// second doors get in, and the answer is not vigilance but a door.
+#realtime nogc
+export fn DefTable @fn_row(name str) -> Option[FnRow] {
+    // `?`, not `??` and not a two-armed if: this door RETURNS an Option, so an
+    // unknown name propagates by the operator made for it (D86 retracted
+    // `?? return` precisely because an early return is control flow, and the
+    // refusal's own hint names `?` first). A name the registry does not know is
+    // an ANSWER for a tolerant door -- check refuses the program elsewhere.
+    ro def = @def_of(name)?
+    // The arm that means "a callable" is the arm that HOLDS the callable row;
+    // the other two are not a fn row.
+    match def.target {
+        DefFn(row) => Some(row)
+        // A type or a variant is not a callable: one answer, one arm.
+        DefType(_) | DefVariant(_) => None
+    }
+}
+
+/// Type by name during COLLECTION: None if the name is unknown or not a
+/// type. Collection is DELIBERATELY tolerant of broken input
+/// (274.3/F-B4): the file picture is built for check too, and check
+/// must issue a diagnostic, not die in an ICE. check is the judge (the
+/// rule "a type in type position must be declared"); sem invents
+/// nothing — it just does not register what it did not understand.
+#realtime nogc
+export fn DefTable @type_decl(name str) -> Option[DeclId] {
+    // `?` for the unknown name (this door returns an Option), then the kind.
+    ro def = @def_of(name)?
+    match def.target {
+        DefType(decl) => Some(decl)
+        // A variant or a callable is not a type, and that is ONE answer.
+        DefVariant(_) | DefFn(_) => None
+    }
+}
+
+// `DefTable.type_decl_of` lived here until 2026-08-22 and is gone: it was the
+// TOTAL half of `type_decl`, and wave B8 gave its only caller a better door --
+// `Ctx.ty_of_name_or_ice`, which answers with a TYPE rather than a declaration
+// and needs no second lookup. The half stayed behind exported and callerless,
+// which is exactly the shape a "complete the set" habit leaves.
+
+
+/// One record field; a field row is this record's index in Ctx.field_rows.
+export type FieldDef value {
+    name str /// Field spelling; the backend uses it for the member name verbatim.
+    type_id TyId /// The field's type id.
+    owner_id TyId /// Owning type id; the door takes the NAME and compares this as a type id.
+    next_row FieldRow /// Next row carrying the SAME field name, or `no_frow()`; see FieldTable. STORING it here is what makes the row an identity rather than a step
+}
+
+/// Record-field registry: fields resolve ONLY through a receiver type —
+/// never as bare names (same as Go/rustc). The door therefore takes the
+/// field name and walks a chain of same-named rows, comparing the owner as
+/// an INTEGER. The first shape built the key as text ("${owner_id}.${name}"),
+/// which allocated and formatted a string on every field access and put
+/// structure back into a string right after §4а spent a rule on "identity
+/// is not a name"; the chain does the same job with one integer compare per
+/// candidate and no allocation. Rows stay in per-type insertion order, so
+/// the FieldRows arm of TypeDef.rows still addresses a contiguous range.
+export type FieldTable {
+    names NameTable /// field name -> FIRST row with that name (NsFields); FieldDef.next walks the rest.
+    rows []FieldDef /// The field rows, grouped per type via TypeDef.rows (the FieldRows arm)
+}
+
+/// Empty field registry with the NsFields namespace.
+export fn FieldTable.new() -> FieldTable =>
+    { names: NameTable.new(NamespaceId.NsFields), rows: []FieldDef.new() }
+
+/// Register one field of `owner_id`, keeping the same-name chain linked.
+export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
+    ro head = FieldRow(@names.find(name))
+    @names.put(name, @rows.len())
+    @rows.push(FieldDef { name, type_id, owner_id, next_row: head })
+}
+
+/// Does `owner_id` have a field named `fname`? The tolerant half again:
+/// `check` asks first, so a misspelled field is a diagnostic, not an ice.
+#realtime nogc
+export fn FieldTable @has_field(owner_id TyId, fname str) -> bool {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = @rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return true }
+        r = fd.next_row
+    }
+    false
+}
+
+/// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
+#realtime nogc
+export fn FieldTable @field_type(owner_id TyId, fname str) -> TyId {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = @rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return fd.type_id }
+        r = fd.next_row
+    }
+    // [LEGACY-#700-user-error-as-ice until:E2b3] a typo in a field name is a
+    // USER error and must be a diagnostic, not an ice; check gets local typing
+    // at E2-b3 and takes this over. Integrator review 2026-08-16.
+    ice("sem: unknown field past check (type checker is a later wave)")
+}
+
+/// One sum_id variant; a variant row is this record's index in Ctx.variant_rows.
+export type VariantDef value {
+    sum_id TyId /// Owning sum's type id (backends derive the tag name from it).
+    name str /// Variant spelling; backends derive maker names from it.
+    payload_off int /// First payload row in Ctx.payload_types.
+    payload_cnt int /// How many payload fields.
+}
+
+/// Type ids of the pre-seeded primitives — the rustc CommonTypes model
+/// (owner 2026-08-15: no hard-coded indexes; the seed hands the ACTUAL ids
+/// out and everything compares against these fields).
+export type Prims value {
+    int_id TyId /// Type id of `int`.
+    str_id TyId /// Type id of `str`.
+    bool_id TyId /// Type id of `bool`.
+    f64_id TyId /// Type id of `f64`.
+}
+
+/// A position whose type the caller cannot state yet.
+///
+/// `check` walks the tree before local typing (274.3/C9), so at a call site it
+/// knows the arity and often the receiver's type, but not the arguments'. A
+/// position carrying this value fits ANY parameter: refusing what cannot be
+/// judged would be a guess in the other direction.
+///
+// `no_ty()` lived here until 2026-08-21 and is gone with its reason: it was
+// `-1` under a name, in a module that does not own the space. The interner owns
+// type ids, so the interner says what "no type" is -- `types.no_ty()` -- and
+// `is_ty` asks the question that `== UNKNOWN_TYPE` used to ask by comparing a
+// sentinel the caller had to know (the same correction the owner made about
+// `?? no_ty()` two waves earlier).
+
+/// WHICH FORM the author wrote at the call site: `f(x)` or `x.f()`.
+///
+/// Not a privilege of the receiver and not a second table (plan 273 stands: a
+/// method IS a function whose first parameter is the receiver, in ONE registry).
+/// It is a fact about the CALL: the language does not let a method be called in
+/// free form, so resolution must know which form is being resolved. Measured
+/// 2026-08-20 -- without it `byte_len("abc")` matched `str @byte_len()` by
+/// arity alone, novac accepted a program the oracle refuses, and the emission
+/// passed one string to a two-parameter function.
+///
+/// The row already carried the datum this compares against: `has_recv`, which
+/// had no reader at all until now, and §10.3в said why it was kept -- "not
+/// derivable from the parameter list".
+export type CallForm enum
+    | FreeCall /// `f(x)`: only a callable declared without a receiver can answer
+    | MethodCall /// `x.f(y)`: only a callable declared WITH a receiver can answer
+
+
+/// File-level semantic context. Row STORAGE is flat id-indexed vectors of
+/// VALUE row records (rustc IndexVec camp; the architecture's "storage
+/// reference"); every name -> id step goes through a table door.
+export type Ctx {
+    coerces []CoercePair /// Implicit conversions declared with `#coerce` (D429), read from declarations.
+    types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
+    tys Interner /// THE type interner (layer 4): every Ty of this file is a row here; identity is the id (E2-b1).
+    prims Prims /// Type ids of the primitives (the CommonTypes model).
+    defs DefTable /// THE unified top-level name registry (types, variants, fns).
+    fields FieldTable /// Record fields, addressed through the owner type.
+    variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.rows (the VariantRows arm)
+    payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
+    fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
+    fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
+}
+
+/// Seed one pre-declared type: the registry row and the def row are born
+/// together; the ACTUAL id flows back to the caller (never hard-coded).
+fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
+    ro id = DeclId(types.len())
+    ro ty_id = tys.prim(ordinal)
+    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, rows: TypeRows.NoRows })
+    defs.add(name, DefTarget.DefType(id))
+    id
+}
+
+/// THE DECLARATION ROW of a type -- ONE door where ten bare indexings stood.
+///
+/// AND THE PLACE WHERE A FINDING IS RECORDED, because wrapping the type-id space
+/// on 2026-08-21 turned a comment into a type-level fact: there are TWO spaces
+/// here, not one.
+///
+///   * what FLOWS through the compiler -- `ParamDef.type_id`, `FnDef.ret_id`,
+///     `Prims`, `CheckOut.types`, every `TyId` below -- is the index of a row in
+///     `Ctx.types`, handed out by `seed` and by `collect_types`;
+///   * `TypeDef.ty_id` is something else: the INTERNER's row for the same
+///     declaration's term, and its own doc calls itself "the E2-b1 seam --
+///     consumers migrate to it one by one".
+///
+/// For primitives, records and sums the two coincide, because `collect_types`
+/// pushes one registry row per interned term in the same order. For `TkParam`
+/// rows they DELIBERATELY differ, and `mangle_test` says so out loud: "fns.params
+/// stores TypeDef ids, not interner TyRow ids -- the two spaces are different".
+/// So an assert here would fire on a legal registry, and this door does NOT
+/// assert: it reads, and it NAMES what it is reading.
+///
+/// Which space should carry the wrapper is a decision about the seam itself
+/// (migrate consumers to interner ids, per the architecture's layer 4, or keep
+/// the declaration index as the identity and give the interner row its own
+/// name). That is the owner's call and a wave of its own -- recorded in sub-plan
+/// 9.1g.1 rather than settled here by whoever typed the field first.
+export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
+    requires is_ty(t), "sem: the declaration of `no type` -- absence has no row"
+{
+    ro d = ctx.tys.decl_head_of(t)
+    assert(is_decl(d) && raw_decl(d) < ctx.types.len(),
+        "sem: a nominal term names a declaration this file's table does not hold")
+    ctx.types[raw_decl(d)]
+}
+
+/// The TYPE of a declaration -- the other direction, and the one the name
+/// registry hands you first: a name resolves to a DECLARATION, and the
+/// declaration's row knows its interned term (rustc: `Res::Def(_, def_id)` then
+/// `tcx.type_of(def_id)`; Go: an object, then its type).
+export fn ty_of_decl(ctx Ctx, d DeclId) -> TyId
+    requires is_decl(d), "sem: the type of `no declaration`"
+    requires raw_decl(d) < ctx.types.len(), "sem: declaration id outside this file's table"
+{
+    ctx.types[raw_decl(d)].ty_id
+}
+
+/// A NAME in type position -> its TYPE, or None when the registry does not know
+/// one. THE door for readers that hold a `Ctx`: two steps, and they are the
+/// donors' two steps (rustc `Res::Def(_, def_id)` then `tcx.type_of(def_id)`).
+export fn Ctx @ty_of_name(name str) -> Option[TyId] {
+    ro d = @defs.type_decl(name)?
+    if raw_decl(d) >= @types.len() { return None }
+    Some(ty_of_row(@types, d))
+}
+
+/// The TOTAL half: a name in type position that the registry MUST know. The
+/// refusal names what it found instead -- no silent int default (#652 class).
+export fn Ctx @ty_of_name_or_ice(name str) -> TyId =>
+    @ty_of_name(name) ?? ice("sem: a name in TYPE position that the registry does not hold (#652 class)")
+
+/// A NAME in type position -> its type, or `no_ty()` when the registry does not
+/// know it. Two steps, and they are the donors' two steps: the name resolves to
+/// a DECLARATION, and the declaration's row knows its term (rustc
+/// `Res::Def(_, def_id)` then `tcx.type_of(def_id)`).
+fn ty_or_none(types []TypeDef, defs DefTable, name str) -> TyId {
+    // The Option is READ as an Option (owner's correction 2026-08-21): turning it
+    // into a sentinel and then testing the sentinel is a detour that makes
+    // "absent" into a number somebody must remember to check.
+    if Some(d) = defs.type_decl(name) {
+        if raw_decl(d) < types.len() { ty_of_row(types, d) } else { no_ty() }
+    } else {
+        no_ty()
+    }
+}
+
+/// The same, over the table alone -- `collect_types` needs it while `Ctx` does
+/// not exist yet, and one rule must not have two bodies (P18).
+export fn ty_of_row(types []TypeDef, d DeclId) -> TyId
+    requires is_decl(d), "sem: the type of `no declaration`"
+    requires raw_decl(d) < types.len(), "sem: declaration id outside the table being built"
+{
+    types[raw_decl(d)].ty_id
+}
+
+/// Build the semantic context of one checked file: its own types and
+/// callables, plus the signatures READ from the declarations handed in (E2:
+/// called by the backend; E4: check becomes the single writer).
+///
+/// The two halves live in two files for a reason, and the doc said so twice
+/// because the paragraph had been orphaned from its function by an insertion --
+/// noticed while cutting `harvest.nv` out on 2026-08-21.
+export fn collect(file Node, decls []Node) -> Ctx {
+    mut ctx = collect_types(file)
+    harvest_methods(decls, ctx.types, ctx.defs, ctx.fns, ctx.coerces)
+    ctx
+}
+
+/// The type and declaration registry of ONE file (without methods:
+/// collect() brings those in from the signatures it read).
+export fn collect_types(file Node) -> Ctx {
+    mut types = []TypeDef.new()
+    mut defs = DefTable.new()
+    mut tys = Interner.new()
+    // Pre-declared types come from the ONE builtins table (P5), in Prims
+    // order; the seed hands the ACTUAL ids back (CommonTypes model). The
+    // universe ordinal is the interner's head for a primitive.
+    mut seeded = []DeclId.new()
+    // TypeDef row per type-parameter INDEX, built on demand by the fn branch
+    // below and shared by every declaration (see the comment there).
+    mut param_rows = []TyId.new()
+    mut ordinal = 0
+    for bt in builtin_types() {
+        seeded.push(seed(types, defs, tys, bt.name, ordinal))
+        ordinal += 1
+    }
+    // The PRIMS are types, and a declaration's type comes from its row -- the
+    // seed hands back the declaration, the row hands back the term.
+    ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
+                       bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]) }
+    mut fields = FieldTable.new()
+    mut variant_rows = []VariantDef.new()
+    mut payload_types = []TyId.new()
+    mut fns = FnTable.new()
+    mut fn_decl_rows = []FnRow.new()
+    // PASS 1 BUILDS THE ROW, not just the name -- and that is a fix, not a
+    // refactor. Until 2026-08-21 pass 1 handed out ids and pass 2 pushed rows,
+    // so the two could DISAGREE: an `alias` consumes a name but pushes no row,
+    // and every type declared after one had an id one greater than its row
+    // index. The guard `id != types.len()` then skipped it, and the type
+    // silently vanished. MEASURED: `type Count alias int` before
+    // `type Cel { v f64 }` made novac refuse `c.v` with "unknown field: this
+    // type has no field with this name" -- a lie about a field that exists, on a
+    // file the oracle accepts. Building the row HERE makes `DeclId ==` its row
+    // index true by CONSTRUCTION, so no guard is needed and no drift is
+    // possible.
+    //
+    // The SHAPE is read from the tree (`shape_of_decl`), never from the
+    // registry: pass 1 is where names are being registered, so a forward
+    // reference cannot be resolved yet -- and asking anyway is what made the
+    // shape depend on declaration order.
+    for c in branch_children(file) {
+        ro k = c.kind_of()
+        if k != NodeKind.TypeDecl && k != NodeKind.SumDecl { continue }
+        ro nk = branch_children(c)
+        if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
+        ro tname = leaf_text(nk[1])
+        // A DUPLICATE type name registers nothing: the first declaration owns
+        // the DeclId, the second gets no row and no id. Judging the duplicate is
+        // check's job; sem's job is to not build a second truth for one name.
+        if defs.type_decl(tname).is_some() { continue }
+        if k == NodeKind.SumDecl {
+            ro d = DeclId(types.len())
+            defs.add(tname, DefTarget.DefType(d))
+            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(d), name: tname,
+                                 rows: TypeRows.NoRows })
+            continue
+        }
+        match shape_of_decl(c) {
+            ShapeRecord => {
+                ro d = DeclId(types.len())
+                defs.add(tname, DefTarget.DefType(d))
+                types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(d), name: tname,
+                                     rows: TypeRows.NoRows })
+            }
+            ShapeNewtype => {
+                // The row exists now; its TERM waits for pass 2, because the
+                // representation is a type reference and may point forward.
+                ro d = DeclId(types.len())
+                defs.add(tname, DefTarget.DefType(d))
+                types.push(TypeDef { kind: TypeKind.TkNewtype, ty_id: no_ty(), name: tname,
+                                     rows: TypeRows.NoRows })
+            }
+            ShapeAlias => {
+                // AN ALIAS IS NOT A TYPE: no row, and no id of its own. Its name
+                // is registered in pass 2, pointing at the representation's
+                // DECLARATION -- so nothing downstream ever learns that a second
+                // name existed. A row would BE a distinct type, which is exactly
+                // what an alias must not be.
+            }
+        }
+    }
+    for c in branch_children(file) {
+        ro k = c.kind_of()
+        if k == NodeKind.TypeDecl {
+            ro tkids = branch_children(c)
+            if tkids.len() < 2 { continue }
+            if tkids[1].kind_of() != NodeKind.LeafNode { continue }
+            ro tname = leaf_text(tkids[1])
+            // SENTINEL AND NOT `?`, and the reason is the language, not taste:
+            // `??` substitutes a VALUE, so `?? continue` is refused (D86, the
+            // 2026-07-23 retraction), and `?` needs a wrapper to return into --
+            // this walk answers `Ctx`. So "skip this declaration" is spelled the
+            // only way a loop can spell it. The policy that came out of this
+            // measurement is in section 9.1g.5: `Option` where the value IS the
+            // answer, a sentinel where the answer is to SKIP.
+            ro owner_id = defs.type_decl(tname) ?? no_decl()
+            if !is_decl(owner_id) { continue }
+            // The ROW already exists (pass 1 built it) -- pass 2 FILLS it. The
+            // old guard `id != types.len()` is gone with the drift it was
+            // guarding against: an id no longer has to agree with a length.
+            if raw_decl(owner_id) >= types.len() { continue }
+            // An ALIAS owns no row, so its name resolves to ANOTHER
+            // declaration; touching that declaration's row here would rewrite
+            // the representation's own fields.
+            ro mine = types[raw_decl(owner_id)]
+            if mine.name != tname { continue }
+            match shape_of_decl(c) {
+                ShapeRecord => {
+                    ro off = fields.rows.len()
+                    mut cnt = 0
+                    for f in branch_children(c) {
+                        if f.kind_of() != NodeKind.Field { continue }
+                        ro fk = branch_children(f)
+                        if fk.len() < 2 { continue }
+                        if fk[0].kind_of() != NodeKind.LeafNode || fk[1].kind_of() != NodeKind.LeafNode { continue }
+                        ro fdecl = defs.type_decl(leaf_text(fk[1])) ?? no_decl()
+                        if !is_decl(fdecl) { continue }
+                        if raw_decl(fdecl) >= types.len() { continue }
+                        fields.add(mine.ty_id, leaf_text(fk[0]), ty_of_row(types, fdecl))
+                        cnt += 1
+                    }
+                    types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord, ty_id: mine.ty_id,
+                                                          name: tname,
+                                                          rows: TypeRows.FieldRows(FieldRow(off), cnt) }
+                }
+                ShapeNewtype => {
+                    // The TERM is interned here and not in pass 1: the
+                    // representation is a type reference, so it may point at a
+                    // declaration further down the file.
+                    match repr_of_decl(c, defs) {
+                        None => {
+                            // A representation novac does not know: the row stays
+                            // without a term, and check refuses the declaration at
+                            // its own position rather than sem guessing one.
+                        }
+                        Some(spec) => {
+                            if raw_decl(spec.under_decl) < types.len() {
+                                types[raw_decl(owner_id)] = TypeDef {
+                                    kind: TypeKind.TkNewtype,
+                                    ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
+                                    name: tname, rows: TypeRows.NoRows }
+                            } else {
+                                // The representation names a declaration outside
+                                // the table -- nothing to intern, and check is
+                                // the judge.
+                            }
+                        }
+                    }
+                }
+                ShapeAlias => {
+                    // THE ONE PLACE that may say an alias is not a type: the
+                    // name resolves to the representation's DECLARATION, and
+                    // nothing downstream ever learns a second name existed.
+                    // Registered HERE and not in pass 1 because the
+                    // representation is a type reference: it may point forward,
+                    // and in pass 1 the forward name is not registered yet.
+                    match repr_of_decl(c, defs) {
+                        None => {
+                            // An alias to a type novac does not know: the name
+                            // stays unregistered, and the use site is refused by
+                            // name instead of resolving to a guess.
+                        }
+                        Some(spec) => defs.add(tname, DefTarget.DefType(spec.under_decl))
+                    }
+                }
+            }
+        } else if k == NodeKind.SumDecl {
+            ro skids = branch_children(c)
+            if skids.len() < 2 { continue }
+            if skids[1].kind_of() != NodeKind.LeafNode { continue }
+            ro sname = leaf_text(skids[1])
+            ro sum_decl = defs.type_decl(sname) ?? no_decl()
+            if !is_decl(sum_decl) { continue }
+            if raw_decl(sum_decl) >= types.len() { continue }
+            ro srow = types[raw_decl(sum_decl)]
+            if srow.name != sname { continue } // a duplicate name owns no row here
+            // The term came from pass 1, where the row was built: the variants
+            // carry it, and nobody re-interns it.
+            ro sum_ty = srow.ty_id
+            ro off = variant_rows.len()
+            mut vcnt = 0
+            for v in branch_children(c) {
+                // Only Variant children carry a row. The `enum` marker, the
+                // sum's own name leaf and the `|` separators share this list,
+                // and recovery debris is check's to report -- sem registers
+                // only what it understood (274.3/F-B4). A guard says that once;
+                // an `else` here would be a branch on a VARIANT test, which the
+                // no-default-branch rule reserves for `match`.
+                if v.kind_of() != NodeKind.Variant { continue }
+                ro vk = branch_children(v)
+                    // A variant with no name (recovery after a broken sum_id):
+                    // skipped — check is the judge, sem does not fail (274.3/F-B4).
+                    if vk.len() < 1 { continue }
+                    // The name is the FIRST identifier leaf, not a fixed index.
+                    // Both shapes exist: `| Red(int)` puts a pipe leaf ahead of
+                    // it, `type Color enum Red(int)` does not -- the first
+                    // variant of the inline form follows the marker directly.
+                    // A fixed index 1 read the payload's `(` there and the sum
+                    // came out with a nameless variant (2026-08-17).
+                    mut name_at = -1
+                    mut vi = 0
+                    for vn in vk {
+                        if name_at < 0 && vn.kind_of() == NodeKind.LeafNode
+                            && leaf_kind(vn) == TokenKind.Ident {
+                            name_at = vi
+                        }
+                        vi += 1
+                    }
+                    if name_at < 0 { continue }
+                    ro vname = leaf_text(vk[name_at])
+                    defs.add(vname, DefTarget.DefVariant(VariantRow(variant_rows.len())))
+                    ro poff = payload_types.len()
+                    mut pcnt = 0
+                    // payload type names sit between '(' and ')'
+                    for j in name_at + 1..vk.len() {
+                        // [LEGACY-#676] var-index-method: `vk[j].kind_of()`
+                        // with a VARIABLE index miscompiles in the oracle
+                        // (E_RECV_METHOD_MISMATCH: receiver resolves as Vec;
+                        // a constant index works). Found 2026-08-14; the
+                        // binding hop is the workaround.
+                        ro pj = vk[j]
+                        if pj.kind_of() != NodeKind.LeafNode { continue }
+                        if leaf_kind(pj) != TokenKind.Ident { continue }
+                        ro pdecl = defs.type_decl(leaf_text(pj)) ?? no_decl()
+                        if !is_decl(pdecl) { continue }
+                        ro pt = ty_of_row(types, pdecl)
+                        payload_types.push(pt)
+                        pcnt += 1
+                    }
+                variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt })
+                vcnt += 1
+            }
+            types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum, ty_id: sum_ty, name: sname,
+                                                  rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
+        } else if k == NodeKind.FnDecl {
+            ro fk = branch_children(c)
+            if fk.len() < 2 { continue }
+            if fk[1].kind_of() != NodeKind.LeafNode { continue }
+            // THIS declaration's type parameters, and a TYPE for each slot it
+            // binds (E2-b2; donor: rustc `TyKind::Param`, a parameter is known
+            // by its INDEX in its owner's generics, not by its name). One row
+            // per index, shared by every declaration: a parameter means
+            // nothing outside a substitution, and the substitution belongs to
+            // the CALL. The row is added only for an index above those already
+            // built -- pushing an index twice would get a deduplicated term
+            // from the interner and break the ty_id == row invariant asserted
+            // at the end of this walk.
+            //
+            // WAVE B8 DELETED A FABRICATION HERE. Until 2026-08-21 this loop
+            // pushed a `TypeDef` row named `"#0"` per slot -- a DECLARATION row
+            // for something nobody declares -- purely so a type parameter could
+            // have an index in `Ctx.types`, because the index WAS the type id.
+            // Once the type id became the interner's term the fabrication had no
+            // purpose: `tys.param(slot)` IS the type, and a parameter has no
+            // declaration, exactly as in every donor.
+            ro tps = generic_names(fk)
+            // The range is evaluated ONCE, so pushing inside it is safe and
+            // the cursor cannot be forgotten (owner 2026-08-22).
+            for pslot in param_rows.len()..tps.len() {
+                param_rows.push(tys.param(pslot))
+            }
+            // no_ty() = no declared return. Legal ONLY for main (check
+            // refuses it elsewhere); backends ice on it as the second floor —
+            // never a silent int (#652 class).
+            mut ret = no_ty()
+            for r in fk {
+                if r.kind_of() != NodeKind.RetType { continue }
+                ro rk = branch_children(r)
+                if rk.len() < 2 || rk[1].kind_of() != NodeKind.LeafNode { continue }
+                ro rname = leaf_text(rk[1])
+                ret = ty_of_type_name(rname, tps, param_rows, types, defs)
+            }
+            // A file function is a callable with no receiver (plan 273):
+            // same row shape as a read method signature, same table.
+            ro fname = leaf_text(fk[1])
+            mut param_ids = []ParamDef.new()
+            for pn in fk {
+                if pn.kind_of() != NodeKind.Param { continue }
+                ro pk = branch_children(pn)
+                // The type by its DOOR, never by index one: `mut v int` puts
+                // the MODE at index zero, so a fixed index reads the NAME as
+                // the type -- and `int` then came back as "a type novac does
+                // not know" about a declaration that is perfectly well typed
+                // (measured 2026-08-21). The typing walk was moved onto these
+                // doors on 2026-08-18; this collector was not, and nothing
+                // noticed because nothing in the corpus declares a mode.
+                // The canon for a value fallback is `?? d` (D86), so the door's
+                // answer arrives that way and the ABSENT case is judged right
+                // below by the same `-1` this loop already stores.
+                ro tat = param_type_at(pk) ?? -1
+                if tat < 0 {
+                    // An unreadable parameter type (recovery debris, or a form
+                    // the E2 subset does not read) keeps the -1 sentinel: the
+                    // slot must still exist so param_off/param_cnt line up, and
+                    // backends ice on -1 rather than invent a type (#652).
+                    param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
+                    continue
+                }
+                // [LEGACY-#676] var-index-method: same binding hop as in
+                // harvest_fn -- a method on a variable-index element resolves
+                // through the CONTAINER.
+                ro tnode = pk[tat]
+                if tnode.kind_of() != NodeKind.LeafNode {
+                    param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
+                    continue
+                }
+                // An unknown type is STORED as no_ty() and said so:
+                // collection is tolerant, and check is the judge. A type
+                // PARAMETER of this declaration is not unknown -- it is the
+                // row built above.
+                ro pname = leaf_text(tnode)
+                ro pt = ty_of_type_name(pname, tps, param_rows, types, defs)
+                // Type AND mode in one row: the mode is an axis of overloading
+                // (P14), so a collector that dropped it would make `f(x T)` and
+                // `f(mut x T)` one callable twice over.
+                param_ids.push(ParamDef { type_id: pt, mode: param_mode_at(pk) })
+            }
+            fns.add(fname, ret, false, param_ids, tps)
+            ro frow = FnRow(fns.rows.len() - 1)
+            defs.add(fname, DefTarget.DefFn(frow))
+            // The DECLARATION's own row, keyed by its node. Asking `defs` by
+            // name gives the LAST row of that name (the table is
+            // last-write-wins), so two overloads used to answer with one row --
+            // and the emitter wrote two C functions with one name, carrying the
+            // other overload's parameter types (owner's review 2026-08-19).
+            ro did = c.id_of()
+            while fn_decl_rows.len() <= did { fn_decl_rows.push(no_row()) }
+            fn_decl_rows[did] = FnRow(frow)
+        } else {
+            // Every other top-level node -- the module declaration, imports,
+            // and recovery Err branches -- declares neither a type nor a
+            // callable, so the registry has nothing to record; naming the
+            // debris is check's job (274.3/F-B4).
+        }
+    }
+    // THE E2-b1 INVARIANT LIVED HERE AND IS GONE BY DESIGN, not by neglect.
+    // It asserted `types[i].ty_id == i` -- that the interner hands out ids in
+    // exactly the order declaration rows are pushed -- and its own comment said
+    // what it was for: "the two numbers part company the moment the first App is
+    // interned, and this assert is what turns that moment into a loud one
+    // instead of a silent skew".
+    //
+    // Wave B8 IS that moment, and it arrived by decision rather than by
+    // accident (sub-plan 9.1g.2, from the donors): the type id is the interner's
+    // TERM, the declaration index is `DeclId`, and they are two spaces that no
+    // longer have to agree. A type PARAMETER has a term and no declaration at
+    // all, so the invariant is not merely unnecessary now -- it is false.
+    //
+    // It did its job on the way out, and loudly, exactly as promised: the first
+    // corpus run after B8 died on it mid-batch, and that is how the batch hole
+    // below it was found too.
+    // The boundary is fixed HERE, by the same pass that filled the prefix:
+    // whatever `harvest_methods` adds next is a signature, not a body of ours.
+    // Setting it anywhere else would make the invariant depend on call order.
+    mut own = fns
+    own.own_cnt = own.rows.len()
+    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
+          coerces: []CoercePair.new() }
+}

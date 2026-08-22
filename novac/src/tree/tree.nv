@@ -1,4 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn `GreenNode` (immutable, position-free) for the green half;
+// rust-analyzer `rowan` `GreenNode(kind, children)` for the homogeneous untyped
+// shape and `SyntaxKind::ERROR` for an Err branch that KEEPS its tokens; NOT
+// taken: Roslyn per-kind typed green classes, the red tree, Roslyn
+// `SkippedTokensTrivia` (skipped tokens are a node here so check can report them),
+// any typed AST view — passes index children positionally until `lower` (E4).
+// Role: layer 2 — the position-free syntax tree every pass walks; form without meaning.
+// Used by: parse builds it, check/sem/emit_c walk it (E1-E2); lower replaces the walkers at E4, the tree stays for the
+// LSP (E3).
+// Guarded by: check-novac-frontend-shape.py (no Result in the frontend, tree always returned), the reserialize property
+// in lex_test.nv, check-novac-no-string-keys.py (kinds are ids, not names).
+// green half of the red/green split; NOT taken: the red tree (positions are
+// derived on demand through source.offset_of, so no second tree is needed).
 // novac/src/tree — the green tree (architecture §2/§5, Roslyn model).
 //
 // Immutable, lossless, position-free: a node is either a leaf (a lex Token,
@@ -13,8 +26,11 @@
 
 module novac.tree
 
-import ../lex.{Token}
+import ../lex.{Token, TokenKind}
+import ../diag.{ice}
 
+/// Every branch shape of the green tree (LeafNode is the leaf's own kind —
+/// a leaf is NOT an error; see kind_of below).
 export type NodeKind enum
     | LeafNode
     | File
@@ -25,16 +41,309 @@ export type NodeKind enum
     | Args
     | Bin
     | Lit
+    | IfStmt
+    | RetStmt
+    | BindStmt
+    | AssignStmt
+    | ForStmt
+    | WhileStmt
+    | MethodCall
+    | FieldAccess
+    | TypeDecl
+    | Field
+    | RecordCtor
+    | CtorField
+    | CtorSpread
+    | SumDecl
+    | Variant
+    | MatchExpr
+    | MatchArm
+    | Pattern
+    | ArrayLit
+    | ArraySpread
+    | Guard
+    | FnExprBody
+    | Param
+    // `name: expr` at a call site. Nova passes defaulted parameters BY
+    // NAME, so this form arrives together with every default value.
+    | NamedArg
+    // `expr as Type`. The right side is a TYPE, which is why the cast is
+    // a node of its own and not a binary operator over two expressions.
+    | Cast
+    // `import a.b.{X}` and `use a.b.c` -- one node for both spellings,
+    // the keyword leaf tells them apart.
+    | ImportDecl
+    // `export` in front of a declaration. It wraps rather than prefixes:
+    // the visibility belongs to the declaration, and a wrapper keeps the
+    // declaration's own shape untouched for every reader of it.
+    | ExportDecl
+    // `#realtime nogc` -- an attribute line standing before a declaration.
+    | AttrDecl
+    // `test "name" { ... }`.
+    | TestDecl
+    // `if c { a } else { b }` standing where a VALUE is expected. The
+    // statement form keeps its own kind: one of them the emitter writes,
+    // the other needs a temporary it does not build yet.
+    | IfExpr
+    // `@field` -- a field of the receiver, inside a method body.
+    | SelfField
+    | Recv
+    | Generics
+    | RetType
+    | Unary
+    | Paren
     | Name
     | Err
 
+/// WHICH binary operator a `Bin` node applies -- the DECISION, taken once.
+///
+/// Why a sum and not the operator token every consumer re-reads (owner's
+/// question 2026-08-16, "not all operators are parsed -- does that make
+/// sense?"). It did not: the token stayed raw in the tree and FIVE separate
+/// if-chains re-decided what it meant -- the parser (precedence), the type
+/// lattice (comparison yields bool), and three tables in the emitter
+/// (checked_op, cmp_op, raw_op). Each enumerated a DIFFERENT subset, and
+/// three of them returned "" on anything they did not know: the #652 class,
+/// a silent default on a closed set. Adding one operator meant editing five
+/// places and hoping. With the decision in a sum, every consumer matches
+/// exhaustively (P21), and a new operator becomes a COMPILE ERROR at each
+/// place that must decide -- which is the only mechanism that scales.
+///
+/// The operator TOKEN stays a child of the node: the green tree is lossless
+/// and must reserialize byte for byte. What is added is the answer, not a
+/// replacement of the question.
+///
+/// Donor: rustc `ast::BinOpKind` (the AST node carries the KIND; the token is
+/// not re-read downstream) and rust-analyzer `ast::BinExpr::op_kind()` (a
+/// classifier over an UNTYPED syntax tree, which is exactly novac's shape);
+/// Roslyn spells the same decision as the node kind itself
+/// (`AddExpression`...) with `OperatorToken` kept for fidelity -- NOT taken,
+/// because it would multiply `NodeKind` by the operator table.
+export type BinOp enum
+    | Add
+    | Sub
+    | Mul
+    | Div
+    | Less
+    | LessEq
+    | Greater
+    | GreaterEq
+    | Modulo
+    | Equal
+    | NotEqual
+    | AndAlso
+    | OrElse
+    | BitAnd
+    | BitOr
+    | BitXor
+    | ShiftLeft
+    | ShiftRight
+    | Range
+
+/// Token -> operator, or nothing. THE table: one place lists which token
+/// means which operator, and both halves of the tolerant/strict pair below
+/// are derived from it.
+///
+/// The first shape had the tolerant half re-list the tokens as a `||`-chain
+/// next to this table -- two hand-written enumerations of one set, so adding
+/// an operator to the table while forgetting the chain would compile clean
+/// and the parser would silently never take it (P22: derived is a FUNCTION,
+/// not a second copy).
+export fn bin_op(k TokenKind) -> Option[BinOp] {
+    match k {
+        Plus => Some(BinOp.Add)
+        Minus => Some(BinOp.Sub)
+        Star => Some(BinOp.Mul)
+        Slash => Some(BinOp.Div)
+        Percent => Some(BinOp.Modulo)
+        Lt => Some(BinOp.Less)
+        Le => Some(BinOp.LessEq)
+        Gt => Some(BinOp.Greater)
+        Ge => Some(BinOp.GreaterEq)
+        EqEq => Some(BinOp.Equal)
+        BangEq => Some(BinOp.NotEqual)
+        AmpAmp => Some(BinOp.AndAlso)
+        PipePipe => Some(BinOp.OrElse)
+        Amp => Some(BinOp.BitAnd)
+        Pipe => Some(BinOp.BitOr)
+        Caret => Some(BinOp.BitXor)
+        Shl => Some(BinOp.ShiftLeft)
+        Shr => Some(BinOp.ShiftRight)
+        DotDot => Some(BinOp.Range)
+        // `_ => None` here is NOT the swallowing default P21 forbids: the
+        // RETURN TYPE already declares this map partial, and "this token is
+        // not a binary operator" is the answer for forty-three of the sixty-two
+        // token kinds. A dispatch that must DECIDE for every variant is the
+        // other thing, and it stays exhaustive (owner's question 2026-08-17:
+        // "is a match not nicer here?" -- it is, and the distinction is what
+        // makes it legal).
+        _ => None
+    }
+}
+
+/// Is this token a binary operator? The TOLERANT half -- the parser must ask
+/// before it commits, and peeking is not deciding.
+export fn is_binop(k TokenKind) -> bool => bin_op(k).is_some()
+
+/// The decision. The STRICT half: a token that is not an operator is an
+/// invariant break, because the caller asked `is_binop` first.
+export fn bin_op_of(k TokenKind) -> BinOp =>
+    bin_op(k) ?? ice("tree: bin_op_of asked about a token that is not a binary operator")
+
+/// WHICH assignment an `AssignStmt` performs -- the same decision shape once
+/// more. A compound assignment IS its binary operator plus a store, so the
+/// sum carries that operator rather than repeating the table: `Set` stores,
+/// and `Update(op)` stores the result of `op`.
+export type AssignOp enum
+    | Set
+    | Update(BinOp)
+
+/// Token -> assignment, or nothing. One table; both halves derived.
+export fn assign_op(k TokenKind) -> Option[AssignOp] {
+    match k {
+        Assign => Some(AssignOp.Set)
+        PlusAssign => Some(AssignOp.Update(BinOp.Add))
+        MinusAssign => Some(AssignOp.Update(BinOp.Sub))
+        StarAssign => Some(AssignOp.Update(BinOp.Mul))
+        SlashAssign => Some(AssignOp.Update(BinOp.Div))
+        PercentAssign => Some(AssignOp.Update(BinOp.Modulo))
+        AmpAssign => Some(AssignOp.Update(BinOp.BitAnd))
+        PipeAssign => Some(AssignOp.Update(BinOp.BitOr))
+        CaretAssign => Some(AssignOp.Update(BinOp.BitXor))
+        ShlAssign => Some(AssignOp.Update(BinOp.ShiftLeft))
+        ShrAssign => Some(AssignOp.Update(BinOp.ShiftRight))
+        _ => None
+    }
+}
+
+/// Is this token an assignment operator?
+export fn is_assign_op(k TokenKind) -> bool => assign_op(k).is_some()
+
+/// The decision; asking about a non-assignment is an invariant break.
+export fn assign_op_of(k TokenKind) -> AssignOp =>
+    assign_op(k) ?? ice("tree: assign_op_of asked about a token that is not an assignment")
+
+/// WHICH unary operator a `Unary` node applies. Same reason as `BinOp`: the
+/// decision is taken once, and every consumer answers for every variant.
+///
+/// `!` is STRICTLY logical on `bool` and is NOT overloadable (D46 AMEND
+/// 2026-08-02: `@not` retracted); `~` IS overloadable through `@bitnot`, and
+/// `-` through `@neg` -- so on a user type both are protocol dispatch, which
+/// the subset refuses honestly until bounds arrive.
+export type UnOp enum
+    | Not
+    | Negate
+    | BitNot
+
+/// Token -> unary operator, or nothing. One table, both halves derived.
+export fn un_op(k TokenKind) -> Option[UnOp] {
+    match k {
+        Bang => Some(UnOp.Not)
+        Minus => Some(UnOp.Negate)
+        Tilde => Some(UnOp.BitNot)
+        _ => None
+    }
+}
+
+/// Is this token a prefix operator?
+export fn is_unop(k TokenKind) -> bool => un_op(k).is_some()
+
+/// The decision; asking about a non-operator is an invariant break.
+export fn un_op_of(k TokenKind) -> UnOp =>
+    un_op(k) ?? ice("tree: un_op_of asked about a token that is not a unary operator")
+
+/// THE identity of a tree node -- the key every side table of the checker's
+/// channel is indexed by, and a space of its own since wave B3 (2026-08-22).
+///
+/// Declared HERE because the parser mints them and this module owns `Node`: the
+/// space belongs to whoever hands out its values (donor: rustc `HirId`, minted
+/// by lowering and imported by every consumer; Go `types2` keys its `Info` maps
+/// by `ast.Expr` identity for the same reason -- the producer names the key).
+///
+/// A LEAF has none, and that is `no_node()` rather than −1: the one door that
+/// knows a leaf owns no identity is `id_of`, and its answer is a value of this
+/// space instead of a number the caller has to interpret.
+export type NodeId int
+
+/// The index inside -- for the side tables this space addresses, and for the
+/// one size computation the pipeline does (`raw_node(file) + 1` is the node
+/// COUNT, because the file node is minted last and its id is the largest).
+#realtime nogc
+export fn raw_node(n NodeId) -> int => n as int
+
+/// "No node" -- what a LEAF answers.
+#realtime nogc
+export fn no_node() -> NodeId => NodeId(-1)
+
+/// Does this identity address a node at all? Asked where a leaf is legal.
+#realtime nogc
+export fn is_node(n NodeId) -> bool => raw_node(n) >= 0
+
+/// A green node: a leaf carries one Token as DATA; a branch groups children
+/// under a kind. Immutable, lossless, position-free by construction.
+///
+/// A branch also carries an `id` — its IDENTITY, not its position. The
+/// checker's channel (`sem.CheckOut`, E2-b1) is a side table keyed by it: a
+/// pass that answers "what type does THIS node have" needs a name for the
+/// node, and in a language without pointer identity there is nothing else to
+/// say it with. Ids are dense and assigned by the parser in creation order
+/// (`parse.Cursor.next_id`); leaves get none, because nothing keys a leaf —
+/// every expression the channel speaks about is a branch.
+///
+/// Donor: Zig `Ast.Node.Index` and Carbon `Parse::Tree` — the PARSER numbers
+/// the nodes, and the id is the node's name everywhere above. NOT taken:
+/// rust-analyzer `AstIdMap` (an id derived from (kind, text range) — novac's
+/// tree deliberately stores no ranges, and deriving them per lookup costs a
+/// pointer walk in the hottest path); rustc `HirId` (assigned by a separate
+/// lowering pass — novac has no lowering until E4, so the parser is the only
+/// pass that sees every node exactly once).
 export type Node enum
     | Leaf(Token)
-    | Branch { kind NodeKind, children []Node }
+    | Branch { id NodeId, kind NodeKind, children []Node }
 
-export fn branch(kind NodeKind, children []Node) -> Node =>
-    Node.Branch { kind, children }
+/// Build a branch node with its identity.
+export fn branch(id NodeId, kind NodeKind, children []Node) -> Node =>
+    Node.Branch { id, kind, children }
 
+/// The node's identity, or -1 for a leaf. THE one place that knows a leaf has
+/// none: readers ask here rather than matching the shape themselves.
+#realtime nogc
+export fn Node @id_of() -> NodeId {
+    match @ {
+        Leaf(_) => no_node()
+        Branch { id, .. } => id
+    }
+}
+
+/// Is this node an IDENTIFIER leaf?
+///
+/// One question, one door. It stood as two conditions -- "a leaf" and "of kind
+/// Ident" -- in six places across four modules, and half of them then took
+/// `leaf_text` of the same node, so one question occupied three lines
+/// (owner's note 2026-08-20).
+#realtime nogc
+export fn Node @is_ident() -> bool {
+    match @ {
+        Leaf(t) => t.kind == TokenKind.Ident
+        Branch { .. } => false
+    }
+}
+
+/// The identifier this node spells, or None when it is not an identifier leaf.
+///
+/// `Option`, not an empty string: an empty string is a SENTINEL, and a sentinel
+/// standing for "not that shape" is the class this compiler keeps removing
+/// (#652, the silent int default). A caller that genuinely wants the empty
+/// string still writes `?? ""` and says so.
+#realtime nogc
+export fn Node @ident_str() -> Option[str] {
+    match @ {
+        Leaf(t) => if t.kind == TokenKind.Ident { Some(t.text) } else { None }
+        Branch { .. } => None
+    }
+}
+
+/// Build a leaf node from a token.
 export fn leaf(t Token) -> Node => Node.Leaf(t)
 
 /// Reserialize a whole tree by walking leaves in order. The green tree owns
@@ -45,6 +354,7 @@ export fn tree_reserialize(n Node) -> str {
     out
 }
 
+/// Append a node's bytes (leading trivia + text of every leaf, in order).
 fn append_node(mut out StringBuilder, n Node) -> () {
     match n {
         Leaf(t) => {

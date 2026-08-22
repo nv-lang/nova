@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_hir::def::Namespace` (a name resolves in a namespace, never
+// globally); Go `types2.Scope.elems` (map[string]Object) for the str-keyed door;
+// Zig `InternPool.OptionalIndex` for `-1 = absent`; NOT taken: rustc `PerNS`,
+// `Rib`/`Resolver` scope chains (Scope in sem is flat, last put wins — no block
+// scoping yet), rustc `Symbol` interning (names are hashed as str on every door
+// call; revisit under П14).
+// Role: layer 3 — the str->id door per namespace; identity is an id after this door, never a name (П2).
+// Used by: sem/DefTable, FieldTable, FnTable, Scope (E1+); the interner keys by structure and does NOT use it (П18).
+// Guarded by: check-novac-no-string-keys.py (no Map[str] outside this module; a NameTable carries its NamespaceId),
+// check-novac-no-alloc-in-lookup.py (the find door allocates nothing).
+// globally) reduced to one str -> id door per namespace; NOT taken: rib/scope
+// chains and macro hygiene — the subset has no shadowing rules yet.
+// novac/src/names — the ONE name door (architecture §2/§4a: identity is an
+// id, never a name).
+//
+// Every resolve table in novac keys by integer id; the ONLY str-keyed maps
+// live HERE, one per namespace, so "who owns name resolution" has a single
+// answer and lookups are O(1). A linear name scan anywhere else in
+// novac/src is the guarded anti-pattern (owner's rule 2026-08-14: compile
+// speed is the top priority, and the number of user types is unbounded —
+// range-coded ids and for-loop scans do not survive that);
+// check-novac-no-string-keys.py holds both halves.
+//
+// E2 note: today the door is a thin NameTable over std HashMap. The full
+// `names` layer of the architecture (scopes, declarations, the
+// NamespaceId-keyed resolver over the syntax projection) grows here — same
+// module, same door — so nothing has to move later.
+
+module novac.names
+
+/// THE id of a top-level DECLARATION -- a row in `sem.Ctx.types` for a type,
+/// and the stable identity the architecture's layer 3 promises: a name resolves
+/// to a declaration, and the declaration's id does not depend on its position.
+///
+/// It lives HERE and not in `sem` because two modules need it and neither owns
+/// the other: `sem` indexes its declaration table by it, and `types` stores it
+/// as the HEAD of a nominal term (`Record(DeclId)`, `Sum(DeclId)`,
+/// `App(DeclId, args)`) -- exactly rustc's `TyKind::Adt(AdtDef, _)`, Go's
+/// named type pointing at its `TypeName`, Swift's `NominalTypeDecl`. The type
+/// carries the declaration; the declaration does not carry the type.
+///
+/// WHY IT EXISTS AT ALL (wave B8, decision 9.1g.2): until 2026-08-21 the
+/// declaration index WAS the type id, and that conflation cost a fabricated
+/// declaration row -- `collect_types` pushed a `TypeDef` named `"#0"` for a type
+/// PARAMETER, which nobody declares, purely so it could have an index. A
+/// structural type has no declaration; that is why the two spaces are two.
+export type DeclId int
+
+/// The index inside, for the vector this space addresses. The ONE unwrapping
+/// door -- `raw_decl` in an expression says "I am indexing a declaration table".
+#realtime nogc
+export fn raw_decl(d DeclId) -> int => d as int
+
+/// "No declaration", as a value of the space rather than a −1 to be known.
+#realtime nogc
+export fn no_decl() -> DeclId => DeclId(-1)
+
+/// Is this an actual declaration? Asked where absence is a legal answer.
+#realtime nogc
+export fn is_decl(d DeclId) -> bool => raw_decl(d) >= 0
+
+
+/// Which namespace a NameTable serves — the key component the string-keys
+/// guard demands (identity is (namespace, name), never a bare name).
+export type NamespaceId enum
+    | NsDefs
+    | NsFields
+    | NsCallables
+    | NsLocals
+
+/// The ONE str -> id door: O(1) map per namespace; every other novac table
+/// keys by integer id (linear name scans are guard-red).
+export type NameTable {
+    ns NamespaceId /// which namespace these names belong to
+    map HashMap[str, int] /// the NamespaceId key component is @ns, one field up
+}
+
+/// Empty table for one namespace.
+export fn NameTable.new(ns NamespaceId) -> NameTable =>
+    { ns, map: HashMap[str, int].new() } // ns is the NamespaceId key component
+
+/// Empty the table without building a new one.
+///
+/// The one-entry probe of the self-initializer check (274.3/F28) reuses a
+/// single table for every binding in a file: the lookup door must not
+/// allocate (P18/P14), and `NameTable.new()` per binding would put an
+/// allocation on the hot path of every `ro`/`mut`.
+export fn NameTable mut @clear() -> () {
+    @map.clear()
+}
+
+/// Bind name -> id (a later put overwrites: shadowing).
+export fn NameTable mut @put(name str, id int) -> () {
+    @map.insert(name, id)
+}
+
+/// -1 = absent. O(1) — the whole point of the door.
+#realtime nogc
+export fn NameTable @find(name str) -> int => @map.get(name) ?? -1

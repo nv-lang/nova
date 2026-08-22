@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `collect_crate_mono_items` -- reachability walked FROM ROOTS
+// over resolved call targets, with a worklist and a seen-set, rather than
+// "emit everything and let the linker sort it out". Go's stenciling has the
+// same shape at the instantiation level.
+//
+// Role: layer 9 of the map -- the set of callables that are actually REACHED.
+//   Today the key is a fn row (E2-b2 without type arguments); it becomes
+//   `(DeclId, substs)` when generics arrive, and the collector is written so
+//   that the key is the only thing that has to change.
+// Used by: emit_c -- it emits a function only if this set contains it.
+// Guarded by: check-novac-emission-size.sh (the ratchet this collector moves),
+//   check-novac-deps.py (the edge mono -> sem is in the architecture table),
+//   check-novac-differential.sh (behaviour must not shift when code is dropped).
+
+module novac.mono
+
+import ../tree.{Node, NodeKind, is_node}
+import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children}
+import ../types.{TyId}
+import ../diag.{ice}
+
+/// ONE instance of a generic callable: which row, under which substitution.
+///
+/// The key of the reachable set for a generic callable is NOT the row -- plan
+/// 274 E2-b2 says it is `(DeclId, substs)`, because `id[int]` and `id[str]`
+/// are two C functions and one row. The substitution lives in `Reach.subst`,
+/// a flat pool addressed by the range, exactly as every other range in this
+/// compiler (`FnDef.param_off/cnt`, `SubstRef.arg_off/cnt`): a range is one
+/// value, so it is one row and cannot desynchronize with itself.
+/// Its parameter and return types are CONCRETE, rewritten here. That is not a
+/// convenience for the backend, it is the architecture's boundary
+/// (novac-architecture.md): "a substitution needed in the emitter means mono
+/// did not finish its work". So mono finishes it -- through `sem.subst_type`,
+/// the one door that applies a substitution -- and the emitter reads type ids
+/// like any other.
+export type Instance value {
+    row FnRow /// the generic callable's row in FnTable
+    subst_off int /// its first substitution argument in `Reach.subst`
+    subst_cnt int /// how many arguments -- equal to the declaration's tparam_cnt
+    ptype_off int /// its first CONCRETE parameter type in `Reach.ptypes`
+    ptype_cnt int /// how many parameters -- equal to the row's param_cnt
+    ret_id TyId /// its CONCRETE return type
+}
+
+/// Which callables are reachable from the roots.
+///
+/// TWO sets, because there are two kinds of answer and one of them is not a
+/// flag. A plain callable is reached or not: a bool per row, and the row IS
+/// its identity. A GENERIC callable is reached PER SUBSTITUTION, so its
+/// element is an `Instance`; a flag on the row could not tell `id[int]` from
+/// `id[str]`, which is the whole point of E2-b2.
+export type Reach {
+    seen []bool /// indexed by fn row; true = a NON-generic callable reached from a root
+    inst []Instance /// generic callables reached, one element per substitution
+    subst []TyId /// flat pool of substitution arguments, addressed by Instance
+    ptypes []ParamDef /// flat pool of instance parameters -- CONCRETE type plus the declared mode, addressed by Instance
+}
+
+/// The instances the walk found: one element per `(row, substitution)`.
+///
+/// The pipeline WALKS this vector -- it types each instance's body and hands
+/// the emitter one function per element. No door asks "is this instance in the
+/// set": the walk below asks that of itself while building, and an exported
+/// question with no caller is a door this plan has already written twice.
+export fn Reach @instances() -> ro []Instance => @inst
+
+/// The substitution of one instance -- a VIEW into the pool, not a copy.
+export fn Reach @subst_of(it Instance) -> ro []TyId =>
+    @subst[it.subst_off..it.subst_off + it.subst_cnt]
+
+/// The CONCRETE parameter types of one instance, in declaration order.
+export fn Reach @ptypes_of(it Instance) -> ro []ParamDef =>
+    @ptypes[it.ptype_off..it.ptype_off + it.ptype_cnt]
+
+/// Is this row generic -- does the declaration bind type parameters?
+#realtime nogc
+fn is_generic(ctx Ctx, row FnRow) -> bool {
+    ro r = raw_row(row)
+    if r < 0 { return false }
+    if r >= ctx.fns.rows.len() { return false }
+    ctx.fns.rows[r].tparam_cnt > 0
+}
+
+/// Is this fn row reached from a root? Tolerant on purpose: the emitter asks
+/// about every fn it walks, including rows that belong to std method
+/// signatures rather than to this file.
+export fn Reach @has(row FnRow) -> bool {
+    ro r = raw_row(row)
+    if r < 0 { return false }
+    if r >= @seen.len() { return false }
+    @seen[r]
+}
+
+// `Reach.count` lived here until 2026-08-22 and is gone: EXPORTED, and called by
+// nobody. Its own baseline entry said what it was for -- "for the one line the
+// pipeline prints" -- and that line no longer prints it, so the door outlived its
+// reader without anybody noticing. Sixth carrier of one habit this session
+// (`candidates_from`, `same_vrow`, `same_decl`, `tparam_index`, this, and
+// `type_decl_of`), which is why the habit now has a guard rather than a note.
+
+
+/// Collect the callables reachable from the roots of this file.
+///
+/// The root is `main`: everything a program does, it does from there. rustc
+/// seeds the same walk with more roots (exported items, `#[used]` statics)
+/// because a crate is a library too; a novac file today is a program, and when
+/// modules arrive the export list joins the seeds here -- one place, named.
+///
+/// The walk is a FIXPOINT over the file's declarations rather than an index
+/// from row to node. The reason is honesty about what is known: rows are handed
+/// out by sem while it walks the top level, and std method signatures take rows
+/// too, so "row minus first row" is an assumption about ordering that nothing
+/// checks. A pass that repeats until nothing changes needs no such assumption.
+/// The cost is passes x declarations, and both are file-sized; when files grow
+/// enough for that to matter, the fix is a real row->node index, not a guess.
+export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
+    mut seen = []bool.new()
+    // One flag per callable row: the COUNT is the whole loop, so the cursor
+    // was carrying no information (owner 2026-08-22).
+    for _ in 0..ctx.fns.rows.len() {
+        seen.push(false)
+    }
+    mut inst = []Instance.new()
+    mut subst = []TyId.new()
+    mut ptypes = []ParamDef.new()
+
+    match entry_row(ctx) {
+        // No entry point in this file: nothing is reachable, and that is an
+        // ANSWER, not a hole -- check refuses such a file by name long before
+        // the emitter is asked anything.
+        None => { return Reach { seen, inst, subst, ptypes } }
+        Some(root) => {
+            if root < seen.len() {
+                seen[root] = true
+            } else {
+                // The registry knows the entry point but the flag vector is
+                // shorter than its row: a broken invariant, not a program
+                // shape.
+                ice("mono: the entry row is outside the callable table")
+            }
+        }
+    }
+
+    mut grew = true
+    while grew {
+        grew = false
+        for c in branch_children(file) {
+            if c.kind_of() != NodeKind.FnDecl { continue }
+            match decl_fn_row(c, ctx) {
+                // A declaration that owns no row is not a callable of this
+                // file: there is nothing to walk from.
+                None => continue
+                Some(row) => {
+                    if raw_row(row) >= seen.len() {
+                        continue
+                    } else {
+                        // The row addresses the flag vector, so it can be read.
+                    }
+                    // REACHED means either "this plain callable is called" or
+                    // "this generic one is instantiated": a generic row never
+                    // enters `seen` (it is not emitted as one function), so
+                    // without the second half its body's callees would never
+                    // be walked and whatever it calls would go unemitted.
+                    ro reached = seen[raw_row(row)] || has_row_instance(inst, row)
+                    if !reached {
+                        continue
+                    } else {
+                        // Reached: its callees are worth walking.
+                    }
+                    if mark_callees(c, ctx, out, seen, inst, subst, ptypes) {
+                        grew = true
+                    } else {
+                        // This body added nothing new this round; the loop
+                        // stops when no body does.
+                    }
+                }
+            }
+        }
+    }
+
+    Reach { seen, inst, subst, ptypes }
+}
+
+/// Is this exact instance (row + substitution) missing from the set being
+/// built? Asked over the vectors the walk is still filling, because a `Reach`
+/// does not exist until the walk ends -- and no second door asks it of a
+/// finished set, because the emitter WALKS `Reach.inst` rather than querying
+/// it (a door with no caller is the trap this plan already fell into once).
+///
+/// A linear walk, and that is the honest form here: the set holds ONE element
+/// per instantiation of the file, so its size is single digits. A hash on
+/// three integers would cost more to write than the walk costs to run, and the
+/// day a file has hundreds of instances the fix is a real index, not a guess
+/// made now.
+#realtime nogc
+fn instance_absent(inst []Instance, subst []TyId, row FnRow, args []TyId) -> bool {
+    for it in inst {
+        if it.row != row { continue }
+        if it.subst_cnt != args.len() { continue }
+        mut same = true
+        for i in 0..args.len() {
+            if subst[it.subst_off + i] != args[i] {
+                same = false
+            } else {
+                // Equal in this slot: nothing to record, the verdict is what
+                // the remaining slots say.
+            }
+        }
+        if same { return false }
+    }
+    true
+}
+
+/// Is any instance of this row in the set yet? Asked by the fixpoint, which
+/// walks a generic body once the FIRST instance of it appears -- the callees
+/// of the body are the same set whichever substitution reached it.
+#realtime nogc
+fn has_row_instance(inst []Instance, row FnRow) -> bool {
+    for it in inst {
+        if it.row == row { return true }
+    }
+    false
+}
+
+/// The row of the entry point, or None when this file declares none.
+#realtime nogc
+fn entry_row(ctx Ctx) -> Option[FnRow] => ctx.fns.entry_row()
+
+/// Mark every callee of this subtree; answer whether anything was newly marked.
+fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
+                mut subst []TyId, mut ptypes []ParamDef) -> bool {
+    mut grew = false
+    ro id = n.id_of()
+    if is_node(id) && out.has_callee(id) {
+        ro cr = out.callee_of(id)
+        // Every kind is NAMED: a call whose target is a variant constructor or
+        // a type is emitted by its own door, and the fn set says nothing about
+        // it. A `_` arm here would swallow whatever kind the registry grows
+        // next, and the collector would silently stop reaching it.
+        match cr.target {
+            CalleeFn(row) => {
+                if is_generic(ctx, row) {
+                    // A GENERIC callee is reached per SUBSTITUTION: the element
+                    // of the set is the instance, and the same call written
+                    // twice adds nothing while two type arguments add two.
+                    ro args = out.callee_subst_of(id)
+                    if instance_absent(inst, subst, row, args) {
+                        ro off = subst.len()
+                        subst.append(args)
+                        // The instance's types are REWRITTEN here, once, into
+                        // the pool: this is mono's own work, and doing it here
+                        // is what keeps every backend free of substitution.
+                        ro poff = ptypes.len()
+                        ro fd = ctx.fns.rows[raw_row(row)]
+                        for p in 0..fd.param_cnt {
+                            // The type is REWRITTEN, the mode is CARRIED: an
+                            // instance's parameter is as mutable as the
+                            // declaration wrote it, and the backend must read
+                            // both from one row.
+                            ro pd = ctx.fns.params[fd.param_off + p]
+                            ptypes.push(ParamDef { type_id: subst_type(ctx, pd.type_id, args),
+                                                   mode: pd.mode })
+                        }
+                        inst.push(Instance { row, subst_off: off, subst_cnt: args.len(),
+                                             ptype_off: poff, ptype_cnt: fd.param_cnt,
+                                             ret_id: subst_type(ctx, fd.ret_id, args) })
+                        grew = true
+                    } else {
+                        // This exact instance is already in the set.
+                    }
+                } else if raw_row(row) >= 0 && raw_row(row) < seen.len() && !seen[raw_row(row)] {
+                    seen[raw_row(row)] = true
+                    grew = true
+                } else {
+                    // Already reached, or a row this file's table does not
+                    // hold: reaching it twice is not news either way.
+                }
+            }
+            // Neither is a callable, so the fn set says nothing about either:
+            // one case, and it is NOT a wildcard -- a fourth kind of target
+            // would still have to come here and say what it does (P21).
+            CalleeVariant(_) | CalleeCtor(_) => {}
+        }
+    } else {
+        // Not a call, or a call check never resolved -- the refusal for the
+        // second case is already in the diagnostics.
+    }
+    if n.kind_of() == NodeKind.LeafNode { return grew }
+    for c in branch_children(n) {
+        if mark_callees(c, ctx, out, seen, inst, subst, ptypes) {
+            grew = true
+        } else {
+            // Nothing new under this child.
+        }
+    }
+    grew
+}

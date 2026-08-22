@@ -128,26 +128,26 @@
 * **Стражи `novac` (Э1 плана 274: весь набор — до первой строки лексера).**
   Правило §10.1: ограничение стоит ноль на первом коммите и невозможно на
   десятитысячном. Что каждый не даёт сделать:
-  `check-novac-deps.sh` — импорт вне таблицы рёбер архитектуры (§10.2, одна
-  таблица — один источник); `check-novac-file-size.sh` — файл больше тысячи
-  строк, жёстко; `check-novac-frontend-shape.sh` — `Result` в сигнатурах
-  фронтенда и узлы без позиций; `check-novac-no-global-state.sh` — общее
-  изменяемое состояние между фазами; `check-novac-no-string-keys.sh` —
+  `check-novac-deps.py` — импорт вне таблицы рёбер архитектуры (§10.2, одна
+  таблица — один источник); `check-novac-file-size.py` — файл больше тысячи
+  строк, жёстко; `check-novac-frontend-shape.py` — `Result` в сигнатурах
+  фронтенда и узлы без позиций; `check-novac-no-global-state.py` — общее
+  изменяемое состояние между фазами; `check-novac-no-string-keys.py` —
   строковый ключ таблицы после двери `names` (идентичность — не имя);
-  `check-novac-atomics-door.sh` — прямые `__atomic_*` мимо одной двери (§8.1);
+  `check-novac-atomics-door.py` — прямые `__atomic_*` мимо одной двери (§8.1);
   `check-novac-diag-schema.sh` — диагностика вне JSON-схемы
   (id, code, severity, primary, message); `check-novac-no-cascade.sh` — больше
   одного `severity=error` на одну посеянную причину (№636 механизмом);
   `check-novac-differential.sh` — расхождение исхода с оракулом вне
   `novac/divergences.allow`; `check-novac-no-panic.sh` — паника или сигнал на
   любой фикстуре (инвариант 11); `check-novac-grammar-fixture-coverage.sh` —
-  грамматическая форма без фикстуры; `check-novac-arch-invariants.sh` — раздел
+  грамматическая форма без фикстуры; `check-novac-arch-invariants.py` — раздел
   карты архитектуры без счётчика инвариантов (274.1 §2б);
-  `check-novac-arch-class-proofs.sh` — класс задачи без названной двери.
-  `check-novac-no-naked-panic.sh` — голый `panic(` вне двери `ice()` (П12:
+  `check-novac-arch-class-proofs.py` — класс задачи без названной двери.
+  `check-novac-no-naked-panic.py` — голый `panic(` вне двери `ice()` (П12:
   явный инвариант рендерит `E_NOVAC_ICE` по схеме и лишь затем умирает по
   правилу языка).
-  `check-novac-legacy-workarounds.sh` — обход бага оракула в novac обязан нести
+  `check-novac-legacy-workarounds.py` — обход бага оракула в novac обязан нести
   маркер `[LEGACY-#NNN]` открытого бага (274 §1.5); фикс-волна оракула снимает
   обходы той же волной (греп на ноль — часть её приёмки).
   `check-retracted-param-form.sh` — снятая постфиксная форма параметра
@@ -418,7 +418,11 @@
   `check-driver-channel-parity.sh` — каждый чекер-канал `emitter.set_*(&env.*)`,
   проведённый в test_runner, обязан быть и в `nova build`, и в standalone (№669: `nova build`
   трижды терял каналы молча при зелёном `nova test`).
-  `check-novac-time-ledger.sh` — коммит, коснувшийся `novac/**`, требует строки
+  `check-novac-time-ledger.py` — коммит, коснувшийся `novac/**`, требует строки в
+леджере `docs/dev/novac-time-ledger.md` за ту же дату, А СУММА ДОЛЕЙ ЗА ОДНУ ДАТУ
+не больше 1.0: доля — часть ОДНОГО дня (274 §1.4; ревью 274.3/F4: за 2026-08-14
+накопилось 5.55 — метрика «274 против 221» дня 30 была арифметически
+недействительна).
   в леджере `docs/dev/novac-time-ledger.md` за ту же дату (274 §1.4: доля
   «274 против 221» дня 30 считается из леджера).
   До сборки `novac` каждый честно зелен строкой «судить нечего» — страж до

@@ -1,0 +1,16 @@
+module extern_decl.neg_1
+
+// ONE seeded cause: the `extern "ABI" fn` form (D282, plan 91.12 F.-1). The
+// parser READS it since 2026-08-20 -- until then the answer was "syntax error:
+// this is not a form of the language", about a form the language has and std's
+// whole FFI layer is written in. What novac lacks is the emission, so check
+// declines the form BY NAME, at the keyword the reader wrote.
+//
+// The parameters name a type novac does not know (`CStr`) and the declaration
+// has no body: both would be a second and third diagnostic if the refusal of
+// the FORM did not stop the walk. One cause, one diagnostic.
+extern "C" fn fs_open(path CStr, flags int) -> int
+
+fn main() {
+    println(1)
+}

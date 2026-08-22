@@ -1,0 +1,17 @@
+module generic_call.neg_1
+
+// ONE seeded cause: the call passes two arguments to a callable that declares
+// one. The refusal names THAT, at the call's own name -- not "generics are not
+// supported", which was the honest answer only until 2026-08-21.
+//
+// The refusal is about the VALUE arity on purpose. The neighbouring shapes --
+// an unknown type argument (`dbl[Zork](21)`) and one too many of them
+// (`dbl[int, f64](21)`) -- are refused by novac and ACCEPTED by the oracle's
+// `check`: it never validates the contents of the turbofish (measured
+// 2026-08-21, registered in docs/dev/novac-divergences.md, class O-1c). As a
+// fixture either of them would assert a divergence instead of an agreement.
+fn dbl[T](x T) -> T => x + x
+
+fn main() {
+    println(dbl[int](1, 2))
+}

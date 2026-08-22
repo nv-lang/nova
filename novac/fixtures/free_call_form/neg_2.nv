@@ -1,0 +1,25 @@
+module free_call_form.neg_2
+
+// ONE seeded cause: the call passes a RECORD where the function declares an
+// `f64`. The arity is right and the name is right; only the type is wrong, and
+// the refusal says which of the three it is.
+//
+// novac ACCEPTED this file until 2026-08-21 and emitted
+// `novac_fn_show__nova_f64__to_nova_f64(c)` -- a struct pointer where a double
+// is declared, from a program the oracle refuses. The cause was the KEY: the
+// call was looked up with `UNKNOWN_TYPE` in every argument slot, so `fits`
+// compared the arity and nothing else. Nova overloads BY PARAMETERS (D84), so a
+// key without types is not a key at all -- the arguments are typed first now,
+// and the walk that types them is also what verifies them.
+//
+// Kept as a fixture rather than as a note in a commit, because the shape is not
+// exotic: any wrong argument is this shape, and a compiler that emits invalid C
+// for it says nothing at all.
+type Cel { v f64 }
+
+fn show(x f64) -> f64 => x
+
+fn main() {
+    ro c = Cel { v: 1.5 }
+    println(show(c))
+}

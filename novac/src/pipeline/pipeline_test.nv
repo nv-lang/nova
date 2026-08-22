@@ -14,30 +14,287 @@
 
 module novac.pipeline
 
+import ../tree.{Node, NodeKind, raw_node}
+import ../parse.{parse}
+import ../sem.{branch_children, leaf_text}
+import ../source.{SourceText}
+import ../diag.{ice}
+import ../check.{check_instance}
+import ../types.{TyId}
+
+// The std signatures these tests need, handed in the way the driver hands
+// them: as TEXT through the one door. Inline and tiny on purpose — the
+// tests stay hermetic (no filesystem, no path, no std dir) and still exercise
+// the real declaration-reading path instead of a special case.
+//
+// History (2026-08-15): this used to hand an EMPTY list, which was right
+// while methods were a hardcoded table and wrong the moment they became
+// read data. The strings test went red and stayed red unnoticed, because
+// the module tests were blocked by an unrelated oracle regression at the
+// time. Handing the signatures is the honest fix; weakening the assert
+// would have hidden the same hole.
+fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_ascii_upper() -> str => \"\"\nfn str @starts_with(needle str) -> bool => true\n")
+
+fn n_diags(text str) -> int => compile(text, std_decls()).len()
+
 test "no cascade: a run of top-level junk is one cause, one diagnostic" {
     // E1 review p.1 (2026-08-14): this used to be THREE diagnostics.
-    assert(compile("1 2 3").len() == 1)
+    assert(n_diags("1 2 3") == 1)
 }
 
 test "no cascade: junk between signature and block is one diagnostic" {
-    assert(compile("fn main junk here () { }").len() == 1)
+    assert(n_diags("fn main junk here () { }") == 1)
 }
 
 test "clean subset file: zero diagnostics" {
-    assert(compile("module a.b\nfn main() { println(\"hi\", 1 + 2) }").len() == 0)
+    assert(n_diags("module a.b\nfn main() { println(\"hi\", 1 + 2) }") == 0)
 }
 
 test "two separate causes: two diagnostics" {
     // Junk at top level AND an unterminated string inside a fn are two
     // independently seeded mistakes — the rule is one PER CAUSE, not one
     // per file.
-    assert(compile("?? fn main() { \"unterminated").len() == 2)
+    assert(n_diags("?? fn main() { \"unterminated") == 2)
 }
 
 test "unterminated string alone: one diagnostic, honest refusal" {
     // E1 review p.4: an unclosed string is ErrorTok now, not a plausible
     // StrLit.
-    assert(compile("fn main() { \"oops }").len() == 1)
+    assert(n_diags("fn main() { \"oops }") == 1)
+}
+
+test "stray module after the header: one diagnostic, no hang (fuzzer 2026-08-14)" {
+    // The doubled-file mutation. KwModule is a sync point for BOTH junk
+    // buckets, so the top loop itself must consume it: before the fix this
+    // input spun forever pushing empty Err branches until the GC died.
+    assert(n_diags("fn main() { }\nmodule") == 1)
+    assert(n_diags("module a\nfn main() { }\nmodule a\nfn main() { }") == 1)
+}
+
+test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08-14)" {
+    // Truncation mid-statement: primary() recovers by consuming the Eof
+    // leaf. Its text used to be the "" literal — a foreign pointer for the
+    // position door, killed by offset_of's contract assert. Now it is the
+    // end-anchored empty slice and the report is honest.
+    assert(n_diags("fn main() { mut i") == 1)
+}
+
+test "E2 strings surface: the shapes are in, a std method with no compiled body is refused" {
+    // `byte_len`, `to_ascii_upper`, `starts_with` are declared in std, and their
+    // BODIES live in std's own Nova source -- which novac does not compile yet.
+    // Every C name is ours now (the oracle's spelling was removed on 2026-08-20
+    // with the `foreign` branch), so a call to a body novac does not emit would
+    // name a symbol that exists nowhere. The subset says that instead, and the
+    // corpus baseline was lowered 11/5 -> 10/4 in the same wave.
+    ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
+    assert(n_diags(src) == 1)
+    // The SHAPES are still in the subset: the same `ro` and `while` without a
+    // std body are clean, so the refusal above is about the missing body and
+    // not about the form.
+    assert(n_diags("fn main() { mut i = 0\n while i < 1 { i += 1 }\n println(i) }") == 0)
+}
+
+/// The `fn id[T](x T) -> T => x` declaration of this source, by name.
+fn generic_decl_of(tree Node, want str) -> Node {
+    for c in branch_children(tree) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        ro kids = branch_children(c)
+        if kids.len() < 2 { continue }
+        if kids[1].kind_of() != NodeKind.LeafNode { continue }
+        if leaf_text(kids[1]) == want { return c }
+    }
+    ice("pipeline_test: the fixture lost its declaration")
+}
+
+test "an instance types its body under the substitution, in its own channel (E2-b2)" {
+    // Go stenciling: ONE copy of the body per instance, each typed on its own.
+    // The assertion is on what the channel HOLDS, not on silence -- before
+    // 2026-08-20 a generic body was not typed at all, and "no diagnostics"
+    // would have passed while nothing whatever had happened.
+    ro src = "fn twice[T](x T) -> T => x + x\nfn main() { println(1) }"
+    ro tree = parse(tokens_of(src))
+    ro ctx = context(tree, std_decls())
+    ro decl = generic_decl_of(tree, "twice")
+    ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx,
+        []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1)
+    assert(diags.len() == 0)
+    // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
+    // A bare name would prove nothing here -- the channel deliberately does
+    // not record one (the lattice reads it from the scope), so the assertion
+    // stands on an expression whose type the channel DOES carry.
+    ro kids = branch_children(decl)
+    mut body_t = -1
+    for c in kids {
+        if c.kind_of() != NodeKind.FnExprBody { continue }
+        ro ek = branch_children(c)
+        body_t = chan.type_of(ek[ek.len() - 1].id_of())
+    }
+    assert(body_t == ctx.prims.int_id)
+}
+
+test "a generic call is COMPILED: two instances, two C functions (E2-b2)" {
+    // The acceptance of E2-b2, and it is asserted on the emission rather than
+    // on silence: `dbl[int]` and `dbl[f64]` are two C functions of one body,
+    // each named by its substitution through `c_callable`.
+    ro src = "fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl[int](21))\n println(dbl[f64](1.5)) }"
+    ro (diags, c) = compile_to_c(src, std_decls())
+    assert(diags.len() == 0)
+    assert(c.contains("dbl__nova_int__to_nova_int__nova_int"))
+    assert(c.contains("dbl__nova_f64__to_nova_f64__nova_f64"))
+    // The generic body itself is NOT emitted as a function of its own: there is
+    // no such C function, only its instances. A `dbl(` substring would match
+    // the instances too, so the assertion is on the SIGNATURE the template
+    // would have had -- a bare `T` parameter, which has no C spelling at all.
+    assert(!c.contains("dbl(nova_int"))
+}
+
+test "a generic call without type arguments is refused, and says so (no inference in E2-b2)" {
+    // By design, not by omission: the turbofish IS the mapping at this stage,
+    // so its absence is a refusal that names itself. The oracle infers here --
+    // a deliberate divergence, recorded in docs/dev/novac-divergences.md.
+    assert(n_diags("fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl(4)) }") == 1)
+}
+
+/// A declaration text carrying a `#coerce` pair, handed in the way the driver
+/// hands std declarations. The pair CANNOT come from the compiled file: novac
+/// compiles no method body, so the declaration is where D429 pairs live for it.
+fn coerce_decls() -> []str =>
+    []str.of("#coerce\nfn Cel consume @into_f64() -> f64 => 0.0\n")
+
+/// The file both coerce tests judge: a record where an `f64` is declared.
+fn coerce_src() -> str =>
+    "type Cel { v f64 }\nfn show(x f64) -> f64 => x\nfn main() { ro c = Cel { v: 1.5 }\n println(show(c)) }"
+
+test "a wrong-typed argument is REFUSED, not emitted (the key is the types, D84)" {
+    // The regression this test exists for: with no pair declared, novac used to
+    // ACCEPT this file and emit `novac_fn_show__nova_f64__to_nova_f64(c)` -- a
+    // struct pointer where a double is declared. The call was looked up with
+    // no_ty() in every argument slot, so only the arity was compared.
+    assert(compile(coerce_src(), std_decls()).len() == 1)
+}
+
+test "an argument that coerces (D429) is refused for the RIGHT reason" {
+    // With the pair declared, the same file is legal Nova -- the oracle compiles
+    // it and prints 1.5. What novac lacks is the emission: R7 makes the
+    // insertion a call to the declared method, and novac compiles no method
+    // body yet. So the refusal names THAT, and not "nothing fits" -- which is
+    // the difference between a boundary and a lie about the program.
+    ro diags = compile(coerce_src(), coerce_decls())
+    assert(diags.len() == 1)
+    assert(diags[0].message.contains("#coerce"))
+    // And the pair is read from the DECLARATION, not known by the compiler: the
+    // same file with the same declaration minus the attribute is refused as an
+    // ordinary type mismatch, with no mention of D429.
+    ro plain = compile(coerce_src(), []str.of("fn Cel consume @into_f64() -> f64 => 0.0\n"))
+    assert(plain.len() == 1)
+    assert(!plain[0].message.contains("#coerce"))
+}
+
+test "a receiver MODE is read AND judged: a consuming method needs a consuming place" {
+    // Two halves of one rule, and the second half moved this contract on
+    // 2026-08-21 (P14: the receiver is parameter zero, so its mode filters the
+    // call like any other position).
+    //
+    // Until then the parser read exactly `mut` as a receiver qualifier, so every
+    // `consume` method of std -- including both finalize-lane `#coerce` pairs --
+    // fell through to the free-function shape and harvested NO row at all.
+    ro decls = []str.of("fn Cel consume @into_f64() -> f64 => 0.0\n")
+    // A `consume` receiver does not take a `ro` binding: nothing fits, so the
+    // refusal is about the call, not about a missing body.
+    ro on_ro = compile("type Cel { v f64 }\nfn main() { ro c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
+    assert(on_ro.len() == 1)
+    assert(!on_ro[0].message.contains("compiles no body"))
+    // A `consume` BINDING is the place it does take -- the signature IS found,
+    // and what novac lacks is the method's body.
+    ro on_consume = compile("type Cel { v f64 }\nfn main() { consume c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
+    assert(on_consume.len() == 1)
+    assert(on_consume[0].message.contains("compiles no body"))
+}
+
+test "`Self` in a declaration is the RECEIVER's type, not a missing one" {
+    // `Self` names no declaration and is in no registry, so a door that only
+    // asked `defs` dropped the WHOLE signature -- and the refusal at the use
+    // site then said "no such method" about a method std declares. std spells
+    // `Self` 264 times across 50 files (measured 2026-08-21).
+    ro decls = []str.of("fn Cel @twin() -> Self => 0
+")
+    ro src = "type Cel { v f64 }
+fn main() { ro c = Cel { v: 1.0 }
+ println(c.twin().v) }"
+    ro diags = compile(src, decls)
+    assert(diags.len() == 1)
+    // Read, and refused for the reason that is left: novac emits no method body.
+    assert(diags[0].message.contains("compiles no body"))
+}
+
+test "a BOUND is not a type parameter: the arity is ONE, not two" {
+    // Until 2026-08-21 the collector took every identifier of a generics list,
+    // so `[T Compare]` registered TWO parameters and the honest call
+    // `pick[int](3)` was refused as "a different number of type arguments" -- a
+    // lie about a legal program, and the only way to satisfy the count was to
+    // write `pick[int, Compare]`.
+    ro src = "fn pick[T Compare](a T) -> T => a
+fn main() { println(1) }"
+    ro tree = parse(tokens_of(src))
+    ro ctx = context(tree, std_decls())
+    match ctx.defs.fn_row("pick") {
+        None => assert(false)
+        Some(row) => assert(ctx.fns.rows[row].tparam_cnt == 1)
+    }
+}
+
+test "the two CONSTRAINTS of a generics entry get two different refusals" {
+    // The full form of an entry is `T [consume] [Protocol + ...]` (owner,
+    // 2026-08-21). `[T consume]` constrains LINEARITY -- measured: the oracle
+    // accepts `fn take[T consume](consume a T) -> T => a`, and answers
+    // `[D156-strict-forget]` when the body does not consume -- while
+    // `[T Compare]` constrains DISPATCH. novac has neither, and one message for
+    // both would name a cause it never established.
+    ro lin = compile("fn take[T consume](consume a T) -> T => a
+fn main() { println(1) }", std_decls())
+    assert(lin.len() == 1)
+    assert(lin[0].message.contains("must-consume"))
+    ro proto = compile("fn take[T Compare](a T) -> int => 1
+fn main() { println(1) }", std_decls())
+    assert(proto.len() == 1)
+    assert(proto[0].message.contains("protocol"))
+}
+
+test "a bound is refused BY NAME, and once" {
+    // novac neither dispatches a protocol nor verifies a constraint (both
+    // arrive with E2-b3), and compiling the generic as if the bound were not
+    // written would accept what the oracle rejects. One cause, one diagnostic.
+    ro diags = compile("fn pick[T Compare](a T) -> T => a
+fn main() { println(1) }", std_decls())
+    assert(diags.len() == 1)
+    assert(diags[0].message.contains("bound on a type parameter"))
+}
+
+test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
+    ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
+    assert(n_diags(src) == 0)
+}
+
+test "record ctor outside a binding initializer is refused in CHECK (E2 boundary)" {
+    // The emitter's tmp scheme exists only for the binding-init shape; a
+    // green check here would turn into an emitter ice killing the smoke.
+    assert(n_diags("type P { a int }\nfn main() { println(P { a: 1 }) }") == 1)
+}
+
+test "unknown method is an honest subset refusal at the name" {
+    assert(n_diags("fn main() { println(\"s\".reverse()) }") == 1)
+}
+
+test "no silent type defaults: fn without a return type is refused (#652 class)" {
+    // The owner's rule 2026-08-14: a quiet nova_int fallback bred a bug
+    // family in the current compiler — the boundary falls in check, the
+    // emitter's ice is only the second floor.
+    assert(n_diags("fn helper() { println(\"x\") }\nfn main() { }") == 1)
+}
+
+test "E2 match surface is clean: sum decl, arms, guards, expression fn" {
+    ro src = "type S\n | A(f64)\n | B(f64, f64)\nfn area(s S) -> f64 => match s {\n A(r) => r\n B(w, h) => w * h\n}\nfn main() { println(area(A(1.5))) }"
+    assert(n_diags(src) == 0)
 }
 
 test "escaped interpolation is a literal, not a refusal" {
@@ -45,5 +302,5 @@ test "escaped interpolation is a literal, not a refusal" {
     // The input is assembled by concatenation so THIS file's own string
     // literal does not interpolate.
     ro src = "fn main() { println(\"\\".concat("$").concat("{x}\") }")
-    assert(compile(src).len() == 0)
+    assert(n_diags(src) == 0)
 }

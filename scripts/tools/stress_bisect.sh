@@ -93,7 +93,10 @@ TEST_BASE=$(basename "$TEST_FILE" .nv)
 
 echo "[stress-bisect] nova test --keep-artifacts $TEST_FILE..." >&2
 NOVA_LOG=$(mktemp)
-./nova-cli/target/release/nova.exe test "$TEST_FILE" --keep-artifacts > "$NOVA_LOG" 2>&1
+. "$(CDPATH= cd -- "$(dirname -- "$0")/../guards" && pwd)/lib/novac.sh"
+NOVA_BIN="$(novac_find_oracle "$(pwd)" || true)"
+[ -n "$NOVA_BIN" ] || { echo "oracle binary not found" >&2; exit 1; }
+"$NOVA_BIN" test "$TEST_FILE" --keep-artifacts > "$NOVA_LOG" 2>&1
 NOVA_EC=$?
 
 # Locate fresh .exe (mtime within last 2 minutes — accounts for cached builds).

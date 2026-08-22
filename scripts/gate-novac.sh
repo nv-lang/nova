@@ -63,10 +63,48 @@ DESYNC_N=0
 GATE_T0=$(date +%s)
 
 # Швы: какие включены — говорим вслух и запоминаем для вердикта.
+# УРОВЕНЬ прогона (2026-08-19, по замеру: полный гейт 584с, из них 238с --
+# мутационная проверка САМИХ стражей, а не компилятора).
+#   loop — только правила по novac/src + сборка + модульные тесты (~80с);
+#   push — плюс поведение: дифф с оракулом, паники, пачка, фаззер (по умолчанию);
+#   full — плюс мутационный самотест стражей и замер цены цикла (CI).
+NOVAC_TIER="${NOVAC_TIER:-push}"
+case "$NOVAC_TIER" in
+    loop|push|full) : ;;
+    *) echo "NOVAC_TIER: loop | push | full (дано: $NOVAC_TIER)" >&2; exit 2 ;;
+esac
+
 SEAMS=""
 [ "${NOVAC_CORPUS:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_CORPUS=0"
 [ "${NOVAC_COST:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_COST=0"
 [ "${NOVAC_PROVE:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_PROVE=0"
+
+# КАЛИБРОВКА МАШИНЫ: во сколько раз она сейчас медленнее эталонной.
+# Замеряется ОДИН раз на прогон -- сама проба стоит секунды, и повторять её
+# перед каждым дедлайном значило бы платить за измерение дороже, чем за
+# измеряемое. Смысл числа -- в `scripts/tools/cal-factor.sh`: пределы стояли
+# константами, а пропускная способность машины меняется в разы от посторонней
+# нагрузки, и ложный отказ по таймауту стоит сорокаминутного перезапуска и
+# учит не верить гейту.
+CAL=$(bash "$ROOT/scripts/tools/cal-factor.sh" 2>/dev/null || echo 1)
+case "$CAL" in ''|*[!0-9]*) CAL=1 ;; esac
+[ "$CAL" -ge 1 ] || CAL=1
+
+# ПОЛ по имени стража: сколько секунд он получает ВСЕГДА, независимо от
+# калибровки. Пол существует там, где известна нижняя граница честной работы:
+# фаззер прогоняет 462 мутации, самотесты -- полсотни стражей с мутацией
+# каждого. На быстрой машине (CAL=1) пол не даёт срезать предел до значения,
+# при котором страж не успевает доказать НИЧЕГО, а красный по таймауту читается
+# как «сломано» -- то есть как ложь.
+floor_for() {
+    case "$1" in
+        check-novac-fuzz-zero-panic.sh)      echo 300 ;;
+        check-novac-selftest-proves-red.sh)  echo 600 ;;
+        check-novac-iteration-cost.sh)       echo 600 ;;
+        check-novac-mangle-fixed-point.sh)   echo 300 ;;
+        *)                                   echo 0 ;;
+    esac
+}
 
 step() {
     printf '[%5ds] == novac-gate: %s ==\n' "$(( $(date +%s) - GATE_T0 ))" "$1"
@@ -98,6 +136,13 @@ guard() {
     local runner=bash out rc
     case "$g" in *.py) runner=python ;; esac
     if [ -n "$deadline" ]; then
+        # Предел = написанное число, умноженное на калибровку, но не ниже
+        # именного пола. Написанное число остаётся смыслом («столько это
+        # стоит на эталонной машине»), а машина сама говорит, во сколько раз
+        # она сегодня медленнее.
+        _fl=$(floor_for "$(basename "$g")")
+        deadline=$(( deadline * CAL ))
+        [ "$deadline" -ge "$_fl" ] || deadline=$_fl
         out="$(bash "$ROOT/scripts/tools/with-deadline.sh" "$deadline" "$runner" "$g" "$@" 2>&1)"; rc=$?
     else
         out="$("$runner" "$g" "$@" 2>&1)"; rc=$?
@@ -116,19 +161,115 @@ guard() {
     return 1
 }
 
+# ПАРАЛЛЕЛЬНЫЙ блок независимых текстовых стражей (2026-08-19).
+#
+# Они не зависят друг от друга и читают одно и то же дерево только на чтение.
+# Последовательно это ~45 запусков по 3-5 секунд = две с половиной минуты
+# ожидания человеком; параллельно — секунды. Вывод собирается в файлы и
+# ПЕЧАТАЕТСЯ В ПОРЯДКЕ ОБЪЯВЛЕНИЯ: недетерминированный порядок красных строк
+# читался бы как разные прогоны.
+PAR_DIR="${TMPDIR:-/tmp}/novac-gate-par.$$"
+PAR_N=0
+par_reset() { rm -rf "$PAR_DIR"; mkdir -p "$PAR_DIR"; PAR_N=0; }
+par_add() {
+    PAR_N=$((PAR_N + 1))
+    printf '%s\n' "$1" > "$PAR_DIR/$PAR_N.cmd"
+    printf '%s\n' "$2" > "$PAR_DIR/$PAR_N.msg"
+}
+par_run() {
+    # ПРЕДЕЛ одновременности: запуск всех разом на восьми ядрах не ускоряет,
+    # а толкается -- каждый страж сам порождает процессы. Число берётся из
+    # NOVAC_JOBS, по умолчанию 8.
+    _jobs="${NOVAC_JOBS:-8}"
+    # ВСЕ питоновские стражи -- ОДНИМ процессом. Интерпретатор стартует 73мс
+    # (замер 2026-08-19), работа самого стража -- 40..60мс: на сорока стражах
+    # старт стоит дороже проверки. Раннер пишет те же N.out и N.rc, поэтому
+    # разбор ниже не знает, кто их написал.
+    # `read` — ВСТРОЕННАЯ команда: строка читается без порождения процесса.
+    # Прежняя редакция звала `cat` на каждый .cmd, и разбор очереди стоил
+    # дороже работы, которую он разбирает (замер 2026-08-19: 10с на блоке,
+    # где стражи считаются за 1.7с).
+    _py=""
+    _i=1
+    while [ "$_i" -le "$PAR_N" ]; do
+        read -r _g < "$PAR_DIR/$_i.cmd"
+        case "$_g" in *.py) _py="$_py $_i" ;; esac
+        _i=$((_i + 1))
+    done
+    if [ -n "$_py" ]; then
+        # shellcheck disable=SC2086
+        python "$ROOT/scripts/guards/run-guards.py" "$ROOT" "$PAR_DIR" $_py &
+    fi
+    _i=1
+    _running=0
+    while [ "$_i" -le "$PAR_N" ]; do
+        read -r _g < "$PAR_DIR/$_i.cmd"
+        case "$_g" in *.py) _i=$((_i + 1)); continue ;; esac
+        ( bash "$_g" "$ROOT" > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
+        _running=$((_running + 1))
+        if [ "$_running" -ge "$_jobs" ]; then
+            wait
+            _running=0
+        fi
+        _i=$((_i + 1))
+    done
+    wait
+    _i=1
+    while [ "$_i" -le "$PAR_N" ]; do
+        # .out читается ОДИН раз в переменную: печать, поиск строки ok: и
+        # разбор рассинхрона идут по ней, а не тремя процессами по файлу.
+        _out=$(cat "$PAR_DIR/$_i.out" 2>/dev/null)
+        [ -n "$_out" ] && printf '%s\n' "$_out"
+        _rc=1
+        [ -f "$PAR_DIR/$_i.rc" ] && read -r _rc < "$PAR_DIR/$_i.rc"
+        read -r _msg < "$PAR_DIR/$_i.msg"
+        read -r _cmd < "$PAR_DIR/$_i.cmd"
+        _base=${_cmd##*/}
+        if [ "$_rc" -ne 0 ]; then
+            if is_desync "$_out"; then
+                desync "$_base: рассинхрон рантайма"
+            else
+                fail "$_msg"
+            fi
+        else
+            case "$_out" in
+                *ok:*) : ;; # зелёный со строкой доказательства
+                *)
+                    echo "ШАГ НИЧЕГО НЕ ДОКАЗАЛ: $_base вышел с нулём, но не напечатал 'ok:'" >&2
+                    fail "$_msg"
+                    ;;
+            esac
+        fi
+        _i=$((_i + 1))
+    done
+    rm -rf "$PAR_DIR"
+}
+
 # ── Стражи БЕЗ бинаря: текст, дока, форма исходника. Идут первыми — дёшевы. ──
-step "novac-arch-class-proofs (три доказательства у каждого класса — 274.1)"
-guard "$ROOT/scripts/guards/check-novac-arch-class-proofs.sh" "$ROOT" || fail "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
-step "novac-arch-invariants (счётчик инвариантов у разделов карты)"
-guard "$ROOT/scripts/guards/check-novac-arch-invariants.sh" "$ROOT" || fail "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
-step "novac-no-naked-panic (явный инвариант — через дверь ice(), П12)"
-guard "$ROOT/scripts/guards/check-novac-no-naked-panic.sh" "$ROOT" || fail "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
-step "novac-legacy-workarounds (форма обхода багов оракула — 274 §1.5)"
-guard "$ROOT/scripts/guards/check-novac-legacy-workarounds.sh" "$ROOT" || fail "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
-step "novac-time-ledger (доля 274/221 из леджера, не по памяти — 274 §1.4)"
-guard "$ROOT/scripts/guards/check-novac-time-ledger.sh" "$ROOT" || fail "коммит в novac/** без строки в леджере времени (274 §1.4)"
-step "novac-deps (рёбра только из таблицы §3 архитектуры)"
-guard "$ROOT/scripts/guards/check-novac-deps.sh" "$ROOT" || fail "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
+# Восемь стражей до рубежа F1 шли ПО ОДНОМУ: восемь стартов процесса строго
+# по очереди ради восьми заголовков в логе. Пачка даёт то же самое — своё
+# сообщение об отказе и своя строка ok: у каждого, — но питоновские идут ОДНИМ
+# процессом (run-guards.py), а shell-овые параллельно.
+step "novac-text (карта, маркеры, леджер, рёбра — до рубежа F1, бинарь не нужен)"
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.py" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
+par_add "$ROOT/scripts/guards/check-novac-arch-invariants.py" "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
+par_add "$ROOT/scripts/guards/check-novac-no-naked-panic.py" "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
+par_add "$ROOT/scripts/guards/check-novac-no-crutch.py" "механизм novac назван костылём вместо того, чтобы быть названным правилом (П34)"
+par_add "$ROOT/scripts/guards/check-novac-no-unwrap-compare.py" "завёрнутый индекс распакован ради сравнения — обёртка перестала защищать (П19)"
+par_add "$ROOT/scripts/guards/check-novac-cursor-is-range.py" "курсор с шагом один написан вручную вместо диапазона (П32)"
+par_add "$ROOT/scripts/guards/check-novac-wrapper-is-stored.py" "завёрнутое пространство нигде не хранится — обёртка вокруг шага, а не личности (§9.1г.1)"
+par_add "$ROOT/scripts/guards/check-novac-import-exists.py" "импортируется имя, которого нет — оракул этого не сверяет (замер 2026-08-22)"
+par_add "$ROOT/scripts/guards/check-novac-export-has-caller.py" "экспорт без вызывающего — имя оправдывает спрос, а не симметрия (П35)"
+par_add "$ROOT/scripts/guards/check-novac-registry-counts.sh" "число в реестре стражей не равно факту (класс doc-truth)"
+par_add "$ROOT/scripts/guards/check-novac-ratchet-moves.sh" "храповик сдвинут без причины в том же диффе (274 §10.4)"
+par_add "$ROOT/scripts/guards/check-novac-acceptance-donor.py" "приёмка волны не называет донора (П27-класс)"
+par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
+par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
+par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
+par_add "$ROOT/scripts/guards/check-novac-time-ledger.py" "коммит в novac/** без строки в леджере времени (274 §1.4)"
+par_add "$ROOT/scripts/guards/check-novac-deps.py" "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
+par_run
 
 # ── РУБЕЖ F1: дальше идут бинарь-зависимые. Бинарь строит ГЕЙТ. ──
 step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено»)"
@@ -142,7 +283,20 @@ if [ -f "$ROOT/novac/src/main.nv" ]; then
     [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
     if [ -f "$NOVA_BIN" ]; then
         mkdir -p "$ROOT/target" "$ROOT/novac/target"
-        if ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1; then
+        # ПЕРЕСБОРКА ТОЛЬКО ПО НУЖДЕ (П14). Пять секунд на каждой правке текста
+        # — а правок текста в цикле большинство. Условие консервативное:
+        # пропускаем, только если бинарь есть, ни один .nv не новее его и оракул
+        # не новее его. Ошибиться тут дороже, чем пересобрать: свежий на вид, но
+        # протухший бинарь — ровно класс 274.3/F1, из-за которого сборку завели.
+        NOVAC_OUT="$ROOT/novac/target/novac.exe"
+        NOVAC_FRESH=0
+        if [ -f "$NOVAC_OUT" ] && [ ! "$NOVA_BIN" -nt "$NOVAC_OUT" ] \
+           && [ -z "$(find "$ROOT/novac/src" -name '*.nv' -newer "$NOVAC_OUT" 2>/dev/null | head -n 1)" ]; then
+            NOVAC_FRESH=1
+        fi
+        if [ "$NOVAC_FRESH" -eq 1 ]; then
+            echo "novac-build ok: бинарь новее всех .nv и оракула — пересборка не нужна"
+        elif ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1; then
             BUILD_OUT="$(cat "$ROOT/target/novac-build.log" 2>/dev/null || true)"
             if is_desync "$BUILD_OUT"; then
                 desync "novac-build: оракул эмитит вызов рантайма, которого нет в заголовках этого дерева — см. target/novac-build.log"
@@ -158,26 +312,125 @@ else
 fi
 
 step "novac-guards (Э1-набор: файл/атомики/ключи/глобалы/форма/фикстуры + бинарь-четвёрка)"
-guard "$ROOT/scripts/guards/check-novac-file-size.sh" "$ROOT" || fail "файл novac длиннее 1000 строк (решение 12)"
-guard "$ROOT/scripts/guards/check-novac-atomics-door.sh" "$ROOT" || fail "атомики/TLS мимо одной двери (274 §8.1)"
-guard "$ROOT/scripts/guards/check-novac-no-string-keys.sh" "$ROOT" || fail "строковый ключ таблицы вне names (архитектура §4а, К2)"
-guard "$ROOT/scripts/guards/check-novac-no-global-state.sh" "$ROOT" || fail "глобальное изменяемое состояние в novac (274 §4 п.5)"
-guard "$ROOT/scripts/guards/check-novac-frontend-shape.sh" "$ROOT" || fail "Result в сигнатуре фронтенда novac (274 §4 п.1)"
-guard "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "$ROOT" || fail "форма грамматики без наблюдающих фикстур (К7)"
-guard "$ROOT/scripts/guards/check-novac-differential.sh" "$ROOT" || fail "расхождение novac с оракулом вне реестра (дифф-гейт)"
-guard "$ROOT/scripts/guards/check-novac-diag-schema.sh" "$ROOT" || fail "диагностика novac не по схеме §7"
-guard "$ROOT/scripts/guards/check-novac-no-cascade.sh" "$ROOT" || fail "каскад диагностик от одной причины (274 §6)"
-guard "$ROOT/scripts/guards/check-novac-no-panic.sh" "$ROOT" || fail "паника/крэш novac на фикстурах (решение 11: ноль паник)"
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-file-size.py" "файл novac длиннее 1000 строк (решение 12)"
+par_add "$ROOT/scripts/guards/check-novac-atomics-door.py" "атомики/TLS мимо одной двери (274 §8.1)"
+par_add "$ROOT/scripts/guards/check-novac-no-string-keys.py" "строковый ключ таблицы вне names (архитектура §4а, К2)"
+par_add "$ROOT/scripts/guards/check-novac-no-global-state.py" "глобальное изменяемое состояние в novac (274 §4 п.5)"
+par_add "$ROOT/scripts/guards/check-novac-frontend-shape.py" "Result в сигнатуре фронтенда novac (274 §4 п.1)"
+par_run
 
-# ═══ СЮДА ВЛИВАЕТСЯ ОСТАЛЬНОЙ НАБОР ОКНА 274 ═══
-# В ветке `p274-novac` стражей novac 37 плюс инструменты; в `main` их файлов 16,
-# и вызывать несуществующий файл нельзя — это тот же ложный зелёный, только с
-# другой стороны. Поэтому здесь ровно те, что есть в main, а остальные приходят
-# СЛИЯНИЕМ вместе со своими файлами. Порядок при вливании: дедлайновые
-# (`--deadline`) и мутационные — после бинарь-четвёрки, `check-novac-guard-registry`
-# последним (он судит сам набор). Мета-стражу надо переставить цель:
-# `GATE="$ROOT/scripts/gate.sh"` → `GATE="$ROOT/scripts/gate-novac.sh"`, иначе он
-# перестанет видеть вызовы — а он сверяет четыре множества и тихо станет ни о чём.
+# ═══ НАБОР ОКНА 274 — влит слиянием 2026-08-16 вместе с файлами ═══
+# Порядок: дешёвые статические — потом дедлайновые — потом мутационный —
+# реестр стражей последним (судит сам набор).
+step "novac-conventions (П13..П27: доки, имена, реестры, двери, доноры)"
+par_reset
+par_add "$ROOT/scripts/guards/check-novac-type-field-docs.py" "тип/поле/функция novac без документации (П13)"
+par_add "$ROOT/scripts/guards/check-novac-doc-language.py" "русский текст в .nv novac (П13)"
+par_add "$ROOT/scripts/guards/check-novac-no-name-hardcode.py" "имя языка/std строкой вне builtins (П5)"
+par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.py" "novac объявил имя, которое экспортирует прелюдия"
+par_add "$ROOT/scripts/guards/check-novac-ctx-tables.py" "таблица строк в Ctx без строки плана §10.3б (П17)"
+par_add "$ROOT/scripts/guards/check-novac-row-fields.py" "поле строки реестра без записи в §10.3в (П22/П23)"
+par_add "$ROOT/scripts/guards/check-novac-ref-field-names.py" "поле-ссылка без суффикса пространства (П19)"
+par_add "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.py" "дверь поиска аллоцирует (П18)"
+par_add "$ROOT/scripts/guards/check-novac-ice-messages.py" "текст ice() повторяется или без модуля (П20)"
+par_add "$ROOT/scripts/guards/check-novac-no-default-branch.py" "ветка «всё остальное» на закрытом множестве (П21)"
+par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя разбирается обратно (П24)"
+par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
+par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
+par_add "$ROOT/scripts/guards/check-novac-one-door-export.py" "одна операция из двух модулей (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 без «что течёт» (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"
+par_add "$ROOT/scripts/guards/check-novac-temp-edges.py" "временное ребро без срока или истекло (274.1 §2в)"
+par_add "$ROOT/scripts/guards/check-novac-module-donor.py" "модуль novac без донора-указателя в заголовке (П27)"
+guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
+par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
+par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
+par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.py" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
+par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.py" "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
+par_add "$ROOT/scripts/guards/check-novac-pch.py" "PCH исчез из горячего пути (274.2 §1а)"
+par_add "$ROOT/scripts/guards/check-novac-line-length.py" "строка длиннее 120 символов вне исключений (П29)"
+par_add "$ROOT/scripts/guards/check-novac-precondition.py" "предусловие двери спрятано в теле (П20 п.5)"
+par_add "$ROOT/scripts/guards/check-novac-emitted-names.py" "печатаемое C-имя вне объявленных пространств (П24)"
+par_add "$ROOT/scripts/guards/check-novac-table-is-match.py" "таблица написана цепочкой if вместо match (П21 п.4)"
+par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагностика ссылается на незнание грамматики (§9.4)"
+par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
+par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
+par_add "$ROOT/scripts/guards/check-novac-conventions-coverage.py" "правило конвенции без названного механизма"
+par_add "$ROOT/scripts/guards/check-gate-budget.py" "механизм бюджета времени гейта выхолощен (конвенция гейтов, Г4)"
+par_add "$ROOT/scripts/guards/check-guard-external-caller.py" "страж без внешнего вызывающего: рост числа (конвенция гейтов, Г8)"
+par_run
+step "novac-lint (свод nv-coding-style по novac/src)"
+guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail "nova lint нашёл замечания в novac/src"
+# ПОВЕДЕНЧЕСКИЕ проверки: они ЗАПУСКАЮТ novac и корпус, а не читают текст.
+# До 2026-08-19 они стояли среди текстовых правил, и человек ждал их в цикле
+# «правка → проверка»: один только дифф стоил полутора минут. Здесь они идут
+# вместе с фаззером и мутационным самотестом — то есть перед пушем, а не на
+# каждый чих (замер того же дня: текстовая часть 260с → 80с без них).
+if [ "$NOVAC_TIER" != "loop" ]; then
+    step "novac-behaviour (запускают novac и корпус: дифф, паники, пачка, чистая сборка)"
+    par_reset
+    par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
+    par_add "$ROOT/scripts/guards/check-novac-differential.sh" "расхождение novac с оракулом вне реестра (дифф-гейт)"
+    par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
+    par_add "$ROOT/scripts/guards/check-novac-cli-surface.sh" "команда novac, которой нет у nova-cli (П26)"
+    par_add "$ROOT/scripts/guards/check-novac-batch.sh" "пачечный проход раннера разобран (274.2 §1б.1)"
+    par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
+    par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
+    par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
+    guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
+    par_run
+fi
+
+if [ "$NOVAC_TIER" != "loop" ]; then
+    step "novac-heavy (дедлайновые: мэнглинг, шаблон, цена, мутационная проверка самотестов)"
+    par_reset
+    par_add "$ROOT/scripts/guards/check-novac-mangle-fixed-point.sh" "мэнгл novac разошёлся с оракулом"
+    par_add "$ROOT/scripts/guards/check-novac-fuzz-zero-panic.sh" "фаззер нашёл падение novac: приёмка Э1 ранга CORE (274.3/F2)"
+    par_add "$ROOT/scripts/guards/check-novac-module-tests.sh" "модульный тест novac упал (контракт модуля)"
+    par_add "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "shell.tpl.c протух"
+    if [ "$NOVAC_TIER" = "full" ]; then par_add "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "самотест стража novac проходит над заглушкой (П16)"; fi
+    par_run
+fi
+
+# `iteration-cost` ИЗМЕРЯЕТ время цикла и потому идёт ОДИН: рядом с фаззером
+# он мерил бы чужую нагрузку и краснел на здоровом дереве.
+if [ "$NOVAC_TIER" = "full" ]; then guard --deadline 600 "$ROOT/scripts/guards/check-novac-iteration-cost.sh" "$ROOT" || fail "цена цикла вышла из бюджета (П14)"; fi
+step "novac-registry (реестр стражей: план ↔ файлы ↔ вызовы ↔ самотесты)"
+# Реестр стражей сверяет ГЕЙТ с планом, а не компилятор с языком (21с):
+# в цикле «правка → вердикт» он не нужен, перед пушем обязателен.
+if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.py" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
+
+# ── БЮДЖЕТ ЯРУСА (конвенция гейтов, Г4): гейт меряет СЕБЯ. ────────────────────────────────
+# Гейт, который идёт девять минут, не гоняют — а правило, которое не гоняют, не
+# правило. Цену возвращают не проверки, а форма: процессы на учёт, старты
+# интерпретатора, пересборка без нужды. Здесь она измерена и сравнена с
+# записанным потолком; предел масштабируется калибровкой машины.
+GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
+BUDGET_FILE="$ROOT/scripts/guards/gate-budget.baseline"
+BUDGET=""
+if [ -f "$BUDGET_FILE" ]; then
+    while read -r _k _v _rest; do
+        [ "$_k" = "$NOVAC_TIER" ] && BUDGET="$_v"
+    done < "$BUDGET_FILE"
+fi
+if [ -n "$BUDGET" ]; then
+    BUDGET_LIMIT=$(( BUDGET * CAL ))
+    if [ "$GATE_ELAPSED" -gt "$BUDGET_LIMIT" ]; then
+        echo "novac-gate: ЯРУС $NOVAC_TIER занял ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с (база $BUDGET x калибровка $CAL)" >&2
+        echo "  Сначала ищи ФОРМУ, а не проверку: процессы на учёт, старт интерпретатора" >&2
+        echo "  на каждого стража, пересборка без нужды — так уже было (558с, 2026-08-19)." >&2
+        echo "  Если работа честно выросла — подними число в $BUDGET_FILE ЗАМЕРОМ и тем же" >&2
+        echo "  слиянием, назвав, чем она выросла." >&2
+        fail "ярус $NOVAC_TIER вышел за бюджет времени (конвенция гейтов, Г4)"
+    else
+        echo "novac-gate ok: ярус $NOVAC_TIER — ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с"
+    fi
+else
+    # Молчание тут было бы вечнозелёным: ярус без строки бюджета не судится
+    # вовсе, и об этом надо СКАЗАТЬ, а не промолчать (класс №519).
+    echo "novac-gate: ярус $NOVAC_TIER — ${GATE_ELAPSED}с, строки бюджета для него нет (не судится)"
+fi
 
 # Рубеж ПЕРЕД вердиктом — иначе красный прогон печатает зелёную строку (№690).
 if [ "$GATE_FAIL_N" -gt 0 ]; then

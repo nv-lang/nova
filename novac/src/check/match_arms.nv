@@ -1,0 +1,265 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_match` / Go `types2.stmt` for "an arm binds, then its
+// body is typed, then the arms must agree"; NOT taken: exhaustiveness by
+// witness construction (rustc's usefulness algorithm) — the subset's sums are
+// small and the counted-coverage rule answers the same question here.
+// Role: layer 4 — everything about a `match`: what an arm binds, what its body
+//   is worth, and whether the arms agree on one type.
+// Used by: the typing walk of check, at every stage from E2-a on.
+// Guarded by: check-novac-match-exhaustive.py (every match over a sum is
+// complete), check-novac-no-default-branch.py (no catch-all on a closed set),
+// the module tests of check.
+//
+// WHY A FILE OF ITS OWN. `typing.nv` crossed 1000 lines (decision 12), and the
+// answer is a cut along a seam rather than an exception. The seam is real: the
+// rest of the file types declarations, statements and expressions, while these
+// functions answer ONE question — what an arm is.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow, is_vrow, variant_range_of}
+import ../types.{TyId, no_ty, is_ty}
+
+/// A match: the scrutinee's type is the answer the emitter needs (it declares
+/// the C temporary with it); the arms bind their binders and are typed after.
+fn Checker mut @type_match(m Node) -> () {
+    ro kids = branch_children(m)
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
+        return
+    }
+    ro scr = kids[1]
+    @type_expr(scr)
+    if @out.len() > 0 { return }
+    ro scr_t = type_of(scr, @ctx, @scope, @chan)
+    @record(scr, scr_t)
+    mut first_t = None
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        first_t = @fold_arm_type(c, scr_t, first_t)
+    }
+    if @out.len() > 0 { return }
+    @report_if_not_exhaustive(kids, scr_t)
+}
+
+/// A match on a sum must cover every variant -- the rule novac did not have
+/// AT ALL until 2026-08-17, which made it WIDER than the language in the one
+/// direction a subset must never be wide.
+///
+/// Measured: `match c { Red(x) => x + 1  Green(x) => x + 2 }` on a three-variant
+/// sum is refused by the oracle (E_MATCH_NON_EXHAUSTIVE, registry #703) and
+/// was accepted by novac with rc=0. The emitted C declares the result
+/// temporary UNINITIALISED, walks the arm chain, and returns it: a program the
+/// oracle refuses to compile became, through novac, a read of uninitialised
+/// automatic storage. Two defects in one -- a divergence from the language and
+/// a silent miscompilation (class K-C).
+///
+/// A wildcard or a plain binder arm covers everything by construction, so the
+/// scan stops there; a guard does NOT count as coverage, because a guard can
+/// be false (the oracle judges it the same way).
+fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
+    // The KIND comes from the interner, and the bound with it. Until wave B8
+    // this line read `raw_ty(scr_t) >= @ctx.types.len()` -- a bound against the
+    // DECLARATION table, which stopped meaning anything the moment a type id
+    // became an interner row: interner ids run past the declaration count, so
+    // the guard started returning early and this rule stopped judging. That is
+    // how a check gets QUIETER without anyone touching it.
+    if !is_ty(scr_t) { return }
+    if @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
+    // The count comes from the arm that HOLDS a variant range: a sum with no
+    // variants is a shape check does not judge here, and so is anything whose
+    // rows are not variants at all.
+    ro vcnt = (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1
+    if vcnt < 1 { return }
+    mut covered = 0
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        ro ak = branch_children(c)
+        if ak.len() < 1 { continue }
+        mut has_guard = false
+        for g in ak {
+            has_guard = has_guard || g.kind_of() == NodeKind.Guard
+        }
+        if has_guard { continue }
+        ro pat = branch_children(ak[0])
+        if pat.len() < 1 { continue }
+        // `is_ident` and not `ident_str` HERE: the answer to "not an
+        // identifier" is `continue`, and `continue` is not an expression, so
+        // the Option form would have to be a manual match -- which the linter
+        // reads as drift from `X ?? D` (W_MANUAL_COALESCE), and rightly.
+        if !pat[0].is_ident() { continue }
+        // The EXPLICIT form and not `?`: this function answers `()`, so there is
+        // no wrapper to propagate into -- which is exactly the case the refusal's
+        // hint reserves for a match (D86: `??` substitutes a value, an early
+        // return is control flow, and `?` needs somewhere to return TO).
+        //
+        // A name the registry never saw is `_` or a plain binder: it matches
+        // anything, so the match is exhaustive whatever the variants are.
+        match @ctx.defs.def_of(leaf_text(pat[0])) {
+            None => return
+            Some(def) => {
+                // The arm that means "a variant" is the arm that HOLDS the
+                // variant row; the other two mean this pattern head names no
+                // variant, and an exhaustiveness count learns nothing from them.
+                match def.target {
+                    DefVariant(vrow) => {
+                        covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
+                    }
+                    // Not a variant: an exhaustiveness count learns nothing.
+                    DefType(_) | DefFn(_) => return
+                }
+            }
+        }
+    }
+    if covered >= vcnt { return }
+    @report_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
+}
+
+/// (rule lives in @type_match now) Every arm of a match must produce the SAME type -- and until 2026-08-17
+/// nobody checked, because `type_of` took the FIRST arm's type and the
+/// comment beside it said the arms "agree by construction".
+///
+/// They do not. Probe -- and it must be written MULTI-LINE, because the
+/// one-line form (arms separated by `,`, spec syntax.ru.md:115) is legal Nova
+/// that this subset does not parse yet:
+///
+///     ro r = match n {
+///         1 => 10
+///         _ => 2.5
+///     }
+///
+/// in a `-> f64` fn.
+/// The emitted C declared `nova_int _novac_match_r`, then assigned
+/// `((nova_f64)2.5)` into it, so the program returned 2 where the oracle
+/// returns 2.5 -- valid C, wrong answer, no diagnostic anywhere. That is the
+/// worst shape a defect can take (class K-C), and it survived because a
+/// comment stood where a check belongs.
+///
+/// The subset REFUSES disagreement rather than unifying it. Unification here
+/// would mean an expected type flowing down into the arms (the oracle has
+/// it: the `-> f64` return coerces the integer literal), and that is
+/// bidirectional inference -- E2-b3 work, not a patch. Refusing is the safe
+/// direction: narrower than the language, never wider.
+
+/// Fold one arm's type into the answer the arms agreed on so far.
+///
+/// Every arm of a `match` must carry the SAME type, and the first arm that has
+/// one sets it. Both "no answer" cases are None and neither is a number: the
+/// arm whose body the walk refused has no type to compare, and before the first
+/// such arm there is nothing to compare AGAINST — two facts that shared the
+/// value -1 until 2026-08-19 and were told apart by their position in the code.
+fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId]) -> Option[TyId] {
+    // No type: the arm reported a diagnostic and has nothing to offer, so the
+    // fold carries the first one through.
+    if Some(at) = @type_arm(arm, scr_t) { @agree_arm_type(arm, at, first) } else { first }
+}
+
+/// The same fold once THIS arm has a type: agree with the first one or report.
+fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId]) -> Option[TyId] {
+    match first {
+        // The first arm with a type sets what the rest must match.
+        None => Some(at)
+        Some(f) => {
+            if at != f && @out.len() == 0 {
+                @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
+            } else {
+                // The arm agrees, or a diagnostic already stands: the answer
+                // is the first arm's type either way.
+            }
+            first
+        }
+    }
+}
+
+/// One arm: binders first (payload fields of a variant pattern, or the whole
+/// scrutinee under a plain binder), then the guard and the arm's value --
+/// the emitter's order exactly.
+/// Returns the arm BODY's type, and the return value is the whole point:
+/// the binders of a pattern live only until `release(mark)` below, so the
+/// body's type can be computed HERE and nowhere later. The first version of
+/// the arm-agreement rule (F36) asked for it after the walk, outside the
+/// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
+/// diagnostic -- the binders were gone by then.
+fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
+    // An arm's binders live in the arm and nowhere else.
+    ro mark = @scope.mark()
+    ro ak = branch_children(arm)
+    if ak.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        return None
+    }
+    ro pat = branch_children(ak[0])
+    if pat.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
+        return None
+    }
+    ro p0 = pat[0]
+    ro is_ident = leaf_kind(p0) == TokenKind.Ident
+    // ONE question about the pattern head, asked once: which variant row does
+    // it name? -1 answers "none" for every other shape (a plain binder, `_`,
+    // a punctuation leaf), and both branches below read that one answer.
+    ro head_def = if is_ident { @ctx.defs.def_of(leaf_text(p0)) } else { None }
+    ro vrow = if Some(def) = head_def {
+        match def.target {
+            DefVariant(row) => row
+            DefType(_) | DefFn(_) => no_vrow()
+        }
+    } else {
+        no_vrow()
+    }
+    if is_vrow(vrow) {
+        mut pi = 0
+        // `for` over the RANGE, not a hand-advanced cursor (owner 2026-08-22):
+        // the walk advances by exactly one every time, so the counter carried no
+        // information -- and a hand-advanced cursor makes "forgot to advance" a
+        // possible bug, which the range form deletes rather than documents.
+        for j in 2..pat.len() {
+            ro pj = pat[j]
+            // ONE question -- is this child a binder leaf? Two nested ifs
+            // asked it in two steps and neither named its second branch.
+            // Punctuation leaves of the pattern name no binder; a guard says
+            // it without branching on a variant test (no-default-branch keeps
+            // that shape for `match`).
+            // The test and the TEXT are one question, so one door answers
+            // both: `ident_str` gives the name or None, and None is exactly
+            // the pattern's parentheses and commas -- leaves that bind
+            // nothing, so the payload cursor must not move.
+            match pj.ident_str() {
+                Some(binder) => {
+                    // A payload binder holds a value of the arm, read-only:
+                    // nothing in the subset writes through it.
+                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[raw_vrow(vrow)].payload_off + pi],
+                                ParamMode.ModeRo)
+                    pi += 1
+                }
+                None => {}
+            }
+        }
+    } else if is_ident && leaf_text(p0) != "_" {
+        // The scrutinee under a new name: the arm reads it, so `ro`.
+        @scope.bind(leaf_text(p0), scr_t, ParamMode.ModeRo)
+    } else {
+        // `_` and a non-identifier head bind nothing by definition: an arm
+        // sees the scrutinee only through a name, and there is no name here.
+    }
+    for g in ak {
+        if g.kind_of() != NodeKind.Guard { continue }
+        ro gk = branch_children(g)
+        // A guard is `if expr` -- two children. A shorter one is a parse
+        // remnant with nothing to type; the next arm child is next.
+        if gk.len() < 2 { continue }
+        @type_expr(gk[1])
+    }
+    ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
+    @type_expr(body)
+    // None is "this arm has no type to compare": the walk refused something in
+    // the body, so the lattice must not be asked about it (its miss is an ice).
+    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope, @chan)) } else { None }
+    @scope.release(mark)
+    body_t
+}

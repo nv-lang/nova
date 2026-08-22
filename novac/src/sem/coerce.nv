@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `CoerceMany`/`coerce_unsized` only for the SHAPE of the question
+// ("does this value reach that position") -- the RULE is Nova's own D429, and it
+// is DECLARATIVE: pairs are read from `.nv` declarations, never known by the
+// compiler. NOT taken: rustc's coercion lattice and autoderef chains (D429 R4
+// forbids chains outright -- one level, no composition, not even across
+// mechanisms).
+// Role: layer 3's D429 registry -- which implicit conversions this program declares, and which function performs each.
+// Used by: check (the refusal path: an argument that coerces is legal Nova, so the refusal must say what novac lacks
+// instead of "nothing fits").
+// Guarded by: check-novac-ctx-tables.py (the table is declared in plan 10.3b), check-novac-row-fields.py (every row
+// field justified in 10.3v), check-novac-no-name-hardcode.py (the attribute's word lives in builtins), the module tests
+// of check.
+// novac/src/sem/coerce.nv -- the `#coerce` pair registry (D429).
+//
+// A co-equal file of the `sem` module (a folder is one module): the registry
+// lives beside the tables it references, and the cut is along MEANING -- "what
+// conversions are declared" is one question, and it has one file. sem.nv
+// crossed the thousand-line limit when this arrived, which is what made the
+// seam visible rather than what created it.
+//
+// What is NOT judged here, and is named rather than left to be discovered:
+// D429's R2 (the two zero-cost lanes, view and finalize) and R3 (one
+// declaration per pair). Both need parameter MODES, and a callable row does not
+// carry them -- `consume` and `ro` are invisible to this registry. Recorded in
+// plan 274 section 9.1d.
+
+module novac.sem
+
+import ../tree.{Node}
+import ../builtins.{COERCE_ATTR}
+import ../types.{TyId}
+
+/// ONE declared implicit conversion (D429 V1, form-source): the pair and the
+/// function that performs it.
+///
+/// A pair is DATA read from a declaration, never knowledge of the compiler:
+/// D429 is explicit that no pair may be hard-coded, and the attribute's own
+/// word lives in `builtins` for the same reason (P5).
+export type CoercePair value {
+    from_id TyId /// source type -- the declaring method's receiver
+    to_id TyId /// target type -- its return type
+    via_row FnRow /// the declaring callable's row -- the inserted call names IT (D429 R7). `FnRow`, not `int`: this IS a row of `Ctx.fns` (`fns.rows[via_row]` two doors down), so the pair carried an untyped index into a typed space until 2026-08-21
+}
+
+/// The row that converts `from` into `to`, or None when no pair is declared.
+///
+/// A linear walk over a handful of pairs (std declares three), asked only when
+/// an exact match has already failed -- which is R5 in its own shape: the exact
+/// path never touches this table, so the hot resolution does not pay for it.
+/// The comparison is by type ID, not by name; the day a program declares
+/// hundreds of pairs the fix is an index, not a guess made now.
+export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
+    for p in ctx.coerces {
+        if p.from_id == from && p.to_id == to { return Some(p.via_row) }
+    }
+    None
+}
+
+
+/// Does this attribute node name `word`? `#coerce` is `['#', ident...]`, and
+/// the words are compared to the ONE place that spells language names (P5).
+fn attr_names(attr Node, word str) -> bool {
+    for c in branch_children(attr) {
+        // A two-armed match and NOT `if Some(...)`, and the difference is
+        // measured: the if-form needs an `else` with a reason anyway (P31), so
+        // for an empty second case it is LONGER, not shorter. `if Some(...)`
+        // wins where the second case carries a VALUE or a terminator.
+        match c.ident_str() {
+            Some(t) => { if t == word { return true } }
+            None => {}
+        }
+    }
+    false
+}
+
+/// Register the pair a `#coerce` declaration declares (D429 V1, form-source):
+/// receiver -> return, performed by this row.
+///
+/// R1 (unary source form) is the ONE rule enforced here, because it is the one
+/// this registry can see: a method with the receiver and nothing else. A form
+/// outside V1 registers no pair, so a call that would need it is refused as an
+/// ordinary type mismatch rather than accepted by a rule novac cannot check.
+/// R2 (the zero-cost lanes) and R3 (one declaration per pair) are NOT judged
+/// here: the row does not carry parameter modes, so `consume` and `ro` are
+/// invisible to it -- named in plan 274 section 9.1d, not left to be discovered.
+fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
+    ro fd = fns.rows[raw_row(via_row)]
+    if !fd.has_recv || fd.param_cnt != 1 || fd.ret_id < 0 {
+        return
+    } else {
+        // A no-parameter method with a declared return: the source form D429
+        // V1 admits, and both ends of the pair are right here.
+    }
+    coerces.push(CoercePair { from_id: fns.params[fd.param_off].type_id, to_id: fd.ret_id, via_row })
+}
+

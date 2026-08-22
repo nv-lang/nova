@@ -1,0 +1,577 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `hir::Node` accessors and Go `ast.Inspect` helpers for "ask the
+// node WHICH child holds what" instead of indexing; NOT taken: a visitor
+// framework — these are plain questions over a children slice, and a framework
+// would hide the very indices this file exists to remove.
+// Role: layer 3 — the ONE place that knows where a name, a type or a body
+//   stands among a node's children; every pass asks here instead of counting.
+// Used by: check, emit_c, mono and sem itself, at every stage from E1 on.
+// Guarded by: check-novac-no-alloc-in-lookup.py (these doors allocate nothing),
+// check-novac-type-field-docs.py (every function documented), the module tests
+// of parse and check that break the moment a shape changes.
+//
+// WHY A FILE OF ITS OWN. `sem.nv` crossed 1000 lines (decision 12), and the
+// answer to that is a cut along a seam, not an exception. The seam is real: the
+// registries and the collector know WHAT is declared, while these doors know
+// WHERE in the tree it is written. Every one of them was born from the same
+// case: a fixed index (`kids[1]`, `pk[0]`) read a mode as the name, or a comma
+// as the type, the moment the shape grew one child.
+
+module novac.sem
+
+import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
+import ../lex.{TokenKind}
+import ../diag.{ice}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
+import ../names.{DeclId, raw_decl, no_decl, is_decl}
+
+/// The BODY of a match arm, or None when the arm carries nothing but
+/// punctuation. Its last child is not always the body.
+///
+/// A one-line `match n { 1 => 10, _ => 2 }` writes a COMMA after each arm body
+/// (D452), and the comma is kept in the tree because the tree is lossless. The
+/// readers that took `ak[ak.len() - 1]` then asked the checker for the type of
+/// a comma and got the honest ice "expression kind without a type rule".
+///
+/// Third instance of the fixed-index class in one day (the method-declaration
+/// ice, check's kids[1], typing's pk[0]/pk[1]). The shape of a tree grows; an
+/// index does not grow with it, and a door does.
+export fn arm_body_at(ak []Node) -> Option[int] {
+    mut i = ak.len() - 1
+    while i >= 0 {
+        ro c = ak[i]
+        ro is_punct = c.kind_of() == NodeKind.LeafNode &&
+            (leaf_kind(c) == TokenKind.Comma || leaf_kind(c) == TokenKind.FatArrow)
+        if !is_punct { return Some(i) }
+        i -= 1
+    }
+    None
+}
+
+/// Where the NAME of a parameter sits among its children, and where its TYPE
+/// begins.
+///
+/// A parameter is `[name, type...]` -- and since 2026-08-17 it may carry a
+/// leading MODE leaf (`fn take(consume v int)`), which shifts both. Every
+/// consumer used to index `pk[0]` and `pk[1]` directly, and the moment the
+/// shape grew those indexes started reading the mode as the name and the name
+/// as the type. That is the same defect the checker hit this morning with
+/// `kids[1]` on a method declaration: a fixed index into a tree whose shape
+/// just grew is a bug waiting for the next form.
+export fn param_name_at(pk []Node) -> Option[int] {
+    mut i = 0
+    for c in pk {
+        ro is_ident = c.kind_of() == NodeKind.LeafNode &&
+            leaf_kind(c) == TokenKind.Ident
+        if is_ident && !is_param_mode(leaf_text(c)) { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+/// The NAME slot of a fn DECLARATION: the first identifier leaf after the
+/// `fn` keyword.
+///
+/// Not child one. A `Generics` branch stands between for `fn twice[T]`, and a
+/// receiver group does for a method -- and `leaf_text` on a branch is an ice,
+/// which is how this rule was learned. The rule itself was then written out a
+/// second time in the typing walk and was about to be written a third in the
+/// emitter, which is what P18 calls a door: one question, one place.
+export fn decl_name_at(kids []Node) -> Option[int] {
+    mut i = 0
+    for c in kids {
+        // Index zero is the `fn` keyword -- a keyword is no identifier, so the
+        // test excludes it by construction rather than by counting.
+        if i > 0 && c.is_ident() { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+/// The parameter MODES, and the set is measured rather than assumed
+/// (2026-08-17, after the owner asked why only `consume` was skipped):
+///
+///     mut v int       legal -- and the one std actually uses, 131 times
+///     consume v int   legal -- 4 times in std
+///     ro v int        parses, then E_REDUNDANT_PARAM_RO (`ro` is default)
+///     own v int       "expected `,`, got identifier" -- NOT a mode
+///     zzz v int       the same, so the set is closed, not open
+///
+/// The `own`/`borrow`/`inout` rows came back "accepted" in an earlier probe of
+/// mine, and they were wrong the same way twice in one shift: the grep behind
+/// the measurement matched only BRACKETED error codes, and this diagnostic
+/// carries none. A measurement is only as good as what it agrees to see.
+///
+/// THE TABLE ABOVE CARRIED A FOURTH ROW, `uninit v int`, and it was wrong the
+/// same way -- re-measured 2026-08-21 on the owner's question ("what does
+/// `uninit` combine with?"): the oracle answers "expected identifier, got
+/// `uninit`" to `fn f(uninit v int)` and ACCEPTS `fn f(v uninit int)`. So
+/// `uninit` is no mode at all: it qualifies the TYPE (`uninit T`, MaybeUninit)
+/// and a pointer's pointee, and THERE it combines with a mode -- `*mut uninit T`
+/// (amendment 2026-08-05, No 358). The axis is three: ro, mut, consume. Had the
+/// wrong row stayed, novac would ACCEPT a parameter form the language refuses --
+/// the over-acceptance direction, the dangerous one.
+///
+/// The CONTEXTUAL half of the set moved to `builtins` on 2026-08-21, where
+/// every string name of the language lives (P5): the parser needs the same
+/// words to read a qualified receiver, and a second copy of a closed set is how
+/// the two start disagreeing about what the language spells.
+///
+/// The keyword half needs no answer here at all: `mut` and `ro` lex as
+/// `KwMut`/`KwRo`, and the only caller asks this AFTER establishing that the
+/// leaf is an identifier -- so a keyword never reaches it.
+fn is_param_mode(word str) -> bool => is_contextual_mode_word(word)
+
+/// The MODE this parameter declares -- `ModeRo` when it writes none, which is
+/// the language's default (D32/D246: a bare parameter IS the read-only view).
+///
+/// Read from the leaves before the NAME, because that is where a mode stands.
+/// The set is closed (see `is_param_mode` above), so an unrecognised word is
+/// not a mode and this door says `ModeRo` about it -- the shape itself is
+/// refused elsewhere, and guessing a mode here would be worse than either.
+export fn param_mode_at(pk []Node) -> ParamMode {
+    // No name: a recovery shape. Nothing is written, so nothing is claimed --
+    // and the `else` says that in the same line instead of a second arm.
+    if Some(n) = param_name_at(pk) { mode_before(pk, n) } else { ParamMode.ModeRo }
+}
+
+/// The mode word standing before slot `n`, as a mode.
+fn mode_before(pk []Node, n int) -> ParamMode {
+    mut i = 0
+    for c in pk {
+        if i >= n { return ModeRo }
+        // A keyword mode answers by its token KIND, a contextual one by its
+        // spelling -- the same split the parser reads it with, because the
+        // lexer owns `mut`/`ro` and `builtins` owns the contextual words (P5).
+        ro k = leaf_kind(c)
+        if k == TokenKind.KwMut { return ModeMut }
+        if k == TokenKind.KwRo { return ModeRo }
+        if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(c)) { return ModeConsume }
+        i += 1
+    }
+    ModeRo
+}
+
+/// What the TAIL of a type declaration says, when it is a type reference:
+/// which type, and whether the declaration is an ALIAS of it or a NEWTYPE over
+/// it.
+///
+/// One record and not two answers, because the two travel together: a caller
+/// that got the id without the alias bit would have to ask a second door to
+/// know what to do with it.
+export type ReprSpec value {
+    under_decl DeclId /// the representation's DECLARATION -- this door has no type table, and a name resolves to a declaration first (wave B8)
+    is_alias bool /// `type Row alias int` -- the same type under a second name
+}
+
+/// WHAT a `type` declaration IS, read from the TREE alone.
+///
+/// Separate from `repr_of_decl` for a reason that cost a live defect: the shape
+/// must be known BEFORE any name is resolved. `repr_of_decl` asks the registry
+/// for the representation, so in the first pass -- where the point is to
+/// register names -- it answers None for a forward reference and the caller
+/// concludes "record". The shape does not need a registry: fields versus a type
+/// reference versus the `alias` marker is a question about leaves.
+export type DeclShape enum
+    | ShapeRecord
+    | ShapeNewtype
+    | ShapeAlias
+
+/// The shape of this `type` declaration. No lookups, no registry, no order
+/// dependence.
+export fn shape_of_decl(decl Node) -> DeclShape {
+    mut seen_name = false
+    mut tail_ident = false
+    for c in branch_children(decl) {
+        if c.kind_of() == NodeKind.Field { return DeclShape.ShapeRecord }
+        if !c.is_ident() { continue }
+        if !seen_name {
+            // The FIRST identifier is the declared NAME (position, not lookup --
+            // the same rule `repr_of_decl` lives by).
+            seen_name = true
+            continue
+        }
+        if leaf_text(c) == ALIAS_MARKER { return DeclShape.ShapeAlias }
+        tail_ident = true
+    }
+    if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }
+}
+
+/// The representation a type declaration names, or None when it declares a
+/// RECORD (a brace body) or names a type novac does not know.
+///
+/// The tail is read by SHAPE: a `Field` child means a record, an `alias` word
+/// means an alias, and a lone identifier is the representation. Until
+/// 2026-08-21 the parser did not read this tail at all and `type Row int` came
+/// back "this is not a form of the language" -- about a form the language has
+/// and the oracle compiles.
+export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
+    mut marks_alias = false
+    mut under = no_decl()
+    mut seen_name = false
+    for c in branch_children(decl) {
+        // A record declares FIELDS: then the tail is not a representation at
+        // all, and this door answers None.
+        if c.kind_of() == NodeKind.Field { return None }
+        if !c.is_ident() { continue }
+        ro word = leaf_text(c)
+        if !seen_name {
+            // The FIRST identifier is the DECLARED name. It must be skipped by
+            // position rather than by lookup: the name is already in the
+            // registry (the first pass put it there), so asking the registry
+            // would answer with the declaration's own id and make every
+            // newtype a newtype over itself.
+            seen_name = true
+            continue
+        }
+        if word == ALIAS_MARKER {
+            marks_alias = true
+            continue
+        }
+        if is_decl(under) {
+            // Already found: a further identifier belongs to a form this door
+            // does not read (type arguments), judged elsewhere.
+            continue
+        }
+        // The Option is read AS an Option (the owner's correction 2026-08-21):
+        // `?? no_ty()` followed by a comparison with the same sentinel is a
+        // detour that turns "absent" into a number to be remembered.
+        if Some(d) = defs.type_decl(word) {
+            under = d
+        } else {
+            // A word that names no type novac knows: the declaration is refused
+            // at its own position, not guessed at here.
+        }
+    }
+    if !is_decl(under) { return None }
+    Some(ReprSpec { under_decl: under, is_alias: marks_alias })
+}
+
+/// The MODE a BINDING statement declares: `ro x = …`, `mut x = …`,
+/// `consume x = …`.
+///
+/// The keyword is the statement's first leaf, and it is a KEYWORD for two of
+/// the three -- so the question is answered by the same split as everywhere
+/// else: token kind for `mut`/`ro`, spelling for `consume` (P5 keeps the
+/// spelling in `builtins`).
+export fn bind_mode_at(kids []Node) -> ParamMode {
+    if kids.len() == 0 { return ModeRo }
+    ro head = kids[0]
+    ro k = leaf_kind(head)
+    if k == TokenKind.KwMut { return ModeMut }
+    if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(head)) { return ModeConsume }
+    // `ro` and anything else: read-only is the language's default, and a
+    // statement whose head is neither was refused by the subset walk.
+    ModeRo
+}
+
+/// The MODE of the RECEIVER of a method declaration -- parameter zero's mode
+/// (plan 273), which is what makes `@ptr()` and `mut @ptr()` two selectable
+/// callables (P14).
+///
+/// Read from the receiver GROUP, after its type: `fn Vec[T] mut @ptr()` puts
+/// the qualifier between the type reference and the `@`. A declaration with no
+/// receiver has no receiver mode, and `ModeRo` is the honest answer -- the
+/// caller only asks when `has_recv`.
+export fn recv_mode_at(kids []Node) -> ParamMode {
+    for c in kids {
+        if c.kind_of() != NodeKind.Recv { continue }
+        return mode_after_first_ident(branch_children(c))
+    }
+    ModeRo
+}
+
+/// The mode word standing AFTER the first identifier of a receiver group.
+///
+/// After, because the first identifier is the receiver's TYPE: a type named
+/// `consume` would otherwise be read as a qualifier of itself.
+fn mode_after_first_ident(rk []Node) -> ParamMode {
+    mut seen_type = false
+    for c in rk {
+        if !seen_type {
+            seen_type = c.is_ident()
+            continue
+        }
+        ro k = leaf_kind(c)
+        if k == TokenKind.KwMut { return ModeMut }
+        if k == TokenKind.KwRo { return ModeRo }
+        if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(c)) { return ModeConsume }
+    }
+    ModeRo
+}
+
+/// The first node of the parameter's TYPE, or None when it declares none.
+export fn param_type_at(pk []Node) -> Option[int] {
+    // No name: a recovery shape, and a type cannot be located without one.
+    if Some(n) = param_name_at(pk) { type_slot_after(pk, n) } else { None }
+}
+
+/// The slot holding the type that follows the name at `n`, or None: the name
+/// may be the LAST child (`fn f(v)`) or be followed by a comma (`fn f(v, w)`),
+/// and in both cases the parameter declares no type of its own.
+fn type_slot_after(pk []Node, n int) -> Option[int] {
+    if n + 1 >= pk.len() {
+        return None
+    } else {
+        // There is a child after the name; whether it is a type is next.
+    }
+    ro t = n + 1
+    ro c = pk[t]
+    ro no_type = c.kind_of() == NodeKind.LeafNode &&
+        leaf_kind(c) == TokenKind.Comma
+    if no_type {
+        return None
+    } else {
+        // A real node stands where the type belongs.
+    }
+    Some(t)
+}
+
+/// Children of a branch node; a leaf here is an invariant break.
+///
+/// The view is READ-ONLY (`-> ro`, owner's review 2026-08-17): the green tree
+/// is immutable by definition, and handing its own children out as a plain
+/// `[]Node` would give every caller a mutable alias of it. The compiler does
+/// not catch that today (see the `ro`-laundering repro in
+/// docs/dev/novac-divergences.md), so the signature has to say it.
+export fn branch_children(n Node) -> ro []Node {
+    match n {
+        Leaf(_) => ice("sem: expected a branch node")
+        Branch { children, .. } => children
+    }
+}
+
+/// Token text of a leaf node; a branch here is an invariant break.
+export fn leaf_text(n Node) -> str {
+    match n {
+        Leaf(t) => t.text
+        Branch { .. } => ice("sem: leaf_text on a branch node")
+    }
+}
+
+/// Token kind of a leaf node; a branch here is an invariant break.
+export fn leaf_kind(n Node) -> TokenKind {
+    match n {
+        Leaf(t) => t.kind
+        Branch { .. } => ice("sem: leaf_kind on a branch node")
+    }
+}
+
+/// Node kinds that stand as expressions (argument/operand positions).
+export fn is_expr_kind(k NodeKind) -> bool {
+    // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
+    // `||` on the next line is parsed as something else entirely (the oracle
+    // answered E_CLOSURE_SCALAR_RETURN), and parentheses around a multi-line
+    // chain are refused outright.
+    k == NodeKind.Paren ||
+    k == NodeKind.Unary ||
+    k == NodeKind.Bin ||
+    k == NodeKind.Lit ||
+    k == NodeKind.Name ||
+    k == NodeKind.Call ||
+    k == NodeKind.MethodCall ||
+    k == NodeKind.FieldAccess ||
+    k == NodeKind.MatchExpr ||
+    k == NodeKind.Cast
+}
+
+/// First-leaf text of a Name-like node (its identifier).
+export fn expr_leaf_name(e Node) -> str {
+    ro kids = branch_children(e)
+    leaf_text(kids[0])
+}
+
+/// Callee text of a Call node's children (leaf or Name-branch callee).
+export fn call_callee_text(kids []Node) -> str {
+    match kids[0] {
+        Leaf(t) => t.text
+        Branch { children, .. } => {
+            match children[0] {
+                Leaf(t) => t.text
+                Branch { .. } => ""
+            }
+        }
+    }
+}
+
+/// Does this declaration write a RECEIVER -- is it a method?
+///
+/// The parser puts a `Recv` branch where a free function has its name leaf, so
+/// the question is "is one of these children a Recv" and the answer arrives at
+/// the first one. Two walks asked it separately until 2026-08-20 (typing, to
+/// refuse a method declaration before `leaf_text` meets a branch and ices; and
+/// the generics-position rule, to tell `fn[T] []T @map` from `fn box[T]`) --
+/// one question, so one door.
+#realtime nogc
+export fn declares_receiver(kids []Node) -> bool {
+    for c in kids {
+        // The prevailing shape for "skip what is not my kind": a negated test
+        // with a terminator, and no `else` doing work on a closed set (P21).
+        if c.kind_of() != NodeKind.Recv { continue }
+        return true
+    }
+    false
+}
+
+/// THE TYPE a type NAME denotes inside a declaration: its own type parameter if
+/// the declaration binds that name, otherwise whatever the registry holds.
+///
+/// WAVE B6 WAS CANCELLED BY THE CRITERION AND BECAME THIS DOOR. The plan said
+/// "wrap the tparam slot, 26 sites". The criterion from wave B4 -- an identity is
+/// STORED -- said no: the slot is never a field of anything. It is produced by
+/// `tparam_slot` and consumed on the next line by `param_rows[slot]`, every time,
+/// which makes it a STEP.
+///
+/// And the step was written out TWICE, verbatim, in `collect_types` -- once for
+/// the return type, once for each parameter. Two copies of one question is what a
+/// missing door looks like from the inside (P18), so the question gets a name and
+/// the slot goes back to being an implementation detail.
+export fn ty_of_type_name(name str, tps []str, param_rows []TyId,
+                          types []TypeDef, defs DefTable) -> TyId {
+    if Some(slot) = tparam_slot(name, tps) {
+        // `-> T` or `x T` names a type PARAMETER of THIS declaration, and that
+        // is a real type: the term the interner made for that slot.
+        param_rows[slot]
+    } else {
+        ty_or_none(types, defs, name)
+    }
+}
+
+/// Which slot of `tps` this type name binds, or None when it is not a type
+/// parameter of the declaration.
+///
+/// The question is asked while COLLECTING, before the callable has a row, so it
+/// cannot go through `FnTable.tparam_index` -- same question, one step earlier,
+/// and the list is the declaration's own arity (never the registry's size).
+#realtime nogc
+export fn tparam_slot(name str, tps []str) -> Option[int] {
+    for i in 0..tps.len() {
+        // BINDER-OK: the set is this declaration's own type parameters, so it
+        // is bounded by its arity and not by any registry.
+        if tps[i] == name {
+            return Some(i)
+        } else {
+            // Not this slot; the next may bind the name.
+        }
+    }
+    None
+}
+
+/// The identifier NAMES a `Generics` node holds, in source order.
+///
+/// ONE question with one answer, asked from both ends of the mapping: a
+/// declaration reads its type PARAMETERS with it (`fn f[T, U]` binds T to slot
+/// 0), and a call site reads its type ARGUMENTS (`f[int, str]` fills the same
+/// slots). Writing it twice is what check-novac-second-door caught on
+/// 2026-08-19 — two identical bodies in two modules, differing only in name.
+///
+/// Brackets and commas are leaves too (the tree is lossless), so only
+/// identifier leaves are names.
+export fn generic_names(kids []Node) -> []str {
+    mut out = []str.new()
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        out.append(names_of_generics(branch_children(c)))
+    }
+    out
+}
+
+/// The NAMES a generics list binds -- one per entry, and the entry's BOUND is
+/// not one of them.
+///
+/// `[T]` binds T. `[T Compare]` binds T and CONSTRAINS it; `[K Equal + Hash, V]`
+/// binds K and V. Until 2026-08-21 this walk took every identifier leaf, so a
+/// bound was counted as a second type parameter: `fn pick[T Compare](a T)` was
+/// registered as binding TWO, and the honest call `pick[int](3)` came back "the
+/// call gives a different number of type arguments than the declaration binds"
+/// -- a refusal that was a lie about a legal program, and the only way to
+/// satisfy the count was to write nonsense (`pick[int, Compare]`).
+///
+/// The rule is positional and needs no knowledge of protocol names: the FIRST
+/// identifier of each comma-separated entry is the parameter, everything after
+/// it inside that entry is its bound.
+export fn names_of_generics(gk []Node) -> []str {
+    mut out = []str.new()
+    mut expect_name = true
+    for g in gk {
+        if g.kind_of() != NodeKind.LeafNode { continue }
+        ro k = leaf_kind(g)
+        if k == TokenKind.Comma {
+            // A new entry begins: its first identifier is a parameter again.
+            expect_name = true
+            continue
+        }
+        if k != TokenKind.Ident { continue }
+        if expect_name {
+            out.push(leaf_text(g))
+            expect_name = false
+        } else {
+            // Inside an entry after its name: this is the BOUND (`Compare`, or
+            // `Equal + Hash` -- the `+` is punctuation and never a name).
+        }
+    }
+    out
+}
+
+/// Does a generics list constrain a parameter to be MUST-CONSUME
+/// (`[T consume]`, `[T consume Compare]`)?
+///
+/// The full form of an entry is `T [consume] [Protocol + Protocol ...]` (owner,
+/// 2026-08-21; measured: the oracle accepts `fn take[T consume](consume a T)
+/// -> T => a`, and on a body that does NOT consume it answers
+/// `[D156-strict-forget]` -- so the word constrains the PARAMETER, it is not a
+/// protocol name). Two questions and two doors, because the two carry different
+/// refusals: linearity is a whole gap of novac (D133/D156 are not tracked at
+/// all), a protocol bound waits for dispatch (D122, E2-b3). One message for both
+/// would name a cause that was not established (the D420 class).
+export fn generics_have_consume(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        for g in branch_children(c) {
+            if g.kind_of() != NodeKind.LeafNode { continue }
+            if leaf_kind(g) != TokenKind.Ident { continue }
+            if is_contextual_mode_word(leaf_text(g)) { return true }
+        }
+    }
+    false
+}
+
+/// Does a generics list write a PROTOCOL bound (`[T Compare]`,
+/// `[K Equal + Hash]`)?
+///
+/// Counted positionally: one identifier per entry is the bare shape, and the
+/// mode word is not a bound -- so what is left over after the names and the mode
+/// words is a protocol.
+export fn generics_have_protocol_bound(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        ro gk = branch_children(c)
+        mut extra = 0
+        mut entries = 1
+        mut expect_name = true
+        for g in gk {
+            if g.kind_of() != NodeKind.LeafNode { continue }
+            ro k = leaf_kind(g)
+            if k == TokenKind.Comma {
+                entries += 1
+                expect_name = true
+                continue
+            }
+            if k != TokenKind.Ident { continue }
+            if expect_name {
+                expect_name = false
+                continue
+            }
+            // After the name inside one entry: a mode word constrains
+            // linearity, anything else is a protocol.
+            if !is_contextual_mode_word(leaf_text(g)) {
+                extra += 1
+            } else {
+                // The mode word: it constrains LINEARITY, not dispatch, and the
+                // door above answers about that separately.
+            }
+        }
+        if extra > 0 { return true }
+    }
+    false
+}

@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none — the door is ours: effects handled here and nowhere else
+// Role: the door — effects handled here only (П15), CLI surface a subset of nova-cli (П26), Verdict to exit code.
+// Used by: the driver, the smoke, the fuzzer and diff-corpus (E1+); novac build replaces emit at E2-b2
+// (cli-divergences.allow).
+// Guarded by: check-novac-cli-surface.sh (commands are a subset of nova-cli, novac/cli-divergences.allow),
+// check-novac-effects-at-door.sh (Fs/Os only here), novac-fuzz-mutations.sh (exit codes stay 0/1/2, silent door is
+// red), the EXPECT_EXIT_CODE contract.
+// (П15), a Verdict sum instead of an int exit code, and a command surface that
+// is a subset of nova-cli's (П26); the shape follows Nova's own effect model.
 // EXPECT_EXIT_CODE 2
 // novac — the Nova compiler written in Nova. Plan 274, stage E1.
 // (Exit 2 = usage exit: the test runner invokes the binary with no args.
@@ -17,44 +26,270 @@
 
 module novac
 
-import ./pipeline.{compile}
-import ./diag.{to_json}
-import std.fs.{read, real_fs}
-import std.os.{args, exit_process, real_os}
+import ./pipeline.{compile, compile_to_c}
+import ./diag.{to_json, json_escape}
+import std.fs.{read, read_dir, real_fs}
+import std.os.{args, env, exit_process, real_os}
 
-fn compile_one(text str, file str) -> int {
-    ro diags = compile(text)
+/// How one file ended. The process exit code is a VIEW of this outcome
+/// (see @code), never the value passed around: §7 fixes the legal set at
+/// exactly three, and the guards read anything else as a panic. A closed
+/// type is what keeps a fourth code from ever being invented — an int
+/// return could grow one silently (the #652 class).
+type Verdict enum
+    | Clean /// nothing to report: the file is inside the subset
+    | Refused /// judged and refused; the diagnostics are already printed
+    | DoorError /// the door failed: bad usage, unreadable path, or not UTF-8
+
+/// The process exit code this outcome reports (the §7 contract, and the
+/// order of the codes IS the order of severity — see worse).
+fn Verdict @code() -> int => match @ {
+    Clean => 0
+    Refused => 1
+    DoorError => 2
+}
+
+/// The worse of two outcomes. A batch reports the worst file it saw, so a
+/// door error outranks a refusal and a refusal outranks a clean file.
+fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else { a }
+
+/// Emit C for one file: print diagnostics, or the C text when there are none.
+fn emit_one(text str, file str, decls []str) -> Verdict {
+    ro (diags, c_text) = compile_to_c(text, decls)
+    if diags.len() > 0 {
+        mut i = 0
+        for d in diags {
+            println(to_json(d, i, file))
+            i += 1
+        }
+        return Verdict.Refused
+    }
+    println(c_text)
+    Verdict.Clean
+}
+
+/// Check one file: print §7 diagnostics one per line, one JSON per line.
+fn compile_one(text str, file str, decls []str) -> Verdict {
+    ro diags = compile(text, decls)
     mut i = 0
     for d in diags {
         println(to_json(d, i, file))
         i += 1
     }
-    if diags.len() > 0 { 1 } else { 0 }
+    if diags.len() > 0 { Verdict.Refused } else { Verdict.Clean }
 }
 
-fn main() {
-    with Fs = real_fs(), Os = real_os() {
-        ro a = args()
-        if a.len() < 3 || a[1] != "check" {
-            println("usage: novac check <file.nv>")
-            exit_process(2)
-            return
+/// Read the declaration texts of a directory (`--std <dir>`): every *.nv,
+/// no recursion. THIS IS THE DOOR: filesystem walking lives here and the
+/// compiler is handed texts (architecture §1 — the compiler reads nothing
+/// itself). A missing or unreadable directory yields an empty list: then no
+/// method is known and every method call gets an honest subset refusal
+/// instead of a quiet guess.
+fn read_decls(dir str) Fs -> []str {
+    mut out = []str.new()
+    if dir == "" { return out }
+    match read_dir(dir.to_path()) {
+        Ok(entries) => {
+            for e in entries {
+                // A DirEntry carries the NAME (a Path), not the full path, so
+                // we join it ourselves; the name bytes become str through the
+                // same door as all other input.
+                ro nm = e.name.os_bytes().to_str() ?? ""
+                if nm == "" { continue }
+                if !nm.ends_with(".nv") { continue }
+                ro full = "${dir}/${nm}"
+                match read(full.to_path()) {
+                    Ok(bytes) => {
+                        match bytes.to_str() {
+                            Ok(t) => { out.push(t) }
+                            // A declaration file that is not UTF-8 is simply
+                            // not a declaration novac can read; skipping it
+                            // leaves its methods unknown, and every use of
+                            // them gets an honest subset refusal at the point
+                            // of use. The marker below must stay on the line
+                            // DIRECTLY above the arm -- the linter matches it
+                            // per line, and wrapping the prose into it once
+                            // broke the suppression (2026-08-17).
+                            // nova:allow W_RESULT_DISCARDED -- unreadable declaration, skipped
+                            Err(_) => {}
+                        }
+                    }
+                    // nova:allow W_RESULT_DISCARDED -- same door rule: an unreadable file is skipped, never guessed at
+                    Err(_) => {}
+                }
+            }
         }
-        ro path = a[2]
+        Err(_) => {
+            println("novac: cannot read declarations dir ", dir)
+        }
+    }
+    out
+}
+
+/// Check one path (read + compile), printing diagnostics; the outcome is
+/// this file's contribution to the batch verdict.
+fn check_path(path str, decls []str) -> Verdict {
+    match read(path.to_path()) {
+        Ok(bytes) => {
+            match bytes.to_str() {
+                Ok(text) => compile_one(text, path, decls)
+                Err(_) => {
+                    println("novac: not UTF-8: ", path)
+                    Verdict.DoorError
+                }
+            }
+        }
+        Err(_) => {
+            println("novac: cannot read ", path)
+            Verdict.DoorError
+        }
+    }
+}
+
+/// CLI entry: `novac check <file.nv>...` (batch: one process, per-file
+/// diagnostics; exit = worst of the files) or `novac emit <file.nv>` (one
+/// file: its C on stdout). Effects are handled here only. Batch check exists
+/// for the cost of the loop (plan 274.2): the process start dominates a
+/// single check, so the fuzzer and the diff runner feed a LIST.
+/// The compiler runs in a CHILD FIBER under a supervisor, and this function
+/// is the boundary that renders what falls out of it.
+///
+/// WHY (owner's correction 2026-08-16). Saying "ice() is the only door of
+/// death in novac" was wrong: contracts and asserts are everywhere,
+/// including inside std, and a bounds check or a contract from three frames
+/// down does not know about novac's section 7 schema. The language already
+/// answers this — a fiber's panic is seen by its parent's supervisor (D13
+/// sanctions supervision at the fiber boundary; a fiber does not catch its
+/// own panic) — and convention P7 point 2 scheduled exactly this shape for
+/// E2: "the full Roslyn pattern — rendering a panic that ARRIVED (an assert
+/// or a contract from the depths included) at the boundary — switches on
+/// when compilation moves into a child fiber".
+///
+/// So: `ice()` stays the door for a deliberate invariant statement with a
+/// good message, and this boundary is the net under everything else. A
+/// machine reader gets a section 7 line and a defined exit code even when
+/// the compiler dies somewhere that never heard of novac.
+fn main() {
+    // The child's ONLY channel outward is an atomic: a handler may not
+    // capture mut state from a fiber (E_HANDLER_MUT_CAPTURE_IN_FIBER), and
+    // the compiler prints its own diagnostics anyway — what has to travel is
+    // the verdict, and whether the process died on the way.
+    mut exit_code = AtomicInt.new(Verdict.DoorError.code())
+    mut died = AtomicInt.new(0)
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            // A child failure here is a compiler crash: novac's own
+            // diagnostics never travel this path (they are printed and
+            // become an exit code). Stop keeps this scope alive so the exit
+            // code below is ours rather than the runtime's.
+            //
+            // The payload carries everything a reader needs, and that is the
+            // point of running under a supervisor at all (owner, 2026-08-16):
+            // `ice()` panics WITH the section 7 line, so it is printed as it
+            // stands; an assert or a contract panics with its own text, and
+            // that text already names the FILE AND LINE of the site plus the
+            // condition -- which `ice()` cannot do, because a wrapper reports
+            // its own body. Both end up as one section 7 line on stdout.
+            ro _ = died.fetch_add(1)
+            // [LEGACY-#708-panic-payload-text] The TEXT is a temporary input.
+            // The integrator confirmed 2026-08-17 that the format itself is
+            // normative (`<file>:<line>: assert failed: <text> (<cond>)`,
+            // Plan 140.1 amendment in 08-runtime.md), so this is not an
+            // accident -- but D462 declares two renderers of one record (text
+            // for humans, JSON for machines), and reading the human one means
+            // depending on the half the spec calls replaceable. The better
+            // discriminator already exists as a FIELD: an assert sets
+            // error_kind = NOVA_THROW_PANIC (Plan 140.3 amendment), exactly
+            // like nv_panic. It is not reachable from a handler yet --
+            // report()/cause() (D463) wait on registry No. 680 -- so the text
+            // stays the input path until No. 708 lands, and then the branch
+            // below is rebuilt on the kind, not on parsing.
+            if err is str {
+                if err.starts_with("{") {
+                    println(err)
+                } else {
+                    println(ice_line(err))
+                }
+            } else {
+                println(ice_line("the compiler died with a payload that is not text"))
+            }
+            return Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                exit_code.store(run(compiler_argv()))
+            }
+        }
+    }
+    if died.load() > 0 {
+        // The line itself was printed by the handler, which is the only place
+        // that sees the payload.
+        exit_process(Verdict.DoorError.code())
+        return
+    }
+    exit_process(exit_code.load())
+}
+
+/// The section 7 line for a death that arrived without one of its own.
+/// Hand-built, exactly like `diag.ice` builds its: the last-resort door must
+/// not depend on machinery it may be reporting about. The message is escaped
+/// through the one door, because an assert text is arbitrary and a contract
+/// quotes its condition.
+fn ice_line(msg str) -> str =>
+    "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${json_escape(msg)}\",\"poisoned_by\":null}"
+
+/// The arguments, read once at the door.
+fn compiler_argv() -> []str {
+    with Os = real_os() {
+        return args()
+    }
+}
+
+/// Everything novac does, now the body of a supervised child fiber.
+fn run(a []str) -> int {
+    with Fs = real_fs(), Os = real_os() {
+        if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
+            println("usage: novac check <file.nv>... | novac emit <file.nv>")
+            return Verdict.DoorError.code()
+        }
+        // std is FOUND the way nova-cli finds it, never passed by a flag
+        // (П26: the command surface is a subset of nova-cli's, flags
+        // included; owner 2026-08-16 — `--std <dir>` was a novac-only form).
+        // The oracle's rule (`manifest::resolve_std_path`): NOVA_STD_PATH if
+        // set, else <repo>/std/src. Reading the declarations from it is the
+        // std interface novac READS instead of knowing by heart (П5); an
+        // unreadable dir gives an empty table and honest subset refusals.
+        ro std_dir = env("NOVA_STD_PATH") ?? "std/src"
+        ro decls = read_decls("${std_dir}/runtime/string")
+        ro argi = 2
+        if argi >= a.len() {
+            println("usage: novac check <file.nv>... | novac emit <file.nv>")
+            return Verdict.DoorError.code()
+        }
+        if a[1] == "check" {
+            mut worst = Verdict.Clean
+            for path in a[argi..] {
+                worst = worse(worst, check_path(path, decls))
+            }
+            return worst.code()
+        }
+        ro path = a[argi]
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
-                    Ok(text) => exit_process(compile_one(text, path))
+                    Ok(text) => { return emit_one(text, path, decls).code() }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
-                        exit_process(2)
+                        return Verdict.DoorError.code()
                     }
                 }
             }
             Err(_) => {
                 println("novac: cannot read ", path)
-                exit_process(2)
+                return Verdict.DoorError.code()
             }
         }
     }
+    Verdict.DoorError.code()
 }

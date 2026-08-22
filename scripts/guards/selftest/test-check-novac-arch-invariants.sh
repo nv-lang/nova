@@ -1,7 +1,7 @@
 #!/bin/sh
-# Самотест check-novac-arch-invariants.sh — оба направления.
+# Самотест check-novac-arch-invariants.py — оба направления.
 export LC_ALL=C
-G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-arch-invariants.sh"
+G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-arch-invariants.py"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-inv-selftest.$$"
 mkdir -p "$T"
@@ -18,8 +18,8 @@ cat > "$T/good.md" <<'EOF'
 ## 11. Сканеры
 без счётчика — не подсуден.
 EOF
-sh "$G" "$ROOT" "$T/good.md" >/dev/null 2>&1 && ok "карта со счётчиками проходит" || bad "законное покраснело"
-sh "$G" "$ROOT" "$T/good.md" 2>/dev/null | grep -q 'ok:' && ok "печатает ok:" || bad "нет ok: (№645)"
+python "$G" "$ROOT" "$T/good.md" >/dev/null 2>&1 && ok "карта со счётчиками проходит" || bad "законное покраснело"
+python "$G" "$ROOT" "$T/good.md" 2>/dev/null | grep -q 'ok:' && ok "печатает ok:" || bad "нет ok: (№645)"
 
 # 2. Нарушение: раздел карты без счётчика — красный.
 cat > "$T/bad.md" <<'EOF'
@@ -28,7 +28,7 @@ cat > "$T/bad.md" <<'EOF'
 ## 3. Рёбра
 инварианты прозой, счёта нет.
 EOF
-sh "$G" "$ROOT" "$T/bad.md" >/dev/null 2>&1 && bad "раздел без счётчика прошёл" || ok "раздел без счётчика пойман"
+python "$G" "$ROOT" "$T/bad.md" >/dev/null 2>&1 && bad "раздел без счётчика прошёл" || ok "раздел без счётчика пойман"
 
 # 3. Нарушение: ПОСЛЕДНИЙ раздел карты без счётчика (граница EOF) — красный.
 cat > "$T/last.md" <<'EOF'
@@ -37,7 +37,7 @@ cat > "$T/last.md" <<'EOF'
 ## 10. Атомики
 последний и без счёта.
 EOF
-sh "$G" "$ROOT" "$T/last.md" >/dev/null 2>&1 && bad "последний без счётчика прошёл" || ok "последний без счётчика пойман"
+python "$G" "$ROOT" "$T/last.md" >/dev/null 2>&1 && bad "последний без счётчика прошёл" || ok "последний без счётчика пойман"
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then

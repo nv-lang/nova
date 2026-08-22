@@ -1,4 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go `types2` `*Checker` (one receiver holding pass state) + rustc `FnCtxt`
+// for the walk; rustc `TyKind::Error(ErrorGuaranteed)` / Roslyn `IsErrorType`
+// suppression for no-cascade (an Err branch is already reported, nothing looks
+// inside); rustc keeps `TyCtxt` explicit (`ty::tls` only for diagnostics) —
+// context is data, not an effect; Go `types2` `Checker.errorf` for the single
+// `refuse` reporter; Donor: none for the subset refusals (init_pos for ctor/match,
+// F65 ordered args, arrays rollback, statement-call = println only) — an honest
+// E_NOVAC_SUBSET instead of a silently wrong emission (П27 p.3 class); NOT taken:
+// rustc obligation solver (E2-b3), local typing in check (274.3 wave 3 / C9).
+// Role: layer 7 — the subset judge; publishes diagnostics, will publish the type channel (resolved_types) at E2-b1
+// tail.
+// Used by: pipeline (E1+); the LSP at E3 reads its channel instead of re-walking; emit_c reads its verdicts, never
+// re-derives.
+// Guarded by: check-novac-no-cascade.sh, check-novac-diag-schema.sh, check-novac-differential.sh (verdicts match the
+// oracle on the corpus), check-novac-no-default-branch.py (kind dispatch is exhaustive), the pipeline tests (one cause,
+// one diagnostic).
+// rustc `FnCtxt` for the walk shape; poisoning discipline from rustc
+// `TyKind::Error` — an already-reported node yields nothing further; NOT taken:
+// rustc's obligation solver (arrives with bounds, E2-b3).
 // novac/src/check — the E1 mini-checker (architecture §2: module `check`).
 //
 // The subset rule is ONE: everything the parser had to recover from is
@@ -17,61 +36,404 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind}
-import ../diag.{Diagnostic, Severity}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../diag.{Diagnostic, Severity, ice}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../types.{TyId, no_ty, is_ty}
+
+/// State of one check run: the source (for positions), the semantic context
+/// and the diagnostics collected so far. A receiver, not a triple of
+/// parameters on every function — the shape of every reference (Go
+/// `*Checker`, Roslyn `Binder`, rustc `FnCtxt`, Zig `*Sema`).
+///
+/// WHY NOT AN EFFECT (owner's question, 2026-08-16). Nova's effects model
+/// CAPABILITIES and control — `Fs`, `Os`, `Fail`, `Supervisor`; the
+/// compilation context is pure data. An ambient context (a) hides the data
+/// flow, and the §3/§4 map rests on that flow being visible ("what flows
+/// along the edge" is guarded), (b) pays a TLS-vtable cost on every read
+/// in the hot `type_of` loop, under П14 "speed is priority #1", (c)
+/// diverges from the references: rustc keeps `TyCtxt` explicit, and the
+/// ambient `ty::tls` is left only for diagnostics and debugging.
+type Checker {
+    src SourceText /// the file text: the one source of positions
+    ctx Ctx /// type registry and callable table, read from the declarations
+    out []Diagnostic /// diagnostics collected by this run
+    chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
+    scope Scope /// locals of the function body being typed; reset per function
+    /// One-entry table reused by the self-initializer check (274.3/F28). It is
+    /// a FIELD and not a local because the lookup door must not build anything
+    /// (P18/P14): a table allocated per binding turns an O(1) question into an
+    /// allocation on the hot path of every `ro`/`mut` in the file.
+    self_probe NameTable
+    /// The instance's substitution: `substs[i]` is the concrete type standing
+    /// in type-parameter slot `i`. EMPTY for an ordinary run over a file, and
+    /// that emptiness is what tells `type_fn` to skip a generic body -- there
+    /// is nothing to type it under. One copy of the body is typed per
+    /// instance (Go stenciling), so nothing here is parametric afterwards.
+    substs []TyId
+}
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
-/// no Result (274 §4 п.1).
-export fn check(file Node, src SourceText) -> []Diagnostic {
-    mut out = []Diagnostic.new()
-    walk(file, src, out)
-    out
-}
-
-fn walk(n Node, src SourceText, mut out []Diagnostic) -> () {
-    match n {
-        Leaf(t) => report_if_error_token(t, src, out)
-        Branch { kind, children } => {
-            if kind == NodeKind.Err {
-                report_err_branch(children, src, out)
-            } else {
-                for c in children {
-                    walk(c, src, out)
-                }
-            }
-        }
+/// no Result (274 §4 item 1).
+///
+/// WHY THIS IS A FREE FUNCTION AND NOT A METHOD ON `Ctx` (owner's question,
+/// 2026-08-16). `Ctx` is DATA — the type registry and the callable table.
+/// Hanging a pass on it would make the registry own the pass, and then
+/// `emit` would want to hang there too: `Ctx` becomes the object that knows
+/// every backend, which is exactly the ownership the architecture keeps
+/// apart (the rustc_middle model — `TyCtxt` holds data, passes consume it).
+/// It would also invert an edge of the §3 table: `Ctx` lives in `sem`, so a
+/// method on it would make `sem` reference `Diagnostic` and the checker,
+/// and `check-novac-deps.py` refuses that edge by construction. What the
+/// entry point IS, is a constructor plus a run — the same shape `emit_c`
+/// uses for `Emitter`: the module has one door, and the receiver lives
+/// behind it.
+/// The channel comes back WITH the diagnostics, from ONE door: a second
+/// entry point ("check, and this time also record") would be two passes
+/// disagreeing about one file, which is the disease the channel cures.
+///
+/// The typing walk runs only on a CLEAN subset verdict. That is not a
+/// convenience: the emitter's contract is already "never called on broken
+/// input" (pipeline), the lattice remaining ices are user errors under
+/// [LEGACY-#700-user-error-as-ice until:E2b3], and typing a file that the
+/// subset already refused would turn a refusal into an ice. When #700 lands
+/// the walk becomes unconditional, because then its answer on bad input is a
+/// diagnostic and not a death.
+export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
+    mut c = Checker {
+        src, ctx,
+        out: []Diagnostic.new(),
+        chan: CheckOut.new(raw_node(file.id_of()) + 1),
+        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        substs: []TyId.new(),
     }
-}
-
-fn report_if_error_token(t Token, src SourceText, mut out []Diagnostic) -> () {
-    if t.kind == TokenKind.ErrorTok {
-        ro lo = src.offset_of(t.text)
-        out.push(Diagnostic {
-            code: "E_NOVAC_SUBSET",
-            severity: Severity.ErrorSev,
-            lo,
-            hi: lo + t.text.byte_len(),
-            message: "outside the E1 subset: unrecognized or context-dependent token",
-        })
+    c.walk(file)
+    if c.out.len() == 0 {
+        c.type_file(file)
+        // The disjointness walk that stood here is gone (2026-08-18): the
+        // channel holds ONE sum per node now, so "a call and an
+        // instantiation at once" is not a state that can be built.
+    } else {
+        // A refused file is not typed: the walk's answer on broken input is an
+        // ice today ([LEGACY-#700-user-error-as-ice until:E2b3]), so the refusals already
+        // collected ARE the verdict, and the channel goes back as the walk left it.
     }
+    (c.out, c.chan)
 }
 
-fn report_err_branch(children []Node, src SourceText, mut out []Diagnostic) -> () {
-    // One Err branch — one diagnostic, spanning its first leaf's text.
+/// Type ONE declaration under a substitution -- one instance of a generic
+/// callable (E2-b2; donor: Go stenciling, one copy of the body per instance,
+/// each typed on its own).
+///
+/// WHY A SEPARATE CHANNEL. The channel is keyed by `NodeId`: one node, one
+/// type. Two instances of one body cannot both live in it, and the alternative
+/// -- keeping the body's types parametric and substituting in every reader --
+/// spreads one decision across every consumer of the channel (P18). So each
+/// instance gets its own channel, sized like the file's, and the emitter reads
+/// the one belonging to the instance it emits.
+///
+/// `cap` is the file's node capacity, not the declaration's: node ids are
+/// handed out per FILE, so a declaration's nodes sit anywhere in that range.
+export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap int) -> ([]Diagnostic, CheckOut)
+    requires cap > 0, "check: an instance channel needs the file's node capacity"
+{
+    mut c = Checker {
+        src, ctx,
+        out: []Diagnostic.new(),
+        chan: CheckOut.new(cap),
+        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        substs,
+    }
+    c.type_fn(decl)
+    (c.out, c.chan)
+}
+
+/// Record one subset refusal at the token's exact bytes. THE one place that
+/// knows the code, the severity and how a span is derived from a leaf — it
+/// used to be copied into five reporters, so a change to the span rule had
+/// five chances to be applied four times (owner's review 2026-08-16).
+fn Checker mut @refuse(t Token, msg str) -> () {
+    ro lo = @src.offset_of(t.text)
+    @refuse_span(lo, lo + t.text.byte_len(), msg)
+}
+
+/// The same door with an EXPLICIT span, for a refusal whose subject is a run
+/// of tokens rather than one (274.3/F24). A junk run of five tokens used to be
+/// underlined at its first byte: the editor squiggle covered `%` and left the
+/// other four looking accepted, which is a lie about what was rejected. The
+/// span rule stays in ONE place -- the reason @refuse exists at all.
+fn Checker mut @refuse_span(lo int, hi int, msg str) -> ()
+    requires lo >= 0, "check: refusal span starts before the file"
+    requires hi >= lo, "check: refusal span ends before it starts" {
+    @out.push(Diagnostic {
+        code: "E_NOVAC_SUBSET",
+        severity: Severity.ErrorSev,
+        lo,
+        hi,
+        message: msg,
+    })
+}
+
+/// Extends `best` to the end of the LAST leaf under `children` -- the right
+/// edge of a run, in source offsets.
+///
+/// It takes the current best and returns a bigger one instead of answering
+/// "the last leaf, if any": a run always has at least the leaf its caller
+/// already found, so absence is not a case here, and the monotone form needs
+/// neither an Option nor an int sentinel. (The Option form was written first
+/// and did not survive: `Option[Token]` -- a record inside an Option -- and a
+/// mut local of `Option[int]` reassigned in a match arm BOTH miscompile under
+/// the current oracle, the second one emitting Nova source text verbatim into
+/// the C. Escalated separately; this shape does not need the feature at all.)
+fn Checker @run_end_of(children []Node, best int) -> int {
+    mut e = best
     for c in children {
         match c {
-            Leaf(t) => {
-                ro lo = src.offset_of(t.text)
-                out.push(Diagnostic {
-                    code: "E_NOVAC_SUBSET",
-                    severity: Severity.ErrorSev,
-                    lo,
-                    hi: lo + t.text.byte_len(),
-                    message: "outside the E1 subset: construct not in the MVP grammar",
-                })
-                return
+            Leaf(t) => { e = e.max(@src.offset_of(t.text) + t.text.byte_len()) }
+            Branch { children: inner, .. } => { e = @run_end_of(inner, e) }
+        }
+    }
+    e
+}
+
+/// Walk the tree and collect subset diagnostics.
+///
+/// init_pos: record constructors and match expressions are subset forms ONLY
+/// in an initializer position — the direct init of a binding or the body of
+/// an expression-bodied fn. The emitter's tmp-schemes have exactly those
+/// shapes; anywhere else (argument, nested field value, condition, arm) the
+/// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
+/// is the common case, so only the two places that actually open an
+/// initializer position say so.
+fn Checker mut @walk(n Node, init_pos bool = false) -> () {
+    match n {
+        Leaf(t) => @report_if_error_token(t)
+        Branch { kind, children, .. } => {
+            // ONE subject, ONE match (P31 p.2, owner 2026-08-17: "combine
+            // several ifs into a match"). The chain this replaces had
+            // fourteen `if kind == ...` in a row, each a decision about the
+            // same value, and a node kind nobody handled fell through in
+            // silence -- which is how four defects arrived this shift.
+            //
+            // Every NodeKind is listed, with no wildcard: adding a kind to
+            // the tree now makes THIS match a compile error, and the author
+            // has to say what the checker does about it. That is the whole
+            // reason a match is worth more than a chain -- exhaustion is
+            // machine-checked, not remembered.
+            //
+            // Arms that fall through to the generic walk below say `{}` and
+            // the comment above covers why: the kind carries no rule of its
+            // own, its children are walked like anyone else's.
+            match kind {
+                Err => {
+                    @report_err_branch(children)
+                    return
+                }
+                Block => @report_if_bad_call_stmt(children)
+                MethodCall => {
+                    @report_if_unknown_method(children)
+                    @report_if_ordered_args(children)
+                }
+                Call => @report_if_ordered_args(children)
+                FnDecl => {
+                    if @report_if_extern_decl(children) {
+                        // The whole FORM is refused, so the rules below have
+                        // nothing left to judge: they ask about the return type
+                        // and the tail of a declaration novac will not compile,
+                        // and the walk of the children would name every unknown
+                        // FFI type on top of that. One cause, one diagnostic.
+                        return
+                    } else {
+                        // An ordinary declaration: the three shape rules below
+                        // are its business as before.
+                    }
+                    @report_if_generic_decl(children)
+                    @report_if_tail_has_no_value(children)
+                    @report_if_return_type_undeclared(children)
+                }
+                TypeDecl | SumDecl => {
+                    // A generic TYPE is not in the subset at all: position
+                    // first, so a misplaced form is named as misplaced.
+                    @report_if_misplaced_generics(children)
+                    @report_if_generic_form(children)
+                }
+                ForStmt => {
+                    @report_if_bad_for_head(children)
+                    // The head is walked SEPARATELY, skipping index 3: a range
+                    // is legal there and nowhere else in the subset, and the
+                    // rule below would otherwise refuse the very form this
+                    // statement exists for.
+                    mut i = 0
+                    for c in children {
+                        if i != 3 {
+                            @walk(c)
+                        } else {
+                            // Index 3 is the HEAD, and a range is legal
+                            // only there: walking it would hand it to the
+                            // rule that refuses ranges as values.
+                        }
+                        i += 1
+                    }
+                    return
+                }
+                Field => {
+                    @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
+                }
+                RetType => {
+                    // The return type is a type reference too, and it was
+                    // judged by nobody: `fn make() -> []int => 1` was ACCEPTED
+                    // while the body returns an int literal (2026-08-17).
+                    @report_if_qualifier_misplaced(children, "result")
+                    @report_if_return_form(children)
+                }
+                IfExpr => {
+                    @report_first_leaf_of(children, IF_EXPR_MSG)
+                    return
+                }
+                SelfField => {
+                    @report_first_leaf_of(children, SELF_FIELD_MSG)
+                    return
+                }
+                ImportDecl => {
+                    @report_first_leaf_of(children, IMPORT_MSG)
+                    return
+                }
+                ExportDecl => {
+                    @report_first_leaf_of(children, EXPORT_MSG)
+                    return
+                }
+                AttrDecl => {
+                    @report_first_leaf_of(children, ATTR_MSG)
+                    return
+                }
+                TestDecl => {
+                    @report_first_leaf_of(children, TEST_MSG)
+                    return
+                }
+                NamedArg => {
+                    @report_first_leaf_of(children, NAMED_ARG_MSG)
+                    return
+                }
+                Cast => {
+                    // NOT refused by SHAPE any more: whether a cast is inside
+                    // the subset depends on the operand's TYPE -- unwrapping a
+                    // newtype into its representation is the one legal case,
+                    // and only typing knows the type. The refusal moved there
+                    // (`type_cast`), which is also where the reason can be
+                    // named instead of the whole form being turned away.
+                }
+                Param => {
+                    // The two forms below are refused whole, and the rules
+                    // after them are skipped on purpose: a variadic already
+                    // carries a slice type, so the type-form rule would add a
+                    // second diagnostic about the same parameter.
+                    if has_variadic_mark(children) {
+                        @report_first_leaf_of(children, VARIADIC_MSG)
+                        return
+                    } else {
+                        // Not a variadic: judged as an ordinary parameter.
+                    }
+                    if has_default_value(children) {
+                        @report_first_leaf_of(children, DEFAULT_PARAM_MSG)
+                        return
+                    } else {
+                        // No default value written: nothing to refuse here.
+                    }
+                    @report_if_qualifier_misplaced(children, "parameter")
+                    @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
+                }
+                RecordCtor => {
+                    if !init_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer")
+                        return
+                    } else {
+                        // In initializer position the constructor is legal;
+                        // its children are walked below like any other node.
+                    }
+                }
+                ArrayLit => {
+                    // Owner's rollback 2026-08-15: []int was taken as a
+                    // hard-coded std instance (one seed row + C_VEC_INT_*
+                    // constants) -- a K7 half-capability (novac 'knows'
+                    // []int, silently not []str). Arrays return with generics
+                    // through `mono` (E2-b); until then this is an honest
+                    // subset refusal, not a fake take.
+                    @report_first_leaf_of(children, "outside the subset: arrays arrive with generics (E2-b), not as one hard-coded instance")
+                    return
+                }
+                MatchExpr => {
+                    if !init_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: match only as a binding initializer")
+                        return
+                    } else {
+                        // Initializer position: legal, walked below.
+                    }
+                }
+                BindStmt => {
+                    // A plain binding is FOUR children -- keyword, name,
+                    // `=`, initializer -- so a declared type makes it five.
+                    // Written as `> 3` at first, the rule fired on every
+                    // ordinary binding in the language and reported a
+                    // declared type where none was written. Counting is a
+                    // measurement too, and this one went unmeasured.
+                    if children.len() > 4 {
+                        @report_first_leaf_of(children, TYPED_LOCAL_MSG)
+                        return
+                    } else {
+                        // No declared type: the ordinary binding.
+                    }
+                    mut i = 0
+                    for c in children {
+                        @walk(c, init_pos: i == children.len() - 1)
+                        i += 1
+                    }
+                    return
+                }
+                FnExprBody => {
+                    // The LAST child is the initializer, and only there are a
+                    // record constructor and a match legal -- that is what
+                    // `init_pos` carries.
+                    mut i = 0
+                    for c in children {
+                        @walk(c, init_pos: i == children.len() - 1)
+                        i += 1
+                    }
+                    return
+                }
+                Lit => {
+                    @report_if_bad_escape(children)
+                    // `"n=${n}"` reaches the tree as ONE literal leaf -- the
+                    // lexer keeps the string whole -- so the interpolation is
+                    // found in its text and named here.
+                    @report_if_interpolated(children)
+                }
+                Variant => {
+                    // A record-form variant carries a brace run among its
+                    // leaves; the ordinary variant does not.
+                    @report_if_record_variant(children)
+                }
+                Bin => {
+                    // F35: `ro a = 0..3` used to reach an ice ("a range is not
+                    // an expression outside a for-head"). It is legal Nova --
+                    // the oracle accepts it -- so the subset refuses it BY NAME
+                    // instead of dying on it. Inside a for-head the walk never
+                    // gets here: that arm walks its children itself.
+                    @report_if_range_outside_for(children)
+                }
+                LeafNode | File | ModuleDecl | Args | IfStmt | RetStmt => {}
+                AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
+                MatchArm | Pattern | ArraySpread | Guard => {}
+                Recv | Generics | Unary | Paren | Name => {}
             }
-            Branch { .. } => {}
+            for c in children {
+                @walk(c)
+            }
         }
     }
 }
+
+// No silent type defaults (owner's rule 2026-08-14, the #652 class: a
+// quiet nova_int fallback bred a bug family in the current compiler). A
+// shape with a missing type is refused HERE — the emitter's matching ice
+// is the second floor, never the first answer.

@@ -1,0 +1,22 @@
+module free_call_form.neg_1
+
+// ONE seeded cause: the call gives one argument to a two-parameter function.
+//
+// novac ACCEPTED this file until 2026-08-20 and emitted
+// `novac_fn_byte_len__nova_int__nova_int__to_nova_int(_novac_strlit_0)` -- one
+// string where two ints are declared. The reason was that `lookup` walked every
+// row of the name, including the signatures of std METHODS read from
+// declarations, and `str @byte_len()` fits one argument by arity. A free call
+// reaching a method is not a thing the language does: without the declaration
+// below, the oracle answers `undefined identifier byte_len`.
+//
+// The form of the call is part of the query now (`CallForm`), and the datum it
+// compares against is `FnDef.has_recv` -- which had no reader at all until this
+// probe found one. Plan 273 stands: one registry, the receiver is parameter
+// zero; what the form answers is "which spelling did the author write", a fact
+// about the CALL.
+fn byte_len(a int, b int) -> int => a + b
+
+fn main() {
+    println(byte_len("abc"))
+}

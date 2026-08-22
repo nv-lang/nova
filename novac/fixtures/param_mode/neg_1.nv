@@ -1,0 +1,15 @@
+module param_mode.neg_1
+
+// ONE seeded cause: `own` is NOT a mode of the language. The set is closed and
+// measured -- `mut`, `ro`, `consume`, `uninit` -- and the oracle answers
+// "expected `,`, got identifier" to everything else, so a parser that treated
+// every leading identifier as a mode would accept a form the language does not
+// have.
+//
+// Both compilers refuse this. novac's refusal is about the shape it sees: with
+// `own` standing where the name belongs, the parameter declares no type.
+fn take(own v int) -> int => v
+
+fn main() {
+    println(take(1))
+}

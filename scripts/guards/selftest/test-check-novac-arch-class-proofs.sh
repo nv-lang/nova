@@ -1,8 +1,8 @@
 #!/bin/sh
-# Самотест check-novac-arch-class-proofs.sh — оба направления (норма 254):
+# Самотест check-novac-arch-class-proofs.py — оба направления (норма 254):
 # ловит нарушение И не краснеет на законном.
 export LC_ALL=C
-G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-arch-class-proofs.sh"
+G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-arch-class-proofs.py"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-proofs-selftest.$$"
 mkdir -p "$T"
@@ -19,8 +19,8 @@ cat > "$T/good.md" <<'EOF'
 **Место:** types.
 **Минимальность:** снятие ломает X.
 EOF
-sh "$G" "$ROOT" "$T/good.md" >/dev/null 2>&1 && ok "полный класс проходит" || bad "полный класс не прошёл"
-sh "$G" "$ROOT" "$T/good.md" 2>/dev/null | grep -q 'ok:' && ok "печатает строку ok:" || bad "нет строки ok: (№645)"
+python "$G" "$ROOT" "$T/good.md" >/dev/null 2>&1 && ok "полный класс проходит" || bad "полный класс не прошёл"
+python "$G" "$ROOT" "$T/good.md" 2>/dev/null | grep -q 'ok:' && ok "печатает строку ok:" || bad "нет строки ok: (№645)"
 
 # 2. Нарушение: класс без Минимальности — красный.
 cat > "$T/bad.md" <<'EOF'
@@ -29,15 +29,15 @@ cat > "$T/bad.md" <<'EOF'
 **Верность:** по построению.
 **Место:** types.
 EOF
-sh "$G" "$ROOT" "$T/bad.md" >/dev/null 2>&1 && bad "класс без Минимальности прошёл" || ok "класс без Минимальности пойман"
+python "$G" "$ROOT" "$T/bad.md" >/dev/null 2>&1 && bad "класс без Минимальности прошёл" || ok "класс без Минимальности пойман"
 
 # 3. Нарушение: раздела нет вовсе — красный.
 echo "# пусто" > "$T/none.md"
-sh "$G" "$ROOT" "$T/none.md" >/dev/null 2>&1 && bad "отсутствие раздела прошло" || ok "отсутствие раздела поймано"
+python "$G" "$ROOT" "$T/none.md" >/dev/null 2>&1 && bad "отсутствие раздела прошло" || ok "отсутствие раздела поймано"
 
 # 4. Законный: раздел есть, классов ноль (заполняется) — зелено.
 echo "## 16. Классы проблем двух месяцев" > "$T/empty.md"
-sh "$G" "$ROOT" "$T/empty.md" >/dev/null 2>&1 && ok "пустой раздел проходит (видит приёмка, не страж)" || bad "пустой раздел покраснел"
+python "$G" "$ROOT" "$T/empty.md" >/dev/null 2>&1 && ok "пустой раздел проходит (видит приёмка, не страж)" || bad "пустой раздел покраснел"
 
 # 5. Нарушение: второй класс сломан, первый цел — красный (ловит не только первый).
 cat > "$T/second.md" <<'EOF'
@@ -47,7 +47,7 @@ cat > "$T/second.md" <<'EOF'
 ### К2. Сломанный
 **Верность:** только одно.
 EOF
-sh "$G" "$ROOT" "$T/second.md" >/dev/null 2>&1 && bad "сломанный второй класс прошёл" || ok "сломанный второй класс пойман"
+python "$G" "$ROOT" "$T/second.md" >/dev/null 2>&1 && bad "сломанный второй класс прошёл" || ok "сломанный второй класс пойман"
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then

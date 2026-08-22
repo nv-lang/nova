@@ -52,10 +52,11 @@ MIN_HEADER_LINES=8
 problems=0
 report() { echo "  ✗ $1" >&2; problems=$((problems + 1)); }
 
-echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh"
+echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh и check-*.py"
 
 shopt -s nullglob
-guards=("$REPO_ROOT"/scripts/guards/check-*.sh)
+# Расширение НЕ часть личности стража (переезд на python, П14).
+guards=("$REPO_ROOT"/scripts/guards/check-*.sh "$REPO_ROOT"/scripts/guards/check-*.py)
 if [ "${#guards[@]}" -eq 0 ]; then
     echo "  стражей не найдено — нечего проверять"
     exit 0
@@ -81,24 +82,37 @@ while IFS=$'\t' read -r fpath hc ref; do
     [ -n "$fpath" ] || continue
     HEADER_LINES["$fpath"]="$hc"
     HAS_PLAN_REF["$fpath"]="$ref"
+# ОДИН проход awk по всем стражам (оптимизация main: 90 файлов, каждый форк
+# заметен) И докстринг питоновского стража (правка ветки p274: шапка .py живёт в
+# тройных кавычках, а не в решётках, поэтому счёт только по '^#' объявлял бы
+# каждый порт недокументированным). Слияние 2026-08-22 сохранило ОБА умысла:
+# структуру main и правило ветки. Открывающая строка бывает и с префиксом `u`.
 done < <(awk '
     FNR == 1 {
         if (NR > 1) print prevfile "\t" hc "\t" ref
-        prevfile = FILENAME; hc = 0; ref = 0
+        prevfile = FILENAME; hc = 0; ref = 0; d = 0
     }
-    FNR <= 20 && /^#/ { hc++ }
+    FNR <= 20 {
+        if ($0 ~ /^#/) { hc++ }
+        else if ($0 ~ /^u?"""/) { d = !d; hc++ }
+        else if (d) { hc++ }
+    }
     /docs\/plans\/|план [0-9]|реестр 221\.1/ { ref = 1 }
     END { if (prevfile != "") print prevfile "\t" hc "\t" ref }
 ' "${guards[@]}")
 
 for g in "${guards[@]}"; do
-    # basename как bash-подстановка, а не форк внешней команды (та же
-    # логика оптимизации — 90 файлов, каждый форк заметен).
+    # basename как bash-подстановка, а не форк внешней команды (оптимизация
+    # main: 90 файлов, каждый форк заметен). Расширение снимается ОБА: страж
+    # бывает и `.sh`, и `.py`, а имя без расширения — то, чем его называют гейт
+    # и реестр.
     name="${g##*/}"
     name="${name%.sh}"
+    name="${name%.py}"
     ok=1
 
-    # 1. Документирован: содержательная шапка + ссылка на план.
+    # 1. Документирован: содержательная шапка + ссылка на план. Считает
+    #    предвычисление выше — оно знает и решётки, и докстринг.
     header_lines="${HEADER_LINES[$g]:-0}"
     if [ "$header_lines" -lt "$MIN_HEADER_LINES" ]; then
         report "$name: шапка тонкая ($header_lines строк < $MIN_HEADER_LINES) — нужно «зачем / что проверяет / как запускать»"

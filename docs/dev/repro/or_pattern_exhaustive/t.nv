@@ -1,0 +1,57 @@
+module m
+
+// FIXED in main on 2026-08-18 as #725 -- this file is now a REGRESSION
+// fixture: `nova check` must REFUSE it. If it ever passes again, the
+// hole is back.
+//
+// What it showed while it was open: an arm carrying an OR-pattern
+// disabled the exhaustiveness check. `Violet` has no arm here, and
+// `nova check` said nothing (exit 0); built and run, the program
+// answered `0` for the uncovered variant.
+//
+// The integrator's diagnosis, recorded because it explains the shape:
+// the checker understood three arm forms and everything else fell into
+// a conservative `_ => return` (doctrine #703, and that doctrine is
+// right). `p | q | r` is parsed exactly, so counting it among the
+// "not understood" was an unfinished branch, not caution. Arm parsing
+// now lives in `arm_coverage` (CatchAll/Variants/Unknown); an unknown
+// alternative inside `|` still voids the whole arm, or the refusal
+// would be false.
+//
+// The measurement that found it (arms written one per name were already
+// refused; the OR forms were not):
+//
+//     Red => 1 / Green => 2 / Blue => 3 / Amber => 4
+//         -> E_MATCH_NON_EXHAUSTIVE, correct
+//     Red => 1 / Green | Blue | Amber => 0
+//         -> accepted, WRONG
+//     the same, wrapped over two lines
+//         -> accepted, WRONG
+//     an OR-group with every variant covered
+//         -> accepted, correct
+//
+// Why it matters beyond the miss itself: novac is built on the promise
+// that a NEW variant of a sum breaks the build at every place that must
+// decide about it. Wherever an OR-group is used to group the "nothing to
+// do" cases -- which is the idiomatic way to write a table -- that
+// promise silently does not hold.
+//
+// Found 2026-08-18 by a table of 64 token kinds that was missing two of
+// them and compiled clean.
+//
+// And the program does not even fail loudly: built and run, this file
+// prints `0` for `Colour.Violet` -- the uncovered variant yields the zero
+// value of the result type and says nothing. A miss that crashes is a
+// nuisance; a miss that answers with a plausible number is a defect that
+// travels.
+
+type Colour enum Red | Green | Blue | Amber | Violet
+
+fn code(c Colour) -> int {
+    match c {
+        Red => 1
+        Green | Blue | Amber => 0
+    }
+}
+
+fn main() { println(code(Colour.Violet)) }

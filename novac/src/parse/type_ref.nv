@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- reading a type reference is our own shape, taken from the
+// language's own spelling (spec syntax.ru.md: qualifiers, `[]T`, `Vec[T]`,
+// `*mut T`, tuples and fn types) rather than from another compiler.
+//
+// Role: ONE door that reads a type wherever a type may stand -- receiver,
+// parameter, result -- plus the bracket run of type parameters. Which
+// qualifier is legal WHERE is not decided here: the parser reads the
+// language, the checker judges the subset (plan 9.4).
+// Used by: parse/parse.nv (fn and type declarations).
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py.
+//
+// Split out of parse.nv on 2026-08-17 when that file crossed the thousand-line
+// line (decision 12 / P13): the type reader grew with the grammar wave --
+// qualifiers, pointers, slices, tuples, fn types -- and it is a self-contained
+// question.
+
+module novac.parse
+
+
+import ../lex.{Token, TokenKind, paren_delta, bracket_delta}
+import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
+
+/// A type REFERENCE as it appears in a signature: `int`, `Vec[T]`, `[]T`,
+/// `[]Vec[T]`. Returns the leaves and bracket runs it consumed, or an empty
+/// list if the cursor is not on a type.
+///
+/// It exists because the receiver of a method is not always an identifier.
+/// Measured on std 2026-08-17: NINETY declarations use `fn[T] ...`, sixteen of
+/// them with a slice receiver (`export fn[T] []T @map[U]`), across ten files.
+/// The parser read `fn` and demanded an identifier, so every one of those
+/// signatures fell into the junk bucket and harvest never saw it -- the
+/// method table was missing them and calls got "no such method", which is a
+/// refusal that names the wrong cause.
+fn Cursor mut @type_ref() -> []Node {
+    mut out = []Node.new()
+    // EVERY qualifier is read HERE, in every position, and WHICH of them is
+    // legal WHERE is the checker's judgement (owner 2026-08-17; it is plan 9.4
+    // applied -- the parser reads the language, the subset lives in check).
+    // A "where am I" parameter on this door was the alternative and was not
+    // taken: it would hold the same knowledge in two places and turn a
+    // misplaced qualifier into a parse failure instead of a named refusal.
+    //
+    // The positions, for the judge: a RECEIVER takes no leading qualifier, a
+    // PARAMETER may take `mut` or `consume`, a RESULT may take `ro`.
+    // Only `ro` and `mut` stand in TYPE position. `consume` is a parameter
+    // MODE and goes before the NAME (`fn take(consume v int)`); `uninit` is
+    // not a type qualifier either. Measured 2026-08-17 after the owner
+    // challenged an earlier table of mine that said otherwise: with the
+    // parameter actually USED, `v consume int` is "expected type, got
+    // `consume`" and `v uninit int` is E_UNSAFE_T_READ_REQUIRES_WRAP. My
+    // first measurement had the parameter unused and a grep that swallowed
+    // the error -- a probe that does not use what it declares proves less
+    // than it looks.
+    ro q = @peek()
+    ro is_qual = q == TokenKind.KwRo || q == TokenKind.KwMut
+    if is_qual {
+        out.push(@take())
+    } else {
+        // An unqualified type reference (`int`, `Vec[T]`). The qualifier is a
+        // leaf when it is written and nothing when it is not -- the checker
+        // reads mutability off the leaves, so a default leaf would be a lie.
+    }
+    // A POINTER type: `*T` and `*mut T` -- std writes `mut data *mut T`,
+    // `ptr *u8`, `-> *mut T`. The pointee goes through this same door, so
+    // `*mut []T` and `*Vec[T]` need no second rule.
+    if @peek() == TokenKind.Star {
+        out.push(@take())
+        out.append(@type_ref())
+        return out
+    } else {
+        // Not a pointer: the shapes below answer.
+    }
+    // Slice prefixes, possibly stacked: `[][]int`.
+    while @peek() == TokenKind.EmptyBrackets { out.push(@take()) }
+    // A function type: `fn(int, str) -> bool`. The parameter list is a
+    // balanced paren run -- the types inside are read by the same door when
+    // the checker walks them, so nothing is lost by taking the run whole.
+    if @peek() == TokenKind.KwFn {
+        out.push(@take())
+        if @peek() == TokenKind.LParen {
+            mut depth = 0
+            while !@at_eof() {
+                // ONE peek, ONE decision about the depth (as in @generics).
+                ro k = @peek()
+                ro delta = paren_delta(k)
+                depth += delta
+                out.push(@take())
+                if depth == 0 { break }
+            }
+        } else {
+            // A bare `fn` with no parameter list is not a function type. The
+            // keyword leaf is already in `out`; refusing what follows is the
+            // caller's grammar, not this reader's job.
+        }
+        if @peek() == TokenKind.Arrow {
+            out.push(@take())
+            out.append(@type_ref())
+        } else {
+            // No arrow: the function type yields unit, and unit is written by
+            // omission in Nova -- there is no result part to read.
+        }
+        return out
+    }
+    // A tuple type: `(int, str)`. Same balanced-run reasoning.
+    if @peek() == TokenKind.LParen {
+        mut depth = 0
+        while !@at_eof() {
+            // ONE peek, ONE decision about the depth (as in @generics).
+            ro k = @peek()
+            ro delta = paren_delta(k)
+            depth += delta
+            out.push(@take())
+            if depth == 0 { break }
+        }
+        return out
+    }
+    if @peek() == TokenKind.Ident {
+        out.push(@take())
+        if @peek() == TokenKind.LBracket {
+            out.push(@generics())
+        } else {
+            // A plain named type (`int`, `Token`): no argument list was
+            // written, so none is invented.
+        }
+    } else {
+        // Not on a type at all, and the EMPTY list is the answer (see the doc
+        // above): the caller knows whether a type was required and refuses
+        // with the right name for its own place.
+    }
+    out
+}
+
+/// The type-parameter list `[T]` / `[K, V]` after a fn or a type name.
+///
+/// The subset does not COMPILE generics yet (E2-b2), but the parser must
+/// still see them, and the reason is a lie it told until this wave: `[` was
+/// not a signature token, so all of `[T](x T) -> T` fell into the junk
+/// bucket, the RetType node was never built, and the refusal read "fn
+/// requires a declared return type" -- about a signature that declares one.
+/// A parser that cannot NAME a construct forces every later pass to guess,
+/// and the guess is reported to the user as the cause. Reading the list is a
+/// balanced-bracket walk; refusing it by name is honest; and E2-b2 finds the
+/// node already in the tree instead of starting with a grammar change.
+fn Cursor mut @generics() -> Node {
+    mut kids = []Node.of(@take()) // '['
+    mut depth = 1
+    while depth > 0 && !@at_eof() {
+        // ONE subject -- the bracket depth -- so ONE decision, and ONE peek
+        // per token instead of two. A match over TokenKind is not open here
+        // (fifty variants, and a wildcard on a closed sum is refused), so the
+        // decision is an expression over the value peeked once.
+        ro k = @peek()
+        ro delta = bracket_delta(k)
+        depth += delta
+        kids.push(@take())
+    }
+    @node(NodeKind.Generics, kids)
+}
+

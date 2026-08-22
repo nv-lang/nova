@@ -1,0 +1,396 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/types — the type interner: THE one door where a type comes into
+// being (architecture, layer map: layer 4; plan 274 section 9.1, stage E2-b1).
+//
+// Donor: rustc `TyCtxt` (interned `Ty`, id equality;
+// `TyKind::Param`/`Infer(TyVar)` as ordinary terms) + Zig `InternPool` (`extra`
+// off/cnt pool for App arguments); rustc `EarlyBinder::instantiate` / `TypeFolder`
+// for `subst` (re-intern only when changed), rustc
+// `TypeVisitableExt::has_param`/`has_infer` for `is_concrete`; Donor: none for the
+// lookup structure — a (kind, head) bucket vector + `next_row` chain, chosen
+// because heads are dense small ints; NOT taken: Zig `InternPool.map` / rustc
+// `InternedSet` full-key hashing, rustc arenas and the query system, the C++
+// template model of partial substitution.
+// Role: layer 4 — the type interner; identity is the id, App/Param/Infer are rows of the same table.
+// Used by: sem since E2-b1 (TypeDef.ty_id); check/type_of and mangle at E2-b1 tail; mono and layout at E2-b2; infer at
+// E2-b3.
+// Guarded by: the interner tests in types_test.nv (identity, subst, concreteness), check-novac-row-fields.py (TyRow
+// fields justified), check-novac-no-alloc-in-lookup.py (reader doors carry #realtime nogc), the ty_id == index assert
+// in sem.collect_types until E2-b2.
+// Nothing here is a copy of the oracle: the oracle has three parallel type
+// representations and none of them is a key (П25).
+//
+// What a type IS here: a term over a small closed set of kinds. `Ty` is an
+// index into the interner's row vector; two structurally equal terms get ONE
+// index by construction, so `a == b` on ids is type equality — the property
+// the whole checker rests on. `Param{index}` and `Infer{vid}` are ordinary
+// rows of the same table (architecture, where real types appear): the
+// case "the real type is known later" is served by substitution, never by a
+// deferred id.
+//
+// Doors, in the П18 sense: `intern` is the ONLY writer; `subst` is the ONLY
+// way a `Param` leaves a type; `is_concrete` is the ONLY question layout is
+// allowed to ask before it starts. The reader doors (`kind_of`, `head_of`,
+// `arg`) allocate nothing.
+//
+// This wave (E2-b1) is ADDITIVE: the interner appears beside the old registry
+// and the old registry becomes its consumer, with the emitted C held
+// byte-identical against the pre-wave snapshot at every step. The registry
+// rows in `sem` will shrink to declarations only in the same wave's tail.
+
+module novac.types
+
+import ../diag.{ice}
+import ../builtins.{TypeKind, TYPE_KIND_COUNT}
+import ../names.{DeclId, raw_decl}
+
+/// One interned type term. VALUE record: rows sit inline in the vector.
+///
+/// The row is a TERM, not a declaration: it knows its head and its
+/// arguments, and nothing about fields, variants or names — those belong
+/// to the declaration the head points at (П22: derived facts are functions
+/// of what is stored, never a second copy on the row).
+export type TyRow value {
+    kind TypeKind /// which term this is; drives the meaning of head_id and the argument range
+    head_id int /// TkPrim: prim ordinal · TkRecord/TkSum/TkApp: DeclId of the head · TkParam: parameter index · TkInfer: variable id
+    arg_off int /// first argument in Interner.args (TkApp only; 0 otherwise)
+    arg_cnt int /// how many arguments (TkApp only; 0 otherwise)
+    next_row TyId /// next row with the SAME kind and head_id, or `no_ty()` — the lookup chain. A row index IS a TyId: the chain walks the same space it stores
+}
+
+/// The interner. Row storage is a flat id-indexed vector of value rows
+/// (IndexVec camp); the argument vectors of all applications live in one
+/// flat pool addressed by off/cnt (same shape as payload_types in sem).
+///
+/// The lookup key is (kind, head_id) → chain of rows; the argument vector is
+/// compared as INTEGERS while walking the chain (П18: a door builds no
+/// strings). Chains are short by nature: they only hold applications of one
+/// head, e.g. Vec[int], Vec[str], Vec[Vec[int]].
+export type Interner {
+    rows []TyRow /// every interned type; a TyId is an index into this vector
+    args []TyId /// argument pool for TkApp rows: type ids, addressed by TyRow.arg_off/arg_cnt
+    heads []TyId /// FIRST row of each (kind, head_id) bucket, or `no_ty()`; see bucket_of
+}
+
+/// THE id of an interned type term -- a row index in `Interner.rows`, and a
+/// TYPE since 2026-08-21 (sub-plan 9.1g.1, wave 1) rather than an `int` with a
+/// suffix. The suffix convention (P19) said which space a number pointed into;
+/// it could not say it to the COMPILER, so a callable row and a type id were
+/// interchangeable at every door that took either.
+///
+/// The interner owns the space, so the interner declares it: this is the module
+/// that hands ids out, and a wrapper declared anywhere else would be a second
+/// authority on what a type id is.
+export type TyId int
+
+/// The index inside, for the vectors this space addresses. The ONE unwrapping
+/// door: `raw_ty` in an expression says "I am indexing", and a reader who sees
+/// it elsewhere is looking at a crossing.
+#realtime nogc
+export fn raw_ty(t TyId) -> int => t as int
+
+/// "No type", as a VALUE of the space rather than a −1 the caller must know.
+/// This replaced `sem.UNKNOWN_TYPE`, which was the same fact spelled as a bare
+/// constant in another module -- two names for one absence.
+#realtime nogc
+export fn no_ty() -> TyId => TyId(-1)
+
+/// Is this an actual type, or the absence? Asked where a hole is legal; the
+/// doors that must not be handed one say so with a `requires`.
+#realtime nogc
+export fn is_ty(t TyId) -> bool => raw_ty(t) >= 0
+
+/// [LEGACY-#TBD-newtype-ro-launder] THE SAME id, rebuilt -- because the oracle
+/// refuses to RETURN a `ro`-bound newtype even when its carrier is a primitive.
+///
+/// Measured 2026-08-21 on a three-line file: `fn pass_int(v int) -> int => v`
+/// compiles, `fn pass_row(r Row) -> Row => r` is `E_READONLY_COERCE`
+/// ("returning a ro-bound source with a non-ro return type would let the
+/// caller's `mut w = f()` write where the source can see it", D246 amendment
+/// [M-ro-launder-via-mut-binding]). For a newtype over `int` there is nothing
+/// to launder: a newtype IS its representation at runtime (zero cost), so the
+/// caller's binding holds an int-sized COPY, exactly as for `int` itself. The
+/// analysis does not peel the newtype to its carrier the way the printer and
+/// the layout do -- so wrapping ANY primitive index space makes `return t`
+/// illegal, and this door is what a wave of wrapping costs until it is fixed.
+///
+/// Reconstruction is free (the C is the same integer), so the cost is the NAME:
+/// this one, greppable, with the reason attached. When the oracle peels the
+/// carrier, every call of this door becomes `t` and the door goes.
+#realtime nogc
+export fn same_ty(t TyId) -> TyId => TyId(raw_ty(t))
+
+/// Number of kinds — bucket arithmetic below needs it as a plain integer.
+fn kind_ordinal(k TypeKind) -> int {
+    match k {
+        TkPrim => 0
+        TkRecord => 1
+        TkSum => 2
+        TkApp => 3
+        TkParam => 4
+        TkInfer => 5
+        TkNewtype => 6
+    }
+}
+
+/// Buckets are (kind, head_id) pairs flattened into one vector: the pool
+/// grows on demand, so a head_id we have not seen simply extends it. Heads
+/// are dense small integers (DeclIds, prim ordinals, param indexes, infer
+/// vids), which is what makes a flat bucket vector the right shape.
+fn bucket_of(k TypeKind, head_id int) -> int => head_id * TYPE_KIND_COUNT + kind_ordinal(k)
+
+/// An empty interner: no rows, no arguments, no buckets.
+export fn Interner.new() -> Interner =>
+    { rows: []TyRow.new(), args: []TyId.new(), heads: []TyId.new() }
+
+/// The head row of a bucket, or -1. Read-only door; grows nothing.
+#realtime nogc
+fn Interner @head_of_bucket(b int) -> TyId {
+    if b >= @heads.len() { return no_ty() }
+    @heads[b]
+}
+
+/// Do the arguments of row `r` equal `want`? Integer compares, no allocation.
+#realtime nogc
+fn Interner @args_equal(r TyId, want []TyId) -> bool {
+    ro row = @rows[raw_ty(r)]
+    if row.arg_cnt != want.len() { return false }
+    // Slices compare as values -- std does the walk, and a view costs nothing
+    // (owner 2026-08-17). The hand-written loop said the same thing in four
+    // lines and hid that this is one comparison.
+    @args[row.arg_off..row.arg_off + want.len()] == want
+}
+
+/// THE ONE WRITER. Intern a term: return the existing row for a
+/// structurally equal term, or push a new one. Every other constructor
+/// below is a thin wrapper that fixes the kind.
+///
+/// Arguments are copied into the pool ONLY when a new row is created — a
+/// lookup that hits allocates nothing beyond what the caller already built.
+export fn Interner mut @intern(kind TypeKind, head_id int, args []TyId) -> TyId {
+    ro b = bucket_of(kind, head_id)
+    mut r = @head_of_bucket(b)
+    while is_ty(r) {
+        if @args_equal(r, args) { return r }
+        r = @rows[raw_ty(r)].next_row
+    }
+    // not found: push the row and link it at the head of its bucket
+    ro off = @args.len()
+    @args.append(args)
+    ro id = TyId(@rows.len())
+    while @heads.len() <= b {
+        @heads.push(no_ty())
+    }
+    ro prev = @heads[b]
+    @heads[b] = id
+    @rows.push(TyRow { kind, head_id, arg_off: off, arg_cnt: args.len(), next_row: prev })
+    id
+}
+
+/// A primitive by its ordinal in the universe (int, str, bool, f64 …).
+export fn Interner mut @prim(ordinal int) -> TyId => @intern(TypeKind.TkPrim, ordinal, []TyId.new())
+
+/// A nominal record declaration, no arguments applied.
+export fn Interner mut @record(decl_id DeclId) -> TyId => @intern(TypeKind.TkRecord, raw_decl(decl_id), []TyId.new())
+
+/// A nominal sum declaration, no arguments applied.
+export fn Interner mut @sum(decl_id DeclId) -> TyId => @intern(TypeKind.TkSum, raw_decl(decl_id), []TyId.new())
+
+/// A type constructor applied to arguments: Vec[int] is app(vec_decl, [int]).
+/// "No generics" is the empty-argument case of the same door (274.1 section 2b):
+/// there is no separate path for the non-generic world.
+export fn Interner mut @app(decl_id DeclId, args []TyId) -> TyId => @intern(TypeKind.TkApp, raw_decl(decl_id), args)
+
+/// The i-th type parameter of the enclosing declaration.
+/// A NEWTYPE over `under`: a DISTINCT nominal type whose representation is that
+/// type (`type Row int`). The representation rides in the args, exactly as an
+/// application's arguments do -- one pool, one shape, and the door below reads
+/// it back.
+export fn Interner mut @newtype(decl_id DeclId, under TyId) -> TyId =>
+    @intern(TypeKind.TkNewtype, raw_decl(decl_id), []TyId.of(under))
+
+/// A type PARAMETER by its index in the owner's generics (donor: rustc
+/// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
+/// have an id at all.
+export fn Interner mut @param(index int) -> TyId => @intern(TypeKind.TkParam, index, []TyId.new())
+
+/// A fresh inference variable. Distinct vids never merge here — union-find
+/// lives in `infer`, and it maps vids to types, it does not re-intern them.
+export fn Interner mut @infer(vid int) -> TyId => @intern(TypeKind.TkInfer, vid, []TyId.new())
+
+// ---- reader doors: allocate nothing -----------------------------------------
+
+/// The kind of a type; an id outside the table is an ice, never a default.
+/// (History: 2026-08-16 this was a FREE function working around bug 696 -- an
+/// exported method returning a sum made the oracle attach a variant of
+/// ANOTHER module's sum to the wrong table; fixed in c52350831, the method
+/// form is back the same day.)
+#realtime nogc
+export fn Interner @kind_of(t TyId) -> TypeKind
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: kind_of asked for a type id outside the interner"
+{
+    @rows[raw_ty(t)].kind
+}
+
+/// The head of a type: DeclId for nominal kinds, ordinal for a primitive,
+/// index for a parameter, vid for an inference variable.
+#realtime nogc
+fn Interner @head_of(t TyId) -> int
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: head_of asked for a type id outside the interner"
+{
+    @rows[raw_ty(t)].head_id
+}
+
+/// THE PRIMITIVE'S ORDINAL -- the head of a `TkPrim` term, and the one thing a
+/// primitive's head is.
+///
+/// WAVE B7 SPLIT `head_of` INTO DOORS, one per kind that HAS a reader. The field
+/// is polymorphic by kind (a prim ordinal, a DeclId, a parameter slot, an
+/// inference vid), so a single `head_of` handed every caller a number and left it
+/// to remember which of the four it was holding. That is the same shape as
+/// `Def.payload` and `CalleeRef.target_row`, with one difference that decides the
+/// cure: inside the interner the field is a HASH KEY (`bucket_of` multiplies it),
+/// so it cannot become a sum without turning the lookup into a match. The row
+/// keeps its word; the READERS get names.
+///
+/// Doors exist for the kinds that are actually asked about -- primitive ordinal,
+/// declaration, parameter slot. `TkInfer`'s vid has no reader, so it has no door:
+/// three callerless doors were deleted this session, and adding a fourth "for
+/// symmetry" is the habit that produced them.
+#realtime nogc
+export fn Interner @prim_ordinal_of(t TyId) -> int
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: prim_ordinal_of asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        TkPrim => row.head_id
+        TkRecord | TkSum | TkApp | TkNewtype =>
+            ice("types: the prim ordinal of a NOMINAL term -- its head is a declaration")
+        TkParam => ice("types: the prim ordinal of a type PARAMETER -- its head is a slot index")
+        TkInfer => ice("types: the prim ordinal of an inference variable -- its head is a vid")
+    }
+}
+
+/// THE PARAMETER SLOT -- the head of a `TkParam` term, and what a substitution
+/// indexes with.
+#realtime nogc
+export fn Interner @param_slot_of(t TyId) -> int
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: param_slot_of asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        TkParam => row.head_id
+        TkPrim => ice("types: the parameter slot of a PRIMITIVE -- its head is a universe ordinal")
+        TkRecord | TkSum | TkApp | TkNewtype =>
+            ice("types: the parameter slot of a NOMINAL term -- its head is a declaration")
+        TkInfer => ice("types: the parameter slot of an inference variable -- its head is a vid")
+    }
+}
+
+/// THE DECLARATION a nominal term names -- `head_of` typed as what it means.
+///
+/// `head_id` is polymorphic by kind (a prim ordinal, a parameter index, an
+/// inference vid, a DeclId), so the crossing is CHECKED here instead of implicit:
+/// only the nominal kinds carry a declaration, and the other three say so.
+#realtime nogc
+export fn Interner @decl_head_of(t TyId) -> DeclId
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: decl_head_of asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        // The NOMINAL kinds are one case, not four: each of them names a
+        // declaration, and that is the whole rule.
+        TkRecord | TkSum | TkApp | TkNewtype => DeclId(row.head_id)
+        // The other three are three DIFFERENT things, so they stay three arms:
+        // the refusal names WHAT was found instead of a declaration.
+        TkPrim => ice("types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
+        TkParam => ice("types: a type PARAMETER names no declaration -- its head is a slot index")
+        TkInfer => ice("types: an inference variable names no declaration -- its head is a vid")
+    }
+}
+
+/// How many arguments an application carries (0 for every other kind).
+#realtime nogc
+export fn Interner @arg_count(t TyId) -> int
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: arg_count asked for a type id outside the interner"
+{
+    @rows[raw_ty(t)].arg_cnt
+}
+
+/// The i-th argument of an application. Out of range is an ice.
+#realtime nogc
+export fn Interner @arg(t TyId, i int) -> TyId {
+    ro row = @rows[raw_ty(t)]
+    assert(i >= 0 && i < row.arg_cnt, "types: application argument index out of range")
+    @args[row.arg_off + i]
+}
+
+/// Does the type contain no Param and no Infer anywhere? This is THE
+/// question layout and the C-name door ask before they start
+/// (architecture, layout): a type that fails it has no size and no name
+/// yet, and asking anyway is the bug the assert exists to catch.
+#realtime nogc
+export fn Interner @is_concrete(t TyId) -> bool {
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        TkPrim => { return true }
+        TkRecord => { return true }
+        TkSum => { return true }
+        TkParam => { return false }
+        TkInfer => { return false }
+        // A NEWTYPE is concrete exactly when its representation is: the type is
+        // distinct, the layout is the representation's (zero cost).
+        TkNewtype => { return @is_concrete(@args[row.arg_off]) }
+        TkApp => {
+            for i in 0..row.arg_cnt {
+                if !@is_concrete(@args[row.arg_off + i]) { return false }
+            }
+            return true
+        }
+    }
+}
+
+/// THE ONE WAY A PARAM LEAVES A TYPE. Replace Param{i} by args[i], recurse
+/// through applications, and re-intern the result. Total by index: a Param
+/// whose index has no argument is an ice — the caller promised a full
+/// vector, and a partial substitution is exactly the C++-template model of
+/// generics that this project rejects (architecture, substitution).
+///
+/// Who may call: `check` and `mono`. Who may not: the emitter — by the time
+/// it runs, every type it sees is concrete or the layout assert has fired.
+export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
+    ro row = @rows[raw_ty(t)]
+    match row.kind {
+        // `same_ty`, not `t`: see [LEGACY-#TBD-newtype-ro-launder] above.
+        TkPrim => { return same_ty(t) }
+        TkRecord => { return same_ty(t) }
+        TkSum => { return same_ty(t) }
+        TkInfer => { return same_ty(t) }
+        // A NEWTYPE is nominal: its identity does not depend on a
+        // substitution, and its representation cannot mention a parameter
+        // while the subset has no generic newtypes. When it does, the
+        // representation substitutes exactly as an application's arguments do,
+        // and this arm grows the same three lines.
+        TkNewtype => { return same_ty(t) }
+        TkParam => {
+            if row.head_id < 0 || row.head_id >= args.len() {
+                ice("types: subst with a partial argument vector — a Param has no argument")
+            }
+            return args[row.head_id]
+        }
+        TkApp => {
+            mut new_args = []TyId.new()
+            mut changed = false
+            for i in 0..row.arg_cnt {
+                ro a = @args[row.arg_off + i]
+                ro s = @subst(a, args)
+                // A flag that only ever turns on is an expression (P31): the branch
+        // that would say "still equal, nothing changes" carries no work.
+        changed = changed || s != a
+                new_args.push(s)
+            }
+            if !changed { return same_ty(t) }
+            return @intern(TypeKind.TkApp, row.head_id, new_args)
+        }
+    }
+}

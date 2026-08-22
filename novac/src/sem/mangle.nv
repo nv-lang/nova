@@ -1,0 +1,298 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_symbol_mangling` — a symbol name is a deterministic
+// Role: the mangling door — every C identifier is a function of the entity, one-way (П24).
+// Used by: emit_c only (E1+); mono at E2-b2 makes it a function of (decl, args); the shell-freshness guard holds
+// primitives to the ABI.
+// Guarded by: check-novac-mangling-one-way.py (no C name is ever parsed back), check-novac-mangle-fixed-point.sh
+// (primitive spellings match the oracle ABI), check-novac-no-name-hardcode.py.
+// FUNCTION of the entity, computed at the door, never stored and never parsed
+// back; NOT taken: the v0 grammar itself (our names must match nova_rt.h ABI
+// for primitives, so the spelling is the oracle's fixed point, П25).
+// novac/src/sem/mangle — THE mangling door: every C identifier a backend
+// emits for a Nova entity comes from HERE, as a FUNCTION of the entity —
+// never as a stored string (owner's verdict 2026-08-15 on C_VEC_INT_TYPE:
+// a constant per type combination is the first member of an infinite
+// series; the oracle's `Nova_Vec____nova_int*` is the VALUE of a mangling
+// function at one point, and copying values instead of the function is the
+// P1 class — a consumer recomputing a fact — turned into hard-coding it).
+//
+// Reference: rustc_symbol_mangling (v0: a deterministic function of the
+// Instance), Go's types.LinkString. The rules below are the ORACLE'S
+// (fixed point on its emission; primitives spell as nova_rt.h says);
+// check-novac-mangle-fixed-point.sh judges them against the oracle's
+// emission of the probe — the rules are held honest by diff, not by prose.
+//
+// Same module as sem.nv (folder = one module of co-equal files): the
+// door reads the type registry it names.
+
+module novac.sem
+
+import ../diag.{ice}
+import ../builtins.{prim_c_name}
+import ../types.{TyId, no_ty, is_ty, same_ty}
+
+/// The REPRESENTATION of a newtype: the type it is laid out as.
+///
+/// One level, never a chain: `type A B` over `type B int` gives `A` the
+/// representation `B`, and asking again peels the next. Callers that need the
+/// LAYOUT ask through `c_type`, which recurses, so no caller has to know how
+/// deep it goes. The representation rides in the interner's args -- the same
+/// pool an application's arguments use, because it IS an argument of the term.
+export fn representation_of(ctx Ctx, t TyId) -> TyId
+    requires is_ty(t), "mangle: representation asked for `no type`"
+    requires ctx.tys.arg_count(t) == 1, "mangle: a newtype term without exactly one representation argument"
+{
+    // The TERM answers, not the declaration row: the representation is an
+    // argument of the term itself (wave B8 -- before it, this door went through
+    // the declaration table to read a fact the interner already held).
+    ctx.tys.arg(t, 0)
+}
+
+/// The type a value is CARRIED as: newtypes peeled, everything else itself.
+///
+/// A newtype is distinct for RESOLUTION and identical for REPRESENTATION, so the
+/// two questions get two doors: `type_tag` keeps the distinction in a C name,
+/// and this one answers "what does the runtime actually hold". The printer asks
+/// it -- `println(Row(7))` prints 7, which is what the oracle does -- and so
+/// does any consumer that cares about the value rather than the name.
+///
+/// A loop and not one step: `type A B` over `type B int` peels twice.
+export fn carrier_of(ctx Ctx, t TyId) -> TyId {
+    // `same_ty`, not `t`: assigning a `ro`-bound newtype into a `mut` binding is
+    // the same refusal as returning one ([LEGACY-#TBD-newtype-ro-launder]).
+    mut cur = same_ty(t)
+    // Bounded by the number of declarations: each step moves to the
+    // representation of a DIFFERENT declaration, and a cycle among them is a
+    // shape the checker refuses before this door is ever asked.
+    mut steps = 0
+    while steps <= ctx.types.len() {
+        if !is_ty(cur) { return cur }
+        ro is_new = match ctx.tys.kind_of(cur) {
+            TkNewtype => true
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
+        }
+        if !is_new { return cur }
+        cur = representation_of(ctx, cur)
+        steps += 1
+    }
+    ice("mangle: a newtype chain longer than the registry -- a cycle reached the carrier door")
+}
+
+/// C spelling of a type id: primitives by their runtime ABI name (a stored
+/// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
+export fn c_type(ctx Ctx, t TyId) -> str {
+    if is_ty(t) {
+        // THE KIND COMES FROM THE INTERNER (wave B8). It used to come from the
+        // declaration row, which meant every question about a type went through
+        // the declaration table -- and a PRIMITIVE has no declaration to go
+        // through. The row is reached for below only where the NAME is wanted.
+        match ctx.tys.kind_of(t) {
+            TkPrim => { return prim_c_name(ctx.tys.prim_ordinal_of(t)) } // universe fact by ordinal, read off the term
+            TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}*" }
+            TkSum => { return "Nova_${decl_of_ty(ctx, t).name}*" }
+            // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
+            // its C spelling is the representation's -- zero cost, and what the
+            // oracle emits too (`typedef nova_int Nova_Row;` and then a plain
+            // `nova_int` local; measured 2026-08-21). The DISTINCTION lives in
+            // the registry and in `type_tag`, never in the layout.
+            TkNewtype => { return c_type(ctx, representation_of(ctx, t)) }
+            TkApp => { ice("mangle: c_type of an applied type — the instance door arrives with E2-b2") }
+            TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
+            TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
+        }
+    }
+    ice("mangle: type id outside the registry — no silent int default (#652 class)")
+}
+
+/// C name of a user type's struct (no pointer): `Nova_<name>`.
+///
+/// Same door discipline as `c_type`, and it was NOT the same until the
+/// owner's review 2026-08-16: an id outside the registry fell into a bounds
+/// panic instead of an honest `ice`, and the kind was tested by an if
+/// instead of an exhaustive match, so a fourth kind would have been spelled
+/// as a struct in silence (П21).
+export fn c_struct(ctx Ctx, t TyId) -> str {
+    if !is_ty(t) {
+        ice("mangle: struct name asked for `no type`")
+    }
+    match ctx.tys.kind_of(t) {
+        TkPrim => { ice("mangle: a primitive has no struct name") }
+        TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}" }
+        TkSum => { return "Nova_${decl_of_ty(ctx, t).name}" }
+        // Same rule as `c_type`: the STRUCT of a newtype is the
+        // representation's, because that is what it is laid out as.
+        TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }
+        TkApp => { ice("mangle: struct name of an applied type — the instance door arrives with E2-b2") }
+        TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
+        TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
+    }
+}
+
+/// C name of a sum's tag constant for a variant: `NOVAC_TAG_<Sum>_<Variant>`
+/// (novac's own namespace for user sums — the oracle's NOVA_TAG_ is its).
+export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
+    ro vd = ctx.variant_rows[raw_vrow(vrow)]
+    "NOVAC_TAG_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+}
+
+/// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
+export fn c_maker(ctx Ctx, vrow VariantRow) -> str {
+    ro vd = ctx.variant_rows[raw_vrow(vrow)]
+    "novac_make_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+}
+
+/// The RUNTIME's entry slot. Not ours to choose: the shell calls this exact
+/// symbol, and `check-novac-shell-freshness.sh` holds the pair together.
+const ENTRY_C_NAME = "nova_fn_main_impl"
+
+/// C name of a method call on a receiver type: the oracle's shape is
+/// `<Recv>_method_<name>` where <Recv> is the receiver's C base spelling
+/// (`Nova_str` for str). Only str receivers exist in the subset today; the
+/// rule generalizes with the registry (records: `Nova_<name>`).
+/// The C name of a CALLABLE. ONE scheme for all of them.
+///
+/// Plan 273 says a method IS a function whose first parameter is marked the
+/// receiver, and this door now spells it that way: the receiver is simply
+/// parameter zero, and no `method` appears in the name. What IS special is
+/// not method-ness but ORIGIN -- a symbol we did not choose:
+///   * the entry point answers to the RUNTIME (`nova_fn_main_impl`);
+///   * a callable read from the oracle's declarations answers to the
+///     ORACLE's ABI, and matching it byte for byte is the fixed point that
+///     `check-novac-mangle-fixed-point.sh` holds.
+/// Everything else is ours, and ours carries its PARAMETER TYPES.
+///
+/// The parameters are in the name because overloading is BY parameters:
+/// until 2026-08-19 `fn describe(v int)` and `fn describe(v str)` -- legal
+/// Nova, accepted by the oracle and by novac -- emitted TWO C functions
+/// called `novac_user_describe`. Invalid C from a valid program, and no
+/// diagnostic anywhere (owner's review; the probe is in the wave's commit).
+///
+/// `args` carries the instance key on top (E2-b2): two instantiations of one
+/// generic callable differ in the same name, after the parameters.
+export fn c_callable(ctx Ctx, row FnRow, subst []TyId) -> str
+    requires raw_row(row) >= 0 && raw_row(row) < ctx.fns.rows.len(), "mangle: callable row outside the registry"
+{
+    ro fd = ctx.fns.rows[raw_row(row)]
+    if is_entry_fn(fd) {
+        return ENTRY_C_NAME
+    } else {
+        // Every other callable is named by the scheme below -- INCLUDING an
+        // overload of `main`, which is an ordinary callable: the entry point is
+        // the row whose symbol the runtime dictates, not every row that shares
+        // its spelling (measured 2026-08-22: both rows got this one symbol).
+    }
+    // ONE scheme for every callable of ours. A receiver is parameter zero and
+    // gets no special treatment: plan 273 says a method IS a function whose
+    // first parameter is marked the receiver, so the name has no `method` in it
+    // and no branch on `has_recv`. Overloading is by parameter types (and the
+    // oracle accepts a difference in the return type alone), so both are here.
+    consume s = StringBuilder.new(cap: 64)
+    s.append("novac_fn_")
+    s.append(fd.name)
+    for p in ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt] {
+        s.append("__")
+        s.append(mode_tag(p.mode))
+        s.append(type_tag(ctx, p.type_id, subst))
+    }
+    // The RETURN type belongs in the name too: the oracle accepts two
+    // callables that differ only by it (probed 2026-08-19), so leaving it
+    // out would reopen the collision the parameters just closed. It is
+    // absent only for the -1 sentinel, which is legal for the entry point
+    // alone and answered above.
+    if fd.ret_id >= 0 {
+        s.append("__to_")
+        s.append(type_tag(ctx, fd.ret_id, subst))
+    } else {
+        // No declared return: check refuses this everywhere but `main`,
+        // and `main` never reaches here.
+    }
+    // A generic call carries substitution arguments that may not appear in
+    // the parameter or return types (e.g. a parameterless generic). The
+    // suffix makes `id[int]` and `id[str]` two C functions even when the
+    // parameters already disambiguate — harmless redundancy.
+    for a in subst {
+        s.append("__")
+        s.append(type_tag(ctx, a, subst))
+    }
+    s
+}
+/// The concrete type a declaration's type stands for under a substitution:
+/// `TkParam(i)` becomes `subst[i]`, and every other type is already itself.
+///
+/// THE one door for applying a substitution, and it became one only when a
+/// THIRD caller wanted it: the rule lived here inside `type_tag` and again in
+/// `check` as `Checker.concrete`, which is how one rule starts being two
+/// (P18). `mono` rewrites an instance's parameter and return types with it, so
+/// no backend ever substitutes -- the architecture's own boundary
+/// (novac-architecture.md: a substitution needed in the emitter means mono did
+/// not finish its work).
+export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
+    if !is_ty(t) { return same_ty(t) }
+    match ctx.tys.kind_of(t) {
+        TkParam => {
+            // The parameter's index comes from the interner term, and it
+            // addresses the substitution directly.
+            ro idx = ctx.tys.param_slot_of(t)
+            assert(idx >= 0 && idx < subst.len(),
+                "mangle: a type parameter outside the substitution — a generic asked without one")
+            return subst[idx]
+        }
+        // Every other kind is already a type: a substitution has nothing to
+        // rewrite in it. Named one by one rather than through a wildcard --
+        // a new kind must come here and say what it does (P21).
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype => {}
+    }
+    // `same_ty`, not `t`: [LEGACY-#TBD-newtype-ro-launder].
+    same_ty(t)
+}
+
+/// The MODE of a parameter, inside a C name.
+///
+/// A parameter's mode is an axis of OVERLOADING (P14), so two callables of one
+/// name differing only by a mode are two C functions -- and until 2026-08-21
+/// they were one: `fn tag(c Cel)` beside `fn tag(mut c Cel)` emitted
+/// `novac_fn_tag__Cel__to_nova_int` twice and clang refused the unit. The same
+/// class the parameter TYPES closed on 2026-08-19, one axis later.
+///
+/// `ro` is UNMARKED on purpose: it is the default of the language, so every
+/// name of mode-free code is exactly what it was, and no baseline moves for a
+/// change that does not concern it.
+///
+/// Letters, not the language's words: the C name is OURS (274 section 7.0), and
+/// the spelling of a mode belongs to `builtins` alone (P5). `m_`/`c_` are
+/// fragments this door invents, like `__to_`.
+#realtime nogc
+fn mode_tag(m ParamMode) -> str => match m {
+    ModeRo => ""
+    ModeMut => "m_"
+    ModeConsume => "c_"
+}
+
+/// An identifier-safe tag for a type, for use INSIDE a C name.
+///
+/// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
+/// star is not a letter. The tag answers a different question -- "which type is
+/// this, spelled so it can sit in an identifier" -- and the two must not be
+/// conflated, or the first pointer instance emits a name C refuses to parse.
+///
+/// `subst` is the substitution of the declaration's type parameters: when a
+/// parameter is `TkParam` with index `i`, `subst[i]` is the concrete type.
+/// Empty for every ordinary callable.
+fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
+    requires is_ty(t), "mangle: type_tag of `no type`"
+{
+    match ctx.tys.kind_of(t) {
+        TkPrim => prim_c_name(ctx.tys.prim_ordinal_of(t))
+        // A record and a sum are named the same way: one case.
+        TkRecord | TkSum => decl_of_ty(ctx, t).name
+        // The newtype's OWN name, never the representation's: `f(Row)` and
+        // `f(int)` are two callables, and the C name is what keeps them apart.
+        TkNewtype => decl_of_ty(ctx, t).name
+        TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
+        // A type parameter resolved through the substitution -- by the ONE
+        // door that applies one, so the mangler and mono cannot disagree about
+        // what `T` stands for.
+        TkParam => type_tag(ctx, subst_type(ctx, t, subst), subst)
+        TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
+    }
+}

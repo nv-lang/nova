@@ -1,0 +1,399 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_parse `expr.rs` -- expression parsing is its own file there
+// too, and for the same reason: the precedence climb and the atom reader
+// are one subject, and the item readers do not touch them.
+//
+// Role: EXPRESSIONS -- the precedence table, the climbing loop, the postfix
+//   chain, `match`, constructor fields, and the atom reader.
+// Used by: parse.nv (statements and signatures ask for an expression),
+//   decls.nv indirectly through the block reader.
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py,
+//   check-novac-doc-language.py.
+//
+// Split out of parse.nv on 2026-08-18, when the expression batch of S9.4a
+// pushed that file past a thousand lines for the second time in two days.
+
+module novac.parse
+
+import ../lex.{Token, TokenKind, brace_delta}
+import ../tree.{Node, NodeKind, BinOp, is_binop, bin_op_of, is_unop}
+
+
+/// Binding power of a binary operator: the DECISION decides, not the token.
+///
+/// The numbers ARE the spec's precedence table (03-syntax, the operator
+/// precedence hierarchy): levels 12, 11, 6 of it, and the range level 2.
+/// The match is exhaustive on purpose -- a new operator does not compile
+/// until this table says where it binds, which is the property the old
+/// token-keyed if-chain could not have.
+fn binding_power(op BinOp) -> int {
+    match op {
+        Mul | Div | Modulo => 12
+        Add | Sub => 11
+        ShiftLeft | ShiftRight => 10
+        BitAnd => 9
+        BitXor => 8
+        BitOr => 7
+        Less | LessEq | Greater | GreaterEq => 6
+        Equal | NotEqual => 5
+        AndAlso => 4
+        OrElse => 3
+        Range => 2
+    }
+}
+
+/// Parse an expression -- precedence climbing (Pratt 1973; the shape rustc
+/// spells `parse_expr_assoc_with` and Go spells `binaryExpr(prec)`).
+///
+/// WHAT THIS REPLACED, and why it was a defect rather than a subset limit
+/// (owner asked 2026-08-16; recorded as 274.3/F18 when it was found). The
+/// first parser built a FLAT left-associative chain over every operator, so
+/// `1 + 2 * 3` parsed as `(1 + 2) * 3` and the emitted C computed 9 where
+/// the language says 7. Nothing above the parser could repair it: by the
+/// time check or the emitter sees the tree, the grouping is already wrong,
+/// and both faithfully emit the wrong answer. A wrong number is not a
+/// subset boundary -- the subset may REFUSE a form, never mis-compute it.
+///
+/// `..` is non-associative in the table: `a .. b .. c` is not a Nova
+/// expression, so after one range operator the loop stops rather than
+/// chaining, and the leftover `..` is refused by the caller's grammar.
+fn Cursor mut @expr() -> Node => @expr_bp(1)
+
+/// The climbing loop: consume operators whose binding power is at least
+/// `min_bp`, and parse their right side at `bp + 1` (left associativity).
+fn Cursor mut @expr_bp(min_bp int) -> Node {
+    mut left = @primary()
+    // A CAST binds looser than the postfix chain and tighter than every binary
+    // operator: `s.len() as u8 + 1` is `((s.len() as u8) + 1)`. Its right side
+    // is a TYPE, so it goes through the type door and not through @expr.
+    while @peek() == TokenKind.KwAs {
+        mut ck = []Node.of(left, @take())
+        ck.append(@type_ref())
+        left = @node(NodeKind.Cast, ck)
+    }
+    while is_binop(@peek()) {
+        ro bp = binding_power(bin_op_of(@peek()))
+        if bp < min_bp { return left }
+        ro op = @take()
+        // Non-associative range: its right side must not swallow another
+        // `..`, so it is parsed one level ABOVE its own power, like every
+        // left-associative operator -- and then the loop refuses to take a
+        // second `..` at the same level.
+        ro right = @expr_bp(bp + 1)
+        left = @node(NodeKind.Bin, []Node.of(left, op, right))
+        if bp == 2 { return left }
+    }
+    left
+}
+
+/// The type arguments of an explicit instantiation: `[T, U]` as a Generics
+/// node, brackets and commas kept as leaves (the tree is lossless).
+///
+/// The SAME node kind a declaration uses for its type parameters, so both ends
+/// of the mapping read the same shape — one question, one answer.
+fn Cursor mut @turbofish() -> Node {
+    mut gk = []Node.of(@take())            // '['
+    while !@at_eof() && @peek() != TokenKind.RBracket {
+        ro before = @i
+        gk.append(@type_ref())
+        @push_if(gk, TokenKind.Comma)
+        if @i == before {
+            // Nothing was consumed: keep the byte so the tree stays lossless
+            // and let check refuse the form with a position.
+            gk.push(@take())
+        } else {
+            // A type argument was read; the loop moves on.
+        }
+    }
+    @push_if(gk, TokenKind.RBracket)
+    @node(NodeKind.Generics, gk)
+}
+
+/// Parse an atom with its postfix chain: `.method(args)` and `.field`.
+///
+/// A PREFIX operator binds tighter than any binary one (spec level 14) and
+/// nests right-associatively: `!!b`, `-(-x)`, `~~n`. A minus in front of a
+/// numeric literal keeps its older, narrower shape (the literal carries it,
+/// so the emitted constant stays one token) -- everything else becomes a
+/// Unary node.
+fn Cursor mut @primary() -> Node {
+    if is_unop(@peek()) && !@minus_before_literal() {
+        mut kids = []Node.of(@take())
+        kids.push(@primary())
+        return @node(NodeKind.Unary, kids)
+    }
+    mut e = @atom()
+    // Postfix loop: `.name(args)` chains left-to-right — `s.trim().len()`
+    // nests MethodCall inside MethodCall; a dot WITHOUT a call is field
+    // access (E2-records). Both are subset forms now; check judges the
+    // method name against the one subset table.
+    while @peek() == TokenKind.Dot {
+        mut kids = []Node.of(e, @take()) // recv, '.'
+        @push_if(kids, TokenKind.Ident)
+        if @peek() == TokenKind.LParen {
+            kids.push(@take())
+            @call_args(kids)
+            e = @node(NodeKind.MethodCall, kids)
+        } else {
+            e = @node(NodeKind.FieldAccess, kids)
+        }
+    }
+    e
+}
+
+/// `match scrutinee { arm* }` — an arm is `pattern [if guard] => expr`.
+/// Patterns of the subset: int literal · binder ident (`_` included — the
+/// emitter treats any binder named `_` as bindless) · `Variant(b1, b2)`.
+/// Arm separators are newlines (D452 land); the tree does not care — arms
+/// run to the closing brace, lossless either way.
+fn Cursor mut @match_expr() -> Node {
+    mut kids = []Node.of(@take()) // KwMatch
+    kids.push(@head_expr())       // scrutinee: `match s {` — brace is the body
+    @push_if(kids, TokenKind.LBrace)
+    while !@at_eof() && @peek() != TokenKind.RBrace {
+        ro before = @i
+        mut ak = []Node.new()
+        // pattern
+        if @peek() == TokenKind.IntLit {
+            ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
+        } else if @peek() == TokenKind.EmptyBrackets {
+            // The empty array pattern is one token now.
+            ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
+        } else if @peek() == TokenKind.LBracket {
+            // Array pattern: `[]` (empty) or `[b1, b2, ..]` (prefix binders
+            // + optional rest). Leaves in order; the emitter reads binders
+            // as Ident leaves and `..` as the rest marker.
+            mut pk = []Node.of(@take())
+            while !@at_eof() && @peek() != TokenKind.RBracket {
+                if @peek() == TokenKind.Ident || @peek() == TokenKind.DotDot {
+                    pk.push(@take())
+                } else {
+                    pk.push(@node(NodeKind.Err, []Node.of(@take())))
+                }
+                @push_if(pk, TokenKind.Comma)
+            }
+            @push_if(pk, TokenKind.RBracket)
+            ak.push(@node(NodeKind.Pattern, pk))
+        } else if @peek() == TokenKind.Ident {
+            mut pk = []Node.of(@take())
+            // A record-form variant in PATTERN position: `Circle { radius }`.
+            // D54 (#719) makes this the only legal way to destructure such a
+            // variant -- the positional form is refused by the oracle since
+            // 2026-08-17 -- so the parser must know the brace shape to let
+            // the checker say anything about either.
+            if @peek() == TokenKind.LBrace {
+                mut depth = 0
+                while !@at_eof() {
+                    depth += brace_delta(@peek())
+                    pk.push(@take())
+                    if depth == 0 { break }
+                }
+            } else {
+                // Not a record-form pattern: the paren form below answers.
+            }
+            if @peek() == TokenKind.LParen {
+                pk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    pk.push(@take())
+                    @push_if(pk, TokenKind.Comma)
+                }
+                @push_if(pk, TokenKind.RParen)
+            } else {
+                // A bare identifier pattern: a binder (`_` included) or a
+                // payload-less variant. The two are told apart by the names
+                // table, not by the parser -- both are one leaf here.
+            }
+            ak.push(@node(NodeKind.Pattern, pk))
+        } else {
+            // Recovery: one Err, one token, keep the arm loop advancing.
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
+            continue
+        }
+        if @peek() == TokenKind.KwIf {
+            mut gk = []Node.of(@take())
+            gk.push(@expr())
+            ak.push(@node(NodeKind.Guard, gk))
+        } else {
+            // An unguarded arm. The absent Guard node is how `Some(x) =>` is
+            // told from `Some(x) if x > 0 =>`; a guard standing for "always
+            // true" would erase the difference exhaustiveness needs.
+        }
+        @push_if(ak, TokenKind.FatArrow)
+        ak.push(@expr())
+        // One-line arms are separated by a COMMA (D452); multi-line arms by
+        // the newline alone, which is trivia to this lexer. Both shapes
+        // therefore arrive here identically and the comma is taken when it
+        // was written. The one-line form is legal Nova -- measured against
+        // the oracle after a doc comment of mine claimed the opposite.
+        @push_if(ak, TokenKind.Comma)
+        kids.push(@node(NodeKind.MatchArm, ak))
+        if @i == before { break }
+    }
+    @push_if(kids, TokenKind.RBrace)
+    @node(NodeKind.MatchExpr, kids)
+}
+
+/// Constructor field list after the opening brace: `name: expr`, punning
+/// `name`, spread `...expr` — comma-separated; the closing brace ends it.
+fn Cursor mut @ctor_fields(mut kids []Node) -> () {
+    while !@at_eof() && @peek() != TokenKind.RBrace {
+        ro before = @i
+        if @peek() == TokenKind.Ellipsis {
+            mut sk = []Node.of(@take())
+            sk.push(@expr())
+            kids.push(@node(NodeKind.CtorSpread, sk))
+        } else if @peek() == TokenKind.Ident {
+            mut fk = []Node.of(@take())
+            if @peek() == TokenKind.Colon {
+                fk.push(@take())
+                fk.push(@expr())
+            } else {
+                // Field punning `{ x }`: the value is the binding of the same
+                // name, and the CtorField of one leaf is exactly that form.
+                // Writing the name out twice would forge source bytes.
+            }
+            kids.push(@node(NodeKind.CtorField, fk))
+        } else {
+            // Recovery inside a constructor: one Err, one token, advance.
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
+        }
+        @push_if(kids, TokenKind.Comma)
+        if @i == before { break }
+    }
+    @push_if(kids, TokenKind.RBrace)
+}
+
+/// Parse a literal, match, array/record constructor, call or name; recover otherwise.
+fn Cursor mut @atom() -> Node {
+    if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit {
+        return @node(NodeKind.Lit, []Node.of(@take()))
+    }
+    if @peek() == TokenKind.Minus {
+        // Unary minus on a numeric literal only (`describe(-3)`); anything
+        // else after `-` recovers as Err through the literal branch below.
+        mut kids = []Node.of(@take())
+        if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit {
+            kids.push(@take())
+            return @node(NodeKind.Lit, kids)
+        }
+        return @node(NodeKind.Err, kids)
+    }
+    if @peek() == TokenKind.LParen {
+        // A parenthesised expression: grouping is how a program overrides
+        // precedence, so a table of precedences without it is only half a
+        // grammar (found while adding the operator set, 2026-08-16). The
+        // parens stay in the tree as leaves -- the tree is lossless -- and
+        // every consumer sees through them to the one expression inside.
+        //
+        // Inside the parens the head restriction is LIFTED (274.3/F23): the
+        // rule exists because `if x {` must read `{` as the body, and inside
+        // brackets there is no such ambiguity -- `if take(P { x: 1 }) > 0 {`
+        // is unambiguous and used to cost four diagnostics. Go does exactly
+        // this (exprLev is restored inside parentheses).
+        ro saved = @no_ctor
+        @no_ctor = false
+        mut kids = []Node.of(@take())
+        kids.push(@expr())
+        if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+        @no_ctor = saved
+        return @node(NodeKind.Paren, kids)
+    }
+    if @peek() == TokenKind.KwMatch { return @match_expr() }
+    // `if` in VALUE position. Read with the same pieces as the statement, kept
+    // under its own kind: the emitter writes the statement directly and needs a
+    // temporary for the expression, so conflating them would emit silence.
+    if @peek() == TokenKind.KwIf {
+        mut kids = []Node.of(@take())
+        kids.push(@head_expr())
+        if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing()) }
+        if @peek() == TokenKind.KwElse {
+            kids.push(@take())
+            if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing()) }
+        } else {
+            // No else: an `if` used as a value without one is a mistake check
+            // names, and the absent node is what lets it see the absence.
+        }
+        return @node(NodeKind.IfExpr, kids)
+    }
+    // `@field` -- the receiver's own field inside a method body.
+    if @peek() == TokenKind.At && @peek(skip: 1) == TokenKind.Ident {
+        mut kids = []Node.of(@take())
+        kids.push(@take())
+        return @node(NodeKind.SelfField, kids)
+    }
+    // `[]int.of(1, 2)` starts with the ONE-token `[]` since 2026-08-17; the
+    // non-empty literal still opens with a bare `[`. Both are array literals
+    // and both enter here.
+    if @peek() == TokenKind.EmptyBrackets {
+        return @node(NodeKind.ArrayLit, []Node.of(@take()))
+    }
+    if @peek() == TokenKind.LBracket {
+        // Array literal `[e, ...spread, e]` — comma-separated; a spread
+        // element is ArraySpread [Ellipsis, expr].
+        mut kids = []Node.of(@take())
+        while !@at_eof() && @peek() != TokenKind.RBracket {
+            ro before = @i
+            if @peek() == TokenKind.Ellipsis {
+                mut sk = []Node.of(@take())
+                sk.push(@expr())
+                kids.push(@node(NodeKind.ArraySpread, sk))
+            } else {
+                kids.push(@expr())
+            }
+            @push_if(kids, TokenKind.Comma)
+            if @i == before { break }
+        }
+        @push_if(kids, TokenKind.RBracket)
+        return @node(NodeKind.ArrayLit, kids)
+    }
+    if @peek() == TokenKind.LBrace && !@no_ctor {
+        // Anonymous constructor `{ ...p, y: 10.0 }` — the record type comes
+        // from the spread's EXPRESSION. The parser does not name it: naming a
+        // type is the registry's answer, and the spread already carries the
+        // one expression that has it.
+        mut kids = []Node.of(@take())
+        @ctor_fields(kids)
+        return @node(NodeKind.RecordCtor, kids)
+    }
+    if @peek() == TokenKind.Ident {
+        ro name = @take()
+        if @peek() == TokenKind.LBracket {
+            // TURBOFISH: `id[int](7)` — the type arguments of an EXPLICIT
+            // instantiation. The form is unambiguous here: the subset has no
+            // index expression at all (there is no Index node), so a bracket
+            // after a name can only be this. Mandatory by plan 274 E2-b2 —
+            // there is no inference, and the order of the arguments IS the
+            // whole mapping to the declaration's type parameters.
+            mut kids = []Node.of(name, @turbofish())
+            if @peek() == TokenKind.LParen {
+                kids.push(@take())
+                @call_args(kids)
+            } else {
+                // No call follows: a bare `id[int]` is not a form of the
+                // subset, and the node keeps what was written so check can
+                // refuse it with a position rather than the parser guessing.
+            }
+            return @node(NodeKind.Call, kids)
+        }
+        if @peek() == TokenKind.LParen {
+            mut kids = []Node.of(name, @take())
+            @call_args(kids)
+            return @node(NodeKind.Call, kids)
+        }
+        if @peek() == TokenKind.LBrace && !@no_ctor {
+            mut kids = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take())
+            @ctor_fields(kids)
+            return @node(NodeKind.RecordCtor, kids)
+        }
+        return @node(NodeKind.Name, []Node.of(name))
+    }
+    // Recovery: an unexpected token — one Err, one token, move on. But a
+    // CLOSING token is not consumed: it belongs to the enclosing form
+    // (274.3/F15). A zero-width Err — the cursor does not move, and the
+    // enclosing loop must notice this (see the non-advancement guard in
+    // block/args).
+    if is_terminator(@peek()) {
+        return @node(NodeKind.Err, []Node.of(@missing()))
+    }
+    @node(NodeKind.Err, []Node.of(@take()))
+}

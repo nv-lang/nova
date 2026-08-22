@@ -1,0 +1,960 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt` (the pass that types a body and WRITES its results
+// into per-body side tables) and Go `types2.Checker` walking statements with
+// one receiver holding the scope; rustc `Rib` for "a block is a frame you
+// push and pop" (taken as an undo trail, not a chain of tables, so the name
+// door stays one integer lookup); Donor: none for the mirroring rule -- that
+// this walk records exactly what the emitter asks, node for node, is an
+// E2-b1 decision so that "the corpus behaves identically" is a property of
+// construction rather than of luck; NOT taken: rustc `InferCtxt` and its
+// unification (E2-b3), Go `types2` block-scoped Scope objects.
+// Role: layer 7's writing half — the pass that types a clean file and publishes the channel.
+// Used by: check (the subset walk calls it once the verdict is clean); nothing else may call it — the channel is the
+// interface.
+// Guarded by: check-novac-no-silent-skip.py (no branch decides nothing), check-novac-channel-one-writer.py (only this
+// module writes the channel), check-novac-match-exhaustive.py (every sum answered), check-novac-file-size.py (this file
+// exists because check.nv crossed 1000 lines).
+// novac/src/check/typing.nv — the typing walk and the lattice it uses.
+//
+// Split out of check.nv when that file crossed the thousand-line limit
+// (2026-08-16). The seam is honest rather than arithmetic: check.nv judges
+// the SHAPE of a file against the subset, this file decides its TYPES and
+// records them. Both are the same module (a folder is one module of co-equal
+// files), so `Checker` and its state are shared without exporting anything.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice}
+import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow}
+import ../types.{TyId, no_ty, is_ty}
+
+// ---- the type channel: what the checker decided ---------------------------
+//
+// The walk below MIRRORS the emitter's demand, node for node and in the same
+// order, and records the answer instead of letting the backend ask later.
+// Mirroring is deliberate and stated: at E2-b1 the channel's job is to move
+// the ANSWER, not to change it, so "the corpus behaves identically" is a
+// property of construction rather than of luck. The total walk over every
+// node (which the LSP needs) arrives with the real checker at E2-b3; until
+// then a node the emitter never asks about carries no entry, and the reader
+// doors are total so that a wrong assumption dies loudly instead of quietly
+// re-deriving.
+//
+// Scope discipline is the emitter's, exactly: one flat Scope per function
+// body, last bind wins, nothing is ever unbound. Block scoping arrives with
+// the real checker; copying today's rule is what keeps the recorded types
+// identical to the computed ones.
+
+/// Every function of the file, in source order.
+fn Checker mut @type_file(file Node) -> () {
+    match file {
+        Leaf(_) => {}
+        Branch { kind, children, .. } => {
+            assert(kind == NodeKind.File, "check: the typing walk was handed a root that is not a File")
+            for c in children {
+                if c.kind_of() != NodeKind.FnDecl { continue }
+                @type_fn(c)
+            }
+        }
+    }
+}
+
+/// Does this declaration bind type parameters of its own?
+///
+/// Asked of the REGISTRY, not of the tree: the collector already read the
+/// declaration, and asking the tree again would be a second answer to one
+/// question (plan 196). A declaration the registry does not know owns no row
+/// and is not generic — the walk then judges it like any other.
+fn Checker @is_generic_decl(f Node) -> bool {
+    match decl_fn_row(f, @ctx) {
+        // No row: this node is not a callable of this file.
+        None => false
+        Some(row) => @ctx.fns.rows[raw_row(row)].tparam_cnt > 0
+    }
+}
+
+/// One function: fresh scope, parameters bound, then the body.
+fn Checker mut @type_fn(f Node) -> () {
+    ro kids = branch_children(f)
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+        return
+    }
+    // A METHOD declaration puts a `Recv` BRANCH where a free function has its
+    // name leaf, and `leaf_text` on a branch is an ice. Until the parser
+    // learned methods (2026-08-17) this was unreachable; the moment it did,
+    // any `fn Account @tag()` in a user file killed the whole check with
+    // "sem: leaf_text on a branch node" -- a crash on correct input, which is
+    // worse than any refusal (P12: a user error leaves through a diagnostic).
+    if declares_receiver(kids) {
+        @report_first_leaf_of(kids, METHOD_DECL_MSG)
+        return
+    } else {
+        // A free function: its body is this walk's business.
+    }
+    // A GENERIC declaration is not typed here. Its body has no types until a
+    // substitution exists, and checking it "in general" would mean a second,
+    // weaker checker standing next to the real one. The body travels through
+    // this same walk once an instance is created with its type arguments
+    // (plan 274 E2-b2, donor: Go stenciling). The SIGNATURE is already
+    // collected, so calls can be resolved and refused by name meanwhile.
+    if @is_generic_decl(f) && @substs.len() == 0 {
+        // SILENT-OK: the body of a generic declaration is typed per
+        // INSTANCE, and this run carries no substitution to type it under.
+        // Its signature is collected already, so nothing is lost --
+        // `check_instance` types the body once per instance (E2-b2).
+        return
+    } else {
+        // Not generic: types are known now, so the walk proceeds.
+    }
+    // The name is the first identifier LEAF, not a fixed index: `fn[T] name`
+    // puts a Generics branch in between. The rule lives in ONE door since
+    // 2026-08-21 -- this walk had it written out, and the emitter needed the
+    // same answer for an instance.
+    ro name = match decl_name_at(kids) {
+        None => {
+            @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+            return
+        }
+        Some(at) => leaf_text(kids[at])
+    }
+    @scope = Scope.new()
+    ro row = match decl_fn_row(f, @ctx) {
+        None => {
+            // SILENT-OK: the registry recorded no row for this
+            // declaration, which means it is malformed, and the subset walk
+            // refused it before this pass ran. There is no row to read
+            // parameter types from, so there is nothing here to type.
+            return
+        }
+        Some(r) => r
+    }
+    // The ROW decides, not the spelling: an overload of `main` binds its
+    // parameters like any other callable. Until 2026-08-22 this read
+    // `name != ENTRY_FN`, so the overload's parameters were never bound and its
+    // body refused its own parameter as an unknown name.
+    if !@ctx.fns.is_entry_row(row) {
+        mut slot = 0
+        for c in kids {
+            if c.kind_of() != NodeKind.Param { continue }
+            ro at = slot
+            slot += 1
+            if @bind_param(branch_children(c), row, at) {
+                // Bound, or a shape this walk does not judge: either way the
+                // next parameter is the next question.
+            } else {
+                // SILENT-OK: the refusal was already reported one call deeper.
+                // `@bind_param` answers false ONLY after `@refuse`, and saying
+                // it again here would be the cascade no-cascade forbids.
+                return
+            }
+        }
+    } else {
+        // THE entry point takes no parameters, so there is nothing to bind; its
+        // body is typed by the loop below like any other body.
+    }
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Block {
+            @type_block(c)
+        } else if ck == NodeKind.FnExprBody {
+            ro ek = branch_children(c)
+            ro e = ek[ek.len() - 1]
+            if e.kind_of() == NodeKind.MatchExpr {
+                @type_match(e)
+            } else if is_expr_kind(e.kind_of()) {
+                @type_expr(e)
+            } else {
+                // Not an expression tail: the subset walk already refused the
+                // form, so there is no answer for the channel to carry.
+            }
+        } else {
+            // Every other child (name, generics, params, return type) holds no
+            // statement and no expression the emitter will ask about.
+        }
+    }
+}
+
+/// Statements of a block, in order.
+fn Checker mut @type_block(b Node) -> () {
+    ro mark = @scope.mark()
+    for c in branch_children(b) {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => @type_stmt(c)
+        }
+    }
+    @scope.release(mark)
+}
+
+/// The lookup key of a method call: the receiver's type in position ZERO, then
+/// one slot per written argument.
+///
+/// Plan 273 §4.4 fixes the receiver at position zero, so a method call and a
+/// free call build the SAME kind of key and ask the SAME door — the only
+/// difference is that one of them has a position zero to fill. There is no
+/// receiver-shaped path left in resolution (owner, 2026-08-19).
+///
+/// Argument positions are `no_ty()`: `check` walks the tree before local
+/// typing (274.3/C9) and cannot type them yet. ARITY, though, is known here and
+/// discriminates from today — `f()` and `f(a)` stopped being one question.
+fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    // The receiver is parameter zero (plan 273) and carries a CLASS: `mut b`
+    // then `b.m()` selects the `mut @m` overload, which is the precedent the
+    // whole mode axis generalizes from (P14 rule 2).
+    out.push(ArgSpec { type_id: recv_t, cls: arg_class(kids[0], @scope) })
+    out.append(unknown_args(kids, 3, @scope))
+    out
+}
+
+/// One `no_ty()` slot per argument child from `from` on. Children before
+/// `from` are syntax — the callee, or the receiver, the dot and the name — and
+/// a punctuation leaf is no argument.
+fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    mut i = 0
+    for c in kids {
+        if i >= from && is_expr_kind(c.kind_of()) {
+            // The TYPE is what this key leaves unknown -- the CLASS is not: what
+            // an argument IS depends on its shape and its binding, both of which
+            // are known before any typing happens.
+            out.push(ArgSpec { type_id: no_ty(), cls: arg_class(c, scope) })
+        } else {
+            // Syntax, not an argument: the argument cursor stays put while the
+            // child cursor advances.
+        }
+        i += 1
+    }
+    out
+}
+
+
+
+/// One parameter of a declaration: bind its name to its type in the scope.
+///
+/// Answers whether the walk may CONTINUE. A parameter this walk does not judge
+/// — no type declared, or a type that is not a plain identifier — is skipped
+/// with `true`; a type novac does not know is REFUSED, and then the whole
+/// declaration is done, which `false` says.
+///
+/// NAME and TYPE are located by the shared doors, never by index. `pk[0]`/
+/// `pk[1]` read the MODE as the name and the name as the type the moment a
+/// parameter is written `fn take(mut v int)`, and the failure wore a lie for a
+/// face: `int` refused as a type novac does not know.
+fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
+    match param_type_at(pk) {
+        // No type declared: a recovery shape the parse already refused, and
+        // there is nothing here to look up.
+        None => true
+        Some(tat) => @bind_typed_param(pk, tat, row, slot)
+    }
+}
+
+/// This type with the instance's substitution applied: a type PARAMETER becomes
+/// the concrete type standing in its slot, everything else is itself.
+///
+/// ONE place applies a substitution, and since 2026-08-21 it is literally one:
+/// `sem.subst_type`. This method used to carry its own copy of the rule beside
+/// the mangler's, and the copies differed in what they did with a parameter
+/// outside the substitution -- the shape P18 is about. An empty substitution is
+/// the ordinary run over a file, where a parameter cannot appear in a typed
+/// body at all: `type_fn` skips a generic declaration when there is nothing to
+/// substitute.
+fn Checker @concrete(t TyId) -> TyId => subst_type(@ctx, t, @substs)
+
+/// The same parameter, with the slot of its type already located.
+fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> bool {
+    // `param_type_at` locates the type AFTER the name, so a located type means
+    // the name was located too; its absence here is a broken invariant.
+    ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
+    // [LEGACY-#676] var-index-method (until:E3): a method called on `pk[tat]`
+    // with a VARIABLE index takes the CONTAINER as its receiver. Where the
+    // container happens to own a method of the same name the program simply
+    // returns the wrong number and says nothing -- measured 2026-08-18,
+    // `xs[i].len()` answering 1 for `["abc"]`. The intermediate binding is the
+    // whole workaround.
+    ro tnode = pk[tat]
+    ro nnode = pk[nat]
+    if !tnode.is_ident() {
+        return true
+    } else {
+        // A plain identifier stands where the type belongs: it can be resolved.
+    }
+    // FIRST FLOOR for a type novac does not know (owner 2026-08-16, "not all
+    // builtin types are parsed -- does that make sense?"). Its universe is four
+    // primitives; the language has the integer family, f32, char and byte
+    // besides. A `u8` parameter used to pass the shape test, get silently
+    // dropped by the collector, and then die as an ICE -- a compiler-bug
+    // message on valid Nova the oracle accepts. A narrow subset is legitimate;
+    // a subset whose boundary is an ice is not.
+    // The TYPE comes from the ROW, and the substitution is applied to it. The
+    // name was resolved here a second time until 2026-08-20 -- the same second
+    // door the emitter had -- and it answered UNKNOWN for `x T`, refusing a
+    // parameter whose type the registry holds. Position is the mapping: plan
+    // 273 §4.4 fixes the slot.
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro pt = if slot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + slot].type_id) } else { no_ty() }
+    if !is_ty(pt) {
+        match tnode {
+            Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
+            Branch { .. } => {}
+        }
+        return false
+    } else {
+        // A type the registry knows: the name can be bound to it.
+    }
+    // The parameter's own MODE goes into the scope: inside the body `a` of
+    // `fn f(mut a Acc)` IS a mut place, and passing it on must select the mut
+    // overload (P14 rule 2).
+    @scope.bind(leaf_text(nnode), pt, param_mode_at(pk))
+    true
+}
+
+/// One statement. A kind the subset does not know is NOT typed and NOT iced:
+/// the emitter refuses it at its own door, and a second death here would only
+/// move the message.
+fn Checker mut @type_stmt(st Node) -> () {
+    ro k = st.kind_of()
+    if k == NodeKind.Call {
+        @type_call_stmt(st)
+    } else if k == NodeKind.IfStmt || k == NodeKind.WhileStmt {
+        ro kids = branch_children(st)
+        // A head this short is a form the subset walk already REFUSED, and
+        // the refusal is the decision: the channel carries no answer for a
+        // node that will never be emitted. Not a silent skip -- the verdict
+        // exists, it just lives in @out (P17 / no-silent-skip).
+        if kids.len() < 3 {
+            assert(@out.len() > 0, "check: a malformed if/while reached typing with no refusal")
+            return
+        }
+        @type_expr(kids[1])
+        @type_block(kids[2])
+        // The ELSE branch, since the parser learned `else` (2026-08-18).
+        // Typing it is not optional: check passed the file and emit ICEd
+        // with "sem: no type recorded" -- a decision taken by one layer
+        // that never reached the next, which is the very class this
+        // compiler was built to stop repeating.
+        if kids.len() > 4 {
+            ro tail = kids[4]
+            if tail.kind_of() == NodeKind.Block {
+                @type_block(tail)
+            } else {
+                // `else if ...`: a nested if, typed by this same door.
+                @type_stmt(tail)
+            }
+        } else {
+            // No else branch was written.
+        }
+    } else if k == NodeKind.RetStmt {
+        ro kids = branch_children(st)
+        // `return` with no operand carries no value, so there is nothing for
+        // the channel to hold -- a decision, not a skip: the emitter asks the
+        // channel only about expressions, and there is none here.
+        // A bare `return` is a form the parser can produce, so the branch is
+        // live -- and it is not silent: the subset requires every fn but main
+        // to declare a value, so a `return` with no operand is a USER error
+        // and gets a refusal here rather than a quiet exit (P17).
+        if kids.len() < 2 {
+            @report_first_leaf_of(kids, "outside the subset: `return` must carry a value")
+            return
+        }
+        @type_expr(kids[1])
+    } else if k == NodeKind.BindStmt {
+        @type_bind(st)
+    } else if k == NodeKind.AssignStmt {
+        ro kids = branch_children(st)
+        // A malformed assignment was already refused by the subset walk, and
+        // the refusal IS the decision -- asserted so the branch cannot go
+        // quiet if the walk ever stops refusing it (P17).
+        if kids.len() < 3 {
+            assert(@out.len() > 0, "check: a malformed assignment reached typing with no refusal")
+            return
+        }
+        ro before = @out.len()
+        @type_expr(kids[2])
+        // The emitter needs the value's type to pick the form of a
+        // compound assignment (int helper, raw C, or fmod), and it may
+        // only READ it. The MARK, not the file's count: a refusal in an
+        // earlier declaration is not this assignment's business.
+        if @out.len() > before { return }
+        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
+    } else if k == NodeKind.ForStmt {
+        ro kids = branch_children(st)
+        // A head this short was already refused by the subset walk; the same
+        // assertion keeps the branch from going quiet if that ever changes.
+        if kids.len() < 5 {
+            assert(@out.len() > 0, "check: a malformed for head reached typing with no refusal")
+            return
+        }
+        ro range = branch_children(kids[3])
+        if range.len() > 2 {
+            @type_expr(range[0])
+            @type_expr(range[2])
+        } else {
+            // A malformed range was already refused; the body below is still
+            // typed because its statements do not depend on the range's shape.
+        }
+        // The loop variable is bound AFTER the range is typed and BEFORE
+        // the body -- the emitter's order (a range expression cannot see
+        // the variable it defines).
+        ro mark = @scope.mark()
+        // A loop variable is a fresh value each turn, bound read-only.
+        @scope.bind(leaf_text(kids[1]), @ctx.prims.int_id, ParamMode.ModeRo)
+        @type_block(kids[4])
+        @scope.release(mark)
+    } else if is_expr_kind(k) {
+        @type_expr(st)
+    } else {
+        // SILENT-OK: a statement kind outside the subset is refused at the
+        // emitter's door, so this walk has no answer to record for it.
+    }
+}
+/// Decide WHICH row a method call goes to, and record the decision.
+///
+/// Finding C9 of 274.3: the pair (receiver type, method name) was resolved
+/// nowhere -- check asked only whether the name existed in some declaration,
+/// and the emitter rebuilt the C name out of the receiver's type. Two answers
+/// to one question, with the second one winning in silence: exactly the shape
+/// plan 196 spends its waves removing from the current compiler.
+///
+/// Overload sets are NOT narrowed here -- that arrives with E2-b3 and needs
+/// argument types. An overloaded name is refused BY NAME instead of being
+/// guessed, because guessing is how the wrong entry point gets emitted.
+fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
+    if kids.len() < 3 {
+        return
+    } else {
+        // Three children are the receiver, the dot and the name: fewer
+        // than that is a recovery shape check has already refused.
+    }
+    match kids[2] {
+        Branch { .. } => {}
+        Leaf(t) => @judge_method_lookup(e, t,
+            @ctx.fns.lookup(t.text, @method_call_key(kids, recv_t), CallForm.MethodCall))
+    }
+}
+
+/// The whole verdict of one method lookup, in one place: record it, or decline
+/// it BY NAME. THREE outcomes and three answers -- no arm falls through.
+///
+/// `FnOverloaded` was RECORDED here until 2026-08-20, and the justification was
+/// explicit: the spelling of a method discarded parameter types, so whichever
+/// row was picked, the emitted C name was the same. That spelling is gone --
+/// the name is ours and carries the parameter types -- so the pick would decide
+/// the SYMBOL. Measured on `greeting.starts_with("hello")`: with the arguments
+/// untyped (274.3/C9) the walk fitted the `char` overload and emitted its name
+/// for a `str` argument. Narrowing needs argument types (E2-b3); until then the
+/// honest answer is a refusal, because guessing is how the wrong entry point
+/// gets called.
+///
+/// `compiles_body` is the other refusal, and it is the same kind of statement:
+/// novac read the signature of a std method but does not emit its body, so
+/// there is no symbol to call. Owner's decision 2026-08-20 -- refuse by name,
+/// and lower the corpus baseline in the same wave rather than emit C that
+/// cannot link.
+fn Checker mut @judge_method_lookup(e Node, t Token, found FnLookup) -> () {
+    match found {
+        FnUnknown => @refuse(t,
+            "outside the subset: this type has no such method in the declarations novac was handed")
+        FnOverloaded(_) => @refuse(t,
+            "outside the subset: this method name is overloaded and novac does not type arguments yet")
+        FnFound(row) => {
+            if @ctx.fns.compiles_body(row) {
+                // The target carries its OWN row: no unwrap here, and no
+                // `DefKind` beside it. Until 2026-08-21 this line handed the
+                // channel a bare int whose meaning depended on a second
+                // argument -- the pair that made a variant row indistinguishable
+                // from a callable one.
+                @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new())
+            } else {
+                @refuse(t,
+                    "outside the subset: novac read this method's signature but compiles no body for it yet")
+            }
+        }
+    }
+}
+
+/// A println statement: each argument carries its own printer, so each
+/// argument's type is a recorded answer. The callee is not resolved --
+/// println is the subset's one builtin and lives in no registry.
+fn Checker mut @type_call_stmt(call Node) -> () {
+    ro kids = branch_children(call)
+    // SILENT-OK: a statement call that is not println was already refused by
+    // report_if_bad_call_stmt in the subset walk, so this walk has nothing
+    // left to decide about it.
+    if call_callee_text(kids) != PRINT_FN { return }
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit {
+            // A string literal argument goes to the literal pool by SHAPE, not
+            // by type; the emitter never asks its type, and the channel holds
+            // answers, not decoration. A numeric literal does get asked, so
+            // the shape test below is on the literal's own token.
+            if leaf_kind(branch_children(c)[0]) == TokenKind.StrLit { continue }
+            @record(c, type_of(c, @ctx, @scope, @chan))
+        } else if is_expr_kind(ck) {
+            // Children FIRST: the walk is what verifies that every name and
+            // field in this argument exists, and only a verified expression
+            // may be handed to the lattice (whose miss is an ice, not a
+            // diagnostic, until #700).
+            ro before = @out.len()
+            @type_expr(c)
+            // The mark, not the file's count: a refusal in an EARLIER declaration
+            // used to stop this walk too, and `@type_bind` then skipped its
+            // `@scope.bind` -- every later name came out "unknown" (probe
+            // 2026-08-20). The question is about THIS expression.
+            if @out.len() > before { return }
+            ro at = type_of(c, @ctx, @scope, @chan)
+            // The printer set is int/str/bool/f64. Every other primitive is
+            // NAMEABLE (the universe holds all fifteen) but not yet
+            // printable, and that boundary belongs here -- the emitter's ice
+            // for a missing printer must never be the first answer.
+            if !@has_printer(at) {
+                @report_first_leaf_of(branch_children(c), "outside the subset: println covers int, str, bool and f64 today")
+                return
+            }
+            @record(c, at)
+        } else {
+            // Neither a literal nor an expression: the callee leaf and the
+            // punctuation children carry no type the emitter asks for.
+        }
+    }
+}
+
+/// A binding. The initializer's type is decided BEFORE the initializer's own
+/// binders exist -- the emitter's order, kept because changing it would change
+/// which programs compile (a match whose first arm uses its binders is
+/// refused today, and that refusal is a fact of the subset, not an accident
+/// of this walk).
+fn Checker mut @type_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer")
+        return
+    }
+    ro vname = leaf_text(kids[1])
+    ro init = kids[kids.len() - 1]
+    ro ik = init.kind_of()
+    // A plain expression initializer is verified before it is typed. A match
+    // initializer is NOT: the emitter decides its type before the arms bind
+    // their binders, and that order is what makes "a match whose first arm
+    // uses its binders" a refusal of the subset rather than a silent success.
+    if ik != NodeKind.MatchExpr && ik != NodeKind.RecordCtor && is_expr_kind(ik) {
+        ro before = @out.len()
+        @type_expr(init)
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+    } else {
+        // A match or record-ctor initializer is walked BELOW, after its type is
+        // decided; any other form was refused by the subset walk. Neither has
+        // anything to verify here.
+    }
+    // A binding whose initializer mentions the name it binds is REFUSED
+    // (274.3/F28). Measured 2026-08-17, and the measurement is why this is a
+    // refusal and not a fix: `ro x = 7` then, inside a block,
+    // `ro x = x < 3` prints `true` for x = 7 AND for x = 1, while
+    // `ro x = x + 100` prints exactly 100. The inner name is visible in its
+    // own initializer and reads as ZERO -- in the ORACLE, not only here. Both
+    // compilers agree, so the differential gate is green while the answer is
+    // wrong; that is the shape a silent miscompilation takes.
+    //
+    // Until the spec says what the form means (escalated with the probe), the
+    // subset refuses it. Rust reads the OUTER binding here (`let x = x + 1`),
+    // which is the reading I expect to win, but expecting is not knowing.
+    @self_probe.clear()
+    @self_probe.put(vname, 0)
+    if @init_reads_self(init) {
+        @report_first_leaf_of([]Node.of(init), SELF_INIT_MSG)
+        return
+    }
+    ro vtype = type_of(init, @ctx, @scope, @chan)
+    @record(init, vtype)
+    if ik == NodeKind.MatchExpr {
+        @type_match(init)
+    } else if ik == NodeKind.RecordCtor {
+        for c in branch_children(init) {
+            ro ck = c.kind_of()
+            if ck == NodeKind.CtorSpread {
+                ro sk = branch_children(c)
+                if sk.len() < 2 { continue }
+                @type_expr(sk[1])
+            } else if ck == NodeKind.CtorField {
+                ro fk = branch_children(c)
+                if fk.len() < 3 { continue }
+                @type_expr(fk[2])
+            } else {
+                // The type name and the braces of the ctor are children too,
+                // and they hold no expression to type.
+            }
+        }
+    } else {
+        // A plain expression initializer was walked above and its type is
+        // recorded; it has no sub-form left to visit.
+    }
+    // The BINDING's own mode, read from the keyword the author wrote: `ro x`,
+    // `mut x` and `consume x` are three different classes at every call site
+    // that passes `x` on (P14).
+    @scope.bind(vname, vtype, bind_mode_at(kids))
+}
+
+/// One text for the rule.
+const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the name it binds"
+
+/// Does the initializer read the binding that is being declared?
+///
+/// The question is asked through the NAME DOOR, not by comparing identifier
+/// text: `names.NameTable` is the one place where a name becomes an id
+/// (rule 1 of the resolve discipline, and its guard is right to insist --
+/// my first version compared identifier TEXT against the declared name in
+/// a walk, which is the linear resolve the rule bans). The declared name
+/// goes into a one-entry table owned by the Checker, every identifier leaf
+/// is asked for its id, and the comparison is on integers.
+#realtime nogc
+fn Checker @init_reads_self(n Node) -> bool {
+    match n {
+        Leaf(t) => leaf_kind(n) == TokenKind.Ident && @self_probe.find(t.text) >= 0
+        Branch { children, .. } => {
+            mut found = false
+            for c in children {
+                // A flag that only turns on IS a disjunction (P31).
+                found = found || @init_reads_self(c)
+            }
+            found
+        }
+    }
+}
+
+
+/// A match: the scrutinee's type is the answer the emitter needs (it declares
+/// the C temporary with it); the arms bind their binders and are typed after.
+/// One text for the method-declaration limit. novac does not DECLARE methods
+/// in the subset (it reads std's declarations to build the method table, P5);
+/// the form is parsed so the refusal can name it.
+const METHOD_DECL_MSG = "outside the subset: novac does not declare methods yet (the form is read from std declarations only)"
+
+/// One text for the exhaustiveness rule; the oracle's own code is named so a
+/// reader can find the other half of the story.
+const NOT_EXHAUSTIVE_MSG = "outside the subset: match on a sum leaves a variant uncovered (oracle: E_MATCH_NON_EXHAUSTIVE, registry 703)"
+
+/// One text for the rule: the reader must not guess whether two wordings
+/// mean two limits.
+const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
+
+/// One expression: record what the emitter asks about, walk what it emits.
+fn Checker mut @type_expr(e Node) -> () {
+    ro k = e.kind_of()
+    if k == NodeKind.Name {
+        // FIRST FLOOR. An unbound name is a USER mistake, and check is where a
+        // user mistake becomes a diagnostic with a position. Before this, the
+        // lattice met it and called it a compiler bug (an ice) -- caught by
+        // the mutation fuzzer on truncated files, three of 192.
+        // The parser builds a Name AROUND its identifier leaf (parse.nv: both
+        // constructions pass exactly one child), so a childless one is a
+        // broken invariant, not a shape to skip -- the same reading as Paren
+        // below, where a silent skip surfaced as "no type recorded" from
+        // another module, one pass later.
+        ro nk = branch_children(e)
+        assert(nk.len() > 0, "check: a name node without its identifier leaf")
+        match nk[0] {
+            Leaf(t) => {
+                if !is_bool_literal(t.text) && !@scope.is_bound(t.text) {
+                    @refuse(t, "unknown name: nothing with this name is bound at this point")
+                } else {
+                    // Bound, or `true`/`false`: nothing to refuse and nothing
+                    // to record -- the lattice reads a Name from the scope.
+                }
+            }
+            Branch { .. } => {}
+        }
+    } else if k == NodeKind.FieldAccess {
+        // REACHABLE, unlike the three above: `s.` with nothing after the dot
+        // gives two children (parse stops rather than inventing a name), and
+        // that is a USER mistake -- so it is a refusal, at the dot.
+        ro kids = branch_children(e)
+        if kids.len() < 3 {
+            @report_first_leaf_of(kids, "outside the subset: a field access needs a name after the dot")
+            return
+        }
+        ro before = @out.len()
+        @type_expr(kids[0])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        // Same first floor for a field: the owner is known now, so "this type
+        // has no such field" is answerable here, at the field's own position.
+        ro owner = type_of(kids[0], @ctx, @scope, @chan)
+        match kids[2] {
+            Leaf(t) => {
+                if !@ctx.fields.has_field(owner, t.text) {
+                    @refuse(t, "unknown field: this type has no field with this name")
+                } else {
+                    // The field exists: nothing to refuse, and nothing to
+                    // record -- the lattice answers a field access from the
+                    // owner's type, which the walk above verified.
+                }
+            }
+            Branch { .. } => {}
+        }
+    } else if k == NodeKind.MethodCall {
+        ro kids = branch_children(e)
+        if kids.len() < 3 {
+            @report_first_leaf_of(kids, "outside the subset: a method call needs a name after the dot")
+            return
+        }
+        @type_expr(kids[0])
+        if @out.len() == 0 {
+            ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
+            @record(kids[0], recv_t)
+            // The DECISION, not a hint: which row this method call goes to.
+            // Until 2026-08-18 nobody made it -- check only asked whether the
+            // NAME existed anywhere, and the emitter rebuilt the C name from
+            // the receiver's type. That is two answers to one question, the
+            // shape plan 196 exists to remove, and it is why the mangling door
+            // had to be two doors. Same lookup door the diagnostics use.
+            @record_method_callee(e, kids, recv_t)
+        } else {
+            // A diagnostic already stands, so the receiver's type is not
+            // trustworthy and nothing is recorded; the arguments are still
+            // walked below, so one run shows the user every mistake.
+        }
+        mut i = 0
+        for c in kids {
+            if i > 2 && is_expr_kind(c.kind_of()) {
+                @type_expr(c)
+            } else {
+                // Children 0..2 are the receiver, the dot and the method
+                // name, and a punctuation leaf is no expression: nothing to
+                // walk, and the cursor still has to advance.
+            }
+            i += 1
+        }
+    } else if k == NodeKind.Call {
+        ro kids = branch_children(e)
+        ro cname = call_callee_text(kids)
+        ro found = @ctx.defs.def_of(cname)
+        // FIRST FLOOR, found by probing the guards above (2026-08-16): a
+        // trailing `1 +` or `!` swallows the NEXT statement as its operand,
+        // so `println(...)` lands in expression position -- and `println` is
+        // the subset's one builtin, present in no registry. The lattice then
+        // called that a compiler bug and panicked `novac check`. It is a user
+        // mistake: an unknown callee in a value position is refused here, at
+        // the call's own name.
+        if found.is_none() {
+            @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows in an expression (println is a statement here, not a value)")
+            return
+        }
+        // ARGUMENTS FIRST, since 2026-08-21. The key of a call IS its argument
+        // types -- Nova overloads by parameters (D84) -- and a key of unknowns
+        // matches by ARITY ALONE. Measured live: `show(c)` with `fn show(x f64)`
+        // and `c` a record was accepted, and the emitter wrote
+        // `novac_fn_show__nova_f64__to_nova_f64(c)` -- a struct pointer where a
+        // double is declared. Invalid C from a program the oracle refuses,
+        // which is the worst direction a divergence can point.
+        //
+        // The walk is also what VERIFIES each argument (names, fields, methods
+        // exist), and only a verified expression may be handed to the lattice,
+        // whose miss is an ice until #700. So a refusal inside an argument stops
+        // the resolution: the type it would answer with is not trustworthy.
+        ro before = @out.len()
+        for c in kids {
+            if !is_expr_kind(c.kind_of()) { continue }
+            @type_expr(c)
+        }
+        if @out.len() > before { return }
+        // The `is_none()` guard above returned, so the row is there. It is read
+        // from the SAME Option rather than looked up a second time: `def_of`
+        // answers with the row, so there is no index to carry and no second
+        // question to ask (wave B4). What the target decides is a match,
+        // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
+        // past silently.
+        ro def = found ?? ice("check: the callee row vanished between two reads of one Option")
+        match def.target {
+            DefVariant(vrow) => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(vrow), []TyId.new())
+            DefFn(_) => {
+                // NOT `def.payload`: `defs` is keyed by the bare name and lives
+                // by last-write-wins, so with two overloads it answers with the
+                // LAST one -- `describe(1)` went to the `str` overload, silently
+                // (owner's review 2026-08-19). The callable registry knows the
+                // whole set; narrowing by argument types arrives with E2-b3, and
+                // until then an ambiguous name is REFUSED rather than guessed.
+                // FreeCall: a callable declared WITH a receiver must not
+                // answer `f(x)`. Until 2026-08-20 the form was not part of the
+                // query, and `byte_len("abc")` reached `str @byte_len()` by
+                // arity alone -- accepted here, refused by the oracle, and
+                // emitted as one string argument to a two-parameter function.
+                ro key = typed_free_key(kids, @ctx, @scope, @chan)
+                match @ctx.fns.lookup(cname, key, CallForm.FreeCall) {
+                    FnFound(row) => @record_free_callee(e, kids, row, key)
+                    FnOverloaded(_) => @report_first_leaf_of(kids,
+                        "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
+                    // The name may be known and the arity may match: what did
+                    // not fit is then a TYPE, and the refusal says which of the
+                    // three it is (D420: name the cause you established, not
+                    // the nearest one).
+                    FnUnknown => @resolve_generic_or_refuse(e, kids, cname, key)
+                }
+            }
+            // A TYPE in call position is a CONSTRUCTION, and the subset knows
+            // exactly one: a newtype over a representation (`Row(7)`). Judged
+            // HERE rather than left to the lattice, which used to ice on it --
+            // an internal compiler error printed at a legal form of the
+            // language (the integrator's measurement 2026-08-21). The record
+            // form (`Cel(1.5)`, which the oracle accepts positionally) is
+            // refused BY NAME, because novac emits the brace form only.
+            DefType(decl) => @record_newtype_ctor(e, kids, ty_of_decl(@ctx, decl))
+        }
+    } else if k == NodeKind.Cast {
+        @type_cast(e)
+    } else if k == NodeKind.Paren {
+        // The parser builds `( expr )` with three children ALWAYS (the
+        // closing paren is a zero-width MissingToken when absent), so a
+        // shorter one is a broken invariant, not a shape to skip. A silent
+        // `return` here used to leave the node untyped, and the hole then
+        // surfaced as "no type recorded" from the channel -- an ice about the
+        // wrong thing, in the wrong module, one pass later (owner's question
+        // 2026-08-16: "what does this return mean?" -- it meant nothing good).
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: a parenthesised expression without its three parts")
+        ro before = @out.len()
+        @type_expr(kids[1])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        @record(e, type_of(e, @ctx, @scope, @chan))
+    } else if k == NodeKind.Unary {
+        // Same reasoning: the parser builds `op operand`, two children, always.
+        ro kids = branch_children(e)
+        assert(kids.len() >= 2, "check: a prefix operator without its operand")
+        ro before = @out.len()
+        @type_expr(kids[1])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        if @report_if_unary_needs_protocol(kids) { return }
+        @record(e, type_of(e, @ctx, @scope, @chan))
+    } else if k == NodeKind.Bin {
+        // And again: `left op right`, three children, by construction.
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: a binary expression without its three parts")
+        // Operands first (they are what can be unknown), then the answer for
+        // THIS node: the whole expression's type decides the emitted shape
+        // (f64 is raw C, int is the checked helper).
+        @type_expr(kids[0])
+        ro before = @out.len()
+        @type_expr(kids[2])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        if @report_if_operator_needs_protocol(kids) { return }
+        // The OPERANDS' types are recorded too: equality on `str` is a method
+        // call, not a C operator, so the emitter must know what it compares —
+        // and it may only READ that, never work it out (the channel rule).
+        @record(kids[0], type_of(kids[0], @ctx, @scope, @chan))
+        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
+        @record(e, type_of(e, @ctx, @scope, @chan))
+    } else {
+        // The kinds `is_expr_kind` admits and this chain does not name are
+        // Lit and MatchExpr, and neither has work HERE: a literal's type is
+        // a property of its own token (the lattice reads it without help),
+        // and the two doors that admit a match -- a binding's initializer and
+        // a fn's expression body -- call @type_match themselves.
+    }
+}
+
+/// In Nova EVERY operator dispatches through a protocol on a user type
+/// (D46/D363: `a + b` is `a.@plus(b)`, `a < b` is `a.@compare(b) < 0`,
+/// `a == b` is `a.@equal(b)`), and the subset does not do that dispatch yet.
+/// So the C form is a function of the operator AND the operand type, not of
+/// the operator alone -- owner's correction 2026-08-16.
+///
+/// Until the protocol path exists (it needs bounds, E2-b3), an operator whose
+/// operands are not the primitives the subset can emit is an honest refusal
+/// at the operator's own position -- not the ice the lattice would raise one
+/// level down, and not a silently wrong primitive emission.
+/// Returns whether it refused.
+fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
+    ro lt = type_of(kids[0], @ctx, @scope, @chan)
+    ro rt = type_of(kids[2], @ctx, @scope, @chan)
+    ro op = bin_op_of(leaf_kind(kids[1]))
+    ro numeric = @is_numeric(lt) && @is_numeric(rt)
+    ro ints = lt == @ctx.prims.int_id && rt == @ctx.prims.int_id
+    ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
+    ro same_prim = lt == rt && @is_primitive(lt)
+    // Each operator states WHICH operands the subset can emit for it. The
+    // match is exhaustive, so a new operator cannot slip in without an
+    // answer -- and the answer is a refusal, never a guess.
+    match op {
+        Add | Sub | Mul | Div | Modulo => { if numeric { return false } }
+        Less | LessEq | Greater | GreaterEq => { if numeric { return false } }
+        Equal | NotEqual => { if same_prim { return false } }
+        AndAlso | OrElse => { if bools { return false } }
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
+        Range => { if numeric { return false } }
+    }
+    match kids[1] {
+        Leaf(t) => @refuse(t, "outside the subset: this operator on these operands dispatches through a protocol (D46: @plus / @compare / @equal), and protocol dispatch arrives with bounds")
+        Branch { .. } => {}
+    }
+    true
+}
+
+/// Does the subset know how to print this type? The emitter has one printer
+/// per type and no generic path; a type outside the set is a refusal here,
+/// never an ice there.
+fn Checker @has_printer(t TyId) -> bool => @is_printable_carrier(carrier_of(@ctx, t))
+
+/// The printer set, asked of the CARRIER: a newtype prints as what it holds
+/// (`println(Row(7))` prints 7, which is what the oracle does), so the peel
+/// happens once, here, and not at each of the four comparisons.
+fn Checker @is_printable_carrier(t TyId) -> bool =>
+    t == @ctx.prims.int_id || t == @ctx.prims.str_id ||
+    t == @ctx.prims.bool_id || t == @ctx.prims.f64_id
+
+/// The two types arithmetic and ordering accept in the subset.
+fn Checker @is_numeric(t TyId) -> bool =>
+    t == @ctx.prims.int_id || t == @ctx.prims.f64_id
+
+/// Every primitive of novac's universe -- equality accepts any of them, as
+/// long as both sides are the SAME one (mixed-type equality is a conversion
+/// question the subset does not answer).
+fn Checker @is_primitive(t TyId) -> bool =>
+    t == @ctx.prims.int_id || t == @ctx.prims.f64_id ||
+    t == @ctx.prims.bool_id || t == @ctx.prims.str_id
+
+/// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
+/// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
+/// and is refused at the operator's own position. Returns whether it refused.
+fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
+    ro t = type_of(kids[1], @ctx, @scope, @chan)
+    match un_op_of(leaf_kind(kids[0])) {
+        Not => { if t == @ctx.prims.bool_id { return false } }
+        Negate => { if @is_numeric(t) { return false } }
+        BitNot => { if t == @ctx.prims.int_id { return false } }
+    }
+    match kids[0] {
+        Leaf(tk) => @refuse(tk, "outside the subset: this prefix operator on this operand dispatches through a protocol (D46: @neg / @bitnot), and protocol dispatch arrives with bounds")
+        Branch { .. } => {}
+    }
+    true
+}
+
+/// Record a node's type through the channel's one writer door.
+fn Checker mut @record(n Node, t TyId) -> () {
+    @chan.record_type(n.id_of(), t)
+}

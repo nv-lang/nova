@@ -1,0 +1,27 @@
+module newtype.pos_1
+
+// A NEWTYPE and its constructor, and the effect is visible: prints 7, byte for
+// byte with the oracle.
+//
+// `type Row int` is a DISTINCT type over the representation `int` -- the oracle
+// enforces the distinction (a `Row` into an `int` parameter is E7301, measured
+// by the integrator 2026-08-21). At runtime it IS the representation, zero cost:
+// the oracle writes `typedef nova_int Nova_Row;` and then a plain `nova_int`
+// local, and novac emits the argument with no wrapper at all.
+//
+// novac refused the DECLARATION until 2026-08-21 with "this is not a form of the
+// language" -- about a form the language has -- because `@type_decl` read only
+// three tails (generics, `enum`/pipes, a brace body) and let any other fall into
+// the top-level junk bucket. And the CONSTRUCTOR iced: `Row(7)` reached the
+// lattice, which answered "internal compiler error" at a legal program.
+//
+// This form is what the registry indices of novac itself are waiting for (plan
+// 274 section 9.1g): a `row` and a `ty_id` are different spaces of the same
+// `int` today, and they can only be told apart by a type once novac reads the
+// type that tells them apart.
+type Row int
+
+fn main() {
+    ro r = Row(7)
+    println(r)
+}

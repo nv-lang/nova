@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem — tests beside the module (project convention).
+//
+// What these tests hold: a C name is a function of the ROW, and the row carries
+// everything the name needs -- the parameters (overloading is BY parameters),
+// the instance arguments (E2-b2), and whose ABI the symbol belongs to.
+//
+// The live defect behind the parameter half (owner's review 2026-08-19):
+// `fn describe(v int)` and `fn describe(v str)` are legal Nova, the oracle
+// accepts them, novac accepted them -- and emitted TWO C functions called
+// `novac_user_describe`. Invalid C from a valid program, with no diagnostic.
+
+module novac.sem
+import ../tree.{Node, NodeKind, branch, leaf}
+import ../builtins.{TypeKind}
+import ../lex.{Token, TokenKind}
+import ../types.{TyId, no_ty, is_ty}
+
+/// An empty file node: these tests need a Ctx with the primitives seeded and
+/// nothing else. Building it here keeps `sem` from importing the parser -- the
+/// architecture table has no edge sem -> parse, and a test is not a licence to
+/// add one.
+fn empty_file() -> Node => branch(0, NodeKind.File, []Node.new())
+
+test "a name with no parameters is the plain form" {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("used", ctx.prims.int_id, false, []ParamDef.new(), []str.new())
+    assert(c_callable(ctx, FnRow(ctx.fns.rows.len() - 1), []TyId.new()) == "novac_fn_used__to_nova_int")
+}
+
+test "PARAMETERS are in the name: two overloads cannot collide" {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("describe", ctx.prims.int_id, false, []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new())
+    ro by_int = ctx.fns.rows.len() - 1
+    ctx.fns.add("describe", ctx.prims.int_id, false, []ParamDef.of(ro_param(ctx.prims.str_id)), []str.new())
+    ro by_str = ctx.fns.rows.len() - 1
+    assert(c_callable(ctx, FnRow(by_int), []TyId.new()) != c_callable(ctx, FnRow(by_str), []TyId.new()))
+}
+
+/// A parameter with the default mode, for tests that judge NAMES rather than
+/// modes: `ro` is the language's default, so this is what "just a parameter of
+/// this type" means (P14 -- the mode axis is judged by its own tests).
+fn ro_param(t TyId) -> ParamDef => { type_id: t, mode: ParamMode.ModeRo }
+
+test "arity is in the name too" {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("pair", ctx.prims.int_id, false, []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new())
+    ro one = ctx.fns.rows.len() - 1
+    ctx.fns.add("pair", ctx.prims.int_id, false,
+        []ParamDef.of(ro_param(ctx.prims.int_id), ro_param(ctx.prims.int_id)), []str.new())
+    ro two = ctx.fns.rows.len() - 1
+    assert(c_callable(ctx, FnRow(one), []TyId.new()) != c_callable(ctx, FnRow(two), []TyId.new()))
+}
+
+test "the entry point answers to the RUNTIME, and one place knows it" {
+    // No `is_entry` flag threaded through every call site: the row carries the
+    // name, and the door decides what that name means (owner, 2026-08-19).
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("main", ctx.prims.int_id, false, []ParamDef.new(), []str.new())
+    assert(c_callable(ctx, FnRow(ctx.fns.rows.len() - 1), []TyId.new()) == "nova_fn_main_impl")
+}
+
+test "instance arguments distinguish two instantiations of one callable" {
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("hold", ctx.prims.int_id, false, []ParamDef.new(), []str.new())
+    ro row = ctx.fns.rows.len() - 1
+    // A parameterless generic: the substitution suffix is the ONLY
+    // disambiguation — without it, both names would be `novac_fn_hold`.
+    ro a = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.int_id))
+    ro b = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.str_id))
+    assert(a != b)
+    assert(a != c_callable(ctx, FnRow(row), []TyId.new()))
+}
+
+/// `fn id[T](x T) -> T` as a TREE, built by hand for the same reason
+/// `empty_file` is: the architecture table has no edge sem -> parse, and a test
+/// is not a licence to add one. The shape is the collector's contract -- the
+/// name is child one, the type parameters live in a Generics branch, a Param
+/// holds (name, type), a RetType holds (arrow, type).
+fn tok(k TokenKind, s str) -> Token => { kind: k, leading: "", text: s }
+
+fn generic_id_file() -> Node {
+    ro gen = branch(1, NodeKind.Generics, []Node.of(leaf(tok(TokenKind.Ident, "T"))))
+    ro par = branch(2, NodeKind.Param,
+        []Node.of(leaf(tok(TokenKind.Ident, "x")), leaf(tok(TokenKind.Ident, "T"))))
+    ro ret = branch(3, NodeKind.RetType,
+        []Node.of(leaf(tok(TokenKind.Arrow, "->")), leaf(tok(TokenKind.Ident, "T"))))
+    ro decl = branch(4, NodeKind.FnDecl,
+        []Node.of(leaf(tok(TokenKind.KwFn, "fn")), leaf(tok(TokenKind.Ident, "id")), gen, par, ret))
+    branch(5, NodeKind.File, []Node.of(decl))
+}
+
+test "the COLLECTOR gives a type parameter a type, so an instance can be named" {
+    // The measurement that made this wave (2026-08-20). Before it, `x T` and
+    // `-> T` both held the -1 sentinel -- the name `T` was asked of the
+    // registry, which does not have it -- so nothing downstream could say what
+    // an instance of this callable is called. `type_tag` had been taught to
+    // substitute a `TkParam`, and there was nothing for it to substitute.
+    //
+    // Donor: rustc `TyKind::Param` -- a parameter is known by its INDEX in its
+    // owner's generics, so one row per index is shared by every declaration.
+    // This test would not merely fail before the change: `c_callable` would die
+    // on `type_tag`'s precondition, because -1 is no type id at all.
+    mut ctx = collect_types(generic_id_file())
+    match ctx.defs.fn_row("id") {
+        None => assert(false)
+        Some(row) => {
+            assert(ctx.fns.rows[raw_row(row)].tparam_cnt == 1)
+            // Parameter AND return resolve to the same parameter row, and it is
+            // a real type of kind TkParam -- not the -1 sentinel.
+            //
+            // WAVE B8 MOVED THIS ASSERT, and the move IS the point. It used to
+            // read `ctx.types[pt].kind` -- the declaration table -- because a
+            // type parameter had a fabricated declaration row named `"#0"`. A
+            // parameter declares nothing, so the row is gone and the KIND now
+            // comes from the interner, which is where a term's kind always was.
+            ro pt = ctx.fns.params[ctx.fns.rows[raw_row(row)].param_off].type_id
+            assert(is_ty(pt))
+            assert(ctx.tys.kind_of(pt) == TypeKind.TkParam)
+            assert(ctx.fns.rows[raw_row(row)].ret_id == pt)
+            // And the instance is nameable: the substitution decides both the
+            // parameter and the return in the emitted name.
+            ro at_int = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.int_id))
+            assert(at_int == "novac_fn_id__nova_int__to_nova_int__nova_int")
+            ro at_str = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.str_id))
+            assert(at_str == "novac_fn_id__nova_str__to_nova_str__nova_str")
+        }
+    }
+}
+
+test "a generic callable's parameters carry the substituted types" {
+    mut ctx = collect_types(empty_file())
+    // fn id[T](x T) -> T. WAVE B8: no registry row is pushed here any more.
+    // This test used to fabricate a `TypeDef` for the parameter and note that
+    // "fns.params stores TypeDef ids, not interner TyRow ids -- the two spaces
+    // are different". They ARE two spaces, and that comment was the evidence:
+    // the fabrication existed only because the DECLARATION index was the type
+    // id. Now `tys.param(0)` IS the type, and a parameter declares nothing --
+    // as in every donor.
+    ro tparam_id = ctx.tys.param(0)
+    ctx.fns.add("id", tparam_id, false, []ParamDef.of(ro_param(tparam_id)), []str.of("T"))
+    ro row = ctx.fns.rows.len() - 1
+    // subst = [int]: TkParam(0) -> int
+    ro a = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.int_id))
+    // subst = [str]: TkParam(0) -> str
+    ro b = c_callable(ctx, FnRow(row), []TyId.of(ctx.prims.str_id))
+    // Both differ from the bare name (empty subst would ICE on TkParam)
+    assert(a != b)
+    // The parameter type appears in the name through substitution
+    assert(a == "novac_fn_id__nova_int__to_nova_int__nova_int")
+    assert(b == "novac_fn_id__nova_str__to_nova_str__nova_str")
+}

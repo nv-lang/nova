@@ -21,14 +21,19 @@
 #
 # Проверялся: Windows (Git Bash), 2026-08-14.
 export LC_ALL=C
-ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# Корень приводится к АБСОЛЮТНОМУ пути: относительный `.` уводил поиск
+# бинаря мимо цели, и страж писал «сломан раннер» о здоровом дереве
+# (2026-08-18). Ложная краснота стоит дороже отсутствующей проверки:
+# по ней идут искать поломку, которой нет, и в стража перестают верить.
+# Если cd не удался — значение СОХРАНЯЕТСЯ как было: пустой ROOT судил бы
+# корень файловой системы, а это хуже исходной болезни.
+ROOT="${1:-$(dirname "$0")/../..}"
+ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 BIN="${2:-$ROOT/novac/target/novac.exe}"
 NAME=check-novac-no-cascade
+. "$(dirname "$0")/lib/novac.sh"
 
-if [ ! -f "$BIN" ]; then
-    echo "$NAME ok: судить нечего (novac ещё не собирается)"
-    exit 0
-fi
+novac_require_bin "$NAME" "$ROOT" "$BIN"
 
 PYBIN=$(command -v python 2>/dev/null || command -v python3 2>/dev/null)
 if [ -z "$PYBIN" ]; then

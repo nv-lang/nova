@@ -1,4 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn `SyntaxToken` (leading trivia; `SyntaxKind.BadToken` for
+// unrecognized bytes) + rust-analyzer `rowan` `GreenToken` (full-fidelity,
+// width-only tokens: Roslyn `GreenNode.FullWidth` model, no stored spans —
+// positions come from source.offset_of, NOT from prefix sums); rustc_lexer
+// `Cursor::number` for the fraction rule (`1.5` vs `0..3`), `TokenKind::Unknown`
+// for one ErrorTok per whole codepoint; NOT taken: Roslyn trailing trivia (Eof
+// carries the tail), Roslyn `ScanInterpolatedStringLiteral` mode stack (E2), Go
+// `token.Lookup` / Zig `std.StaticStringMap` keyword tables (an if-chain over 11
+// keywords; revisit when the set grows).
+// Role: layer 1 of the map — bytes to tokens with trivia; the ONLY thing that knows the character stream.
+// Used by: parse (E1+), and the reserialize guard: byte-exact round trip; unchanged through E4.
+// Guarded by: check-novac-grammar-fixture-coverage.sh (every token form has a fixture), the reserialize property in
+// lex_test.nv (leaves == tokens, byte-exact), novac-fuzz-mutations.sh (no panic on any input).
+// token owns its trivia and positions are prefix sums, never stored spans; taken:
+// full-fidelity tokens; NOT taken: Roslyn's trailing trivia (one side is enough
+// for byte-exact reserialization and halves the bookkeeping).
 // novac/src/lex — the tokenization door (architecture §2: module `lex`).
 //
 // Lossless: every byte of the input lands in exactly one token, either as
@@ -25,58 +41,278 @@
 
 module novac.lex
 
+/// Every lexeme class of the subset; two-char operators lex BEFORE their
+/// one-char prefixes; ErrorTok carries unrecognized bytes losslessly.
 export type TokenKind enum
     | KwModule
     | KwFn
+    | KwIf
+    | KwReturn
+    | KwFor
+    | KwIn
+    | KwMut
+    | KwRo
+    | KwWhile
+    | KwType
+    | KwMatch
+    | KwAs
+    | KwImport
+    | KwUse
+    | KwExport
+    | KwTest
+    | KwElse
+    | KwExtern
+    | KwUnsafe
+    | Hash
     | Ident
     | IntLit
+    | FloatLit
     | StrLit
     | LParen
     | RParen
     | LBrace
     | RBrace
+    /// `[]` as ONE lexeme: the slice marker of `[]T` and the array
+    /// literal `[]int.of(...)`. It was a PAIR the parser glued back
+    /// together at every type position with a two-token lookahead
+    /// (owner 2026-08-17). The language spells it as one thing, and a
+    /// lexeme the reader treats as one is a token.
+    | EmptyBrackets
+    | LBracket
+    | RBracket
     | Dot
     | Comma
     | Plus
     | Minus
     | Star
     | Slash
+    | Lt
+    | Le
+    | Gt
+    | Ge
+    | Percent
+    | EqEq
+    | BangEq
+    | AmpAmp
+    | PipePipe
+    | Amp
+    | Caret
+    | Shl
+    | Shr
+    | Tilde
+    | Bang
+    | Pipe
+    | FatArrow
+    | Assign
+    | PlusAssign
+    | MinusAssign
+    | StarAssign
+    | SlashAssign
+    | PercentAssign
+    | AmpAssign
+    | PipeAssign
+    | CaretAssign
+    | ShlAssign
+    | ShrAssign
+    | DotDot
+    | Ellipsis
+    | Colon
+    | At
+    | Arrow
     | ErrorTok
     | Eof
 
+/// One green token: no positions stored (widths, not positions — offsets
+/// derive by prefix summing; the lossless invariant makes that exact).
 export type Token {
-    kind TokenKind
-    leading str
-    text str
+    kind TokenKind /// lexeme class
+    leading str /// leading trivia (spaces/comments) — a slice of src
+    text str /// the token's own bytes — ALWAYS a slice of src (the position door depends on it; Eof carries src[n..n])
 }
 
-fn is_space(b u8) -> bool => b == 32 || b == 9 || b == 13 || b == 10
+// [LEGACY-#675] char-literal-permissive: TWO oracle inconsistencies around
+// char literals, both found 2026-08-14 by dogfooding: (a) the backslash
+// literal fails standalone ("expected closing ' in char literal") yet the
+// same spelling inside this file was silently accepted and MISCOMPILED;
+// (b) a char literal containing a RAW control byte (tab / CR / LF, even
+// spanning lines) is silently accepted with garbage semantics -- that is how
+// this very lexer shipped a broken is_space: the built binary looped
+// allocating until Boehm died with "Too many heap sections" (the owner's
+// screenshot). Canon per std (json.nv B_* consts): special bytes as hex
+// constants, printable ones as ('x' as u8). Escalate to the integrator for
+// the number and the registry row; self-expiring: when the checker REJECTS
+// raw control bytes in char literals, the neg fixture will start passing.
+const B_TAB u8 = 0x09
+const B_LF u8 = 0x0A
+const B_CR u8 = 0x0D
+const B_BACKSLASH u8 = 0x5C
+// UTF-8 continuation bytes (10xxxxxx). lex only ever sees VALID UTF-8 (main
+// validates via to_str before the pipeline), so "next byte is not a
+// continuation byte" is exactly "codepoint boundary".
+const B_UTF8_TAIL_LO u8 = 0x80
 
-fn is_digit(b u8) -> bool => b >= 48 && b <= 57
+/// Whitespace byte: space, tab, CR, LF.
+fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
 
+/// ASCII digit byte.
+fn is_digit(b u8) -> bool => b >= ('0' as u8) && b <= ('9' as u8)
+
+/// Byte that may start an identifier: ASCII letter or underscore.
 fn is_ident_start(b u8) -> bool =>
-    (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95
+    (b >= ('a' as u8) && b <= ('z' as u8)) || (b >= ('A' as u8) && b <= ('Z' as u8)) || b == ('_' as u8)
 
+/// Byte that may continue an identifier: start byte or digit.
 fn is_ident_byte(b u8) -> bool => is_ident_start(b) || is_digit(b)
 
-fn keyword_kind(t str) -> TokenKind {
-    if t == "module" { return TokenKind.KwModule }
-    if t == "fn" { return TokenKind.KwFn }
-    TokenKind.Ident
+/// The byte at `k`, or 0 past the end -- so a lookahead needs no bounds test
+/// at the call site. Zero starts no lexeme, so it can stand for "nothing".
+fn byte_at(b []u8, n int, k int) -> u8 {
+    if k < n {
+        b[k]
+    } else {
+        0
+    }
 }
 
-fn punct_kind(b u8) -> TokenKind {
-    if b == 40 { return TokenKind.LParen }
-    if b == 41 { return TokenKind.RParen }
-    if b == 123 { return TokenKind.LBrace }
-    if b == 125 { return TokenKind.RBrace }
-    if b == 46 { return TokenKind.Dot }
-    if b == 44 { return TokenKind.Comma }
-    if b == 43 { return TokenKind.Plus }
-    if b == 45 { return TokenKind.Minus }
-    if b == 42 { return TokenKind.Star }
-    if b == 47 { return TokenKind.Slash }
-    TokenKind.ErrorTok
+/// How this token moves a PARENTHESIS depth: `+1` opens, `-1` closes, `0`
+/// otherwise -- and every kind is NAMED rather than swept into a `_` arm.
+///
+/// Three decisions met on this one function (2026-08-18). The owner asked why
+/// it was a chain of `if` and not a match; then why the result was `Option[int]`
+/// and not `int`; and the P21 guard refuses a `_ =>` arm on a closed set.
+///
+/// All three land in the same place. `bin_op` is partial BY NATURE -- "not a
+/// binary operator" cannot be said with a `BinOp`, there is no neutral one --
+/// so it declares partiality in its type and its `_ => None` is an answer. A
+/// depth HAS a neutral element, so `int` is the honest result and `Option`
+/// would only make every call site write `?? 0`. But `_ => 0` would then be
+/// the swallowing default: a NEW token that ought to nest would quietly get
+/// zero, and the run would end with an unbalanced count and no diagnostic.
+/// Naming every kind costs four lines and buys a compile error at exactly this
+/// spot the day a nesting token is added.
+///
+/// The chain this replaces stood in THREE places over the same two kinds, and
+/// the third of them counted `[`/`]` instead -- the divergence three copies
+/// breed.
+export fn paren_delta(k TokenKind) -> int {
+    match k {
+        LParen => 1
+        RParen => -1
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        IntLit | FloatLit |
+        StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
+        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+    }
+}
+
+/// The same for `[` and `]`, and exhaustive for the same reason.
+export fn bracket_delta(k TokenKind) -> int {
+    match k {
+        LBracket => 1
+        RBracket => -1
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        IntLit | FloatLit |
+        StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
+        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+    }
+}
+
+/// The same for `{` and `}` -- the brace list of an import, and any other
+/// balanced brace run a reader walks without interpreting.
+export fn brace_delta(k TokenKind) -> int {
+    match k {
+        LBrace => 1
+        RBrace => -1
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        IntLit | FloatLit |
+        StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
+        SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
+        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+    }
+}
+
+/// Keyword kind for an identifier text, or Ident when it is not a keyword.
+fn keyword_kind(t str) -> TokenKind => match t {
+    "module" => TokenKind.KwModule
+    "fn" => TokenKind.KwFn
+    "if" => TokenKind.KwIf
+    "return" => TokenKind.KwReturn
+    "for" => TokenKind.KwFor
+    "in" => TokenKind.KwIn
+    "mut" => TokenKind.KwMut
+    "ro" => TokenKind.KwRo
+    "while" => TokenKind.KwWhile
+    "type" => TokenKind.KwType
+    "match" => TokenKind.KwMatch
+    // `as` was NOT a keyword until 2026-08-18, so `1 as u8` lexed as two
+    // names and the refusal read "unknown name" -- about a cast, not a
+    // name. A missing keyword does not stay missing quietly.
+    "as" => TokenKind.KwAs
+    // The DECLARATION words. `export` stands in front of most of std, and
+    // until 2026-08-18 it lexed as a plain identifier: the top-level loop
+    // dropped it into the junk bucket and the file was refused with a
+    // nameless message. `use` and `import` are BOTH real (measured against
+    // the oracle the same day), `export import` is not.
+    "import" => TokenKind.KwImport
+    "use" => TokenKind.KwUse
+    "export" => TokenKind.KwExport
+    "test" => TokenKind.KwTest
+    // The FFI words (D282, plan 91.12 F.-1): `extern "nova" fn` and
+    // `extern "C" fn`, with `unsafe` allowed between the ABI and `fn`. Until
+    // 2026-08-20 neither was a keyword, so the whole FFI layer of std answered
+    // "syntax error: this is not a form of the language" -- about a form the
+    // language has. A missing keyword does not stay missing quietly.
+    "extern" => TokenKind.KwExtern
+    "unsafe" => TokenKind.KwUnsafe
+    // `else` was not a keyword until 2026-08-18, and the miss wore a
+    // disguise: `if c { } else { }` was refused with "record constructor
+    // only as a binding initializer", because the brace after the
+    // identifier `else` read as a record literal. A form the parser does
+    // not know does not stay silent -- it lies.
+    "else" => TokenKind.KwElse
+    // The domain is OPEN -- any identifier text may arrive -- so the
+    // wildcard is the type's own partiality, not a hidden case (P21 p.3):
+    // whatever is not a keyword IS an identifier.
+    _ => TokenKind.Ident
+}
+
+/// Token kind for a one-byte punctuation, or ErrorTok when unknown.
+/// The patterns are LITERALS, not named constants, and that is not a style
+/// choice: `match b { B_LPAREN => ... }` with a `const B_LPAREN u8` passes
+/// `nova check` and then breaks the C -- the emitter reads a named constant
+/// in pattern position as a SUM VARIANT and emits a tag access on a byte
+/// (probed 2026-08-17, recorded as O-1g in the divergence registry). Until
+/// that closes, the byte value carries its character in a comment.
+fn punct_kind(b u8) -> TokenKind => match b {
+    0x28 => TokenKind.LParen    // (
+    0x29 => TokenKind.RParen    // )
+    0x7B => TokenKind.LBrace    // {
+    0x7D => TokenKind.RBrace    // }
+    0x5B => TokenKind.LBracket  // [
+    0x5D => TokenKind.RBracket  // ]
+    0x2E => TokenKind.Dot       // .
+    0x2C => TokenKind.Comma     // ,
+    0x23 => TokenKind.Hash      // #
+    0x3A => TokenKind.Colon     // :
+    0x40 => TokenKind.At        // @
+    0x2B => TokenKind.Plus      // +
+    0x2D => TokenKind.Minus     // -
+    0x2A => TokenKind.Star      // *
+    0x2F => TokenKind.Slash     // /
+    // OPEN domain: a byte is any of 256, and everything outside the table is
+    // an error token by the definition of this door (P21 p.3).
+    _ => TokenKind.ErrorTok
 }
 
 /// Tokenize the whole input. Always succeeds; always covers every byte.
@@ -92,15 +328,22 @@ export fn lex(src str) -> []Token {
         while in_trivia && i < n {
             if is_space(b[i]) {
                 i += 1
-            } else if b[i] == 47 && i + 1 < n && b[i + 1] == 47 {
-                while i < n && b[i] != 10 { i += 1 }
+            } else if b[i] == ('/' as u8) && i + 1 < n && b[i + 1] == ('/' as u8) {
+                while i < n && b[i] != B_LF { i += 1 }
             } else {
                 in_trivia = false
             }
         }
         ro leading = src[trivia_start..i]
         if i >= n {
-            toks.push(Token { kind: TokenKind.Eof, leading, text: "" })
+            // The Eof text is the EMPTY SLICE ANCHORED AT THE END, not the ""
+            // literal: every token text must be a real slice of src, or the
+            // one position door (source.offset_of, pointer distance) gets a
+            // foreign pointer and its contract assert fires — fuzzer catch
+            // 2026-08-14: recovery at EOF puts this leaf into an Err branch
+            // and check reports a position on it. text[n..n] is contract-legal
+            // (str @index admits start == end == byte_len).
+            toks.push(Token { kind: TokenKind.Eof, leading, text: src[n..n] })
             return toks
         }
         // Token text.
@@ -113,7 +356,36 @@ export fn lex(src str) -> []Token {
         } else if is_digit(c) {
             while i < n && is_digit(b[i]) { i += 1 }
             kind = TokenKind.IntLit
-        } else if c == 34 {
+            // `1_000`, `0xFF`, `1e9` are LANGUAGE forms the E1 subset does not
+            // lex yet -- and until now it did not refuse them either: the
+            // digits stopped at the underscore and `1_000` became IntLit(1)
+            // plus identifier `_000`, which parses, checks and COMPILES to
+            // the number one (274.3/F21). A silent misread is the worst of
+            // the three outcomes; the honest one is a refusal that names the
+            // whole run. The bytes stay ours -- lossless -- so E2 turns this
+            // branch into real lexing without moving the boundary.
+            // A digit run touching an identifier byte is a refusal; a run
+            // that ends cleanly is the IntLit already decided above -- the
+            // second branch has nothing to add, and says so (P31).
+            if i < n && is_ident_byte(b[i]) {
+                while i < n && (is_ident_byte(b[i]) || is_digit(b[i])) { i += 1 }
+                kind = TokenKind.ErrorTok
+            } else {
+                // Clean digit run: `kind` is already IntLit from above.
+            }
+            // FloatLit: digits '.' digit+ — but `0..3` must stay
+            // IntLit DotDot IntLit, so the dot is taken ONLY when the very
+            // next byte is a digit (a second dot never is).
+            // FloatLit only when a digit follows the dot; otherwise the dot
+            // belongs to the next token (`0..3` stays IntLit DotDot IntLit).
+            if i + 1 < n && b[i] == ('.' as u8) && is_digit(b[i + 1]) {
+                i += 1
+                while i < n && is_digit(b[i]) { i += 1 }
+                kind = TokenKind.FloatLit
+            } else {
+                // Not a fraction: the token ends here as the IntLit it is.
+            }
+        } else if c == ('"' as u8) {
             // String literal: raw bytes between quotes, escapes kept verbatim
             // (lossless; meaning is parse/check business, not lex).
             //
@@ -129,33 +401,176 @@ export fn lex(src str) -> []Token {
             mut has_interp = false
             mut closed = false
             while i < n && !closed {
-                if b[i] == 34 {
+                // A newline ENDS the search (274.3/F19). Without this the
+                // scan ran to the next quote ANYWHERE in the file, so one
+                // missing quote joined two lines into a literal and the
+                // diagnostic pointed dozens of bytes away from the mistake --
+                // the reader was sent to correct code. Every serious lexer
+                // stops a non-raw literal at the line end (rustc
+                // unterminated_double_quote_string, Roslyn ERR_NewlineInConst)
+                // for exactly this reason: the honest report is "unclosed
+                // HERE", not "unexpected something over there".
+                if b[i] == B_LF { break }
+                if b[i] == ('"' as u8) {
                     closed = true
                     i += 1
-                } else if b[i] == 92 && i + 1 < n {
+                } else if b[i] == B_BACKSLASH && i + 1 < n {
                     // An escape consumes BOTH bytes and, deliberately, does
                     // not look inside: `\${` is the escaped, literal form and
                     // must NOT flag interpolation (E1 review p.4 -- the old
                     // loop inspected the already-escaped byte).
                     i += 2
                 } else {
-                    if b[i] == 36 && i + 1 < n && b[i + 1] == 123 { has_interp = true }
+                    // Interpolation is detected, not consumed: the refusal is
+                    // decided after the literal closes.
+                    has_interp = has_interp || (b[i] == ('$' as u8) && i + 1 < n && b[i + 1] == ('{' as u8))
                     i += 1
                 }
             }
             kind = TokenKind.StrLit
-            // Honest refusals, both K7-shaped (E1 review p.4): a string that
-            // never closed is not a plausible StrLit, and interpolation is
-            // outside the E1 subset (context-dependent lexing is the E2
-            // mode-stack step). Either way the bytes stay ours -- lossless.
-            if has_interp || !closed { kind = TokenKind.ErrorTok }
+            // A string that never CLOSED is not a plausible StrLit -- the
+            // bytes stay ours either way, but calling an unterminated run a
+            // literal would hand the parser a lie.
+            //
+            // INTERPOLATION, on the other hand, stopped being a lexer error
+            // on 2026-08-18 (S9.4: the grammar is the language's, the subset
+            // is the checker's). `"n=${n}"` is one literal of the language;
+            // making it an ErrorTok meant the refusal came out as "construct
+            // not in the MVP grammar" over the whole string, naming nothing.
+            // The literal now reaches the tree whole and check names the form
+            // by looking for the marker in its text.
+            if !closed {
+                kind = TokenKind.ErrorTok
+            } else {
+                // A closed literal: StrLit stands, interpolated or not.
+            }
         } else {
-            kind = punct_kind(c)
-            i += 1
+            // TWO dispatches, both by `match`, and neither byte is read twice
+            // (owner 2026-08-17: "the same first characters are tested many
+            // times, and the second and third too" -- then "the second can be
+            // a match as well").
+            //
+            // What this replaces: thirty-odd `else if` branches that asked
+            // `c == '<'` four times, `c == '>'` four, `c == '&'` three, each
+            // re-reading b[i+1] on its own. To know which branch wins a reader
+            // had to hold the entire sequence in mind. Now the first byte
+            // picks its arm, the second byte picks the form inside it, and the
+            // arm owns every lexeme that starts with that character.
+            //
+            // Patterns are LITERALS with the character in a comment: a named
+            // `const` in pattern position passes check and breaks the emitted
+            // C (O-1g in the divergence registry). The `_` arms are the byte
+            // domain's own openness -- 256 values, not a closed sum (P21 p.3).
+            ro c1 = byte_at(b, n, i + 1)
+            ro c2 = byte_at(b, n, i + 2)
+            match c {
+                0x5B => match c1 {                          // [
+                    // `[]` is ONE lexeme -- the slice marker of `[]T` and the
+                    // array literal. Only an IMMEDIATE `]` glues: `[ ]` stays
+                    // two, and so does `[i]`, because an index expression must
+                    // see the brackets apart.
+                    0x5D => { i += 2; kind = TokenKind.EmptyBrackets }
+                    _ => { i += 1; kind = TokenKind.LBracket }
+                }
+                0x3C => match c1 {                          // <
+                    0x3C => match c2 {
+                        0x3D => { i += 3; kind = TokenKind.ShlAssign }
+                        _ => { i += 2; kind = TokenKind.Shl }
+                    }
+                    0x3D => { i += 2; kind = TokenKind.Le }
+                    _ => { i += 1; kind = TokenKind.Lt }
+                }
+                0x3E => match c1 {                          // >
+                    0x3E => match c2 {
+                        0x3D => { i += 3; kind = TokenKind.ShrAssign }
+                        _ => { i += 2; kind = TokenKind.Shr }
+                    }
+                    0x3D => { i += 2; kind = TokenKind.Ge }
+                    _ => { i += 1; kind = TokenKind.Gt }
+                }
+                0x25 => match c1 {                          // %
+                    0x3D => { i += 2; kind = TokenKind.PercentAssign }
+                    _ => { i += 1; kind = TokenKind.Percent }
+                }
+                0x2A => match c1 {                          // *
+                    0x3D => { i += 2; kind = TokenKind.StarAssign }
+                    _ => { i += 1; kind = TokenKind.Star }
+                }
+                0x2F => match c1 {                          // /
+                    0x3D => { i += 2; kind = TokenKind.SlashAssign }
+                    _ => { i += 1; kind = TokenKind.Slash }
+                }
+                0x3D => match c1 {                          // =
+                    0x3D => { i += 2; kind = TokenKind.EqEq }
+                    0x3E => { i += 2; kind = TokenKind.FatArrow }
+                    _ => { i += 1; kind = TokenKind.Assign }
+                }
+                0x21 => match c1 {                          // !
+                    0x3D => { i += 2; kind = TokenKind.BangEq }
+                    _ => { i += 1; kind = TokenKind.Bang }
+                }
+                0x26 => match c1 {                          // &
+                    0x3D => { i += 2; kind = TokenKind.AmpAssign }
+                    0x26 => { i += 2; kind = TokenKind.AmpAmp }
+                    _ => { i += 1; kind = TokenKind.Amp }
+                }
+                0x5E => match c1 {                          // ^
+                    0x3D => { i += 2; kind = TokenKind.CaretAssign }
+                    _ => { i += 1; kind = TokenKind.Caret }
+                }
+                0x7C => match c1 {                          // |
+                    0x3D => { i += 2; kind = TokenKind.PipeAssign }
+                    0x7C => { i += 2; kind = TokenKind.PipePipe }
+                    _ => { i += 1; kind = TokenKind.Pipe }
+                }
+                0x2B => match c1 {                          // +
+                    0x3D => { i += 2; kind = TokenKind.PlusAssign }
+                    _ => { i += 1; kind = TokenKind.Plus }
+                }
+                0x2D => match c1 {                          // -
+                    0x3D => { i += 2; kind = TokenKind.MinusAssign }
+                    0x3E => { i += 2; kind = TokenKind.Arrow }
+                    _ => { i += 1; kind = TokenKind.Minus }
+                }
+                0x2E => match c1 {                          // .
+                    0x2E => match c2 {
+                        0x2E => { i += 3; kind = TokenKind.Ellipsis }
+                        _ => { i += 2; kind = TokenKind.DotDot }
+                    }
+                    _ => { i += 1; kind = TokenKind.Dot }
+                }
+                0x7E => { i += 1; kind = TokenKind.Tilde }   // ~
+                // Everything else: a one-byte lexeme the table answers for, or
+                // a byte we do not know -- and a non-ASCII run is swallowed
+                // whole so the source slice never splits a codepoint.
+                _ => {
+                    kind = punct_kind(c)
+                    i += 1
+
+                    if c >= B_UTF8_TAIL_LO {
+                // A non-ASCII byte outside every token class starts a
+                // multi-byte codepoint: the ErrorTok must swallow the WHOLE
+                // sequence, or the src[start..i] slice below splits the
+                // codepoint and the str-slice contract panics (fuzzer catch
+                // 2026-08-14: corruption byte ahead of a Cyrillic comment).
+                //
+                // And it swallows the whole RUN of them, not one codepoint
+                // (274.3/F22): a Cyrillic identifier used to produce SIX
+                // diagnostics for one mistake, because each letter became its
+                // own error token. One cause, one diagnostic -- the same rule
+                // the panic-mode buckets in the parser follow.
+                        while i < n && b[i] >= B_UTF8_TAIL_LO { i += 1 }
+                    } else {
+                        // An ASCII byte: punct_kind already answered for it.
+                    }
+                }
+            }
         }
         toks.push(Token { kind, leading, text: src[start..i] })
     }
-    toks.push(Token { kind: TokenKind.Eof, leading: "", text: "" })
+    // Same end-anchored empty slices as the early return above — the Eof
+    // leaf must point INTO src for the position door.
+    toks.push(Token { kind: TokenKind.Eof, leading: src[n..n], text: src[n..n] })
     toks
 }
 

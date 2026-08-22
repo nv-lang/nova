@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_expr_cast` / `CastCheck` for the SHAPE of the question --
+// a cast is judged by the PAIR (source type, target type), not by the target
+// alone. The RULE is Nova's own: a newtype and its representation are the same
+// value, so unwrapping is free and everything else is not a cast at all.
+// NOT taken: rustc's cast kinds and its coercion lattice (D55 says widening is
+// not a cast in Nova, and the numeric family arrives with its own rules).
+// Role: layer 7 -- the ONE rule for `expr as T` in the subset.
+// Used by: typing.nv (the walk) and type_of.nv (the lattice reads the target).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv crossed 1000 lines), the newtype fixtures,
+// check-novac-no-cascade.sh.
+// novac/src/check/casts.nv -- what a cast may do in the subset.
+//
+// A co-equal file of the `check` module, cut along MEANING: the cast rule is one
+// subject with one pair of legal types, and it arrived whole on 2026-08-21 --
+// wrapping the registry indices in newtypes (plan 274 section 9.1g) needs the
+// UNWRAP, because an index that cannot be handed back to a vector is a type
+// without a purpose.
+
+module novac.check
+
+import ../tree.{Node}
+import ../builtins.{TypeKind}
+import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children}
+import ../types.{TyId, no_ty, is_ty, same_ty}
+
+/// A CAST, and the one shape the subset compiles: unwrapping a NEWTYPE into its
+/// representation (`r as int` for `type Row int`).
+///
+/// That direction is the inverse of the constructor, and it is what makes a
+/// wrapped index usable at all -- an index that cannot be handed back to a
+/// vector is a type without a purpose (plan 274 section 9.1g). The opposite
+/// direction is NOT this form: `7 as Row` would be the constructor written
+/// sideways, and the constructor is `Row(7)`.
+///
+/// Everything else keeps the named refusal: the numeric family arrives with its
+/// own rules (widening is not a cast in Nova, D55), and a cast between
+/// unrelated types is a hole the language does not have.
+fn Checker mut @type_cast(e Node) -> () {
+    ro kids = branch_children(e)
+    if kids.len() < 3 {
+        // `x as` with nothing after it: a recovery shape, refused at the
+        // keyword rather than typed.
+        @report_first_leaf_of(kids, CAST_MSG)
+        return
+    } else {
+        // Operand, `as`, and a target: the shape is whole.
+    }
+    ro before = @out.len()
+    @type_expr(kids[0])
+    if @out.len() > before { return }
+    ro from = type_of(kids[0], @ctx, @scope, @chan)
+    ro target = cast_target_of(e, @ctx)
+    if !is_ty(target) {
+        @report_first_leaf_of(kids, "outside the subset: a cast to a type novac does not know")
+        return
+    } else {
+        // A target the registry holds: the pair decides.
+    }
+    // The ONE legal pair: a newtype unwrapped into what it is laid out as. The
+    // carrier door answers transitively, so `type A B` over `type B int` may be
+    // cast to `int` as well as to `B`.
+    ro legal = from != target && (target == carrier_of(@ctx, from) ||
+        target == @representation_of_or_self(from))
+    if !legal {
+        @report_first_leaf_of(kids, CAST_MSG)
+        return
+    } else {
+        // A newtype and its representation: the value is unchanged, and the
+        // emitter writes the operand.
+    }
+    @record(e, target)
+}
+
+/// The representation of a newtype, or the type itself when it is not one.
+///
+/// A TOLERANT half beside `representation_of`, which asserts: the cast rule asks
+/// about a type that may well be an ordinary one, and "it is not a newtype" is
+/// an ANSWER here rather than a broken invariant.
+fn Checker @representation_of_or_self(t TyId) -> TyId {
+    // `same_ty` on both hand-backs: [LEGACY-#TBD-newtype-ro-launder].
+    if !is_ty(t) { return same_ty(t) }
+    match @ctx.tys.kind_of(t) {
+        TkNewtype => representation_of(@ctx, t)
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => same_ty(t)
+    }
+}
+

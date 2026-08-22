@@ -1,0 +1,11 @@
+module m
+
+fn main() {
+    ro x = 7
+    if x > 0 {
+        // prints 100, not 107: the inner name is visible in its own
+        // initializer and reads as zero
+        ro x = x + 100
+        println(x)
+    }
+}

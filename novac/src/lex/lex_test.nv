@@ -64,12 +64,58 @@ test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {
     assert(lo1 + toks[1].text.byte_len() == 8)
 }
 
-test "interpolated string is refused honestly, not mislexed (owner 2026-08-14)" {
-    // Flat scan would close the outer string at the inner quote -- plausibly
-    // wrong tokenization. E1 marks the token ErrorTok instead; bytes survive.
+test "interpolated string stays ONE literal; the checker names it (S9.4a)" {
+    // Until 2026-08-18 this token was ErrorTok: the lexer refused the form.
+    // That made the refusal come out as "construct not in the MVP grammar"
+    // over the whole string, naming nothing -- so the rule moved where it
+    // belongs. `"hello ${x}"` is ONE literal of the language; the lexer keeps
+    // it whole, and check refuses it BY NAME (string interpolation is not
+    // compiled yet). A flat scan would still be wrong -- it would close the
+    // outer string at the inner quote -- so the scan itself is unchanged.
     ro src = "f(\"hello \${x}\")"
     ro toks = lex(src)
+    assert(toks[2].kind == TokenKind.StrLit)
+    assert(reserialize(toks) == src)
+}
+
+test "an UNTERMINATED string is still a lexer error, not a literal" {
+    // The other half of the same decision: interpolation is a FORM of the
+    // language, an unclosed run is not. Calling it a literal would hand the
+    // parser a lie about what it holds.
+    ro toks = lex("f(\"never closed")
     assert(toks[2].kind == TokenKind.ErrorTok)
+}
+
+test "arithmetic tokens: two-char operators split before one-char (E1 growth)" {
+    ro toks = lex("if a <= b { return a < c } x += 1 .. 2 -> mut")
+    assert(toks[0].kind == TokenKind.KwIf)
+    assert(toks[2].kind == TokenKind.Le)
+    assert(toks[5].kind == TokenKind.KwReturn)
+    assert(toks[7].kind == TokenKind.Lt)
+    assert(toks[11].kind == TokenKind.PlusAssign)
+    assert(toks[13].kind == TokenKind.DotDot)
+    assert(toks[15].kind == TokenKind.Arrow)
+    assert(toks[16].kind == TokenKind.KwMut)
+}
+
+test "arithmetic file reserializes byte for byte" {
+    ro src = "fn factorial(n int) -> int {
+    if n <= 1 {
+        return 1
+    }
+    n * factorial(n - 1)
+}
+"
+    assert(reserialize(lex(src)) == src)
+}
+
+test "multi-byte codepoint outside every token class: one ErrorTok, lossless (fuzzer 2026-08-14)" {
+    // An em-dash hits the punct fallback; eating it ONE byte at a time made
+    // src[start..i] split the codepoint and the str-slice contract panicked.
+    ro src = "a — b"
+    ro toks = lex(src)
+    assert(toks[1].kind == TokenKind.ErrorTok)
+    assert(toks[1].text.byte_len() == 3)
     assert(reserialize(toks) == src)
 }
 
@@ -78,4 +124,51 @@ test "eof token carries tail trivia" {
     ro last = toks[toks.len() - 1]
     assert(last.kind == TokenKind.Eof)
     assert(last.leading == "  // tail")
+}
+
+// --- 2026-08-17 closures (P10: a fixture for every fix) ------------------
+
+test "F19: a string literal does not cross a line" {
+    // The scan used to run to the next quote ANYWHERE in the file, so one
+    // missing quote joined two lines into a literal and the diagnostic landed
+    // dozens of bytes past the mistake.
+    ro toks = lex("ro a = \"open\nro b = \"closed\"")
+    // the unterminated literal ends at the newline, so the second line lexes
+    // as code again: an Ident `ro` must appear after it
+    mut saw_error = false
+    mut saw_ident_after = false
+    for t in toks {
+        // Accumulating a flag is an EXPRESSION, not a branching: `||` says
+        // "once true, stays true" without a second branch to explain (P31).
+        saw_error = saw_error || t.kind == TokenKind.ErrorTok
+        saw_ident_after = saw_ident_after || (saw_error && t.kind == TokenKind.Ident)
+    }
+    assert(saw_error, "an unterminated string must produce an error token")
+    assert(saw_ident_after, "the next line must lex as code, not as literal text")
+}
+
+test "F21: a digit run touching an identifier byte is one refusal" {
+    // `1_000` used to lex as IntLit(1) plus identifier `_000` -- it parsed,
+    // checked and COMPILED to the number one.
+    ro toks = lex("ro x = 1_000")
+    mut ints = 0
+    mut errors = 0
+    for t in toks {
+        // Counting is an expression too: add one when it matches, zero when
+        // it does not -- the absent branch has nothing to say.
+        ints += if t.kind == TokenKind.IntLit { 1 } else { 0 }
+        errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
+    }
+    assert(errors == 1, "1_000 must be refused as one run")
+    assert(ints == 0, "1_000 must not leave an IntLit behind")
+}
+
+test "F22: a non-ASCII run is ONE error token, not one per letter" {
+    // A Cyrillic identifier used to produce six diagnostics for one cause.
+    ro toks = lex("ro \u{43f}\u{440}\u{438}\u{432}\u{435}\u{442} = 1")
+    mut errors = 0
+    for t in toks {
+        errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
+    }
+    assert(errors == 1, "one non-ASCII run must be one error token")
 }

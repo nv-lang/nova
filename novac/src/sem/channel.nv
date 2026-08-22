@@ -1,0 +1,359 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `TypeckResults` (rustc_middle::ty::typeck_results) -- per-body
+// side tables (`node_types`, `type_dependent_defs`) written by ONE pass and
+// only read below, with `node_type` calling `bug!` on absence rather than
+// re-deriving; Go `types2.Info` (`Types`, `Uses`, `Instances`) for the split
+// into separate maps by QUESTION rather than one fat node record; rustc
+// rust-analyzer `hir_ty::InferenceResult.type_of_expr` (`ArenaMap<ExprId, Ty>`
+// = a dense `Vec` of optionals per body) for the DENSE side-table shape, and
+// rustc `hir::OwnerNodes.nodes` (`IndexVec<ItemLocalId, ParentedNode>`, whose
+// density `hir_id_validator` asserts) for "an id-indexed vector IS the map";
+// Zig `InternPool` optional indices for a sentinel instead of an option (novac
+// spells it -1, Zig spells it maxInt -- same idea, different spelling); Donor: none for the disjointness rule between
+// `callees` and
+// `substs` (novac's own invariant: a node is a call or an instantiation, never
+// both); NOT taken: rustc `ItemLocalMap` hashing and the owner/`HirId` two-level
+// key (novac has one body space per file) and its `ItemLocalMap` hashing --
+// rustc's own per-node type table is a HASH map, which is the form this file
+// deliberately does not take; Go `Info.Selections` (method
+// selection is still mangled from the receiver type until the mangling door
+// takes a DeclId, E2-b2), rustc `InferCtxt` canonicalization.
+// Role: layer 7's OUTPUT -- the checker's channel: what the checker decided, read by everyone below, re-derived by no
+// one.
+// Used by: check writes it (the ONE writer), emit_c reads it; mono and layout read it at E2-b2; the LSP reads it at E3
+// instead of re-walking.
+// Guarded by: check-novac-ctx-tables.py (channel tables declared in plan 10.3b), check-novac-row-fields.py (CalleeRef
+// fields justified in 10.3v), check-novac-no-alloc-in-lookup.py (the readers are doors and allocate nothing),
+// check-novac-differential.sh (a wrong recorded type shows up as different C or a different verdict).
+// novac/src/sem/channel.nv -- the checker's channel (architecture section 1,
+// "the checker's channel"; plan 274 section 9.1, E2-b1).
+//
+// WHY A CHANNEL AT ALL. Before it, `emit_c` asked `sem.type_of` while it was
+// emitting: the backend re-derived types that the checker had already decided,
+// which is the exact shape plan 196 spent a wave removing from the current
+// compiler (two answers to one question, and the second one wins in silence).
+// The rule the channel enforces is one sentence: AFTER THE CHECKER, NOBODY
+// INFERS. Consumers read.
+//
+// WHAT IS RECORDED AT E2-b1, and what is not. The checker records exactly the
+// questions the emitter asks -- the type of a binding's initializer, of a
+// match scrutinee, of a method call's receiver, of a binary expression, of
+// each println argument -- and the callee of every resolved `Call`. It does
+// NOT yet type every node of the tree: the total walk arrives with the real
+// checker (E2-b3), and the LSP that needs totality arrives after it (E3).
+// This is stated rather than implied, because a HALF-FULL channel that
+// pretends to be full is worse than no channel: a reader would get a hole and
+// "helpfully" recompute. Hence the readers below are TOTAL -- a missing entry
+// is an ice, never an Option, and never a recomputation.
+
+module novac.sem
+
+import ../diag.{ice}
+import ../tree.{NodeId, raw_node, is_node}
+import ../types.{TyId, no_ty, is_ty}
+
+/// WHAT a resolved call targets, and the target CARRIES ITS OWN ROW.
+///
+/// Until 2026-08-21 this was a pair, `kind DefKind` beside `target_row int`,
+/// and the int was POLYMORPHIC by the kind: a callable row for a function, a
+/// variant row for a variant, an interned type id for a construction. The
+/// owner's question was "why is it not `FnRow`" -- and the answer is that
+/// `FnRow` would be a LIE on two of the three arms: `c_maker` would then be
+/// handed a `FnRow` holding a variant row, which is precisely the confusion
+/// the wrapper exists to make impossible.
+///
+/// So the payload moves INSIDE the discriminant, where each space gets its own
+/// type. This is the same argument this file already won once: `callees` and
+/// `substs` were two parallel vectors held apart by a runtime walk, and became
+/// `Resolution`, a sum, because a sum does not need the walk -- the forbidden
+/// state cannot be built. Here the forbidden state is "a variant row read as a
+/// callable row", and after this it cannot be built either.
+export type CalleeTarget enum
+    | CalleeFn(FnRow)
+    | CalleeVariant(VariantRow)
+    | CalleeCtor(TyId)
+
+/// What a resolved `Call` targets, plus the type arguments it was written with
+/// -- so the emitter reads a DECISION instead of repeating the lookup by name.
+export type CalleeRef value {
+    target CalleeTarget /// WHICH callable, variant or type -- each in its own space, because the sum carries the row
+    subst_off int /// First type argument of this call in `subst_args`; 0 with subst_cnt 0 = not generic
+    subst_cnt int /// How many type arguments the call was written with; 0 = a plain call
+}
+
+/// Do two decisions name the SAME target? Asked by the one writer, to hold
+/// "a call is resolved once" -- and asked with a nested match rather than `==`
+/// because the arms live in three different index spaces and comparing across
+/// them is exactly the question this sum answers with "never".
+#realtime nogc
+fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
+    match a {
+        // The OR-pattern is the COMPACT exhaustive form, and the reason it is
+        // used instead of `_ => false` is the whole point of P21 (owner's
+        // question 2026-08-22, "why not `_`?"): a wildcard that produces a
+        // VALUE swallows the arm this sum does not have yet -- a fourth kind of
+        // target would silently answer "not the same" and the channel's
+        // once-only invariant would stop holding. A comment cannot notice a
+        // fourth arm; the compiler can, and an OR-pattern keeps it able to
+        // while costing one line instead of three. (`_` stays legal where it is
+        // a REFUSAL -- `ice`/`@refuse` cannot be silently wrong.)
+        CalleeFn(x) => {
+            match b {
+                CalleeFn(y) => x == y
+                CalleeVariant(_) | CalleeCtor(_) => false
+            }
+        }
+        CalleeVariant(x) => {
+            match b {
+                CalleeVariant(y) => x == y
+                CalleeFn(_) | CalleeCtor(_) => false
+            }
+        }
+        CalleeCtor(x) => {
+            match b {
+                CalleeCtor(y) => x == y
+                CalleeFn(_) | CalleeVariant(_) => false
+            }
+        }
+    }
+}
+
+/// Is this target an actual row, in whichever space it lives? Absence is not a
+/// decision, and the writer refuses to record one.
+#realtime nogc
+fn target_present(t CalleeTarget) -> bool {
+    match t {
+        CalleeFn(r) => raw_row(r) >= 0
+        CalleeVariant(v) => is_vrow(v)
+        CalleeCtor(id) => is_ty(id)
+    }
+}
+
+/// Where a substitution's arguments live in the pool. A range is ONE value,
+/// so it is one row -- not two parallel vectors (owner's review 2026-08-16).
+/// Parallel `off`/`cnt` vectors admit a state the language forbids: two
+/// lengths that disagree. A row cannot desynchronize with itself (P23), and
+/// the registry already spells ranges this way -- `TypeDef.rows` (one field since
+/// wave B5, because that pair was polymorphic by kind),
+/// `VariantDef.payload_off/payload_cnt` live inside their row.
+export type SubstRef value {
+    arg_off int /// First argument in `subst_args`; -1 = this node instantiates nothing.
+    arg_cnt int /// How many arguments; 0 when arg_off < 0.
+}
+
+/// The checker's output for ONE file: three side tables keyed by NodeId.
+///
+/// WHY THREE TABLES AND NOT ONE FAT ROW PER NODE. They are three different
+/// QUESTIONS with three different domains: every typed expression has a type,
+/// only a call has a callee, only an instantiation has a substitution. Both
+/// donors split the same way (rustc `TypeckResults`: `node_types`,
+/// `type_dependent_defs`, `node_args`; Go `types2.Info`: `Types`, `Uses`,
+/// `Instances`) and for the same reason: each table has ONE writer door and
+/// its own invariant, and a consumer asks one question rather than receiving
+/// three answers of which two are sentinels. The disjointness of the last two
+/// is stated ACROSS them (`assert_disjoint`) precisely because they are two.
+///
+/// Dense vectors, not hash maps: ids are assigned by the parser in creation
+/// order, so they are dense small ints and the index IS the key (rustc
+/// IndexVec). `-1` is the absent marker in every one of them.
+///
+/// `callees` and `substs` are disjoint BY CONSTRUCTION of the recorders: a
+/// call node records a callee, an instantiating non-call node records a
+/// substitution, and `assert_disjoint` states it as a checkable fact rather
+/// than a habit.
+/// What a node resolves TO, when it resolves to anything at all.
+///
+/// ONE field instead of two vectors (owner's question 2026-08-18: "if they are
+/// one to one, why two arrays?"). They were never a pairing -- they were two
+/// PARALLEL VECTORS over one index space, and "no node is both a call and an
+/// instantiation" was held by a walk over the whole file (`assert_disjoint`).
+/// The conventions say the opposite (rule 3, rustc `IndexVec<Idx, RowDef>`): a
+/// row makes desynchronisation UNREPRESENTABLE rather than checkable. A sum
+/// does it one better -- the walk is not weakened, it is deleted, because the
+/// state it looked for cannot be built.
+export type Resolution enum
+    | Unresolved
+    | Callee(CalleeRef)
+    | Subst(SubstRef)
+
+/// THE checker's channel: what the checker decided, read by everyone after it
+/// and re-derived by no one.
+export type CheckOut {
+    types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
+    res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
+    subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
+}
+
+/// An empty channel sized for a file of `node_count` branch nodes. The size
+/// comes from the parser's counter, so an id outside it is a bug loud enough
+/// to name (a declaration tree's node keyed into the user file's channel, for
+/// instance -- each parse has its OWN id space).
+export fn CheckOut.new(node_count int) -> CheckOut {
+    mut types = []TyId.new()
+    mut res = []Resolution.new()
+    for _ in 0..node_count {
+        types.push(no_ty())
+        res.push(Resolution.Unresolved)
+    }
+    CheckOut { types, res, subst_args: []TyId.new() }
+}
+
+/// Record the type of a node. Writing a DIFFERENT answer over an existing one
+/// is an ice: two answers to one question is precisely the disease the channel
+/// exists to cure, and it must not be curable by ordering. Writing the SAME
+/// answer twice is legal -- the emitter asks for a binding's initializer type
+/// and then emits that same expression, and both paths mean one fact.
+export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
+    requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
+{
+    ro prev = @types[raw_node(id)]
+    assert(!is_ty(prev) || prev == t, "sem: a node was typed twice with different answers")
+    @types[raw_node(id)] = t
+}
+
+/// Record the decided target of a call.
+export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []TyId) -> ()
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a call outside this file's id space"
+    requires target_present(target), "sem: channel callee write with no row — absence is not a decision"
+{
+    match @res[raw_node(id)] {
+        Unresolved => {}
+        Callee(prev) => assert(same_target(prev.target, target),
+            "sem: a call was resolved twice to different targets")
+        Subst(_) => ice("sem: record_callee on a node already recorded as an instantiation")
+    }
+    // The call's decision is the WHOLE answer: which row, and with which type
+    // arguments. rustc keeps the same two facts about one node (type_dependent
+    // _defs + node_args); here they live in one row, so they cannot disagree.
+    ro subst_off = @subst_args.len()
+    @subst_args.append(subst)
+    @res[raw_node(id)] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len() })
+}
+
+/// Record the substitution instantiating a generic at a NON-call node (record
+/// literal, variant constructor, pattern over a generic sum, prefixed path).
+/// The first writer arrives with E2-b2; the table, the door and the
+/// disjointness invariant exist now, because the invariant is what makes the
+/// two tables two rather than one habit.
+export fn CheckOut mut @record_subst(id NodeId, args []TyId) -> ()
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: subst_of asked about a node outside this file's id space"
+{
+    // The two exclusions that used to be `requires` over two tables are now ONE
+    // question to one field: the sum cannot hold both, so "a call and an
+    // instantiation at once" is not a state to forbid -- it does not exist.
+    match @res[raw_node(id)] {
+        Unresolved => {}
+        Callee(_) => ice("sem: record_subst on a node already recorded as a call")
+        Subst(_) => ice("sem: record_subst twice on one node")
+    }
+    ro arg_off = @subst_args.len()
+    @subst_args.append(args)
+    @res[raw_node(id)] = Resolution.Subst(SubstRef { arg_off, arg_cnt: args.len() })
+}
+
+/// The type of a node. TOTAL: a hole is an ice, not an Option — an optional
+/// return is an invitation to write "and if there is none, I will work it out
+/// myself", which is the branch that made two answers possible in the first
+/// place (plan 196's lesson).
+#realtime nogc
+export fn CheckOut @type_of(id NodeId) -> TyId
+    requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
+{
+    ro t = @types[raw_node(id)]
+    assert(is_ty(t), "sem: no type recorded for this node — a hole in the checker's channel")
+    t
+}
+
+/// The decided target of a call. TOTAL, for the same reason.
+#realtime nogc
+export fn CheckOut @callee_of(id NodeId) -> CalleeRef
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a call outside this file's id space"
+{
+    match @res[raw_node(id)] {
+        Callee(c) => c
+        Unresolved => ice("sem: callee_of on a node with nothing recorded — a hole in the channel")
+        Subst(_) => ice("sem: callee_of on a node recorded as an instantiation")
+    }
+}
+
+/// Does this node carry a resolved callee? TOLERANT, and for the same reason
+/// `has_subst` is: the mono collector walks every node of a body and most of
+/// them call nothing, so "no callee here" is an ANSWER and not a hole.
+#realtime nogc
+export fn CheckOut @has_callee(id NodeId) -> bool
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: has_callee asked about a node outside this file's id space"
+{
+    match @res[raw_node(id)] {
+        Callee(_) => true
+        Unresolved | Subst(_) => false
+    }
+}
+
+/// Whether a node carries a substitution — the only tolerant question in this
+/// module, and it is tolerant because "no substitution" is a legal ANSWER
+/// here, not a hole: most nodes instantiate nothing.
+#realtime nogc
+export fn CheckOut @has_subst(id NodeId) -> bool
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: has_subst asked about a node outside this file's id space"
+{
+    match @res[raw_node(id)] {
+        Subst(_) => true
+        Unresolved | Callee(_) => false
+    }
+}
+
+/// The CALLABLE row of this reference -- for the readers that already know the
+/// target is a function and would otherwise write a match with two dead arms
+/// (the method-call emission: a method IS a function, D273).
+///
+/// A reader that branches on the target three ways does NOT come here: it
+/// matches the sum and binds the row in its own arm, which is one question
+/// instead of two. So this door exists for the single-arm case, and the arms it
+/// cannot answer are an ice rather than a `requires`, because after the payload
+/// moved into the sum the wrong call is no longer a state to forbid -- it is a
+/// shape the type carries.
+export fn CalleeRef @callable_row() -> FnRow {
+    match @target {
+        CalleeFn(r) => r
+        CalleeVariant(_) => ice("sem: the callable row of a variant reference — a variant row is not a callable row")
+        CalleeCtor(_) => ice("sem: the callable row of a construction — a type id is not a callable row")
+    }
+}
+
+/// The substitution a CALL was written with -- a VIEW into the pool, not a
+/// copy (the arguments live once).
+///
+/// `subst_of` answers about an INSTANTIATION node; this one answers about a
+/// CALL, whose range lives inside its `CalleeRef`. Two questions, two doors,
+/// because a node is one or the other by construction and mixing them would
+/// mean asking "which kind are you" at every use.
+export fn CheckOut @callee_subst_of(id NodeId) -> ro []TyId
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: callee_subst_of outside this file's id space"
+{
+    ro cr = match @res[raw_node(id)] {
+        Callee(c) => c
+        Unresolved => ice("sem: callee_subst_of on a node with nothing recorded")
+        Subst(_) => ice("sem: callee_subst_of on a node recorded as an instantiation")
+    }
+    @subst_args[cr.subst_off..cr.subst_off + cr.subst_cnt]
+}
+
+/// The substitution of a node; asking about a node that has none is an ice
+/// (ask `has_subst` first).
+export fn CheckOut @subst_of(id NodeId) -> ro []TyId
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: subst_of asked about a node outside this file's id space"
+{
+    ro sr = match @res[raw_node(id)] {
+        Subst(s) => s
+        Unresolved => ice("sem: subst_of on a node with nothing recorded — a hole in the channel")
+        Callee(_) => ice("sem: subst_of on a node recorded as a call")
+    }
+    // A VIEW into the pool, not a copy: the arguments live once (nv-coding-style
+    // section 18a; a counted push loop here would allocate per question).
+    @subst_args[sr.arg_off..sr.arg_off + sr.arg_cnt]
+}
+
+// `assert_disjoint` lived here until 2026-08-18 and is gone with its reason.
+// It walked the whole file checking that no node sat in both `callees` and
+// `substs`; those two are now ONE sum, so the state it looked for cannot be
+// built. An invariant that the type system holds needs no walk.

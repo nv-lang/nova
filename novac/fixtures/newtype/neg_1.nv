@@ -1,0 +1,24 @@
+module newtype.neg_1
+
+// ONE seeded cause: the constructor is given something that is not the
+// representation. `Row` wraps an `int`, and a string is not one.
+//
+// novac refuses it BY NAME, at the argument. The ORACLE does not: `nova check`
+// accepts this file and clang then refuses the emission -- class O-1c (the
+// checker admits what its own codegen rejects), measured 2026-08-21 and
+// registered in docs/dev/novac-divergences.md. `Row(1, 2)` -- two arguments to a
+// one-field wrapper -- passes its check too. So this fixture asserts novac's
+// refusal, not an agreement; the differential guard judges `pos_*` files only,
+// which is why the divergence lives in the registry rather than here.
+//
+// What the refusal replaced matters more than its wording. Until 2026-08-21
+// EVERY type in call position -- this mistake and the legal `Row(7)` alike --
+// reached the lattice and came back "internal compiler error (novac bug, not
+// yours)". An ICE on a user's mistake is the P12 class; an ICE on a LEGAL form
+// is worse, and both were here.
+type Row int
+
+fn main() {
+    ro r = Row("s")
+    println(1)
+}

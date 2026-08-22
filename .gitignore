@@ -106,3 +106,8 @@ test_out.txt
 # Local secrets for the manual smoke test of examples/flagship/http_proxy_chain
 # (plan 249 §5). The committed template is `.env.example`.
 .env
+
+# сгенерированный C рядом с исходниками novac — артефакт сборки, не источник
+# (shell.tpl.c — настоящий источник, поэтому исключение)
+novac/src/**/*.c
+!novac/src/emit_c/shell.tpl.c

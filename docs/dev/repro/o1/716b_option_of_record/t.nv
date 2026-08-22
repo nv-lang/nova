@@ -1,0 +1,16 @@
+module m
+
+type Tok { k int }
+
+fn last(xs []Tok) -> int {
+    mut found = Option[Tok].None
+    for t in xs {
+        found = Option[Tok].Some(t)
+    }
+    match found {
+        Some(t) => t.k()
+        None => -1
+    }
+}
+
+fn main() => println(last([]Tok.of(Tok { k: 7 })))

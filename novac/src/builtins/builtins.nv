@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_span::sym` + Go `types.Universe` — the universe of
+// Role: the universe — the ONE table of pre-declared names and primitive ABI facts the compiler reads (П5).
+// Used by: sem seeds the registry from it, mangle asks prim_c_name (E1+); grows only when the language's universe
+// grows.
+// Guarded by: check-novac-no-name-hardcode.py (std names only here), check-novac-no-prelude-shadow.py,
+// check-novac-mangle-fixed-point.sh (prim_c_name matches nova_rt.h).
+// pre-declared names lives in ONE table the compiler reads, never a scattering
+// of string literals (П5); NOT taken: rustc's symbol interning (names here are
+// four).
+// novac/src/builtins — THE ONE FILE where names of the language may appear as
+// string literals (convention P5, guard check-novac-no-name-hardcode.py; owner
+// 2026-08-15). What is legitimate here, by the reference compilers (rustc
+// `sym`/LangItem, Go `types.Universe`, Zig builtins): (a) the universe —
+// primitive types with their runtime ABI spelling; (b) language entry
+// points the compiler itself must know (main, the println statement form).
+// What is NOT legitimate here (and what was REMOVED 2026-08-16 by the owner's
+// rule «no temporary hardcode»): names of std types and methods — they are
+// DECLARATIONS, read by `sem` from the signatures handed to novac; instances
+// of generics (they come from `mono`); and C names of anything but primitives
+// (they come from the mangling door, `sem/mangle`).
+//
+// Its own module (the rustc_span::sym model): every layer that must SPELL a
+// name imports this leaf — check, sem, emit_c — and no edge points back.
+
+module novac.builtins
+
+
+/// What a registry type IS — selects which row table the off/cnt range
+/// addresses (record -> fields, sum -> variants; primitives own no rows).
+/// Lives here, not in sem, because the builtin seed rows carry it and sem
+/// imports builtins (no back edge).
+export type TypeKind enum
+    | TkPrim /// a primitive of the universe: int, str, bool, f64
+    | TkRecord /// a nominal record declaration, no type parameters applied
+    | TkSum /// a nominal sum declaration, no type parameters applied
+    | TkApp /// a type constructor applied to arguments: Vec[int] (E2-b1)
+    | TkParam /// a type parameter of the enclosing declaration, by index (E2-b1)
+    | TkInfer /// an inference variable, alive only inside one body (E2-b1)
+    | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
+
+/// How many kinds there are. The interner's bucket arithmetic multiplies by
+/// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
+/// "what is that 6?" — a magic constant one file away from its source is the
+/// first thing to drift when a kind is added). Every dispatch on TypeKind is
+/// an exhaustive match, so a seventh kind is a compile error at each site —
+/// and this constant is the ONE place a match cannot reach, hence the note.
+export const TYPE_KIND_COUNT = 7
+
+/// Name of the program entry function.
+export const ENTRY_FN = "main"
+
+/// Name of the print statement the subset understands (a statement form
+/// today, not a std function — the one println the runtime prints through).
+export const PRINT_FN = "println"
+
+/// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
+/// the others (P5): the emitter must not spell std names itself, and the
+/// registry is asked for the row under this name.
+export const EQUAL_METHOD = "equal"
+
+/// The attribute that declares an implicit conversion (D429): `#coerce` on a
+/// no-parameter method makes `receiver -> return` an implicit pair. A NAME OF
+/// THE LANGUAGE, so it lives here and nowhere else (P5) -- D429 is emphatic
+/// that not one pair may be hard-coded in a compiler, and the same holds for
+/// the word that declares them.
+export const COERCE_ATTR = "coerce"
+
+/// The CONTEXTUAL mode word of the language -- the one a token kind cannot
+/// answer for.
+///
+/// A mode qualifies a parameter (`mut v int`) and a receiver
+/// (`fn StringBuilder consume @into_str()`). The set is closed and measured
+/// against the oracle rather than assumed; the measurement and what it cost are
+/// written out at `sem/slots.nv`'s `is_param_mode`.
+///
+/// The axis is exactly THREE modes -- `ro`, `mut`, `consume` -- and only one of
+/// them lives here. `mut` and `ro` are KEYWORDS: the lexer owns those spellings
+/// and hands out `KwMut`/`KwRo`, so a reader asks the token kind and repeating
+/// the words here would be the copy P5 exists to prevent. `consume` is an
+/// ordinary identifier to the lexer, so only its spelling identifies it -- and a
+/// spelling of the language lives HERE, which is why the parser has an edge to
+/// this module at all.
+///
+/// `uninit` is NOT here, and that is a measurement of 2026-08-21, not a taste:
+/// the oracle answers "expected identifier, got `uninit`" to `fn f(uninit v T)`
+/// and accepts `fn f(v uninit T)`. It is a qualifier of the TYPE (`uninit T`,
+/// the MaybeUninit wrapper) and of a pointer's pointee, where it does combine
+/// with a mode -- `*mut uninit T` (D-amendment 2026-08-05, No 358: a bare
+/// `*uninit T` is not writable). Treating it as a mode would have made novac
+/// ACCEPT a parameter form the language does not have.
+export fn is_contextual_mode_word(word str) -> bool => word == CONSUME_MODE
+
+/// The word that turns a type declaration into an ALIAS rather than a newtype:
+/// `type Row alias int` is `int` under a second name, while `type Row int` is a
+/// DISTINCT type over the same representation (measured by the integrator
+/// 2026-08-21: the oracle enforces the distinction -- `Row` into an `int`
+/// parameter is E7301).
+///
+/// A NAME OF THE LANGUAGE, so it lives here (P5), next to `enum` -- the other
+/// word that decides what a `type` declaration means.
+export const ALIAS_MARKER = "alias"
+
+/// The RECEIVER's own type, spelled by its role: `fn T @twin() -> Self`.
+///
+/// A NAME OF THE LANGUAGE, so it lives here (P5). It names no declaration and
+/// is in no registry -- which is exactly how it went missing: a door that only
+/// asked `defs` dropped every signature mentioning it, and std spells it 264
+/// times across 50 files (measured 2026-08-21).
+export const SELF_TYPE = "Self"
+
+/// The mode that takes ownership. Named because two readers tell it apart from
+/// the other contextual word (`uninit` promises a write, `consume` a move), and
+/// a name of the language may be spelled in ONE place (P5).
+export const CONSUME_MODE = "consume"
+
+/// One pre-declared type of the universe: (source name, runtime C spelling).
+/// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a
+/// fact, not a mangling result; everything non-primitive goes through the
+/// mangling door.
+export type BuiltinType value {
+    name str /// canonical Nova spelling
+    c_name str /// runtime ABI spelling (nova_rt.h)
+}
+
+// The universe, in Prims order; the seed hands the ACTUAL ids back
+// (CommonTypes model, no hard-coded indexes).
+// THE universe table, built ONCE at module load. It is the WHOLE primitive
+// set of the language, not a convenient corner of it (owner's question
+// 2026-08-16: "you still have not added all the builtin types -- does that
+// make sense?"). It did not: a type novac does not know cannot even be
+// NAMED in a signature, and novac's own lexer is written in `u8`. The C
+// names are an ABI fact, read from the oracle's own map
+// (compiler-codegen/src/codegen/emit_c.rs, the primitive table) rather than
+// invented -- getting one wrong is a silent layout bug, not a compile error.
+//
+// What the subset does WITH them is a separate and narrower question:
+// arithmetic and printing still cover int and f64 only, and `check` refuses
+// the rest honestly at the operator or the argument. (owner's correction
+// 2026-08-16: a function returning a fresh vector allocated on EVERY call —
+// prim_c_name is a door and П18 says a door allocates nothing; the seed loop
+// called it too. A module-level `ro` binding is initialized once and read
+// forever; the type system keeps it read-only).
+//
+// Module-private, not exported, and that is NOT the wanted shape: probed
+// 2026-08-16 — `export ro` of a vector is not importable across a module
+// boundary in the oracle (`undefined identifier` at the use site), and
+// `export const` refuses `.of(...)` (E_CONST_NOT_CONSTEXPR: literals only).
+// So the table stays private and the ONE reader door below hands it out.
+// [LEGACY-#701-export-ro-vector] goes when the oracle exports `ro` values.
+ro universe = []BuiltinType.of(
+    BuiltinType { name: "int", c_name: "nova_int" },
+    BuiltinType { name: "str", c_name: "nova_str" },
+    BuiltinType { name: "bool", c_name: "nova_bool" },
+    BuiltinType { name: "f64", c_name: "nova_f64" },
+    BuiltinType { name: "uint", c_name: "nova_uint" },
+    BuiltinType { name: "i8", c_name: "int8_t" },
+    BuiltinType { name: "i16", c_name: "int16_t" },
+    BuiltinType { name: "i32", c_name: "int32_t" },
+    BuiltinType { name: "i64", c_name: "int64_t" },
+    BuiltinType { name: "u8", c_name: "nova_byte" },
+    BuiltinType { name: "u16", c_name: "uint16_t" },
+    BuiltinType { name: "u32", c_name: "uint32_t" },
+    BuiltinType { name: "u64", c_name: "uint64_t" },
+    BuiltinType { name: "f32", c_name: "nova_f32" },
+    BuiltinType { name: "char", c_name: "nova_char" })
+
+/// The runtime ABI spelling of a primitive by its universe ordinal — THE
+/// door the mangler asks (E2-b1 step 3). It used to be a field copied onto
+/// every TypeDef row; a fact of nova_rt.h belongs to the universe, and a
+/// C name is a FUNCTION of the term, never a stored string (П22, mangle
+/// door rule). The ordinal is what the interner keeps as the head of a
+/// TkPrim term, so the round trip is prim term -> ordinal -> ABI name.
+#realtime nogc
+export fn prim_c_name(ordinal int) -> str
+    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+{
+    universe[ordinal].c_name
+}
+
+/// The universe as a whole, for the seed loop in sem — the SAME vector, not a
+/// copy (a `[]T` is a header; the rows live once). Exists only because the
+/// oracle cannot export a `ro` vector yet (see `universe`).
+///
+/// The return type carries `ro` (owner's review 2026-08-17). Handing a `ro`
+/// binding out as a plain `[]T` launders it: the caller gets a MUTABLE alias
+/// of read-only data. Probed the same day — the oracle accepts the laundered
+/// form silently AND the mutation lands: pushing through the alias grows the
+/// `ro` table itself (repro in docs/dev/novac-divergences.md). Until that is
+/// fixed the compiler cannot enforce this for us, so the signature states it:
+/// `-> ro []BuiltinType`, the same shape std uses for its own views
+/// (`str @bytes() -> ro []u8`, `IoCapture @out_bytes() -> ro []u8`).
+export fn builtin_types() -> ro []BuiltinType => universe
+
+/// The two bool literals of the language, named ONCE.
+///
+/// They are not tokens of their own: the lexer sees identifiers, and the
+/// language spells them `true` / `false` (the oracle emits the C keywords,
+/// since `nova_bool` is C `bool`). Without them the subset had no way to
+/// WRITE a bool at all -- only to compute one from a comparison -- which the
+/// owner's question about the literal list exposed (2026-08-16).
+#realtime nogc
+export fn is_bool_literal(name str) -> bool => name == "true" || name == "false"
+
+/// The C spelling of a bool constant. `nova_bool` IS C `bool`, so the two
+/// spellings coincide -- but they are LANGUAGE names, and language names live
+/// here (P5), not as string literals in the backend.
+#realtime nogc
+export fn bool_c_literal(v bool) -> str {
+    if v { return "true" }
+    "false"
+}
