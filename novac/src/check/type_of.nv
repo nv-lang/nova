@@ -15,7 +15,7 @@
 module novac.check
 
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, NodeId, raw_node, no_node, is_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}

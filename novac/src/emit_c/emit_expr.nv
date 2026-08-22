@@ -15,7 +15,7 @@
 module novac.emit_c
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of}
+import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of, NodeId, raw_node, no_node, is_node}
 import ../diag.{ice}
 import ../sem.{ArgSpec, ArgClass, CallForm, FnLookup, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../builtins.{EQUAL_METHOD, ENTRY_FN, PRINT_FN, bool_c_literal}

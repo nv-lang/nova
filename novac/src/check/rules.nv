@@ -18,7 +18,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, NodeId, raw_node, no_node, is_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}

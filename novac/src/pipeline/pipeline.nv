@@ -43,7 +43,7 @@ fn tokens_of(text str) -> []Token {
 import ../source.{SourceText}
 import ../lex.{lex, reserialize, Token}
 import ../parse.{parse}
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
 import ../check.{check, check_instance}
 import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation}
@@ -115,7 +115,7 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnosti
     // root's id plus one IS the file's node capacity -- what an instance
     // channel must be sized to, because a declaration's nodes sit anywhere in
     // that range.
-    ro cap = tree.id_of() + 1
+    ro cap = raw_node(tree.id_of()) + 1
     for it in reach.instances() {
         // mono instantiated a row this file does not declare: a call to a body
         // novac does not compile is refused BY NAME in check, so reaching here

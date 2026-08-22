@@ -14,7 +14,7 @@
 
 module novac.pipeline
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
 import ../parse.{parse}
 import ../sem.{branch_children, leaf_text}
 import ../source.{SourceText}
@@ -116,7 +116,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     ro ctx = context(tree, std_decls())
     ro decl = generic_decl_of(tree, "twice")
     ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx,
-        []TyId.of(ctx.prims.int_id), tree.id_of() + 1)
+        []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1)
     assert(diags.len() == 0)
     // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
     // A bare name would prove nothing here -- the channel deliberately does

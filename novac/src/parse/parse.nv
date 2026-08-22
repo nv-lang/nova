@@ -57,7 +57,7 @@ type Cursor {
 fn Cursor mut @node(kind NodeKind, children []Node) -> Node {
     ro id = @next_id
     @next_id += 1
-    branch(id, kind, children)
+    branch(NodeId(id), kind, children)
 }
 
 /// Look ahead `skip` tokens without moving. ONE door, not a family: the

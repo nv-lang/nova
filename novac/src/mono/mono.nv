@@ -15,7 +15,7 @@
 
 module novac.mono
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
 import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, leaf_text}
 import ../builtins.{ENTRY_FN}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
@@ -239,7 +239,7 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                 mut subst []TyId, mut ptypes []ParamDef) -> bool {
     mut grew = false
     ro id = n.id_of()
-    if id >= 0 && out.has_callee(id) {
+    if is_node(id) && out.has_callee(id) {
         ro cr = out.callee_of(id)
         // Every kind is NAMED: a call whose target is a variant constructor or
         // a type is emitted by its own door, and the fn set says nothing about

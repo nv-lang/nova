@@ -36,7 +36,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, NodeId, raw_node, no_node, is_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
@@ -104,7 +104,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     mut c = Checker {
         src, ctx,
         out: []Diagnostic.new(),
-        chan: CheckOut.new(file.id_of() + 1),
+        chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
         substs: []TyId.new(),
     }

@@ -252,6 +252,33 @@ export fn is_unop(k TokenKind) -> bool => un_op(k).is_some()
 export fn un_op_of(k TokenKind) -> UnOp =>
     un_op(k) ?? ice("tree: un_op_of asked about a token that is not a unary operator")
 
+/// THE identity of a tree node -- the key every side table of the checker's
+/// channel is indexed by, and a space of its own since wave B3 (2026-08-22).
+///
+/// Declared HERE because the parser mints them and this module owns `Node`: the
+/// space belongs to whoever hands out its values (donor: rustc `HirId`, minted
+/// by lowering and imported by every consumer; Go `types2` keys its `Info` maps
+/// by `ast.Expr` identity for the same reason -- the producer names the key).
+///
+/// A LEAF has none, and that is `no_node()` rather than −1: the one door that
+/// knows a leaf owns no identity is `id_of`, and its answer is a value of this
+/// space instead of a number the caller has to interpret.
+export type NodeId int
+
+/// The index inside -- for the side tables this space addresses, and for the
+/// one size computation the pipeline does (`raw_node(file) + 1` is the node
+/// COUNT, because the file node is minted last and its id is the largest).
+#realtime nogc
+export fn raw_node(n NodeId) -> int => n as int
+
+/// "No node" -- what a LEAF answers.
+#realtime nogc
+export fn no_node() -> NodeId => NodeId(-1)
+
+/// Does this identity address a node at all? Asked where a leaf is legal.
+#realtime nogc
+export fn is_node(n NodeId) -> bool => raw_node(n) >= 0
+
 /// A green node: a leaf carries one Token as DATA; a branch groups children
 /// under a kind. Immutable, lossless, position-free by construction.
 ///
@@ -272,18 +299,18 @@ export fn un_op_of(k TokenKind) -> UnOp =>
 /// pass that sees every node exactly once).
 export type Node enum
     | Leaf(Token)
-    | Branch { id int, kind NodeKind, children []Node }
+    | Branch { id NodeId, kind NodeKind, children []Node }
 
 /// Build a branch node with its identity.
-export fn branch(id int, kind NodeKind, children []Node) -> Node =>
+export fn branch(id NodeId, kind NodeKind, children []Node) -> Node =>
     Node.Branch { id, kind, children }
 
 /// The node's identity, or -1 for a leaf. THE one place that knows a leaf has
 /// none: readers ask here rather than matching the shape themselves.
 #realtime nogc
-export fn Node @id_of() -> int {
+export fn Node @id_of() -> NodeId {
     match @ {
-        Leaf(_) => -1
+        Leaf(_) => no_node()
         Branch { id, .. } => id
     }
 }

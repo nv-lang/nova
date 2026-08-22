@@ -19,7 +19,7 @@
 
 module novac.sem
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
 import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}

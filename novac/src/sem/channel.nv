@@ -49,6 +49,7 @@
 module novac.sem
 
 import ../diag.{ice}
+import ../tree.{NodeId, raw_node, no_node, is_node}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// WHAT a resolved call targets, and the target CARRIES ITS OWN ROW.
@@ -201,20 +202,20 @@ export fn CheckOut.new(node_count int) -> CheckOut {
 /// exists to cure, and it must not be curable by ordering. Writing the SAME
 /// answer twice is legal -- the emitter asks for a binding's initializer type
 /// and then emits that same expression, and both paths mean one fact.
-export fn CheckOut mut @record_type(id int, t TyId) -> ()
-    requires id >= 0 && id < @types.len(), "sem: channel asked about a node outside this file's id space"
+export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
+    requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
 {
-    ro prev = @types[id]
+    ro prev = @types[raw_node(id)]
     assert(!is_ty(prev) || prev == t, "sem: a node was typed twice with different answers")
-    @types[id] = t
+    @types[raw_node(id)] = t
 }
 
 /// Record the decided target of a call.
-export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []TyId) -> ()
-    requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
+export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []TyId) -> ()
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a call outside this file's id space"
     requires target_present(target), "sem: channel callee write with no row — absence is not a decision"
 {
-    match @res[id] {
+    match @res[raw_node(id)] {
         Unresolved => {}
         Callee(prev) => assert(same_target(prev.target, target),
             "sem: a call was resolved twice to different targets")
@@ -225,7 +226,7 @@ export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []TyId)
     // _defs + node_args); here they live in one row, so they cannot disagree.
     ro subst_off = @subst_args.len()
     @subst_args.append(subst)
-    @res[id] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len() })
+    @res[raw_node(id)] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len() })
 }
 
 /// Record the substitution instantiating a generic at a NON-call node (record
@@ -233,20 +234,20 @@ export fn CheckOut mut @record_callee(id int, target CalleeTarget, subst []TyId)
 /// The first writer arrives with E2-b2; the table, the door and the
 /// disjointness invariant exist now, because the invariant is what makes the
 /// two tables two rather than one habit.
-export fn CheckOut mut @record_subst(id int, args []TyId) -> ()
-    requires id >= 0 && id < @res.len(), "sem: subst_of asked about a node outside this file's id space"
+export fn CheckOut mut @record_subst(id NodeId, args []TyId) -> ()
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: subst_of asked about a node outside this file's id space"
 {
     // The two exclusions that used to be `requires` over two tables are now ONE
     // question to one field: the sum cannot hold both, so "a call and an
     // instantiation at once" is not a state to forbid -- it does not exist.
-    match @res[id] {
+    match @res[raw_node(id)] {
         Unresolved => {}
         Callee(_) => ice("sem: record_subst on a node already recorded as a call")
         Subst(_) => ice("sem: record_subst twice on one node")
     }
     ro arg_off = @subst_args.len()
     @subst_args.append(args)
-    @res[id] = Resolution.Subst(SubstRef { arg_off, arg_cnt: args.len() })
+    @res[raw_node(id)] = Resolution.Subst(SubstRef { arg_off, arg_cnt: args.len() })
 }
 
 /// The type of a node. TOTAL: a hole is an ice, not an Option — an optional
@@ -254,20 +255,20 @@ export fn CheckOut mut @record_subst(id int, args []TyId) -> ()
 /// myself", which is the branch that made two answers possible in the first
 /// place (plan 196's lesson).
 #realtime nogc
-export fn CheckOut @type_of(id int) -> TyId
-    requires id >= 0 && id < @types.len(), "sem: channel asked about a node outside this file's id space"
+export fn CheckOut @type_of(id NodeId) -> TyId
+    requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
 {
-    ro t = @types[id]
+    ro t = @types[raw_node(id)]
     assert(is_ty(t), "sem: no type recorded for this node — a hole in the checker's channel")
     t
 }
 
 /// The decided target of a call. TOTAL, for the same reason.
 #realtime nogc
-export fn CheckOut @callee_of(id int) -> CalleeRef
-    requires id >= 0 && id < @res.len(), "sem: channel asked about a call outside this file's id space"
+export fn CheckOut @callee_of(id NodeId) -> CalleeRef
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a call outside this file's id space"
 {
-    match @res[id] {
+    match @res[raw_node(id)] {
         Callee(c) => c
         Unresolved => ice("sem: callee_of on a node with nothing recorded — a hole in the channel")
         Subst(_) => ice("sem: callee_of on a node recorded as an instantiation")
@@ -278,10 +279,10 @@ export fn CheckOut @callee_of(id int) -> CalleeRef
 /// `has_subst` is: the mono collector walks every node of a body and most of
 /// them call nothing, so "no callee here" is an ANSWER and not a hole.
 #realtime nogc
-export fn CheckOut @has_callee(id int) -> bool
-    requires id >= 0 && id < @res.len(), "sem: has_callee asked about a node outside this file's id space"
+export fn CheckOut @has_callee(id NodeId) -> bool
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: has_callee asked about a node outside this file's id space"
 {
-    match @res[id] {
+    match @res[raw_node(id)] {
         Callee(_) => true
         Unresolved | Subst(_) => false
     }
@@ -291,10 +292,10 @@ export fn CheckOut @has_callee(id int) -> bool
 /// module, and it is tolerant because "no substitution" is a legal ANSWER
 /// here, not a hole: most nodes instantiate nothing.
 #realtime nogc
-export fn CheckOut @has_subst(id int) -> bool
-    requires id >= 0 && id < @res.len(), "sem: has_subst asked about a node outside this file's id space"
+export fn CheckOut @has_subst(id NodeId) -> bool
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: has_subst asked about a node outside this file's id space"
 {
-    match @res[id] {
+    match @res[raw_node(id)] {
         Subst(_) => true
         Unresolved | Callee(_) => false
     }
@@ -325,10 +326,10 @@ export fn CalleeRef @callable_row() -> FnRow {
 /// CALL, whose range lives inside its `CalleeRef`. Two questions, two doors,
 /// because a node is one or the other by construction and mixing them would
 /// mean asking "which kind are you" at every use.
-export fn CheckOut @callee_subst_of(id int) -> ro []TyId
-    requires id >= 0 && id < @res.len(), "sem: callee_subst_of outside this file's id space"
+export fn CheckOut @callee_subst_of(id NodeId) -> ro []TyId
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: callee_subst_of outside this file's id space"
 {
-    ro cr = match @res[id] {
+    ro cr = match @res[raw_node(id)] {
         Callee(c) => c
         Unresolved => ice("sem: callee_subst_of on a node with nothing recorded")
         Subst(_) => ice("sem: callee_subst_of on a node recorded as an instantiation")
@@ -338,10 +339,10 @@ export fn CheckOut @callee_subst_of(id int) -> ro []TyId
 
 /// The substitution of a node; asking about a node that has none is an ice
 /// (ask `has_subst` first).
-export fn CheckOut @subst_of(id int) -> ro []TyId
-    requires id >= 0 && id < @res.len(), "sem: subst_of asked about a node outside this file's id space"
+export fn CheckOut @subst_of(id NodeId) -> ro []TyId
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: subst_of asked about a node outside this file's id space"
 {
-    ro sr = match @res[id] {
+    ro sr = match @res[raw_node(id)] {
         Subst(s) => s
         Unresolved => ice("sem: subst_of on a node with nothing recorded — a hole in the channel")
         Callee(_) => ice("sem: subst_of on a node recorded as a call")

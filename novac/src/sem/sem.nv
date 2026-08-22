@@ -53,7 +53,7 @@
 module novac.sem
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
 import ../builtins.{TypeKind, builtin_types, COERCE_ATTR}
@@ -214,7 +214,7 @@ export fn DefTable @find(name str) -> int => @names.find(name)
 /// lines rather than finding a name they cannot guess.
 export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
     ro id = f.id_of()
-    if id < 0 || id >= ctx.fn_decl_rows.len() {
+    if !is_node(id) || raw_node(id) >= ctx.fn_decl_rows.len() {
         // A node from ANOTHER parse -- the declarations handed to novac have
         // their own id space -- owns no row in this file's table.
         return None
