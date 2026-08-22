@@ -1,0 +1,82 @@
+// EXPECT_STDOUT own=42 blanket=tag ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №712, ПОПРАВКА, ОПЛАЧЕННАЯ КРАСНЫМ ФЛАГМАНОМ.
+//
+// Первая версия правки №712 аннотировала вызов blanket-метода ПО ИМЕНИ: если
+// имя есть в карте blanket'ов — записать её тип возврата. Но имя blanket'а
+// НЕ ПРИНАДЛЕЖИТ blanket'у. `to_str` — одновременно имя прелюдного
+// `fn[T] T @to_str() -> str` и имя КОНКРЕТНЫХ методов с ДРУГИМ возвратом:
+// `HeaderValue @to_str() -> Result[str, HttpError]` (nova-http),
+// `Path @to_str() -> Option[str]` (`std/src/fs/path.nv`). Конкретный метод
+// получал тип возврата blanket'а, и флагман `aggregator` падал СЕМНАДЦАТЬЮ
+// ошибками СИ вида `initializing 'nova_str' with an expression of
+// incompatible type 'NovaRes_nova_str_Nova_HttpError_p *'`.
+//
+// ФОРМА ЗДЕСЬ ВЫВЕРЕНА ТРАССОЙ, А НЕ ПОХОЖЕСТЬЮ, и это стоило трёх неудачных
+// попыток, каждая из которых была ЗЕЛЁНОЙ на сломанном бинаре — то есть не
+// умела падать. Аннотация-по-имени стоит в ветке, куда управление приходит
+// ТОЛЬКО после промаха штатного резолва (`infer_method_call_channel_type`), а
+// он не промахивается ни на простой локали, ни на арме `match`, ни даже на
+// цикле по полю. `NOVA_CALL_TRACE=to_str` на флагмане назвал промах поимённо
+// (`[AP-MISS] obj=i:hv(false)`), и различие оказалось в ОДНОЙ переменной:
+// переменная цикла, чей ИТЕРИРУЕМЫЙ САМ ЕСТЬ ВЫЗОВ МЕТОДА
+// (`for hv in @get_all("transfer-encoding")`, `nova-http/src/header.nv:222`)
+// — её тип к моменту обхода в карту области видимости не попадает. Ровно эта
+// форма стоит ниже; на ней сломанный бинарь красный.
+//
+// ВОЗВРАТ СВОЕГО МЕТОДА ОБЯЗАН ОТЛИЧАТЬСЯ от возврата blanket'а: при
+// совпадающем `str` подмена была бы не видна.
+//
+// ВТОРАЯ ПОЛОВИНА — В ТОМ ЖЕ ФАЙЛЕ И ЭТО НАМЕРЕННО: тем же обходом, но по
+// типу БЕЗ своего `to_str`, ходит blanket, который обязан продолжать
+// работать. Иначе «починка» свелась бы к отключению правки №712 целиком, а
+// это не починка.
+module standalone.d712_blanket_name_collision_pos
+
+type D712Err { msg str }
+
+type D712Own { n int }
+
+// Своё имя совпадает с прелюдным blanket'ом, а возврат — нет.
+export fn D712Own @to_str() -> Result[str, D712Err] => Ok("own=${@n}")
+
+type D712Plain { n int }
+
+type D712Box { owns []D712Own, plains []D712Plain }
+
+export fn D712Box @all_owns() -> []D712Own => @owns
+
+export fn D712Box @all_plains() -> []D712Plain => @plains
+
+// НОСИТЕЛЬ: переменная цикла, чей итерируемый — ВЫЗОВ МЕТОДА.
+export fn D712Box @own_str() -> str {
+    mut acc = ""
+    for o in @all_owns() {
+        ro s = match o.to_str() {
+            Ok(t)  => t
+            Err(_) => "none"
+        }
+        acc = "${acc}${s}"
+    }
+    acc
+}
+
+// КОНТРОЛЬ: тот же обход, тип БЕЗ своего метода — blanket обязан работать.
+export fn D712Box @plain_tag() -> str {
+    mut acc = ""
+    for p in @all_plains() {
+        acc = "${acc}${p.d712_plain_tag()}"
+    }
+    acc
+}
+
+fn main() Io -> () {
+    ro b = D712Box {
+        owns: [D712Own { n: 42 }],
+        plains: [D712Plain { n: 1 }],
+    }
+    print("${b.own_str()} blanket=${b.plain_tag()} ok")
+}
+
+fn[T] T @d712_plain_tag() -> str => "tag"
