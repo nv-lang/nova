@@ -3917,6 +3917,29 @@ struct TypeCheckCtx<'a> {
     /// Закрывает D175 §«binding dominates» — Rust-style rule.
     /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
     ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// №717 (решение владельца 2026-08-21): **`ro` ЗАРАЖАЕТ ТОЛЬКО
+    /// ПО АЛИАСУ.** Здесь лежат ЛОКАЛИ, чьё значение есть ПСЕВДОНИМ
+    /// ro-источника (`ro al = v`, `ro f = v.field`, `ro e = v[i]`) — и
+    /// только они. Локаль, связанная со СВЕЖИМ значением (вызов,
+    /// литерал, конструктор, арифметика) — ОБЫЧНАЯ, сколько бы
+    /// немутабельной ни была её привязка.
+    ///
+    /// Почему это ОТДЕЛЬНОЕ множество, а не `ro_binding_names`: там
+    /// лежат ВСЕ немутабельные привязки. Замер 2026-08-20 это и
+    /// доказал: стоило сделать локали видимыми проверке возврата —
+    /// `nova check std/src` дал `PASS: 3  FAIL: 177`, **773** срабатывания
+    /// `E_READONLY_COERCE` при каноне 26, потому что проверка превращалась
+    /// в «нельзя возвращать ни одну ro-локаль», а `ro x = …` — обычная
+    /// форма записи в Nova (`collections/vec/mutate.nv:133` возвращает
+    /// `removed` — СВЕЖЕЕ снятое значение, ничей не псевдоним).
+    ///
+    /// Живёт на всю ФУНКЦИЮ, а не на блок — и это ЗАКРЫТИЕ ДЫРЫ (3)
+    /// ПОРЯДОК: `f1_block` восстанавливает `ro_binding_names` на выходе
+    /// (и правильно делает), а проверка хвоста идёт ПОСЛЕ него —
+    /// поэтому происхождение биндинга запоминается ОДИН РАЗ, в момент
+    /// заведения, и не зависит от того, кто кого восстанавливает. Тот же
+    /// приём, что и `BindingOrigin` в №672, и это не совпадение.
+    ro_alias_names: std::cell::RefCell<std::collections::HashSet<String>>,
     /// №309/№317 (221.1, окно p-ovl-channel): mirror of `ro_binding_names`
     /// for `consume`-bound identifiers — set of local names whose CURRENT
     /// binding was introduced via `consume x = ...` (`LetDecl.consume`) or a
@@ -4882,6 +4905,7 @@ impl<'a> TypeCheckCtx<'a> {
             current_fn_generics: std::cell::RefCell::new(Vec::new()),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
+            ro_alias_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             consume_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             mut_ref_param_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             user_shadowed_generic_types,
@@ -8473,6 +8497,10 @@ impl<'a> TypeCheckCtx<'a> {
         };
         let ro_snap_fn: std::collections::HashSet<String> =
             self.ro_binding_names.borrow().clone();
+        // №717: алиас-провенанс живёт РОВНО одну функцию: имена
+        // локалей одной функции не должны ничего значить в следующей.
+        let ro_alias_snap_fn: std::collections::HashSet<String> =
+            std::mem::take(&mut *self.ro_alias_names.borrow_mut());
         if is_entry_fn {
             for p in &fd.params {
                 // Add non-mut, non-consume params to ro_binding_names so
@@ -8534,7 +8562,9 @@ impl<'a> TypeCheckCtx<'a> {
                     self.check_closure_scalar_return(e, ret, errors);
                     // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б,
                     // 2026-07-23): 3rd position of the norm — RETURN.
-                    self.check_ro_launder_return(e, ret, &scope, errors);
+                    // №717 дыра (2): через хвостовое семейство — хвост ветви
+                    // if/match тоже есть возврат.
+                    self.check_ro_launder_tail(e, ret, &scope, errors);
                     self.materialize_literal_coercion(e, ret);
                     // №658: return is a DEFINITE expected-type position, but the
                     // return-compat path never runs `assignable` (see the doc
@@ -8556,7 +8586,8 @@ impl<'a> TypeCheckCtx<'a> {
                         // dedicated block above `check_closure_scalar_return`'s definition).
                         self.check_closure_scalar_return(trailing, ret, errors);
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
-                        self.check_ro_launder_return(trailing, ret, &scope, errors);
+                        // №717 дыра (2): см. `check_ro_launder_tail`.
+                        self.check_ro_launder_tail(trailing, ret, &scope, errors);
                         self.materialize_literal_coercion(trailing, ret);
                         // №658: implicit tail return — same fill as the
                         // arrow-body site above.
@@ -8619,6 +8650,8 @@ impl<'a> TypeCheckCtx<'a> {
         // added — function scopes are independent; param names from one fn
         // must not bleed into the next fn's checks.
         *self.ro_binding_names.borrow_mut() = ro_snap_fn;
+        // №717: тот же рубеж для алиас-провенанса.
+        *self.ro_alias_names.borrow_mut() = ro_alias_snap_fn;
         // №309/№317: restore consume_binding_names symmetrically.
         *self.consume_binding_names.borrow_mut() = consume_snap_fn;
         // Plan 172.5 (D326 R10): restore the enclosing fn's mut-ref-param set.
@@ -8949,6 +8982,21 @@ impl<'a> TypeCheckCtx<'a> {
                     set.remove(&name);
                     if !d.mutable {
                         set.insert(name);
+                    }
+                }
+                // №717 (решение владельца 2026-08-21): АЛИАС-ПРОВЕНАНС.
+                // Немутабельная локаль, чьё значение — МЕСТО, укоренённое в
+                // ro-источнике, сама ro. Связанная со свежим значением — нет.
+                // Shadow-семантика та же, что у `ro_binding_names` выше:
+                // каждый `let` замещает прежнюю запись имени.
+                if !provenance_disabled() {
+                    if let Some(name) = pattern_simple_name(&d.pattern) {
+                        let aliases_ro = !d.mutable && self.expr_aliases_ro_source(&d.value);
+                        let mut set = self.ro_alias_names.borrow_mut();
+                        set.remove(&name);
+                        if aliases_ro {
+                            set.insert(name);
+                        }
                     }
                 }
                 // №309/№317 (окно p-ovl-channel): track `consume x = ...`
@@ -19279,11 +19327,62 @@ impl<'a> TypeCheckCtx<'a> {
     /// frozen source. `-> ro T` is exempt (the return itself is frozen
     /// regardless of what's inside). Scalar-primitive exemption applies
     /// identically to the other two positions (see `is_bare_scalar_primitive`).
+    /// №717 (2026-08-21): АЛИАСИРУЕТ ЛИ выражение ro-источник.
+    ///
+    /// Алиас — это МЕСТО (place), укоренённое в ro-имени: само имя,
+    /// его поле, его элемент. ВСЁ ОСТАЛЬНОЕ — СВЕЖЕЕ значение: вызов
+    /// (включая `vec.remove(i)` — тот самый `removed` из замера 2026-08-20),
+    /// литерал, конструктор, арифметика, копия. Именно этот различитель
+    /// и отделяет 26 от 773.
+    fn expr_aliases_ro_source(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                self.ro_binding_names.borrow().contains(n)
+                    || self.ro_alias_names.borrow().contains(n)
+            }
+            ExprKind::Member { obj, .. } => self.expr_aliases_ro_source(obj),
+            ExprKind::Index { obj, .. } => self.expr_aliases_ro_source(obj),
+            ExprKind::RefArg(inner) => self.expr_aliases_ro_source(inner),
+            _ => false,
+        }
+    }
+
+    /// №717: имя связано с ro-источником — либо это не-`mut` параметр
+    /// (P7 freeze, D176-дефолт), либо локаль-псевдоним ro-источника.
+    fn name_is_ro_source(&self, name: &str) -> bool {
+        if self.ro_binding_names.borrow().contains(name) {
+            return true;
+        }
+        !provenance_disabled() && self.ro_alias_names.borrow().contains(name)
+    }
+
     fn check_ro_launder_return(
         &self,
         value: &Expr,
         ret: &TypeRef,
         scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.check_ro_launder_return_at(value, ret, scope, false, errors)
+    }
+
+    /// №717 (2026-08-21): `alias_only` — судить ТОЛЬКО локали-псевдонимы
+    /// ro-источника, не трогая не-`mut` ПАРАМЕТРЫ.
+    ///
+    /// Новый обход хвостов ветвей (дыра (2)) несёт НОВОЕ правило —
+    /// алиасное — и НЕ распространяет задним числом СТАРОЕ правило
+    /// (параметр-в-возврате) на позиции, до которых оно раньше не
+    /// доходило. Замер назвал цену такого распространения точно: 27
+    /// срабатываний в std и 3 в nova-http, все — не-`mut` параметр в хвосте
+    /// ветви (`@min`/`@max`/`@clamp`/`@or`/`@fold`/`@plus`), то есть ровно то,
+    /// что решение владельца 2026-08-18 (вариант (в)) велит ВЫВОДИТЬ
+    /// как `ro`, а не отвергать. Вариант (в) в этом окне не реализован.
+    fn check_ro_launder_return_at(
+        &self,
+        value: &Expr,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        alias_only: bool,
         errors: &mut Vec<Diagnostic>,
     ) {
         if ret.is_readonly() {
@@ -19292,7 +19391,12 @@ impl<'a> TypeCheckCtx<'a> {
         if let ExprKind::Ident(name) = &value.kind {
             let is_scalar = self.infer_expr_type(value, scope)
                 .map_or(false, |t| is_fully_stack_value(&t, &self.types));
-            if !is_scalar && self.ro_binding_names.borrow().contains(name) {
+            let is_ro_source = if alias_only {
+                !provenance_disabled() && self.ro_alias_names.borrow().contains(name)
+            } else {
+                self.name_is_ro_source(name)
+            };
+            if !is_scalar && is_ro_source {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_READONLY_COERCE] возврат `{name}` — источник связан как `ro` \
@@ -19311,6 +19415,83 @@ impl<'a> TypeCheckCtx<'a> {
                     value.span,
                 ));
             }
+        }
+    }
+
+    /// №717 ДЫРА (2) ОБХОД (2026-08-21): ХВОСТ В ПОЗИЦИИ ЗНАЧЕНИЯ — тоже
+    /// возврат, и его никто не отдавал `check_ro_launder_return`.
+    ///
+    /// `check_ro_launder_return_in_block` УЖЕ обходил `b.trailing`, но отдавал
+    /// его `..._in_expr`, который ищет только ВЛОЖЕННЫЕ `return` внутри
+    /// If/Match/While — голой `Ident`-хвост ветви до проверки не доходил
+    /// вовсе. Дописать вызов в лоб было нельзя: тот же `..._in_block`
+    /// зовётся и для тела `while`, где хвост возвратом НЕ является.
+    /// Ответ — ПОМЕТКА ПОЗИЦИИ: это отдельное семейство, которое зовётся
+    /// ТОЛЬКО от хвоста тела функции и спускается только в те ветвления,
+    /// чей хвост сам стоит в позиции значения (if / match / блок).
+    /// Циклы сюда намеренно НЕ входят.
+    fn check_ro_launder_tail(
+        &self,
+        e: &Expr,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.check_ro_launder_tail_at(e, ret, scope, false, errors)
+    }
+
+    fn check_ro_launder_tail_at(
+        &self,
+        e: &Expr,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        in_branch: bool,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if provenance_disabled() {
+            if !in_branch {
+                self.check_ro_launder_return(e, ret, scope, errors);
+            }
+            return;
+        }
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.check_ro_launder_tail_block(then, ret, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) =>
+                            self.check_ro_launder_tail_block(b, ret, scope, errors),
+                        ElseBranch::If(x) =>
+                            self.check_ro_launder_tail_at(x, ret, scope, true, errors),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) =>
+                            self.check_ro_launder_tail_at(x, ret, scope, true, errors),
+                        MatchArmBody::Block(b) =>
+                            self.check_ro_launder_tail_block(b, ret, scope, errors),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.check_ro_launder_tail_block(b, ret, scope, errors),
+            _ => self.check_ro_launder_return_at(e, ret, scope, in_branch, errors),
+        }
+    }
+
+    /// Хвост блока-ветви — всегда ВЕТВЬ (единственный вызов не из ветви —
+    /// это само тело функции, и оно идёт через `check_ro_launder_tail`).
+    fn check_ro_launder_tail_block(
+        &self,
+        b: &Block,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(t) = &b.trailing {
+            self.check_ro_launder_tail_at(t, ret, scope, true, errors);
         }
     }
 

@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// #717, the discriminator's other side (owner's ruling 2026-08-21): a local
+// bound to a FRESH value is an ordinary local, however non-mutable its
+// binding is. This is the shape the 2026-08-20 measurement broke on --
+// making every ro local visible to the return check gave `PASS: 3
+// FAIL: 177` and 773 E_READONLY_COERCE against a canon of 26, because
+// `collections/vec/mutate.nv:133` returns `removed`, a freshly taken value
+// that is nobody's alias. It must stay legal, and it does.
+module spec_tests.conformance
+
+fn m717_fresh_from_call(v []int) -> []int {
+    ro removed = v.slice(0, 1)
+    removed
+}
+
+fn m717_fresh_from_literal() -> []int {
+    ro made = []int.of(7, 8, 9)
+    made
+}
+
+fn m717_fresh_through_branch(flag bool) -> []int {
+    ro made = []int.of(1)
+    if flag { made } else { []int.of(2) }
+}
