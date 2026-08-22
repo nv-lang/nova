@@ -14,6 +14,7 @@ mod emit_detach;
 // child module (same ratchet rule; see its doc). Field + two consult sites stay.
 mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
+mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -6979,17 +6980,7 @@ impl CEmitter {
                                 self.user_type_fwd_decls.push_str(&format!(
                                     "typedef int64_t Nova_{};\n", fb));
                             }
-                        } else if self.value_sum_names.contains(&t.name) {
-                            // A4: inline tag struct. Registering the alias HERE is
-                            // what makes every later pass agree -- `resolved_named_to_c`
-                            // returns `NovaValue_X` (emit_c.rs:5045) and, because the
-                            // name carries the `NovaValue_` prefix, `is_value_type`
-                            // recognises it, so the `.`-vs-`->` oracle flips for free
-                            // at its seven consumers.
-                            self.user_type_fwd_decls.push_str(&format!(
-                                "typedef struct NovaValue_{0} NovaValue_{0};\n", fb));
-                            self.type_aliases.insert(
-                                t.name.clone(), format!("NovaValue_{}", fb));
+                        } else if self.a4_fwd_decl_value_sum(&t.name, &fb) {
                         } else {
                             self.user_type_fwd_decls.push_str(&format!(
                                 "typedef struct Nova_{0} Nova_{0};\n", fb));
@@ -18999,284 +18990,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
 
-    /// Plan 172.14 F.2 atom A4: `NOVA_KILL_A4=1` restores the pre-atom emission
-    /// (every sum a heap pointer). The acceptance baseline is taken with this
-    /// switch on the SAME binary -- same rule and shape as `NOVA_KILL_744` and
-    /// `NOVA_KILL_D55NT`.
-    fn a4_value_sums_disabled() -> bool {
-        std::env::var("NOVA_KILL_A4").map(|v| v == "1").unwrap_or(false)
-    }
-
-    /// A4: collect every type name that appears in a position where turning a sum
-    /// into an inline value would change something OTHER than the sum itself --
-    /// a generic ARGUMENT (`Option[X]`, `Vec[X]`, `Result[X, _]`, any user
-    /// template), a slice element, or behind a pointer.
-    ///
-    /// `Option[X]` is the one that matters most and the reason this fence exists
-    /// at all: `Option[<heap sum>]` is today a bare nullable `Nova_X*` under NPO,
-    /// carrying no tag of its own (`emit_c.rs:56632` keys NPO off a trailing `*`).
-    /// Making X a value would silently move Option to the tagged form -- a size
-    /// and ABI change to a second type. That belongs to A6, not here.
-    fn a4_collect_poisoned_from_typeref(ty: &TypeRef, out: &mut HashSet<String>) {
-        match ty {
-            TypeRef::Named { generics, .. } => {
-                for g in generics {
-                    Self::a4_collect_named_leaves(g, out);
-                    Self::a4_collect_poisoned_from_typeref(g, out);
-                }
-            }
-            // `[]X` lowers to a `Vec` mono whose element storage is the C type of
-            // X -- A5's subject, not A4's.
-            TypeRef::Array(inner, _) => {
-                Self::a4_collect_named_leaves(inner, out);
-                Self::a4_collect_poisoned_from_typeref(inner, out);
-            }
-            // `[N]X` stores X inline too, and `*X` fixes a pointer ABI.
-            TypeRef::FixedArray(_, inner, _) | TypeRef::Pointer(inner, _) => {
-                Self::a4_collect_named_leaves(inner, out);
-                Self::a4_collect_poisoned_from_typeref(inner, out);
-            }
-            TypeRef::Tuple(items, _) => {
-                for it in items {
-                    Self::a4_collect_named_leaves(it, out);
-                    Self::a4_collect_poisoned_from_typeref(it, out);
-                }
-            }
-            TypeRef::Func { params, return_type, .. } => {
-                for p in params {
-                    Self::a4_collect_named_leaves(p, out);
-                    Self::a4_collect_poisoned_from_typeref(p, out);
-                }
-                if let Some(r) = return_type {
-                    Self::a4_collect_named_leaves(r, out);
-                    Self::a4_collect_poisoned_from_typeref(r, out);
-                }
-            }
-            TypeRef::Readonly(inner, _)
-            | TypeRef::Mut(inner, _)
-            | TypeRef::Uninit(inner, _)
-            | TypeRef::Ref(inner, _) => Self::a4_collect_poisoned_from_typeref(inner, out),
-            TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
-        }
-    }
-
-    /// A4: every `Named` name reachable inside `ty`, at any depth.
-    fn a4_collect_named_leaves(ty: &TypeRef, out: &mut HashSet<String>) {
-        match ty {
-            TypeRef::Named { path, generics, .. } => {
-                if let Some(n) = path.last() {
-                    out.insert(n.clone());
-                }
-                for g in generics {
-                    Self::a4_collect_named_leaves(g, out);
-                }
-            }
-            TypeRef::Array(inner, _)
-            | TypeRef::FixedArray(_, inner, _)
-            | TypeRef::Pointer(inner, _)
-            | TypeRef::Readonly(inner, _)
-            | TypeRef::Mut(inner, _)
-            | TypeRef::Uninit(inner, _)
-            | TypeRef::Ref(inner, _) => Self::a4_collect_named_leaves(inner, out),
-            TypeRef::Tuple(items, _) => {
-                for it in items {
-                    Self::a4_collect_named_leaves(it, out);
-                }
-            }
-            TypeRef::Func { params, return_type, .. } => {
-                for p in params {
-                    Self::a4_collect_named_leaves(p, out);
-                }
-                if let Some(r) = return_type {
-                    Self::a4_collect_named_leaves(r, out);
-                }
-            }
-            TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
-        }
-    }
-
-    /// A4: the same poison rule over a checker-resolved type. Declarations are
-    /// walked as syntax above, but EXPRESSIONS are not walked at all -- the
-    /// checker already visited every one of them and left the answer in
-    /// `resolved_types`, which is both cheaper and broader than re-walking the
-    /// AST (a turbofish `Vec[X].new()` or an inferred `Option[X]` local never has
-    /// to be found by hand).
-    fn a4_collect_poisoned_from_resolved(
-        rt: &crate::types::ResolvedType,
-        out: &mut HashSet<String>,
-    ) {
-        use crate::types::ResolvedType as R;
-        match rt {
-            R::Named { args, .. } => {
-                for a in args {
-                    Self::a4_collect_resolved_leaves(a, out);
-                    Self::a4_collect_poisoned_from_resolved(a, out);
-                }
-            }
-            // `[]X` / `[N]X` store X as an element; a typed pointer pins an ABI.
-            R::Array(inner) | R::FixedArray(_, inner) | R::TypedPtr(_, inner) => {
-                Self::a4_collect_resolved_leaves(inner, out);
-                Self::a4_collect_poisoned_from_resolved(inner, out);
-            }
-            R::Tuple(items) => {
-                for it in items {
-                    Self::a4_collect_resolved_leaves(it, out);
-                    Self::a4_collect_poisoned_from_resolved(it, out);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// A4: every `Named` name reachable inside a resolved type, at any depth.
-    fn a4_collect_resolved_leaves(rt: &crate::types::ResolvedType, out: &mut HashSet<String>) {
-        use crate::types::ResolvedType as R;
-        if let R::Named { name, args, .. } = rt {
-            out.insert(name.clone());
-            for a in args {
-                Self::a4_collect_resolved_leaves(a, out);
-            }
-        } else {
-            match rt {
-                R::Array(inner) | R::FixedArray(_, inner) | R::TypedPtr(_, inner) => {
-                    Self::a4_collect_resolved_leaves(inner, out)
-                }
-                R::Tuple(items) => {
-                    for it in items {
-                        Self::a4_collect_resolved_leaves(it, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Plan 172.14 F.2 atom A4 -- which sums are emitted as an inline
-    /// `NovaValue_<X>` tag struct instead of a `nova_alloc`'d `Nova_<X>*`?
-    ///
-    /// A4 deliberately takes the narrowest class that still exercises the whole
-    /// mechanism: **payload-less, non-generic, unfenced** sums. Two consequences
-    /// of that choice are worth stating, because they remove work rather than add
-    /// it:
-    ///
-    ///  - payload-less means ZERO inline edges, so such a sum is non-recursive by
-    ///    construction. The A2 detector is not consulted here; it starts earning
-    ///    its keep at A7, where payload-carrying sums arrive.
-    ///  - payload-less means there is no `->payload.<V>` access anywhere, so the
-    ///    four hard-coded payload accessors in the match emitter are unreachable
-    ///    for this class. Only the TAG accessor has to learn the value form.
-    ///
-    /// The fence (see `a4_collect_poisoned_*`) keeps `Option[X]`, `Vec[X]`, slice
-    /// elements, pointers and erased generic arguments on the old path, so this
-    /// atom changes the representation of ONE type at a time and never a second
-    /// type's layout as a side effect.
-    fn build_value_sum_set(&mut self, module: &Module) {
-        if Self::a4_value_sums_disabled() {
-            return;
-        }
-        let mut poisoned: HashSet<String> = HashSet::new();
-
-        // (a) declarations: fields, variant payloads, newtype/alias targets.
-        for item in &module.items {
-            match item {
-                Item::Type(t) => match &t.kind {
-                    TypeDeclKind::Record(fields) => {
-                        for f in fields {
-                            Self::a4_collect_poisoned_from_typeref(&f.ty, &mut poisoned);
-                        }
-                    }
-                    TypeDeclKind::NamedTuple(fields) => {
-                        for f in fields {
-                            Self::a4_collect_poisoned_from_typeref(&f.ty, &mut poisoned);
-                        }
-                    }
-                    TypeDeclKind::Sum(variants) => {
-                        for v in variants {
-                            match &v.kind {
-                                crate::ast::SumVariantKind::Unit => {}
-                                crate::ast::SumVariantKind::Tuple(tys) => {
-                                    for ty in tys {
-                                        Self::a4_collect_poisoned_from_typeref(ty, &mut poisoned);
-                                    }
-                                }
-                                crate::ast::SumVariantKind::Record(fields) => {
-                                    for f in fields {
-                                        Self::a4_collect_poisoned_from_typeref(
-                                            &f.ty, &mut poisoned);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
-                        Self::a4_collect_poisoned_from_typeref(inner, &mut poisoned);
-                    }
-                    _ => {}
-                },
-                Item::Fn(f) => {
-                    // An `external` signature pins a C ABI we do not own.
-                    let is_external = matches!(f.body, crate::ast::FnBody::External);
-                    for p in &f.params {
-                        Self::a4_collect_poisoned_from_typeref(&p.ty, &mut poisoned);
-                        if is_external {
-                            Self::a4_collect_named_leaves(&p.ty, &mut poisoned);
-                        }
-                    }
-                    if let Some(r) = &f.return_type {
-                        Self::a4_collect_poisoned_from_typeref(r, &mut poisoned);
-                        if is_external {
-                            Self::a4_collect_named_leaves(r, &mut poisoned);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // (b) expressions, via the checker's own annotations.
-        for rt in self.resolved_types.values() {
-            Self::a4_collect_poisoned_from_resolved(rt, &mut poisoned);
-        }
-
-        // (c) candidates.
-        for item in &module.items {
-            let Item::Type(t) = item else { continue };
-            let TypeDeclKind::Sum(variants) = &t.kind else { continue };
-            if variants.is_empty() {
-                continue;
-            }
-            if !variants
-                .iter()
-                .all(|v| matches!(v.kind, crate::ast::SumVariantKind::Unit))
-            {
-                continue;
-            }
-            if !t.generics.is_empty() {
-                continue;
-            }
-            if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
-                continue;
-            }
-            // A colliding simple name is emitted under a module-qualified base;
-            // that second naming axis is not worth crossing with a second ABI in
-            // the first behaviour-changing atom.
-            if self.colliding_type_names.contains(&t.name) {
-                continue;
-            }
-            if poisoned.contains(&t.name) {
-                continue;
-            }
-            self.value_sum_names.insert(t.name.clone());
-        }
-
-        if std::env::var("NOVA_DETECT_A4").map(|v| v == "1").unwrap_or(false) {
-            let mut names: Vec<&String> = self.value_sum_names.iter().collect();
-            names.sort();
-            eprintln!("[a4-valuesum] eligible={} names={}", names.len(),
-                      names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","));
-        }
-    }
-
     fn emit_sum_type(&mut self, name: &str, variants: &[SumVariant]) -> Result<(), String> {
         // Plan 72 P1-B: empty sum type (0 variants) — bottom / uninhabited type.
         // `type RuntimeNoneError` etc. (empty sum). C does not support empty
@@ -19304,47 +19017,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line(&format!("}} Nova_{}_Tag;", name));
 
-        // Plan 172.14 F.2 atom A4: payload-less, non-generic, unfenced sum ->
-        // inline `NovaValue_X { tag; }`, with constructors returning it by value.
-        // The tag ENUM keeps its `Nova_X_Tag` / `NOVA_TAG_X_V` spelling, so every
-        // existing reference to a tag constant is untouched and only the carrier
-        // changes. There is no union here at all -- payload-less is precisely the
-        // class with nothing to put in one, which is why it is the first atom.
-        if self.value_sum_names.contains(name) {
-            self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
-            self.line(&format!("struct NovaValue_{} {{", name));
-            self.indent += 1;
-            self.line(&format!("Nova_{}_Tag tag;", name));
-            self.indent -= 1;
-            self.line("};");
-            self.line("");
-            for v in variants {
-                self.line(&format!(
-                    "{storage}NovaValue_{name} nova_make_{name}_{var}(void) {{",
-                    storage = self.top_level_storage(), name = name, var = v.name));
-                self.indent += 1;
-                self.line(&format!("NovaValue_{} _r;", name));
-                self.line(&format!("_r.tag = NOVA_TAG_{}_{};", name, v.name));
-                self.line("return _r;");
-                self.indent -= 1;
-                self.line("}");
-                self.line("");
-            }
-            let empty_schema: HashMap<String, Vec<String>> =
-                variants.iter().map(|v| (v.name.clone(), Vec::new())).collect();
-            let variant_order: Vec<String> =
-                variants.iter().map(|v| v.name.clone()).collect();
-            let c_name = format!("NovaValue_{}", name);
-            self.sum_schema_registry.register_user_sum(
-                name,
-                &empty_schema,
-                &c_name,
-                super::sum_schema_registry::SumAbi::ValueTagPayload,
-                &variant_order,
-            );
-            self.sum_schemas.insert(name.to_string(), empty_schema);
-            return Ok(());
-        }
+        // Plan 172.14 F.2 atom A4 (codegen/emit_c/sum_placement.rs).
+        if self.emit_value_sum_type(name, variants) { return Ok(()); }
 
         // Collect schema while building union
         let mut sum_schema: HashMap<String, Vec<String>> = HashMap::new();
@@ -22030,15 +21704,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_field_eq(&self, c_type: &str, l: &str, r: &str, depth: usize) -> String {
         const MAX_EQ_DEPTH: usize = 32;
         let cty = c_type.trim();
-        // Plan 172.14 F.2 atom A4: an inline payload-less sum IS its tag, so
-        // equality is a tag comparison on values. This sits before the generic
-        // `NovaValue_` record arm below, which would hunt for a record schema
-        // this type does not have and fall through to a struct `==` C rejects.
-        if let Some(bare) = cty.strip_prefix("NovaValue_") {
-            if !cty.ends_with('*') && self.value_sum_names.contains(bare) {
-                return format!("(({}).tag == ({}).tag)", l, r);
-            }
-        }
+        if let Some(eq) = self.a4_value_sum_eq(cty, l, r) { return eq; }
         // Recursion guard (R2): cyclic record schema → bail to identity.
         if depth >= MAX_EQ_DEPTH {
             return format!("(({}) == ({}))", l, r);
@@ -35906,10 +35572,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     } else {
                                         eff_key.clone()
                                     };
-                                    return Ok(format!(
-                                        "(nova_int)(intptr_t)nova_make_{}_{}()",
-                                        ctor_prefix, variant_name
-                                    ));
+                                    return Ok(self.a4_unit_variant_ctor(&eff_key, &ctor_prefix, &variant_name));
                                 }
                             }
                         }
@@ -53301,13 +52964,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     format!("NOVA_TAG_{}_{}", type_name, variant_name)
                 };
-                // Plan 172.14 F.2 atom A4: a payload-less sum lowered to an inline
-                // `NovaValue_X` is read with `.` like `NovaOpt_`, not `->`. Both the
-                // Nova-level name and the already-lowered C type are consulted, since
-                // the scrutinee arrives by either route depending on the arm.
                 let is_value_sum = !is_opt_ptr
-                    && (self.value_sum_names.contains(&type_name)
-                        || (scr_ty.starts_with("NovaValue_") && !scr_ty.ends_with('*')));
+                    && self.a4_is_value_sum_scrutinee(&type_name, &scr_ty);
                 let accessor = if is_opt || is_value_sum { "." } else { "->" };
                 // Plan 118 Ф.5: NPO-aware match-pattern check для Option[*T].
                 // Tag field dropped в NPO layout — use value-NULL convention.
@@ -62947,7 +62605,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
                         return format!("{}*", mangled);
                     }
-                    return format!("Nova_{}*", type_name);
+                    return self.a4_sum_c_type(&type_name);
                 }
             }
         }
@@ -62973,7 +62631,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     || self.record_schemas.contains_key(name.as_str())
                     || self.sum_schemas.contains_key(name.as_str()))
             {
-                return format!("Nova_{}*", name);
+                return self.a4_sum_c_type(name);
             }
         }
         // Channel 6e (tally 2026-07-02, Path:__array): синтетический путь
@@ -63143,13 +62801,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             || self.sum_schema_registry.lookup_sum_schema(&sum_base).is_some()
                             || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
                         {
-                            return format!("Nova_{}*", sum_base);
+                            return self.a4_sum_c_type(&sum_base);
                         }
                     }
                     // Check if this is a sum-type record variant.
                     // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
                     if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
-                        format!("Nova_{}*", sum_type_name)
+                        self.a4_sum_c_type(&sum_type_name)
                     } else if self.generic_types.contains(&struct_name) {
                         // Generic type: compute concrete mono name from field values.
                         // Check BEFORE record_schemas because record_schemas has the erased form
@@ -63277,7 +62935,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                                 return "NovaOpt_nova_int".into();
                             }
-                            return format!("Nova_{}*", type_name);
+                            return self.a4_sum_c_type(&type_name);
                         }
                     }
                     // Empty-sum type name used as a value (e.g. `CharTryFromError` in
@@ -63294,7 +62952,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         || self.record_schemas.contains_key(name.as_str())
                         || self.sum_schemas.contains_key(name.as_str())
                     {
-                        return format!("Nova_{}*", name);
+                        return self.a4_sum_c_type(name);
                     }
                     // [M-channel-generic-elem-type] (b): `Channel` as a bare
                     // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
@@ -63395,7 +63053,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if self.sum_schemas.contains_key(n.as_str())
                             || self.sum_schema_registry.lookup_sum_schema(n).is_some()
                         {
-                            return format!("Nova_{}*", n);
+                            return self.a4_sum_c_type(&n);
                         }
                     }
                     // [M-172.1-d174] phase-safe: Ident-база без материализованного типа
@@ -63963,7 +63621,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if self.sum_schemas.contains_key(type_part.as_str())
                         || self.sum_schema_registry.lookup_sum_schema(type_part).is_some()
                     {
-                        return format!("Nova_{}*", type_part);
+                        return self.a4_sum_c_type(&type_part);
                     }
                 }
                 // Plan 127.1 Ф.1: mirror emit_expr Path branch — when parser
@@ -64387,7 +64045,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                                 return "NovaOpt_nova_int".into();
                             }
-                            return format!("Nova_{}*", type_name);
+                            return self.a4_sum_c_type(&type_name);
                         }
                     }
                     // Empty-sum type name used as a value (e.g. `CharTryFromError` in
@@ -64404,7 +64062,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         || self.record_schemas.contains_key(name.as_str())
                         || self.sum_schemas.contains_key(name.as_str())
                     {
-                        return format!("Nova_{}*", name);
+                        return self.a4_sum_c_type(name);
                     }
                     // [M-channel-generic-elem-type] (b): `Channel` as a bare
                     // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
@@ -65063,7 +64721,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Check variant in sum registries
                         if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(last) {
                             if fields.is_empty() {
-                                return format!("Nova_{}*", type_name);
+                                return self.a4_sum_c_type(&type_name);
                             }
                         }
                         // Registered record type
