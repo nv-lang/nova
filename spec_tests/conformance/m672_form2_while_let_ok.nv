@@ -17,7 +17,7 @@ fn m672_next_ok(n int) -> Option[M672W2Ok] {
 fn m672_form2_ok() -> () {
     mut i = 2
     while Some(consume r) = m672_next_ok(i) {
-        i = i - 1
+        i -= 1
         assert(r.tag > 0)
         r.close()
     }
