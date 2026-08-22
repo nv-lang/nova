@@ -39923,6 +39923,87 @@ fn consume_pattern_names_with_mut(p: &Pattern, out: &mut Vec<(String, bool)>) {
     }
 }
 
+/// №672/№717 (2026-08-21): ВЫКЛЮЧАТЕЛЬ обеих правок — один на две,
+/// потому что механизм один (per-binding provenance).
+///
+/// `NOVA_KILL_PROVENANCE=1` возвращает ПРЕЖНЕЕ поведение НА ТОМ ЖЕ
+/// БИНАРЕ: исключение D432 снова раздаётся всем, кроме arm-паттерна
+/// (№667), новые точки заведения обязательств молчат, а ro-алиасное
+/// правило №717 не действует. Нужен ровно для приёмки «доказано в обе
+/// стороны»: каждая новая фикстура под ним обязана краснеть.
+fn provenance_disabled() -> bool {
+    use std::sync::OnceLock;
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| {
+        std::env::var("NOVA_KILL_PROVENANCE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
+/// №672 (реестр 221.1, решение владельца 2026-08-21):
+/// **PER-BINDING PROVENANCE** — ПРОИСХОЖДЕНИЕ обязательства потребления.
+///
+/// До него исключение D432 (авто-`@cleanup` снимает обязательство)
+/// раздавалось ПО ФОРМЕ ЗАПИСИ, через транзиентный флаг
+/// `arm_pattern_exit_check`: флаг взводился вокруг ОДНОГО вызова
+/// `check_obligations_at_exit` (arm-паттерн, №667), а остальные четыре
+/// формы биндинга шли мимо него и молча освобождались исключением,
+/// которого кодоген не подкрепляет — ресурс тёк без единого слова.
+///
+/// Теперь происхождение записывается НА КАЖДОМ БИНДИНГЕ в момент
+/// заведения (`declare_consume_binding`), и исключение D432 §2 спрашивает
+/// ИМЕННО его: `auto_cleanup_qualifies()` ниже — ЗЕРКАЛО
+/// одноимённого метода кодогена (`emit_c.rs::auto_cleanup_qualifies`:
+/// `decl.consume && matches!(decl.pattern, Pattern::Ident{..})`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingOrigin {
+    /// `consume X = e;` — bare `Stmt::Let` с `Pattern::Ident`. ЕДИНСТВЕННАЯ
+    /// форма, под которую кодоген реально армит `DeferEntry` с
+    /// авто-`@cleanup` (D432 §2) — и потому единственная, которую
+    /// исключение освобождает.
+    BareLet,
+    /// Форма (1) №672: `fn eat(consume r T)` — consume-параметр.
+    /// Вызывающий дизармит СВОЙ флаг при передаче, вызываемый не
+    /// чистит никогда — значит освобождать нельзя.
+    FnParam,
+    /// Форма (3) №672: `fn T consume @m()` — consume-ресивер.
+    Receiver,
+    /// Форма (2) и arm-паттерн №667: биндинг из паттерна
+    /// (`Ok(consume r) => …`, `while Some(consume r) = …`).
+    Pattern,
+    /// Форма (4) №672: `consume out = consume s { … }` — результат-
+    /// биндинг consume-области (`Stmt::ConsumeScope`).
+    ConsumeScopeResult,
+    /// Форма (5) №672: параметр замыкания / хендлер-опа.
+    ClosureParam,
+    /// `for consume x in …` — переменная consume-цикла (D156).
+    /// В пятёрку №672 не входит, но кодоген её тоже не армит.
+    LoopVar,
+}
+
+impl BindingOrigin {
+    /// ЗЕРКАЛО `emit_c.rs::auto_cleanup_qualifies`: только bare
+    /// `Stmt::Let` с `Pattern::Ident` получает от кодогена авто-cleanup,
+    /// значит только она освобождается исключением D432 §2.
+    fn auto_cleanup_qualifies(self) -> bool {
+        matches!(self, BindingOrigin::BareLet)
+    }
+
+    /// Текст для диагностики: чем заведён биндинг.
+    fn describe(self) -> &'static str {
+        match self {
+            BindingOrigin::BareLet => "consume-биндинг `consume X = …`",
+            BindingOrigin::FnParam => "consume-параметр функции",
+            BindingOrigin::Receiver => "consume-ресивер метода",
+            BindingOrigin::Pattern => "биндинг из паттерна",
+            BindingOrigin::ConsumeScopeResult => "результат-биндинг consume-области",
+            BindingOrigin::ClosureParam => "параметр замыкания / хендлер-опа",
+            BindingOrigin::LoopVar => "переменная `for consume`-цикла",
+        }
+    }
+}
+
 /// Flow-context consume-анализа одной функции / теста.
 struct ConsumeCtx<'a> {
     reg: &'a ConsumeRegistry,
@@ -39983,6 +40064,12 @@ struct ConsumeCtx<'a> {
     /// `check_d162_coverage` which runs AFTER `consume_walk_block` has already
     /// cleared `consume_obligations` for satisfied obligations.
     all_declared_consume: HashSet<String>,
+    /// №672 (2026-08-21): PER-BINDING PROVENANCE — чем заведено каждое
+    /// обязательство из `consume_obligations`. Заполняется РОВНО в
+    /// `declare_consume_binding` (единственная точка заведения),
+    /// читается РОВНО в `check_obligations_at_exit` — там, где раньше
+    /// спрашивался транзиентный `arm_pattern_exit_check`.
+    binding_origin: HashMap<String, BindingOrigin>,
     /// Plan 100.1 (D133 / D5): состояние consume-полей receiver'а.
     /// Ключ — имя поля (без "@."), значение — VarState.
     /// Для consume-методов: поля должны быть Consumed на exit'е.
@@ -40075,17 +40162,6 @@ struct ConsumeCtx<'a> {
     /// проверка молча пропускается (см. PROGRESS-p315.md «Known scope
     /// narrowing»).
     current_fn_effects: Option<&'a [TypeRef]>,
-    /// #667 (2026-08-15): true ONLY while `check_and_clear_arm_pattern_obligations`
-    /// runs the exit-check for a match arm's OWN pattern bindings
-    /// (`Ok(consume r) => { .. }`). D432 auto-cleanup covers bare
-    /// `consume X = e;` bindings only (D432 s.2: destructuring/pattern bindings
-    /// stay under plain D133) -- the codegen never emits an auto-cleanup for a
-    /// pattern binding, so exempting it here as `is_auto_cleanup_eligible` was
-    /// a checker/codegen split: the resource silently leaked with no
-    /// diagnostic (probe: `Ok(consume r) => { assert(r.tag == 4) }` compiled;
-    /// ResourceTrace counted zero cleanups). Under this flag the exemption is
-    /// off and a Live pattern binding is D133-not-consumed with a hint.
-    arm_pattern_exit_check: bool,
     /// #671 (2026-08-15): имена вариантов сумм, ПРИНИМАЮЩИХ аргументы
     /// (tuple/record-payload), плюс builtin `Ok`/`Err`/`Some`. Конструктор
     /// варианта ЗАБИРАЕТ владение аргументом (`Ok(r)` кладёт `r` в payload и
@@ -40132,6 +40208,7 @@ impl<'a> ConsumeCtx<'a> {
             aliases: HashMap::new(),
             consume_obligations: HashSet::new(),
             all_declared_consume: HashSet::new(),
+            binding_origin: HashMap::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
             view_params: HashSet::new(),
@@ -40146,7 +40223,6 @@ impl<'a> ConsumeCtx<'a> {
             guard_violations: Vec::new(),
             coerce_consumed_via: HashMap::new(),
             current_fn_effects: None,
-            arm_pattern_exit_check: false,
             variant_ctor_names: collect_variant_ctor_names(module),
             module,
         }
@@ -40757,12 +40833,30 @@ impl<'a> ConsumeCtx<'a> {
 
     /// Зарегистрировать `consume tx = ...` binding — tx обязан быть
     /// Consumed до scope-exit.
-    fn declare_consume_binding(&mut self, name: &str, ty: Option<String>) {
+    ///
+    /// №672 (2026-08-21): `origin` — ПРОИСХОЖДЕНИЕ биндинга, единственное
+    /// место, где оно записывается. Параметр ОБЯЗАТЕЛЬНЫЙ и без дефолта
+    /// намеренно: новая точка заведения обязана НАЗВАТЬ свою форму,
+    /// а не молча унаследовать исключение D432 — именно так пять форм
+    /// и текли молча.
+    fn declare_consume_binding(&mut self, name: &str, ty: Option<String>, origin: BindingOrigin) {
         if name == "_" { return; }
         self.declare(name, ty);
         self.consume_obligations.insert(name.to_string());
         // Plan 100.8 (D166): also track in all_declared_consume (never cleared).
         self.all_declared_consume.insert(name.to_string());
+        self.binding_origin.insert(name.to_string(), origin);
+    }
+
+    /// №672: происхождение обязательства. Дефолт `BareLet` —
+    /// консервативный: неизвестное происхождение ведёт себя КАК РАНЬШЕ
+    /// (освобождается), то есть молчаливого пути, который я пропустил бы,
+    /// новых ложных отказов не даёт.
+    fn origin_of(&self, name: &str) -> BindingOrigin {
+        self.binding_origin.get(name)
+            .or_else(|| self.binding_origin.get(&self.canonical(name)))
+            .copied()
+            .unwrap_or(BindingOrigin::BareLet)
     }
 
     /// Plan 181 (D347) R2 [M-181-same-scope-rebinding]: a same-scope re-binding
@@ -40851,7 +40945,11 @@ impl<'a> ConsumeCtx<'a> {
         if closure_name == "_" { return; }
         // Consume-closure само является consume-obligation: если не invoked
         // до scope-exit → D133-not-consumed error.
-        self.declare_consume_binding(closure_name, Some("__consume_closure__".to_string()));
+        self.declare_consume_binding(
+            closure_name,
+            Some("__consume_closure__".to_string()),
+            BindingOrigin::BareLet,
+        );
         self.consume_closures.insert(closure_name.to_string(), captured);
     }
 
@@ -40918,10 +41016,21 @@ impl<'a> ConsumeCtx<'a> {
             // строгая линейность без изменений (`cleanup_effects` даёт
             // `None` для них).
             let cleanup_row = if is_strict_generic { None } else { self.lin_reg.cleanup_effects(&ty) };
-            // #667: a match-arm PATTERN binding gets no auto-cleanup from the
-            // codegen (D432 s.2) -- it must be consumed explicitly, like a type
-            // without `@cleanup`. The exemption below is for bare bindings only.
-            let is_auto_cleanup_eligible = cleanup_row.is_some() && !self.arm_pattern_exit_check;
+            // №672 (2026-08-21, решение владельца) — ГЛАВНАЯ СТРОЧКА ПРАВКИ.
+            // Исключение D432 §2 спрашивает ПРОИСХОЖДЕНИЕ биндинга, а не
+            // транзиентный флаг вокруг ОДНОГО вызова (№667). Кодоген
+            // армит авто-`@cleanup` только для bare `Stmt::Let` с `Pattern::Ident`
+            // (`auto_cleanup_qualifies`), значит только такой биндинг вправе
+            // молчать. Остальные четыре формы текли именно здесь.
+            let origin = self.origin_of(name);
+            let d432_exempt = if provenance_disabled() {
+                // Прежнее поведение байт-в-байт: освобождались ВСЕ, кроме
+                // arm-паттерна (тогдашний `arm_pattern_exit_check`).
+                !matches!(origin, BindingOrigin::Pattern)
+            } else {
+                origin.auto_cleanup_qualifies()
+            };
+            let is_auto_cleanup_eligible = cleanup_row.is_some() && d432_exempt;
             let leftover_at_exit = matches!(state, Some(VarState::Live) | Some(VarState::MaybeConsumed(_)));
             if is_auto_cleanup_eligible && leftover_at_exit {
                 if let (Some(row), Some(cfe)) = (cleanup_row, self.current_fn_effects) {
@@ -42568,10 +42677,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                                 typeref_contains_consume_generic(&p.ty, &g_set)
                             }).cloned()
                         });
-                        ctx.declare_consume_binding(&p.name, pty);
+                        ctx.declare_consume_binding(&p.name, pty, BindingOrigin::FnParam);
                     } else if p.consume {
                         // Explicit `consume` param: consume-obligation.
-                        ctx.declare_consume_binding(&p.name, pty);
+                        ctx.declare_consume_binding(&p.name, pty, BindingOrigin::FnParam);
                     } else {
                         // Plan 100.3 (D157): non-consume param of consume type
                         // → view-param. Can read fields, call non-consume methods,
@@ -43263,7 +43372,7 @@ fn consume_require_pattern_binding(
         return;
     }
     if is_consume {
-        ctx.declare_consume_binding(name, ty);
+        ctx.declare_consume_binding(name, ty, BindingOrigin::Pattern);
         // D180: consume-биндинг уже mut-capable.
         ctx.local_mut.insert(name.to_string(), true);
         return;
@@ -43506,11 +43615,12 @@ fn check_and_clear_arm_pattern_obligations(
     let full_obligations = std::mem::replace(
         &mut ctx.consume_obligations,
         new_obligations.iter().cloned().collect());
-    // #667: pattern bindings are exit-checked WITHOUT the D432 auto-cleanup
-    // exemption (see `arm_pattern_exit_check` doc).
-    ctx.arm_pattern_exit_check = true;
+    // #667 -> №672 (2026-08-21): pattern-биндинги проверяются БЕЗ
+    // исключения D432, и теперь это следует из их ПРОИСХОЖДЕНИЯ
+    // (`BindingOrigin::Pattern`), а не из транзиентного флага вокруг этого
+    // единственного вызова — флаг и был тем, что оставило четыре
+    // другие формы биндинга молчать.
     ctx.check_obligations_at_exit(exit_span, errors);
-    ctx.arm_pattern_exit_check = false;
     ctx.consume_obligations = full_obligations;
     for n in &new_obligations {
         ctx.consume_obligations.remove(n);
@@ -43834,6 +43944,17 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 }));
             }
 
+            // №672 (2026-08-21): ПРОИСХОЖДЕНИЕ этого let-биндинга — ЗЕРКАЛО
+            // `emit_c.rs::auto_cleanup_qualifies`: авто-`@cleanup` кодоген армит
+            // ТОЛЬКО для `decl.consume` с `Pattern::Ident` (D432 §2). Деструктуризация
+            // (`consume (a, b) = …`) авто-cleanup'а НЕ получает — значит и
+            // исключения тоже не получает.
+            let let_origin = if matches!(&decl.pattern, Pattern::Ident { .. }) {
+                BindingOrigin::BareLet
+            } else {
+                BindingOrigin::Pattern
+            };
+
             // Rule 3 (D180): `consume X = consume_var` = move semantics
             // (mark source Consumed, transfer obligation to X).
             if let Some(ref canon) = alias_src {
@@ -43842,7 +43963,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     ctx.mark_consumed(canon, decl.span);
                     ctx.consume_obligations.remove(canon);
                     let ty = ctx.var_types.get(canon).cloned();
-                    ctx.declare_consume_binding(&names[0], ty);
+                    ctx.declare_consume_binding(&names[0], ty, let_origin);
                     // Skip the existing alias/declare path below.
                     return;
                 }
@@ -43943,7 +44064,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     };
                     // Plan 100.1 (D133 / D9): `consume tx = ...` binding.
                     if decl.consume {
-                        ctx.declare_consume_binding(n, t);
+                        ctx.declare_consume_binding(n, t, let_origin);
                     } else if let Some(ref captured) = consume_closure_captured {
                         // Plan 100.3 (D157): consume-closure — declares as consume-obligation.
                         ctx.declare_consume_closure(n, captured.clone());
@@ -44290,7 +44411,11 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         || ctx.lin_reg.consume_methods.contains_key(t.as_str())
                 });
                 if tail_escape || r.declared_consume {
-                    ctx.declare_consume_binding(&r.name, known_result_ty);
+                    ctx.declare_consume_binding(
+                        &r.name,
+                        known_result_ty,
+                        BindingOrigin::ConsumeScopeResult,
+                    );
                 } else {
                     ctx.declare(&r.name, None);
                 }
@@ -44655,7 +44780,7 @@ fn consume_walk_consume_for(
     // ── Pass 1: discover which outer-scope vars get consumed in body ──
     // (pessimistic: if consumed in body, mark maybe-consumed post-loop)
     for n in loop_var_names {
-        ctx.declare_consume_binding(n, None);
+        ctx.declare_consume_binding(n, None, BindingOrigin::LoopVar);
     }
     let mut throwaway: Vec<Diagnostic> = Vec::new();
     consume_walk_block(ctx, body, &mut throwaway);
@@ -44693,7 +44818,7 @@ fn consume_walk_consume_for(
 
     // ── Pass 2: real walk with error collection ──
     for n in loop_var_names {
-        ctx.declare_consume_binding(n, None);
+        ctx.declare_consume_binding(n, None, BindingOrigin::LoopVar);
     }
     consume_walk_block(ctx, body, errors);
 
