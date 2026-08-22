@@ -7145,6 +7145,9 @@ impl<'a> TypeCheckCtx<'a> {
         // size walk degrades gracefully (depth-guard → None, surfaced only when
         // `size_of` forces it); this dedicated check reports it at type-check time.
         self.check_infinite_type(td, errors);
+        // Plan 172.14 F.2 atom A2: detect-only census of sum recursion.
+        // Gated on NOVA_DETECT_SUMREC; contributes nothing to the program.
+        self.detect_sum_recursion(td);
         // Plan 173.3 (D415 §1): `#share` — applicable to kinds that have a
         // concrete (if compiler-opaque) instance identity: Record, NamedTuple,
         // Newtype, Opaque, Sum. NOT applicable to Effect/Protocol/Alias/TypeSet
@@ -7404,6 +7407,203 @@ impl<'a> TypeCheckCtx<'a> {
             "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
                 | "i8" | "u8" | "uint" | "bool" | "char" | "str"
         )
+    }
+
+    /// Plan 172.14 F.2 atom A2 -- would this sum's layout recurse without bound
+    /// if sums were laid out INLINE (a tagged value struct) instead of behind
+    /// `nova_alloc`?
+    ///
+    /// Deliberately NOT `check_infinite_type`. That walk answers a different
+    /// question and cuts sums out of its graph twice on purpose -- as subject
+    /// (`subject_inlineable`) and as edge (`boxed_to_pointer`, "A Sum is ALWAYS
+    /// heap") -- because under today's ABI a sum reference IS a pointer and so
+    /// can never close a value cycle. Placement asks the counterfactual, so the
+    /// sum edge has to be put back; every other rule is kept identical to the
+    /// size walk, so the two cannot drift apart silently.
+    ///
+    /// Edge rules, and the reason for each:
+    ///   sum variant payload ................ INLINE  the hypothesis under test
+    ///   value record / named tuple /
+    ///     newtype / alias field ............ INLINE  laid out in place
+    ///   HEAP record field .................. STOP    is a pointer, stays one
+    ///   `Option[T]` ........................ INLINE  `NovaOpt_T` is a by-value
+    ///                                                struct, so `Option[Self]`
+    ///                                                does NOT break a cycle
+    ///   `Vec`/`HashMap`/`Set`/`Chan`[T] .... STOP    heap buffer behind a ptr
+    ///   `Result[..]` ....................... STOP    `NovaRes_*` is a heap ptr
+    ///   `[]T`, `*T`, `ref T` ............... STOP    pointer, or {ptr,len}
+    ///   `[N]T` ............................. INLINE  n inline copies
+    ///   tuple .............................. INLINE  each element
+    ///   primitive, `str` ................... STOP    finite leaf
+    ///   unresolvable name .................. STOP    cannot prove a cycle
+    ///
+    /// The direction of error matters and is chosen: over-detection is SAFE
+    /// (recursive => stays on the heap => exactly today's behaviour), while
+    /// under-detection is not. The one rule that has to guess -- an unknown
+    /// generic instantiation -- walks BOTH the template body and the type
+    /// arguments, which can only add cycles, never hide one.
+    pub(crate) fn sum_is_recursive(&self, td: &TypeDecl) -> bool {
+        if !matches!(&td.kind, TypeDeclKind::Sum(_)) {
+            return false;
+        }
+        let mut gs: GenericScope = HashMap::new();
+        for g in &td.generics {
+            gs.insert(g.name.clone(), g.clone());
+        }
+        let root = td.name.clone();
+        let mut on_path: HashSet<String> = HashSet::new();
+        on_path.insert(root);
+        for field_ty in Self::sumrec_inline_edges(td) {
+            if self.sumrec_dfs(field_ty, &mut on_path, &gs) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A2: every INLINE-edge `TypeRef` of a decl under the "sums are values"
+    /// hypothesis. Callers reach this only for decls already classified inline.
+    fn sumrec_inline_edges(td: &TypeDecl) -> Vec<&TypeRef> {
+        match &td.kind {
+            TypeDeclKind::Sum(variants) => {
+                let mut out: Vec<&TypeRef> = Vec::new();
+                for v in variants {
+                    match &v.kind {
+                        crate::ast::SumVariantKind::Unit => {}
+                        crate::ast::SumVariantKind::Tuple(tys) => out.extend(tys.iter()),
+                        crate::ast::SumVariantKind::Record(fields) => {
+                            out.extend(fields.iter().map(|f| &f.ty))
+                        }
+                    }
+                }
+                out
+            }
+            TypeDeclKind::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
+            TypeDeclKind::NamedTuple(fields) => fields.iter().map(|f| &f.ty).collect(),
+            TypeDeclKind::Newtype(inner) => vec![inner],
+            TypeDeclKind::Alias(inner) => vec![inner],
+            _ => Vec::new(),
+        }
+    }
+
+    /// A2: container bases whose contents live behind a pointer, so they BREAK a
+    /// layout cycle. `Option` is deliberately absent -- it is by value.
+    #[inline]
+    fn sumrec_is_boxing_container(name: &str) -> bool {
+        matches!(
+            name,
+            "Vec" | "HashMap" | "HashSet" | "Set" | "Map" | "Chan" | "Channel"
+                | "Result" | "Box" | "Rc" | "Arc"
+        )
+    }
+
+    /// A2: DFS half of `sum_is_recursive`. True iff this `TypeRef` reaches, over
+    /// INLINE edges only, some type already on the walk stack.
+    fn sumrec_dfs(
+        &self,
+        t: &TypeRef,
+        on_path: &mut HashSet<String>,
+        gs: &GenericScope,
+    ) -> bool {
+        match t {
+            TypeRef::Named { path, generics, .. } => {
+                let Some(name) = path.last() else { return false };
+                // A bare generic param of the root decl is not a user type.
+                if gs.contains_key(name) {
+                    return false;
+                }
+                if Self::is_primitive_type_name(name) {
+                    return false;
+                }
+                // `Option[T]` is a by-value `NovaOpt_T`: it does NOT break the
+                // cycle, so walk straight into T. This single rule is what most
+                // separates this walk from the size walk, and it is why
+                // `type N enum Leaf | Node(Option[N])` has to stay on the heap.
+                if name == "Option" {
+                    return generics.iter().any(|g| self.sumrec_dfs(g, on_path, gs));
+                }
+                if Self::sumrec_is_boxing_container(name) {
+                    return false;
+                }
+                // Back-edge into a node already on the stack is the cycle. Checked
+                // BEFORE resolution, so a generic self-reference (`LinkedList[T]`
+                // inside `LinkedList`) is caught too.
+                if on_path.contains(name) {
+                    return true;
+                }
+                let Some(decl) = self.types_get_here(name) else { return false };
+                // A heap record reference is a pointer, so the cycle stops here.
+                // This is where this walk agrees with the size walk again.
+                if matches!(&decl.kind, TypeDeclKind::Record(_)) && decl.allocation.is_heap() {
+                    return false;
+                }
+                let inline = matches!(
+                    &decl.kind,
+                    TypeDeclKind::Sum(_)
+                        | TypeDeclKind::Record(_)
+                        | TypeDeclKind::NamedTuple(_)
+                        | TypeDeclKind::Newtype(_)
+                        | TypeDeclKind::Alias(_)
+                );
+                if !inline {
+                    return false;
+                }
+                on_path.insert(name.clone());
+                let mut found = false;
+                for field_ty in Self::sumrec_inline_edges(decl) {
+                    if self.sumrec_dfs(field_ty, on_path, gs) {
+                        found = true;
+                        break;
+                    }
+                }
+                // An unknown generic instantiation can hide a cycle in its type
+                // arguments; walking them can only ADD cycles, never mask one.
+                if !found {
+                    for g in generics {
+                        if self.sumrec_dfs(g, on_path, gs) {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                on_path.remove(name);
+                found
+            }
+            TypeRef::Tuple(elems, _) => elems.iter().any(|e| self.sumrec_dfs(e, on_path, gs)),
+            TypeRef::FixedArray(_, elem, _) => self.sumrec_dfs(elem, on_path, gs),
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _) => self.sumrec_dfs(inner, on_path, gs),
+            // Pointer / ref / slice -- indirection, 8 or 16 bytes. STOP.
+            TypeRef::Pointer(_, _) | TypeRef::Ref(_, _) | TypeRef::Array(_, _) => false,
+            TypeRef::Unit(_) | TypeRef::Func { .. } | TypeRef::Protocol { .. } => false,
+        }
+    }
+
+    /// A2 detect mode. `NOVA_DETECT_SUMREC=1` prints one line per sum declaration
+    /// and changes nothing else -- no diagnostic, no emission, no exit code. The
+    /// corpus census is then taken by grepping these lines, so the number the
+    /// phase leans on comes from a RUN rather than from a script that re-parses
+    /// `.nv` by hand (which is what produced the first, over-approximate count).
+    fn detect_sum_recursion(&self, td: &TypeDecl) {
+        let TypeDeclKind::Sum(variants) = &td.kind else { return };
+        if std::env::var("NOVA_DETECT_SUMREC").map(|v| v != "1").unwrap_or(true) {
+            return;
+        }
+        let payloadless = variants
+            .iter()
+            .all(|v| matches!(v.kind, crate::ast::SumVariantKind::Unit));
+        let mut names: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+        names.sort_unstable();
+        eprintln!(
+            "[a2-sumrec] sum={} file={} variants={} recursive={} payloadless={} vnames={}",
+            td.name,
+            td.span.file_id,
+            variants.len(),
+            if self.sum_is_recursive(td) { 1 } else { 0 },
+            if payloadless { 1 } else { 0 },
+            names.join(","),
+        );
     }
 
     /// Plan 174.3 (D54 §6): validate the operand of `x is T`. `is` is legal on

@@ -14,6 +14,7 @@ mod emit_detach;
 // child module (same ratchet rule; see its doc). Field + two consult sites stay.
 mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
+mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -949,6 +950,10 @@ pub struct CEmitter {
     /// `NovaValue_` prefix; this set isolates user-declared value-records
     /// from runtime types.
     value_record_names: HashSet<String>,
+    /// Plan 172.14 F.2 atom A4: sums emitted as an inline `NovaValue_<X>`
+    /// tag struct instead of a heap `Nova_<X>*`. Payload-less, non-generic
+    /// and unfenced only; see `build_value_sum_set`.
+    value_sum_names: HashSet<String>,
     /// Maps sum type name → variant name → field types (positional)
     sum_schemas: HashMap<String, HashMap<String, Vec<String>>>,
     /// [M-sync-crossmodule-samename-type-collision] Collision-aware nominal-type
@@ -2631,6 +2636,7 @@ impl CEmitter {
             record_schemas: HashMap::new(),
             named_tuple_field_defaults: HashMap::new(),
             value_record_names: HashSet::new(),
+            value_sum_names: HashSet::new(),
             sum_schemas: HashMap::new(),
             colliding_type_names: HashSet::new(),
             colliding_fn_names: HashSet::new(),
@@ -6878,6 +6884,11 @@ impl CEmitter {
             } else { None })
             .collect();
 
+        // Plan 172.14 F.2 atom A4: decide which sums become inline value structs
+        // BEFORE the forward-decl loop below, because that loop is what pushes the
+        // `typedef` and registers the `type_aliases` entry every later pass reads.
+        self.build_value_sum_set(module);
+
         for item in &module.items {
             if let Item::Type(t) = item {
                 // Plan 172.1 U.1.3b (§0 single source): типы, определённые в C-runtime-хедерах
@@ -6969,6 +6980,7 @@ impl CEmitter {
                                 self.user_type_fwd_decls.push_str(&format!(
                                     "typedef int64_t Nova_{};\n", fb));
                             }
+                        } else if self.a4_fwd_decl_value_sum(t, &fb) {
                         } else {
                             self.user_type_fwd_decls.push_str(&format!(
                                 "typedef struct Nova_{0} Nova_{0};\n", fb));
@@ -18977,6 +18989,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(())
     }
 
+
     fn emit_sum_type(&mut self, name: &str, variants: &[SumVariant]) -> Result<(), String> {
         // Plan 72 P1-B: empty sum type (0 variants) — bottom / uninhabited type.
         // `type RuntimeNoneError` etc. (empty sum). C does not support empty
@@ -18989,6 +19002,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.sum_schemas.insert(name.to_string(), HashMap::new());
             return Ok(());
         }
+        // Plan 172.14 F.2 atom A4 (codegen/emit_c/sum_placement.rs).
+        if self.emit_value_sum_type(name, variants) { return Ok(()); }
+
         // Tag enum
         self.line("typedef enum {");
         self.indent += 1;
@@ -21665,13 +21681,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if Self::eq_single_eval_disabled() || undeclarable {
             return (l.to_string(), r.to_string(), String::new());
         }
+        // Both temps take the COMPARISON's type, because that is the type
+        // `emit_field_eq` will read them at; typing each from its own operand
+        // instead was tried and is wrong -- it desynchronises the temp from the
+        // accessor and produced `.tag` on a `Nova_NodeKind*`.
+        //
+        // A POINTER temp is assigned through an explicit cast. An operand's own
+        // inferred type can legitimately disagree with the comparison type when
+        // variant->sum resolution is first-wins and names another sum; the old
+        // emission wrote `((Nova_X*)(expr))->tag`, so the cast was always there and
+        // dropping it turned a silent mis-resolution into a compile error. Value
+        // types get no cast (C has no cast to struct type) -- ambiguous sums are
+        // kept off the value path by the A4 variant-collision fence instead.
+        // Gated on A4 so `NOVA_KILL_A4=1` restores the pre-atom text byte for byte:
+        // with A4 off every one of these types is a pointer and the mismatch is a
+        // clang warning, exactly as before; with A4 on it is a hard error.
+        let cast = if t.ends_with('*') && !Self::a4_value_sums_disabled() {
+            format!("({})", t)
+        } else {
+            String::new()
+        };
         let mut pre = String::new();
         let lt = if Self::eq_operand_is_bare_ident(l) {
             l.to_string()
         } else {
             let tmp = self.fresh_tmp_named("eq");
             self.line(&format!("{} {};", t, tmp));
-            pre.push_str(&format!("{} = ({}), ", tmp, l));
+            pre.push_str(&format!("{} = {}({}), ", tmp, cast, l));
             tmp
         };
         let rt = if Self::eq_operand_is_bare_ident(r) {
@@ -21679,7 +21715,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             let tmp = self.fresh_tmp_named("eq");
             self.line(&format!("{} {};", t, tmp));
-            pre.push_str(&format!("{} = ({}), ", tmp, r));
+            pre.push_str(&format!("{} = {}({}), ", tmp, cast, r));
             tmp
         };
         (lt, rt, pre)
@@ -21688,6 +21724,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_field_eq(&self, c_type: &str, l: &str, r: &str, depth: usize) -> String {
         const MAX_EQ_DEPTH: usize = 32;
         let cty = c_type.trim();
+        if let Some(eq) = self.a4_value_sum_eq(cty, l, r) { return eq; }
         // Recursion guard (R2): cyclic record schema → bail to identity.
         if depth >= MAX_EQ_DEPTH {
             return format!("(({}) == ({}))", l, r);
@@ -35555,10 +35592,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     } else {
                                         eff_key.clone()
                                     };
-                                    return Ok(format!(
-                                        "(nova_int)(intptr_t)nova_make_{}_{}()",
-                                        ctor_prefix, variant_name
-                                    ));
+                                    return Ok(self.a4_unit_variant_ctor(&eff_key, &ctor_prefix, &variant_name));
                                 }
                             }
                         }
@@ -37670,6 +37704,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Spec 02-types.md:331 «Sum → int — безопасный, всегда работает» (`c as int` = disc).
                 // Pointer-sum (`Nova_X*`) → `(v)->tag` (как Is-cast `:21840`); value-sum (int64-typedef
                 // `Nova_X` без `*`) уже несёт disc как значение → падает в generic C-cast ниже (verbatim).
+                if let Some(x) = self.a4_sum_as_int_cast(&inner_c_ty, &target_c, &v) { return Ok(x); }
                 if let Some(sum_name) = Self::debt_strip_nova_prefix_opt(&inner_c_ty).and_then(|s| s.strip_suffix('*')) {
                     if self.sum_schemas.contains_key(sum_name) && matches!(target_c.as_str(),
                         "nova_int" | "int64_t" | "int32_t" | "int16_t" | "int8_t"
@@ -52950,7 +52985,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     format!("NOVA_TAG_{}_{}", type_name, variant_name)
                 };
-                let accessor = if is_opt { "." } else { "->" };
+                let is_value_sum = !is_opt_ptr
+                    && self.a4_is_value_sum_scrutinee(&type_name, &scr_ty);
+                let accessor = if is_opt || is_value_sum { "." } else { "->" };
                 // Plan 118 Ф.5: NPO-aware match-pattern check для Option[*T].
                 // Tag field dropped в NPO layout — use value-NULL convention.
                 let base = if is_opt && !is_opt_ptr {
@@ -62589,7 +62626,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
                         return format!("{}*", mangled);
                     }
-                    return format!("Nova_{}*", type_name);
+                    return self.a4_sum_c_type(&type_name);
                 }
             }
         }
@@ -62615,7 +62652,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     || self.record_schemas.contains_key(name.as_str())
                     || self.sum_schemas.contains_key(name.as_str()))
             {
-                return format!("Nova_{}*", name);
+                return self.a4_sum_c_type(name);
             }
         }
         // Channel 6e (tally 2026-07-02, Path:__array): синтетический путь
@@ -62785,13 +62822,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             || self.sum_schema_registry.lookup_sum_schema(&sum_base).is_some()
                             || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
                         {
-                            return format!("Nova_{}*", sum_base);
+                            return self.a4_sum_c_type(&sum_base);
                         }
                     }
                     // Check if this is a sum-type record variant.
                     // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
                     if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
-                        format!("Nova_{}*", sum_type_name)
+                        self.a4_sum_c_type(&sum_type_name)
                     } else if self.generic_types.contains(&struct_name) {
                         // Generic type: compute concrete mono name from field values.
                         // Check BEFORE record_schemas because record_schemas has the erased form
@@ -62919,7 +62956,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                                 return "NovaOpt_nova_int".into();
                             }
-                            return format!("Nova_{}*", type_name);
+                            return self.a4_sum_c_type(&type_name);
                         }
                     }
                     // Empty-sum type name used as a value (e.g. `CharTryFromError` in
@@ -62936,7 +62973,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         || self.record_schemas.contains_key(name.as_str())
                         || self.sum_schemas.contains_key(name.as_str())
                     {
-                        return format!("Nova_{}*", name);
+                        return self.a4_sum_c_type(name);
                     }
                     // [M-channel-generic-elem-type] (b): `Channel` as a bare
                     // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
@@ -63037,7 +63074,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if self.sum_schemas.contains_key(n.as_str())
                             || self.sum_schema_registry.lookup_sum_schema(n).is_some()
                         {
-                            return format!("Nova_{}*", n);
+                            return self.a4_sum_c_type(&n);
                         }
                     }
                     // [M-172.1-d174] phase-safe: Ident-база без материализованного типа
@@ -63605,7 +63642,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if self.sum_schemas.contains_key(type_part.as_str())
                         || self.sum_schema_registry.lookup_sum_schema(type_part).is_some()
                     {
-                        return format!("Nova_{}*", type_part);
+                        return self.a4_sum_c_type(&type_part);
                     }
                 }
                 // Plan 127.1 Ф.1: mirror emit_expr Path branch — when parser
@@ -64029,7 +64066,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                                 return "NovaOpt_nova_int".into();
                             }
-                            return format!("Nova_{}*", type_name);
+                            return self.a4_sum_c_type(&type_name);
                         }
                     }
                     // Empty-sum type name used as a value (e.g. `CharTryFromError` in
@@ -64046,7 +64083,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         || self.record_schemas.contains_key(name.as_str())
                         || self.sum_schemas.contains_key(name.as_str())
                     {
-                        return format!("Nova_{}*", name);
+                        return self.a4_sum_c_type(name);
                     }
                     // [M-channel-generic-elem-type] (b): `Channel` as a bare
                     // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
@@ -64705,7 +64742,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Check variant in sum registries
                         if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(last) {
                             if fields.is_empty() {
-                                return format!("Nova_{}*", type_name);
+                                return self.a4_sum_c_type(&type_name);
                             }
                         }
                         // Registered record type
