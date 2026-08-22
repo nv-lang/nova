@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// #672 form (1) (registry 221.1, owner's ruling 2026-08-21): a `consume`
+// PARAMETER of an `@cleanup` type is an obligation like any other binding.
+// Before the fix the D432 auto-cleanup exemption was handed out by the shape
+// of the writing, so this compiled and cleaned up nothing at all: the caller
+// disarms its own flag when it hands ownership over, and the callee never
+// released it. Verified by observation, not derived from the code -- a
+// `println` inside `@cleanup` never printed.
+module neg.m672_form1_consume_param_leak_neg
+
+type M672P1 consume { tag int }
+
+fn M672P1 consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+fn M672P1 consume @close() -> () { () }
+
+// nova:expect D133-not-consumed -- the consume parameter owns the resource and gets no auto-cleanup (D432 s.2 covers bare `consume X = e` only); it must be released here (#672 form 1)
+fn m672_eat(consume r M672P1) -> () {
+    assert(r.tag == 4)
+}
+
+fn main() {
+    consume r = M672P1 { tag: 4 }
+    m672_eat(r)
+}

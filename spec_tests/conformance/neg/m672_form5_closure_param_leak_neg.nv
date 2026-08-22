@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// #672 form (5): a closure parameter was declared as a bare NAME, which lost
+// both the `consume` flag and the TYPE -- so no obligation was created even
+// for a strictly linear type, and the D157 view ban was dead too. A typed
+// closure form (`fn(consume v T) -> ()`, D22-rev closure-full) now carries
+// both facts. `|x| ...` closure-light still cannot: D22-rev gives its
+// parameters no type syntax at all, and that gap is recorded in the registry
+// rather than papered over.
+module neg.m672_form5_closure_param_leak_neg
+
+type M672C5 consume { tag int }
+
+fn M672C5 consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+fn M672C5 consume @close() -> () { () }
+
+fn main() {
+    // nova:expect D133-not-consumed -- the closure's `consume` parameter owns the value and gets no auto-cleanup (#672 form 5)
+    ro k = fn(consume v M672C5) -> () {
+        assert(v.tag == 5)
+    }
+    assert(true)
+}

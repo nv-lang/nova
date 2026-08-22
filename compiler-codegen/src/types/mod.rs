@@ -38460,6 +38460,13 @@ struct LinearityRegistry {
     /// те два метода, которыми ресурс и освобождается: оба — то, что
     /// зовёт `@cleanup` своего типа. Отсюда и правило.
     cleanup_delegates: HashMap<String, HashSet<String>>,
+    /// №672 форма (3): типы, чей `@cleanup` НЕ ДЕЛАЕТ НИЧЕГО
+    /// (пустое тело либо ровно `()`). У такого типа нечего терять —
+    /// значит, нечего и диагностировать. Названо ЗАМЕРОМ по
+    /// conformance: `m666_variant_ctor_moves_consume` и
+    /// `m667_arm_binding_and_variant_ctor_ownership` — оба с пустым cleanup'ом,
+    /// оба про владение, а не про освобождение.
+    cleanup_is_noop: HashSet<String>,
 }
 
 /// №672 форма (3): собрать имена методов, вызванных НА `@` в теле.
@@ -38482,6 +38489,27 @@ fn typeref_contains_must_consume(t: &TypeRef, lin_reg: &LinearityRegistry) -> bo
         TypeRef::Tuple(elems, _) => elems.iter().any(|e| typeref_contains_must_consume(e, lin_reg)),
         TypeRef::Readonly(inner, _) => typeref_contains_must_consume(inner, lin_reg),
         _ => false,
+    }
+}
+
+/// №672 форма (3): тело не делает ничего — пустой блок, блок с одним
+/// `()`, либо стрелочное `=> ()`. Намеренно буквально: вопрос здесь
+/// не «что этот код делает», а «написано ли в нём хоть что-нибудь».
+fn fnbody_is_noop(body: &FnBody) -> bool {
+    fn expr_is_unit(e: &Expr) -> bool { matches!(e.kind, ExprKind::UnitLit) }
+    match body {
+        FnBody::External => false,
+        FnBody::Expr(e) => expr_is_unit(e),
+        FnBody::Block(b) => {
+            let stmts_empty = b.stmts.is_empty()
+                || (b.stmts.len() == 1
+                    && matches!(&b.stmts[0], Stmt::Expr(e) if expr_is_unit(e)));
+            let trailing_empty = match &b.trailing {
+                None => true,
+                Some(t) => expr_is_unit(t),
+            };
+            stmts_empty && trailing_empty
+        }
     }
 }
 
@@ -38556,6 +38584,7 @@ impl LinearityRegistry {
         let mut local_type_names = HashSet::new();
         let mut cleanup_effect_rows: HashMap<String, Vec<TypeRef>> = HashMap::new();
         let mut cleanup_delegates: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut cleanup_is_noop: HashSet<String> = HashSet::new();
 
         // Plan 217 §8а п.1 / D432-амендмент 2026-08-04 (№315): `@cleanup`
         // (метод `cleanup` на consume-receiver'е, instance-kind, protocol-
@@ -38663,6 +38692,11 @@ impl LinearityRegistry {
                     }
                 }
                 cleanup_delegates.insert(ty.clone(), reached);
+                if bodies.get(&(ty.clone(), "cleanup".to_string()))
+                    .map_or(false, |b| fnbody_is_noop(b))
+                {
+                    cleanup_is_noop.insert(ty.clone());
+                }
             }
         }
 
@@ -38672,6 +38706,7 @@ impl LinearityRegistry {
             local_type_names,
             cleanup_effect_rows,
             cleanup_delegates,
+            cleanup_is_noop,
         }
     }
 
@@ -38679,6 +38714,11 @@ impl LinearityRegistry {
     /// типа `ty` — то есть тем, до чего досягает `@cleanup`.
     fn is_cleanup_delegate(&self, ty: &str, method: &str) -> bool {
         self.cleanup_delegates.get(ty).map_or(false, |s| s.contains(method))
+    }
+
+    /// №672 форма (3): `@cleanup` этого типа не делает ничего.
+    fn cleanup_does_nothing(&self, ty: &str) -> bool {
+        self.cleanup_is_noop.contains(ty)
     }
 
     /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
@@ -42982,6 +43022,7 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                         && !lin_reg.is_cleanup_delegate(&recv.type_name, &f.name)
                         && !hands_ownership_on
                         && !f.returns_receiver
+                        && !lin_reg.cleanup_does_nothing(&recv.type_name)
                         && lin_reg.cleanup_effects(&recv.type_name).is_some()
                     {
                         ctx.declare_consume_binding(
