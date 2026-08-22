@@ -350,15 +350,41 @@ impl CEmitter {
     /// `NovaValue_X` everywhere, and because that name carries the `NovaValue_`
     /// prefix, `is_value_type` recognises it and the `.`-versus-`->` oracle flips
     /// for free at its seven consumers.
-    pub(super) fn a4_fwd_decl_value_sum(&mut self, name: &str, fb: &str) -> bool {
-        if !self.value_sum_names.contains(name) {
+    pub(super) fn a4_fwd_decl_value_sum(&mut self, t: &crate::ast::TypeDecl, fb: &str) -> bool {
+        if !self.value_sum_names.contains(&t.name) {
             return false;
         }
-        self.user_type_fwd_decls
-            .push_str(&format!("typedef struct NovaValue_{0} NovaValue_{0};
+        let TypeDeclKind::Sum(variants) = &t.kind else { return false };
+        // The COMPLETE definition goes into the forward-decl buffer, not just a
+        // `typedef struct`. A field of value type needs a complete struct, and
+        // record bodies are emitted before `emit_sum_type` runs -- a forward
+        // declaration alone gives "field has incomplete type", which is exactly
+        // what conformance reported for `NovaValue_PathStyle` embedded in a
+        // record. Emitting the whole thing this early is sound only because a
+        // payload-less sum has ZERO dependencies on other user types: its body
+        // is one tag word. A payload-carrying sum (A7) will have to join the
+        // unified value-type topo-sort instead.
+        let mut decl = String::new();
+        decl.push_str("typedef enum {
+");
+        for v in variants {
+            match v.discriminant {
+                Some(d) => decl.push_str(&format!("    NOVA_TAG_{}_{} = {},
+", fb, v.name, d)),
+                None => decl.push_str(&format!("    NOVA_TAG_{}_{},
+", fb, v.name)),
+            }
+        }
+        decl.push_str(&format!("}} Nova_{}_Tag;
 ", fb));
+        decl.push_str(&format!("typedef struct NovaValue_{0} NovaValue_{0};
+", fb));
+        decl.push_str(&format!(
+            "struct NovaValue_{} {{ Nova_{}_Tag tag; }};
+", fb, fb));
+        self.user_type_fwd_decls.push_str(&decl);
         self.type_aliases
-            .insert(name.to_string(), format!("NovaValue_{}", fb));
+            .insert(t.name.clone(), format!("NovaValue_{}", fb));
         true
     }
 
@@ -428,13 +454,9 @@ impl CEmitter {
             return false;
         }
         {
-            self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
-            self.line(&format!("struct NovaValue_{} {{", name));
-            self.indent += 1;
-            self.line(&format!("Nova_{}_Tag tag;", name));
-            self.indent -= 1;
-            self.line("};");
-            self.line("");
+            // Enum + struct were already emitted into the forward-decl buffer by
+            // `a4_fwd_decl_value_sum`; only the constructors belong here, where
+            // they still precede every function body that calls them.
             for v in variants {
                 self.line(&format!(
                     "{storage}NovaValue_{name} nova_make_{name}_{var}(void) {{",

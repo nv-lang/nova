@@ -6980,7 +6980,7 @@ impl CEmitter {
                                 self.user_type_fwd_decls.push_str(&format!(
                                     "typedef int64_t Nova_{};\n", fb));
                             }
-                        } else if self.a4_fwd_decl_value_sum(&t.name, &fb) {
+                        } else if self.a4_fwd_decl_value_sum(t, &fb) {
                         } else {
                             self.user_type_fwd_decls.push_str(&format!(
                                 "typedef struct Nova_{0} Nova_{0};\n", fb));
@@ -19002,6 +19002,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.sum_schemas.insert(name.to_string(), HashMap::new());
             return Ok(());
         }
+        // Plan 172.14 F.2 atom A4 (codegen/emit_c/sum_placement.rs).
+        if self.emit_value_sum_type(name, variants) { return Ok(()); }
+
         // Tag enum
         self.line("typedef enum {");
         self.indent += 1;
@@ -19016,9 +19019,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         self.indent -= 1;
         self.line(&format!("}} Nova_{}_Tag;", name));
-
-        // Plan 172.14 F.2 atom A4 (codegen/emit_c/sum_placement.rs).
-        if self.emit_value_sum_type(name, variants) { return Ok(()); }
 
         // Collect schema while building union
         let mut sum_schema: HashMap<String, Vec<String>> = HashMap::new();
