@@ -66,7 +66,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, AssignOp, bin_op_of, un_op_of, assign_op_of, NodeId, raw_node, no_node, is_node}
 import ../diag.{ice}
 import ../mono.{Reach}
-import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow}
+import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, FieldRow, raw_frow, no_frow, is_frow}
 import ../builtins.{PRINT_FN, bool_c_literal}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
@@ -189,7 +189,11 @@ fn Emitter mut @emit_record_decl(rec_id int) -> () {
     ro sn = c_struct(@ctx, td.ty_id)
     @body.append("typedef struct ${sn} ${sn};\n")
     @body.append("struct ${sn} {\n")
-    for j in td.row_off..td.row_off + td.row_cnt {
+    // The FIELD range, asked of the arm that holds one: a declaration whose rows
+    // are variants (or none) has no fields to write, and the door says so instead
+    // of handing back a range into the wrong table.
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
         ro fd = @ctx.fields.rows[j]
         @body.append("    ")
         @body.append(c_type(@ctx, fd.type_id))
@@ -208,15 +212,18 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
     // A DECL index; the C name comes from the row's own type id (see above).
     ro td = @ctx.types[sum_id]
     ro sn = c_struct(@ctx, td.ty_id)
-    ro vend = td.row_off + td.row_cnt
+    // The VARIANT range, from the arm that holds one.
+    ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+    ro vstart = raw_vrow(vrange.0)
+    ro vend = vstart + vrange.1
     @body.append("typedef enum {\n")
-    for v in td.row_off..vend {
+    for v in vstart..vend {
         @body.append("    ${c_tag(@ctx, VariantRow(v))},\n")
     }
     @body.append("} ${sn}_Tag;\n")
     @body.append("typedef struct ${sn} ${sn};\n")
     @body.append("struct ${sn} {\n    ${sn}_Tag tag;\n    union {\n")
-    for v in td.row_off..vend {
+    for v in vstart..vend {
         ro vd = @ctx.variant_rows[v]
         @body.append("        struct {\n")
         for p in 0..vd.payload_cnt {
@@ -227,7 +234,7 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
         @body.append("        } ${vd.name};\n")
     }
     @body.append("    } payload;\n};\n\n")
-    for v in td.row_off..vend {
+    for v in vstart..vend {
         ro vd = @ctx.variant_rows[v]
         @body.append("static ${sn}* ${c_maker(@ctx, VariantRow(v))}(")
         if vd.payload_cnt == 0 {

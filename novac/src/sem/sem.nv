@@ -75,6 +75,28 @@ export type DefTarget enum
     | DefVariant(VariantRow)
     | DefFn(FnRow)
 
+/// WHICH ROWS a type declaration owns, and IN WHICH SPACE.
+///
+/// FOUND BY WAVE B5, and found the way the good ones are: by the type system
+/// refusing to answer. `TypeDef` used to carry `row_off int` + `row_cnt int`, and
+/// its own doc said what they meant -- "first row of this type in Ctx.field_rows
+/// (record) / Ctx.variant_rows (sum)". Two spaces, one pair of numbers, the kind
+/// deciding which: the same disease as `Def{kind,payload}` and
+/// `CalleeRef{kind,target_row}`, both cured the same way earlier this week.
+///
+/// While both spaces were `int` the conflation was invisible. Once `FieldRow` and
+/// `VariantRow` became types, the range could not be typed as EITHER -- and that
+/// is the signal, not an inconvenience: a record's range read as a sum's is a
+/// state that must not be representable.
+///
+/// So the range moves INSIDE the discriminant. A primitive and a newtype own no
+/// rows at all, and `NoRows` says that instead of a zero pair that has to be
+/// interpreted.
+export type TypeRows enum
+    | NoRows
+    | FieldRows(FieldRow, int)
+    | VariantRows(VariantRow, int)
+
 /// One type of the file registry; a type id is this record's interned
 /// index in Ctx.types (see the terminology note above). Registry rows are
 /// VALUE records: a plain record is a GC pointer — one heap allocation per
@@ -83,8 +105,7 @@ export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
     ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
-    row_off int /// First row of this type in Ctx.field_rows (record) / Ctx.variant_rows (sum_id).
-    row_cnt int /// How many rows; 0 for primitives.
+    rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
 }
 
 /// The MODE of a parameter: the third axis of mutability -- and an axis of
@@ -316,7 +337,7 @@ export type FieldDef value {
     name str /// Field spelling; the backend uses it for the member name verbatim.
     type_id TyId /// The field's type id.
     owner_id TyId /// Owning type id; the door takes the NAME and compares this as a type id.
-    next_row int /// Next row carrying the SAME field name, or -1; see FieldTable.
+    next_row FieldRow /// Next row carrying the SAME field name, or `no_frow()`; see FieldTable. STORING it here is what makes the row an identity rather than a step
 }
 
 /// Record-field registry: fields resolve ONLY through a receiver type —
@@ -339,7 +360,7 @@ export fn FieldTable.new() -> FieldTable =>
 
 /// Register one field of `owner_id`, keeping the same-name chain linked.
 export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
-    ro head = @names.find(name)
+    ro head = FieldRow(@names.find(name))
     @names.put(name, @rows.len())
     @rows.push(FieldDef { name, type_id, owner_id, next_row: head })
 }
@@ -348,9 +369,9 @@ export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
 /// `check` asks first, so a misspelled field is a diagnostic, not an ice.
 #realtime nogc
 export fn FieldTable @has_field(owner_id TyId, fname str) -> bool {
-    mut r = @names.find(fname)
-    while r >= 0 {
-        ro fd = @rows[r]
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = @rows[raw_frow(r)]
         if fd.owner_id == owner_id { return true }
         r = fd.next_row
     }
@@ -360,9 +381,9 @@ export fn FieldTable @has_field(owner_id TyId, fname str) -> bool {
 /// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
 #realtime nogc
 export fn FieldTable @field_type(owner_id TyId, fname str) -> TyId {
-    mut r = @names.find(fname)
-    while r >= 0 {
-        ro fd = @rows[r]
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = @rows[raw_frow(r)]
         if fd.owner_id == owner_id { return fd.type_id }
         r = fd.next_row
     }
@@ -443,7 +464,7 @@ export type Ctx {
 fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, row_off: 0, row_cnt: 0 })
+    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -596,7 +617,7 @@ export fn collect_types(file Node) -> Ctx {
             ro d = DeclId(types.len())
             defs.add(tname, DefTarget.DefType(d))
             types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(d), name: tname,
-                                 row_off: 0, row_cnt: 0 })
+                                 rows: TypeRows.NoRows })
             continue
         }
         match shape_of_decl(c) {
@@ -604,7 +625,7 @@ export fn collect_types(file Node) -> Ctx {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
                 types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(d), name: tname,
-                                     row_off: 0, row_cnt: 0 })
+                                     rows: TypeRows.NoRows })
             }
             ShapeNewtype => {
                 // The row exists now; its TERM waits for pass 2, because the
@@ -612,7 +633,7 @@ export fn collect_types(file Node) -> Ctx {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
                 types.push(TypeDef { kind: TypeKind.TkNewtype, ty_id: no_ty(), name: tname,
-                                     row_off: 0, row_cnt: 0 })
+                                     rows: TypeRows.NoRows })
             }
             ShapeAlias => {
                 // AN ALIAS IS NOT A TYPE: no row, and no id of its own. Its name
@@ -657,7 +678,8 @@ export fn collect_types(file Node) -> Ctx {
                         cnt += 1
                     }
                     types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord, ty_id: mine.ty_id,
-                                                          name: tname, row_off: off, row_cnt: cnt }
+                                                          name: tname,
+                                                          rows: TypeRows.FieldRows(FieldRow(off), cnt) }
                 }
                 ShapeNewtype => {
                     // The TERM is interned here and not in pass 1: the
@@ -674,7 +696,7 @@ export fn collect_types(file Node) -> Ctx {
                                 types[raw_decl(owner_id)] = TypeDef {
                                     kind: TypeKind.TkNewtype,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
-                                    name: tname, row_off: 0, row_cnt: 0 }
+                                    name: tname, rows: TypeRows.NoRows }
                             } else {
                                 // The representation names a declaration outside
                                 // the table -- nothing to intern, and check is
@@ -767,7 +789,7 @@ export fn collect_types(file Node) -> Ctx {
                 vcnt += 1
             }
             types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum, ty_id: sum_ty, name: sname,
-                                                  row_off: off, row_cnt: vcnt }
+                                                  rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }

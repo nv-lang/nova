@@ -22,7 +22,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, NodeId, raw_no
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, VariantRow, raw_vrow, no_vrow, is_vrow}
+import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, candidates_from, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, VariantRow, raw_vrow, no_vrow, is_vrow, variant_range_of}
 import ../types.{TyId, raw_ty, no_ty, is_ty}
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
@@ -71,8 +71,11 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
     // how a check gets QUIETER without anyone touching it.
     if !is_ty(scr_t) { return }
     if @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
-    ro td = decl_of_ty(@ctx, scr_t)
-    if td.row_cnt < 1 { return }
+    // The count comes from the arm that HOLDS a variant range: a sum with no
+    // variants is a shape check does not judge here, and so is anything whose
+    // rows are not variants at all.
+    ro vcnt = (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1
+    if vcnt < 1 { return }
     mut covered = 0
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
@@ -113,7 +116,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
             }
         }
     }
-    if covered >= td.row_cnt { return }
+    if covered >= vcnt { return }
     @report_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
 }
 

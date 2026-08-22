@@ -40,15 +40,59 @@ import ../types.{TyId, raw_ty, no_ty, is_ty}
 // `typedef nova_int Nova_X` and the C unit is refused. Isolated to twelve lines
 // (2026-08-22): one file, sum above newtype fails, newtype above sum compiles.
 //
-// Inside one module the same rule runs over FILES, in their order: `VariantRow`
-// feeds two sums -- `DefTarget` in sem.nv and `CalleeTarget` in channel.nv -- so
-// it has to be declared in the file that comes before both, and that is this one.
-// `FnRow`, `TyId` and `DeclId` never met the defect because they already sit in
-// files (or modules) emitted earlier.
+// Inside one module the same rule runs over FILES, in their order, and it now
+// holds TWO spaces: `VariantRow` feeds `DefTarget` (sem.nv) and `CalleeTarget`
+// (channel.nv), and `FieldRow` feeds `TypeRows` (sem.nv) -- so both have to be
+// declared in the file that comes before those, and that is this one. `FnRow`,
+// `TyId` and `DeclId` never met the defect because they already sit in files (or
+// modules) emitted earlier; that is luck of ordering, not design.
 //
 // So this POSITION is a workaround under [LEGACY-#TBD-newtype-order-in-sum-arm],
 // not a decision about where the type belongs. When the oracle stops caring
 // about declaration order, it moves next to `VariantDef`.
+
+/// THE row of a record's FIELD in `Ctx.field_rows`.
+///
+/// A space of its own, and the criterion the previous wave produced says why it
+/// deserves the wrapper while the `defs` row did not: this one is STORED --
+/// `FieldDef.next_row` holds it, so the same-name chain WALKS the space instead
+/// of merely stepping through it. A value that lives in a field is an identity;
+/// one that dies on the next line is a step (§9.1g.1, wave B4).
+export type FieldRow int
+
+/// The index inside -- the ONE unwrapping door for this space.
+#realtime nogc
+export fn raw_frow(f FieldRow) -> int => f as int
+
+/// "No field", as a value: the END of a same-name chain, which is where the
+/// walk stops.
+#realtime nogc
+export fn no_frow() -> FieldRow => FieldRow(-1)
+
+/// Is this an actual field row? Asked by the chain walk, where the end is a
+/// legal answer.
+#realtime nogc
+export fn is_frow(f FieldRow) -> bool => raw_frow(f) >= 0
+
+/// THE VARIANT range of a declaration: first row and count, or None when this
+/// declaration owns no variants. A door and not a bare match, because three
+/// readers ask it and each would otherwise spell the two impossible arms.
+export fn variant_range_of(td TypeDef) -> Option[(VariantRow, int)] {
+    match td.rows {
+        VariantRows(first, cnt) => Some((first, cnt))
+        // A record's field range is not a variant range, and a type with no rows
+        // has neither: both answer "none" rather than a zero to interpret.
+        NoRows | FieldRows(_, _) => None
+    }
+}
+
+/// THE FIELD range of a declaration, by the same rule.
+export fn field_range_of(td TypeDef) -> Option[(FieldRow, int)] {
+    match td.rows {
+        FieldRows(first, cnt) => Some((first, cnt))
+        NoRows | VariantRows(_, _) => None
+    }
+}
 
 /// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since
 /// wave B2 (2026-08-22), and the last bare `int` in the arms of `DefTarget` and
