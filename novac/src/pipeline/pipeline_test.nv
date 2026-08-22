@@ -14,13 +14,13 @@
 
 module novac.pipeline
 
-import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
+import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
 import ../sem.{branch_children, leaf_text}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId}
 
 // The std signatures these tests need, handed in the way the driver hands
 // them: as TEXT through the one door. Inline and tiny on purpose — the

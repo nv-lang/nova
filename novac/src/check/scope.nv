@@ -17,7 +17,7 @@ module novac.check
 
 import ../names.{NameTable, NamespaceId}
 import ../sem.{ParamMode}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 // ---- the type lattice: the checker's own, not the registry's --------------
 //

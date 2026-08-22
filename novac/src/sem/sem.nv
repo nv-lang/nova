@@ -53,11 +53,11 @@
 module novac.sem
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
+import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
 import ../builtins.{TypeKind, builtin_types, COERCE_ATTR}
-import ../types.{Interner, TyId, raw_ty, no_ty, is_ty}
+import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
 /// a SUM, not int constants (owner 2026-08-14: the language's own type

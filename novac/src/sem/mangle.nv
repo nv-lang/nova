@@ -29,7 +29,7 @@ module novac.sem
 
 import ../diag.{ice}
 import ../builtins.{prim_c_name}
-import ../types.{TyId, raw_ty, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
 ///

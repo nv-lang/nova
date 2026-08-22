@@ -18,11 +18,11 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, NodeId, raw_node, no_node, is_node}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 
 /// [name, type-ident, ...] — the second child must be an Ident leaf. Whether

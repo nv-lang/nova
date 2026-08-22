@@ -29,7 +29,7 @@ module novac.sem
 
 import ../tree.{Node}
 import ../builtins.{COERCE_ATTR}
-import ../types.{TyId, raw_ty}
+import ../types.{TyId}
 
 /// ONE declared implicit conversion (D429 V1, form-source): the pair and the
 /// function that performs it.

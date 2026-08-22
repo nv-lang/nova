@@ -43,13 +43,13 @@ fn tokens_of(text str) -> []Token {
 import ../source.{SourceText}
 import ../lex.{lex, reserialize, Token}
 import ../parse.{parse}
-import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
+import ../tree.{Node, NodeKind, raw_node}
 import ../check.{check, check_instance}
 import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation}
 import ../mono.{Reach, reachable}
 import ../sem.{Ctx, collect, decl_fn_row, branch_children}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId}
 
 /// A file's semantic context: the file's types + method signatures, READ
 /// from the declarations passed in. The compiler does not walk the

@@ -49,8 +49,8 @@
 module novac.sem
 
 import ../diag.{ice}
-import ../tree.{NodeId, raw_node, no_node, is_node}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../tree.{NodeId, raw_node, is_node}
+import ../types.{TyId, no_ty, is_ty}
 
 /// WHAT a resolved call targets, and the target CARRIES ITS OWN ROW.
 ///

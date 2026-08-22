@@ -15,10 +15,9 @@
 
 module novac.mono
 
-import ../tree.{Node, NodeKind, NodeId, raw_node, no_node, is_node}
-import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, leaf_text}
-import ../builtins.{ENTRY_FN}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../tree.{Node, NodeKind, is_node}
+import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children}
+import ../types.{TyId}
 import ../diag.{ice}
 
 /// ONE instance of a generic callable: which row, under which substitution.

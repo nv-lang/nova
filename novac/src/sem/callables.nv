@@ -31,7 +31,7 @@ import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 // WHY `VariantRow` LIVES IN THIS FILE and not beside `VariantDef`, where it
 // belongs by subject: THE ORACLE'S EMISSION DEPENDS ON DECLARATION ORDER. A

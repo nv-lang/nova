@@ -14,7 +14,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, branch, leaf}
 import ../builtins.{TypeKind}
 import ../lex.{Token, TokenKind}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 /// An empty file node: these tests need a Ctx with the primitives seeded and
 /// nothing else. Building it here keeps `sem` from importing the parser -- the

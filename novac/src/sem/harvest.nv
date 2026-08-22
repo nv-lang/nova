@@ -31,7 +31,7 @@ module novac.sem
 
 import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, SELF_TYPE}
-import ../types.{TyId, raw_ty, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 /// Collect method signatures from READ declarations (`fn <Recv>
 /// @<name>() -> R`). Only signatures where BOTH the receiver AND the

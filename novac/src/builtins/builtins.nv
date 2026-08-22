@@ -25,7 +25,6 @@
 
 module novac.builtins
 
-import ../diag.{ice}
 
 /// What a registry type IS — selects which row table the off/cnt range
 /// addresses (record -> fields, sum -> variants; primitives own no rows).

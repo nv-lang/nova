@@ -16,7 +16,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
-import ../tree.{Node, NodeKind, BinOp, UnOp, is_binop, bin_op_of, is_unop}
+import ../tree.{Node, NodeKind, BinOp, is_binop, bin_op_of, is_unop}
 
 
 /// Binding power of a binary operator: the DECISION decides, not the token.

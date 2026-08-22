@@ -22,7 +22,7 @@ module novac.check
 import ../tree.{Node}
 import ../builtins.{TypeKind}
 import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children}
-import ../types.{TyId, raw_ty, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// A CAST, and the one shape the subset compiles: unwrapping a NEWTYPE into its
 /// representation (`r as int` for `type Row int`).

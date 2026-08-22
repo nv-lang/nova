@@ -13,11 +13,27 @@
 который держит правило до её починки, потому что молчащий контракт хуже
 отсутствующего: он выглядит проверенным.
 
-ПРАВИЛО. Для каждой строки `import <путь>.{A, B, C}` в `novac/src/**/*.nv` каждое
-имя обязано быть объявлено в модуле, на который указывает путь: `export type`,
-`export fn` (в т.ч. метод `export fn T @m`), `export const` — или быть плечом
-`export type ... enum` (плечи импортируются наравне с именами: `DefFn`,
-`TkNewtype`).
+ДВА ПРАВИЛА, и второе нашла та же перепроверка.
+
+ПРАВИЛО A (существование). Для каждой строки `import <путь>.{A, B, C}` в
+`novac/src/**/*.nv` каждое имя обязано быть объявлено в модуле, на который
+указывает путь: `export type`, `export fn` (в т.ч. метод `export fn T @m`),
+`export const` — или быть плечом `export type ... enum` (плечи импортируются
+наравне с именами: `DefFn`, `TkNewtype`).
+
+ПРАВИЛО B (использование). Имя, которое МОДУЛЬ не использует нигде, в списке не
+стоит. Замер 2026-08-22: 36 таких имён, и 26 из них — мои, добавленные в тот же
+день «набором»: заворачивая пространство, я вписывал во все файлы сразу
+`X`+`raw_X`+`no_X`+`is_X`, хотя половина файлов пользуется одним. Ровно та же
+привычка, что за сессию породила три ЭКСПОРТА без вызывающего, только в третьей
+форме — поэтому правило и механизм, а не памятка.
+
+ГРАНУЛЯРНОСТЬ — МОДУЛЬ, И ЭТО НЕСУЩЕЕ. Импорты в Nova видны всему модулю: папка
+есть один модуль из со-равных файлов, и файл законно пользуется именем, которое
+импортировал СОСЕД (замер: `check.nv` использует `NameTable`, импортированный
+`typing.nv`; `slots.nv` — `TyId` из `sem.nv`). Первый замер этого стража считал
+по ФАЙЛУ и дал 224 «неиспользуемых» — то есть 188 ложных. Считать по файлу здесь
+значит покрасить законный код.
 
 СЛЕПЫЕ ЗОНЫ, названные вслух: имена из `std`/прелюдии страж не судит (модуль
 `novac/src` их не объявляет); путь, ведущий вне `novac/src`, пропускается.
@@ -95,12 +111,25 @@ def main():
     cache = {}
     bad = []
     checked = 0
+    # Правило B считается по МОДУЛЮ (папке): имена видны всем со-равным файлам.
+    mod_imports = {}        # модуль -> {имя: "файл:строка"}
+    mod_code = {}           # модуль -> код модуля без строк импорта
     for f in files:
         rel = str(f.relative_to(src)).replace("\\", "/")
-        for n, line in enumerate(f.read_bytes().decode("utf-8", "replace").replace("\r", "").split("\n"), 1):
+        home = f.parent.name if f.parent != src else "main"
+        lines = f.read_bytes().decode("utf-8", "replace").replace("\r", "").split("\n")
+        mod_code.setdefault(home, [])
+        mod_code[home].append("\n".join(x.split("//", 1)[0] for x in lines
+                                        if not RE_IMPORT.match(x)))
+        mod_imports.setdefault(home, {})
+        for n, line in enumerate(lines, 1):
             m = RE_IMPORT.match(line)
             if not m:
                 continue
+            for raw0 in m.group(3).split(","):
+                nm0 = raw0.strip()
+                if nm0:
+                    mod_imports[home].setdefault(nm0, f"{rel}:{n}")
             mod = m.group(2)
             if mod not in cache:
                 cache[mod] = module_names(src, mod)
@@ -116,6 +145,24 @@ def main():
                     bad.append(f"  {rel}:{n}: `{nm}` импортируется из `{mod}`, "
                                f"а модуль его не объявляет")
 
+    dead = []
+    for home, names in sorted(mod_imports.items()):
+        code = "\n".join(mod_code.get(home, []))
+        for nm, where in sorted(names.items()):
+            if not re.search(r"(^|[^A-Za-z0-9_])" + re.escape(nm) + r"($|[^A-Za-z0-9_])", code):
+                dead.append(f"  {where}: `{nm}` импортируется, а модуль `{home}` его нигде не использует")
+
+    if dead and not bad:
+        print(f"{NAME}: FAIL — имя импортировано и не используется (правило B):", file=sys.stderr)
+        for b in dead:
+            print(b, file=sys.stderr)
+        print("  Считается по МОДУЛЮ: импорт виден всем со-равным файлам папки, поэтому", file=sys.stderr)
+        print("  «сосед импортировал, я пользуюсь» — законно. Незаконно другое: имя,", file=sys.stderr)
+        print("  которого не знает НИ ОДИН файл модуля. Так набирается набор `X`+`raw_X`+", file=sys.stderr)
+        print("  `no_X`+`is_X` там, где нужен один — та же привычка, что делает экспорт", file=sys.stderr)
+        print("  без вызывающего.", file=sys.stderr)
+        return 1
+
     if bad:
         print(f"{NAME}: FAIL — импортируется имя, которого нет:", file=sys.stderr)
         for b in bad:
@@ -127,7 +174,7 @@ def main():
         return 1
 
     print(f"{NAME} ok: файлов .nv: {len(files)}, импортируемых имён проверено: {checked}, "
-          f"несуществующих: 0")
+          f"несуществующих: 0, неиспользуемых модулем: 0")
     return 0
 
 
