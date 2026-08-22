@@ -317,20 +317,12 @@ export fn DefTable @type_decl(name str) -> Option[DeclId] {
     }
 }
 
-/// Resolve `name` in TYPE POSITION (params, fields, returns, constructor
-/// heads): ONE lookup, then the kind must be a type. NO SILENT DEFAULT.
-#realtime nogc
-export fn DefTable @type_decl_of(name str) -> DeclId {
-    // The refusal is an ice per ARM rather than one assert over a tag: each
-    // wrong arm says WHAT was found in type position, which is the difference
-    // between a diagnosis and a complaint.
-    ro def = @def_of(name) ?? ice("sem: type name not in the registry — no silent int default (#652 class)")
-    match def.target {
-        DefType(decl) => decl
-        DefVariant(_) => ice("sem: a VARIANT in type position -- no silent int default (#652 class)")
-        DefFn(_) => ice("sem: a FUNCTION in type position -- no silent int default (#652 class)")
-    }
-}
+// `DefTable.type_decl_of` lived here until 2026-08-22 and is gone: it was the
+// TOTAL half of `type_decl`, and wave B8 gave its only caller a better door --
+// `Ctx.ty_of_name_or_ice`, which answers with a TYPE rather than a declaration
+// and needs no second lookup. The half stayed behind exported and callerless,
+// which is exactly the shape a "complete the set" habit leaves.
+
 
 /// One record field; a field row is this record's index in Ctx.field_rows.
 export type FieldDef value {

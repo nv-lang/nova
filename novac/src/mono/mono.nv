@@ -92,19 +92,13 @@ export fn Reach @has(row FnRow) -> bool {
     @seen[r]
 }
 
-/// How many rows the set holds -- for the one line the pipeline prints.
-export fn Reach @count() -> int {
-    mut n = 0
-    for f in @seen {
-        if f {
-            n += 1
-        } else {
-            // Not reached: nothing to count, and the branch says so rather
-            // than leaving the reader to infer it (P31).
-        }
-    }
-    n
-}
+// `Reach.count` lived here until 2026-08-22 and is gone: EXPORTED, and called by
+// nobody. Its own baseline entry said what it was for -- "for the one line the
+// pipeline prints" -- and that line no longer prints it, so the door outlived its
+// reader without anybody noticing. Sixth carrier of one habit this session
+// (`candidates_from`, `same_vrow`, `same_decl`, `tparam_index`, this, and
+// `type_decl_of`), which is why the habit now has a guard rather than a note.
+
 
 /// Collect the callables reachable from the roots of this file.
 ///
