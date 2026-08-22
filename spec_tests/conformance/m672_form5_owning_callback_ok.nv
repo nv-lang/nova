@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// #672 form (5), the BOUNDARY -- named by a measurement against `nova-polaris`
+// (2026-08-22), which the first cut of this form reddened in four places
+// (`E_VIEW_BINDING_FORBIDDEN` / `D157-consume-via-view` on `ws` and `w`,
+// `src/rt/ws_upgrade_hijack_smoke.nv` and `src/doc_samples_test.nv`).
+//
+// A closure parameter of a must-consume type WITHOUT `consume` must NOT be
+// treated as a D157 view-param the way a NAMED FUNCTION parameter is. The
+// mirror looks exact and is not: a fn type carries only parameter TYPES
+// (`TypeRef::Func { params: Vec<TypeRef> }`), with no place to write
+// `consume`, so an OWNING callback -- `on_upgrade(fn(ws WebSocket) ...)`,
+// where the callback closes the socket -- cannot be spelled any other way.
+// Making it a view would have banned the shape outright with no opt-out.
+//
+// What form (5) keeps is the half the ruling actually asks for: a closure
+// parameter written `consume v T` raises the obligation
+// (m672_form5_closure_param_leak_neg), and the parameter's TYPE is threaded
+// either way so consume-method resolution works on it at all.
+module spec_tests.conformance
+
+type M672Ws consume { id int }
+
+fn M672Ws consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+fn M672Ws consume @close() -> () { () }
+
+fn m672_on_upgrade(cb fn(M672Ws) -> ()) -> () {
+    cb(M672Ws { id: 1 })
+}
+
+fn m672_ws_owning_callback_ok() -> () {
+    m672_on_upgrade(fn(ws M672Ws) -> () {
+        consume w = ws
+        w.close()
+    })
+}
