@@ -3701,7 +3701,16 @@ struct TypeCheckCtx<'a> {
     /// `str.m()`/`UserType.m()` (тип ∈ self.types) его не находил → ложный E7320. Примитивы
     /// (int) случайно проходили (их нет в self.types → ранний return). Заполняется здесь,
     /// в `TypeCheckCtx::build` (детекция по `module.items`), независимо от `sig`-реестра.
-    blanket_method_names: HashSet<String>,
+    /// Реестр 221.1 №712 (случай A): множество имён стало КАРТОЙ «имя → тип
+    /// возврата». Значение `Some(tr)` — возврат НЕ упоминает собственных
+    /// generic-параметров метода (`fn[T] T @to_str() -> str`): тип известен
+    /// прямо из объявления, и его можно записать в канал `resolved_types` для
+    /// узла ВЫЗОВА. Значение `None` — случай (B) (`@pipe[U](f fn(T) -> U) -> U`:
+    /// возврат — собственный параметр, нужен настоящий вывод), либо возврата
+    /// нет, либо имя объявлено НЕСКОЛЬКИМИ blanket'ами (например `@to_i128()`
+    /// для `SignedInts` и `UnsignedInts`) — в обоих случаях аннотация не
+    /// выдаётся и поведение остаётся прежним.
+    blanket_method_names: HashMap<String, Option<TypeRef>>,
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: TypeTable<'a>,
@@ -4353,7 +4362,7 @@ impl<'a> TypeCheckCtx<'a> {
         let mut file_local_types: HashMap<crate::diag::FileId, HashMap<String, &'a TypeDecl>> =
             HashMap::new();
         // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
-        let mut blanket_method_names: HashSet<String> = HashSet::new();
+        let mut blanket_method_names: HashMap<String, Option<TypeRef>> = HashMap::new();
         // [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
         // sum-variant-имена ЛОССЛЕСС (тот же Vec-обход `module.items`, что
         // строит `types` ниже) — параллельно `types`-HashMap, который при
@@ -4376,7 +4385,32 @@ impl<'a> TypeCheckCtx<'a> {
                     // primitives, where the registry keys it under the param `"T"`).
                     if let Some(recv) = &f.receiver {
                         if f.generics.iter().any(|g| g.name == recv.type_name) {
-                            blanket_method_names.insert(f.name.clone());
+                            // №712 (A): рядом с именем кладём тип возврата, но
+                            // ТОЛЬКО когда он не упоминает собственных
+                            // generic-параметров метода — тогда он известен из
+                            // объявления и не требует вывода. `-> @`
+                            // (returns_receiver, D132) исключён: там возврат —
+                            // сам receiver, то есть параметр по определению.
+                            let own: HashSet<String> =
+                                f.generics.iter().map(|g| g.name.clone()).collect();
+                            let ret_a: Option<TypeRef> = if f.returns_receiver {
+                                None
+                            } else {
+                                f.return_type
+                                    .as_ref()
+                                    .filter(|tr| !typeref_mentions_any(tr, &own))
+                                    .cloned()
+                            };
+                            match blanket_method_names.entry(f.name.clone()) {
+                                std::collections::hash_map::Entry::Vacant(v) => {
+                                    v.insert(ret_a);
+                                }
+                                // Имя уже занято другим blanket'ом → отвечать
+                                // одним типом за оба нельзя, канал молчит.
+                                std::collections::hash_map::Entry::Occupied(mut o) => {
+                                    o.insert(None);
+                                }
+                            }
                         }
                     }
                 }
@@ -10358,6 +10392,42 @@ impl<'a> TypeCheckCtx<'a> {
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     } else if let ExprKind::Member { obj: mo, name: method } = &func.kind {
+                        // [M-blanket-method-resolve] / registry 221.1 No.712, CASE (A).
+                        // A blanket method (`fn[T] T @m(...)`) is accepted by
+                        // `f3_check_member_ctx` through an early `return` -- so that no
+                        // false E7320 fires, since the registry keys it under the
+                        // PARAM name ("T") and not under the concrete receiver type --
+                        // but its RESULT TYPE was never resolved and never reached the
+                        // channel. On a BUILTIN receiver (`5.p712_tag()`) codegen's
+                        // legacy inference coped on its own; on a USER type it did not,
+                        // and `nova build` printed `[INTERNAL-PANIC]
+                        // [E_CODEGEN_TYPE_UNKNOWN] method call return type unknown`.
+                        // THE KEY IS THE CALL's id (`e.id`), not the member's: the
+                        // panic lives in `infer_call_ret_c`, reached from
+                        // `infer_expr_c_type`'s `ExprKind::Call` arm.
+                        // BOUNDARY: case (A) only -- the map yields `Some(tr)` solely
+                        // when the declared return mentions none of the method's OWN
+                        // type-params. Case (B) (`@pipe[U](f fn(T) -> U) -> U`) needs
+                        // real inference from the closure argument and stays silent here.
+                        // ORDER: `or_insert` -- the specialised producers below override
+                        // this annotation with their own `insert`.
+                        // KILL SWITCH `NOVA_KILL_712=1` removes the fix WHOLE
+                        // (lesson of No.711: a partial switch proves the wrong thing).
+                        if e.id.is_set()
+                            && std::env::var_os("NOVA_KILL_712").is_none()
+                        {
+                            if let Some(Some(ret_tr)) =
+                                self.blanket_method_names.get(method.as_str())
+                            {
+                                if !typeref_mentions_any(ret_tr, gs) {
+                                    let rt = ResolvedType::from_type_ref(ret_tr);
+                                    self.resolved_types_buf
+                                        .borrow_mut()
+                                        .entry(e.id)
+                                        .or_insert(rt);
+                                }
+                            }
+                        }
                         // Plan 221.1 №286/№143 (окно p-chan, real Channel[T] mono):
                         // `rx.recv()`/`rx.try_recv()`/`tx.share()` — same producer
                         // logic as `infer_expr_type`'s dedicated Call-arm above
@@ -16135,7 +16205,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if overloads.is_none()
                     && !gs.contains_key(parts[0].as_str())
                     && self.find_method_decl(&parts[0], &parts[1]).is_none()
-                    && !self.blanket_method_names.contains(&parts[1])
+                    && !self.blanket_method_names.contains_key(parts[1].as_str())
                 {
                     if let Some(td) = self.types_get_here(parts[0].as_str()) {
                         // Знание полно только для простых форм: у alias/protocol/
@@ -17061,7 +17131,7 @@ impl<'a> TypeCheckCtx<'a> {
         // per-type resolution below keys on `tname` and would miss it, firing a
         // false [E7320] on `str`/user types (primitives slip through the
         // `self.types.get` early-return). Accept the blanket method here.
-        if self.blanket_method_names.contains(name) {
+        if self.blanket_method_names.contains_key(name) {
             return;
         }
         // [M-198-f4c-1-privfile-type-not-discriminated]: file-aware lookup —
