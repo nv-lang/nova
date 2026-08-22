@@ -123,10 +123,10 @@ export fn Reach @count() -> int {
 /// enough for that to matter, the fix is a real row->node index, not a guess.
 export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     mut seen = []bool.new()
-    mut i = 0
-    while i < ctx.fns.rows.len() {
+    // One flag per callable row: the COUNT is the whole loop, so the cursor
+    // was carrying no information (owner 2026-08-22).
+    for _ in 0..ctx.fns.rows.len() {
         seen.push(false)
-        i += 1
     }
     mut inst = []Instance.new()
     mut subst = []TyId.new()

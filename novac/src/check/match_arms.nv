@@ -145,11 +145,9 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
 /// such arm there is nothing to compare AGAINST — two facts that shared the
 /// value -1 until 2026-08-19 and were told apart by their position in the code.
 fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId]) -> Option[TyId] {
-    match @type_arm(arm, scr_t) {
-        // The arm reported a diagnostic: it has no type to offer.
-        None => first
-        Some(at) => @agree_arm_type(arm, at, first)
-    }
+    // No type: the arm reported a diagnostic and has nothing to offer, so the
+    // fold carries the first one through.
+    if Some(at) = @type_arm(arm, scr_t) { @agree_arm_type(arm, at, first) } else { first }
 }
 
 /// The same fold once THIS arm has a type: agree with the first one or report.
@@ -207,8 +205,11 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     }
     if is_vrow(vrow) {
         mut pi = 0
-        mut j = 2
-        while j < pat.len() {
+        // `for` over the RANGE, not a hand-advanced cursor (owner 2026-08-22):
+        // the walk advances by exactly one every time, so the counter carried no
+        // information -- and a hand-advanced cursor makes "forgot to advance" a
+        // possible bug, which the range form deletes rather than documents.
+        for j in 2..pat.len() {
             ro pj = pat[j]
             // ONE question -- is this child a binder leaf? Two nested ifs
             // asked it in two steps and neither named its second branch.
@@ -229,7 +230,6 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
                 }
                 None => {}
             }
-            j += 1
         }
     } else if is_ident && leaf_text(p0) != "_" {
         // The scrutinee under a new name: the arm reads it, so `ro`.

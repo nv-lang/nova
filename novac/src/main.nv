@@ -269,10 +269,8 @@ fn run(a []str) -> int {
         }
         if a[1] == "check" {
             mut worst = Verdict.Clean
-            mut i = argi
-            while i < a.len() {
-                worst = worse(worst, check_path(a[i], decls))
-                i += 1
+            for path in a[argi..] {
+                worst = worse(worst, check_path(path, decls))
             }
             return worst.code()
         }

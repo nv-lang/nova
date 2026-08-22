@@ -130,11 +130,9 @@ fn is_param_mode(word str) -> bool => is_contextual_mode_word(word)
 /// not a mode and this door says `ModeRo` about it -- the shape itself is
 /// refused elsewhere, and guessing a mode here would be worse than either.
 export fn param_mode_at(pk []Node) -> ParamMode {
-    match param_name_at(pk) {
-        // No name: a recovery shape. Nothing is written, so nothing is claimed.
-        None => ModeRo
-        Some(n) => mode_before(pk, n)
-    }
+    // No name: a recovery shape. Nothing is written, so nothing is claimed --
+    // and the `else` says that in the same line instead of a second arm.
+    if Some(n) = param_name_at(pk) { mode_before(pk, n) } else { ParamMode.ModeRo }
 }
 
 /// The mode word standing before slot `n`, as a mode.
@@ -304,11 +302,8 @@ fn mode_after_first_ident(rk []Node) -> ParamMode {
 
 /// The first node of the parameter's TYPE, or None when it declares none.
 export fn param_type_at(pk []Node) -> Option[int] {
-    match param_name_at(pk) {
-        // No name: a recovery shape, and a type cannot be located without one.
-        None => None
-        Some(n) => type_slot_after(pk, n)
-    }
+    // No name: a recovery shape, and a type cannot be located without one.
+    if Some(n) = param_name_at(pk) { type_slot_after(pk, n) } else { None }
 }
 
 /// The slot holding the type that follows the name at `n`, or None: the name

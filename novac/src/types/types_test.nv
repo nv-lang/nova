@@ -103,21 +103,15 @@ test "chains: many applications of one head stay distinct and findable" {
     mut it = Interner.new()
     ro vec_decl = DeclId(7)
     mut ids = []TyId.new()
-    mut i = 0
-    while i < 6 {
+    for i in 0..6 {
         ro pi = it.prim(i)
         ids.push(it.app(vec_decl, []TyId.of(pi)))
-        i += 1
     }
     // all distinct
-    mut a = 0
-    while a < 6 {
-        mut b = a + 1
-        while b < 6 {
+    for a in 0..6 {
+        for b in a + 1..6 {
             assert(ids[a] != ids[b])
-            b += 1
         }
-        a += 1
     }
     // and each is found again, not re-created
     ro before = it.rows.len()

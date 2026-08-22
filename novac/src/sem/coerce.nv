@@ -62,6 +62,10 @@ export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
 /// the words are compared to the ONE place that spells language names (P5).
 fn attr_names(attr Node, word str) -> bool {
     for c in branch_children(attr) {
+        // A two-armed match and NOT `if Some(...)`, and the difference is
+        // measured: the if-form needs an `else` with a reason anyway (P31), so
+        // for an empty second case it is LONGER, not shorter. `if Some(...)`
+        // wins where the second case carries a VALUE or a terminator.
         match c.ident_str() {
             Some(t) => { if t == word { return true } }
             None => {}

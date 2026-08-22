@@ -35,58 +35,57 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     // carry a leading MODE leaf (`fn take(consume v int)`), and `kids[1]`
     // then reads the NAME as the type. Same class as the method-declaration
     // ice this morning -- a fixed index into a tree whose shape just grew.
-    match param_type_at(kids) {
-        // The parameter declares no type at all: the ordinary path below is
-        // the one answer for that shape.
-        None => {}
-        Some(at) => {
-            // A slot at 0 or 1 means no MODE leaf stands before the type, and
-            // then the ordinary path below answers as well.
-            if at > 1 {
-                match kids[at] {
-                    Leaf(t) => {
-                        // EXHAUSTIVE, not a chain of `||` (owner's question
-                        // 2026-08-20): a disjunction over a closed set answers
-                        // "no" SILENTLY, so a new TokenKind that starts a type
-                        // form would slip through here and be found weeks
-                        // later. A match makes it an error at this line -- the
-                        // same reason lex.nv's three delta functions list
-                        // every kind (P21, P31).
-                        ro is_form = match t.kind {
-                            // These START a type FORM the subset does not read
-                            // in a parameter that already carries a mode.
-                            LBracket | EmptyBrackets | Star | KwRo | KwMut | KwFn | LParen => true
-                            // Everything else cannot start one: a keyword of a
-                            // declaration or statement, a literal, an operator,
-                            // a separator, or the file's end.
-                            KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
-                            KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern |
-                            KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
-                            RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
-                            Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
-                            Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
-                            MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
-                            PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis |
-                            Colon | At | Arrow | ErrorTok | Eof => false
-                        }
-                        if is_form {
-                            @report_first_leaf_of(kids, TYPE_FORM_MSG)
-                        } else {
-                            // A plain named type in a parameter carrying a
-                            // mode: the shape is fine and the name resolution
-                            // judges the rest.
-                        }
-                        return
+    // No type declared at all, or a slot at 0/1 (no MODE leaf before the type):
+    // the ordinary path below is the one answer for both shapes, so neither is a
+    // BRANCH here -- `if Some(...)` says that, where a two-armed match had to
+    // spell an arm that does nothing (owner 2026-08-22).
+    if Some(at) = param_type_at(kids) {
+        // A slot at 0 or 1 means no MODE leaf stands before the type, and
+        // then the ordinary path below answers as well.
+        if at > 1 {
+            match kids[at] {
+                Leaf(t) => {
+                    // EXHAUSTIVE, not a chain of `||` (owner's question
+                    // 2026-08-20): a disjunction over a closed set answers
+                    // "no" SILENTLY, so a new TokenKind that starts a type
+                    // form would slip through here and be found weeks
+                    // later. A match makes it an error at this line -- the
+                    // same reason lex.nv's three delta functions list
+                    // every kind (P21, P31).
+                    ro is_form = match t.kind {
+                        // These START a type FORM the subset does not read
+                        // in a parameter that already carries a mode.
+                        LBracket | EmptyBrackets | Star | KwRo | KwMut | KwFn | LParen => true
+                        // Everything else cannot start one: a keyword of a
+                        // declaration or statement, a literal, an operator,
+                        // a separator, or the file's end.
+                        KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
+                        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern |
+                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
+                        RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
+                        Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
+                        Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
+                        MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
+                        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis |
+                        Colon | At | Arrow | ErrorTok | Eof => false
                     }
-                    Branch { .. } => {
-                        // A generics node after the name: judged by the loop
-                        // below.
-                        return
+                    if is_form {
+                        @report_first_leaf_of(kids, TYPE_FORM_MSG)
+                    } else {
+                        // A plain named type in a parameter carrying a
+                        // mode: the shape is fine and the name resolution
+                        // judges the rest.
                     }
+                    return
                 }
-            } else {
-                // No mode leaf: the ordinary path below answers.
+                Branch { .. } => {
+                    // A generics node after the name: judged by the loop
+                    // below.
+                    return
+                }
             }
+        } else {
+            // No mode leaf: the ordinary path below answers.
         }
     }
     for c in kids {

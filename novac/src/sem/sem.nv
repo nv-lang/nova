@@ -741,15 +741,13 @@ export fn collect_types(file Node) -> Ctx {
                     ro poff = payload_types.len()
                     mut pcnt = 0
                     // payload type names sit between '(' and ')'
-                    mut j = name_at + 1
-                    while j < vk.len() {
+                    for j in name_at + 1..vk.len() {
                         // [LEGACY-#676] var-index-method: `vk[j].kind_of()`
                         // with a VARIABLE index miscompiles in the oracle
                         // (E_RECV_METHOD_MISMATCH: receiver resolves as Vec;
                         // a constant index works). Found 2026-08-14; the
                         // binding hop is the workaround.
                         ro pj = vk[j]
-                        j += 1
                         if pj.kind_of() != NodeKind.LeafNode { continue }
                         if leaf_kind(pj) != TokenKind.Ident { continue }
                         ro pdecl = defs.type_decl(leaf_text(pj)) ?? no_decl()
@@ -785,10 +783,10 @@ export fn collect_types(file Node) -> Ctx {
             // purpose: `tys.param(slot)` IS the type, and a parameter has no
             // declaration, exactly as in every donor.
             ro tps = generic_names(fk)
-            mut pslot = param_rows.len()
-            while pslot < tps.len() {
+            // The range is evaluated ONCE, so pushing inside it is safe and
+            // the cursor cannot be forgotten (owner 2026-08-22).
+            for pslot in param_rows.len()..tps.len() {
                 param_rows.push(tys.param(pslot))
-                pslot += 1
             }
             // no_ty() = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on it as the second floor —
