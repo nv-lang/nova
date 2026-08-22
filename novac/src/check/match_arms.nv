@@ -90,21 +90,27 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         // the Option form would have to be a manual match -- which the linter
         // reads as drift from `X ?? D` (W_MANUAL_COALESCE), and rightly.
         if !pat[0].is_ident() { continue }
-        ro d = @ctx.defs.find(leaf_text(pat[0]))
-        if d < 0 {
-            // `_` or a plain binder: it matches anything, so the match is
-            // exhaustive whatever the variants are.
-            return
-        }
-        // The arm that means "a variant" is the arm that HOLDS the variant
-        // row; the other two mean this pattern head is not a variant at all,
-        // and an exhaustiveness count learns nothing from them.
-        match @ctx.defs.rows[d].target {
-            DefVariant(vrow) => {
-                covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
+        // The EXPLICIT form and not `?`: this function answers `()`, so there is
+        // no wrapper to propagate into -- which is exactly the case the refusal's
+        // hint reserves for a match (D86: `??` substitutes a value, an early
+        // return is control flow, and `?` needs somewhere to return TO).
+        //
+        // A name the registry never saw is `_` or a plain binder: it matches
+        // anything, so the match is exhaustive whatever the variants are.
+        match @ctx.defs.def_of(leaf_text(pat[0])) {
+            None => return
+            Some(def) => {
+                // The arm that means "a variant" is the arm that HOLDS the
+                // variant row; the other two mean this pattern head names no
+                // variant, and an exhaustiveness count learns nothing from them.
+                match def.target {
+                    DefVariant(vrow) => {
+                        covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
+                    }
+                    // Not a variant: an exhaustiveness count learns nothing.
+                    DefType(_) | DefFn(_) => return
+                }
             }
-            // Not a variant at all: an exhaustiveness count learns nothing.
-            DefType(_) | DefFn(_) => return
         }
     }
     if covered >= td.row_cnt { return }
@@ -194,9 +200,9 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // ONE question about the pattern head, asked once: which variant row does
     // it name? -1 answers "none" for every other shape (a plain binder, `_`,
     // a punctuation leaf), and both branches below read that one answer.
-    ro d = if is_ident { @ctx.defs.find(leaf_text(p0)) } else { -1 }
-    ro vrow = if d >= 0 {
-        match @ctx.defs.rows[d].target {
+    ro head_def = if is_ident { @ctx.defs.def_of(leaf_text(p0)) } else { None }
+    ro vrow = if Some(def) = head_def {
+        match def.target {
             DefVariant(row) => row
             DefType(_) | DefFn(_) => no_vrow()
         }

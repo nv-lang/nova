@@ -741,7 +741,7 @@ fn Checker mut @type_expr(e Node) -> () {
     } else if k == NodeKind.Call {
         ro kids = branch_children(e)
         ro cname = call_callee_text(kids)
-        ro d = @ctx.defs.find(cname)
+        ro found = @ctx.defs.def_of(cname)
         // FIRST FLOOR, found by probing the guards above (2026-08-16): a
         // trailing `1 +` or `!` swallows the NEXT statement as its operand,
         // so `println(...)` lands in expression position -- and `println` is
@@ -749,7 +749,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // called that a compiler bug and panicked `novac check`. It is a user
         // mistake: an unknown callee in a value position is refused here, at
         // the call's own name.
-        if d < 0 {
+        if found.is_none() {
             @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows in an expression (println is a statement here, not a value)")
             return
         }
@@ -771,11 +771,13 @@ fn Checker mut @type_expr(e Node) -> () {
             @type_expr(c)
         }
         if @out.len() > before { return }
-        // `d < 0` returned above, so the row exists: the old `if d >= 0` here
-        // was a condition that could not be false -- it read as a decision
-        // and was none. What the kind decides is a match, exhaustive by
-        // construction, so a fourth arm of `DefTarget` cannot slip past silently.
-        ro def = @ctx.defs.rows[d]
+        // The `is_none()` guard above returned, so the row is there. It is read
+        // from the SAME Option rather than looked up a second time: `def_of`
+        // answers with the row, so there is no index to carry and no second
+        // question to ask (wave B4). What the target decides is a match,
+        // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
+        // past silently.
+        ro def = found ?? ice("check: the callee row vanished between two reads of one Option")
         match def.target {
             DefVariant(vrow) => @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(vrow), []TyId.new())
             DefFn(_) => {

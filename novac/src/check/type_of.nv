@@ -271,9 +271,8 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     if k == NodeKind.Call {
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
-        ro d = ctx.defs.find(call_callee_text(branch_children(e)))
-        assert(d >= 0, "check: call target not in the registry — no silent int default (#652 class)")
-        ro def = ctx.defs.rows[d]
+        ro cname = call_callee_text(branch_children(e))
+        ro def = ctx.defs.def_of(cname) ?? ice("check: call target not in the registry (#652 class)")
         if DefVariant(vrow) = def.target { return ctx.variant_rows[raw_vrow(vrow)].sum_id }
         if DefFn(decl_row) = def.target {
             // The ROW the checker resolved, when it recorded one: `defs` is

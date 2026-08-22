@@ -594,15 +594,15 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId) -> () {
     } else if leaf_kind(p0) == TokenKind.Ident {
         // A bare `None` (no parens) is a variant too — resolve by name
         // regardless of arity; only a NON-variant ident is a binder.
-        ro d = @ctx.defs.find(leaf_text(p0))
-        if d >= 0 {
-            vrow = match @ctx.defs.rows[d].target {
+        if Some(def) = @ctx.defs.def_of(leaf_text(p0)) {
+            vrow = match def.target {
                 DefVariant(row) => row
                 DefType(_) | DefFn(_) => no_vrow()
             }
         } else {
-            // A name the registry never saw is a fresh binder, and -1 is what
-            // the binder path below reads: no tag test, an always-true arm.
+            // A name the registry never saw is a fresh binder, and `no_vrow()`
+            // is what the binder path below reads: no tag test, an always-true
+            // arm.
         }
         if is_vrow(vrow) {
             @emit_tag_test(uniq, vrow)

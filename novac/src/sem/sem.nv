@@ -202,9 +202,23 @@ export fn DefTable mut @add(name str, target DefTarget) -> () {
     @rows.push(Def { target })
 }
 
-/// Row of `name`, or -1.
+/// WHAT this name IS, or None -- the registry's ONE public question.
+///
+/// WAVE B4 EXPECTED A WRAPPER HERE AND FOUND THAT THERE IS NO SPACE TO WRAP.
+/// The plan said "wrap the `defs` row index, 10 sites, and answer `Option[DefRow]`
+/// instead of −1". The measurement said otherwise: every one of the five readers
+/// did `find(name)` and then `rows[d]` on the very next line, and nothing ever
+/// carried the index anywhere. An index that never outlives the indexing it feeds
+/// is not an identity -- it is a step, and typing a step is ceremony.
+///
+/// So the space is DELETED rather than named: the door answers with the ROW. The
+/// −1 goes with it, and so do the five `d >= 0` guards that had to know about it.
 #realtime nogc
-export fn DefTable @find(name str) -> int => @names.find(name)
+export fn DefTable @def_of(name str) -> Option[Def] {
+    ro d = @names.find(name)
+    if d < 0 { return None }
+    Some(@rows[d])
+}
 
 /// The callable row a DECLARATION NODE owns, or None.
 ///
@@ -250,17 +264,15 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
 /// second doors get in, and the answer is not vigilance but a door.
 #realtime nogc
 export fn DefTable @fn_row(name str) -> Option[FnRow] {
-    ro d = @find(name)
-    if d < 0 {
-        return None
-    } else {
-        // The registry does not know the name: that is an ANSWER for a
-        // tolerant door, and check refuses the program elsewhere.
-    }
-    // No crossing to name any more: the arm that means "a callable" is the arm
-    // that HOLDS the callable row. The other two are not a fn row, and None
-    // says so honestly -- the caller asked a tolerant question.
-    match @rows[d].target {
+    // `?`, not `??` and not a two-armed if: this door RETURNS an Option, so an
+    // unknown name propagates by the operator made for it (D86 retracted
+    // `?? return` precisely because an early return is control flow, and the
+    // refusal's own hint names `?` first). A name the registry does not know is
+    // an ANSWER for a tolerant door -- check refuses the program elsewhere.
+    ro def = @def_of(name)?
+    // The arm that means "a callable" is the arm that HOLDS the callable row;
+    // the other two are not a fn row.
+    match def.target {
         DefFn(row) => Some(row)
         // A type or a variant is not a callable: one answer, one arm.
         DefType(_) | DefVariant(_) => None
@@ -275,13 +287,9 @@ export fn DefTable @fn_row(name str) -> Option[FnRow] {
 /// nothing — it just does not register what it did not understand.
 #realtime nogc
 export fn DefTable @type_decl(name str) -> Option[DeclId] {
-    ro d = @names.find(name)
-    if d < 0 {
-        return None
-    } else {
-        // The registry knows the name; whether it names a TYPE is next.
-    }
-    match @rows[d].target {
+    // `?` for the unknown name (this door returns an Option), then the kind.
+    ro def = @def_of(name)?
+    match def.target {
         DefType(decl) => Some(decl)
         // A variant or a callable is not a type, and that is ONE answer.
         DefVariant(_) | DefFn(_) => None
@@ -292,12 +300,11 @@ export fn DefTable @type_decl(name str) -> Option[DeclId] {
 /// heads): ONE lookup, then the kind must be a type. NO SILENT DEFAULT.
 #realtime nogc
 export fn DefTable @type_decl_of(name str) -> DeclId {
-    ro d = @names.find(name)
-    assert(d >= 0, "sem: type name not in the registry — no silent int default (#652 class)")
     // The refusal is an ice per ARM rather than one assert over a tag: each
     // wrong arm says WHAT was found in type position, which is the difference
     // between a diagnosis and a complaint.
-    match @rows[d].target {
+    ro def = @def_of(name) ?? ice("sem: type name not in the registry — no silent int default (#652 class)")
+    match def.target {
         DefType(decl) => decl
         DefVariant(_) => ice("sem: a VARIANT in type position -- no silent int default (#652 class)")
         DefFn(_) => ice("sem: a FUNCTION in type position -- no silent int default (#652 class)")
@@ -498,7 +505,7 @@ export fn Ctx @ty_of_name(name str) -> Option[TyId] {
 /// The TOTAL half: a name in type position that the registry MUST know. The
 /// refusal names what it found instead -- no silent int default (#652 class).
 export fn Ctx @ty_of_name_or_ice(name str) -> TyId =>
-    @ty_of_name(name) ?? ice("sem: type name not in the registry — no silent int default (#652 class)")
+    @ty_of_name(name) ?? ice("sem: a name in TYPE position that the registry does not hold (#652 class)")
 
 /// A NAME in type position -> its type, or `no_ty()` when the registry does not
 /// know it. Two steps, and they are the donors' two steps: the name resolves to
