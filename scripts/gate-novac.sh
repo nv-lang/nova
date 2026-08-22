@@ -261,7 +261,6 @@ par_add "$ROOT/scripts/guards/check-novac-cursor-is-range.py" "курсор с �
 par_add "$ROOT/scripts/guards/check-novac-wrapper-is-stored.py" "завёрнутое пространство нигде не хранится — обёртка вокруг шага, а не личности (§9.1г.1)"
 par_add "$ROOT/scripts/guards/check-novac-import-exists.py" "импортируется имя, которого нет — оракул этого не сверяет (замер 2026-08-22)"
 par_add "$ROOT/scripts/guards/check-novac-export-has-caller.py" "экспорт без вызывающего — имя оправдывает спрос, а не симметрия (П35)"
-par_add "$ROOT/scripts/guards/check-novac-registry-counts.sh" "число в реестре стражей не равно факту (класс doc-truth)"
 par_add "$ROOT/scripts/guards/check-novac-ratchet-moves.sh" "храповик сдвинут без причины в том же диффе (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-acceptance-donor.py" "приёмка волны не называет донора (П27-класс)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
@@ -400,6 +399,15 @@ step "novac-registry (реестр стражей: план ↔ файлы ↔ �
 # Реестр стражей сверяет ГЕЙТ с планом, а не компилятор с языком (21с):
 # в цикле «правка → вердикт» он не нужен, перед пушем обязателен.
 if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-guard-registry.py" "$ROOT" || fail "реестр стражей novac разошёлся"; fi
+# ЦЕНА ЯРУСА — ЧАСТЬ ВЫБОРА МЕСТА (замер 2026-08-23, П14). Счётчики реестра
+# я сперва поставил в ярус loop, и он подорожал с 13с до 38с: страж запускает
+# ВСЕ девять самотестов, это 27с из 38. Первый же прогон в тот день был
+# КРАСНЫМ по бюджету (46с при пределе 40) — поймал не я, поймал
+# check-gate-budget. Место определяется не «полезно ли», а ЧТО МЕНЯЕТСЯ: числа
+# в реестре меняются вместе со стражами, а кто правит стража — гоняет push. В
+# loop меняются .nv, и ярус для них обязан оставаться дешёвым. Потому этот
+# страж живёт там же, где его напарник по реестру, — и по той же причине.
+if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-registry-counts.sh" "$ROOT" || fail "число в реестре стражей не равно факту (класс doc-truth)"; fi
 
 # ── БЮДЖЕТ ЯРУСА (конвенция гейтов, Г4): гейт меряет СЕБЯ. ────────────────────────────────
 # Гейт, который идёт девять минут, не гоняют — а правило, которое не гоняют, не
