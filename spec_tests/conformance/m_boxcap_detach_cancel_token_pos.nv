@@ -66,6 +66,11 @@ fn m_boxcap_serve(consume m_boxcap_listener TcpListener, m_boxcap_stop CancelTok
             }
         }
     }
+    // #672 form (1) (2026-08-21): the listener was handed over by the caller
+    // and never given back to anyone -- a silent leak that the D432 exemption
+    // covered for `consume` parameters until provenance was recorded per
+    // binding. The event loop owns it, so the event loop closes it.
+    m_boxcap_listener.close()
 }
 
 test "m_boxcap detach box-capture + reachable CancelToken: serve, respond, cancel-shutdown (regression guard)" {
