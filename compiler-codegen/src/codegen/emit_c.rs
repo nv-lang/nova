@@ -21674,42 +21674,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// comma operator, so `cond && (x == f())` still does not call `f` when `cond`
     /// is false. Returns the two operand texts to compare, plus the comma prefix
     /// the caller wraps around the finished comparison.
-    fn eq_materialize(
-        &mut self,
-        ty: &str,
-        lty: &str,
-        rty: &str,
-        l: &str,
-        r: &str,
-    ) -> (String, String, String) {
-        let fallback = ty.trim().to_string();
-        let declarable = |t: &str| {
-            !t.is_empty() && t != "void" && !t.contains('(') && !t.contains('[')
-        };
-        if Self::eq_single_eval_disabled() || !declarable(&fallback) {
+    fn eq_materialize(&mut self, ty: &str, l: &str, r: &str) -> (String, String, String) {
+        let t = ty.trim().to_string();
+        // Not declarable as a plain local: empty, void, or a function/array type.
+        let undeclarable = t.is_empty() || t == "void" || t.contains('(') || t.contains('[');
+        if Self::eq_single_eval_disabled() || undeclarable {
             return (l.to_string(), r.to_string(), String::new());
         }
-        // Each side is declared with ITS OWN inferred C type, not with the
-        // comparison's type. They can genuinely differ: `find_variant_compat` is
-        // first-wins and can name a DIFFERENT sum than the operand's own for a
-        // variant shared by two sums (`crossmod_samename_method_lastwins`). While
-        // both sides were heap pointers that mismatch was invisible; once a sum is
-        // an inline struct (A4) it becomes a hard "assigning to NovaValue_A from
-        // NovaValue_B". Using the operand's own type keeps each temp well-typed and
-        // leaves the first-wins question exactly where it was.
+        // Both temps take the COMPARISON's type, because that is the type
+        // `emit_field_eq` will read them at; typing each from its own operand
+        // instead was tried and is wrong -- it desynchronises the temp from the
+        // accessor and produced `.tag` on a `Nova_NodeKind*`.
+        //
+        // A POINTER temp is assigned through an explicit cast. An operand's own
+        // inferred type can legitimately disagree with the comparison type when
+        // variant->sum resolution is first-wins and names another sum; the old
+        // emission wrote `((Nova_X*)(expr))->tag`, so the cast was always there and
+        // dropping it turned a silent mis-resolution into a compile error. Value
+        // types get no cast (C has no cast to struct type) -- ambiguous sums are
+        // kept off the value path by the A4 variant-collision fence instead.
+        let cast = if t.ends_with('*') { format!("({})", t) } else { String::new() };
         let mut pre = String::new();
-        let mut bind = |me: &mut Self, e: &str, own: &str, pre: &mut String| -> String {
-            if Self::eq_operand_is_bare_ident(e) {
-                return e.to_string();
-            }
-            let t = if declarable(own) { own } else { fallback.as_str() };
-            let tmp = me.fresh_tmp_named("eq");
-            me.line(&format!("{} {};", t, tmp));
-            pre.push_str(&format!("{} = ({}), ", tmp, e));
+        let lt = if Self::eq_operand_is_bare_ident(l) {
+            l.to_string()
+        } else {
+            let tmp = self.fresh_tmp_named("eq");
+            self.line(&format!("{} {};", t, tmp));
+            pre.push_str(&format!("{} = {}({}), ", tmp, cast, l));
             tmp
         };
-        let lt = bind(self, l, lty, &mut pre);
-        let rt = bind(self, r, rty, &mut pre);
+        let rt = if Self::eq_operand_is_bare_ident(r) {
+            r.to_string()
+        } else {
+            let tmp = self.fresh_tmp_named("eq");
+            self.line(&format!("{} {};", t, tmp));
+            pre.push_str(&format!("{} = {}({}), ", tmp, cast, r));
+            tmp
+        };
         (lt, rt, pre)
     }
 
@@ -35832,7 +35833,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let struct_ty = if lty.starts_with("_NovaTuple") { lty.clone() } else { rty.clone() };
                     match op {
                         BinOp::Eq | BinOp::Neq => {
-                            let (l744, r744, pre744) = self.eq_materialize(&struct_ty, &lty, &rty, &l, &r);
+                            let (l744, r744, pre744) = self.eq_materialize(&struct_ty, &l, &r);
                             let eq = format!("{}{}", pre744, self.emit_field_eq(&struct_ty, &l744, &r744, 0));
                             return Ok(match op {
                                 BinOp::Eq  => format!("({})", eq),
@@ -35887,7 +35888,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // @equal fallback: field-by-field structural comparison.
                         if matches!(op, BinOp::Eq | BinOp::Neq) {
-                            let (l744, r744, pre744) = self.eq_materialize(tuple_ty, &lty, &rty, &l, &r);
+                            let (l744, r744, pre744) = self.eq_materialize(tuple_ty, &l, &r);
                             let eq = format!("{}{}", pre744, self.emit_field_eq(tuple_ty, &l744, &r744, 0));
                             return Ok(match op {
                                 BinOp::Eq  => format!("({})", eq),
@@ -35939,7 +35940,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     } else {
                         &rty
                     };
-                    let (l744, r744, pre744) = self.eq_materialize(value_ty, &lty, &rty, &l, &r);
+                    let (l744, r744, pre744) = self.eq_materialize(value_ty, &l, &r);
                     let eq = format!("{}{}", pre744, self.emit_field_eq(value_ty, &l744, &r744, 0));
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
@@ -36109,7 +36110,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    let (l744, r744, pre744) = self.eq_materialize(&res_ty, &lty, &rty, &l2, &r2);
+                    let (l744, r744, pre744) = self.eq_materialize(&res_ty, &l2, &r2);
                     let eq = format!("{}{}", pre744, self.emit_field_eq(&res_ty, &l744, &r744, 0));
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
@@ -36274,7 +36275,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // emit_field_eq на полном `Nova_X*` пройдёт ту же
                         // tag+payload рекурсию (см. helper), reusing @equal/@eq/
                         // @compare когда они есть на самом sum-типе.
-                        let (l744, r744, pre744) = self.eq_materialize(&sty, &lty, &rty, &l, &r);
+                        let (l744, r744, pre744) = self.eq_materialize(&sty, &l, &r);
                         let eq = format!("{}{}", pre744, self.emit_field_eq(&sty, &l744, &r744, 0));
                         return match op {
                             BinOp::Eq  => Ok(format!("({})", eq)),

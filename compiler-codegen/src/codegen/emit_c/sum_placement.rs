@@ -328,6 +328,46 @@ impl CEmitter {
             }
         }
 
+        // (b3) sums returned by an AMBIGUOUSLY NAMED method. When the same method
+        // name is declared on more than one receiver type, the emitter's C-type
+        // inference resolves the call's TYPE by the last registration while the
+        // CALL itself resolves correctly -- `Node @kind_of() -> NodeKind` next to
+        // `Interner @kind_of(int) -> TypeKind` (registry #696, fixture
+        // `crossmod_samename_method_lastwins`). The emitted comparison then read
+        // `((Nova_TypeKind*)(expr))->tag` on a `Nova_NodeKind*`, which C accepted
+        // because the cast was explicit and both were pointers. An inline value
+        // cannot be cast that way, so the mis-inference stops being survivable.
+        // The mis-inference itself is a live defect and OLDER than this atom; it
+        // is not A4's to fix, so the sums it can name stay on the heap.
+        {
+            let mut recv_of_method: HashMap<&str, HashSet<&str>> = HashMap::new();
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    if let Some(rv) = &f.receiver {
+                        recv_of_method
+                            .entry(f.name.as_str())
+                            .or_default()
+                            .insert(rv.type_name.as_str());
+                    }
+                }
+            }
+            for item in &module.items {
+                let Item::Fn(f) = item else { continue };
+                if f.receiver.is_none() {
+                    continue;
+                }
+                let ambiguous = recv_of_method
+                    .get(f.name.as_str())
+                    .map_or(false, |rs| rs.len() > 1);
+                if !ambiguous {
+                    continue;
+                }
+                if let Some(rt) = &f.return_type {
+                    Self::a4_collect_named_leaves(rt, &mut poisoned);
+                }
+            }
+        }
+
         // (c) candidates.
         for item in &module.items {
             let Item::Type(t) = item else { continue };
