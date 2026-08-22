@@ -510,8 +510,8 @@ export fn ty_of_decl(ctx Ctx, d DeclId) -> TyId
 /// one. THE door for readers that hold a `Ctx`: two steps, and they are the
 /// donors' two steps (rustc `Res::Def(_, def_id)` then `tcx.type_of(def_id)`).
 export fn Ctx @ty_of_name(name str) -> Option[TyId] {
-    ro d = @defs.type_decl(name) ?? no_decl()
-    if !is_decl(d) || raw_decl(d) >= @types.len() { return None }
+    ro d = @defs.type_decl(name)?
+    if raw_decl(d) >= @types.len() { return None }
     Some(ty_of_row(@types, d))
 }
 
@@ -525,9 +525,14 @@ export fn Ctx @ty_of_name_or_ice(name str) -> TyId =>
 /// a DECLARATION, and the declaration's row knows its term (rustc
 /// `Res::Def(_, def_id)` then `tcx.type_of(def_id)`).
 fn ty_or_none(types []TypeDef, defs DefTable, name str) -> TyId {
-    ro d = defs.type_decl(name) ?? no_decl()
-    if !is_decl(d) || raw_decl(d) >= types.len() { return no_ty() }
-    ty_of_row(types, d)
+    // The Option is READ as an Option (owner's correction 2026-08-21): turning it
+    // into a sentinel and then testing the sentinel is a detour that makes
+    // "absent" into a number somebody must remember to check.
+    if Some(d) = defs.type_decl(name) {
+        if raw_decl(d) < types.len() { ty_of_row(types, d) } else { no_ty() }
+    } else {
+        no_ty()
+    }
 }
 
 /// The same, over the table alone -- `collect_types` needs it while `Ctx` does
@@ -643,6 +648,13 @@ export fn collect_types(file Node) -> Ctx {
             if tkids.len() < 2 { continue }
             if tkids[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(tkids[1])
+            // SENTINEL AND NOT `?`, and the reason is the language, not taste:
+            // `??` substitutes a VALUE, so `?? continue` is refused (D86, the
+            // 2026-07-23 retraction), and `?` needs a wrapper to return into --
+            // this walk answers `Ctx`. So "skip this declaration" is spelled the
+            // only way a loop can spell it. The policy that came out of this
+            // measurement is in section 9.1g.5: `Option` where the value IS the
+            // answer, a sentinel where the answer is to SKIP.
             ro owner_id = defs.type_decl(tname) ?? no_decl()
             if !is_decl(owner_id) { continue }
             // The ROW already exists (pass 1 built it) -- pass 2 FILLS it. The
