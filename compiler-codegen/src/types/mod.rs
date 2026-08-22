@@ -4363,6 +4363,11 @@ impl<'a> TypeCheckCtx<'a> {
             HashMap::new();
         // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
         let mut blanket_method_names: HashMap<String, Option<TypeRef>> = HashMap::new();
+        // No.712 correction: names of CONCRETE (non-blanket) instance methods in
+        // this CU. A blanket name that ALSO names a concrete method somewhere is
+        // ambiguous by name alone, and the channel must stay silent for it --
+        // see the post-processing pass just before `TypeCheckCtx { .. }`.
+        let mut concrete_method_names: HashSet<String> = HashSet::new();
         // [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
         // sum-variant-имена ЛОССЛЕСС (тот же Vec-обход `module.items`, что
         // строит `types` ниже) — параллельно `types`-HashMap, который при
@@ -4411,6 +4416,10 @@ impl<'a> TypeCheckCtx<'a> {
                                     o.insert(None);
                                 }
                             }
+                        } else {
+                            // No.712: a CONCRETE method -- receiver is a real type,
+                            // not one of the fn's own generics.
+                            concrete_method_names.insert(f.name.clone());
                         }
                     }
                 }
@@ -4901,6 +4910,40 @@ impl<'a> TypeCheckCtx<'a> {
             .filter(|(_, n)| *n > 1)
             .map(|(s, _)| s.to_string())
             .collect();
+        // No.712, THE CORRECTION A RED FLAGSHIP PAID FOR. A blanket's NAME does
+        // not belong to the blanket. `to_str` is at once the prelude blanket
+        // `fn[T] T @to_str() -> str` AND the name of concrete methods with
+        // DIFFERENT returns -- `HeaderValue @to_str() -> Result[str, HttpError]`
+        // (nova-http), `Path @to_str() -> Option[str]` (std/fs). The first
+        // version keyed the annotation on the name alone, so a concrete method
+        // was handed the blanket's return: 17 C errors on the `aggregator`
+        // flagship. The receiver's own type cannot rescue the decision at the
+        // call site -- measured, not assumed: `NOVA_CALL_TRACE` shows the
+        // receiver absent from `scope` at that point for EVERY local receiver
+        // (`obj=i:hv(false)`, `obj=i:k(false)`), which is precisely why the
+        // regular resolver missed and control reached the blanket arm at all.
+        // So the disambiguation is done HERE, once, where the whole CU is in
+        // hand: a blanket name that ANY concrete method also carries -- declared
+        // (`concrete_method_names`, this same `module.items` scan) or synthesized
+        // (`synth_methods`, the auto-derive overlay the resolver itself consults)
+        // -- loses its return type and annotates nothing. The KEY stays in the
+        // map so the E7320 suppression below is untouched.
+        // COST NAMED HONESTLY: an ambiguous name reverts to pre-fix behaviour for
+        // EVERY receiver, including those with no such method of their own. That
+        // is the conservative half of the trade, and it is the right half: a
+        // missing annotation is the old, honest diagnostic; a wrong one is
+        // miscompiled C.
+        for (name, ret) in blanket_method_names.iter_mut() {
+            if ret.is_none() {
+                continue;
+            }
+            let synth_has = synth_methods.values().any(|m| {
+                m.keys().any(|k| k.trim_start_matches('@') == name.as_str())
+            });
+            if concrete_method_names.contains(name.as_str()) || synth_has {
+                *ret = None;
+            }
+        }
         TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
@@ -10613,6 +10656,26 @@ impl<'a> TypeCheckCtx<'a> {
                         // this annotation with their own `insert`.
                         // KILL SWITCH `NOVA_KILL_712=1` removes the fix WHOLE
                         // (lesson of No.711: a partial switch proves the wrong thing).
+                        // No.712 CORRECTION, paid for by a red flagship: the
+                        // decision to annotate must come from RESOLUTION, not from
+                        // the NAME. `to_str` is at once a blanket name and the name
+                        // of CONCRETE methods with DIFFERENT returns --
+                        // `HeaderValue @to_str() -> Result[str, HttpError]`
+                        // (nova-http), `Path @to_str() -> Option[str]` (std/fs).
+                        // The first version keyed on the name alone and handed the
+                        // concrete method the blanket's return: 17 C errors on the
+                        // `aggregator` flagship. The row No.712 had said exactly
+                        // this -- "the key is the CALL, not the member" -- and the
+                        // hole was that only the WRITE used the call id while the
+                        // DECISION still used the name.
+                        // THE DOOR IS THE RESOLVER'S OWN: `t_provides_method`
+                        // (`sig.methods_of` union the synth overlay), the same
+                        // helper the E7320 gate consults -- not a second copy.
+                        // WHERE THE DISAMBIGUATION LIVES: not here. The receiver
+                        // is not in `scope` at this point (that is WHY the regular
+                        // resolver missed and control got here), so the decision is
+                        // made once in `TypeCheckCtx::build` -- an ambiguous blanket
+                        // name carries `None` and annotates nothing. See there.
                         if e.id.is_set()
                             && std::env::var_os("NOVA_KILL_712").is_none()
                         {
