@@ -56,17 +56,13 @@ fn rank(c Colour) -> int {
 
 fn churn(rounds int, per int) -> int {
     mut acc = 0
-    mut k = 0
-    while k < rounds {
+    for k in 0..rounds {
         mut garbage []str = []
-        mut j = 0
-        while j < per {
+        for j in 0..per {
             garbage.push("garbage_${j}_${k}")
-            j = j + 1
         }
-        acc = acc + garbage.len()
+        acc += garbage.len()
         gc.collect()
-        k = k + 1
     }
     acc
 }

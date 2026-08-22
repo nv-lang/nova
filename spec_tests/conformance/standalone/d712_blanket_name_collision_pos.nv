@@ -53,10 +53,7 @@ export fn D712Box @all_plains() -> []D712Plain => @plains
 export fn D712Box @own_str() -> str {
     mut acc = ""
     for o in @all_owns() {
-        ro s = match o.to_str() {
-            Ok(t)  => t
-            Err(_) => "none"
-        }
+        ro s = o.to_str() ?? "none"
         acc = "${acc}${s}"
     }
     acc
