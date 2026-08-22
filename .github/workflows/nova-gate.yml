@@ -207,6 +207,102 @@ jobs:
           done
           exit $rc
 
+  # ── scripts/gate.sh, ЯРУС loop — текст, без компилятора ─────────────────
+  # Plan 275 Ф.3 (docs/plans/275-gate-cost.md). Measurement 2026-08-21: of 81
+  # guard files only 25 had an external caller. CI runs `gate-novac.sh` and did
+  # NOT run `scripts/gate.sh` — the tree's authoritative gate — so 56 guards
+  # were held up by whoever remembered to type the command. Rule G8 of
+  # docs/dev/gate-guard-conventions.md is blunt about it: a mechanism only the
+  # person who remembers it can start is not a mechanism. The price was paid in
+  # the same week: the gate went unrun for seven days and collected four reds,
+  # three of them belonging to nobody who could see them.
+  #
+  # WHY HERE AND NOT IN A FILE OF ITS OWN. `push` needs exactly the toolchain
+  # recipe this file already carries — the 1.85 rustup pin, the apt line from
+  # docs/guide/linux-build.md, recursive submodules, the cargo cache and the
+  # nova-http sibling clone. A second file would be a second copy of that
+  # recipe, and copies of a recipe drift silently: this repository has paid for
+  # that class twice already (#509, #524), which is why the flagship target
+  # list and the package list are single files read by both gate and CI.
+  #
+  # `loop` is a separate job from `push` on purpose: it needs no toolchain at
+  # all and answers in a couple of minutes, so a text-level breakage is red
+  # before the compiler has finished building.
+  #
+  # fetch-depth 0 is not optional here: the loop tier runs guards that walk the
+  # git log (commit language, dead commit refs, branch absorption, accepted-but-
+  # unmerged). On a depth-1 clone they judge a history that is not there.
+  gate-loop:
+    name: gate.sh tier loop (text only — no compiler is started)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout nova (full history — the git-log guards need a real log)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: scripts/gate.sh — tier loop
+        env:
+          NOVA_GATE_TIER: loop
+        run: bash scripts/gate.sh
+
+  # ── scripts/gate.sh, ЯРУС push — поведение ──────────────────────────────
+  # The behaviour tier: mega-CU, `conformance --full`, `nova test std/src`,
+  # the flagship builds, the flagship smoke, the crate tests. It is cumulative
+  # (loop ⊂ push): G4 says a green `loop` is not grounds for a push, so the
+  # tier one runs before pushing has to be the stronger claim, not a different
+  # one.
+  #
+  # The gate builds nova-cli itself (its own `cargo build --release` step), so
+  # there is no separate build step here; the cache is what makes that cheap.
+  #
+  # OVERLAP, NAMED OUT LOUD: the `gate` job below runs conformance, the
+  # flagship builds, the smoke and examples anti-rot too — the push tier is a
+  # superset of it. The overlap is deliberate for now: `gate` is a proven green
+  # job and this one has never run. Once `gate-push` has a green history, the
+  # duplicated steps of `gate` come out — not before.
+  gate-push:
+    name: gate.sh tier push (behaviour — conformance, std, flagships)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout nova (submodules recursive, full history)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install system deps (docs/guide/linux-build.md recipe)
+        run: sudo apt-get update && sudo apt-get install -y clang cmake make libgc-dev build-essential
+
+      - name: Cache cargo registry + nova-cli target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nova-cli/target
+          key: ${{ runner.os }}-gate-push-cargo-${{ hashFiles('nova-cli/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gate-push-cargo-
+
+      # examples/nova.toml declares `http = { path = "../../nova-http" }`, so
+      # every build inside examples/ needs that sibling physically on disk —
+      # see the long note above the `gate` job.
+      - name: Clone nova-http sibling (path-dependency of examples/nova.toml)
+        run: |
+          git clone --depth 1 https://github.com/nv-lang/nova-http "${GITHUB_WORKSPACE}/../nova-http"
+
+      - name: scripts/gate.sh — tier push
+        env:
+          NOVA_GATE_TIER: push
+        run: bash scripts/gate.sh
+
   gate:
     name: nova-gate (conformance + flagship examples)
     runs-on: ubuntu-latest
