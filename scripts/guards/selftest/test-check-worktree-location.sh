@@ -52,6 +52,19 @@ mkdir -p "$TMP/plain"
 out=$(bash "$G" "$TMP/plain" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "не-git каталог не краснит"; else bad "упал на не-git каталоге (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-worktree-location: 4/4 ok"; exit 0; fi
+# 5. ДОЗВОЛЕННОГО КОРНЯ НА ЭТОЙ МАШИНЕ НЕТ — правило не про неё, зелено.
+#    Именно этот случай у раннера CI, и именно на нём страж краснел
+#    2026-08-23: единственный чекаут `/home/runner/work/nova/nova` был объявлен
+#    деревом вне корня. Без этого случая новая ветка не судима — класс №519.
+#    Проверяем обе стороны: при НЕСУЩЕСТВУЮЩЕМ корне зелено ДАЖЕ при
+#    живом нарушителе — иначе ветка не та, что нужна; а при СУЩЕСТВУЮЩЕМ
+#    тот же нарушитель обязан краснить (случай 2 выше это уже доказал).
+git -C "$REPO" branch -q wt5 2>/dev/null
+git -C "$REPO" worktree add -q "$TMP/elsewhere/wt5" wt5 >/dev/null 2>&1
+out=$(NOVA_WORKTREE_ROOT="$TMP/no-such-root-here" bash "$G" "$REPO" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "отсутствующий корень — правило не про эту машину (случай CI)"; else bad "покраснел там, где корня нет (код $rc): $out"; fi
+git -C "$REPO" worktree remove --force "$TMP/elsewhere/wt5" >/dev/null 2>&1
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-worktree-location: 5/5 ok"; exit 0; fi
 echo "селфтест check-worktree-location: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
