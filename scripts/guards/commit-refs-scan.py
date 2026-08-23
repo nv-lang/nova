@@ -51,9 +51,28 @@ SKIP_NAMES = ("commit-refs-scan.py", "check-commit-refs.sh")
 
 
 def reachable_shas(repo):
-    out = subprocess.run(["git", "-C", repo, "rev-list", "main"],
-                         capture_output=True, text=True).stdout
-    return set(l.strip() for l in out.split("\n") if l.strip())
+    """Хеши, достижимые ХОТЬ ОТКУДА: `main`, `origin/main`, `HEAD` — ОБЪЕДИНЕНИЕ.
+
+    Два замера 2026-08-23, оба на этом страже:
+
+    1. На PR-чекауте CI локальной `main` нет вовсе. `rev-list main` возвращал
+       пусто, и страж печатал FAIL, НИЧЕГО не проверив, — вердикт без проверки,
+       худший вид красноты.
+    2. Правило ловит МЁРТВЫЙ хеш — тот, которого нет нигде: опечатку или
+       переписанную историю. Хеш невлитой ветки не мёртв; он существует, и после
+       слияния станет достижим из main. Собственный текст стража это признаёт
+       («либо ветка не влита, либо историю переписали»), но считал оба случая
+       одинаково — и рабочая ветка, ссылающаяся на свои же коммиты, краснела за
+       то, что ещё не влита.
+
+    Отсюда объединение: тревога остаётся ровно на «нет нигде».
+    """
+    shas = set()
+    for ref in ("main", "origin/main", "HEAD"):
+        out = subprocess.run(["git", "-C", repo, "rev-list", ref],
+                             capture_output=True, text=True).stdout
+        shas |= set(l.strip() for l in out.split("\n") if l.strip())
+    return shas
 
 
 def collect(scan_root):
