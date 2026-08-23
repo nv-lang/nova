@@ -809,9 +809,14 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @emit_bind(st)
     } else if k == NodeKind.AssignStmt {
         ro kids = branch_children(st)
-        ro target = expr_leaf_name(kids[0])
         @body.append("    ")
-        @body.append(target)
+        // THE TARGET IS WRITTEN THE WAY IT IS READ. `expr_leaf_name` answers a
+        // NAME, and `@n` is not one -- it emitted the bare receiver mark, so
+        // `@n = @n + 1` became `@ = ...` and clang said "expected expression"
+        // (measured 2026-08-23, wave 3g write path). Emitting the target as an
+        // EXPRESSION covers a plain name and `@field` with one path, so the two
+        // sides of an assignment cannot drift apart again.
+        @emit_expr(kids[0])
         @body.append(" = ")
         // A compound assignment IS its binary operator plus a store, so it
         // reuses the ONE form table rather than repeating it (`a += b` is
@@ -825,9 +830,13 @@ fn Emitter mut @emit_stmt(st Node) -> () {
                 // an integer helper on doubles.
                 ro is_float = @out.type_of(kids[2].id_of()) == @ctx.prims.f64_id
                 ro form = c_binary_form(op, is_float)
+                // The target appears on the RIGHT of a compound assignment
+                // too (`a += b` is `a = a + b`), and it is written the same
+                // way there: as an EXPRESSION, so `@n += 1` works for the same
+                // reason `@n = @n + 1` does.
                 if !is_call_form(op, is_float) {
                     @body.append("((")
-                    @body.append(target)
+                    @emit_expr(kids[0])
                     @body.append(") ")
                     @body.append(form)
                     @body.append(" (")
@@ -836,7 +845,7 @@ fn Emitter mut @emit_stmt(st Node) -> () {
                 } else {
                     @body.append(form)
                     @body.append("(")
-                    @body.append(target)
+                    @emit_expr(kids[0])
                     @body.append(", ")
                     @emit_expr(kids[2])
                     @body.append(")")
