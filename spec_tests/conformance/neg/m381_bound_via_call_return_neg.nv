@@ -1,0 +1,49 @@
+// EXPECT_COMPILE_ERROR E_BOUND_NOT_SATISFIED
+//
+// #381 (registry 221.1): a protocol bound was enforced only when the argument's
+// type came from a LITERAL. When it came from a CALL's return the check did not
+// run at all -- `infer_arg_ty` is a lightweight probe with no arm for a call, and
+// the bound loop does `continue` on a `None` under the comment "inference
+// failed -- best effort". So the bound was not weaker, it was absent.
+//
+// MEASURED BEFORE THE FIX, all three shapes on the same tree:
+//
+//     a.append(NoSlice{junk:7})        E_BOUND_NOT_SATISFIED   (caught)
+//     ro bad = make(); a.append(bad)   PASS: 1 FAIL: 0         (silent)
+//     a.append(make())                 PASS: 1 FAIL: 0         (silent)
+//
+// and the silent ones then failed at the C stage with `passing 'Nova_NoSlice *'
+// to parameter of incompatible type` -- check and build disagreeing, which is
+// the class this row is filed under and why it is K1.
+//
+// Both call-shaped forms are pinned here, because they broke for DIFFERENT
+// reasons: the inline one because the probe had no call arm, the local one
+// because a binding whose type comes from a call return was never recorded in
+// scope at all -- the root the row names in exactly those words.
+module neg.m381_bound_via_call_return_neg
+
+type NoSlice { junk int }
+
+fn make_no_slice() -> NoSlice {
+    return NoSlice { junk: 7 }
+}
+
+fn m381_via_local() -> int {
+    mut a = []u8.new()
+    ro bad = make_no_slice()
+    // nova:expect E_BOUND_NOT_SATISFIED -- `bad` holds a call's return type, which the bound check must see just as it sees a literal (#381)
+    a.append(bad)
+    return a.len()
+}
+
+fn m381_inline() -> int {
+    mut a = []u8.new()
+    // nova:expect E_BOUND_NOT_SATISFIED -- the call result goes straight in, with no local to record (#381)
+    a.append(make_no_slice())
+    return a.len()
+}
+
+fn main() {
+    assert(m381_via_local() == 0)
+    assert(m381_inline() == 0)
+}

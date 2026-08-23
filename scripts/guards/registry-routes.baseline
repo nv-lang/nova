@@ -424,4 +424,12 @@ no_caveat=30
 #   class stood closed on a run nobody could repeat. The probe is now
 #   standalone/m370_mut_param_and_clone_pos.nv, PASS: 1 FAIL: 0, and proven
 #   both ways -- defect values give PASS: 0 FAIL: 1.
-blockers=39
+# 2026-08-23, No.381 CLOSED -- 39 -> 38. A protocol bound was enforced only for
+#   LITERAL arguments; when the type came from a call the check did not run at
+#   all, and the program then failed at the C stage. Fixed in the checker
+#   channel in two halves (the call's declared return read from the signature
+#   registry, and locals initialised from a call recorded in scope), with two
+#   false refusals the corpus caught on the way -- a return mentioning a type
+#   parameter, and a bare generic container (D135 carve-out) -- both excluded.
+#   Corpus: conformance one CU PASS: 844 FAIL: 0, std PASS: 75 FAIL: 0.
+blockers=38
