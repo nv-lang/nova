@@ -508,6 +508,23 @@ Do not use them for other purposes.
   own cleanup that walks the elements and, per
   [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
   compiler inserts the call.
+- **Auto-`@cleanup` frees ONE binding form, not everything except a list**
+  ([D432 amendment 2026-08-21](decisions/02-types.md#d432), registry 221.1
+  #672). The s.2 exemption lifts the obligation only from `consume X = e;`
+  with a single `Ident` pattern -- the one form the codegen actually arms a
+  cleanup for. The rule is stated through the binding's PROVENANCE rather than
+  as a list of exceptions, so that the next binding form added to the language
+  falls under the norm by itself instead of leaking until somebody remembers
+  to list it. The consume obligation is raised for a consume parameter, for
+  `while Pat = expr`, for a consume scope's result binding, and for a typed
+  closure or handler-op parameter alike.
+- **`ro` infects by alias only**
+  ([D246 amendment 2026-08-21](decisions/02-types.md#d246), registry 221.1
+  #717). A local whose value is a place rooted in a ro name (`ro al = v`,
+  `ro f = v.field`, `ro e = v[i]`) is itself ro and cannot be returned under a
+  non-`ro` return type -- branch tails of `if`/`match` included. A local bound
+  to a FRESH value (a call result, a literal, a constructor, `.clone()`) is an
+  ordinary local, however non-mutable its binding is.
 - `Display`/`@display(mut w Write)` — string representation for
   `${expr}` interpolation and `str.from(v)` on a user type
   ([D73](decisions/08-runtime.md#d73)).

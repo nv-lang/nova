@@ -3,14 +3,17 @@
 # запрещён). Красноту доказываем МУТАЦИЕЙ ПОДСУДНОГО: у подложного дерева
 # отнимаем по одной части механизма и ждём красного с названной причиной.
 #
+# Форма перенесена из окна 274 вместе со стражем; перенацелена на главный гейт
+# дерева (переменная яруса `NOVA_GATE_TIER`, судимый файл `scripts/gate.sh`).
+#
 # Отдельно доказана краснота САМОГО гейта при превышении бюджета — она живёт не
-# в страже, а в гейте: 2026-08-19 потолок яруса loop временно опущен до 1с,
-# гейт вышел с кодом 1, потолок возвращён — вышел с 0.
+# в страже, а в гейте: потолок яруса loop временно опускается до 1с, гейт
+# выходит с кодом 1, потолок возвращается — выходит с 0.
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
 G="$GD/check-gate-budget.py"
-T="${TMPDIR:-/tmp}/novac-gate-budget-selftest.$$"
+T="${TMPDIR:-/tmp}/nova-gate-budget-selftest.$$"
 mkdir -p "$T/tree/scripts/guards"
 trap 'rm -rf "$T"' 0
 fails=0
@@ -20,8 +23,8 @@ bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 # Подложный гейт со ВСЕМИ частями механизма.
 mk_gate() {
     cat > "$1" <<'SH'
-NOVAC_TIER="${NOVAC_TIER:-push}"
-case "$NOVAC_TIER" in
+NOVA_GATE_TIER="${NOVA_GATE_TIER:-full}"
+case "$NOVA_GATE_TIER" in
     loop|push|full) ;;
     *) exit 2 ;;
 esac
@@ -29,12 +32,12 @@ GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
 BUDGET_FILE="$ROOT/scripts/guards/gate-budget.baseline"
 BUDGET_LIMIT=$(( BUDGET * CAL ))
 if [ "$GATE_ELAPSED" -gt "$BUDGET_LIMIT" ]; then
-    fail "ярус $NOVAC_TIER вышел за бюджет времени (конвенция гейтов, Г4)"
+    fail "ярус $NOVA_GATE_TIER вышел за бюджет времени (конвенция гейтов, Г4)"
 fi
 echo "строки бюджета для него нет (не судится)"
 SH
 }
-mk_budget() { printf '# comment\n\nloop 20\npush 300\n' > "$1"; }
+mk_budget() { printf '# comment\n\nloop 60\npush 900\n' > "$1"; }
 
 mk_gate "$T/tree/gate.sh"
 mk_budget "$T/tree/scripts/guards/gate-budget.baseline"
@@ -65,7 +68,7 @@ fi
 mv "$T/hidden" "$T/tree/scripts/guards/gate-budget.baseline"
 
 # ── 4. строка бюджета не разбирается — красный ───────────────────────────
-printf 'loop twenty\n' > "$T/tree/scripts/guards/gate-budget.baseline"
+printf 'loop sixty\n' > "$T/tree/scripts/guards/gate-budget.baseline"
 if python "$G" "$T/tree" "$T/tree/gate.sh" > "$T/o4" 2> "$T/e4"; then
     bad "неразбираемая строка бюджета прошла"
 else
@@ -75,7 +78,7 @@ else
 fi
 mk_budget "$T/tree/scripts/guards/gate-budget.baseline"
 
-# ── 5..7. механизм выхолощен по частям — каждый раз красный ──────────────
+# ── 5..8. механизм выхолощен по частям — каждый раз красный ──────────────
 mutate() { # $1 sed-выражение, $2 ожидаемая причина, $3 имя случая
     mk_gate "$T/tree/gate.sh"
     sed -i "$1" "$T/tree/gate.sh"
@@ -86,19 +89,30 @@ mutate() { # $1 sed-выражение, $2 ожидаемая причина, $3
     fi
 }
 mutate 's|gate-budget.baseline|some-other-file|'  "не читает файл бюджета"   "гейт не читает файл бюджета"
-mutate 's|GATE_ELAPSED|SOMETHING_ELSE|g'                "не меряет собственное"    "гейт не меряет своё время"
-mutate 's|BUDGET \* CAL|BUDGET|'                        "не масштабируется"        "предел без калибровки машины"
-mutate 's|fail "ярус |echo "ярус |'                     "не приводит к отказу"     "превышение без отказа"
+mutate 's|GATE_ELAPSED|SOMETHING_ELSE|g'          "не меряет собственное"    "гейт не меряет своё время"
+mutate 's|BUDGET \* CAL|BUDGET|'                  "не масштабируется"        "предел без калибровки машины"
+mutate 's|fail "ярус |echo "ярус |'               "не приводит к отказу"     "превышение без отказа"
 
-# ── 8. ярус без бюджета и без честного «не судится» — красный ────────────
+# ── 9. ярусов не видно вовсе — красный (страж ни о чём, класс №519) ──────
+mk_gate "$T/tree/gate.sh"
+sed -i 's|^case "\$NOVA_GATE_TIER" in|case "$SOMETHING" in|' "$T/tree/gate.sh"
+if python "$G" "$T/tree" "$T/tree/gate.sh" > "$T/o9" 2> "$T/e9"; then
+    bad "гейт без разбора ярусов прошёл зелёным"
+else
+    grep -q "не найден разбор NOVA_GATE_TIER" "$T/e9" \
+        && ok "разбор ярусов пропал — красный" \
+        || bad "красный, но не про пропавший разбор: [$(head -n 1 "$T/e9")]"
+fi
+
+# ── 10. ярус без бюджета и без честного «не судится» — красный ───────────
 mk_gate "$T/tree/gate.sh"
 sed -i 's|echo "строки бюджета для него нет (не судится)"||' "$T/tree/gate.sh"
-if python "$G" "$T/tree" "$T/tree/gate.sh" > "$T/o8" 2> "$T/e8"; then
+if python "$G" "$T/tree" "$T/tree/gate.sh" > "$T/oa" 2> "$T/ea"; then
     bad "ярус без бюджета и без честной строки прошёл (вечнозелёная дыра)"
 else
-    grep -q "без честного" "$T/e8" \
+    grep -q "без честного" "$T/ea" \
         && ok "ярус без бюджета обязан быть назван вслух — красный" \
-        || bad "красный, но не про несудимый ярус: [$(head -n 1 "$T/e8")]"
+        || bad "красный, но не про несудимый ярус: [$(head -n 1 "$T/ea")]"
 fi
 
 echo "итог: FAIL $fails"

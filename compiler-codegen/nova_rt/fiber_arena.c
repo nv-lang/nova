@@ -193,6 +193,52 @@ static void _arena_register_pthread_key(void) {
  * диагностируется — handler ищет owner arena в глобальном списке если
  * TLS arena не содержит fault. */
 
+/* ── АЛЬТЕРНАТИВНЫЙ СТЕК СИГНАЛА (№745, 2026-08-23) ──────────────────
+ *
+ * Без него обработчик выше НЕ ЗАПУСКАЕТСЯ в единственном случае,
+ * ради которого написан. Чтобы доставить SIGSEGV, ядро кладёт кадр
+ * сигнала НА ТЕКУЩИЙ СТЕК; при переполнении стека места там ровно
+ * ноль. Итог: процесс умирал действием по умолчанию вместо диагностики,
+ * а фикстура `standalone/fiber_stack_overflow` краснела НА LINUX и
+ * зеленела на Windows (там VEH ловит STATUS_STACK_OVERFLOW и место на
+ * сбойном стеке ему не нужно).
+ *
+ * Цена ошибки была предъявлена буквально: один прогон этой фикстуры
+ * под Linux оставил core dump на 140 ГБ и заполнил диск целиком.
+ *
+ * Стек — ПОТОКОВЫЙ (`sigaltstack` — per-thread), поэтому вызов стоит в
+ * `nova_fiber_arena_init` ВНЕ pthread_once, в отличие от самого sigaction,
+ * который process-wide. Память — статический __thread-буфер, а не
+ * mmap: аллокатор в момент, когда у нас кончился стек, — лишний способ
+ * не дойти до диагностики, и освобождать его потом не нужно.
+ *
+ * Размер взят НЕ равным SIGSTKSZ: в современном glibc это динамическое
+ * значение (sysconf), которое нельзя употребить в размере массива; 64 КБ
+ * с запасом покрывает и MINSIGSTKSZ любой архитектуры, и наш обработчик,
+ * который лишь ищет arena и печатает строку. */
+#ifndef NOVA_SIGSTACK_SIZE
+#  define NOVA_SIGSTACK_SIZE (64 * 1024)
+#endif
+static __thread char _t_sigstack[NOVA_SIGSTACK_SIZE];
+static __thread int  _t_sigstack_armed = 0;
+
+static void _arena_arm_sigaltstack(void) {
+    stack_t ss;
+    if (_t_sigstack_armed) return;
+    /* NOVA_KILL_ALTSTACK=1 — kill-switch домашнего образца: тот же бинарь
+     * обязан уметь вести себя ОБОИМИ способами, иначе «зелёно после
+     * правки» не доказывает, что зелёным его сделала именно правка. */
+    {
+        const char* kill = getenv("NOVA_KILL_ALTSTACK");
+        if (kill && kill[0] == '1' && kill[1] == ' ') return;
+    }
+    memset(&ss, 0, sizeof(ss));
+    ss.ss_sp    = _t_sigstack;
+    ss.ss_size  = sizeof(_t_sigstack);
+    ss.ss_flags = 0;
+    if (sigaltstack(&ss, NULL) == 0) _t_sigstack_armed = 1;
+}
+
 static struct sigaction _prev_sigsegv;
 /* [M-fiber-arena-sigsegv-install-race]: было `static bool _sigsegv_installed`
  * с голым check-then-set в _arena_install_sigsegv_handler — два потока,
@@ -279,7 +325,11 @@ static void _arena_install_sigsegv_handler(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = _arena_sigsegv_handler;
-    sa.sa_flags     = SA_SIGINFO | SA_NODEFER;  /* allow re-entry для re-raise */
+    /* SA_ONSTACK (№745): без него обработчик не запускается именно на
+     * переполнении стека — то есть в том единственном случае, ради
+     * которого он написан. Парный кусок — _arena_arm_sigaltstack(),
+     * вызываемый per-thread в nova_fiber_arena_init(). */
+    sa.sa_flags     = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;  /* allow re-entry для re-raise */
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &_prev_sigsegv);
 }
@@ -654,6 +704,12 @@ static void _nova_mark_tail_used(struct NovaFiberArena* a, size_t from) {
 /* ── Init ──────────────────────────────────────────────────────── */
 
 void nova_fiber_arena_init(void) {
+    /* №745: альтернативный стек — ПЕРВЫМ делом и ДО раннего возврата.
+     * Он per-thread, а ранний возврат срабатывает на повторных вызовах того же
+     * потока — ставить после него значило бы оставить без защиты поток,
+     * чей arena уже жив (сам вызов идемпотентен по _t_sigstack_armed). */
+    _arena_arm_sigaltstack();
+
     /* Already initialized? (idempotent — safe to call multiple times.) */
     if (_t_arena && _t_arena->base) return;
 

@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// #717 hole (2) TRAVERSAL: a branch TAIL is a return value too, and nothing
+// ever handed one to the check -- `check_ro_launder_return_in_expr` looked
+// only for nested explicit `return`, so a bare `Ident` tail of an `if` or a
+// `match` arm never reached it. The branch-tail position carries the alias
+// rule (parameters in that position are variant (в) territory, ruled on
+// 2026-08-18 and not implemented here).
+module neg.m717_ro_alias_branch_tail_neg
+
+fn m717_launder_via_branch(v []int, flag bool) -> []int {
+    ro al = v
+    if flag {
+        // nova:expect E_READONLY_COERCE -- the alias local reaches the caller through a branch tail, which is a return like any other (#717 hole 2)
+        al
+    } else {
+        []int.of(0)
+    }
+}
+
+fn main() {
+    mut arr = []int.of(1, 2, 3)
+    ro got = m717_launder_via_branch(arr, true)
+    assert(got.len() == 3)
+}

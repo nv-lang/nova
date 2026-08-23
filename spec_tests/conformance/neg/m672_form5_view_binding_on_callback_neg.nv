@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR E_VIEW_BINDING_FORBIDDEN
+//
+// #672 form (5), second half of the proof. A closure parameter used to be
+// declared as a BARE NAME, so the linearity walk had no type for it and no
+// rule could fire on it at all. With the type threaded, a must-consume
+// closure parameter is a D157 view (exactly like a named fn parameter), and
+// rebinding it with `mut` is the D180 rule-6 violation it always was --
+// silently accepted until now.
+//
+// Measured against nova-polaris 2026-08-22: this exact shape stood in
+// `src/rt/ws_upgrade_hijack_smoke.nv` and `src/doc_samples_test.nv`
+// (`mut w = ws` inside `on_upgrade(fn(ws WebSocket) ...)`), and the canonical
+// spelling the compiler's own fix-it names -- `consume w = ws` -- was all
+// either site needed. The positive twin is m672_form5_owning_callback_ok.
+module neg.m672_form5_view_binding_on_callback_neg
+
+type M672Wv consume { id int }
+
+fn M672Wv consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+fn M672Wv consume @close() -> () { () }
+
+fn m672_wv_on_upgrade(cb fn(M672Wv) -> ()) -> () {
+    cb(M672Wv { id: 1 })
+}
+
+fn main() {
+    m672_wv_on_upgrade(fn(ws M672Wv) -> () {
+        // nova:expect E_VIEW_BINDING_FORBIDDEN -- the callback owns the value and must say so with `consume w = ws`; `mut` is a view-binding on a consume-obligatory variable (D180 rule 6, #672 form 5)
+        mut w = ws
+        // nova:expect D157-consume-via-view -- and the consequence: a view may never be consumed, so the close below is refused too (D157, #672 form 5)
+        w.close()
+    })
+}

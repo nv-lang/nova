@@ -38,6 +38,76 @@ if [ -z "${NOVA_GC_LIB_DIR:-}" ]; then
 fi
 unset NOVA_STD_PATH 2>/dev/null || true
 
+# ── ЯРУСЫ ГЕЙТА (конвенция docs/dev/gate-guard-conventions.md, Г4) ───────────
+#
+# ЗАЧЕМ. Полный прогон стоит 23.4 минуты (профиль по шагам —
+# docs/plans/275-gate-cost.md, раздел 0), и запускал его только тот, кто о нём
+# помнил: CI зовёт `scripts/gate-novac.sh` и НЕ зовёт этот файл. Замер
+# 2026-08-21: стражей 81, под внешним судьёй 25, без внешнего вызывающего 56.
+# Механизм, который запускает только помнящий о нём, — не механизм (Г8), и
+# цена уже уплачена: гейт не гоняли неделю, и в нём накопились четыре красных,
+# из которых три не принадлежали тому, кто их нашёл.
+#
+# Лечится это НЕ ускорением. Лечится тем, что дешёвая часть гейта отделена от
+# дорогой и потому может зваться машиной на каждый пуш.
+#
+#   loop — ТОЛЬКО чтение текста. Ни сборки, ни запуска компилятора, ни
+#          `nova test`. Шаг, который поднимает `nova` или `cargo`, сюда не
+#          попадает НИКОГДА — это прямая формулировка Г4, а не пожелание.
+#   push — поведение: мега-CU, `conformance --full`, `nova test std/src`,
+#          флагманы, смоук, crate-tests.
+#   full — всё: самотесты стражей, сборка флагмана на ЧИСТОМ дереве, пакетные
+#          репы, вердикт внешнего CI.
+#
+# ЯРУСЫ НАКОПИТЕЛЬНЫЕ: loop ⊂ push ⊂ full. Иначе `push` был бы утверждением
+# не сильнее, а ДРУГИМ, — а Г4 говорит прямо: зелёный `loop` не есть основание
+# для пуша. Тот, кто зовёт ярус перед отправкой, обязан получить надмножество.
+#
+# УМОЛЧАНИЕ — `full`, и это условие, а не настройка: всякий, кто звал гейт как
+# `bash scripts/gate.sh`, обязан получить ровно тот же набор шагов в том же
+# порядке, что и до появления ярусов.
+NOVA_GATE_TIER="${NOVA_GATE_TIER:-full}"
+case "$NOVA_GATE_TIER" in
+    loop|push|full) ;;
+    *) echo "GATE FATAL: неизвестный ярус NOVA_GATE_TIER='$NOVA_GATE_TIER' (можно loop|push|full)" >&2
+       exit 1 ;;
+esac
+case "$NOVA_GATE_TIER" in
+    loop) GATE_TIER_N=1 ;;
+    push) GATE_TIER_N=2 ;;
+    full) GATE_TIER_N=3 ;;
+esac
+
+# СУХОЙ ПРОГОН — печатаются заголовки шагов, не исполняется ничего.
+# Заведён как ДОКАЗАТЕЛЬСТВО того, что умолчание не поехало: список шагов до
+# правки и после сверяется дословно (`diff`), а не на глаз. Тот же довод, что
+# у Г6: «выглядит так же» — не сверка.
+NOVA_GATE_DRYRUN="${NOVA_GATE_DRYRUN:-0}"
+
+# Путь к собранному компилятору. Пуст до шага сборки — и обязан существовать
+# ДО НЕГО, потому что `set -u` разворачивает аргументы шага раньше, чем шаг
+# решит, его ли это ярус: в `loop` сборки нет, а строка вызова стража с
+# `"$NOVA"` в аргументах читается всё равно.
+NOVA=""
+
+STEP_ACTIVE=1
+# tier_at_least <ярус> — исполняется ли на ВЫБРАННОМ ярусе шаг такого класса.
+tier_at_least() {
+    case "$1" in
+        loop) [ "$GATE_TIER_N" -ge 1 ] ;;
+        push) [ "$GATE_TIER_N" -ge 2 ] ;;
+        full) [ "$GATE_TIER_N" -ge 3 ] ;;
+        *) return 1 ;;
+    esac
+}
+# body_runs — исполнять ли ТЕЛО текущего шага. Заголовок и тело разделены
+# намеренно: сухой прогон обязан напечатать состав яруса, ничего не сделав.
+body_runs() {
+    [ "$STEP_ACTIVE" -eq 1 ] || return 1
+    [ "$NOVA_GATE_DRYRUN" = "1" ] && return 1
+    return 0
+}
+
 # КОПИМ отказы вместо выхода на первом (2026-08-09, требование владельца
 # «почти каждый шаг можно делать в фоне» + наблюдение: гейт падал на ПЕРВОМ же
 # страже и не доходил до остальных, из-за чего интегратор четырежды подряд
@@ -61,8 +131,24 @@ GATE_FAIL_N=0
 # находиться. Байт задаётся явно и один раз.
 ESC=$(printf '\033')
 GATE_T0=$(date +%s)
+# ШАГ ОБЪЯВЛЯЕТ СВОЙ ЯРУС ПЕРВЫМ АРГУМЕНТОМ: `step loop "arch-ratchet"`.
+# Ярус обязателен и не имеет умолчания — шаг, забывший его назвать, роняет
+# гейт сразу. Молчаливое умолчание означало бы, что новый шаг, написанный по
+# образцу соседней строки, тихо попадает не в тот ярус, и заметить это можно
+# было бы только по секундам (тот же класс, что №519: молчаливо несудимое).
 step() {
-    printf '[%5ds] == gate: %s ==\n' "$(( $(date +%s) - GATE_T0 ))" "$1"
+    _step_tier="$1"; shift
+    case "$_step_tier" in
+        loop|push|full) ;;
+        *) echo "GATE FATAL: шаг гейта без яруса (loop|push|full): $_step_tier $*" >&2
+           exit 1 ;;
+    esac
+    if tier_at_least "$_step_tier"; then
+        STEP_ACTIVE=1
+        printf '[%5ds] == gate: %s ==\n' "$(( $(date +%s) - GATE_T0 ))" "$1"
+    else
+        STEP_ACTIVE=0
+    fi
 }
 fail() {
     echo "GATE FAIL: $1" >&2
@@ -92,6 +178,9 @@ fail() {
 # четыре шага разом при механическом переводе на обёртку; форму теперь держит
 # свойство 4 в check-gate-steps-assert.sh.
 guard() {
+    # Шаг чужого яруса не исполняется — и НЕ засчитывается отказом: он просто
+    # не этого прогона. Сухой прогон не исполняет ничего вовсе.
+    body_runs || return 0
     local deadline=""
     if [ "$1" = "--deadline" ]; then deadline="$2"; shift 2; fi
     local g="$1"; shift
@@ -165,7 +254,20 @@ if [ -n "$OVERRIDE_FILES" ]; then
     print_override_warning
 fi
 
-step "arch-ratchet"
+# КАЛИБРОВКА СРОКОВ (реестр 221.1 №558/№475, замер 2026-08-17) — ОДИН раз на
+# прогон. Считалась ниже, у самотестов; поднята сюда, потому что бюджет яруса
+# (Г4) масштабируется тем же множителем, а самотесты идут только в `full`.
+# Сама проба стоит ~1.5с; печать множителя осталась там, где была, — у
+# самотестов, для которых она и заводилась.
+if [ "$NOVA_GATE_DRYRUN" = "1" ]; then
+    NOVA_CAL_FACTOR=1
+else
+    NOVA_CAL_FACTOR=$(bash "$ROOT/scripts/tools/cal-factor.sh" "$ROOT" 2>/dev/null)
+fi
+case "$NOVA_CAL_FACTOR" in ''|*[!0-9]*) NOVA_CAL_FACTOR=1 ;; esac
+export NOVA_CAL_FACTOR
+
+step loop "arch-ratchet"
 guard "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 
 # Plan 70 Ф.2: `type_ref_to_c(t).unwrap_or_else(|_| "nova_int")` — преобразование
@@ -173,7 +275,7 @@ guard "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growt
 # без единой диагностики. До 2026-08-21 этого стража не звал НИКТО (ни здесь,
 # ни в CI) — и счёт успел уехать 7 → 21, то есть ровно то, против чего он
 # заведён, случилось у него на глазах (конвенция гейтов, Г8).
-step "no-silent-int-fallback (молчаливый откат к nova_int в кодогене)"
+step loop "no-silent-int-fallback (молчаливый откат к nova_int в кодогене)"
 guard "$ROOT/scripts/guards/lint-no-silent-int-fallback.sh" "$ROOT" \
     || fail "молчаливый откат к nova_int в compiler-codegen сверх базы (Plan 70; канон — err_no_int_fallback/record_strict_error)"
 
@@ -183,7 +285,7 @@ guard "$ROOT/scripts/guards/lint-no-silent-int-fallback.sh" "$ROOT" \
 # компилятора» в nova-http, которой не было (устаревшие заголовки копии не
 # объявляли символ из фикса №108), плюс >1 ГБ мусора по репам. Копия НЕ нужна —
 # есть штатные NOVA_RT_DIR/NOVA_CG_INCLUDE (см. шапку самого стража).
-step "no-runtime-copy"
+step loop "no-runtime-copy"
 guard "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
 
 # Трек Ж (231): страж без самотеста — доверие на слово. Самотесты дешёвые
@@ -191,9 +293,9 @@ guard "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия ран
 # Реестр 221.1 №155/№161 (урок повторился ДВАЖДЫ за день): маркер [M-...] в коде без
 # записи в реестре = невидимый долг — обход живёт, а дефекта для планирования нет.
 # Первый прогон стража нашёл 59 таких; ручные аудиты видели 8. Храповик: расти нельзя.
-step "marker-registry-sync"
+step loop "marker-registry-sync"
 guard "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "маркеры в коде без записи в реестре (№155/№161)"
-step "bug-number-sync (№217 — каждый новый маркер нумерован в 221.1)"
+step loop "bug-number-sync (№217 — каждый новый маркер нумерован в 221.1)"
 guard "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый маркер без № в 221.1 (правило владельца №217)"
 
 # Реестр 221.1 №446/№447 (окно presume-cas-gate, 2026-08-08): единственный
@@ -202,21 +304,31 @@ guard "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новы�
 # два из которых несли живой дефект (двойной destroy+sweep дубликата
 # мёртвого co). Страж ловит новый resume-сайт, открытый в обход
 # nova_resume_fiber (fibers.h).
-step "expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453)"
-step "накопление несведённых веток (никогда не копи)"
-step "форма записей реестра (класс, приоритет, оговорка)"
+step loop "expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453)"
+step loop "накопление несведённых веток (никогда не копи)"
+step loop "форма записей реестра (класс, приоритет, оговорка)"
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
-step "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
+step loop "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
 guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
-step "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
+step loop "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
 guard "$ROOT/scripts/guards/check-guard-external-caller.py" "$ROOT" \
     || fail "стражей без внешнего вызывающего стало больше (docs/dev/gate-guard-conventions.md, Г8)"
+
+# Слэш-команды репозитория (`.claude/commands/`) — такая же проводка, как хуки:
+# механизм, который едет вместе с деревом. Сломанная шапка НЕ выглядит сломанной —
+# команда грузится, но теряет описание и список инструментов. 2026-08-23: из
+# четырёх новых команд ДВЕ несли двоеточие внутри `description`, YAML читал
+# остаток строки как вложенное отображение, и нашёл это владелец глазами в
+# предпросмотре markdown. Проверка стоит миллисекунды.
+step loop "claude-commands-frontmatter (шапка слэш-команды обязана парситься)"
+guard "$ROOT/scripts/guards/check-claude-commands-frontmatter.py" "$ROOT" \
+    || fail "шапка слэш-команды не читается: команда работает наполовину и молча"
 
 guard "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 
 guard "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 
-step "nova:expect — храповик разметки негативных фикстур (план 262 Б)"
+step loop "nova:expect — храповик разметки негативных фикстур (план 262 Б)"
 # Файловый EXPECT_COMPILE_ERROR говорит «где-то в этом файле ошибка», и
 # фикстура остаётся зелёной, даже когда ошибка переехала на другую строку
 # по другой причине. `nova:expect` пришпиливает ожидание к МЕСТУ. Разом
@@ -224,10 +336,10 @@ step "nova:expect — храповик разметки негативных ф�
 guard "$ROOT/scripts/guards/check-nova-expect-ratchet.sh" "$ROOT" \
     || fail "неразмеченных негативных фикстур стало больше (план 262 Б)"
 
-step "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
+step push "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
 guard "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
 
-step "invariant-discipline (норма об инвариантах — всеобъемлюща)"
+step loop "invariant-discipline (норма об инвариантах — всеобъемлюща)"
 # №475: ИМЕННО этот страж завис 2026-08-08 на 4 часа (grep-цикл по всему
 # дереву, включая target/ и чужие worktree) и держал gate.sh мёртвым, пока
 # никто не смотрел. `with-deadline.sh` появился как раз ради этого класса,
@@ -246,47 +358,49 @@ guard --deadline 300 "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT
 # Обратно тоже: правка novac гоняла весь компиляторный гейт вместе с мега-CU.
 #
 # НОВЫЕ ПРОВЕРКИ novac ДОБАВЛЯТЬ ТУДА, НЕ СЮДА.
-step "driver-channel-parity (три драйвера кормят одни каналы — №669)"
+step loop "driver-channel-parity (три драйвера кормят одни каналы — №669)"
 guard "$ROOT/scripts/guards/check-driver-channel-parity.sh" "$ROOT" || fail "чекер-канал проведён не во всех драйверах (№669)"
-step "fiber-migration-ordering (двери миграции RELEASE/ACQ_REL — №443)"
+step loop "fiber-migration-ordering (двери миграции RELEASE/ACQ_REL — №443)"
 guard "$ROOT/scripts/guards/check-fiber-migration-ordering.sh" "$ROOT" || fail "ослаблена дверь миграции файбера — обычные поля контекста стали гонкой (№443)"
-step "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
+step loop "rt-sigpipe-ign (SIG_IGN в двери драйвера — №664)"
 guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SIGPIPE) пропал из nova_driver_init (№664)"
-step "retracted-param-form (снятая форма параметра в доке — D445, №611)"
+step loop "retracted-param-form (снятая форма параметра в доке — D445, №611)"
 guard "$ROOT/scripts/guards/check-retracted-param-form.sh" "$ROOT" || fail "снятая постфиксная форма параметра в доке (D445 AMEND, №611)"
-step 'retracted-try-semantics (снятая трактовка `?` в доке — D85, №713)'
+step loop 'retracted-try-semantics (снятая трактовка `?` в доке — D85, №713)'
 guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
-step "retired-names (снятое имя не живёт в рабочих зонах — №442)"
+step loop "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
-step "registry-single-verdict (одна строка — один вердикт и статус — №730)"
+step loop "registry-single-verdict (одна строка — один вердикт и статус — №730)"
 guard "$ROOT/scripts/guards/check-registry-single-verdict.sh" "$ROOT" || fail "в реестре строка с ДВУМЯ вердиктами или статусами: сканеры читают первое вхождение, дописки идут в хвост — заглавные числа релиза начинают врать в обе стороны (№730)"
-step "fixed-but-open (правка слита — строка не числится открытой — №731)"
+step loop "fixed-but-open (правка слита — строка не числится открытой — №731)"
 guard "$ROOT/scripts/guards/check-fixed-but-open.sh" "$ROOT" || fail "в реестре строка со СЛИТОЙ правкой стоит OPEN: план показывает работу, которой нет, и блокеры тега завышены — четыре БЛОКИРУЮЩИХ строки (№711, №714, №719, №720) стояли так при приколотой фикстуре (№731); либо закрой строку по ЗАМЕРУ, либо впиши номер в scripts/guards/fixed-but-open.baseline с причиной"
-step "bare-type-lookups (чтения карты типов голым именем не растут — №705)"
+step loop "bare-type-lookups (чтения карты типов голым именем не растут — №705)"
 guard "$ROOT/scripts/guards/check-bare-type-lookups.sh" "$ROOT" || fail "прибавилось чтений карты типов чекера ГОЛЫМ именем: карта коллидирует между модулями last-write-wins, и класс на этом возвращался четырежды (196.7, №696, №705, №729) — разрешай по файлу места использования, types_get_for_file(name, id)"
-step "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
+step loop "mixed-eol (смешанные окончания строк в рабочем дереве — №442)"
 guard "$ROOT/scripts/guards/check-mixed-eol.sh" "$ROOT" || fail "смешанные окончания строк: построчные и побайтные счётчики расходятся, git этого не видит (core.autocrlf), лечится перевыкладкой файла, а не коммитом"
-step "crate-tests (собственные наборы nova-lsp и nova-cli — №723)"
+step push "crate-tests (собственные наборы nova-lsp и nova-cli — №723)"
 guard --deadline 600 "$ROOT/scripts/guards/check-crate-tests.sh" "$ROOT" || fail "тесты Rust-крейтов красные: расширение и CLI входят в поставку, а их наборы до 2026-08-18 не гонял ни гейт, ни CI (№723; так нашёлся №724 — nova check . не проверял ничего)"
-step "process-exit-under-pool (процесс завершается при 16 воркерах, ×200 — №694)"
+step push "process-exit-under-pool (процесс завершается при 16 воркерах, ×200 — №694)"
 guard --deadline 300 "$ROOT/scripts/guards/check-process-exit-under-pool.sh" "$ROOT" || fail "процесс не завершается при полном пуле воркеров (№694: потерянная побудка при остановке)"
-step "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
+step push "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
 guard --deadline 120 "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
-step "sync-guards (копии стражей в пакетных репах не разошлись)"
-bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
+step loop "sync-guards (копии стражей в пакетных репах не разошлись)"
+if body_runs; then
+    bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
+fi
 
-step "no-path-deps (D420 — path только под [replace]; №444)"
+step loop "no-path-deps (D420 — path только под [replace]; №444)"
 guard "$ROOT/scripts/guards/check-no-path-deps.sh" "$ROOT" || fail "path-зависимость в коммитящемся манифесте/локе (D420)"
 
-step "single-mco-resume (№446/№447 — единственный resume-сайт в Vela)"
+step loop "single-mco-resume (№446/№447 — единственный resume-сайт в Vela)"
 guard "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
 
 
 
-step "doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31)"
+step loop "doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31)"
 guard "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
 
-step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
+step loop "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # №322: вторым аргументом — база сравнения для подпроверки same-commit
 # pairing (без неё она физически не выполняется). Локально берём
 # предыдущий коммит; в CI база передаётся явно (PR base / event.before).
@@ -295,30 +409,36 @@ step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # (для СЕБЯ это «не передали диапазон» — нормальный кросс-репный случай),
 # и гейт печатал зелёный пропуск там, где вызывающий обязан был дать базу.
 # require-diff-base.sh делает эту неудачу ОТКАЗОМ шага, а не тихим пропуском.
-DOC_GUARD_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
-    || fail "doc-conventions: не вычислить diff-base для guide_same_commit (см. scripts/tools/require-diff-base.sh) — подпроверка не может выполниться"
+DOC_GUARD_BASE=""
+if body_runs; then
+    DOC_GUARD_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
+        || fail "doc-conventions: не вычислить diff-base для guide_same_commit (см. scripts/tools/require-diff-base.sh) — подпроверка не может выполниться"
+fi
 guard "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
 
-step "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
+step loop "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 
-step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
+step loop "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
 # №586-класс: та же ошибка, что у DOC_GUARD_BASE выше — пустая база молча
 # уезжала в подпроверку, которая для СЕБЯ легитимно пропускает rule5/rule1,
 # и отказ вызывающего тонул в чужом легитимном пропуске.
-TFC_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
-    || fail "test-fixture-coverage: не вычислить diff-base (см. scripts/tools/require-diff-base.sh) — rule5/rule1 не могут выполниться"
+TFC_BASE=""
+if body_runs; then
+    TFC_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
+        || fail "test-fixture-coverage: не вычислить diff-base (см. scripts/tools/require-diff-base.sh) — rule5/rule1 не могут выполниться"
+fi
 guard "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
-step "diag-fixture-coverage (кодов диагностик без neg-фикстуры не прибавляется — №639)"
+step loop "diag-fixture-coverage (кодов диагностик без neg-фикстуры не прибавляется — №639)"
 guard "$ROOT/scripts/guards/check-diag-fixture-coverage.sh" "$ROOT" || fail "прибавилось кодов диагностики без neg-фикстуры: правило 5 работает ПО ДИФФУ и про накопленное не знает ничего — замер 2026-08-19: из 421 кода без фикстуры 210 (№639); новая диагностика обязана приезжать со своей neg-фикстурой, обе формы записи кода считаются одинаково"
-step "test-env-races (одну переменную среды правит не больше одного теста — №733)"
+step loop "test-env-races (одну переменную среды правит не больше одного теста — №733)"
 guard "$ROOT/scripts/guards/check-test-env-races.sh" "$ROOT" || fail "два теста правят ОДНУ переменную среды, а тесты Rust идут ПАРАЛЛЕЛЬНО в ОДНОМ процессе: зелёное становится вопросом планировщика (№733 — `march_flag_default` упал на CI, пройдя локально); решение — в чистую функцию, чтение среды — РОВНО ОДНОМУ тесту"
-step "generic-static (статик не живёт внутри generic-функции — №736)"
+step loop "generic-static (статик не живёт внутри generic-функции — №736)"
 guard "$ROOT/scripts/guards/check-generic-static.sh" "$ROOT" || fail "`static` внутри generic-функции: Rust инстанцирует его НА КАЖДУЮ мономорфизацию, и мьютекс, заведённый там ради сериализации, НЕ СЕРИАЛИЗУЕТ НИЧЕГО (№736: у каждого из семи тестов SCC-кэша был СВОЙ мьютекс, и CI дал (0,3) вместо (0,1)); вынеси статик на уровень модуля"
-step "std-module-coverage (модулей std без единого теста не прибавляется — №471)"
+step loop "std-module-coverage (модулей std без единого теста не прибавляется — №471)"
 guard "$ROOT/scripts/guards/check-std-module-coverage.sh" "$ROOT" || fail "прибавилось модулей std БЕЗ ЕДИНОГО теста: база известных отказов сторожит ПАДАЮЩИЕ тесты и слепа к ОТСУТСТВУЮЩИМ — непокрытость выглядит как исправность (№471); тест клади РЯДОМ с модулем, как требует конвенция std"
 
-step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
+step full "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
 # НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
 # ронять локальный гейт. Блокирует отправку хук `pre-push` (--strict).
 # Смысл шага — чтобы «локально зелено» и «снаружи красно» не могли разойтись
@@ -336,10 +456,18 @@ step "ci-status (внешний авторитетный гейт — GitHub Act
 # два прогона подряд «RED на 7aa5be9b2» прошли мимо читающего, который смотрел
 # tail и грепал GATE FAIL. Класс №645: строка была, читать было некому. Приём
 # тот же, что у override-предупреждения (№283): печать в начале И у вердикта.
-CI_STATUS_OUT=$(bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
-    bash "$ROOT/scripts/guards/check-ci-status.sh" 2>&1 || true)
-printf '%s\n' "$CI_STATUS_OUT"
-CI_VERDICT_LINE=$(printf '%s\n' "$CI_STATUS_OUT" | grep -m1 '^check-ci-status: ' || true)
+# ЯРУС `full`, а не `push`, и это не экономия секунд. Шаг существует, чтобы
+# СНАРУЖИ прогона сообщить локальному человеку, что внешний авторитетный гейт
+# красен. Внутри самого этого гейта он не имеет смысла: прогонов на текущем
+# коммите ещё нет по построению, и честный ответ «нечего смотреть» превратился
+# бы в постоянный шум там, где вердикт как раз и вырабатывается.
+CI_VERDICT_LINE=""
+if body_runs; then
+    CI_STATUS_OUT=$(bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
+        bash "$ROOT/scripts/guards/check-ci-status.sh" 2>&1 || true)
+    printf '%s\n' "$CI_STATUS_OUT"
+    CI_VERDICT_LINE=$(printf '%s\n' "$CI_STATUS_OUT" | grep -m1 '^check-ci-status: ' || true)
+fi
 
 # Срок 60→240 (2026-08-11): шаг упёрся в предел и стал отказом «шаг ничего не
 # доказал» (№475) — не из-за кириллицы, а потому что история, которую он
@@ -355,40 +483,40 @@ CI_VERDICT_LINE=$(printf '%s\n' "$CI_STATUS_OUT" | grep -m1 '^check-ci-status: '
 #
 # Срок 240 оставлен как ЗАПАС на первый прогон в свежем клоне, где отметки
 # ещё нет: там честно нужны минуты, и это не повод считать шаг недоказанным.
-step "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
+step loop "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
 guard --deadline 240 "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
-step "устаревшие пометки «не реализован» в спеке (№557)"
+step loop "устаревшие пометки «не реализован» в спеке (№557)"
 guard "$ROOT/scripts/guards/check-stale-unimplemented.sh" "$ROOT" \
     || fail "спека объявляет нереализованным то, что план считает сделанным"
 
-step "рабочие деревья только в d:/Sources/nv-lang (№561)"
+step loop "рабочие деревья только в d:/Sources/nv-lang (№561)"
 guard "$ROOT/scripts/guards/check-worktree-location.sh" "$ROOT" \
     || fail "worktree вне дозволенного корня"
 
-step "страница правил называет всех стражей (№560)"
+step loop "страница правил называет всех стражей (№560)"
 guard "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
     || fail "страж без объяснения на странице правил"
 
 # №565: локальный гейт судит НЕ ТО ДЕРЕВО, что судит внешний мир — локально
 # активен `nova.override.toml`, которого в коммите нет. Шаг собирает флагман во
 # временном дереве из HEAD. Дорогой (минуты), поэтому под сроком.
-step "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
+step full "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
 guard --deadline 600 "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
     || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
 # №578: флаг, который никто не взводит и нигде не описывает, снаружи
 # неотличим от несделанной работы (прецедент — №575, много-TU).
 # №612: второго индекса планов не бывает — рукописная сводка расходится молча.
-step "второго индекса планов нет (№612)"
+step loop "второго индекса планов нет (№612)"
 guard "$ROOT/scripts/guards/check-no-handwritten-plan-index.sh" "$ROOT" \
     || fail "рукописная сводка планов вернулась"
 
 # D456/№568/№579: граница эффекта — API на Nova, а не таблица системных вызовов.
 # Правило жило прозой с 2026-08-11 без единого механизма, и обход в `Net.lookup`
 # прожил недели, защищённый комментарием, учившим несуществующему ограничению.
-step "форма границы эффекта (D456 — не таблица системных вызовов)"
+step loop "форма границы эффекта (D456 — не таблица системных вызовов)"
 guard "$ROOT/scripts/guards/check-effect-boundary-shape.sh" "$ROOT" \
     || fail "на границе эффекта прибавилось C-форм (сырая ручка, out-параметр, счётчик рядом с данными)"
 
@@ -397,22 +525,22 @@ guard "$ROOT/scripts/guards/check-effect-boundary-shape.sh" "$ROOT" \
 # давно влитое как отсутствующее.
 # №637/№643: текст, испорченный «UTF-8 прочитан как CP1251», состоит из законных
 # символов — его не видит ни страж управляющих байтов, ни док-конвенции.
-step "текст не испорчен мохибейком (№637)"
+step loop "текст не испорчен мохибейком (№637)"
 guard "$ROOT/scripts/guards/check-no-mojibake.sh" "$ROOT" \
     || fail "в дереве прибавилось испорченного текста (UTF-8 прочитан как CP1251)"
 
-step "поглощение ветки сверяют предком, не диффом (№629)"
+step loop "поглощение ветки сверяют предком, не диффом (№629)"
 guard "$ROOT/scripts/guards/check-branch-absorption-method.sh" "$ROOT" \
     || fail "трёхточечный дифф судит о ветках либо потеряна дверь branch-absorbed.sh"
 
 # №608/№609: публичная страница на двух языках, и имя стороны не лжёт.
-step "публичные страницы парны и на своих языках (№608, №609)"
+step loop "публичные страницы парны и на своих языках (№608, №609)"
 guard "$ROOT/scripts/guards/check-doc-language-pairs.sh" "$ROOT" \
     || fail "страницы без пары или сторона не на своём языке"
 
 # №TBD-plan-dup: один и тот же абзац в двух разделах плана — план,
 # который начнёт врать по частям.
-step "дословные повторы между разделами планов"
+step loop "дословные повторы между разделами планов"
 guard "$ROOT/scripts/guards/check-plan-duplication.py" "$ROOT" \
     || fail "дословный повтор между разделами плана вырос"
 
@@ -420,20 +548,27 @@ guard "$ROOT/scripts/guards/check-plan-duplication.py" "$ROOT" \
 # механизмом, иначе живёт до первого шага, написанного по образцу соседней
 # строки. Стоит РАНЬШЕ остальных: если сама форма шагов сломана, вердикты
 # нижележащих шагов ничего не стоят.
-step "шаги гейта требуют от стража его собственную строку (П1 №4, №645, №647)"
+step loop "шаги гейта требуют от стража его собственную строку (П1 №4, №645, №647)"
 guard "$ROOT/scripts/guards/check-gate-steps-assert.sh" "$ROOT" \
     || fail "шаг гейта засчитывает ноль без доказательства"
+
+# Г4: ярусы держатся не текстом конвенции, а тем, что дешёвый ярус ОСТАЁТСЯ
+# дешёвым. Механизм бюджета можно вырезать одной строкой и не заметить —
+# этот страж следит, чтобы его не сняли и не выхолостили.
+step loop "бюджет яруса на месте и не выхолощен (Г1..Г7, механизм окна 274)"
+guard "$ROOT/scripts/guards/check-gate-budget.py" "$ROOT" \
+    || fail "механизм бюджета яруса снят или выхолощен (docs/dev/gate-guard-conventions.md, раздел «Механизм»)"
 
 # №646: ссылка на коммит обязана вести туда, где что-то есть. Храповик, а не
 # долг к погашению: вычистка истории 2026-08-13 оставила мёртвыми 828 из 2769
 # хешей, названных в доке. Смысл шага — поймать СЛЕДУЮЩЕЕ переписывание
 # истории до отправки в зеркала, а не после.
-step "ссылки на коммиты в доке (мёртвые хеши, зеркала, ссылка без темы)"
+step loop "ссылки на коммиты в доке (мёртвые хеши, зеркала, ссылка без темы)"
 guard "$ROOT/scripts/guards/check-commit-refs.sh" "$ROOT" \
     || fail "новых мёртвых ссылок на коммиты прибавилось"
 
 # №TBD-secrets: секрет вреден самим фактом попадания в историю.
-step "секреты в дереве (ключи, токены, пароль внутри URL)"
+step loop "секреты в дереве (ключи, токены, пароль внутри URL)"
 # ЛИТЕРАЛЬНЫЙ ОБРАТНЫЙ СЛЭШ С БУКВОЙ N ВМЕСТО ПЕРЕНОСА СТРОКИ (реестр 221.1
 # №645). До 2026-08-14 здесь между корнем и «или отказ» стояли два ЛИТЕРАЛЬНЫХ
 # символа вместо настоящего переноса; пример этой формы в комментарии не
@@ -448,41 +583,64 @@ guard "$ROOT/scripts/guards/check-staged-secrets.sh" --tree "$ROOT" \
 
 # №TBD-control-chars: невидимый управляющий байт в исходнике — код, который
 # читается верным и работает неверным (перенесено из соседнего проекта).
-step "невидимые управляющие байты в исходниках"
+step loop "невидимые управляющие байты в исходниках"
 guard "$ROOT/scripts/guards/check-no-control-chars.sh" "$ROOT" \
     || fail "управляющие байты в исходниках"
 
 # №607: корень публичного репозитория — витрина, а не стол.
-step "в корне репозитория только предусмотренное (№607)"
+step loop "в корне репозитория только предусмотренное (№607)"
 guard "$ROOT/scripts/guards/check-repo-root-clean.sh" "$ROOT" \
     || fail "в корне лежит непредусмотренное"
-step "no-machine-paths (путь к машине владельца не пишется, а выводится — №698)"
+step loop "no-machine-paths (путь к машине владельца не пишется, а выводится — №698)"
 guard "$ROOT/scripts/guards/check-no-machine-paths.sh" "$ROOT" || fail "абсолютный путь к машине в отслеживаемом скрипте (№698)"
 
 # №597: код возврата обёртки — не код возврата сборки.
-step "фоновая сборка проверяет результат, а не код обёртки (№597)"
+step loop "фоновая сборка проверяет результат, а не код обёртки (№597)"
 guard "$ROOT/scripts/guards/check-background-build-verified.sh" "$ROOT" \
     || fail "фоновая сборка без проверки результата"
 
 # №594: реестр говорит «закрыто», а ветки в `main` нет — следующий будет
 # искать несуществующее. 2026-08-11 так пролежала ветка плана 270.
-step "принятая в реестре работа влита (№594)"
+step loop "принятая в реестре работа влита (№594)"
 guard "$ROOT/scripts/guards/check-accepted-branch-merged.sh" "$ROOT" \
     || fail "работа принята в реестре, но её ветка не влита"
 
-step "у каждого флага NOVA_* есть вызывающий или описание (№578)"
+step loop "у каждого флага NOVA_* есть вызывающий или описание (№578)"
 guard "$ROOT/scripts/guards/check-flag-has-caller.sh" "$ROOT" \
     || fail "флаг NOVA_* без вызывающего и без описания"
 
-step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
+step loop "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
 guard "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
 
-step "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
+step loop "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
 guard "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"
 
-step "самотесты стражей (все из каталога, параллельно)"
+# ТРИ СТРАЖА, КОТОРЫХ НЕ ЗВАЛ НИКТО (План 275 Ф.3, ГТ8).
+#
+# После того как CI начал звать этот файл, без внешнего вызывающего
+# осталось трое — и их не звал даже гейт. Все три текстовые,
+# вместе 6+1+0 секунд (замер 2026-08-23), то есть ярус loop.
+#
+# Цена того, что их не звали, предъявлена тем же запуском: первый же
+# прогон check-lsp-launch-path вернул КРАСНОЕ — страж сравнивал НАПИСАНИЕ
+# пути, а не путь, и ложно краснел на ЛЮБОМ дереве без `target/`, то есть
+# на каждом чекауте CI. Починен тем же коммитом, с четвёртым случаем
+# самопроверки (POS2: несобранное дерево обязано быть зелёным).
+step loop "входы чекера идут через prepare_module_for_check"
+guard "$ROOT/scripts/guards/check-checker-entrypoints.sh" "$ROOT" \
+    || fail "прямой вызов check_module* мимо prepare_module_for_check"
+
+step loop "путь сборки nova-lsp == путь запуска редактором (№531)"
+guard "$ROOT/scripts/guards/check-lsp-launch-path.sh" "$ROOT" \
+    || fail "nova-lsp собирается не туда, откуда его запускает редактор"
+
+step loop "статус-таблицы не пишутся руками"
+guard "$ROOT/scripts/guards/check-no-manual-status-table.sh" "$ROOT" \
+    || fail "рукописная статус-таблица вместо сгенерированной"
+
+step full "самотесты стражей (все из каталога, параллельно)"
 # ЕДИНСТВЕННОЕ место, где они запускаются. Каталог обходится целиком,
 # поэтому новый самотест подхватывается сам — дописывать его в gate.sh
 # не нужно и, значит, нельзя забыть.
@@ -502,137 +660,146 @@ step "самотесты стражей (все из каталога, пара�
 # а не кодом возврата: `xargs` иначе оборвал бы очередь на первом упавшем, и
 # про остальные мы бы не узнали — ровно та слепота, из-за которой гейт вообще
 # копит отказы, а не выходит на первом.
-SELFTEST_JOBS="${NOVA_GATE_SELFTEST_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
-[ "$SELFTEST_JOBS" -ge 1 ] || SELFTEST_JOBS=1
-# КАЛИБРОВКА СРОКОВ (реестр 221.1 №558/№475, замер 2026-08-17).
-# Пределы самотестов стояли константами, а пропускная способность машины
-# меняется в разы от посторонней нагрузки: один и тот же набор под `-P 8`
-# завершил 37 штук за 120с на свободной машине и 22 за те же 120с при
-# работающем рядом воркфлоу. Прогон 18 покраснел ровно так — самотест на 46с
-# был убит пределом 300с. Здесь машина измеряет свою занятость сама, ОДИН раз
-# на весь цикл, и число печатается: молчаливая калибровка ничем не лучше
-# молчаливой константы.
-NOVA_CAL_FACTOR=$(bash "$ROOT/scripts/tools/cal-factor.sh" "$ROOT" 2>/dev/null)
-case "$NOVA_CAL_FACTOR" in ''|*[!0-9]*) NOVA_CAL_FACTOR=1 ;; esac
-export NOVA_CAL_FACTOR
-echo "selftest :: множитель сроков ${NOVA_CAL_FACTOR}x (калибровка машины, cal-factor.baseline)"
-SELFTEST_FAILDIR="${TMPDIR:-/tmp}/gate_selftest_fails_$$"
-rm -rf "$SELFTEST_FAILDIR"
-mkdir -p "$SELFTEST_FAILDIR"
-find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print0 2>/dev/null \
-    | xargs -0 -r -P "$SELFTEST_JOBS" -I{} \
-        bash "$ROOT/scripts/tools/run-guard-selftest.sh" {} "$SELFTEST_FAILDIR" "$ROOT"
-for _f in "$SELFTEST_FAILDIR"/*; do
-    [ -e "$_f" ] || continue
-    fail "самотест стража: $(basename "$_f")"
-done
-rm -rf "$SELFTEST_FAILDIR"
+if body_runs; then
+    SELFTEST_JOBS="${NOVA_GATE_SELFTEST_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+    [ "$SELFTEST_JOBS" -ge 1 ] || SELFTEST_JOBS=1
+    # КАЛИБРОВКА СРОКОВ (реестр 221.1 №558/№475, замер 2026-08-17).
+    # Пределы самотестов стояли константами, а пропускная способность машины
+    # меняется в разы от посторонней нагрузки: один и тот же набор под `-P 8`
+    # завершил 37 штук за 120с на свободной машине и 22 за те же 120с при
+    # работающем рядом воркфлоу. Прогон 18 покраснел ровно так — самотест на 46с
+    # был убит пределом 300с. Машина измеряет свою занятость сама, ОДИН раз на
+    # прогон (замер поднят к началу гейта — им же масштабируется бюджет яруса),
+    # и число печатается: молчаливая калибровка ничем не лучше молчаливой
+    # константы.
+    echo "selftest :: множитель сроков ${NOVA_CAL_FACTOR}x (калибровка машины, cal-factor.baseline)"
+    SELFTEST_FAILDIR="${TMPDIR:-/tmp}/gate_selftest_fails_$$"
+    rm -rf "$SELFTEST_FAILDIR"
+    mkdir -p "$SELFTEST_FAILDIR"
+    find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print0 2>/dev/null \
+        | xargs -0 -r -P "$SELFTEST_JOBS" -I{} \
+            bash "$ROOT/scripts/tools/run-guard-selftest.sh" {} "$SELFTEST_FAILDIR" "$ROOT"
+    for _f in "$SELFTEST_FAILDIR"/*; do
+        [ -e "$_f" ] || continue
+        fail "самотест стража: $(basename "$_f")"
+    done
+    rm -rf "$SELFTEST_FAILDIR"
+fi
 
 # Самотесты ПЕРЕХВАТЧИКОВ (`scripts/claude-hooks/`) — отдельным шагом: они на
 # python и живут в другом каталоге. Перехватчик правит поведение агента, а не
 # дерево, поэтому его поломка невидима — он просто перестаёт срабатывать
 # (реестр №630: правило про PowerShell завели в тот же день, когда на нём же
 # и обожглись).
-step "самотесты перехватчиков (claude-hooks)"
-for _ht in "$ROOT"/scripts/claude-hooks/selftest/test-*.py; do
-    [ -e "$_ht" ] || continue
-    bash "$ROOT/scripts/tools/with-deadline.sh" 120 python "$_ht" \
-        || fail "самотест перехватчика: $(basename "$_ht")"
-done
-
-step "cargo build --release"
-( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
-# Имя бинаря знает ОДНА дверь: на Linux он зовётся `nova`, и жёсткая
-# привязка к `.exe` роняла этот гейт на первой же строке (2026-08-18).
-. "$ROOT/scripts/guards/lib/novac.sh"
-NOVA="$(novac_find_oracle "$ROOT" || true)"
-[ -n "$NOVA" ] || fail "oracle binary not found under $ROOT/nova-cli/target/release"
-
-# РУБЕЖ ПЕРЕД ДОРОГИМ ШАГОМ. Всё выше — дешёвые стражи (секунды); мега-CU
-# идёт около 37 минут. Если дерево не прошло дешёвое, тратить их незачем,
-# но и обрывать на ПЕРВОЙ находке незачем тоже — здесь сообщаются ВСЕ.
-gate_barrier
-
-step "mega-CU (spec_tests/conformance, one CU)"
-MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
-_MEGA_T0=$(date +%s)
-# `--jobs` = половина ядер, а НЕ все (разведка p259-gate-speed, 2026-08-09).
-# Замер на одном и том же чанке из 193 работ: `--jobs 8` — стенка 160 с при
-# сумме занятости 1049 с; `--jobs 16` — стенка 154 с при сумме 2054 с. То есть
-# удвоение воркеров даёт +4% пропускной способности и РОВНО ВДВОЕ худшую
-# латентность каждой работы. А длительность шага определяется длинным полюсом —
-# одной работой, — и его шестнадцать воркеров тормозят вдвое ни за что.
-MEGA_JOBS="${NOVA_GATE_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
-[ "$MEGA_JOBS" -ge 1 ] 2>/dev/null || MEGA_JOBS=4
-echo "mega-CU :: --jobs $MEGA_JOBS"
-"$NOVA" test --positive --compile-error --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
-MEGA_EXIT=$?
-_MEGA_SEC=$(( $(date +%s) - _MEGA_T0 ))
-# ── Храповик ВРЕМЕНИ мега-CU (реестр 221.1 №437) ─────────────────────────────
-# ЗАЧЕМ: №437 (замедление чекера ~4x) и №429 (регресс латентности) оба прожили
-# незамеченными, потому что скорость мы меряем только когда случайно заглянем.
-# Этот шаг делает время ВИДИМЫМ на каждом прогоне.
-# ДИЗАЙН — ИНФОРМАЦИОННЫЙ, НЕ блокирующий: wall-time шумит (скорость машины,
-# фоновая нагрузка), и жёсткий порог ложно ронял бы гейт. Урок 2026-08-07:
-# «деградация чекера» оказалась частично артефактом замера под нагрузкой
-# конкурирующих окон (p-stability подтвердил паритет латентности в ЧИСТОМ замере).
-# Поэтому: печатаем время и дельту ВСЕГДА; ГРОМКО предупреждаем при росте >50%;
-# гейт НЕ роняем (никакой fail). Порог 1.5x ловит алгоритмический скачок (×4 у
-# №437 закричал бы), но переживает 20-30% шума машины.
-_MEGA_TIME_BASE="$ROOT/scripts/guards/mega-cu-time.baseline"
-_MEGA_BASE=$(grep -E '^seconds=' "$_MEGA_TIME_BASE" 2>/dev/null | head -1 | cut -d= -f2)
-if [ -n "$_MEGA_BASE" ] && [ "$_MEGA_BASE" -gt 0 ] 2>/dev/null; then
-    _MEGA_PCT=$(( (_MEGA_SEC - _MEGA_BASE) * 100 / _MEGA_BASE ))
-    echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline ${_MEGA_BASE}s, дельта ${_MEGA_PCT}%)"
-    if [ "$_MEGA_SEC" -gt $(( _MEGA_BASE * 3 / 2 )) ]; then
-        echo "  ⚠️  МЕГА-CU МЕДЛЕННЕЕ БАЗЫ БОЛЕЕ ЧЕМ НА 50% (№437-класс)." >&2
-        echo "  ⚠️  Проверь нагрузку машины (tasklist | grep cargo/clang); если чисто —" >&2
-        echo "  ⚠️  это НАСТОЯЩИЙ регресс скорости, замерь профиль. Гейт НЕ роняю (шум)." >&2
-    fi
-else
-    echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline не задан — см. scripts/guards/mega-cu-time.baseline)"
+step full "самотесты перехватчиков (claude-hooks)"
+if body_runs; then
+    for _ht in "$ROOT"/scripts/claude-hooks/selftest/test-*.py; do
+        [ -e "$_ht" ] || continue
+        bash "$ROOT/scripts/tools/with-deadline.sh" 120 python "$_ht" \
+            || fail "самотест перехватчика: $(basename "$_ht")"
+    done
 fi
-MEGA_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
-echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
-# -- Храповик ЧИСЛА SKIP мега-CU (реестр 221.1 №453б) -------------------------
-# ЗАЧЕМ: гейт ассертил только PASS/FAIL -- уехавшая из корпуса фикстура (не
-# компилируется вовсе, лейн-исключена без видимой строки, неизвестный
-# EXPECT_* тихо не проверяет ничего) не даёт ни PASS, ни FAIL и была НЕВИДИМА
-# ПРИНЦИПИАЛЬНО (№453). SKIP-строка печатается ("PASS: N  FAIL: M  SKIP: K
-# (skipped)") ТОЛЬКО когда K>0 -- при K==0 хвост "SKIP: ..." в строке
-# отсутствует вовсе, поэтому явно дефолтим на 0, а не считаем это ошибкой.
-# В ОТЛИЧИЕ от mega-cu-time.baseline (шум машины -> только предупреждение) --
-# рост SKIP ЖЁСТКО роняет гейт: снижение (фикстуру осознанно убрали/перевели
-# лейн) принимается, база обновляется вручную с летописью в baseline-файле.
-_MEGA_SKIP=$(echo "$MEGA_LINE" | grep -oE "SKIP: [0-9]+" | grep -oE "[0-9]+" | head -1)
-[ -n "$_MEGA_SKIP" ] || _MEGA_SKIP=0
-_MEGA_SKIP_BASE_FILE="$ROOT/scripts/guards/mega-cu-skip.baseline"
-_MEGA_SKIP_BASE=$(grep -E '^skips=' "$_MEGA_SKIP_BASE_FILE" 2>/dev/null | head -1 | cut -d= -f2)
-if [ -n "$_MEGA_SKIP_BASE" ] && [ "$_MEGA_SKIP_BASE" -ge 0 ] 2>/dev/null; then
-    echo "mega-CU SKIP: ${_MEGA_SKIP} (baseline ${_MEGA_SKIP_BASE})"
-    if [ "$_MEGA_SKIP" -gt "$_MEGA_SKIP_BASE" ]; then
-        fail "mega-CU SKIP вырос: ${_MEGA_SKIP} > baseline ${_MEGA_SKIP_BASE} (№453-класс -- фикстуры молча уехали из гейта; см. $_MEGA_SKIP_BASE_FILE и $MEGA_LOG). Если рост осознанный (лейн/маркер сменился законно) -- обнови skips= в baseline-файле с летописью."
-    fi
-else
-    fail "mega-CU SKIP: baseline не задан или некорректен ($_MEGA_SKIP_BASE_FILE) -- храповик №453(б) не может проверить рост SKIP"
-fi
-# Строка PASS/FAIL ОБЯЗАНА присутствовать: краш компилятора её не печатает вовсе,
-# и наивный фильтр молча роняет — тогда «зелено» означает «ничего не увидел».
-echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
-    || fail "mega-CU: строки PASS/FAIL нет вовсе (краш не печатает её — см. $MEGA_LOG)"
-# 2026-07-30: whitelist СНЯТ — мега-CU впервые полностью зелёный (591/0/67).
-# История, чтобы не завели снова «на всякий случай»: whitelist допускал ровно один
-# красный по ИМЕНИ `a_q3_println_debug_record`. Имя оказалось ЛОЖНЫМ — раннер
-# приписывал падение первому по алфавиту файлу слитого CU, а сам `a_q3` был невиновен
-# (изолированно 5/5). Настоящих виновников оказалось трое, слоями: `d62` (NULL-deref
-# handler'а, реестр №158) прятал `Tagged` (гейт №136 бил по TurboFish-форме, №159),
-# который прятал третий дефект. Каждый обрывал прогон раньше следующего.
-# Мораль: whitelist по имени в слитом CU — не смягчение, а слепое пятно. Если красный
-# вернётся — чинить, а не заносить в исключения.
-[ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
-echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
 
-step "conformance-full (лейны panic/exit/timeout — их не гонял НИКТО)"
+step push "cargo build --release"
+if body_runs; then
+    ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
+    NOVA="$ROOT/nova-cli/target/release/nova.exe"
+    # Имя бинаря зависит от платформы, и до 2026-08-22 здесь стояло только
+    # `nova.exe`: на Linux шаг падал бы «nova.exe not found» на успешно
+    # собранном компиляторе. Пока гейт звал только человек с Windows, это было
+    # невидимо; ярус `push` зовёт CI на ubuntu. Ровно тот же двухстрочный отбор
+    # уже стоит у стражей check-clean-checkout-build и check-process-exit-under-pool.
+    [ -x "$NOVA" ] || NOVA="$ROOT/nova-cli/target/release/nova"
+    [ -x "$NOVA" ] || fail "компилятор не собран: нет ни nova.exe, ни nova в $ROOT/nova-cli/target/release"
+
+    # РУБЕЖ ПЕРЕД ДОРОГИМ ШАГОМ. Всё выше — дешёвые стражи (секунды); мега-CU
+    # идёт около 37 минут. Если дерево не прошло дешёвое, тратить их незачем,
+    # но и обрывать на ПЕРВОЙ находке незачем тоже — здесь сообщаются ВСЕ.
+    gate_barrier
+fi
+
+step push "mega-CU (spec_tests/conformance, one CU)"
+if body_runs; then
+    MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
+    _MEGA_T0=$(date +%s)
+    # `--jobs` = половина ядер, а НЕ все (разведка p259-gate-speed, 2026-08-09).
+    # Замер на одном и том же чанке из 193 работ: `--jobs 8` — стенка 160 с при
+    # сумме занятости 1049 с; `--jobs 16` — стенка 154 с при сумме 2054 с. То есть
+    # удвоение воркеров даёт +4% пропускной способности и РОВНО ВДВОЕ худшую
+    # латентность каждой работы. А длительность шага определяется длинным полюсом —
+    # одной работой, — и его шестнадцать воркеров тормозят вдвое ни за что.
+    MEGA_JOBS="${NOVA_GATE_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+    [ "$MEGA_JOBS" -ge 1 ] 2>/dev/null || MEGA_JOBS=4
+    echo "mega-CU :: --jobs $MEGA_JOBS"
+    "$NOVA" test --positive --compile-error --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
+    MEGA_EXIT=$?
+    _MEGA_SEC=$(( $(date +%s) - _MEGA_T0 ))
+    # ── Храповик ВРЕМЕНИ мега-CU (реестр 221.1 №437) ─────────────────────────────
+    # ЗАЧЕМ: №437 (замедление чекера ~4x) и №429 (регресс латентности) оба прожили
+    # незамеченными, потому что скорость мы меряем только когда случайно заглянем.
+    # Этот шаг делает время ВИДИМЫМ на каждом прогоне.
+    # ДИЗАЙН — ИНФОРМАЦИОННЫЙ, НЕ блокирующий: wall-time шумит (скорость машины,
+    # фоновая нагрузка), и жёсткий порог ложно ронял бы гейт. Урок 2026-08-07:
+    # «деградация чекера» оказалась частично артефактом замера под нагрузкой
+    # конкурирующих окон (p-stability подтвердил паритет латентности в ЧИСТОМ замере).
+    # Поэтому: печатаем время и дельту ВСЕГДА; ГРОМКО предупреждаем при росте >50%;
+    # гейт НЕ роняем (никакой fail). Порог 1.5x ловит алгоритмический скачок (×4 у
+    # №437 закричал бы), но переживает 20-30% шума машины.
+    _MEGA_TIME_BASE="$ROOT/scripts/guards/mega-cu-time.baseline"
+    _MEGA_BASE=$(grep -E '^seconds=' "$_MEGA_TIME_BASE" 2>/dev/null | head -1 | cut -d= -f2)
+    if [ -n "$_MEGA_BASE" ] && [ "$_MEGA_BASE" -gt 0 ] 2>/dev/null; then
+        _MEGA_PCT=$(( (_MEGA_SEC - _MEGA_BASE) * 100 / _MEGA_BASE ))
+        echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline ${_MEGA_BASE}s, дельта ${_MEGA_PCT}%)"
+        if [ "$_MEGA_SEC" -gt $(( _MEGA_BASE * 3 / 2 )) ]; then
+            echo "  ⚠️  МЕГА-CU МЕДЛЕННЕЕ БАЗЫ БОЛЕЕ ЧЕМ НА 50% (№437-класс)." >&2
+            echo "  ⚠️  Проверь нагрузку машины (tasklist | grep cargo/clang); если чисто —" >&2
+            echo "  ⚠️  это НАСТОЯЩИЙ регресс скорости, замерь профиль. Гейт НЕ роняю (шум)." >&2
+        fi
+    else
+        echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline не задан — см. scripts/guards/mega-cu-time.baseline)"
+    fi
+    MEGA_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
+    echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
+    # -- Храповик ЧИСЛА SKIP мега-CU (реестр 221.1 №453б) -------------------------
+    # ЗАЧЕМ: гейт ассертил только PASS/FAIL -- уехавшая из корпуса фикстура (не
+    # компилируется вовсе, лейн-исключена без видимой строки, неизвестный
+    # EXPECT_* тихо не проверяет ничего) не даёт ни PASS, ни FAIL и была НЕВИДИМА
+    # ПРИНЦИПИАЛЬНО (№453). SKIP-строка печатается ("PASS: N  FAIL: M  SKIP: K
+    # (skipped)") ТОЛЬКО когда K>0 -- при K==0 хвост "SKIP: ..." в строке
+    # отсутствует вовсе, поэтому явно дефолтим на 0, а не считаем это ошибкой.
+    # В ОТЛИЧИЕ от mega-cu-time.baseline (шум машины -> только предупреждение) --
+    # рост SKIP ЖЁСТКО роняет гейт: снижение (фикстуру осознанно убрали/перевели
+    # лейн) принимается, база обновляется вручную с летописью в baseline-файле.
+    _MEGA_SKIP=$(echo "$MEGA_LINE" | grep -oE "SKIP: [0-9]+" | grep -oE "[0-9]+" | head -1)
+    [ -n "$_MEGA_SKIP" ] || _MEGA_SKIP=0
+    _MEGA_SKIP_BASE_FILE="$ROOT/scripts/guards/mega-cu-skip.baseline"
+    _MEGA_SKIP_BASE=$(grep -E '^skips=' "$_MEGA_SKIP_BASE_FILE" 2>/dev/null | head -1 | cut -d= -f2)
+    if [ -n "$_MEGA_SKIP_BASE" ] && [ "$_MEGA_SKIP_BASE" -ge 0 ] 2>/dev/null; then
+        echo "mega-CU SKIP: ${_MEGA_SKIP} (baseline ${_MEGA_SKIP_BASE})"
+        if [ "$_MEGA_SKIP" -gt "$_MEGA_SKIP_BASE" ]; then
+            fail "mega-CU SKIP вырос: ${_MEGA_SKIP} > baseline ${_MEGA_SKIP_BASE} (№453-класс -- фикстуры молча уехали из гейта; см. $_MEGA_SKIP_BASE_FILE и $MEGA_LOG). Если рост осознанный (лейн/маркер сменился законно) -- обнови skips= в baseline-файле с летописью."
+        fi
+    else
+        fail "mega-CU SKIP: baseline не задан или некорректен ($_MEGA_SKIP_BASE_FILE) -- храповик №453(б) не может проверить рост SKIP"
+    fi
+    # Строка PASS/FAIL ОБЯЗАНА присутствовать: краш компилятора её не печатает вовсе,
+    # и наивный фильтр молча роняет — тогда «зелено» означает «ничего не увидел».
+    echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
+        || fail "mega-CU: строки PASS/FAIL нет вовсе (краш не печатает её — см. $MEGA_LOG)"
+    # 2026-07-30: whitelist СНЯТ — мега-CU впервые полностью зелёный (591/0/67).
+    # История, чтобы не завели снова «на всякий случай»: whitelist допускал ровно один
+    # красный по ИМЕНИ `a_q3_println_debug_record`. Имя оказалось ЛОЖНЫМ — раннер
+    # приписывал падение первому по алфавиту файлу слитого CU, а сам `a_q3` был невиновен
+    # (изолированно 5/5). Настоящих виновников оказалось трое, слоями: `d62` (NULL-deref
+    # handler'а, реестр №158) прятал `Tagged` (гейт №136 бил по TurboFish-форме, №159),
+    # который прятал третий дефект. Каждый обрывал прогон раньше следующего.
+    # Мораль: whitelist по имени в слитом CU — не смягчение, а слепое пятно. Если красный
+    # вернётся — чинить, а не заносить в исключения.
+    [ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
+    echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
+fi
+
+step push "conformance-full (лейны panic/exit/timeout — их не гонял НИКТО)"
 # ЗАЧЕМ. Мега-CU выше идёт с `--positive --compile-error`. Фикстуры с
 # `EXPECT_RUNTIME_PANIC` (32), `EXPECT_EXIT_CODE` (6) и `EXPECT_TIMEOUT_MS` (16)
 # в эти лейны не попадают — храповик SKIP (№453б) лишь СЧИТАЛ их пропущенными и
@@ -646,54 +813,67 @@ step "conformance-full (лейны panic/exit/timeout — их не гонял �
 # ПОЧЕМУ СВЕРКА МНОЖЕСТВА, А НЕ ЧИСЛА. Храповик «не больше N красных» пропустил
 # бы подмену одного красного другим — страж ни о чём (класс F1, №645). Поэтому
 # сверяются ИМЕНА, а список красных явный и с причинами.
-FULL_LOG="${TMPDIR:-/tmp}/gate_full_$$.log"
-FULL_KNOWN="$ROOT/scripts/guards/conformance-known-red.list"
-"$NOVA" test --full --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$FULL_LOG" 2>&1
-FULL_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
-echo "conformance-full :: $FULL_LINE"
-echo "$FULL_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
-    || fail "conformance-full: строки PASS/FAIL нет вовсе (краш её не печатает — см. $FULL_LOG)"
+if body_runs; then
+    FULL_LOG="${TMPDIR:-/tmp}/gate_full_$$.log"
+    FULL_KNOWN="$ROOT/scripts/guards/conformance-known-red.list"
+    "$NOVA" test --full --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$FULL_LOG" 2>&1
+    FULL_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
+    echo "conformance-full :: $FULL_LINE"
+    echo "$FULL_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
+        || fail "conformance-full: строки PASS/FAIL нет вовсе (краш её не печатает — см. $FULL_LOG)"
 
-# Имена упавших. Маркеры перечислены явно; если какой-то вид отказа сюда не
-# попал — это ловится самопроверкой ниже, а не проходит молча.
-FULL_BAD=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" \
-    | grep -E "^(NEG-[A-Z-]+|CC-FAIL|RUN-FAIL|CODEGEN-FAIL|MISMATCH|TIMEOUT|FAIL) +spec_tests/" \
-    | awk '{print $2}' | sort -u)
-FULL_BAD_N=$(printf '%s' "$FULL_BAD" | grep -c . || true)
-FULL_FAIL_N=$(echo "$FULL_LINE" | grep -oE "FAIL: [0-9]+" | grep -oE "[0-9]+" | head -1)
-[ -n "$FULL_FAIL_N" ] || FULL_FAIL_N=0
+    # Имена упавших. Маркеры перечислены явно; если какой-то вид отказа сюда не
+    # попал — это ловится самопроверкой ниже, а не проходит молча.
+    FULL_BAD=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" \
+        | grep -E "^(NEG-[A-Z-]+|CC-FAIL|RUN-FAIL|CODEGEN-FAIL|MISMATCH|TIMEOUT|FAIL) +spec_tests/" \
+        | awk '{print $2}' | sort -u)
+    FULL_BAD_N=$(printf '%s' "$FULL_BAD" | grep -c . || true)
+    FULL_FAIL_N=$(echo "$FULL_LINE" | grep -oE "FAIL: [0-9]+" | grep -oE "[0-9]+" | head -1)
+    [ -n "$FULL_FAIL_N" ] || FULL_FAIL_N=0
 
-# САМОПРОВЕРКА: сколько сказал итог — столько имён и обязано извлечься. Иначе
-# шаг сверяет НЕ ТО и «зелено» означает «не смог назвать».
-[ "$FULL_BAD_N" -eq "$FULL_FAIL_N" ] \
-    || fail "conformance-full: итог сообщает FAIL: $FULL_FAIL_N, а по именам извлеклось $FULL_BAD_N — вид отказа не разобран, шаг сверял бы не то (см. $FULL_LOG и список маркеров в gate.sh)"
+    # САМОПРОВЕРКА: сколько сказал итог — столько имён и обязано извлечься. Иначе
+    # шаг сверяет НЕ ТО и «зелено» означает «не смог назвать».
+    [ "$FULL_BAD_N" -eq "$FULL_FAIL_N" ] \
+        || fail "conformance-full: итог сообщает FAIL: $FULL_FAIL_N, а по именам извлеклось $FULL_BAD_N — вид отказа не разобран, шаг сверял бы не то (см. $FULL_LOG и список маркеров в gate.sh)"
 
-FULL_EXP=$(grep -vE '^\s*#' "$FULL_KNOWN" 2>/dev/null | awk '{print $1}' | grep -E '^spec_tests/' | sort -u)
-FULL_NEW=$(comm -23 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
-FULL_GONE=$(comm -13 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+    FULL_EXP=$(grep -vE '^\s*#' "$FULL_KNOWN" 2>/dev/null | awk '{print $1}' | grep -E '^spec_tests/' | sort -u)
+    FULL_NEW=$(comm -23 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+    FULL_GONE=$(comm -13 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
 
-if [ -n "$FULL_NEW" ]; then
-    printf '%s\n' "$FULL_NEW" | head -10 >&2
-    fail "conformance-full: красная фикстура вне списка известных ($FULL_KNOWN). Это лейн, который до 2026-08-19 не гонял никто — чини дефект, а не заноси в список; занесение только с номером строки реестра и причиной."
+    if [ -n "$FULL_NEW" ]; then
+        printf '%s\n' "$FULL_NEW" | head -10 >&2
+        fail "conformance-full: красная фикстура вне списка известных ($FULL_KNOWN). Это лейн, который до 2026-08-19 не гонял никто — чини дефект, а не заноси в список; занесение только с номером строки реестра и причиной."
+    fi
+    if [ -n "$FULL_GONE" ]; then
+        echo "  ЗАМЕТКА: позеленели и могут уйти из $FULL_KNOWN:" >&2
+        printf '  %s\n' "$FULL_GONE" >&2
+    fi
+    # СТРОКА «ok» ТОЛЬКО КОГДА ok. `fail` не выходит, а КОПИТ отказ
+    # (требование 2026-08-09), поэтому безусловный `echo` ниже печатался
+    # СРАЗУ ПОСЛЕ отказа. В первом же прогоне этого яруса на CI (2026-08-23)
+    # журнал содержал две соседние строки: «conformance-full ok: красных
+    # ровно столько» и тут же «GATE FAIL: красная фикстура вне списка».
+    # Всякий, кто грепает вердикт по слову ok, прочтёт первую — точно тот
+    # класс, что №7690 ниже в этом же файле («GATE OK» над списком отказов).
+    if [ -z "$FULL_NEW" ]; then
+        echo "conformance-full ok: красных ровно столько и ровно тех, что в списке"
+    fi
 fi
-if [ -n "$FULL_GONE" ]; then
-    echo "  ЗАМЕТКА: позеленели и могут уйти из $FULL_KNOWN:" >&2
-    printf '  %s\n' "$FULL_GONE" >&2
-fi
-echo "conformance-full ok: красных ровно столько и ровно тех, что в списке"
 
-step "check std/src (byte-canon)"
-STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/${ESC}\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
-echo "std :: $STD_LINE"
-# Канон 2026-07-29: PASS 147 / FAIL 26 / WARN 1078. Прежний «144/27/1057» устарел
-# и делал гейт красным на чистом main (факт до этого слияния — 146/27/1071: PASS/WARN
-# росли от новых файлов, это законно). FAIL опустился 27→26 в этом слиянии:
-# `testing/handlers/core.nv` получил недостающий `import std.time.duration`
-# ([M-inline-cast-receiver-method-resolution]). Оставшиеся 26 — ВСЕ neg-фикстуры
-# (проверено списком: ни одна не перестала падать). Ассертим ТОЛЬКО FAIL —
-# рост FAIL = регресс; сдвиг PASS/WARN от новых файлов законен и гейт ронять не должен.
-echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
-    || fail "check std: FAIL отклонился от канона 26 (все 26 — neg-фикстуры): '$STD_LINE'"
+step push "check std/src (byte-canon)"
+if body_runs; then
+    STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/${ESC}\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
+    echo "std :: $STD_LINE"
+    # Канон 2026-07-29: PASS 147 / FAIL 26 / WARN 1078. Прежний «144/27/1057» устарел
+    # и делал гейт красным на чистом main (факт до этого слияния — 146/27/1071: PASS/WARN
+    # росли от новых файлов, это законно). FAIL опустился 27→26 в этом слиянии:
+    # `testing/handlers/core.nv` получил недостающий `import std.time.duration`
+    # ([M-inline-cast-receiver-method-resolution]). Оставшиеся 26 — ВСЕ neg-фикстуры
+    # (проверено списком: ни одна не перестала падать). Ассертим ТОЛЬКО FAIL —
+    # рост FAIL = регресс; сдвиг PASS/WARN от новых файлов законен и гейт ронять не должен.
+    echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
+        || fail "check std: FAIL отклонился от канона 26 (все 26 — neg-фикстуры): '$STD_LINE'"
+fi
 
 # Реестр 221.1 №416 (2026-08-07): `.github/workflows/nova-lint.yml`
 # (`nova-lint-std-gate`) уже гоняет `nova lint --deny std` как ЖЁСТКИЙ
@@ -725,7 +905,7 @@ echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
 # CI — но пересечение неполное (два отказа только локальные, два только на CI).
 # Счётчик сказал бы «7 <= 8, всё хорошо» и скрыл бы `reflect_test`, который
 # до слияния группы M не падал вовсе.
-step "nova test std/src (то же, что гоняет CI — №591/№402)"
+step push "nova test std/src (то же, что гоняет CI — №591/№402)"
 # Сверка вынесена в СТРАЖ, а не живёт здесь: пока она была телом шага
 # гейта, CI позвать её было нечем, и он гонял `nova test std` голым —
 # любой известный отказ валил дорожку. Оттого внешний гейт был красен
@@ -735,21 +915,23 @@ step "nova test std/src (то же, что гоняет CI — №591/№402)"
 guard "$ROOT/scripts/guards/check-std-test-baseline.sh" "$ROOT" "$NOVA" \
     || fail "nova test std: отказ вне базы имён (подмена или регресс)"
 
-step "nova lint --deny std/src (0 findings — 221.1 №416)"
-LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"
-"$NOVA" lint --deny "$ROOT/std/src" >"$LINT_LOG" 2>&1
-LINT_EXIT=$?
-LINT_LINE=$(sed -e "s/\[[0-9;]*m//g" "$LINT_LOG" | grep -E "^lint: .* finding\(s\)" | tail -1)
-echo "lint std/src :: $LINT_LINE"
-# Строка "lint: N file(s), M finding(s), K denied (--deny, exit 1)" ОБЯЗАНА
-# присутствовать — краш линтера её не печатает вовсе, и голая проверка
-# exit-кода молча считала бы такой прогон непроверенным «зелёным» (то же
-# правило, что у mega-CU выше: PASS/FAIL строка ассертится ЯВНО).
-echo "$LINT_LINE" | grep -qE "finding\(s\)" \
-    || fail "nova lint std/src: строки 'N finding(s)' нет вовсе (краш? см. $LINT_LOG)"
-echo "$LINT_LINE" | grep -qE ", 0 finding\(s\)" \
-    || fail "nova lint std/src: находки > 0, ожидался канон 0 (см. $LINT_LOG): '$LINT_LINE'"
-[ "$LINT_EXIT" -eq 0 ] || fail "nova lint --deny std/src: exit=$LINT_EXIT (см. $LINT_LOG)"
+step push "nova lint --deny std/src (0 findings — 221.1 №416)"
+if body_runs; then
+    LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"
+    "$NOVA" lint --deny "$ROOT/std/src" >"$LINT_LOG" 2>&1
+    LINT_EXIT=$?
+    LINT_LINE=$(sed -e "s/\[[0-9;]*m//g" "$LINT_LOG" | grep -E "^lint: .* finding\(s\)" | tail -1)
+    echo "lint std/src :: $LINT_LINE"
+    # Строка "lint: N file(s), M finding(s), K denied (--deny, exit 1)" ОБЯЗАНА
+    # присутствовать — краш линтера её не печатает вовсе, и голая проверка
+    # exit-кода молча считала бы такой прогон непроверенным «зелёным» (то же
+    # правило, что у mega-CU выше: PASS/FAIL строка ассертится ЯВНО).
+    echo "$LINT_LINE" | grep -qE "finding\(s\)" \
+        || fail "nova lint std/src: строки 'N finding(s)' нет вовсе (краш? см. $LINT_LOG)"
+    echo "$LINT_LINE" | grep -qE ", 0 finding\(s\)" \
+        || fail "nova lint std/src: находки > 0, ожидался канон 0 (см. $LINT_LOG): '$LINT_LINE'"
+    [ "$LINT_EXIT" -eq 0 ] || fail "nova lint --deny std/src: exit=$LINT_EXIT (см. $LINT_LOG)"
+fi
 
 # Реестр 221.1 №416 (хвост, 2026-08-07, окно p416b): `.github/workflows/
 # nova-lint.yml` также гоняет `nova lint --deny spec_tests` (89 находок были
@@ -758,19 +940,21 @@ echo "$LINT_LINE" | grep -qE ", 0 finding\(s\)" \
 # корпус ФИКСТУР: часть находок в исходных 83 была НАМЕРЕННОЙ (неканоничная
 # форма — сам предмет теста), закрыта через `// nova:allow RULE -- причина`
 # с обоснованием (PROGRESS-p416b.md), не игнором строки/файла целиком.
-step "nova lint --deny spec_tests (0 findings — 221.1 №416 хвост)"
-LINT_LOG2="${TMPDIR:-/tmp}/gate_lint_spec_$$.log"
-"$NOVA" lint --deny "$ROOT/spec_tests" >"$LINT_LOG2" 2>&1
-LINT_EXIT2=$?
-LINT_LINE2=$(sed -e "s/\[[0-9;]*m//g" "$LINT_LOG2" | grep -E "^lint: .* finding\(s\)" | tail -1)
-echo "lint spec_tests :: $LINT_LINE2"
-echo "$LINT_LINE2" | grep -qE "finding\(s\)" \
-    || fail "nova lint spec_tests: строки 'N finding(s)' нет вовсе (краш? см. $LINT_LOG2)"
-echo "$LINT_LINE2" | grep -qE ", 0 finding\(s\)" \
-    || fail "nova lint spec_tests: находки > 0, ожидался канон 0 (см. $LINT_LOG2): '$LINT_LINE2'"
-[ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
+step push "nova lint --deny spec_tests (0 findings — 221.1 №416 хвост)"
+if body_runs; then
+    LINT_LOG2="${TMPDIR:-/tmp}/gate_lint_spec_$$.log"
+    "$NOVA" lint --deny "$ROOT/spec_tests" >"$LINT_LOG2" 2>&1
+    LINT_EXIT2=$?
+    LINT_LINE2=$(sed -e "s/\[[0-9;]*m//g" "$LINT_LOG2" | grep -E "^lint: .* finding\(s\)" | tail -1)
+    echo "lint spec_tests :: $LINT_LINE2"
+    echo "$LINT_LINE2" | grep -qE "finding\(s\)" \
+        || fail "nova lint spec_tests: строки 'N finding(s)' нет вовсе (краш? см. $LINT_LOG2)"
+    echo "$LINT_LINE2" | grep -qE ", 0 finding\(s\)" \
+        || fail "nova lint spec_tests: находки > 0, ожидался канон 0 (см. $LINT_LOG2): '$LINT_LINE2'"
+    [ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
+fi
 
-step "flagship examples --strict-effects (цели из общего с CI списка)"
+step push "flagship examples --strict-effects (цели из общего с CI списка)"
 # ПЯТЬ целей, а не одна. 2026-08-09: локальный гейт собирал только aggregator,
 # CI собирает пять — и первым же прогоном покраснел на examples/tls/echo_server.nv
 # (`undefined identifier session`, остаток переименования). Гейт, который слабее
@@ -783,32 +967,34 @@ step "flagship examples --strict-effects (цели из общего с CI сп�
 # Список — ФАЙЛОМ, общим с CI (2026-08-10). До этого он был записан дважды —
 # здесь и в workflow — и ничто не проверяло совпадение копий; тот же класс, что
 # №509/№524. Теперь добавление цели — одна строка в одном файле.
-FLAGSHIP_LIST="$ROOT/scripts/guards/flagship-targets.txt"
-[ -f "$FLAGSHIP_LIST" ] || fail "нет списка флагман-целей $FLAGSHIP_LIST"
-FLAG_FAILED=""
-FLAG_N=0
-tr -d "$(printf '\r')" < "$FLAGSHIP_LIST" > "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
-while read -r _fname _t _rest; do
-    case "$_fname" in ''|\#*) continue ;; esac
-    [ -n "$_t" ] || { echo "flagship :: строка без пути: $_fname"; FLAG_FAILED="$FLAG_FAILED $_fname"; continue; }
-    [ -f "$ROOT/$_t" ] || { echo "flagship :: НЕТ ФАЙЛА $_t"; FLAG_FAILED="$FLAG_FAILED $_fname"; continue; }
-    FLAG_N=$((FLAG_N + 1))
-    _flog="${TMPDIR:-/tmp}/gate_flagship_$$.log"
-    "$NOVA" build "$ROOT/$_t" --strict-effects >"$_flog" 2>&1
-    if [ $? -eq 0 ]; then
-        echo "flagship ok :: $_t"
-    else
-        echo "flagship FAIL :: $_t"
-        grep -m3 "error:" "$_flog" | sed 's/^/    /'
-        FLAG_FAILED="$FLAG_FAILED $_t"
-    fi
-    rm -f "$_flog"
-done < "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
-rm -f "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
-echo "flagship :: собрано $FLAG_N"
-[ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
+if body_runs; then
+    FLAGSHIP_LIST="$ROOT/scripts/guards/flagship-targets.txt"
+    [ -f "$FLAGSHIP_LIST" ] || fail "нет списка флагман-целей $FLAGSHIP_LIST"
+    FLAG_FAILED=""
+    FLAG_N=0
+    tr -d "$(printf '\r')" < "$FLAGSHIP_LIST" > "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
+    while read -r _fname _t _rest; do
+        case "$_fname" in ''|\#*) continue ;; esac
+        [ -n "$_t" ] || { echo "flagship :: строка без пути: $_fname"; FLAG_FAILED="$FLAG_FAILED $_fname"; continue; }
+        [ -f "$ROOT/$_t" ] || { echo "flagship :: НЕТ ФАЙЛА $_t"; FLAG_FAILED="$FLAG_FAILED $_fname"; continue; }
+        FLAG_N=$((FLAG_N + 1))
+        _flog="${TMPDIR:-/tmp}/gate_flagship_$$.log"
+        "$NOVA" build "$ROOT/$_t" --strict-effects >"$_flog" 2>&1
+        if [ $? -eq 0 ]; then
+            echo "flagship ok :: $_t"
+        else
+            echo "flagship FAIL :: $_t"
+            grep -m3 "error:" "$_flog" | sed 's/^/    /'
+            FLAG_FAILED="$FLAG_FAILED $_t"
+        fi
+        rm -f "$_flog"
+    done < "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
+    rm -f "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
+    echo "flagship :: собрано $FLAG_N"
+    [ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
+fi
 
-step "flagship smoke (не собрать, а ЗАПУСТИТЬ — реестр 221.1 №548)"
+step push "flagship smoke (не собрать, а ЗАПУСТИТЬ — реестр 221.1 №548)"
 # Сборка ловит синтаксис и типы, но НЕ то, работает ли программа. Флагман-мост
 # вошёл в гейт 2026-08-10 и в тот же день оказался неработающим: туннель
 # открывался, и мост тут же сбрасывал соединение (корень — №552, дизарм не знал
@@ -818,76 +1004,80 @@ step "flagship smoke (не собрать, а ЗАПУСТИТЬ — реест�
 # Смоук обязан быть БЕЗ СЕКРЕТОВ: прежний требовал живого прокси с паролем и
 # потому не гонялся никогда — о поломке узнали от постороннего наблюдения.
 # Каждый скрипт ниже поднимает своё окружение сам (локальные стенды, loopback).
-FLAG_SMOKES="
-examples/flagship/http_proxy_chain/tools/smoke.sh
-"
-SMOKE_FAILED=""
-SMOKE_N=0
-for _s in $FLAG_SMOKES; do
-    [ -f "$ROOT/$_s" ] || { echo "smoke :: НЕТ ФАЙЛА $_s"; SMOKE_FAILED="$SMOKE_FAILED $_s"; continue; }
-    SMOKE_N=$((SMOKE_N + 1))
-    _slog="${TMPDIR:-/tmp}/gate_smoke_$$.log"
-    bash "$ROOT/scripts/tools/with-deadline.sh" 300 bash "$ROOT/$_s" >"$_slog" 2>&1
-    if [ $? -eq 0 ]; then
-        echo "smoke ok :: $_s"
-    else
-        echo "smoke FAIL :: $_s"
-        tail -5 "$_slog" | sed 's/^/    /'
-        SMOKE_FAILED="$SMOKE_FAILED $_s"
-    fi
-    rm -f "$_slog"
-done
-echo "smoke :: прогнано $SMOKE_N"
-[ -z "$SMOKE_FAILED" ] || fail "флагман-смоук красный:$SMOKE_FAILED"
+if body_runs; then
+    FLAG_SMOKES="
+    examples/flagship/http_proxy_chain/tools/smoke.sh
+    "
+    SMOKE_FAILED=""
+    SMOKE_N=0
+    for _s in $FLAG_SMOKES; do
+        [ -f "$ROOT/$_s" ] || { echo "smoke :: НЕТ ФАЙЛА $_s"; SMOKE_FAILED="$SMOKE_FAILED $_s"; continue; }
+        SMOKE_N=$((SMOKE_N + 1))
+        _slog="${TMPDIR:-/tmp}/gate_smoke_$$.log"
+        bash "$ROOT/scripts/tools/with-deadline.sh" 300 bash "$ROOT/$_s" >"$_slog" 2>&1
+        if [ $? -eq 0 ]; then
+            echo "smoke ok :: $_s"
+        else
+            echo "smoke FAIL :: $_s"
+            tail -5 "$_slog" | sed 's/^/    /'
+            SMOKE_FAILED="$SMOKE_FAILED $_s"
+        fi
+        rm -f "$_slog"
+    done
+    echo "smoke :: прогнано $SMOKE_N"
+    [ -z "$SMOKE_FAILED" ] || fail "флагман-смоук красный:$SMOKE_FAILED"
+fi
 
 # ── ПАРИТЕТ С CI (реестр 221.1 №516) ────────────────────────────────────────
 # Ниже — шаги, которые CI считает блокирующими, а локальный гейт не делал.
 # Пока их не было, «локально зелено» означало меньше, чем выглядело: 147
 # коммитов ушли на зелёном локальном гейте и покраснели в CI первым прогоном.
 
-step "examples anti-rot (весь examples/** по списку 197 Ф.5, как в CI)"
+step push "examples anti-rot (весь examples/** по списку 197 Ф.5, как в CI)"
 # Список целей читается ИЗ ТОГО ЖЕ файла, что использует CI, — иначе гейт и CI
 # разойдутся молча, а это ровно тот дефект, который здесь и чинится.
-ANTIROT_LIST="$ROOT/docs/plans/wip/197-f5-gate-list.txt"
-if [ ! -f "$ANTIROT_LIST" ]; then
-    fail "нет списка anti-rot $ANTIROT_LIST (CI читает его же)"
-else
-    # `tr -d` обязателен: у списка СМЕШАННЫЕ окончания строк, и без очистки
-    # `$_path` приходит с невидимым возвратом каретки — nova отвечает
-    # `path not found` на путь, который в выводе выглядит совершенно верным.
-    # Поймано 2026-08-09: все 32 цели падали в гейте и проходили вручную,
-    # потому что вручную я читал грепнутое подмножество, а не файл целиком.
-    tr -d "$(printf '\r')" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
-    ANTIROT_N=$(awk '$1=="BUILD"||$1=="CHECK"{n++} END{print n+0}' \
-        "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt")
-    # ПАРАЛЛЕЛЬНО с 2026-08-12 — второй потребитель гейта после самотестов
-    # (848с из ~3400). Цели независимы: каждая своя сборка примера, общих
-    # файлов не читают и не пишут. Обёртка `run-antirot-one.sh` попутно чинит
-    # два дефекта, невидимых в последовательном цикле: общий файл лога на все
-    # итерации и столкновение выходных имён (два разных примера дают `hello`).
-    ANTIROT_JOBS="${NOVA_GATE_ANTIROT_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
-    [ "$ANTIROT_JOBS" -ge 1 ] || ANTIROT_JOBS=1
-    ANTIROT_FAILDIR="${TMPDIR:-/tmp}/gate_antirot_fails_$$"
-    rm -rf "$ANTIROT_FAILDIR"
-    mkdir -p "$ANTIROT_FAILDIR"
-    awk '$1=="BUILD"||$1=="CHECK"{print $1"\t"$2}' \
-        "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt" \
-        | xargs -r -P "$ANTIROT_JOBS" -I{} sh -c \
-            'printf "%s" "{}" | { IFS="	" read -r k p; \
-             bash "$0/scripts/tools/run-antirot-one.sh" "$k" "$p" "$1" "$0" "$2"; }' \
-            "$ROOT" "$ANTIROT_FAILDIR" "$NOVA"
-    ANTIROT_FAILED=""
-    for _f in "$ANTIROT_FAILDIR"/*; do
-        [ -e "$_f" ] || continue
-        ANTIROT_FAILED="$ANTIROT_FAILED $(basename "$_f")"
-    done
-    rm -rf "$ANTIROT_FAILDIR"
-    rm -f "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
-    echo "anti-rot :: целей проверено $ANTIROT_N"
-    [ -z "$ANTIROT_FAILED" ] || fail "examples anti-rot:$ANTIROT_FAILED"
+if body_runs; then
+    ANTIROT_LIST="$ROOT/docs/plans/wip/197-f5-gate-list.txt"
+    if [ ! -f "$ANTIROT_LIST" ]; then
+        fail "нет списка anti-rot $ANTIROT_LIST (CI читает его же)"
+    else
+        # `tr -d` обязателен: у списка СМЕШАННЫЕ окончания строк, и без очистки
+        # `$_path` приходит с невидимым возвратом каретки — nova отвечает
+        # `path not found` на путь, который в выводе выглядит совершенно верным.
+        # Поймано 2026-08-09: все 32 цели падали в гейте и проходили вручную,
+        # потому что вручную я читал грепнутое подмножество, а не файл целиком.
+        tr -d "$(printf '\r')" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
+        ANTIROT_N=$(awk '$1=="BUILD"||$1=="CHECK"{n++} END{print n+0}' \
+            "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt")
+        # ПАРАЛЛЕЛЬНО с 2026-08-12 — второй потребитель гейта после самотестов
+        # (848с из ~3400). Цели независимы: каждая своя сборка примера, общих
+        # файлов не читают и не пишут. Обёртка `run-antirot-one.sh` попутно чинит
+        # два дефекта, невидимых в последовательном цикле: общий файл лога на все
+        # итерации и столкновение выходных имён (два разных примера дают `hello`).
+        ANTIROT_JOBS="${NOVA_GATE_ANTIROT_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+        [ "$ANTIROT_JOBS" -ge 1 ] || ANTIROT_JOBS=1
+        ANTIROT_FAILDIR="${TMPDIR:-/tmp}/gate_antirot_fails_$$"
+        rm -rf "$ANTIROT_FAILDIR"
+        mkdir -p "$ANTIROT_FAILDIR"
+        awk '$1=="BUILD"||$1=="CHECK"{print $1"\t"$2}' \
+            "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt" \
+            | xargs -r -P "$ANTIROT_JOBS" -I{} sh -c \
+                'printf "%s" "{}" | { IFS="	" read -r k p; \
+                 bash "$0/scripts/tools/run-antirot-one.sh" "$k" "$p" "$1" "$0" "$2"; }' \
+                "$ROOT" "$ANTIROT_FAILDIR" "$NOVA"
+        ANTIROT_FAILED=""
+        for _f in "$ANTIROT_FAILDIR"/*; do
+            [ -e "$_f" ] || continue
+            ANTIROT_FAILED="$ANTIROT_FAILED $(basename "$_f")"
+        done
+        rm -rf "$ANTIROT_FAILDIR"
+        rm -f "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
+        echo "anti-rot :: целей проверено $ANTIROT_N"
+        [ -z "$ANTIROT_FAILED" ] || fail "examples anti-rot:$ANTIROT_FAILED"
+    fi
 fi
 
-step "lint registry self-test (правило срабатывает И не даёт ложняка, как в CI)"
+step push "lint registry self-test (правило срабатывает И не даёт ложняка, как в CI)"
 # ДВЕ стороны, и вторая важнее: страж, переставший ловить, выглядит так же,
 # как страж, которому нечего ловить.
 # `--deny` ОБЯЗАТЕЛЕН: без него находки информационные и код возврата 0 — так
@@ -895,23 +1085,29 @@ step "lint registry self-test (правило срабатывает И не д�
 # команды БЕЗ `--deny` и потому был красным с самого введения флага: самотест
 # реестра не проверял ничего, и под ним спокойно жило ложное срабатывание
 # (реестр 221.1 №519 и №520).
-"$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_pos.nv" >/dev/null 2>&1
-if [ $? -eq 0 ]; then
-    fail "conv_pos.nv БОЛЬШЕ НЕ даёт находок — conv-правило перестало срабатывать"
+if body_runs; then
+    "$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_pos.nv" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        fail "conv_pos.nv БОЛЬШЕ НЕ даёт находок — conv-правило перестало срабатывать"
+    fi
+    "$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_clean.nv" >/dev/null 2>&1 \
+        || fail "conv_clean.nv даёт находки — ложное срабатывание conv-правила (№520)"
 fi
-"$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_clean.nv" >/dev/null 2>&1 \
-    || fail "conv_clean.nv даёт находки — ложное срабатывание conv-правила (№520)"
 
-step "nova build smoke (ICE-храповик плана 196, как в CI)"
-SMOKE_NV="${TMPDIR:-/tmp}/nova_build_smoke_$$.nv"
-printf 'fn main() {\n    println("hello, nova build")\n}\n' > "$SMOKE_NV"
-"$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >/dev/null 2>&1 \
-    || fail "nova build smoke не собрался (ICE-регресс, план 196)"
-rm -f "$SMOKE_NV" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
+step push "nova build smoke (ICE-храповик плана 196, как в CI)"
+if body_runs; then
+    SMOKE_NV="${TMPDIR:-/tmp}/nova_build_smoke_$$.nv"
+    printf 'fn main() {\n    println("hello, nova build")\n}\n' > "$SMOKE_NV"
+    "$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >/dev/null 2>&1 \
+        || fail "nova build smoke не собрался (ICE-регресс, план 196)"
+    rm -f "$SMOKE_NV" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
+fi
 
-step "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
-"$NOVA" lint --rule W_LEADING_BINOP_CONTINUATION "$ROOT/nova_tests" >/dev/null 2>&1 \
-    || fail "W_LEADING_BINOP_CONTINUATION даёт находки в nova_tests"
+step push "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
+if body_runs; then
+    "$NOVA" lint --rule W_LEADING_BINOP_CONTINUATION "$ROOT/nova_tests" >/dev/null 2>&1 \
+        || fail "W_LEADING_BINOP_CONTINUATION даёт находки в nova_tests"
+fi
 
 # ОСТАВШИЙСЯ ПРОБЕЛ, названный вслух: `nova doc --check` / `nova doc --test`
 # (workflow nova-doc.yml) локально НЕ прогоняются. Этот job в CI сейчас красный,
@@ -919,46 +1115,48 @@ step "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
 # краснеет по чужому долгу и перестаёт быть сигналом. Записано в
 # docs/dev/prompts/integrator-queue.md.
 
-step "пакетные репозитории (план 261 Ф.3 — №524)"
+step full "пакетные репозитории (план 261 Ф.3 — №524)"
 # Список — ФАЙЛОМ, общим с CI. Перечисление в скрипте
 # протекает (№509).
-PKG_LIST="$ROOT/scripts/guards/package-repos.txt"
-if [ ! -f "$PKG_LIST" ]; then
-    fail "нет списка пакетов $PKG_LIST (план 261 Ф.0)"
-else
-    # Окружение задаётся ЯВНО: установка компилятора НЕ
-    # самодостаточна — он выводит пути к std и рантайму из
-    # каталога проекта (№530). Когда №530 закроется — снять
-    # эти три строки и убедиться, что шаг всё ещё зелёный.
-    PKG_ENV_STD="$ROOT/std/src"
-    PKG_ENV_RT="$ROOT/compiler-codegen/nova_rt"
-    PKG_ENV_CG="$ROOT/compiler-codegen"
-    PKG_FAILED=""
-    PKG_N=0
-    tr -d "$(printf '\r')" < "$PKG_LIST" > "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
-    while read -r _pname _ppath _pcmd; do
-        case "$_pname" in ''|\#*) continue ;; esac
-        [ -d "$_ppath" ] || { echo "пакеты :: НЕТ КАТАЛОГА $_pname ($_ppath)"; PKG_FAILED="$PKG_FAILED $_pname"; continue; }
-        PKG_N=$((PKG_N + 1))
-        _plog="${TMPDIR:-/tmp}/gate_pkg_$$.log"
-        ( cd "$_ppath" \
-          && NOVA_STD_PATH="$PKG_ENV_STD" NOVA_RT_DIR="$PKG_ENV_RT" NOVA_CG_INCLUDE="$PKG_ENV_CG" \
-             "$NOVA" test src ) >"$_plog" 2>&1
-        if [ $? -eq 0 ]; then
-            echo "пакеты ok :: $_pname"
-        else
-            echo "пакеты FAIL :: $_pname"
-            grep -m2 -E "PASS:|error" "$_plog" | sed 's/^/    /'
-            PKG_FAILED="$PKG_FAILED $_pname"
-        fi
-        rm -f "$_plog"
-    done < "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
-    rm -f "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
-    echo "пакеты :: проверено $PKG_N"
-    [ -z "$PKG_FAILED" ] || fail "пакетные репозитории красные:$PKG_FAILED"
+if body_runs; then
+    PKG_LIST="$ROOT/scripts/guards/package-repos.txt"
+    if [ ! -f "$PKG_LIST" ]; then
+        fail "нет списка пакетов $PKG_LIST (план 261 Ф.0)"
+    else
+        # Окружение задаётся ЯВНО: установка компилятора НЕ
+        # самодостаточна — он выводит пути к std и рантайму из
+        # каталога проекта (№530). Когда №530 закроется — снять
+        # эти три строки и убедиться, что шаг всё ещё зелёный.
+        PKG_ENV_STD="$ROOT/std/src"
+        PKG_ENV_RT="$ROOT/compiler-codegen/nova_rt"
+        PKG_ENV_CG="$ROOT/compiler-codegen"
+        PKG_FAILED=""
+        PKG_N=0
+        tr -d "$(printf '\r')" < "$PKG_LIST" > "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
+        while read -r _pname _ppath _pcmd; do
+            case "$_pname" in ''|\#*) continue ;; esac
+            [ -d "$_ppath" ] || { echo "пакеты :: НЕТ КАТАЛОГА $_pname ($_ppath)"; PKG_FAILED="$PKG_FAILED $_pname"; continue; }
+            PKG_N=$((PKG_N + 1))
+            _plog="${TMPDIR:-/tmp}/gate_pkg_$$.log"
+            ( cd "$_ppath" \
+              && NOVA_STD_PATH="$PKG_ENV_STD" NOVA_RT_DIR="$PKG_ENV_RT" NOVA_CG_INCLUDE="$PKG_ENV_CG" \
+                 "$NOVA" test src ) >"$_plog" 2>&1
+            if [ $? -eq 0 ]; then
+                echo "пакеты ok :: $_pname"
+            else
+                echo "пакеты FAIL :: $_pname"
+                grep -m2 -E "PASS:|error" "$_plog" | sed 's/^/    /'
+                PKG_FAILED="$PKG_FAILED $_pname"
+            fi
+            rm -f "$_plog"
+        done < "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
+        rm -f "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
+        echo "пакеты :: проверено $PKG_N"
+        [ -z "$PKG_FAILED" ] || fail "пакетные репозитории красные:$PKG_FAILED"
+    fi
 fi
 
-step "D-number uniqueness"
+step loop "D-number uniqueness"
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
 # FixedArray-блока в D440 (реестр 221.1 №123).
 #
@@ -974,9 +1172,11 @@ step "D-number uniqueness"
 # `## D239-зеркало`) между номером и разделителем несут слово и в скан не идут —
 # это тот же decision, а не второй под тем же номером. Сверяем ЧИСЛА, а не
 # строки целиком: иначе `## D440.` и `## D440 —` разошлись бы как разные ключи.
-DUPES=$(grep -rhoE "^## D[0-9]+(\.|[[:space:]]+—)" spec/decisions/*.md \
-        | grep -oE "[0-9]+" | sort -n | uniq -d)
-[ -n "$DUPES" ] && fail "дублирующиеся номера D-блоков: $(echo "$DUPES" | tr '\n' ' ')"
+if body_runs; then
+    DUPES=$(grep -rhoE "^## D[0-9]+(\.|[[:space:]]+—)" spec/decisions/*.md \
+            | grep -oE "[0-9]+" | sort -n | uniq -d)
+    [ -n "$DUPES" ] && fail "дублирующиеся номера D-блоков: $(echo "$DUPES" | tr '\n' ' ')"
+fi
 # №651: вердикт внешнего гейта — у итога, где его прочтут. Красный CI не
 # роняет локальный гейт (совещательный шаг, см. его вызов), но GATE OK не
 # имеет права ВЫГЛЯДЕТЬ полной правдой, когда авторитетный гейт красен.
@@ -987,6 +1187,30 @@ if [ -n "${CI_VERDICT_LINE:-}" ]; then
         *RED*|*STALE*|*ОШИБКА*) CI_TAIL=" [ВНЕШНИЙ CI НЕ ЗЕЛЁНЫЙ — см. строку выше; пуш остановит pre-push]" ;;
     esac
 fi
+# ── БЮДЖЕТ ЯРУСА (конвенция гейтов, Г1..Г7; механизм — окно 274) ────────────
+# Гейт МЕРЯЕТ СЕБЯ и краснеет при превышении. Число — не рекорд, а потолок с
+# запасом; живёт в scripts/guards/gate-budget.baseline и снимается замером.
+# Предел масштабируется калибровкой машины (CAL): без неё на медленной машине
+# он краснеет на здоровом дереве, а на быстрой не ловит ничего.
+#
+# Ярус, для которого строки нет, назван ВСЛУХ, а не молчит: молчаливо несудимый
+# ярус — вечнозелёная дыра (класс №519).
+GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
+if [ "$NOVA_GATE_DRYRUN" != "1" ]; then
+    BUDGET=$(grep -E "^$NOVA_GATE_TIER[[:space:]]+[0-9]+" "$ROOT/scripts/guards/gate-budget.baseline" 2>/dev/null \
+             | head -1 | awk '{print $2}')
+    case "$BUDGET" in
+        ''|*[!0-9]*)
+            echo "бюджет :: ярус $NOVA_GATE_TIER идёт ${GATE_ELAPSED}с; строки бюджета для него нет (не судится)" ;;
+        *)
+            CAL="$NOVA_CAL_FACTOR"
+            BUDGET_LIMIT=$(( BUDGET * CAL ))
+            echo "бюджет :: ярус $NOVA_GATE_TIER — ${GATE_ELAPSED}с при пределе ${BUDGET_LIMIT}с (${BUDGET}с × калибровка ${CAL}x)"
+            [ "$GATE_ELAPSED" -le "$BUDGET_LIMIT" ] \
+                || fail "ярус $NOVA_GATE_TIER вышел за бюджет: ${GATE_ELAPSED}с > ${BUDGET_LIMIT}с (scripts/guards/gate-budget.baseline). Ярус, который перестал быть дешёвым, перестаёт зваться — это Г1..Г7 целиком. Чини цену шага, а не число в базе." ;;
+    esac
+fi
+
 # ИТОГОВЫЙ РУБЕЖ ИДЁТ ПЕРВЫМ — и это не косметика (№690, 2026-08-16).
 # Раньше `gate_barrier` стоял ПОСЛЕ этого блока, а комментарий рядом
 # утверждал «сюда доходим, если мега-CU прошёл» — но шаги ПОСЛЕ рубежа на

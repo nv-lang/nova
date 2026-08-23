@@ -60,10 +60,14 @@ gate rather than passing quietly.
 
 * `main` belongs to the integrator. You work in **your own branch in your own
   worktree**, and the integrator merges.
-* Worktrees live **only under `d:/Sources/nv-lang/`** — not `C:\Users\Public`,
-  not inside the repository. `C:` runs out of disk regularly, and a worktree
-  inside the repo gets swept into every grep and reddens guards on someone
-  else's snapshot.
+* Worktrees live **beside the repository** — under the directory that holds the
+  main working copy, never inside the repository itself, and never on a system
+  drive with no room on it. The permitted root is *derived*, not written down:
+  it is the parent of the main working copy (`NOVA_WORKTREE_ROOT` overrides),
+  and `scripts/guards/check-worktree-location.sh` enforces it. Two measured
+  reasons: a system drive that fills up turns a build failure into thirty fake
+  test failures, and a worktree inside the repo gets swept into every grep and
+  reddens guards on someone else's snapshot.
 
 **Changing the language**
 

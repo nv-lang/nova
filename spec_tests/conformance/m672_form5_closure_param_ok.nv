@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// #672 form (5), positive side: the closure's `consume` parameter is
+// released inside the closure body, so it stays legal.
+module spec_tests.conformance
+
+type M672C5Ok consume { tag int }
+
+fn M672C5Ok consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+fn M672C5Ok consume @close() -> () { () }
+
+fn m672_form5_ok() -> () {
+    ro k = fn(consume v M672C5Ok) -> () {
+        assert(v.tag == 5)
+        v.close()
+    }
+    assert(true)
+}
