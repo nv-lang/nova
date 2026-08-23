@@ -6,10 +6,20 @@ module generic_call.neg_2
 //
 // Why this is a refusal and not a choice (E2-b3 wave 1): whichever argument
 // "wins" decides which C symbol the call names. Picking the first one silently
-// would emit a call to `pick` instantiated at int while handing it a str -- a
-// mis-compilation that the C compiler may or may not catch, far from here. The
-// refusal names the conflict instead.
-fn pick[T](a T, b T) -> T => a
+// emits a call to `pick` instantiated at int while handing it a str -- and that
+// is not a hypothetical. MEASURED 2026-08-23 on the same shape: the oracle
+// PASSES it at `check` and clang then refuses the emission with "passing 'const
+// nova_str' to parameter of incompatible type 'nova_int'". Seventh carrier of
+// class O-1c, recorded in docs/dev/novac-divergences.md.
+//
+// SO THIS FIXTURE PINS NOVAC'S REFUSAL AND CLAIMS NO AGREEMENT: the oracle's
+// outcome on this shape differs at check level, and a `neg_*` that pretended
+// otherwise would assert a divergence as if it were a rule (the reason
+// `dbl[Zork](21)` is not a fixture either -- see neg_1).
+// The body returns an int, not `a`: returning a `ro`-bound parameter would add
+// a SECOND cause (the oracle refuses that separately, `E_READONLY_COERCE`), and
+// a fixture with two causes cannot say which one it pins.
+fn pick[T](a T, b T) -> int => 2
 
 fn main() {
     println(pick(1, "s"))
