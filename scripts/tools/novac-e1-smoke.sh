@@ -40,7 +40,22 @@ ORACLE="$(novac_find_oracle "$(pwd)" || true)"
     printf '%s\n' "$ORACLE" > "$CACHE/oracle.path"
 fi
 read -r ORACLE < "$CACHE/oracle.path"
+# КЛЮЧ КЭША ВКЛЮЧАЕТ ЗАГОЛОВКИ РАНТАЙМА (2026-08-23). PCH прелюдии собирается
+# из `nova_rt/nova_rt.h` и всего, что тот втягивает, а ключ знал только штамп
+# ОРАКУЛА. Слияние main тронуло `nova_rt/fibers.h`, и clang отказался пятью
+# фикстурами подряд: «file has been modified since the precompiled header was
+# built: size changed». Отказ выглядел как поломка смоука, а был протухшим
+# кэшом — то есть ключ, знающий меньше, чем содержимое от чего зависит.
+# Берётся МАКСИМУМ штампов: оракул плюс самый свежий заголовок рантайма.
 ORACLE_STAMP=$(stat -c %Y "$ORACLE")
+_RT_STAMP=$(find "$ROOT/compiler-codegen/nova_rt" -name '*.h' -printf '%T@\n' 2>/dev/null \
+            | sort -rn | head -1 | cut -d. -f1)
+if [ -n "$_RT_STAMP" ] && [ "$_RT_STAMP" -gt "$ORACLE_STAMP" ] 2>/dev/null; then
+    ORACLE_STAMP="$_RT_STAMP"
+else
+    # Заголовки старше бинаря: ключ остаётся штампом оракула, как и был.
+    :
+fi
 # КАКОЙ clang НАСТОЯЩИЙ. Путь Windows — это ДЕФОЛТ WINDOWS, а не факт мира:
 # на Linux его нет, и инструмент молча уезжал в «нет такого файла». Признак
 # системы здесь — `cygpath`: он есть в MSYS и его нет нигде больше.
