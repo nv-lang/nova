@@ -39,14 +39,14 @@
 # parameter, and all four were ONE crossing -- the polymorphic
 # `CalleeRef.target_row` reaching the mangling door. Closed with a door carrying
 # a precondition.
-# 21 -> 22 (2026-08-23, merging main): the queue counts COMMITS that touched
-# spec/decisions after spec-point, so a commit that merely CARRIED someone
-# else's decisions into the branch counts like a decision itself. The
-# twenty-second is exactly such a carrier -- `1a169747e`, the merge of main.
-# Named weakness of the measure: the next merge will add one more without
-# adding a single decision; the honest measure counts along main's own line
-# (`--no-merges`), and that is written up as a class in plan 274 section 9.1d.
-#   spec-queue: 22
+# 21 -> 24 (2026-08-23): the MEASURE changed, and the number moved with it. The
+# queue used to be counted in whatever tree the run happened in -- 22 in this
+# branch, 24 in CI, where the tree is this branch MERGED with main, for one and
+# the same spec. A number that depends on who is looking is not a measure. It is
+# now counted along main's own line with `--no-merges`, so a commit that merely
+# CARRIED someone else's decisions (a merge) no longer counts as a decision, and
+# branch and CI agree. Class K8, plan 274 section 9.1d.
+#   spec-queue: 24
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

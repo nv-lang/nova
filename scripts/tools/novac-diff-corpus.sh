@@ -59,7 +59,18 @@ ORACLE_REV=$(git -C "$(dirname "$ORACLE")" rev-parse --short HEAD 2>/dev/null)
 # рукой в nova.toml. Считается как число коммитов в spec/decisions после
 # закреплённой точки; расхождение с toml — красный (план §1.1: «лаг — число,
 # не ощущение»).
-QUEUE_REAL=$(git -C "$ROOT" log --since="$SPEC_POINT 23:59:59" --format=%h -- spec/decisions 2>/dev/null | wc -l | tr -d " ")
+# СЧИТАЕМ ПО ЛИНИИ MAIN, А НЕ ПО СВОЕМУ ДЕРЕВУ (2026-08-23, класс К8 плана 274
+# §9.1д). Прежняя форма считала коммиты в ТЕКУЩЕМ дереве, и число зависело от
+# того, кто смотрит: в ветке — 22, в CI (ветка, слитая с main) — 24, при одной и
+# той же спеке. Отставание от СПЕКИ — свойство спеки, а не чекаута. Плюс коммит,
+# который лишь ПРИНЁС чужие решения (слияние), больше не считается решением:
+# `--no-merges`.
+# Порядок опроса: `origin/main` — если реф есть (обычный клон); иначе HEAD — в
+# PR-чекауте origin/main может не быть, но сам чекаут УЖЕ содержит main.
+QUEUE_REF=main
+git -C "$ROOT" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1 && QUEUE_REF=origin/main
+git -C "$ROOT" rev-parse --verify -q "$QUEUE_REF" >/dev/null 2>&1 || QUEUE_REF=HEAD
+QUEUE_REAL=$(git -C "$ROOT" log --since="$SPEC_POINT 23:59:59" --no-merges --format=%h "$QUEUE_REF" -- spec/decisions 2>/dev/null | wc -l | tr -d " ")
 QUEUE_TOML=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*spec-queue:[[:space:]]*\([0-9][0-9]*\)$/\1/p')
 echo "novac-diff-corpus: oracle-pin=$PIN oracle-HEAD=$ORACLE_REV spec-point=$SPEC_POINT spec-queue=$QUEUE_REAL (в nova.toml: $QUEUE_TOML) сборка novac=single-file корпус=$CORPUS"
 if [ -z "$QUEUE_TOML" ]; then
