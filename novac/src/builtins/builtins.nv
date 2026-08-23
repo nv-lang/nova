@@ -178,6 +178,20 @@ export fn prim_c_name(ordinal int) -> str
     universe[ordinal].c_name
 }
 
+/// The SOURCE spelling of a primitive by its universe ordinal — the name a
+/// diagnostic shows a person (`int`), not the runtime ABI name the mangler needs
+/// (`nova_int`, which is `prim_c_name` right above).
+///
+/// Two doors and not one because they answer different questions and diverge in
+/// spelling for most of the table (`u8` is `nova_byte`, `i32` is `int32_t`). A
+/// message that printed the ABI name would name a type the author never wrote.
+#realtime nogc
+export fn prim_name(ordinal int) -> str
+    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+{
+    universe[ordinal].name
+}
+
 /// The universe as a whole, for the seed loop in sem — the SAME vector, not a
 /// copy (a `[]T` is a header; the rows live once). Exists only because the
 /// oracle cannot export a `ro` vector yet (see `universe`).
