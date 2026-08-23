@@ -1,6 +1,17 @@
 # Plan 40 Ф.1 Этап 5 — Linux Docker build context exclusions.
 
 # Build artifacts (Windows-specific).
+#
+# THE ROOT `target/` IS THE IMPORTANT ONE, and it was missing here until
+# 2026-08-23. It holds `libuv-cache/libuv.a` and `rt-archive-cache/`, both
+# built by the HOST, and the container prefers the cached archive over the
+# system libuv it installed from apt. Symptom when it bites: every test
+# CC-FAILs with `undefined reference to __isoc23_strtol` -- host libuv
+# compiled against a newer glibc, linked against 22.04's 2.35. So the image
+# whose whole purpose is Linux validation (plan 44.1) was validating a
+# HYBRID of two machines, and would report either a false red or a false
+# green depending on what the host had lying about.
+target/
 nova-cli/target/
 nova-cli/target_alt/
 compiler-codegen/target/
