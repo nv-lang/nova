@@ -87,7 +87,13 @@ if [ ! -f "$ORACLE_EXE" ] || [ ! -f "$LINKCMD" ]; then
         printf '%s\n' "-fuse-ld=lld" >> "$LINKCMD"
         grep -q "libnova_rt" "$LINKCMD" || fail "перехват clang-argv не сработал"
         # compile-only flags (for the PCH and the -c step): no libs/linker flags
-        grep -vE '\.lib$|^-l|^-L$|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' "$LINKCMD" > "$CFLAGS"
+        # `.a`/`.so` РЯДОМ С `.lib` (2026-08-23, по красному CI). Фильтр знал
+        # только Windows-имена библиотек, и на Linux архивы `libnova_rt.a` и
+        # `libuv.a` оставались в CFLAGS — то есть в команду сборки PCH попадал
+        # ВХОД, а не флаг, и clang отвечал «cannot specify -o when generating
+        # multiple output files». Отказ выглядел как поломка перехвата, хотя
+        # перехват работал: он честно записал argv, а фильтр вырезал не всё.
+        grep -vE '\.lib$|\.a$|\.so$|^-l|^-L$|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' "$LINKCMD" > "$CFLAGS"
     fi
 fi
 
