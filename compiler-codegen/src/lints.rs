@@ -4706,6 +4706,25 @@ fn conv_is_stringish(e: &Expr) -> bool {
     }
 }
 
+/// Root receiver of a `.concat(...)` chain: `s.concat(a).concat(b)` -> `s`.
+/// `None` unless the whole spine is `.concat(..)` calls ending in a bare
+/// identifier -- `t.trim().concat(x)` is not this shape and is not flagged.
+fn conv_concat_chain_root(e: &Expr) -> Option<&str> {
+    // Kill-switch: disables the lane that revived this rule, same binary.
+    if std::env::var("NOVA_KILL_CONCAT_LOOP_LANE").as_deref() == Ok("1") {
+        return None;
+    }
+    let ExprKind::Call { func, .. } = &e.kind else { return None };
+    let ExprKind::Member { obj, name } = &func.kind else { return None };
+    if name != "concat" {
+        return None;
+    }
+    match &obj.kind {
+        ExprKind::Ident(n) => Some(n.as_str()),
+        _ => conv_concat_chain_root(obj),
+    }
+}
+
 fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
     for f in conv_all_fns(m) {
         conv_walk_fn(
@@ -4720,6 +4739,18 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                     // `buf += "..."` / `buf += "${x}"`.
                     crate::ast::AssignOp::Add => conv_is_stringish(value),
                     // `buf = buf + x` где участвует строковый литерал/интерп.
+                    // №TBD, ЗАМЕР 2026-08-23: обе `+`-ланеи этого правила
+                    // НЕДОСТИЖИМЫ: `s = s + p` падает типопроверкой на
+                    // `E_STR_CONCAT_PLUS` ЗАДОЛГО до линта — правило стояло
+                    // мёртвым. Скрылось потому, что его самотест `conv_pos.nv` был
+                    // переписан на `.concat` в `dda19d40a`, и вместо обещанных
+                    // заголовком 7 находок стал давать 6, а гейт сверял только
+                    // «больше нуля». Ланеи ОСТАВЛЕНЫ — они ничего не стоят и
+                    // станут единственным защитником, если `+` вернут.
+                    //
+                    // ЖИВАЯ ФОРМА — `buf = buf.concat(..)`: её сам текст
+                    // `E_STR_CONCAT_PLUS` называет оставшейся доступной, и именно
+                    // она даёт O(N²) в цикле.
                     crate::ast::AssignOp::Assign => {
                         matches!(&value.kind,
                             ExprKind::Binary { op: crate::ast::BinOp::Add, left, right }
@@ -4727,6 +4758,7 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                                     || matches!(&left.kind, ExprKind::Ident(l) if l == tname)
                                         && conv_is_stringish(right))
                             && conv_is_stringish(value)
+                            || conv_concat_chain_root(value) == Some(tname.as_str())
                     }
                     _ => false,
                 };
@@ -4735,11 +4767,10 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                         rule: "W_STR_CONCAT_LOOP",
                         diag: Diagnostic::new(
                             format!(
-                                "concatenation `{} = {} + ...` in a loop — O(N²) \
+                                "re-assigning `{tname}` from itself in a loop — O(N²) \
                                  (perf-conventions): every iteration copies the whole \
                                  accumulator. Canon: `StringBuilder.new()` + \
-                                 `.append(...)` in the loop + `.into_str()` after.",
-                                tname, tname
+                                 `.append(...)` in the loop + `.into_str()` after."
                             ),
                             *span,
                         ),
@@ -7119,6 +7150,66 @@ fn conv_redundant_consume_rebind(m: &Module, _o: &ConvLintOptions, out: &mut Vec
 const CONV_AUTO_CLEANUP_SEED_TYPES: &[&str] =
     &["TcpStream", "MutexGuard", "ReadGuard", "WriteGuard", "Permit"];
 
+/// Registry-driven half of the seed list (№520 class, measured 2026-08-23).
+/// The list above is NAMES, and a name is not a type: a user type merely
+/// SHARING one of those five names -- `type MutexGuard consume { .. }` with
+/// no `consume @cleanup` -- got the finding, and removing the call as the
+/// advice says left `D133-not-consumed`. That is exactly what №520 filed
+/// against this registry ("the rule judges by the METHOD NAME without asking
+/// whether coercion is possible for THIS receiver"), one rule over.
+///
+/// The fix is the shape `scan_coerce_methods` already established for
+/// `#coerce`: read the DECLARATIONS visible in the linted module (own items
+/// + same-folder peers) and let the name list stand in ONLY where nothing is
+/// visible. Returns (types that declare `consume @cleanup`, types declared
+/// here at all) -- the second set is what lets a LOCAL declaration override
+/// the fallback instead of merely adding to it.
+fn scan_auto_cleanup_types(m: &Module) -> (HashSet<String>, HashSet<String>) {
+    let mut with_cleanup = HashSet::new();
+    for f in conv_all_fns(m) {
+        let Some(r) = &f.receiver else { continue };
+        if r.consume && r.kind == ReceiverKind::Instance && f.name == "cleanup" {
+            with_cleanup.insert(r.type_name.clone());
+        }
+    }
+    let mut declared = HashSet::new();
+    let mut collect = |items: &[Item], out: &mut HashSet<String>| {
+        for item in items {
+            if let Item::Type(td) = item {
+                out.insert(td.name.clone());
+            }
+        }
+    };
+    collect(&m.items, &mut declared);
+    for pf in &m.peer_files {
+        collect(&pf.items_here, &mut declared);
+    }
+    (with_cleanup, declared)
+}
+
+/// Does a binding of declared type `tn` actually get D432 auto-cleanup?
+///
+/// A type DECLARED in this module answers for itself; only a type whose
+/// declaration is out of sight (std's `TcpStream` seen from a consumer file
+/// -- `nova lint` has no cross-module import resolution) falls back to the
+/// name list.
+fn conv_type_has_auto_cleanup(
+    tn: &str,
+    with_cleanup: &HashSet<String>,
+    declared: &HashSet<String>,
+) -> bool {
+    // Kill-switch: restores the pre-fix behaviour (the NAME list alone) on
+    // the SAME binary, so "green after the change" can be told apart from
+    // "green either way".
+    if std::env::var("NOVA_KILL_CLEANUP_REGISTRY").as_deref() == Ok("1") {
+        return CONV_AUTO_CLEANUP_SEED_TYPES.contains(&tn);
+    }
+    if with_cleanup.contains(tn) {
+        return true;
+    }
+    !declared.contains(tn) && CONV_AUTO_CLEANUP_SEED_TYPES.contains(&tn)
+}
+
 fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
     fn tail_call(block: &Block) -> Option<&Expr> {
         if let Some(t) = &block.trailing {
@@ -7135,9 +7226,14 @@ fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Ve
         }
     }
 
-    fn check_block(block: &Block, out: &mut Vec<LintWarning>) {
-        // Consume-bindings, explicitly typed as a seed auto-cleanup type,
-        // introduced directly in THIS block's own statement list.
+    fn check_block(
+        block: &Block,
+        cx: &(HashSet<String>, HashSet<String>),
+        out: &mut Vec<LintWarning>,
+    ) {
+        // Consume-bindings, explicitly typed as a type that really carries
+        // `consume @cleanup`, introduced directly in THIS block's own
+        // statement list.
         let mut seed_bindings: Vec<&str> = Vec::new();
         for s in &block.stmts {
             let Stmt::Let(d) = s else { continue };
@@ -7147,7 +7243,7 @@ fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Ve
             let Pattern::Ident { name, .. } = &d.pattern else { continue };
             let Some(ty) = &d.ty else { continue };
             let Some(tn) = conv_ty_last_name(ty) else { continue };
-            if CONV_AUTO_CLEANUP_SEED_TYPES.contains(&tn) {
+            if conv_type_has_auto_cleanup(tn, &cx.0, &cx.1) {
                 seed_bindings.push(name.as_str());
             }
         }
@@ -7177,24 +7273,29 @@ fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Ve
         });
     }
 
-    fn check_expr(e: &Expr, out: &mut Vec<LintWarning>) {
+    fn check_expr(
+        e: &Expr,
+        cx: &(HashSet<String>, HashSet<String>),
+        out: &mut Vec<LintWarning>,
+    ) {
         let ExprKind::Match { arms, .. } = &e.kind else { return };
         for arm in arms {
             if let MatchArmBody::Block(b) = &arm.body {
-                check_block(b, out);
+                check_block(b, cx, out);
             }
         }
     }
 
+    let cx = scan_auto_cleanup_types(m);
     for f in conv_all_fns(m) {
         if let FnBody::Block(b) = &f.body {
-            check_block(b, out);
+            check_block(b, &cx, out);
         }
-        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+        conv_walk_fn(f, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, &cx, out));
     }
     for tb in conv_all_test_bodies(m) {
-        check_block(tb, out);
-        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, out));
+        check_block(tb, &cx, out);
+        conv_walk_block(tb, false, &mut |_s, _| {}, &mut |e, _in_loop| check_expr(e, &cx, out));
     }
 }
 
@@ -10161,6 +10262,101 @@ mod tests {
         let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
         let hit = min_max_rule_hits(&ws, "W_COERCE_EXPLICIT_REDUNDANT");
         assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn auto_cleanup_silent_on_user_type_merely_sharing_a_seed_name() {
+        // №520 class, one rule over: the seed list is NAMES, and a name is
+        // not a type. A user `MutexGuard` with no `consume @cleanup` used to
+        // get the finding, and removing the call as the advice says left
+        // `D133-not-consumed` -- advice that does not compile.
+        //
+        // This case lives HERE and not in `conv_clean.nv` because the
+        // compiled corpus cannot hold it yet: a user type sharing a std
+        // type's name mangles onto the SAME C struct (`Nova_MutexGuard_s`),
+        // so the fixture CC-FAILs for an unrelated reason (filed separately,
+        // measured 2026-08-23). The lint level needs no C compiler.
+        let src = "module foo
+             type MutexGuard consume { ro id int }
+             fn MutexGuard consume @close() -> () { }
+             fn acquire(n int) -> MutexGuard => { id: n }
+             fn hold() -> () {
+                 consume g MutexGuard = acquire(1)
+                 g.close()
+             }
+";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_MANUAL_CLOSE_AUTO_CLEANUP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn auto_cleanup_fires_on_local_type_declaring_cleanup_outside_the_seed_list() {
+        // The other direction of the same change: a type the module declares
+        // WITH `consume @cleanup` really does get D432 auto-cleanup, so the
+        // tail call really is redundant -- and the old name list was blind
+        // to it. A rule that only ever loses coverage is not a fix.
+        let src = "module foo
+             type Lease consume { ro id int }
+             fn Lease consume @cleanup(_outcome ScopeOutcome) -> () { }
+             fn Lease consume @close() -> () { }
+             fn take(n int) -> Lease => { id: n }
+             fn hold() -> () {
+                 consume l Lease = take(1)
+                 l.close()
+             }
+";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_MANUAL_CLOSE_AUTO_CLEANUP");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn str_concat_loop_flags_the_concat_form_the_plus_form_cannot_reach() {
+        // `s = s + p` never reaches this lint: it fails type-check on
+        // `E_STR_CONCAT_PLUS` first, so the rule stood dead. `.concat` in a
+        // loop is the form the error text itself says remains available.
+        let src = "module foo
+             fn join(parts []str) -> str {
+                 mut s = \"\"
+                 for p in parts {
+                     s = s.concat(\",\").concat(p)
+                 }
+                 s
+             }
+";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = min_max_rule_hits(&ws, "W_STR_CONCAT_LOOP");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn str_concat_loop_silent_when_the_accumulator_is_not_the_chain_root() {
+        // `out = src.concat(x)` copies a DIFFERENT value each iteration --
+        // not the O(N²) accumulator shape. Guards the new lane against the
+        // obvious over-reach.
+        let src = "module foo
+             fn pick(parts []str, src str) -> str {
+                 mut out = \"\"
+                 for p in parts {
+                     out = src.concat(p)
+                 }
+                 out
+             }
+";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            min_max_rule_hits(&ws, "W_STR_CONCAT_LOOP").is_empty(),
+            "got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
     }
 
     #[test]

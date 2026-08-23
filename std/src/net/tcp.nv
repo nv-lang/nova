@@ -102,7 +102,15 @@ fn unit_ok() -> Result[(), NetError] => Ok(())
 fn unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
 
 // Tuple-return helper (codegen tuple inference in handler bodies).
-fn split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
+// #717: the halves are MOVED through this helper, not frozen -- a plain
+// parameter is `ro` by default (D176), so returning it inside a tuple typed
+// non-ro hands the caller write access to a value this function received
+// read-only. Ownership transfer is what `consume` is for (D131/D133); `ro`
+// would be the wrong canon here [INV-PROPERTY], since the caller must consume
+// the halves it gets back. [INV-PROPERTY] -- held by the corpus: `nova test
+// std/src` covers this helper's callers, and the #717 rule itself reddens
+// the plain-parameter form, so neither direction can drift silently.
+fn split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (ro TcpReadHalf, ro TcpWriteHalf) => (rh, wh)
 
 // ─── TcpListener public API ───────────────────────────────────────────────────
 

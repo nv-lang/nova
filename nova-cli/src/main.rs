@@ -595,6 +595,13 @@ enum Cmd {
         /// Select all test types including slow (--positive --compile-error --panic --timeout --exit --slow).
         #[arg(long)]
         full: bool,
+        /// With --full: keep every test TYPE but drop `*_slow.nv`. For a lane
+        /// that must cover all `EXPECT_*` kinds (so an enumeration cannot go
+        /// stale) without letting a stress shape judge it -- the merge gate's
+        /// conformance-full step on the `push` tier. The nightly `full` tier
+        /// runs without it, so the slow lane still has a caller.
+        #[arg(long = "exclude-slow")]
+        exclude_slow: bool,
         /// [M-169-timing-report-regression-gate]: if any test exceeds N ms
         /// (total elapsed_ms), after the run print the violators and exit
         /// with code 3. Default: 0 (disabled).
@@ -5672,6 +5679,7 @@ fn cmd_test(
     timeout_type: bool,
     exit: bool,
     full: bool,
+    exclude_slow: bool,
     max_test_ms: u128,
     report_cc_leaks: bool,
 ) -> Result<()> {
@@ -5815,7 +5823,11 @@ fn cmd_test(
             use test_runner::{TestSelection, TestType};
             if full || slow_only {
                 // --full or legacy --slow-only: all types + slow
-                TestSelection::full()
+                let mut sel = TestSelection::full();
+                if exclude_slow {
+                    sel.include_slow = false;
+                }
+                sel
             } else {
                 let any_type = positive || compile_error || panic || timeout_type || exit;
                 let mut types = std::collections::HashSet::new();
@@ -7024,6 +7036,7 @@ fn run() -> ExitCode {
             keep_artifacts, gc,
             list, filter_from, shuffle, skip, mono_depth,
             include_slow, slow, slow_only, positive, compile_error, panic, timeout_type, exit, full,
+            exclude_slow,
             max_test_ms, report_cc_leaks,
         } => cmd_test(
             &paths,
@@ -7056,6 +7069,7 @@ fn run() -> ExitCode {
             timeout_type,
             exit,
             full,
+            exclude_slow,
             max_test_ms,
             report_cc_leaks,
         ),

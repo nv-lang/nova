@@ -109,8 +109,24 @@ fn run_nova_test_and_assert_pass(dir: PathBuf, file: PathBuf, case: &str) {
         .output()
         .expect("spawn `nova test` on out-of-tree probe");
     let combined = combined_output(&out);
-    fs::remove_dir_all(dir.parent().unwrap_or(&dir)).ok();
-    let _ = &dir;
+    // DELETE EXACTLY WHAT THE PROBE CREATED. Until 2026-08-23 this line read
+    // `dir.parent()`, and `dir` is `<system temp>/nova_oot_ancestor_<pid>_<tag>_pkg`
+    // -- so the parent is the SYSTEM TEMP ROOT, and the test asked to delete
+    // all of it. `.ok()` swallowed the outcome, so nothing ever said so.
+    //
+    // On Windows the call fails (files in use) and the suite is green, which
+    // is why it lived. On the CI runner it partially SUCCEEDS: the two tests
+    // in this file run in parallel threads, and whichever finishes first
+    // deletes the other's `probe.nv` out from under a running `nova test`.
+    // That is the CI-only red the gate reported -- `out.status.success()` on
+    // line 121, in whichever of the two lost the race.
+    debug_assert!(
+        dir.file_name()
+            .map(|n| n.to_string_lossy().starts_with("nova_oot_ancestor_"))
+            .unwrap_or(false),
+        "cleanup must target the probe's own directory, not an ancestor: {dir:?}"
+    );
+    fs::remove_dir_all(&dir).ok();
 
     assert!(
         !combined.contains("E_D78_MODULE_PATH_MISMATCH"),

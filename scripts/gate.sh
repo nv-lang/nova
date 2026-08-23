@@ -832,7 +832,23 @@ step push "conformance-full (лейны panic/exit/timeout — их не гон�
 if body_runs; then
     FULL_LOG="${TMPDIR:-/tmp}/gate_full_$$.log"
     FULL_KNOWN="$ROOT/scripts/guards/conformance-known-red.list"
-    "$NOVA" test --full --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$FULL_LOG" 2>&1
+    # ЯРУС РЕШАЕТ, СУДЯТ ЛИ СТРЕСС-ФОРМЫ (замер 2026-08-23, реестр №452).
+    # `--full` тянет и `*_slow.nv`. `p452_arena_slot_reuse_stress_slow` —
+    # СТОХАСТИЧЕСКАЯ по собственному признанию фикстура (6560 файберов,
+    # NOVA_MAXPROCS=16): локально зелёная и соло, и на `--jobs 2` (замерено:
+    # `PASS: 871 FAIL: 1`, где единственный красный — известный `neg_read_oob`),
+    # а на двухъядерном раннере CI краснела ДВАЖДЫ. Лейн, краснеющий случайно,
+    # учит перезапускать вместо того чтобы читать.
+    #
+    # Разрез идёт по ОСИ, а не по перечислению лейнов: `--exclude-slow`
+    # оставляет ВСЕ виды `EXPECT_*` (ради чего шаг и просит `--full` вместо
+    # списка, который отстанет от корпуса), убирая только стресс-формы. На
+    # ярусе `full` — ночью, где есть бюджет — они бегут, то есть у slow-лейна
+    # каллер остаётся, и это не форма №748.
+    FULL_SLOW_FLAG="--exclude-slow"
+    tier_at_least full && FULL_SLOW_FLAG=""
+    echo "conformance-full :: slow-формы $([ -z "$FULL_SLOW_FLAG" ] && echo ВКЛЮЧЕНЫ || echo исключены) (ярус $NOVA_GATE_TIER)"
+    "$NOVA" test --full $FULL_SLOW_FLAG --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$FULL_LOG" 2>&1
     FULL_LINE=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
     echo "conformance-full :: $FULL_LINE"
     echo "$FULL_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
@@ -854,6 +870,17 @@ if body_runs; then
 
     FULL_EXP=$(grep -vE '^\s*#' "$FULL_KNOWN" 2>/dev/null | awk '{print $1}' | grep -E '^spec_tests/' | sort -u)
     FULL_NEW=$(comm -23 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
+    if [ -n "$FULL_NEW" ]; then
+        # ПРИЧИНУ, А НЕ ТОЛЬКО ИМЯ. До 2026-08-23 шаг печатал только имя
+        # красной фикстуры, а `$FULL_LOG` оставался на раннере — по логу CI
+        # нельзя было отличить таймаут от настоящей регрессии, и разбор
+        # начинался с попытки воспроизвести вслепую.
+        echo "conformance-full :: вердикты новых красных:"
+        printf '%s\n' "$FULL_NEW" | while read -r _f; do
+            [ -n "$_f" ] || continue
+            sed -e "s/${ESC}\[[0-9;]*m//g" "$FULL_LOG" | grep -F "$_f" | grep -vE "^(PASS|SKIP) " | head -3 | sed "s/^/    /"
+        done
+    fi
     FULL_GONE=$(comm -13 <(printf '%s\n' "$FULL_BAD" | grep .) <(printf '%s\n' "$FULL_EXP" | grep .))
 
     if [ -n "$FULL_NEW" ]; then
@@ -1101,10 +1128,25 @@ step push "lint registry self-test (правило срабатывает И н�
 # команды БЕЗ `--deny` и потому был красным с самого введения флага: самотест
 # реестра не проверял ничего, и под ним спокойно жило ложное срабатывание
 # (реестр 221.1 №519 и №520).
+# СВЕРКА ПО СОСТАВУ, А НЕ «БОЛЬШЕ НУЛЯ» (№TBD, замер 2026-08-23).
+# Заголовок `conv_pos.nv` обещал 7 находок, фактически файл давал 6:
+# рефакторинг фикстуры на `.concat` (`dda19d40a`) унёс единственный сайт
+# `W_STR_CONCAT_LOOP`, а шаг требовал лишь ненулевого кода возврата —
+# шесть оставшихся правил кормили его, и мёртвое правило жило под
+# зелёным шагом. Тот же класс, что №519: самотест, не умеющий покраснеть.
+# Список НАМЕРЕННО жёсткий: новое правило в фикстуре обязано править
+# и его, и шапку фикстуры — именно этого от самотеста и хочется.
+CONV_POS_RULES="W_DESTRUCTURE_SNAPSHOT W_LEADING_BINOP_CONTINUATION W_MANUAL_CLOSE_AUTO_CLEANUP W_NONVARIADIC_OF W_REDUNDANT_OF W_RETIRED_PREFIX W_STR_CONCAT_LOOP W_WITH_MUTATOR"
 if body_runs; then
     "$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_pos.nv" >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         fail "conv_pos.nv БОЛЬШЕ НЕ даёт находок — conv-правило перестало срабатывать"
+    fi
+    CONV_POS_RAW=$("$NOVA" lint "$ROOT/spec_tests/conformance/lint/conv_pos.nv" 2>&1 | grep -o "\[W_[A-Z_]*\]" | tr -d "[]" | sort -u)
+    CONV_POS_GOT=$(echo $CONV_POS_RAW)
+    CONV_POS_WANT=$(echo $(for _r in $CONV_POS_RULES; do echo "$_r"; done | sort -u))
+    if [ "$CONV_POS_GOT" != "$CONV_POS_WANT" ]; then
+        fail "conv_pos.nv даёт ДРУГОЙ состав правил. ждали: [$CONV_POS_WANT]; получили: [$CONV_POS_GOT]"
     fi
     "$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_clean.nv" >/dev/null 2>&1 \
         || fail "conv_clean.nv даёт находки — ложное срабатывание conv-правила (№520)"

@@ -33,13 +33,13 @@ fn socket_ok(h *()) -> Result[UdpSocket, NetError] => Ok(UdpSocket.from_raw(h))
 
 fn err_socket(code int) -> Result[UdpSocket, NetError] => Err(NetError.from_code(code))
 
-fn recv_pair(n int, addr SocketAddr) -> (int, SocketAddr) => (n, addr)
+fn recv_pair(n int, addr SocketAddr) -> (int, ro SocketAddr) => (n, addr)
 
-fn recv_ok(n int, addr SocketAddr) -> Result[(int, SocketAddr), NetError] => Ok(recv_pair(n, addr))
+fn recv_ok(n int, addr SocketAddr) -> Result[(int, ro SocketAddr), NetError] => Ok(recv_pair(n, addr))
 
-fn recv_bytes_pair(data []u8, addr SocketAddr) -> ([]u8, SocketAddr) => (data, addr)
+fn recv_bytes_pair(data []u8, addr SocketAddr) -> (ro []u8, ro SocketAddr) => (data, addr)
 
-fn recv_bytes_ok(data []u8, addr SocketAddr) -> Result[([]u8, SocketAddr), NetError] => Ok(recv_bytes_pair(data, addr))
+fn recv_bytes_ok(data []u8, addr SocketAddr) -> Result[(ro []u8, ro SocketAddr), NetError] => Ok(recv_bytes_pair(data, addr))
 
 /// Bind a UDP socket to `addr`. `SocketAddr.loopback(0)` → OS-assigned port.
 #stable(since = "0.1")

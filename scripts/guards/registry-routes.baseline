@@ -141,7 +141,7 @@ no_route=0
 #   any single count, it is that lowering a ratchet has no external
 #   caller either: the guard prints the drop and passes, and a passing
 #   step is one nobody reads. Rule G8 applies to the baselines too.
-no_caveat=33
+no_caveat=30
 # №728 (`type Bytes []u8` молча значит newtype над `u8`) — новый блокер,
 #   найден 2026-08-18 по дороге к №723. Скобка после имени типа — список
 #   generic-параметров (D52), и парсер принимает его пустым без
@@ -401,4 +401,35 @@ no_caveat=33
 #   exactly one existing fixture, d354_generic_anon_tuple_mono, whose
 #   signature was the very form the ruling forbids; its source moved to the
 #   canon. Corpus in one CU after: PASS 247 FAIL 0.
-blockers=46
+# 2026-08-23, SIX PHANTOMS VERIFIED AND DECLARED -- 46 -> 42, caveats 33 -> 30.
+#   #446, #447, #465, #517, #536 and #599 each stated their own closure in
+#   prose and were counted open because the scanner reads the field (#753).
+#   Every one was re-verified BEFORE the wording moved, by running the
+#   evidence the row itself named:
+#     446, 447 -- check-single-mco-resume ok (the guard the rows cite)
+#     465      -- three m465 fixtures, PASS: 3 FAIL: 0
+#     517      -- std/src/collections/index_map, PASS: 1 FAIL: 0
+#     536      -- standalone/p576_modcall_probe, PASS: 1 FAIL: 0
+#     599      -- std/src/time + encoding/serde, PASS: 7 FAIL: 0 (the row
+#                 promised exactly seven)
+#   Not a defect was touched: these rows were closed on 14 August and the
+#   release count simply could not see it.
+#   УТОЧНЕНИЕ: сначала счёт дал 42, потому что шесть строк несли ДВА
+#   маркера `Статус:` — новое поле и старый литерал в прозе («Прежний
+#   статус: Статус: …»). После того как проза перестала употреблять
+#   маркерное слово, счёт стал 40 — ровно 46 минус шесть проверенных.
+# 2026-08-23, No.370 CONFIRMED -- 40 -> 39. The last of the nine phantoms, and
+#   the only one whose evidence had to be BUILT rather than re-run: the row was
+#   closed on a "probe of three assertions" that was never committed, so the
+#   class stood closed on a run nobody could repeat. The probe is now
+#   standalone/m370_mut_param_and_clone_pos.nv, PASS: 1 FAIL: 0, and proven
+#   both ways -- defect values give PASS: 0 FAIL: 1.
+# 2026-08-23, No.381 CLOSED -- 39 -> 38. A protocol bound was enforced only for
+#   LITERAL arguments; when the type came from a call the check did not run at
+#   all, and the program then failed at the C stage. Fixed in the checker
+#   channel in two halves (the call's declared return read from the signature
+#   registry, and locals initialised from a call recorded in scope), with two
+#   false refusals the corpus caught on the way -- a return mentioning a type
+#   parameter, and a bare generic container (D135 carve-out) -- both excluded.
+#   Corpus: conformance one CU PASS: 844 FAIL: 0, std PASS: 75 FAIL: 0.
+blockers=38

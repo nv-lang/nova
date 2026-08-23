@@ -28447,8 +28447,14 @@ impl<'a> BoundCtx<'a> {
                 self.check_let_pattern_irrefutable(&d.pattern, errors);
                 // Регистрируем simple-Ident pattern с inferred типом.
                 if let Some(name) = pattern_simple_name(&d.pattern) {
+                    // №381, вторая половина корня, названного строкой дословно:
+                    // «локаль, чей тип пришёл из возврата вызова, не записана».
+                    // Без этого `ro bad = make()` не попадала в scope вовсе, и
+                    // следующий же `a.append(bad)` проходил ба́унд молча — именно
+                    // эта форма оставалась дырой после того, как инлайн-форму закрыли.
                     let inferred = d.ty.clone()
-                        .or_else(|| Self::infer_arg_ty(&d.value, scope));
+                        .or_else(|| Self::infer_arg_ty(&d.value, scope))
+                        .or_else(|| self.call_return_ty(&d.value));
                     if let Some(t) = inferred {
                         scope.insert(name, t);
                     }
@@ -29479,7 +29485,29 @@ impl<'a> BoundCtx<'a> {
             let arg_expr = call_arg.expr();
             if let Some(t_name) = Self::param_generic_name(&param.ty, &callee.generics) {
                 if !bindings.contains_key(&t_name) {
-                    if let Some(arg_ty) = Self::infer_arg_ty(arg_expr, scope) {
+                    // №381: `infer_arg_ty` — ЛЁГКАЯ проба (литералы, имена в scope,
+                    // `as`, унарные), и ветки на ВЫЗОВ у неё нет. При `None`
+                    // цикл ниже делает `continue` — то есть ба́унд НЕ проверяется вовсе,
+                    // а не проверяется слабее. [INV-PROPERTY] — держится фикстурой
+                    // `neg/m381_bound_via_call_return_neg.nv`: обе call-формы закреплены
+                    // line-pinned маркерами и краснеют, если проверка снова перестанет запускаться.
+                    //
+                    // ЗАМЕР ДО ПРАВКИ (реестр №381):
+                    //   a.append(NoSlice{junk:7})      -> E_BOUND_NOT_SATISFIED
+                    //   ro bad = make(); a.append(bad) -> PASS: 1 FAIL: 0
+                    //   a.append(make())               -> PASS: 1 FAIL: 0
+                    // и третий падает на этапе C: `passing 'Nova_NoSlice *' to
+                    // parameter of incompatible type`. То самое «проверка и сборка
+                    // расходятся», ради которого строка заведена как К1.
+                    //
+                    // Спрашиваем СОБСТВЕННЫЙ полный вывод чекера, а не заводим вторую
+                    // выводилку: канал 196 требует резолвить ОДИН раз и ЧИТАТЬ ответ.
+                    // Порядок именно такой (сначала лёгкая проба): она дешевле и уже
+                    // покрывает подавляющее большинство аргументов, а полный вывод зовётся
+                    // только там, где раньше была дыра.
+                    let arg_ty = Self::infer_arg_ty(arg_expr, scope)
+                        .or_else(|| self.call_return_ty(arg_expr));
+                    if let Some(arg_ty) = arg_ty {
                         bindings.insert(t_name, arg_ty);
                     }
                 }
@@ -30713,6 +30741,78 @@ impl<'a> BoundCtx<'a> {
 
     /// Минимальная inference типа argument'а — best-effort на основе
     /// синтаксической формы и текущего scope (let-bindings).
+    /// №381: ОБЪЯВЛЕННЫЙ тип возврата простого вызова `name(...)`.
+    ///
+    /// `infer_arg_ty` — лёгкая проба без ветки на вызов, а `BoundCtx` — не
+    /// полный чекер и вывода типов у него нет. Но у него ЕСТЬ реестр
+    /// сигнатур — тот самый единый источник (план 172.1 U.2.3.2), где
+    /// объявленный возврат уже лежит. Это НЕ вторая выводилка, а
+    /// чтение уже разрешённого — правило канала 196.
+    ///
+    /// ОСОЗНАННО УЗКО, чтобы не дать НИ ОДНОГО ложного отказа:
+    ///   * только голое имя функции в позиции callee (не метод, не выражение);
+    ///   * если кандидатов-перегрузок несколько и возвраты у них РАЗНЫЕ —
+    ///     отвечаем `None` (решать перегрузку здесь нечем, а угадать значит
+    ///     отклонить законный код);
+    ///   * генерик-возврат (`-> T`, где `T` — параметр самой функции) — `None`:
+    ///     его конкретизация требует вывода, которого здесь нет.
+    /// Во всех этих случаях поведение остаётся тем же, что было до правки.
+    fn call_return_ty(&self, e: &Expr) -> Option<TypeRef> {
+        // NOVA_KILL_BOUND_CALL_RET=1 — kill-switch домашнего образца (как
+        // NOVA_KILL_ALTSTACK у №7745): «зелёно после правки» не доказывает,
+        // что зелёным его сделала именно правка. Без переключателя старое
+        // поведение видно только пересборкой, а пересборка — другой бинарь.
+        if std::env::var("NOVA_KILL_BOUND_CALL_RET").as_deref() == Ok("1") {
+            return None;
+        }
+        let ExprKind::Call { func, .. } = &e.kind else { return None };
+        let ExprKind::Ident(name) = &func.kind else { return None };
+        let cands = self.sig.fn_decls.get(name.as_str())?;
+        let first = cands.first()?;
+        let ret = first.return_type.as_ref()?;
+        // Перегрузки с РАЗНЫМИ возвратами — не нашe дело здесь.
+        // TypeRef не сравнивается напрямую (нет PartialEq) — сверяем формы.
+        let ret_shape = format!("{:?}", ret);
+        if cands.iter().any(|f| {
+            f.return_type.as_ref().map(|t| format!("{:?}", t)) != Some(ret_shape.clone())
+        }) {
+            return None;
+        }
+        // Возврат, УПОМИНАЮЩИЙ параметр типа ГДЕ УГОДНО внутри, — не
+        // конкретный тип. Первая редакция смотрела только на ВЕРХНИЙ уровень
+        // и пропускала `Result[T, E]`: в scope ложился ОБЪЯВЛЕННЫЙ тип с
+        // неинстанцированным `T`, и следующий `r.is_ok()` получал
+        // `[E_RECV_SHAPE_MISMATCH]` на законном коде (замер: конформанс дал
+        // FAIL 1 на `d135_bare_generic_inferred`). Ложный отказ хуже пропущенного:
+        // пропуск оставляет старое поведение, отказ ломает рабочий код.
+        let names: Vec<&str> = first.generics.iter().map(|g| g.name.as_str()).collect();
+        if !names.is_empty() {
+            let shape = format!("{:?}", ret);
+            if names.iter().any(|n| {
+                shape.contains(&format!("\"{}\"", n))
+            }) {
+                return None;
+            }
+        }
+        // ГОЛЫЙ ГЕНЕРИК-КОНТЕЙНЕР — тоже не конкретный тип, и это второй
+        // ложный отказ, пойманный корпусом: `fn d135_validated(n int) -> Result`
+        // (карв-аут D135 — аргументы выводятся из тела) записывался в scope как
+        // безаргументный `Result`, и следующий `r.is_ok()` получал
+        // `[E_RECV_SHAPE_MISMATCH]` на законном коде (конформанс: FAIL 1 на
+        // `d135_bare_generic_inferred`). Правило: если тип ОБЪЯВЛЕН с параметрами,
+        // а в возврате их нет — конкретности нет, молчим.
+        if let TypeRef::Named { path, generics, .. } = ret.strip_modifiers() {
+            if generics.is_empty() && path.len() == 1 {
+                if let Some(decl) = self.type_decls.get(&path[0]) {
+                    if !decl.generics.is_empty() {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(ret.clone())
+    }
+
     fn infer_arg_ty(e: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
         match &e.kind {
             // Plan 172.1 U.1.3b step 1 (Gap A): self/@ receiver carries the enclosing
