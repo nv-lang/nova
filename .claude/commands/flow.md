@@ -1,7 +1,7 @@
 ---
-description: режим хода «сделал -> доложил -> сделал»: ждать только в трёх случаях
-argument-hint: [чем заняться; по умолчанию — текущая очередь]
-allowed-tools: Bash, Read, Edit, Write, Grep, Glob
+description: "режим хода «сделал -> доложил -> сделал»: ждать только в трёх случаях"
+argument-hint: "[чем заняться; по умолчанию — текущая очередь]"
+allowed-tools: "Bash, Read, Edit, Write, Grep, Glob"
 ---
 
 Работай так: $ARGUMENTS
