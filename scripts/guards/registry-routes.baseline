@@ -368,4 +368,12 @@ no_caveat=34
 #   the loop-tier job runs `no-silent-int-fallback` against
 #   /home/runner/work/nova/nova/compiler-codegen/src. Guards without an external
 #   caller, which this row quoted as unchanged at 56, are now 0 of 82.
-blockers=49
+# 2026-08-23, No.745 CLOSED -- 49 -> 48. Both fixtures of the row are green on
+#   BOTH platforms now, measured on a clean Linux image with default arena
+#   settings: fiber_stack_overflow PASS 1/0 in 12s (was TIMEOUT 64s),
+#   supervised_cancel_double_bind PASS 1/0 in 1s (was TIMEOUT 84s); Windows
+#   unchanged green. The second half was never about detection -- both paths
+#   ended in a crash after their diagnostic was already printed, and a core of
+#   Nova's reserved fiber arena is tens of gigabytes. #436's canon (a program
+#   error is a controlled exit) simply had not been applied there.
+blockers=48
