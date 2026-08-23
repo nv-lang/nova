@@ -95,8 +95,14 @@ fi
 if [ ! -f "$PCH" ]; then
     # the PCH records its source header's path — keep it in the cache too
     printf '#include "nova_rt/nova_rt.h"\n' > "$CACHE/prelude-$ORACLE_STAMP.h"
+    # ОТКАЗ ОБЯЗАН ПОКАЗАТЬ ПЕРЕХВАЧЕННЫЕ ФЛАГИ (2026-08-23). На CI (Linux) этот
+    # шаг ответил «cannot specify -o when generating multiple output files» — то
+    # есть в CFLAGS попал ВХОД, а не только флаги, — и по одному этому
+    # сообщению нельзя сказать, какой именно: argv оракула на Linux другой, а
+    # машины под рукой нет. Теперь отказ несёт первые строки CFLAGS, и разбор
+    # идёт по факту, а не по догадке.
     eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -x c-header \"$CACHE/prelude-$ORACLE_STAMP.h\" -o \"$PCH\"" > "$T/pch.out" 2>&1 \
-        || fail "PCH не собрался: $(head -3 "$T/pch.out")"
+        || fail "PCH не собрался: $(head -3 "$T/pch.out") | перехваченные CFLAGS ($(grep -c '' "$CFLAGS") строк): $(tr '\n' ' ' < "$CFLAGS" | head -c 400)"
 fi
 
 # ---- 3. novac emit -> compile against PCH -> link with the oracle's argv --
