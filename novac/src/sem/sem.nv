@@ -351,6 +351,7 @@ export type CallForm enum
 /// VALUE row records (rustc IndexVec camp; the architecture's "storage
 /// reference"); every name -> id step goes through a table door.
 export type Ctx {
+    module_c str /// THIS file's module path in the shape a C name carries it (`novac.sem` -> `novac_sem`); `""` when the file declares none. Part of a declaration's IDENTITY (plan 274 section 9.1d point 1), which is why it is not derived at each use
     coerces []CoercePair /// Implicit conversions declared with `#coerce` (D429), read from declarations.
     types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
     tys Interner /// THE type interner (layer 4): every Ty of this file is a row here; identity is the id (E2-b1).
@@ -918,5 +919,5 @@ export fn collect_types(file Node) -> Ctx {
     mut own = fns
     own.own_cnt = own.rows.len()
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
-          coerces, protos }
+          module_c: module_path_c(file), coerces, protos }
 }

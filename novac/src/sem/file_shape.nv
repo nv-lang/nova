@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/file_shape.nv — what a FILE says about itself: its module path,
+// and which declarations it holds (plan 274, decision 12 cut).
+//
+// Donor: none for the questions -- both are Nova's own shape (a module
+// declaration heads the file; `export` wraps a declaration). rustc's `Crate`
+// carries the same pair for the same reason: the unit's identity and its items
+// are asked together and by everyone.
+// Role: layer 3 (sem), the FILE-level doors. Everything else in `slots.nv`
+//       answers about the inside of ONE declaration; these two answer about the
+//       file that holds them.
+// Used by: `sem.collect_types` (both), `check` (the typing walk and the subset
+//          walk), `mono` (the reachability roots), `emit_c` (the emission
+//          order), `mangle` (the module part of our C names).
+// Guarded by: check-novac-file-decls-door.py (nobody walks a root's children
+//             raw), check-novac-file-size.py (this file exists because slots.nv
+//             crossed a thousand lines), check-novac-emitted-unique.py (the
+//             module path is what makes two modules' names differ).
+//
+// A co-equal file of module `novac.sem` (folder = one module). The cut is by
+// MEANING and the size only made it visible: `slots.nv` locates things INSIDE a
+// declaration, and these two locate the declarations themselves.
+
+module novac.sem
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+
+/// THE MODULE PATH of a file, in the shape a C name can carry: `module
+/// novac.sem` answers `novac_sem`, and a file that declares none answers `""`.
+///
+/// WHY A C NAME NEEDS IT (plan 274 section 9.1d point 1): the path is part of a
+/// declaration's IDENTITY, exactly like its parameter types. Until 2026-08-23 the
+/// path was PARSED and read by nobody, and novac got away with it for one reason
+/// only -- it compiles exactly one module, so two same-named declarations could
+/// not meet. The day modules arrive they meet silently: one C name, two bodies,
+/// and the linker picks.
+///
+/// The dot becomes `_` and nothing else is transformed: a module path is made of
+/// identifiers, which are already C-safe, and inventing an escape for a
+/// character the language cannot put there would be a rule with no case.
+export fn module_path_c(file Node) -> str {
+    consume s = StringBuilder.new(cap: 32)
+    for c in branch_children(file) {
+        if c.kind_of() != NodeKind.ModuleDecl { continue }
+        for m in branch_children(c) {
+            if m.kind_of() != NodeKind.LeafNode { continue }
+            // A TABLE, so it is written as one (P21): two token kinds carry the
+            // path and everything else in a module declaration does not.
+            match leaf_kind(m) {
+                Ident => s.append(leaf_text(m))
+                Dot => s.append("_")
+                // The `module` keyword itself, or recovery debris after a broken
+                // path: neither is part of the name, and saying so here is what
+                // keeps the residual arm from being a silent default.
+                _ => {}
+            }
+        }
+    }
+    s
+}
+
+/// THE DECLARATIONS OF A FILE, with the visibility wrapper opened.
+///
+/// `export fn f()` parses as an `ExportDecl` WRAPPING the declaration -- the
+/// shape is deliberate and its reason is written at the parser: every reader of
+/// a `FnDecl` keeps working on the shape it knew. What that reasoning did not
+/// cover is the FILE level: four walks look for declarations among the file's
+/// children, and to each of them an exported declaration is simply not there.
+/// Measured 2026-08-23 on novac's own sources -- 4 of 34 files stop at their
+/// first `export`, and 29 at their first `import`.
+///
+/// So there is ONE door, and `check-novac-file-decls-door.py` refuses a raw walk
+/// over a file's children anywhere else. That is the difference between a rule
+/// and a habit here: a missed site would make an exported declaration invisible
+/// to mono -- no row, no emission, no diagnostic -- and silence is the one
+/// failure mode this plan spends its guards on.
+export fn file_decls(file Node) -> []Node {
+    mut out = []Node.new()
+    for c in branch_children(file) {
+        if c.kind_of() != NodeKind.ExportDecl {
+            out.push(c)
+            continue
+        }
+        // The wrapper holds the `export` leaf and the declaration it applies to;
+        // everything else in it is recovery debris the checker names.
+        for w in branch_children(c) {
+            if w.kind_of() == NodeKind.LeafNode { continue }
+            out.push(w)
+        }
+    }
+    out
+}
+

@@ -74,38 +74,6 @@ export fn param_name_at(pk []Node) -> Option[int] {
     None
 }
 
-/// THE DECLARATIONS OF A FILE, with the visibility wrapper opened.
-///
-/// `export fn f()` parses as an `ExportDecl` WRAPPING the declaration -- the
-/// shape is deliberate and its reason is written at the parser: every reader of
-/// a `FnDecl` keeps working on the shape it knew. What that reasoning did not
-/// cover is the FILE level: four walks look for declarations among the file's
-/// children, and to each of them an exported declaration is simply not there.
-/// Measured 2026-08-23 on novac's own sources -- 4 of 34 files stop at their
-/// first `export`, and 29 at their first `import`.
-///
-/// So there is ONE door, and `check-novac-file-decls-door.py` refuses a raw walk
-/// over a file's children anywhere else. That is the difference between a rule
-/// and a habit here: a missed site would make an exported declaration invisible
-/// to mono -- no row, no emission, no diagnostic -- and silence is the one
-/// failure mode this plan spends its guards on.
-export fn file_decls(file Node) -> []Node {
-    mut out = []Node.new()
-    for c in branch_children(file) {
-        if c.kind_of() != NodeKind.ExportDecl {
-            out.push(c)
-            continue
-        }
-        // The wrapper holds the `export` leaf and the declaration it applies to;
-        // everything else in it is recovery debris the checker names.
-        for w in branch_children(c) {
-            if w.kind_of() == NodeKind.LeafNode { continue }
-            out.push(w)
-        }
-    }
-    out
-}
-
 /// Is this child of a call an ARGUMENT? Two shapes are: a bare expression, and
 /// a NAMED argument (`by: 2`), which is a node WRAPPING one.
 ///

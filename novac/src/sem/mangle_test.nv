@@ -155,3 +155,26 @@ test "a generic callable's parameters carry the substituted types" {
     assert(a == "novac_fn_id__nova_int__to_nova_int__nova_int")
     assert(b == "novac_fn_id__nova_str__to_nova_str__nova_str")
 }
+
+test "the MODULE PATH is part of a C name: two modules, two names" {
+    // The whole point of section 9.1d point 1, asserted the only way it can be
+    // today: novac compiles ONE module, so two same-named declarations cannot
+    // meet in a file -- and that is exactly why the collision would be silent
+    // when they finally can. So the door is asked twice with the same
+    // declaration and a different module path.
+    mut ctx = collect_types(empty_file())
+    ctx.fns.add("helper", ctx.prims.int_id, false, []ParamDef.of(ro_param(ctx.prims.int_id)),
+                []str.new(), []str.new())
+    ro row = FnRow(ctx.fns.rows.len() - 1)
+    ctx.module_c = "a_b"
+    ro in_ab = c_callable(ctx, row, []TyId.new())
+    ctx.module_c = "a_c"
+    ro in_ac = c_callable(ctx, row, []TyId.new())
+    assert(in_ab != in_ac)
+    assert(in_ab.contains("a_b_helper"))
+    assert(in_ac.contains("a_c_helper"))
+    // A file with NO module declaration adds nothing -- not even a separator,
+    // which would leave a hole where the identity is missing.
+    ctx.module_c = ""
+    assert(c_callable(ctx, row, []TyId.new()).contains("novac_fn_helper"))
+}

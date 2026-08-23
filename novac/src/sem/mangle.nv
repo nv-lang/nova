@@ -140,6 +140,24 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
 /// `novac/src/emit_c/shell.tpl.c:56-58`.
 export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${decl_of_ty(ctx, t).name}_Tag"
 
+/// The module part of one of OUR names: the path plus a separator, or `""`.
+///
+/// A door and not `"${ctx.module_c}_"` at three call sites, because the EMPTY
+/// case is the whole question: a file with no module declaration must add
+/// nothing at all, and a trailing separator would make `novac_fn__helper` -- a
+/// name with a hole where the identity is missing, which is exactly what a
+/// reader would then have to know not to trust.
+///
+/// WHAT DOES NOT GET IT, and this is interop rather than an exception: the C
+/// STRUCT names (`Nova_<name>`). Our emission is glued into the oracle's shell
+/// (274 section 7.0), the shell declares those types, and a name we invent there
+/// would not be the type the shell knows. They stay until novac emits the whole
+/// prelude itself -- the same end condition every other interop line carries.
+fn module_prefix(ctx Ctx) -> str {
+    if ctx.module_c == "" { return "" }
+    "${ctx.module_c}_"
+}
+
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t TyId) -> str {
@@ -201,13 +219,17 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
 /// (novac's own namespace for user sums — the oracle's NOVA_TAG_ is its).
 export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
     ro vd = ctx.variant_rows[raw_vrow(vrow)]
-    "NOVAC_TAG_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+    // TWICE QUALIFIED, exactly as section 9.1d point 3 asks: the module, then the
+    // sum, then the variant. Two same-named sums in one unit used to collapse
+    // into one tag set -- and a tag is an enum constant, so C would have taken
+    // the second definition as a redefinition or, worse, silently agreed.
+    "NOVAC_TAG_${module_prefix(ctx)}${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
 export fn c_maker(ctx Ctx, vrow VariantRow) -> str {
     ro vd = ctx.variant_rows[raw_vrow(vrow)]
-    "novac_make_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+    "novac_make_${module_prefix(ctx)}${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// The RUNTIME's entry slot. Not ours to choose: the shell calls this exact
@@ -257,6 +279,13 @@ export fn c_callable(ctx Ctx, row FnRow, subst []TyId) -> str
     // oracle accepts a difference in the return type alone), so both are here.
     consume s = StringBuilder.new(cap: 64)
     s.append("novac_fn_")
+    // THE MODULE PATH IS PART OF THE IDENTITY (section 9.1d point 1), and it goes
+    // FIRST for the same reason the parameters go last: the name reads
+    // outside-in, and two modules declaring `helper` must differ before their
+    // parameters are even compared. A file with no module declaration adds
+    // nothing -- novac's own `main.nv` is such a file, and inventing a path for
+    // it would name something the source does not say.
+    s.append(module_prefix(ctx))
     s.append(fd.name)
     for p in ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt] {
         s.append("__")

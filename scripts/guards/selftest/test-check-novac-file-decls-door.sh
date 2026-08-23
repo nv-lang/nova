@@ -55,10 +55,13 @@ D=$(mk door "module a" "fn use_door(file Node) -> () {" \
 run "$D" && ok "вызов двери не судится" || bad "вызов двери покраснел"
 
 # --- ЗАКОННО: дом двери вне суда -----------------------------------------
+# Путь дома — часть правила, и самотест его проверяет ИМЕННО поэтому: когда
+# решение 12 вырезало файловые вопросы из `slots.nv` в свой файл, красным стал
+# этот случай, а не молчание.
 D="$T/home"; mkdir -p "$D/sem"
 printf "%s\n" "module a" "export fn file_decls(file Node) -> []Node {" \
-    "    for c in branch_children(file) { out.push(c) }" "    out" "}" > "$D/sem/slots.nv"
-run "$D" && ok "sem/slots.nv вне суда: дом самой двери" || bad "дом двери покраснел"
+    "    for c in branch_children(file) { out.push(c) }" "    out" "}" > "$D/sem/file_shape.nv"
+run "$D" && ok "sem/file_shape.nv вне суда: дом самой двери" || bad "дом двери покраснел"
 
 # --- ЗАКОННО: комментарий ------------------------------------------------
 D=$(mk comment "module a" "fn f() -> () {" "    // was: branch_children(file)" "    g()" "}")
