@@ -67,7 +67,12 @@ else
     ALLOW_FILE="${NOVA_SECRETS_ALLOWLIST:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets-allowlist.baseline}"
     ALLOW_RE=""
     if [ -f "$ALLOW_FILE" ]; then
+        # CR СНИМАЕТСЯ ЗДЕСЬ (2026-08-23). `.baseline` не закреплён в
+        # .gitattributes, поэтому в дереве с autocrlf он CRLF, и строка из
+        # одного `\r` читается как исключение без причины — страж краснел на
+        # ПУСТОЙ строке и печатал пустое имя.
         while IFS= read -r line; do
+            line=${line%$'\r'}
             case "$line" in ''|'#'*) continue ;; esac
             path=$(printf '%s' "$line" | awk '{print $1}')
             case "$line" in

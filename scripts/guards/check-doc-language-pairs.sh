@@ -68,7 +68,11 @@ cyr_pct() {
 # Известные пробелы пары. Каждая строка ОБЯЗАНА нести номер записи.
 BASELINE=""
 if [ -f "$BASE_FILE" ]; then
+    # CR СНИМАЕТСЯ ЗДЕСЬ (2026-08-23), по той же причине, что и в
+    # check-staged-secrets: база выложена CRLF, и `\r`-строка читалась как
+    # «имя без номера», то есть долг без следа — на ровном месте.
     while IFS= read -r line; do
+        line=${line%$'\r'}
         case "$line" in ''|'#'*) continue ;; esac
         name=$(printf '%s' "$line" | awk '{print $1}')
         case "$line" in
