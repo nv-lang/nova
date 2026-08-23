@@ -1,0 +1,25 @@
+module protocol_decl.neg_1
+
+// ONE seeded cause: the type handed to a bounded parameter does NOT have the
+// method the contract requires. `Plain` has no `@size()`, so `twice[T Sized]`
+// cannot take it.
+//
+// Both compilers refuse, and the outcome AGREES -- which is what a `neg_*`
+// fixture is allowed to assert. Their wording differs and that is fine: the
+// oracle answers `E_BOUND_NOT_SATISFIED`, novac answers "Plain does not satisfy
+// `Sized` -- missing size() -> int". The bar for naming the MISSING signature
+// rather than just the bound was taken from the oracle's own message (measured
+// 2026-08-23): a refusal that only names the bound leaves the reader to guess
+// which requirement failed.
+type Sized protocol {
+    @size() -> int
+}
+
+type Plain { m int }
+
+fn twice[T Sized](a T) -> int => 2
+
+fn main() {
+    ro p = Plain { m: 1 }
+    println("twice = ", twice(p))
+}

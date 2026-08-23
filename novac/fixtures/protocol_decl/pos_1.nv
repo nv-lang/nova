@@ -1,0 +1,33 @@
+module protocol_decl.pos_1
+
+// A CONTRACT, A TYPE THAT MEETS IT, AND A CALL THROUGH THE BOUND -- the whole
+// path of E2-b3 wave 3b plus 3g, in one file the oracle compiles too.
+//
+// What each line is here for:
+//   * `type Sized protocol { ... }` -- the form novac called "not a form of the
+//     language" until wave 3a, and registers as a contract since 3b;
+//   * `fn Box @size() -> int` -- a method declared in THIS file, which the
+//     collector dropped until wave 3g (a method puts a `Recv` branch where a
+//     free function has its name leaf, and the collector required a leaf);
+//   * `twice[T Sized]` -- the bound, checked at the CALL against the type the
+//     arguments deduced, not at the declaration;
+//   * the call itself -- so the emission is exercised: `nova test` runs this
+//     binary and compares stdout with the oracle's byte for byte.
+//
+// The method body returns a constant on purpose: `@field` inside a method body
+// is still refused by name (wave 3g part 3), and a fixture must not depend on a
+// form the subset has not reached.
+type Sized protocol {
+    @size() -> int
+}
+
+type Box { n int }
+
+fn Box @size() -> int => 3
+
+fn twice[T Sized](a T) -> int => 2
+
+fn main() {
+    ro b = Box { n: 1 }
+    println("twice = ", twice(b))
+}

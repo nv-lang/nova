@@ -22,8 +22,10 @@
 // one question -- what a contract requires, and whether a type meets it.
 
 module novac.sem
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty, Interner}
 import ../names.{NameTable, NamespaceId}
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
 
 /// ONE required signature of a protocol: `@size() -> int`.
 ///
@@ -77,3 +79,38 @@ export fn ProtoTable mut @add(name str, sig_off int, sig_cnt int) -> int {
 /// The row of the protocol with this name, or -1: the ONE door callers ask.
 #realtime nogc
 export fn ProtoTable @row_of(name str) -> int => @names.find(name)
+
+/// Fill the signatures of ONE protocol declaration: pass 2 of the collector.
+///
+/// Lives with the registry it fills. Pass 1 counted the signatures and put
+/// placeholder rows in place; here the TYPES are resolved, which can only happen
+/// after every type of the file is registered -- a contract may require
+/// `@at(i int) -> Cel` with `Cel` declared below it.
+///
+/// Called BEFORE the collector asks `defs` for the declaration's owner, because
+/// a contract has no row in `types` and that lookup would skip it.
+export fn fill_proto_sigs(mut protos ProtoTable, decl Node, tname str,
+                          types []TypeDef, defs DefTable, tys Interner) -> () {
+    ro prow = protos.row_of(tname)
+    if prow < 0 {
+        ice("sem: pass 2 sees a protocol pass 1 did not register")
+    } else {
+        // Registered in pass 1, as every protocol is.
+    }
+    mut si = protos.rows[prow].sig_off
+    for m in branch_children(decl) {
+        if m.kind_of() != NodeKind.ProtoMethod { continue }
+        ro mk = branch_children(m)
+        ro poff = protos.sig_params.len()
+        mut pcnt = 0
+        for pm in mk {
+            if pm.kind_of() != NodeKind.Param { continue }
+            protos.sig_params.push(ty_of_param_node(pm, types, defs, tys))
+            pcnt += 1
+        }
+        protos.sigs[si] = ProtoSig { name: proto_method_name(m) ?? "",
+                                     ret_id: ty_of_ret_node(mk, types, defs, tys),
+                                     param_off: poff, param_cnt: pcnt }
+        si += 1
+    }
+}

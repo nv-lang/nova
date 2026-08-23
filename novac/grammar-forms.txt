@@ -6,3 +6,4 @@ str_lit
 generic_call
 param_mode
 newtype
+protocol_decl

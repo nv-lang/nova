@@ -682,6 +682,19 @@ export fn collect_types(file Node) -> Ctx {
             // only way a loop can spell it. The policy that came out of this
             // measurement is in section 9.1g.5: `Option` where the value IS the
             // answer, a sentinel where the answer is to SKIP.
+            // A PROTOCOL IS FILLED BEFORE `defs` IS ASKED. A contract is not
+            // registered as a type by construction (it has no layout), so the
+            // owner lookup below answers "no declaration" and the loop would
+            // skip -- which is exactly what happened until 2026-08-23: the
+            // signatures stayed untyped and the refusal said "missing size()"
+            // instead of "missing size() -> int". The FILLING itself lives with
+            // the registry it fills (`protocols.nv`), not here.
+            if shape_of_decl(c) == DeclShape.ShapeProtocol {
+                fill_proto_sigs(protos, c, tname, types, defs, tys)
+                continue
+            } else {
+                // Not a protocol: the ordinary owner lookup below applies.
+            }
             ro owner_id = defs.type_decl(tname) ?? no_decl()
             if !is_decl(owner_id) { continue }
             // The ROW already exists (pass 1 built it) -- pass 2 FILLS it. The
@@ -694,33 +707,11 @@ export fn collect_types(file Node) -> Ctx {
             ro mine = types[raw_decl(owner_id)]
             if mine.name != tname { continue }
             match shape_of_decl(c) {
-                // The signatures were counted in pass 1 and are TYPED here,
-                // where every type of the file is registered: a protocol may
-                // require `@at(i int) -> Cel` with `Cel` declared below it.
-                ShapeProtocol => {
-                    ro prow = protos.row_of(tname)
-                    if prow >= 0 {
-                        mut si = protos.rows[prow].sig_off
-                        for m in branch_children(c) {
-                            if m.kind_of() != NodeKind.ProtoMethod { continue }
-                            ro mk = branch_children(m)
-                            ro poff = protos.sig_params.len()
-                            mut pcnt = 0
-                            for pm in mk {
-                                if pm.kind_of() != NodeKind.Param { continue }
-                                protos.sig_params.push(ty_of_param_node(pm, types, defs, tys))
-                                pcnt += 1
-                            }
-                            protos.sigs[si] = ProtoSig {
-                                name: proto_method_name(m) ?? "",
-                                ret_id: ty_of_ret_node(mk, types, defs, tys),
-                                param_off: poff, param_cnt: pcnt }
-                            si += 1
-                        }
-                    } else {
-                        ice("sem: pass 2 sees a protocol pass 1 did not register")
-                    }
-                }
+                // Handled ABOVE, before the owner lookup: a contract has no row
+                // in `types`, so it cannot be filled by a walk that starts from
+                // one. The arm is named rather than left to a `_` so that a new
+                // shape still stops the compiler here (P21).
+                ShapeProtocol => {}
                 ShapeRecord => {
                     ro off = fields.rows.len()
                     mut cnt = 0
@@ -851,7 +842,40 @@ export fn collect_types(file Node) -> Ctx {
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }
-            if fk[1].kind_of() != NodeKind.LeafNode { continue }
+            if fk[1].kind_of() != NodeKind.LeafNode {
+                // A METHOD DECLARED IN THIS FILE (wave 3g). Until 2026-08-23
+                // this branch dropped it: a method puts a `Recv` BRANCH where a
+                // free function has its name leaf, the collector required a
+                // leaf, and so the row was never registered -- which is why
+                // `check` had to refuse the whole form ("novac does not declare
+                // methods yet").
+                //
+                // The reader is the SAME one std declarations go through
+                // (`harvest_fn`), because plan 273 says a method is a function
+                // whose first parameter is the receiver: one form, one reader.
+                // Two readers would be the very split that plan closed.
+                // NOT a receiver group -- recovery debris, or `fn[T] ...`
+                // with type parameters before the name, which `check` refuses
+                // by position. The TERMINATOR is the branch (P21): a match over
+                // NodeKind would need forty-five arms, and the guard accepts a
+                // terminator exactly for this shape.
+                if fk[1].kind_of() != NodeKind.Recv { continue }
+                ro before = fns.rows.len()
+                harvest_fn(fk, types, defs, fns)
+                if fns.rows.len() > before {
+                    // The node -> row map is what lets the EMITTER find the
+                    // body: `harvest_fn` alone registers a signature, and a
+                    // signature with no body is what std declarations are.
+                    ro mdid = c.id_of()
+                    while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
+                    fn_decl_rows[mdid] = FnRow(fns.rows.len() - 1)
+                } else {
+                    // The reader refused the signature (an unknown type in it,
+                    // for instance): no row, no map entry, and `check` names
+                    // the refusal at the point of use.
+                }
+                continue
+            }
             // THIS declaration's type parameters, and a TYPE for each slot it
             // binds (E2-b2; donor: rustc `TyKind::Param`, a parameter is known
             // by its INDEX in its owner's generics, not by its name). One row

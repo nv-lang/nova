@@ -90,11 +90,18 @@ fn Checker mut @type_fn(f Node) -> () {
     // any `fn Account @tag()` in a user file killed the whole check with
     // "sem: leaf_text on a branch node" -- a crash on correct input, which is
     // worse than any refusal (P12: a user error leaves through a diagnostic).
+    // A METHOD's body is judged like any other body (wave 3g). The blanket
+    // refusal that stood here until 2026-08-23 was honest only while `sem`
+    // dropped the declaration -- an unregistered method would have made every
+    // call inside the body unresolvable. Now the row exists, so the body is
+    // this walk's business too, and what it cannot judge it refuses BY NAME
+    // (`@field` still does, and that is wave 3g part 3).
     if declares_receiver(kids) {
-        @report_first_leaf_of(kids, METHOD_DECL_MSG)
-        return
+        // Nothing special: fall through into the same walk a free function
+        // gets. The receiver is parameter zero (plan 273), so the body's
+        // parameter types are already in the row.
     } else {
-        // A free function: its body is this walk's business.
+        // A free function: the same walk, by the same rule.
     }
     // A GENERIC declaration is not typed here. Its body has no types until a
     // substitution exists, and checking it "in general" would mean a second,
