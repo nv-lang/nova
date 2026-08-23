@@ -6,10 +6,14 @@
 module spec_tests.conformance
 
 // Single type-param: (T, T) — same element type, two distinct call-site instantiations.
-fn[T] d354_dup(v T) -> (T, T) => (v, v)
+// `-> (ro T, ro T)`, не `(T, T)`: возврат ro-параметра внутри кортежа —
+// E_READONLY_COERCE по D246 (№7717 дыра 1 ФОРМА, 2026-08-23). Предмет этой
+// фикстуры — мономорфизация кортежа, а не ro-ность; `ro` — квалификатор
+// вида, не отдельный тип, так что предмет сохранён.
+fn[T] d354_dup(v T) -> (ro T, ro T) => (v, v)
 
 // Two type-params: (T, U) — heterogeneous element types per instantiation.
-fn[T, U] d354_pair(x T, y U) -> (T, U) => (x, y)
+fn[T, U] d354_pair(x T, y U) -> (ro T, ro U) => (x, y)
 
 test "generic (T, T) mono + destructure with REAL int types (D354)" {
     ro (a, b) = d354_dup[int](42)

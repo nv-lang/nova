@@ -1,0 +1,34 @@
+// EXPECT_STDOUT tuple-ro ok
+//
+// #717 hole (1) FORM, the POSITIVE half: the fix walks tuple elements, so it
+// must be shown NOT to refuse the forms that are legal. Its negative twin is
+// `neg/m717_ro_tuple_element_return_neg.nv`.
+//
+// Three shapes that have to keep compiling, and each is here for a reason the
+// fix could plausibly have broken:
+//
+//   * the element declared `ro` -- the canon the diagnostic tells the author to
+//     write, and the reason the check returns early on `ret.is_readonly()`;
+//   * a fresh value in the element -- a call result is not a place rooted in a
+//     ro name, and treating constructors as aliases is exactly the false
+//     positive that separated 26 real cases from 773 in the original census;
+//   * an all-scalar tuple -- a copy the caller cannot write through, exempt by
+//     `is_fully_stack_value` (D246 s72), the same exemption the bare form has.
+module standalone.m717_ro_tuple_element_ok
+
+fn ro_element(v []int) -> (ro []int, int) => (v, v.len())
+
+fn fresh_element(v []int) -> ([]int, int) => (v.clone(), v.len())
+
+fn scalar_pair(n int) -> (int, int) => (n, n + 1)
+
+fn main() Io -> () {
+    mut arr = []int.of(1, 2, 3)
+    ro frozen = ro_element(arr)
+    ro copied = fresh_element(arr)
+    ro pair = scalar_pair(7)
+    assert(frozen.1 == 3)
+    assert(copied.1 == 3)
+    assert(pair.1 == 8)
+    println("tuple-ro ok")
+}

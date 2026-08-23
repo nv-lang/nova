@@ -518,6 +518,16 @@ Do not use them for other purposes.
   to list it. The consume obligation is raised for a consume parameter, for
   `while Pat = expr`, for a consume scope's result binding, and for a typed
   closure or handler-op parameter alike.
+- **The alias rule follows a ro place into a TUPLE ELEMENT**
+  ([D246 amendment 2026-08-23](decisions/02-types.md#d246), registry 221.1
+  #717 hole 1). A place rooted in a ro name carried in a tuple element is
+  judged against THAT ELEMENT's declared type, not against the tuple as a
+  whole: `fn wrap(v []int) -> ([]int, int) => (v, v.len())` is
+  `E_READONLY_COERCE`, and the canon is `-> (ro []int, int)`. Measured before
+  the rule existed: the caller wrote `pair.0[0] = 999` and the write landed in
+  the frozen source. An element declared `ro`, an element holding a fresh value
+  (a call, a literal, a constructor), and a fully-stack element are exempt
+  exactly as they are in the bare return position -- the same check judges both.
 - **`ro` infects by alias only**
   ([D246 amendment 2026-08-21](decisions/02-types.md#d246), registry 221.1
   #717). A local whose value is a place rooted in a ro name (`ro al = v`,
