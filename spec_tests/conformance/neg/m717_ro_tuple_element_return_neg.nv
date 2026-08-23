@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// #717 hole (1) FORM (registry 221.1): a ro place leaves the function inside a
+// TUPLE ELEMENT. The bare form `fn f(v []int) -> []int { v }` was rejected from
+// the start, and one handed through a local since hole (3) -- but a tuple was
+// not looked into at all: `check_ro_launder_return_at` matched only `Ident` in
+// the return position, and `return (v, v.len())` is a `TupleLit`.
+//
+// MEASURED BEFORE THE FIX, carried all the way to a running program rather than
+// argued from the type-checker:
+//
+//     fn wrap(v []int) -> ([]int, int) { return (v, v.len()) }
+//     mut pair = wrap(src)
+//     pair.0[0] = 999          // accepted
+//     println("src[0]=", src[0])   // printed src[0]=999
+//
+// The caller wrote into data the function had been handed READ-ONLY. That is
+// silent corruption, which is why the row is K1 and holds the tag.
+//
+// The canon is to declare the element read-only -- `-> (ro []int, int)` -- or
+// to return an independent copy. The positive side of this pair lives in
+// `standalone/m717_ro_tuple_element_ok.nv`: the fix must not refuse the canon.
+module neg.m717_ro_tuple_element_return_neg
+
+fn m717_launder_via_tuple(v []int) -> ([]int, int) {
+    // nova:expect E_READONLY_COERCE -- `v` is a ro parameter (D176 default, P7 freeze) and leaves inside a tuple element declared plain `[]int`, so `mut pair = f(...)` at the caller writes straight into the frozen source (#717 hole 1 FORM)
+    return (v, v.len())
+}
+
+fn main() {
+    mut arr = []int.of(1, 2, 3)
+    ro got = m717_launder_via_tuple(arr)
+    assert(got.1 == 3)
+}

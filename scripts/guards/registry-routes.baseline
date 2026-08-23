@@ -387,4 +387,18 @@ no_caveat=33
 #   The window's regression fixture, which had been sitting on the unmerged
 #   branch p452-stack-overflow the whole time, is merged in the same commit:
 #   the class had been "closed" with no judge in the corpus at all.
-blockers=47
+# 2026-08-23, No.717 CLOSED -- 47 -> 46. The last hole was (1) FORM, and the
+#   route this row carried for it was dead: it named variant (v), "infer the
+#   return as ro", which the owner's ruling of 22 August retracted -- there is
+#   no inference, the author writes `ro`. So the hole closed by widening the
+#   CHECK instead: `check_ro_launder_return_at` only ever matched `Ident` in
+#   the return position, and `return (v, v.len())` is a TupleLit it never
+#   looked inside.
+#   Measured before the fix, carried to a running program rather than to a
+#   checker verdict: `mut pair = wrap(src); pair.0[0] = 999` type-checked,
+#   built, and printed src[0]=999 -- data handed in READ-ONLY, overwritten.
+#   Radius measured, not estimated: across the whole corpus the fix refused
+#   exactly one existing fixture, d354_generic_anon_tuple_mono, whose
+#   signature was the very form the ruling forbids; its source moved to the
+#   canon. Corpus in one CU after: PASS 247 FAIL 0.
+blockers=46
