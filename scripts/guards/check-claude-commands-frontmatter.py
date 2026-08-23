@@ -17,8 +17,16 @@
   * `description` присутствует и не пуст — это текст, который видно в меню
     команд, и без него команда безымянна.
 
+ВТОРОЕ ПРАВИЛО (2026-08-23): команда `*-recheck.md` обязана СОСЛАТЬСЯ на общее тело
+`docs/dev/recheck-common.md`, и файл обязан существовать. Повод: `/novac-recheck` и
+`/oracle-recheck` выросли из одного списка и за вечер получили четыре одинаковые
+правки — каждую руками в два файла. Общую часть вынесли в один файл; новый способ
+сломаться — команда, потерявшая ссылку: она продолжит работать и просто перестанет
+проверять половину, молча.
+
 НЕ ПРОВЕРЯЕТ: смысл описания и тело команды (их судит ревью); наличие
-`argument-hint`/`allowed-tools` — они необязательны.
+`argument-hint`/`allowed-tools` — они необязательны; совпадение текста общей части с
+тем, что было в командах (это работа ревью, а не грепа).
 
 Отсутствие папки или ноль файлов — зелёное молчание: судить нечего.
 Отсутствие PyYAML — КРАСНОЕ: страж, который не может проверить, обязан
@@ -33,6 +41,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-claude-commands-frontmatter"
+COMMON = "docs/dev/recheck-common.md"
 
 
 def frontmatter_of(text):
@@ -86,6 +95,14 @@ def main(argv):
         desc = data.get("description")
         if not isinstance(desc, str) or not desc.strip():
             bad.append((rel, "нет непустого `description` — команда будет безымянной в меню"))
+
+        # Правило 2: у команд-перепроверок общее тело — одно, и на него ссылаются.
+        if path.name.endswith("-recheck.md"):
+            if COMMON not in text:
+                bad.append((rel, "не ссылается на общее тело `%s` — половина проверок "
+                                 "тихо выпадет" % COMMON))
+            elif not (root / COMMON).is_file():
+                bad.append((rel, "ссылается на `%s`, которого нет в дереве" % COMMON))
 
     if bad:
         print("%s FAIL: шапка команды не читается (%d из %d)" % (NAME, len(bad), len(files)))
