@@ -154,6 +154,16 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
 /// compile error at exactly this line.
 fn Emitter mut @emit_type_decls() -> () {
     for t in 0..@ctx.types.len() {
+        // A HANDED-OVER TYPE IS DECLARED BY THE SHELL, not by us. Our emission is
+        // glued into the oracle's shell (274 section 7.0), and the shell already
+        // declares std's types -- so emitting them again would be a second
+        // definition of one name, and novac does not even know their fields (the
+        // harvest reads names and kinds, not bodies). Measured 2026-08-24: with
+        // handed-over types in the registry the emission grew a `NovaValue_Pair`
+        // beside the file's own `Nova_Pair`. This is INTEROP with its own end
+        // condition: the day novac emits the whole prelude it declares them
+        // itself, and this test goes with the shell.
+        if t < @ctx.defs.foreign_cnt { continue }
         ro td = @ctx.types[t]
         match td.kind {
             TkPrim => {} // primitives own no declarations

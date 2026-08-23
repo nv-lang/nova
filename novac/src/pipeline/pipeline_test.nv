@@ -16,11 +16,11 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
-import ../sem.{branch_children, leaf_text}
+import ../sem.{branch_children, leaf_text, is_value_record}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
-import ../types.{TyId}
+import ../types.{TyId, no_ty}
 
 // The std signatures these tests need, handed in the way the driver hands
 // them: as TEXT through the one door. Inline and tiny on purpose — the
@@ -406,4 +406,54 @@ fn main() { println(1) }"
     assert(diags.len() == 1)
     assert(!diags[0].message.contains("internal compiler error"))
     assert(diags[0].message.contains("generic parameters are not compiled yet"))
+}
+
+test "a handed-over type is KNOWN, and the file's own declaration of that name wins" {
+    // TWO CRITERIA IN ONE FILE, because they are one mechanism: the handed-over
+    // types are registered BEFORE the compiled file's passes, so (a) a signature
+    // of the file may name one of them and (b) a name the file also declares is
+    // overwritten by the file's own row -- a program is compiled against what it
+    // declares.
+    //
+    // The shapes differ on purpose: the handed-over `Pair` has a field `a`, the
+    // file's own has `b`. If the foreign row won, `p.b` would be "unknown field",
+    // and if the foreign types were registered AFTER the file (the order this
+    // wave corrected), `take(p Pair)` would be refused as a type novac does not
+    // know. Either regression turns this test red.
+    ro handed = "module std.pairs
+export type Pair value { a int }
+fn Pair @first() -> int => 1"
+    ro src = "module m.own
+type Pair { b int }
+fn take(p Pair) -> int => p.b
+fn main() {
+ ro p = Pair { b: 7 }
+ println(take(p))
+}"
+    ro (diags, c) = compile_to_c(src, []str.of(handed))
+    assert(diags.len() == 0)
+    // AND THE TYPE IS THE FILE'S OWN, asked of the REGISTRY rather than of the
+    // emitted text: P24 forbids reading a C name back apart, and it is right --
+    // the identity lives in the registry, and a string check would pass on a
+    // substring of some other name. The file's `Pair` is a PLAIN record; the
+    // handed-over one is a `value` record, so `by_value` tells them apart with
+    // no spelling involved.
+    // Asked through the doors of this layer: `is_value_record` is sem's own
+    // answer about a type, and the type comes from the registry by name. The
+    // architecture has no `pipeline -> names` edge, and a test does not get to
+    // add one -- an edge is a line in the table of section 3, with a contract.
+    ro ctx = context(parse(tokens_of(src)), []str.of(handed))
+    assert(!is_value_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
+}
+
+test "a type nobody declared is still refused by name" {
+    // The boundary of the same mechanism: registering handed-over types must not
+    // turn every unknown name into a type. `Zork` is declared nowhere.
+    ro (diags, _) = compile_to_c("module m.z
+fn take(z Zork) -> int => 1
+fn main() { println(1) }",
+                                 []str.of("module std.pairs
+export type Pair value { a int }"))
+    assert(diags.len() == 1)
+    assert(diags[0].message.contains("does not know this type yet"))
 }

@@ -120,21 +120,57 @@ export type Def value {
 export type DefTable {
     names NameTable /// name -> row in `rows` (NsDefs namespace).
     rows []Def /// What each registered name is.
+    foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
 }
 
 /// Empty registry with the NsDefs namespace.
 export fn DefTable.new() -> DefTable =>
-    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new() }
+    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), foreign_cnt: 0 }
 
 /// Register one name. LAST PUT WINS, and that is the rule rather than a
 /// shortcut: `collect_types` gives the id to the FIRST declaration that owns
 /// it, so a later duplicate resolves to the same id and pushes no second row.
 /// Judging the duplicate is CHECK's ground — sem builds the picture and does
 /// not refuse; two truths for one name is what this shape prevents.
+/// LAST PUT WINS, AND SINCE 2026-08-23 THAT IS THE SHADOWING RULE ITSELF.
+///
+/// The handed-over types are registered FIRST (see `collect_types_with`), so a
+/// name the compiled file also declares is overwritten by the file's own row --
+/// which is what the language means: a program is compiled against what it
+/// declares, and a foreign declaration of that name answers only where the file
+/// has none.
+///
+/// A CHAIN OF SAME-NAMED ROWS WAS BUILT HERE AND REMOVED THE SAME HOUR, and the
+/// reason is worth keeping: with the foreign types entering first, the chain was
+/// UNOBSERVABLE -- every question it could answer differently was already
+/// answered right by the order. A construction nobody can see the effect of is
+/// the K7 class this plan refuses, so the order stayed and the chain went. The
+/// day two FOREIGN declarations of one name can arrive (that is `import`, which
+/// brings nothing yet), the ambiguity is a REFUSAL to write, not a chain to walk.
 export fn DefTable mut @add(name str, target DefTarget) -> () {
     @names.put(name, @rows.len())
     @rows.push(Def { target })
 }
+
+/// Everything registered so far came from ELSEWHERE; every row after this is the
+/// compiled file's own.
+export fn DefTable mut @seal_foreign() -> () {
+    @foreign_cnt = @rows.len()
+}
+
+/// Did the compiled FILE declare this name, or does it only exist because novac
+/// was handed a declaration that uses it?
+///
+/// THE QUESTION EXISTS BECAUSE OF A MEASURED COLLISION (2026-08-23). Pass one
+/// skips a name the registry already holds -- correct while every row came from
+/// one file, where a duplicate means the same declaration seen twice. With
+/// handed-over types entering first, that same rule made the FILE'S OWN
+/// declaration look like a duplicate and skipped it: a file declaring
+/// `type Pair { b int }` beside a handed-over `type Pair value { a int }` was
+/// compiled against the FOREIGN layout (`NovaValue_Pair` in the emission), which
+/// is somebody else's type under your name.
+#realtime nogc
+export fn DefTable @declared_by_file(name str) -> bool => @names.find(name) >= @foreign_cnt
 
 /// WHAT this name IS, or None -- the registry's ONE public question.
 ///
@@ -467,14 +503,31 @@ export fn ty_of_row(types []TypeDef, d DeclId) -> TyId
 /// because the paragraph had been orphaned from its function by an insertion --
 /// noticed while cutting `harvest.nv` out on 2026-08-21.
 export fn collect(file Node, decls []Node) -> Ctx {
-    mut ctx = collect_types(file)
+    // THE HANDED-OVER TYPES GO IN FIRST, inside the collector, and the order is
+    // the measurement rather than a preference: the file's own signatures are
+    // read by that same collector, and a signature naming `CharsIter` resolves
+    // the name THEN -- so registering foreign types afterwards left every such
+    // parameter typed `no_ty()` and the refusal said "novac does not know this
+    // type yet" about a type it had just been handed (measured 2026-08-23).
+    mut ctx = collect_types_with(file, decls)
+    // Methods after types, for the neighbouring reason: `harvest_methods` drops a
+    // signature whose parameter or return type the registry does not know.
     harvest_methods(decls, ctx.types, ctx.defs, ctx.fns, ctx.coerces)
     ctx
 }
 
 /// The type and declaration registry of ONE file (without methods:
 /// collect() brings those in from the signatures it read).
-export fn collect_types(file Node) -> Ctx {
+export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new())
+
+/// The same registry, plus the declarations novac was HANDED.
+///
+/// Two doors and not one flag: a caller that has no foreign declarations (every
+/// module test builds a `Ctx` that way) says so by NOT passing them, and the
+/// wrapper above is the whole difference. The seam exists because the boundary
+/// between foreign and own rows is fixed INSIDE this function -- between the
+/// handed-over types and the file's own passes -- and a caller cannot place it.
+export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut types = []TypeDef.new()
     mut defs = DefTable.new()
     mut tys = Interner.new()
@@ -490,6 +543,13 @@ export fn collect_types(file Node) -> Ctx {
         seeded.push(seed(types, defs, tys, bt.name, ordinal))
         ordinal += 1
     }
+    // THE HANDED-OVER TYPES, right after the seed and before anything of this
+    // file: a signature of the file may name one of them, and the pass that
+    // reads signatures is below. The boundary is fixed immediately after, so the
+    // reader can let the file's own declaration shadow a foreign one of the same
+    // name.
+    harvest_types(decls, types, defs, tys)
+    defs.seal_foreign()
     // The PRIMS are types, and a declaration's type comes from its row -- the
     // seed hands back the declaration, the row hands back the term.
     ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
@@ -531,10 +591,13 @@ export fn collect_types(file Node) -> Ctx {
         ro nk = branch_children(c)
         if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
         ro tname = leaf_text(nk[1])
-        // A DUPLICATE type name registers nothing: the first declaration owns
-        // the DeclId, the second gets no row and no id. Judging the duplicate is
-        // check's job; sem's job is to not build a second truth for one name.
-        if defs.type_decl(tname).is_some() { continue }
+        // A DUPLICATE WITHIN THIS FILE registers nothing: the first declaration
+        // owns the DeclId, the second gets no row and no id, and judging the
+        // duplicate is check's job -- sem's job is to not build a second truth
+        // for one name. The question is asked of the FILE, not of the table:
+        // a name a handed-over declaration also uses is NOT a duplicate, and
+        // treating it as one compiled the file against the foreign type.
+        if defs.declared_by_file(tname) { continue }
         if k == NodeKind.SumDecl {
             ro d = DeclId(types.len())
             defs.add(tname, DefTarget.DefType(d))

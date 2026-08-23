@@ -106,6 +106,69 @@ fn harvest_in(n Node, types []TypeDef, defs DefTable, mut fns FnTable, mut coerc
     }
 }
 
+/// THE TYPES of the declarations novac was HANDED, into the same registry.
+///
+/// Until 2026-08-23 only method SIGNATURES were harvested, and the types those
+/// signatures mention were not -- which is why `fn take(xs CharsIter)` answered
+/// "novac does not know this type yet" about a type std declares three lines
+/// above the method that returns it, and why a signature whose parameter is such
+/// a type was dropped whole.
+///
+/// TOLERANT BY DESIGN, like the signature reader beside it: a declaration whose
+/// shape this pass cannot read registers nothing, and the use of its name gets an
+/// honest refusal at the point of use. Nothing here refuses -- `sem` builds the
+/// picture, `check` judges it.
+///
+/// FIELDS ARE NOT READ YET, and that is a boundary rather than an omission: a
+/// field of a handed-over record is reachable only through a form the subset does
+/// not compile (`iter.pos`), so reading them now would be a capability with no
+/// obligation (K7). The name and the KIND are what a type in a signature needs.
+export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
+                        mut tys Interner) -> () {
+    for d in decls {
+        for c in file_decls(d) {
+            ro k = c.kind_of()
+            if k != NodeKind.TypeDecl && k != NodeKind.SumDecl { continue }
+            ro nk = branch_children(c)
+            if nk.len() < 2 { continue }
+            if nk[1].kind_of() != NodeKind.LeafNode { continue }
+            ro tname = leaf_text(nk[1])
+            // A name the registry already holds is not registered twice: the
+            // chain would grow a second foreign row for one declaration, and
+            // the reader would answer with whichever came last -- the very
+            // last-write-wins this table stopped doing.
+            if defs.def_of(tname).is_some() { continue }
+            ro id = DeclId(types.len())
+            defs.add(tname, DefTarget.DefType(id))
+            // A SUM IS TOLD BY THE NODE KIND, not by `DeclShape`: that sum has
+            // four variants and none of them is a sum, because the shape reader
+            // answers about a `type` declaration's TAIL while the parser already
+            // separated `SumDecl` from `TypeDecl`. The C compiler said so --
+            // `NOVA_TAG_NovaValue_DeclShape_ShapeSum` exists nowhere -- which is
+            // the third time this session that a guess about a closed set was
+            // corrected by a build rather than by a check.
+            if k == NodeKind.SumDecl {
+                // The VARIANTS are not read, for the same reason the fields are
+                // not: constructing one needs a path form the subset does not
+                // compile, so reading them now would be a capability with no
+                // obligation.
+                types.push(TypeDef { kind: TypeKind.TkSum, by_value: false,
+                                     ty_id: tys.sum(id), name: tname,
+                                     rows: TypeRows.NoRows })
+                continue
+            }
+            // Everything else -- a record, an alias, a newtype, a protocol from
+            // elsewhere -- registers as a RECORD with no fields, which is the
+            // honest "a type novac knows of and knows nothing about". Refusing
+            // here would drop the declaration and take the methods that mention
+            // it down with it.
+            types.push(TypeDef { kind: TypeKind.TkRecord, by_value: decl_is_value(c),
+                                 ty_id: tys.record(id), name: tname,
+                                 rows: TypeRows.NoRows })
+        }
+    }
+}
+
 /// One declaration: receiver, name, return type. Taken only if BOTH
 /// the receiver AND the return are already known to the registry —
 /// otherwise the method does not enter the subset and gets an
