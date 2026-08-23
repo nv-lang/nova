@@ -28,7 +28,7 @@ module novac.check
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children, ty_source_name, missing_sig_of, bind_fault, bind_slots, identity_slots, no_row}
+import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children, ty_source_name, missing_sig_of, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
 /// The lookup key of a free call: one slot per written argument, no position
@@ -106,20 +106,25 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
     // needs it allocation-free).
     ro slots = bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key)
     for s in 0..fd.param_cnt {
-        ro at = slots[s]
+        ro at = slots[s].arg_row
         // Nothing written fills this slot: its default does, and a default has
         // no type to disagree with. `continue` IS the other branch (P31 form 2).
         if at < 0 { continue }
         ro want = @ctx.fns.params[fd.param_off + s]
         if want.type_id == key[at].type_id { continue }
         match coerce_row(@ctx, key[at].type_id, want.type_id) {
-            // D429: a pair IS declared for this position, so the call is legal
-            // Nova -- the value coerces through that method. What novac lacks
-            // is the emission: R7 makes the insertion a call to the declared
-            // function, and novac compiles no method body yet, so emitting it
-            // would name a C symbol that exists nowhere.
+            // D429: a pair IS declared for this position, and since wave 5 a
+            // pair novac can EMIT is taken by the coercing stage before any
+            // refusal -- so reaching here means the stage declined it, and the
+            // reason it declines is always the same one: the pair's method is a
+            // declaration novac read but emits no body for (std's own), and the
+            // inserted call would name a C symbol that exists nowhere.
+            //
+            // THIS TEXT USED TO SAY "novac does not compile a method body yet",
+            // and that stopped being true with wave 3g -- a refusal describing a
+            // limit we no longer have sends the reader to the wrong place (D420).
             Some(_) => @report_first_leaf_of(kids,
-                "outside the subset: this argument coerces through a `#coerce` method (D429), and novac does not compile a method body yet")
+                "outside the subset: this argument coerces through a `#coerce` method whose body novac does not emit -- the pair is declared on a type whose methods arrive as signatures only (D429 R7 names the call, so there must be one to name)")
             None => @report_first_leaf_of(kids,
                 "outside the subset: this argument's type is not the one this function declares here")
         }
@@ -157,6 +162,124 @@ fn Checker @binding_refusal(row FnRow, key []ArgSpec) -> Option[str] {
         FaultTooManyArgs(_) => Some(
             "this call writes more arguments than the callable declares")
     }
+}
+
+/// D429 R5's SECOND STAGE: the exact key fitted nothing, so a DECLARED pair may
+/// carry an argument to its parameter.
+///
+/// Donor: none for the RULE -- D429 is Nova's own, and it is stricter than every
+/// donor I know: pairs are declared in the program (never known by the
+/// compiler), one level only, no chains, and the exact match always wins. What
+/// IS taken is the SHAPE of a two-stage overload resolution: C++ ranks an
+/// implicit conversion below an exact match, and Swift does the same for its
+/// `ExpressibleBy*` conformances. Both name ambiguity as an error rather than
+/// picking, which is R5 exactly.
+///
+/// Why a stage of its own and not a widening of `fits`: the exact stage must
+/// stay exact. A door that accepted a coercible argument would make
+/// `take(bytes)` and `take("s")` one question, and the answer to the second
+/// depends on a table the first must never consult (P14: compilation speed is
+/// priority one, and the pair table is a linear walk).
+fn Checker mut @resolve_coerce_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
+    mut winner = no_row()
+    mut second = no_row()
+    // The chain, walked through the two doors rather than materialised: the same
+    // walk `lookup` does, and for the same reason it allocates nothing.
+    mut row = @ctx.fns.first_row_of(cname)
+    while raw_row(row) >= 0 {
+        ro here = row
+        row = @ctx.fns.next_row_of(row)
+        if !@coerces_into(here, key) { continue }
+        if raw_row(winner) < 0 {
+            winner = here
+        } else {
+            second = here
+        }
+    }
+    if raw_row(second) >= 0 {
+        // TWO candidates reachable through declared pairs. D429 R5 refuses
+        // rather than ranking: the pairs lead to DIFFERENT targets, and there is
+        // no rule in the language that would prefer one target over another.
+        @report_first_leaf_of(kids,
+            "E_COERCE_AMBIGUOUS: two declared `#coerce` pairs make this call applicable, to different target types -- D429 R5 refuses rather than choosing (name the conversion at the call site)")
+        return
+    } else {
+        // At most one candidate: either it takes the call or nothing does.
+    }
+    if raw_row(winner) < 0 {
+        @refuse_free_call(kids, cname, key)
+        return
+    } else {
+        // One candidate, reachable through a pair per position.
+    }
+    ro fd = @ctx.fns.rows[raw_row(winner)]
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(winner), []TyId.new(),
+        @coerced_slots(winner, key))
+}
+
+/// Does every position of this row take its argument -- as written, or through a
+/// declared pair? A candidate that needs a pair novac cannot EMIT is not a
+/// candidate: the inserted call names a C symbol, and novac emits no std body.
+fn Checker @coerces_into(row FnRow, key []ArgSpec) -> bool {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    if !@ctx.fns.compiles_body(row) { return false }
+    match bind_fault(@ctx.fns.params, fd.param_off, fd.param_cnt, key) {
+        FaultNone => {}
+        FaultPositionalAfterNamed(_) => return false
+        FaultTooManyArgs(_) => return false
+        FaultPositionalDefaulted(_) => return false
+        FaultUnknownName(_) => return false
+        FaultDuplicate(_) => return false
+        FaultMissing(_) => return false
+    }
+    mut needs_pair = false
+    // THE SLOT index is the position in the binding; `sb.arg_row` is the ARGUMENT it
+    // holds, and with a named argument the two differ. Reading the parameter by
+    // the argument's index is the mistake this counter exists to prevent -- I
+    // made it here first (2026-08-23), and only the C compiler said so.
+    mut s = -1
+    for sb in bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key) {
+        s += 1
+        if sb.arg_row < 0 { continue }
+        ro want = @ctx.fns.params[fd.param_off + s].type_id
+        ro got = key[sb.arg_row].type_id
+        if want == got { continue }
+        if !is_ty(got) { return false }
+        match coerce_row(@ctx, got, want) {
+            Some(via) => {
+                if !@ctx.fns.compiles_body(via) { return false } else { needs_pair = true }
+            }
+            None => return false
+        }
+    }
+    // A row that needs NO pair would have fitted the exact stage; reaching here
+    // without one means the arity matched and the types did too, which the exact
+    // stage already refused for a reason of its own. Saying so keeps this stage
+    // from quietly re-deciding what stage one decided.
+    needs_pair
+}
+
+/// The binding of the winning row, with each position's declared conversion in
+/// its own slot -- the decision the emitter reads (D429 R7 names the call).
+fn Checker @coerced_slots(row FnRow, key []ArgSpec) -> []SlotBind {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    mut out = []SlotBind.new()
+    mut s = -1
+    for sb in bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key) {
+        s += 1
+        if sb.arg_row < 0 {
+            out.push(sb)
+            continue
+        }
+        ro want = @ctx.fns.params[fd.param_off + s].type_id
+        ro got = key[sb.arg_row].type_id
+        if want == got {
+            out.push(sb)
+            continue
+        }
+        out.push(SlotBind { arg_row: sb.arg_row, via_row: coerce_row(@ctx, got, want) ?? no_row() })
+    }
+    out
 }
 
 /// A TYPE in call position: the construction of a NEWTYPE, or an honest refusal.
@@ -226,14 +349,18 @@ fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []
             if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
                 @record_free_callee(e, kids, row, key)
             } else {
-                @refuse_free_call(kids, cname, key)
+                // A PLAIN row of the right arity that the exact key rejected:
+                // its types are the cause, and a declared pair may still carry
+                // them (D429 R5 stage two). The coercing stage refuses by name
+                // when no pair helps, so nothing is swallowed here.
+                @resolve_coerce_or_refuse(e, kids, cname, key)
             }
         }
-        // No row of this arity, or several: either way the refusal door names
-        // which of the causes holds -- it asks the same questions again and
-        // answers with the one it establishes.
-        FnUnknown => @refuse_free_call(kids, cname, key)
-        FnOverloaded(_) => @refuse_free_call(kids, cname, key)
+        // No row of this arity, or several: the COERCING stage gets its turn
+        // before any refusal (D429 R5 stage two), and it refuses by name when
+        // no declared pair helps either.
+        FnUnknown => @resolve_coerce_or_refuse(e, kids, cname, key)
+        FnOverloaded(_) => @resolve_coerce_or_refuse(e, kids, cname, key)
     }
 }
 

@@ -1,0 +1,26 @@
+module coerce_pair.pos_1
+
+// A DECLARED IMPLICIT CONVERSION (E2-b3 wave 5, D429). The pair is DATA read
+// from the program -- `#coerce fn str consume @to_bytes() -> Bytes` -- and the
+// call site writes nothing: `take("s")` passes a `str` where `Bytes` is
+// declared, and the value arrives through the method the program NAMED.
+//
+// THE EMISSION IS THE NAMED DOOR, and the fixture is built so that a made-up
+// conversion could not pass it: `@to_bytes` returns `{ n: 7 }`, a number that
+// appears nowhere else in the file, so the printed value is 7 only if THAT
+// method ran. A cast, a reinterpretation or a zero-initialised record would
+// print something else.
+//
+// THE `consume` FORM IS THE ORACLE'S RULE, not a preference: D429 R2 gives the
+// non-`consume` (view) lane the obligation to return `ro O`, and the oracle
+// refuses the shape that does not (measured 2026-08-23, which is how this
+// fixture came to be written the other way round).
+type Bytes { n int }
+
+#coerce fn str consume @to_bytes() -> Bytes => { n: 7 }
+
+fn take(b Bytes) -> int => b.n
+
+fn main() {
+    println(take("s"))
+}

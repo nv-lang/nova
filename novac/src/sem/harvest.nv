@@ -85,18 +85,15 @@ fn harvest_in(n Node, types []TypeDef, defs DefTable, mut fns FnTable, mut coerc
             // declaration keyword begins). So the relation "this attribute
             // belongs to what follows" is a property of THIS walk, and it is
             // one bool wide.
-            mut coerce_next = false
+            // WHOSE attribute is this -- asked by the door, once for the list,
+            // because the compiled FILE now asks the same question and two
+            // readings of one positional rule is how they part company.
+            ro marked = coerce_marked(children)
             for c in children {
-                if c.kind_of() == NodeKind.AttrDecl {
-                    coerce_next = attr_names(c, COERCE_ATTR)
-                    continue
-                }
-                // Not an attribute: whatever a previous one marked is decided
-                // below. No `else` -- the branch above ENDS in `continue`, and
-                // a variant test whose else does the work is what P21 refuses.
+                if c.kind_of() == NodeKind.AttrDecl { continue }
                 ro before = fns.rows.len()
                 harvest_in(c, types, defs, fns, coerces)
-                if coerce_next && fns.rows.len() > before {
+                if is_coerce_marked(marked, c.id_of()) && fns.rows.len() > before {
                     harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {
                     // Either no attribute stood here, or the declaration under
@@ -104,7 +101,6 @@ fn harvest_in(n Node, types []TypeDef, defs DefTable, mut fns FnTable, mut coerc
                     // not know is not taken (see harvest_fn), and a pair to a
                     // row that does not exist would be a pair to nothing.
                 }
-                coerce_next = false
             }
         }
     }

@@ -483,6 +483,25 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
                        tparam_off: toff, tparam_cnt: tparam_names.len(), next_row: head })
 }
 
+/// WHERE the chain of this name starts, and WHAT follows a row in it -- the two
+/// halves of "walk the candidates", each allocation-free.
+///
+/// The candidate SET is what the second stage of D429 R5 needs and the exact
+/// stage never does. It was ONE door handing over a vector, and the guard
+/// refused it in the same minute (П18: a door of a table does not build) -- and
+/// the guard was right, not merely strict: `lookup` walks this chain on every
+/// call, so a set-shaped answer would put an allocation on the hot path for the
+/// sake of a caller that runs once, off it.
+#realtime nogc
+export fn FnTable @first_row_of(name str) -> FnRow => FnRow(@heads.find(name))
+
+/// The next row carrying the SAME name, or `no_row()` at the end of the chain.
+#realtime nogc
+export fn FnTable @next_row_of(row FnRow) -> FnRow {
+    if raw_row(row) < 0 { return no_row() }
+    @rows[raw_row(row)].next_row
+}
+
 /// The SINGLE row of this name, when the name carries exactly one.
 ///
 /// `None` when the name is unknown OR overloaded, and the difference matters to

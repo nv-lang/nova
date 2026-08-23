@@ -1,0 +1,30 @@
+module coerce_pair.neg_1
+
+// ONE seeded cause: TWO declared pairs from the same source type to DIFFERENT
+// targets make two candidates applicable, and D429 R5 refuses rather than
+// ranking them. There is no rule in the language that would prefer `Bytes` over
+// `Text`, and inventing one at the call site is how a program starts depending
+// on which declaration was read first.
+//
+// AGREEMENT, measured 2026-08-23: the oracle refuses this shape too -- it says
+// "no matching overload for `take(nova_str)`" and lists both candidates, which
+// is the same OUTCOME by a different route (it does not attempt a pair against
+// an overload set at all). A fixture pair asserts the outcome, so this one is
+// legal; novac's message names the RULE instead of the candidate list, and that
+// is deliberate -- D420 wants the cause, and "no matching overload" sends the
+// reader to look for a missing declaration that is right here.
+type Bytes { n int }
+
+type Text { n int }
+
+#coerce fn str consume @to_bytes() -> Bytes => { n: 1 }
+
+#coerce fn str consume @to_text() -> Text => { n: 2 }
+
+fn take(b Bytes) -> int => b.n
+
+fn take(t Text) -> int => t.n
+
+fn main() {
+    println(take("s"))
+}

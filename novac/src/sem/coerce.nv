@@ -27,7 +27,7 @@
 
 module novac.sem
 
-import ../tree.{Node}
+import ../tree.{Node, NodeId, NodeKind}
 import ../builtins.{COERCE_ATTR}
 import ../types.{TyId, is_ty}
 
@@ -60,8 +60,13 @@ export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
 
 /// Does this attribute node name `word`? `#coerce` is `['#', ident...]`, and
 /// the words are compared to the ONE place that spells language names (P5).
-fn attr_names(attr Node, word str) -> bool {
-    for c in branch_children(attr) {
+fn attr_names(attr Node, word str) -> bool => attr_kids_name(branch_children(attr), word)
+
+/// The same question asked of the attribute's CHILDREN -- what a walk that
+/// already opened the node has. One implementation, two entrances: `check`
+/// judges the form from inside the walk, the collectors from outside it.
+export fn attr_kids_name(kids []Node, word str) -> bool {
+    for c in kids {
         // A two-armed match and NOT `if Some(...)`, and the difference is
         // measured: the if-form needs an `else` with a reason anyway (P31), so
         // for an empty second case it is LONGER, not shorter. `if Some(...)`
@@ -70,6 +75,50 @@ fn attr_names(attr Node, word str) -> bool {
             Some(t) => { if t == word { return true } }
             None => {}
         }
+    }
+    false
+}
+
+/// WHICH declarations a `#coerce` attribute marks, by node id.
+///
+/// ONE reading of "whose attribute is this", asked by BOTH collectors -- std's
+/// (`harvest_in`) and the compiled file's (`collect_types`). An attribute is a
+/// SIBLING of the declaration it marks (the parser keeps the tree lossless), so
+/// the question is positional, and answering it inside each loop meant two
+/// answers.
+///
+/// NO BUG IS BEING FIXED HERE, and the first version of this comment claimed
+/// one -- that std's loop never cleared its flag. It cleared it (the compiler
+/// said so, by refusing the line I had left behind). The door is justified by
+/// the ONE reading, not by a defect: the rule "an attribute marks the NEXT
+/// declaration and nothing else" is positional, and a second copy of it is a
+/// second place for it to drift.
+export fn coerce_marked(kids []Node) -> []NodeId {
+    mut out = []NodeId.new()
+    mut pending = false
+    for c in kids {
+        if c.kind_of() == NodeKind.AttrDecl {
+            pending = attr_names(c, COERCE_ATTR)
+            continue
+        }
+        if pending {
+            out.push(c.id_of())
+        } else {
+            // No attribute stood before this declaration.
+        }
+        // The mark is CONSUMED by the declaration it marked: the next one is
+        // unmarked unless it carries its own attribute.
+        pending = false
+    }
+    out
+}
+
+/// Is this declaration one of the marked ones? The other half of the same
+/// reading, for a collector that has a node and a list.
+#realtime nogc
+export fn is_coerce_marked(marked []NodeId, id NodeId) -> bool {
+    for m in marked {
+        if m == id { return true }
     }
     false
 }
@@ -84,7 +133,7 @@ fn attr_names(attr Node, word str) -> bool {
 /// R2 (the zero-cost lanes) and R3 (one declaration per pair) are NOT judged
 /// here: the row does not carry parameter modes, so `consume` and `ro` are
 /// invisible to it -- named in plan 274 section 9.1d, not left to be discovered.
-fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
+export fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
     ro fd = fns.rows[raw_row(via_row)]
     if !fd.has_recv || fd.param_cnt != 1 || !is_ty(fd.ret_id) {
         return

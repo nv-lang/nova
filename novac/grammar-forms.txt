@@ -8,3 +8,4 @@ param_mode
 newtype
 protocol_decl
 default_named
+coerce_pair

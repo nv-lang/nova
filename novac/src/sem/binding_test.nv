@@ -59,8 +59,8 @@ test "the required parameter alone binds, and the default fills its slot" {
     // Slot 0 takes argument 0; slot 1 is left to the declaration.
     ro slots = bind_slots(ps, 0, 2, args)
     assert(slots.len() == 2)
-    assert(slots[0] == 0)
-    assert(slots[1] == -1)
+    assert(slots[0].arg_row == 0)
+    assert(slots[1].arg_row == -1)
 }
 
 test "the defaulted parameter passed BY NAME binds to its own slot" {
@@ -69,8 +69,8 @@ test "the defaulted parameter passed BY NAME binds to its own slot" {
     ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id), named_arg(ctx.prims.int_id, "by"))
     assert(fault_is(bind_fault(ps, 0, 2, args), "none", 0))
     ro slots = bind_slots(ps, 0, 2, args)
-    assert(slots[0] == 0)
-    assert(slots[1] == 1)
+    assert(slots[0].arg_row == 0)
+    assert(slots[1].arg_row == 1)
 }
 
 test "passing the defaulted parameter POSITIONALLY is refused, by slot" {

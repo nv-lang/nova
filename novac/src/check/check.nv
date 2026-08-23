@@ -38,8 +38,8 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR}
+import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, attr_kids_name}
 import ../types.{TyId, no_ty, is_ty}
 
 /// State of one check run: the source (for positions), the semantic context
@@ -315,7 +315,16 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     return
                 }
                 AttrDecl => {
-                    @report_first_leaf_of(children, ATTR_MSG)
+                    // `#coerce` is JUDGED, not refused (wave 5): it declares a
+                    // PAIR (D429), and the pair is read by the collector. Every
+                    // other attribute is still outside the subset -- an effect
+                    // attribute changes what the body may do, and novac compiles
+                    // none of that yet.
+                    if !attr_kids_name(children, COERCE_ATTR) {
+                        @report_first_leaf_of(children, ATTR_MSG)
+                    } else {
+                        // The one attribute the subset reads.
+                    }
                     return
                 }
                 TestDecl => {

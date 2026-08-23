@@ -356,6 +356,19 @@ fn name_fault(params []ParamDef, off int, cnt int, args []ArgSpec, run int) -> B
     BindFault.FaultTooManyArgs(args.len())
 }
 
+/// WHAT FILLS ONE PARAMETER SLOT: which written argument, and through which
+/// declared conversion.
+///
+/// ONE row and not two pools, by rule P23: "argument 2 goes here" and "and it
+/// arrives through `@to_bytes`" are two halves of ONE decision about ONE slot,
+/// and two parallel vectors would admit a state the language does not have --
+/// a conversion belonging to another slot. The same argument that put the
+/// substitution and the row into `CalleeRef` together.
+export type SlotBind value {
+    arg_row int /// index of the WRITTEN argument filling this slot -- a row of the call's key; -1 = the declaration's own default
+    via_row FnRow /// the `#coerce` method the value arrives through (D429 R7 names the call), or `no_row()` when the type matches as written
+}
+
 /// The IDENTITY binding: slot `i` is filled by argument `i`.
 ///
 /// For the calls whose parameters are positional BY CONSTRUCTION -- a variant's
@@ -363,17 +376,26 @@ fn name_fault(params []ParamDef, off int, cnt int, args []ArgSpec, run int) -> B
 /// by and no defaults to omit, so the mapping is nothing but the count; the
 /// emitter still reads it from the channel, so it has ONE way to walk a call
 /// rather than one per target kind.
-export fn identity_slots(n int) -> []int => (0..n).collect()
+export fn identity_slots(n int) -> []SlotBind {
+    mut out = []SlotBind.new()
+    for i in 0..n {
+        out.push(SlotBind { arg_row: i, via_row: no_row() })
+    }
+    out
+}
 
 /// The BINDING itself: for each parameter slot, the index of the argument that
 /// fills it, or -1 when the declaration's default does.
 ///
 /// Asked once, on the row that was chosen, and recorded into the channel — so
 /// the emitter reads a decision instead of making it again.
-export fn bind_slots(params []ParamDef, off int, cnt int, args []ArgSpec) -> []int {
-    mut out = []int.new()
+export fn bind_slots(params []ParamDef, off int, cnt int, args []ArgSpec) -> []SlotBind {
+    mut out = []SlotBind.new()
     for s in 0..cnt {
-        out.push(bind_slot_of(params, off, cnt, args, s))
+        // No conversion here: this door answers WHICH argument, and whether a
+        // value needs a declared pair to reach its parameter is the coercing
+        // stage's question (D429 R5 keeps the two stages apart on purpose).
+        out.push(SlotBind { arg_row: bind_slot_of(params, off, cnt, args, s), via_row: no_row() })
     }
     out
 }

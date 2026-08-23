@@ -193,7 +193,7 @@ export type CheckOut {
     types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
     res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
-    arg_slots []int /// Flat pool of argument BINDINGS: per parameter slot, the index of the argument filling it, or -1 = its declared default.
+    arg_slots []SlotBind /// Flat pool of argument BINDINGS: per parameter slot, WHICH argument fills it and through WHICH declared conversion (see SlotBind).
 }
 
 /// An empty channel sized for a file of `node_count` branch nodes. The size
@@ -207,7 +207,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
     }
-    CheckOut { types, res, subst_args: []TyId.new(), arg_slots: []int.new() }
+    CheckOut { types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new() }
 }
 
 /// Record the type of a node. Writing a DIFFERENT answer over an existing one
@@ -225,7 +225,7 @@ export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
 
 /// Record the decided target of a call.
 export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []TyId,
-                                     slots []int) -> ()
+                                     slots []SlotBind) -> ()
     requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a call outside this file's id space"
     requires target_present(target), "sem: channel callee write with no row — absence is not a decision"
 {
@@ -342,7 +342,7 @@ export fn CalleeRef @callable_row() -> FnRow {
 /// A VIEW into the pool, like the substitution beside it. The emitter walks this
 /// and nothing else: the written order of the arguments is not the order they
 /// are passed in, and a slot may have no argument at all.
-export fn CheckOut @callee_slots_of(id NodeId) -> ro []int
+export fn CheckOut @callee_slots_of(id NodeId) -> ro []SlotBind
     requires is_node(id) && raw_node(id) < @res.len(), "sem: callee_slots_of outside this file's id space"
 {
     ro cr = match @res[raw_node(id)] {

@@ -283,6 +283,19 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
             // would still have to come here and say what it does (P21).
             CalleeVariant(_) | CalleeCtor(_) => {}
         }
+        // AN INSERTED CONVERSION IS A CALL TOO (D429 R7, wave 5). A `#coerce`
+        // pair's method is reached by the call that needed it and by nothing
+        // else -- nobody wrote its name anywhere. Without this the emission
+        // named a symbol no body defined, and the LINKER is what said so
+        // (measured 2026-08-23: `undefined symbol:
+        // novac_fn_to_bytes__c_nova_str__to_Bytes`).
+        for sb in out.callee_slots_of(id) {
+            if raw_row(sb.via_row) < 0 { continue }
+            if raw_row(sb.via_row) >= seen.len() { continue }
+            if seen[raw_row(sb.via_row)] { continue }
+            seen[raw_row(sb.via_row)] = true
+            grew = true
+        }
     } else {
         // Not a call, or a call check never resolved -- the refusal for the
         // second case is already in the diagnostics.

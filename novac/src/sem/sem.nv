@@ -498,6 +498,12 @@ export fn collect_types(file Node) -> Ctx {
     mut payload_types = []TyId.new()
     mut fns = FnTable.new()
     mut fn_decl_rows = []FnRow.new()
+    // The pairs THIS file declares (D429). std's are appended later by
+    // `harvest_methods`; both go into one table, because a pair is a pair
+    // whoever wrote it -- and until 2026-08-23 only std's were read, so a
+    // `#coerce` in the compiled file registered nothing at all.
+    mut coerces = []CoercePair.new()
+    ro coerce_marks = coerce_marked(branch_children(file))
     // PASS 1 BUILDS THE ROW, not just the name -- and that is a fix, not a
     // refactor. Until 2026-08-21 pass 1 handed out ids and pass 2 pushed rows,
     // so the two could DISAGREE: an `alias` consumes a name but pushes no row,
@@ -780,6 +786,14 @@ export fn collect_types(file Node) -> Ctx {
                     ro mdid = c.id_of()
                     while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
                     fn_decl_rows[mdid] = mrow
+                    // A `#coerce` on it declares a PAIR, and the same reader
+                    // std's declarations go through decides whether the form is
+                    // the one D429 V1 admits.
+                    if is_coerce_marked(coerce_marks, c.id_of()) {
+                        harvest_coerce_pair(fns, coerces, mrow)
+                    } else {
+                        // An ordinary method: no pair.
+                    }
                 } else {
                     // The signature was refused by the reader: no row, no map
                     // entry, and `check` names it at the point of use.
@@ -901,5 +915,5 @@ export fn collect_types(file Node) -> Ctx {
     mut own = fns
     own.own_cnt = own.rows.len()
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
-          coerces: []CoercePair.new(), protos }
+          coerces, protos }
 }

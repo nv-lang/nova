@@ -185,13 +185,29 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
     for s in 0..slots.len() {
         @body.append(if first { "" } else { ", " })
         first = false
-        ro at = slots[s]
+        ro at = slots[s].arg_row
+        // THE DECLARED CONVERSION, when the checker recorded one (D429 R7): the
+        // emission is a call to the method the program NAMED, never a cast and
+        // never a conversion of our own invention. `#coerce fn str consume
+        // @to_bytes() -> Bytes` becomes exactly that method's C name around the
+        // argument.
+        ro wrap = raw_row(slots[s].via_row) >= 0
+        if wrap {
+            @body.append("${c_callable(@ctx, slots[s].via_row, no_subst())}(")
+        } else {
+            // The type matches as written: nothing stands around the value.
+        }
         if at < 0 {
             @emit_slot_default(row, s)
         } else if recv_slot && at == 0 {
             @emit_expr(kids[0])
         } else {
             @emit_expr(call_arg_at(kids, from, if recv_slot { at - 1 } else { at }))
+        }
+        if wrap {
+            @body.append(")")
+        } else {
+            // Nothing was opened.
         }
     }
 }
