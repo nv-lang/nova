@@ -135,7 +135,12 @@ fi
 for g in $(grep -rhoE '\[INV-GUARD: *[a-zA-Z0-9._-]+' --exclude-dir=selftest \
              --include=*.rs --include=*.c --include=*.h --include=*.nv --include=*.sh \
              . 2>/dev/null | sed 's/.*\[INV-GUARD: *//' | sort -u); do
-    if [ ! -f "scripts/guards/${g}" ] && [ ! -f "scripts/guards/${g}.sh" ]; then
+    # `.py` РАВНОПРАВЕН (2026-08-23): половина стражей этого дерева —
+    # питоновские, и без этой строки [INV-GUARD: check-novac-no-unwrap-compare]
+    # объявлялся ссылкой на несуществующего стража. Правило звучало как
+    # «инвариант держит страж», а работало как «страж на bash».
+    if [ ! -f "scripts/guards/${g}" ] && [ ! -f "scripts/guards/${g}.sh" ] \
+       && [ ! -f "scripts/guards/${g}.py" ]; then
         echo "check-invariant-discipline: НАРУШЕНИЕ — [INV-GUARD: $g] указывает на несуществующего стража" >&2
         VIOL=$((VIOL + 1))
         continue

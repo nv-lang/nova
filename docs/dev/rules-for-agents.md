@@ -147,6 +147,34 @@
   `check-novac-no-naked-panic.py` — голый `panic(` вне двери `ice()` (П12:
   явный инвариант рендерит `E_NOVAC_ICE` по схеме и лишь затем умирает по
   правилу языка).
+* **Стражи `novac`, заведённые после Э1 (список рос волнами; здесь он полон —
+  страж, о котором нельзя прочитать, есть запрет без причины, №560).**
+  `check-novac-batch.sh` — дифф-раннер зовёт novac ПАЧКОЙ, и смерть пачки не
+  читается как «все приняли»; `check-novac-build-clean.sh` — предупреждение
+  сборки novac; `check-novac-cli-surface.sh` — команда или флаг novac мимо
+  поверхности `nova-cli` без НАЗВАННОГО расхождения;
+  `check-novac-commit-donor.sh` — коммит novac без строки `Donor:` (и оракул
+  донором быть не может, П25); `check-novac-effects-at-door.sh` — способность
+  ниже двери (П15); `check-novac-emission-size.sh` — объём эмиссии novac
+  разошёлся с базой; `check-novac-fuzz-zero-panic.sh` — паника на мутациях
+  корпуса; `check-novac-iteration-cost.sh` — цена цикла «правка → вердикт» вышла
+  за бюджет (П14); `check-novac-lint.sh` — свод `nv-coding-style` по
+  `novac/src`; `check-novac-local-only-work.sh` — ветка с невлитой работой и без
+  копии на `origin`, то есть работа, живущая ровно на одном диске;
+  `check-novac-mangle-fixed-point.sh` — C-имя, которое novac печатает, а
+  оболочка оракула не объявляет (расхождение мэнглинга ловится диффом, не
+  прозой); `check-novac-module-tests.sh` — модульный тест novac упал (тест
+  держит КОНТРАКТ модуля); `check-novac-oracle-fresh.sh` — бинарь оракула старше
+  своих `.rs`, то есть гейт судит вчерашним компилятором;
+  `check-novac-ratchet-moves.sh` — сдвиг числа в `novac-*.baseline` без
+  строки-причины тем же диффом; `check-novac-registry-counts.sh` — число
+  случаев, обещанное строкой реестра, не равно тому, что печатает самотест;
+  `check-novac-selftest-proves-red.sh` — самотест стража проходит над
+  ЗАГЛУШКОЙ, то есть не доказывает красноту (П16);
+  `check-novac-shell-freshness.sh` — `shell.tpl.c` разошёлся с эмиссией оракула
+  по зонтичному probe; `check-novac-smoke-wrapper.sh` — POSIX-обёртка перехвата
+  clang-argv сломана (её ветку эта машина не ходит, а CI ходит).
+
   `check-novac-legacy-workarounds.py` — обход бага оракула в novac обязан нести
   маркер `[LEGACY-#NNN]` открытого бага (274 §1.5); фикс-волна оракула снимает
   обходы той же волной (греп на ноль — часть её приёмки).

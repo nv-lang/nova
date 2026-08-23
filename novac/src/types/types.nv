@@ -90,6 +90,9 @@ export type TyId int
 export fn raw_ty(t TyId) -> int => t as int
 
 /// "No type", as a VALUE of the space rather than a −1 the caller must know.
+/// [INV-GUARD: check-novac-no-unwrap-compare] -- the same door discipline that
+/// holds `no_row`: unwrapping in order to compare is red, so absence cannot
+/// silently become a number again.
 /// This replaced `sem.UNKNOWN_TYPE`, which was the same fact spelled as a bare
 /// constant in another module -- two names for one absence.
 #realtime nogc

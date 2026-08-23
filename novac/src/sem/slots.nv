@@ -521,8 +521,10 @@ export fn names_of_generics(gk []Node) -> []str {
 /// -> T => a`, and on a body that does NOT consume it answers
 /// `[D156-strict-forget]` -- so the word constrains the PARAMETER, it is not a
 /// protocol name). Two questions and two doors, because the two carry different
-/// refusals: linearity is a whole gap of novac (D133/D156 are not tracked at
-/// all), a protocol bound waits for dispatch (D122, E2-b3). One message for both
+/// refusals: linearity is a whole gap of novac (D133/D156 are not tracked at all)
+/// [INV-TODO: 274 9.1g.3 -- deferred by a recorded marker until E2-b3; the plan
+/// owns the question, and no registry number is invented here], a protocol bound
+/// waits for dispatch (D122, E2-b3). One message for both
 /// would name a cause that was not established (the D420 class).
 export fn generics_have_consume(kids []Node) -> bool {
     for c in kids {

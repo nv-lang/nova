@@ -17,41 +17,44 @@
 # recorded in the plan. oracle-pin = revision of the current compiler the
 # diff gate compares against; it moves by a deliberate commit, mandatorily
 # after each blocker window touching the novac subset (e.g. #659+#660).
-# spec-queue СЧИТАЕТСЯ машиной (274.3/F13): число коммитов в spec/decisions
-# после spec-point; дифф-раннер сверяет с этой строкой и краснеет на
-# расхождении. Значение 2 = D104 rev-2 (два коммита 2026-08-15).
-# ВАЖНО: у трёх строк ниже СТРОГИЙ формат «#   ключ: значение» без
-# хвостовых комментариев — иначе якорь их не видит и проверка тихо
-# отключается (поймано на себе 2026-08-15).
+# spec-queue IS COUNTED BY MACHINE (274.3/F13): the number of commits touching
+# spec/decisions after spec-point; the diff runner compares it against the line
+# below and reddens on a mismatch.
+# IMPORTANT: the three lines below use a STRICT format "#   key: value" with no
+# trailing comment -- otherwise the anchor misses them and the check switches
+# itself off in silence (caught on ourselves 2026-08-15).
 #   spec-point: 2026-08-14
-# 19 -> 20 (2026-08-18): приехало решение #719/D54 — позиционный разбор
-# record-варианта (`Circle(r)` при `Circle { radius f64 }`) запрещён, оракул
-# отвечает E_RECORD_VARIANT_POSITIONAL_PATTERN. Замерено в тот же день: novac
-# эту программу тоже отвергает, но ПО ДРУГОЙ причине — record-форма варианта
-# им ещё не разбирается, и отказ безымянный. Расхождения в исходе нет;
-# правило войдёт вместе с формой (§9.4а, класс B).
-# 20 -> 21 (2026-08-21): приехал амендмент D55 — newtype-половина
-# single-wrapper сужена до НЕТИПИЗИРОВАННЫХ констант (`ro r Row = 7` как было,
-# `take_row(i)` для типизированной переменной — E7301, нужен `Row(i)` или
-# `i as Row`); суммы не тронуты, выход через `#coerce` оставлен открытым (R11
-# больше не считает newtype-пару дублем). Для novac это НЕ долг, а выигрыш:
-# правило назвало четыре места в его собственном исходнике, где голый `int` тёк
-# в параметр `FnRow`, и все четыре были одним скрещиванием — полиморфный
-# `CalleeRef.target_row` в дверь мэнглинга. Закрыто дверью с предусловием.
-# 21 -> 22 (2026-08-23, слияние main): очередь считается КОММИТАМИ, тронувшими
-# spec/decisions после spec-point, и коммит, ПРИНЁСШИЙ чужие решения в ветку,
-# считается наравне с самим решением. Двадцать вторым стал именно такой
-# носитель — `1a169747e`, слияние main. Названная слабость меры: следующее
-# слияние снова прибавит единицу, не прибавив ни одного решения; честная мера —
-# считать по линии main (`--no-merges`), и это выписано классом в §9.1д.
+# 19 -> 20 (2026-08-18): decision #719/D54 arrived -- a record-form variant can
+# no longer be destructured positionally (`Circle(r)` for `Circle { radius f64 }`);
+# the oracle answers E_RECORD_VARIANT_POSITIONAL_PATTERN. Measured the same day:
+# novac rejects that program too, but for a DIFFERENT reason -- it does not parse
+# the record form of a variant yet, so its refusal is unnamed. No divergence in
+# the outcome; the rule lands together with the form (9.4a, class B).
+# 20 -> 21 (2026-08-21): the D55 amendment arrived -- the newtype half of a
+# single wrapper narrows to UNTYPED constants (`ro r Row = 7` as before,
+# `take_row(i)` for a typed variable is E7301 and needs `Row(i)` or `i as Row`);
+# sums untouched, the `#coerce` exit left open (R11 no longer counts a newtype
+# pair as a duplicate). For novac this was a gain, not a debt: the rule named
+# four places in its own source where a bare `int` flowed into an `FnRow`
+# parameter, and all four were ONE crossing -- the polymorphic
+# `CalleeRef.target_row` reaching the mangling door. Closed with a door carrying
+# a precondition.
+# 21 -> 22 (2026-08-23, merging main): the queue counts COMMITS that touched
+# spec/decisions after spec-point, so a commit that merely CARRIED someone
+# else's decisions into the branch counts like a decision itself. The
+# twenty-second is exactly such a carrier -- `1a169747e`, the merge of main.
+# Named weakness of the measure: the next merge will add one more without
+# adding a single decision; the honest measure counts along main's own line
+# (`--no-merges`), and that is written up as a class in plan 274 section 9.1d.
 #   spec-queue: 22
 #   oracle-pin: 2803de2d9
 #   stage: E2
-# stage — ТЕКУЩИЙ этап плана 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5, E6). Это
-# якорь для самоистекающих записей: временное ребро таблицы §3 архитектуры
-# помечено этапом, ДО которого оно законно; как только stage двигается дальше,
-# check-novac-temp-edges.sh краснеет, пока ребро не снято той же волной.
-# Двигает stage сознательный коммит с приёмкой этапа, не рука.
+# stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
+# E6). It anchors self-expiring records: a temporary edge in the architecture's
+# section 3 table is marked with the stage BEFORE which it is legal, and the
+# moment stage moves past it, check-novac-temp-edges.sh reddens until the edge
+# is removed by the same wave. Stage is moved by a deliberate commit that
+# accepts a stage, never by hand along the way.
 
 [package]
 name = "novac"

@@ -597,7 +597,9 @@ fn Checker mut @report_if_misplaced_generics(kids []Node) -> () {
     // binds" -- a lie about a legal program.
     // The full form of an entry is `T [consume] [Protocol + ...]`, and the two
     // constraints get two refusals: linearity is a gap of novac as a whole
-    // (D133/D156 are not tracked anywhere), a protocol bound waits for dispatch
+    // (D133/D156 are not tracked anywhere) [INV-TODO: 274 9.1g.3 -- deferred by a
+    // recorded marker until E2-b3; the plan owns it, no number self-assigned]
+    // , a protocol bound waits for dispatch
     // (D122, E2-b3). Naming one cause for both would name a cause that was not
     // established.
     if generics_have_consume(kids) {

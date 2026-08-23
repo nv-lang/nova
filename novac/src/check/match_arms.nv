@@ -49,7 +49,9 @@ fn Checker mut @type_match(m Node) -> () {
 
 /// A match on a sum must cover every variant -- the rule novac did not have
 /// AT ALL until 2026-08-17, which made it WIDER than the language in the one
-/// direction a subset must never be wide.
+/// direction a subset must never be wide. [INV-GUARD: check-novac-differential]
+/// -- the corpus judges the OUTCOME against the oracle on every file, so a
+/// subset that accepts what the language refuses reddens there, not here.
 ///
 /// Measured: `match c { Red(x) => x + 1  Green(x) => x + 2 }` on a three-variant
 /// sum is refused by the oracle (E_MATCH_NON_EXHAUSTIVE, registry #703) and

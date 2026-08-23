@@ -514,6 +514,9 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // NAMEABLE (the universe holds all fifteen) but not yet
             // printable, and that boundary belongs here -- the emitter's ice
             // for a missing printer must never be the first answer.
+            // [INV-PROPERTY] -- the refusal returns two lines below, so the
+            // emitter is not reached at all for this form; violating it would
+            // require deleting the check, not merely getting it wrong.
             if !@has_printer(at) {
                 @report_first_leaf_of(branch_children(c), "outside the subset: println covers int, str, bool and f64 today")
                 return
