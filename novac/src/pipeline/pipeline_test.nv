@@ -161,6 +161,33 @@ test "a generic call without type arguments DEDUCES from the arguments (E2-b3 wa
     assert(c.contains("dbl__nova_int__to_nova_int__nova_int"))
 }
 
+test "the UNIT return type is a type, not a tuple (E2-b3 wave 3g-2)" {
+    // `-> ()` is the form novac's OWN source is written in -- hundreds of
+    // signatures -- and the return-shape rule used to refuse it together with
+    // the tuple `(a, b)`, because both start with `(`. Stage 5 (self-build) was
+    // locked behind that one rule.
+    //
+    // Held by a test and not by a fixture, on purpose: a `neg_*` must assert
+    // AGREEMENT about the outcome, and every negative shape measured for this
+    // form disagrees -- `ro x = m.reset()` (binding a unit) is accepted by the
+    // oracle and refused by novac at `println`, and `-> () => 3` (an int body
+    // under a unit return) is accepted by BOTH, which is a shared typing hole
+    // rather than a rule. Recorded in the plan; the pair lands when a negative
+    // with an agreeing outcome exists.
+    ro src = "type Box { mut n int }
+fn Box mut @reset() -> () {
+    @n = 0
+}
+fn main() { mut b = Box { n: 5 }
+ b.reset()
+ println(\"n = \", b.n) }"
+    ro (diags, c) = compile_to_c(src, std_decls())
+    assert(diags.len() == 0)
+    // The emission must carry the unit's ABI name: a return type that compiled
+    // to something else would be a silent layout change.
+    assert(c.contains("nova_unit"))
+}
+
 test "a protocol declaration is READ and JUDGED, not refused (E2-b3 waves 3a+3b)" {
     // FOUR answers this line has given, and three of them were wrong -- kept
     // here because the sequence is the lesson:

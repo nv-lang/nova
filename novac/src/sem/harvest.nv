@@ -30,7 +30,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{COERCE_ATTR, SELF_TYPE}
+import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME}
 import ../types.{TyId, no_ty, is_ty}
 
 /// Read a METHOD declared in THIS file: the same reader std declarations go
@@ -140,7 +140,12 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut fns FnTable) -> (
         } else if ck == NodeKind.RetType {
             ro rk = branch_children(c)
             if rk.len() < 2 { continue }
-            ret_name = leaf_text(rk[1])
+            // `-> ()` names the UNIT, and its spelling is punctuation rather
+            // than an identifier -- so reading leaf 1 gave `(` and the whole
+            // signature was DROPPED (all its types must be known). The call site
+            // then said "no such method in the declarations handed to novac"
+            // about a method declared three lines above (measured 2026-08-23).
+            ret_name = if ret_is_unit(rk) { UNIT_TYPE_NAME } else { leaf_text(rk[1]) }
         } else if ck == NodeKind.LeafNode && mname == "" && recv_name != "" {
             if leaf_kind(c) != TokenKind.Ident { continue }
             mname = leaf_text(c)

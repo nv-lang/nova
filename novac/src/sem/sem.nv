@@ -56,7 +56,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
-import ../builtins.{TypeKind, builtin_types, COERCE_ATTR}
+import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
@@ -900,14 +900,7 @@ export fn collect_types(file Node) -> Ctx {
             // no_ty() = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on it as the second floor —
             // never a silent int (#652 class).
-            mut ret = no_ty()
-            for r in fk {
-                if r.kind_of() != NodeKind.RetType { continue }
-                ro rk = branch_children(r)
-                if rk.len() < 2 || rk[1].kind_of() != NodeKind.LeafNode { continue }
-                ro rname = leaf_text(rk[1])
-                ret = ty_of_type_name(rname, tps, param_rows, types, defs)
-            }
+            ro ret = ret_ty_of_decl(fk, tps, param_rows, types, defs)
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])

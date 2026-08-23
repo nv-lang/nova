@@ -21,7 +21,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
+import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds, ret_is_unit}
 import ../types.{TyId, no_ty, is_ty}
 
 
@@ -131,6 +131,11 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
 /// `-> fn(int) -> str` are read by the parser and refused by name here.
 fn Checker mut @report_if_return_form(kids []Node) -> () {
     if kids.len() < 2 { return }
+    // THE UNIT IS NOT A TUPLE. `-> ()` and `-> (a, b)` both start with `(`, and
+    // lumping them together refused the form novac's OWN source is written in --
+    // hundreds of signatures -- which is stage 5 locked behind one rule
+    // (measured 2026-08-23, plan 9.1e W3g-2).
+    if ret_is_unit(kids) { return } else { }
     // `-> Vec[int]`: the head is an identifier and the application arrives as
     // a Generics branch after it, so the leaf test below never sees it.
     for c in kids {

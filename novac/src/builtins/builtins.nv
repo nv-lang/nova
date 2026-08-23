@@ -125,6 +125,13 @@ export const RECV_BINDING = "@"
 /// of the way of any user name the mangling might produce.
 export const RECV_C_NAME = "_novac_self"
 
+/// The SOURCE spelling of the unit type: `()`.
+///
+/// A name no identifier can be, so nothing in a program can shadow it, and the
+/// registry can hold the unit like any other type. P5 keeps it here with every
+/// other name of the language.
+export const UNIT_TYPE_NAME = "()"
+
 /// The RECEIVER's own type, spelled by its role: `fn T @twin() -> Self`.
 ///
 /// A NAME OF THE LANGUAGE, so it lives here (P5). It names no declaration and
@@ -187,7 +194,16 @@ ro universe = []BuiltinType.of(
     BuiltinType { name: "u32", c_name: "uint32_t" },
     BuiltinType { name: "u64", c_name: "uint64_t" },
     BuiltinType { name: "f32", c_name: "nova_f32" },
-    BuiltinType { name: "char", c_name: "nova_char" })
+    BuiltinType { name: "char", c_name: "nova_char" },
+    // THE UNIT. Its source spelling is `()`, not a word -- so it is the one
+    // entry of this table whose `name` is punctuation, and that is deliberate:
+    // the table maps a SOURCE SPELLING to a runtime ABI name, and the unit has
+    // both (`nova_rt.h`: `typedef struct { char _dummy; } nova_unit`). The spec
+    // calls it a type form of the language (02-types.md), not an absence.
+    //
+    // It goes LAST so no seeded ordinal moves: `Prims` reads the first four by
+    // index, and an insertion above would have silently renamed them.
+    BuiltinType { name: "()", c_name: "nova_unit" })
 
 /// The runtime ABI spelling of a primitive by its universe ordinal — THE
 /// door the mangler asks (E2-b1 step 3). It used to be a field copied onto

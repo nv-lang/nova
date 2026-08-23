@@ -22,7 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
 import ../types.{TyId, no_ty, Interner}
 
@@ -575,6 +575,61 @@ export fn bounds_of_generics(gk []Node) -> []str {
         // Either no entry was open, or its bound is already recorded.
     }
     out
+}
+
+/// The TYPE a declaration's return declares, or `no_ty()` when it declares
+/// none (legal for `main` only; the backends ice on absence rather than invent).
+///
+/// Two spellings, one door: `-> int` names a type, `-> ()` is punctuation. The
+/// caller used to spell both out, which is how the unit could be missed in one
+/// reader and not the other.
+export fn ret_ty_of_decl(fk []Node, tps []str, param_rows []TyId,
+                         types []TypeDef, defs DefTable) -> TyId {
+    mut ret = no_ty()
+    for r in fk {
+        if r.kind_of() != NodeKind.RetType { continue }
+        ro rk = branch_children(r)
+        if ret_is_unit(rk) {
+            ret = ty_of_type_name(UNIT_TYPE_NAME, tps, param_rows, types, defs)
+            continue
+        } else {
+            // A named type: the identifier path below answers.
+        }
+        if rk.len() < 2 || rk[1].kind_of() != NodeKind.LeafNode { continue }
+        ret = ty_of_type_name(leaf_text(rk[1]), tps, param_rows, types, defs)
+    }
+    ret
+}
+
+/// Does this return-type node declare the UNIT (`-> ()`)?
+///
+/// The parser leaves `(` and `)` as leaves, so the question is about tokens, not
+/// about a name -- and it is asked in two places (the shape rule, which must not
+/// call the unit a tuple, and the collector, which needs its type id), so it is
+/// a door rather than two spellings of one test.
+export fn ret_is_unit(rk []Node) -> bool {
+    mut saw_lparen = false
+    for c in rk {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        ro k = leaf_kind(c)
+        if k == TokenKind.LParen {
+            saw_lparen = true
+            continue
+        }
+        if k == TokenKind.RParen {
+            if saw_lparen {
+                return true
+            } else {
+                // A closing paren with no opening one before it: recovery
+                // debris, and the walk keeps looking.
+                continue
+            }
+        }
+        if k == TokenKind.Arrow { continue }
+        // Anything else between the parens means this is not the unit.
+        if saw_lparen { return false } else { continue }
+    }
+    false
 }
 
 /// The NAME slot of a record-field node, or None.
