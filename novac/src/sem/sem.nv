@@ -718,12 +718,18 @@ export fn collect_types(file Node) -> Ctx {
                     for f in branch_children(c) {
                         if f.kind_of() != NodeKind.Field { continue }
                         ro fk = branch_children(f)
-                        if fk.len() < 2 { continue }
-                        if fk[0].kind_of() != NodeKind.LeafNode || fk[1].kind_of() != NodeKind.LeafNode { continue }
-                        ro fdecl = defs.type_decl(leaf_text(fk[1])) ?? no_decl()
+                        // BY DOOR, not by index: a field may carry a MODE
+                        // (`mut n int`), and index zero is then the mode. Read
+                        // positionally, the mode became the NAME and the field
+                        // vanished from the registry -- the refusal then said
+                        // "unknown field" about a field written right there.
+                        ro fnat = field_name_at(fk) ?? -1
+                        ro ftat = field_type_at(fk) ?? -1
+                        if fnat < 0 || ftat < 0 { continue }
+                        ro fdecl = defs.type_decl(leaf_text(fk[ftat])) ?? no_decl()
                         if !is_decl(fdecl) { continue }
                         if raw_decl(fdecl) >= types.len() { continue }
-                        fields.add(mine.ty_id, leaf_text(fk[0]), ty_of_row(types, fdecl))
+                        fields.add(mine.ty_id, leaf_text(fk[fnat]), ty_of_row(types, fdecl))
                         cnt += 1
                     }
                     types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord, ty_id: mine.ty_id,
@@ -856,23 +862,15 @@ export fn collect_types(file Node) -> Ctx {
                 // Two readers would be the very split that plan closed.
                 // NOT a receiver group -- recovery debris, or `fn[T] ...`
                 // with type parameters before the name, which `check` refuses
-                // by position. The TERMINATOR is the branch (P21): a match over
-                // NodeKind would need forty-five arms, and the guard accepts a
-                // terminator exactly for this shape.
+                // by position. The TERMINATOR is the branch (P21).
                 if fk[1].kind_of() != NodeKind.Recv { continue }
-                ro before = fns.rows.len()
-                harvest_fn(fk, types, defs, fns)
-                if fns.rows.len() > before {
-                    // The node -> row map is what lets the EMITTER find the
-                    // body: `harvest_fn` alone registers a signature, and a
-                    // signature with no body is what std declarations are.
+                if Some(mrow) = harvest_own_method(fk, types, defs, fns) {
                     ro mdid = c.id_of()
                     while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
-                    fn_decl_rows[mdid] = FnRow(fns.rows.len() - 1)
+                    fn_decl_rows[mdid] = mrow
                 } else {
-                    // The reader refused the signature (an unknown type in it,
-                    // for instance): no row, no map entry, and `check` names
-                    // the refusal at the point of use.
+                    // The signature was refused by the reader: no row, no map
+                    // entry, and `check` names it at the point of use.
                 }
                 continue
             }

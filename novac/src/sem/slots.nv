@@ -577,6 +577,63 @@ export fn bounds_of_generics(gk []Node) -> []str {
     out
 }
 
+/// The NAME slot of a record-field node, or None.
+///
+/// A field may carry a MODE (`mut n int`), so index zero is not the name --
+/// exactly the trap the parameter reader fell into on 2026-08-21 and this one
+/// fell into on 2026-08-23: the collector read the mode AS the name, the real
+/// name never entered the registry, and the refusal said "unknown field" about a
+/// field written right there.
+export fn field_name_at(fk []Node) -> Option[int] {
+    mut i = 0
+    for c in fk {
+        // The TERMINATOR is the branch (P21): `continue` for anything that is
+        // not a leaf, so a new node kind cannot fall into an `else` that does
+        // work. A match over NodeKind would need forty-five arms.
+        if c.kind_of() != NodeKind.LeafNode {
+            i += 1
+            continue
+        }
+        if !is_mode_word(leaf_text(c)) { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+/// The TYPE slot of a record-field node -- the leaf after its name -- or None.
+export fn field_type_at(fk []Node) -> Option[int] {
+    // POSITIONAL WALK, no indexing. The indexed form (`fk[i].kind_of()`) was
+    // refused by the oracle's codegen with `E_RECV_METHOD_MISMATCH` -- it typed
+    // the INDEXED EXPRESSION as the vector itself and looked for `kind_of` on
+    // `Vec`. NOT a new find: that is [LEGACY-#676], the var-index-method defect
+    // this tree already works around in `harvest_fn` and in the collector. The
+    // walk below says the same thing without the form that trips it, so no
+    // marker is needed here -- there is nothing to remove when #676 is fixed.
+    mut i = 0
+    mut seen_name = false
+    for c in fk {
+        if c.kind_of() != NodeKind.LeafNode {
+            i += 1
+            continue
+        }
+        if seen_name { return Some(i) }
+        if !is_mode_word(leaf_text(c)) {
+            seen_name = true
+        } else {
+            // A mode word stands BEFORE the name (`mut n int`): it is neither
+            // the name nor the type, so the walk just steps over it.
+        }
+        i += 1
+    }
+    None
+}
+
+/// Is this word one of the language's MODE words?
+///
+/// The door exists because the same question is asked by the parameter reader,
+/// the field reader and the parser -- three places, one closed set (P5).
+export fn is_mode_word(w str) -> bool => w == "mut" || w == "ro" || is_contextual_mode_word(w)
+
 /// The method NAME of a `ProtoMethod` node: the identifier after the `@`.
 ///
 /// Position, not lookup -- the same rule every other reader of this tree lives

@@ -33,6 +33,26 @@ import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, SELF_TYPE}
 import ../types.{TyId, no_ty, is_ty}
 
+/// Read a METHOD declared in THIS file: the same reader std declarations go
+/// through, plus the node -> row entry the emitter needs to find the body.
+///
+/// Answers the row it registered, or `None` when the signature was refused (an
+/// unknown type in it, for instance) -- and then `check` names the refusal at
+/// the point of use rather than the collector guessing.
+///
+/// Lives here and not in the collector because this IS reading a method
+/// declaration, which is what this file does; the collector calls it.
+export fn harvest_own_method(kids []Node, types []TypeDef, defs DefTable,
+                             mut fns FnTable) -> Option[FnRow] {
+    ro before = fns.rows.len()
+    harvest_fn(kids, types, defs, fns)
+    if fns.rows.len() > before {
+        Some(FnRow(fns.rows.len() - 1))
+    } else {
+        None
+    }
+}
+
 /// Collect method signatures from READ declarations (`fn <Recv>
 /// @<name>() -> R`). Only signatures where BOTH the receiver AND the
 /// return are types already known to the registry are taken: the rest

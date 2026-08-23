@@ -406,8 +406,26 @@ fn Cursor mut @type_decl() -> Node {
     if is_sum_marker { return @node(NodeKind.SumDecl, kids) }
     if @peek() == TokenKind.LBrace {
         kids.push(@take())
-        while @peek() == TokenKind.Ident {
-            mut fk = []Node.of(@take()) // field name
+        // A FIELD MAY CARRY A MODE: `type Counter { mut n int }` is Nova the
+        // oracle compiles, and novac answered "this is not a form of the
+        // language" -- about a form the language HAS (measured 2026-08-23,
+        // while wiring the write path of wave 3g). The word is read by the SAME
+        // door parameters use (`@at_mode_word`): `mut` is not a keyword in this
+        // lexer, and one door for one question keeps the four words spelled
+        // once (P5).
+        //
+        // The loop condition follows the mode, not the name: a body opening
+        // with `mut` starts with KwMut, so a condition testing only for an
+        // identifier stopped before the first field and dropped the whole body
+        // into the junk bucket.
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            mut fk = []Node.new()
+            if @at_mode_word() {
+                fk.push(@take())
+            } else {
+                // No mode: the field is read-only by default (D176).
+            }
+            @push_if(fk, TokenKind.Ident) // field name
             @push_if(fk, TokenKind.Ident) // field type
             kids.push(@node(NodeKind.Field, fk))
         }
