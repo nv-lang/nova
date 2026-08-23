@@ -1180,6 +1180,9 @@ static inline void nova_assert_loc(
             msg_heap = (char*)nova_alloc(n + 1);
             for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
         }
+        /* №679 kill-switch: hand out the STACK buffer, exactly as before the
+         * fix, so the fixtures can be shown to redden on the same binary. */
+        if (getenv("NOVA_KILL_ASSERT_MSG_HEAP")) { msg_heap = buf; }
         /* Inside a fiber: route through the nearest NovaFailFrame so longjmp
          * stays on the fiber's own stack — never crosses the mco boundary.
          * Spawn-entry pushes a per-fiber fail-frame; supervised_run re-throws

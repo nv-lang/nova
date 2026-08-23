@@ -1,0 +1,23 @@
+// EXPECT_RUNTIME_PANIC assert failed: n == 999
+//
+// Registry 221.1 #679, the harder half: the same message, but reported from
+// INSIDE a fiber. This is the hop the defect was named for -- the child's
+// fail-frame carried the pointer into the parent's slot, and the parent read
+// it on the drive thread after the child's stack was gone. On the main flow a
+// stale stack read can still happen to hold the text; across the hop it
+// cannot.
+//
+// Peer of p679_assert_message_survives_cleanup.nv (main flow).
+module standalone.p679_assert_message_survives_fiber_hop
+
+fn boom(n int) Io -> () {
+    defer { println("cleanup ran with n=${n} and enough text to disturb the frame") }
+    assert(n == 999)
+}
+
+fn main() Io -> () {
+    ro t = CancelToken.new()
+    supervised(cancel: t) {
+        spawn { boom(1) }
+    }
+}

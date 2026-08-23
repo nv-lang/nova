@@ -1,0 +1,26 @@
+// EXPECT_RUNTIME_PANIC assert failed: n == 999
+//
+// Registry 221.1 #679: the failed assert's message was formatted into a
+// `char buf[512]` ON THE STACK, handed to the fail-frame as
+// `nova_str_from_cstr(buf)` -- a NON-OWNING view -- and then `longjmp`'d off
+// that very frame. Nothing copied it afterwards: the parent slot kept the raw
+// pointer and it was read later, on the drive thread, with the child's stack
+// long gone. A use-after-free across a thread boundary, and what the user saw
+// was `panic:` with no text at all.
+//
+// The cause is gone: `nova_assert_loc` heap-copies once, at the source
+// (0d4622dda). Nothing pinned that, though -- no fixture in the corpus
+// asserted that an assert's own message survives a cleanup, which is exactly
+// how the defect reached a release-blocking row in the first place.
+//
+// The trigger was never `defer` as such but how much stack runs between the
+// formatting and the read, which is why it read as intermittent and lived so
+// long. A message-carrying `defer` is the cheapest deterministic stand-in.
+module standalone.p679_assert_message_survives_cleanup
+
+fn boom(n int) Io -> () {
+    defer { println("cleanup ran with n=${n} and enough text to disturb the frame") }
+    assert(n == 999)
+}
+
+fn main() Io -> () => boom(1)
