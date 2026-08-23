@@ -68,6 +68,7 @@ export type NamespaceId enum
     | NsFields
     | NsCallables
     | NsLocals
+    | NsProtocols /// protocol names: a CONTRACT is not a type, so it cannot share NsDefs
 
 /// The ONE str -> id door: O(1) map per namespace; every other novac table
 /// keys by integer id (linear name scans are guard-red).

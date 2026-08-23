@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../diag.{ice}
-import ../builtins.{prim_c_name, is_runtime_abi_sum}
+import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -106,6 +106,31 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
         if ctx.variant_rows[v].payload_cnt != 0 { return false }
     }
     true
+}
+
+/// The type's SOURCE name, for a message a person reads (`int`, not `nova_int`).
+///
+/// Primitives answer through the universe (a primitive names no declaration --
+/// its head is an ordinal, wave B8), everything nominal through its declaration
+/// row. The three remaining kinds cannot stand where this door is asked -- a
+/// call argument and a protocol signature are both concrete by then -- so they
+/// answer with a WORD rather than an ice: a diagnostic must never be the thing
+/// that crashes the compiler (P12).
+///
+/// Lives here and not in `check` because two callers want it: the deduction
+/// conflict message and the unsatisfied-bound message (P18 -- one question, one
+/// door).
+export fn ty_source_name(ctx Ctx, t TyId) -> str {
+    if !is_ty(t) { return "an unreadable type" }
+    match ctx.tys.kind_of(t) {
+        TkPrim => prim_name(ctx.tys.prim_ordinal_of(t))
+        TkRecord => decl_of_ty(ctx, t).name
+        TkSum => decl_of_ty(ctx, t).name
+        TkNewtype => decl_of_ty(ctx, t).name
+        TkApp => "a generic instance"
+        TkParam => "a type parameter"
+        TkInfer => "an inference variable"
+    }
 }
 
 /// C name of a sum's TAG ENUM: always `Nova_<X>_Tag`, whether the sum is a

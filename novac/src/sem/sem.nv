@@ -449,6 +449,7 @@ export type Ctx {
     payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
+    protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b).
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -580,6 +581,7 @@ export fn collect_types(file Node) -> Ctx {
     ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
                        bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]) }
     mut fields = FieldTable.new()
+    mut protos = ProtoTable.new()
     mut variant_rows = []VariantDef.new()
     mut payload_types = []TyId.new()
     mut fns = FnTable.new()
@@ -618,12 +620,31 @@ export fn collect_types(file Node) -> Ctx {
             continue
         }
         match shape_of_decl(c) {
-            // A PROTOCOL is not a type a value can have (wave 3a): it names a
-            // CONTRACT, and the registry holds types. Registering it as a
-            // record would let `ro x Sized = ...` through, which is a program
-            // the language does not have. The checker refuses the declaration
-            // by name instead; dispatch arrives with wave 3b.
-            ShapeProtocol => {}
+            // A PROTOCOL is not a type a value can have: it names a CONTRACT,
+            // and `types` holds types. Registering it there would let
+            // `ro x Sized = ...` through, which is a program the language does
+            // not have -- so it goes to its own table (P17 row in plan 10.3b).
+            //
+            // Pass 1 registers the NAME and the SIGNATURE COUNT; the signature
+            // types are resolved in pass 2, for the same reason fields are: a
+            // signature may name a type declared further down the file.
+            ShapeProtocol => {
+                mut cnt = 0
+                for m in branch_children(c) {
+                    if m.kind_of() != NodeKind.ProtoMethod { continue }
+                    cnt += 1
+                }
+                protos.add(tname, protos.sigs.len(), cnt)
+                for m in branch_children(c) {
+                    if m.kind_of() != NodeKind.ProtoMethod { continue }
+                    // A nameless signature keeps its ROW (the counts must stay
+                    // aligned with pass 1) and an empty name, which no candidate
+                    // can ever match -- and `check` refuses the declaration by
+                    // name, so the empty row is never the thing a reader sees.
+                    protos.sigs.push(ProtoSig { name: proto_method_name(m) ?? "",
+                                                ret_id: no_ty(), param_off: 0, param_cnt: 0 })
+                }
+            }
             ShapeRecord => {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
@@ -673,8 +694,33 @@ export fn collect_types(file Node) -> Ctx {
             ro mine = types[raw_decl(owner_id)]
             if mine.name != tname { continue }
             match shape_of_decl(c) {
-                // Nothing to fill: pass 1 registered no row for a protocol.
-                ShapeProtocol => {}
+                // The signatures were counted in pass 1 and are TYPED here,
+                // where every type of the file is registered: a protocol may
+                // require `@at(i int) -> Cel` with `Cel` declared below it.
+                ShapeProtocol => {
+                    ro prow = protos.row_of(tname)
+                    if prow >= 0 {
+                        mut si = protos.rows[prow].sig_off
+                        for m in branch_children(c) {
+                            if m.kind_of() != NodeKind.ProtoMethod { continue }
+                            ro mk = branch_children(m)
+                            ro poff = protos.sig_params.len()
+                            mut pcnt = 0
+                            for pm in mk {
+                                if pm.kind_of() != NodeKind.Param { continue }
+                                protos.sig_params.push(ty_of_param_node(pm, types, defs, tys))
+                                pcnt += 1
+                            }
+                            protos.sigs[si] = ProtoSig {
+                                name: proto_method_name(m) ?? "",
+                                ret_id: ty_of_ret_node(mk, types, defs, tys),
+                                param_off: poff, param_cnt: pcnt }
+                            si += 1
+                        }
+                    } else {
+                        ice("sem: pass 2 sees a protocol pass 1 did not register")
+                    }
+                }
                 ShapeRecord => {
                     ro off = fields.rows.len()
                     mut cnt = 0
@@ -885,7 +931,7 @@ export fn collect_types(file Node) -> Ctx {
                 // `f(mut x T)` one callable twice over.
                 param_ids.push(ParamDef { type_id: pt, mode: param_mode_at(pk) })
             }
-            fns.add(fname, ret, false, param_ids, tps)
+            fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))
             // The DECLARATION's own row, keyed by its node. Asking `defs` by
@@ -925,5 +971,5 @@ export fn collect_types(file Node) -> Ctx {
     mut own = fns
     own.own_cnt = own.rows.len()
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
-          coerces: []CoercePair.new() }
+          coerces: []CoercePair.new(), protos }
 }

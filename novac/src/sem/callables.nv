@@ -305,6 +305,7 @@ export fn FnTable @entry_row() -> Option[FnRow] {
 /// chain, not a flag on a row.
 export type FnTable {
     tparams []str /// type-parameter NAMES of every callable, grouped by tparam_off/cnt
+    tbounds []str /// the BOUND of each type parameter (`""` = none), same grouping as `tparams` -- a parallel pool, so a slot's bound is one index away
     rows []FnDef /// every callable, in registration order; a row index is what `DefTarget.DefFn` carries
     params []ParamDef /// parameters of every callable -- type AND mode in one row, addressed by FnDef.param_off/param_cnt
     heads NameTable /// name -> FIRST row with that name; `FnDef.next_row` walks the rest
@@ -314,7 +315,7 @@ export type FnTable {
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
     { rows: []FnDef.new(), params: []ParamDef.new(), heads: NameTable.new(NamespaceId.NsCallables),
-      tparams: []str.new(), own_cnt: 0 }
+      tparams: []str.new(), tbounds: []str.new(), own_cnt: 0 }
 
 /// Does novac compile this callable's BODY?
 ///
@@ -424,7 +425,7 @@ fn FnTable @specificity_of(row FnRow) -> int {
 /// order (§4.4 fixes the position, so the caller has no other place to put
 /// it, and no way to name a second one).
 export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []ParamDef,
-                          tparam_names []str) -> () {
+                          tparam_names []str, tparam_bounds []str) -> () {
     ro head = FnRow(@heads.find(name))
     ro off = @params.len()
     // Whole slice at once: std does the copy (nv-coding-style section 18a --
@@ -433,8 +434,92 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
     @heads.put(name, @rows.len())
     ro toff = @tparams.len()
     @tparams.append(tparam_names)
+    // The bound pool is filled to the SAME length as the name pool, always:
+    // `tparam_off` addresses both, and a short pool would silently shift every
+    // later callable's bounds by one.
+    for i in 0..tparam_names.len() {
+        @tbounds.push(if i < tparam_bounds.len() { tparam_bounds[i] } else { "" })
+    }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
                        tparam_off: toff, tparam_cnt: tparam_names.len(), next_row: head })
+}
+
+/// E2-b3 WAVE 3B -- STRUCTURAL SATISFACTION: does `t` have every method the
+/// protocol in row `prow` requires? `None` = it does; `Some(text)` names the
+/// FIRST missing signature.
+///
+/// Donor: Go's method set. A type satisfies a contract by HAVING the methods,
+/// with no impl block, no coherence and no orphan rules -- we have none of the
+/// three (D53), so trait selection would be borrowing machinery for a question
+/// it does not answer here. The bar for the MESSAGE is the oracle's own,
+/// measured 2026-08-23: "`Plain` is missing: size() -> int" -- naming the method
+/// rather than the bound is the difference between a fixable refusal and a
+/// riddle.
+///
+/// The receiver is position ZERO of a method row (plan 273), so a required
+/// `@size() -> int` is satisfied by a row named `size` whose parameter 0 is `t`,
+/// whose remaining parameters match the signature's, and whose return type
+/// matches. A signature whose types novac could not resolve (`no_ty()`) is NOT
+/// compared on that position: refusing there would blame the candidate for the
+/// protocol's own unreadable declaration.
+export fn missing_sig_of(ctx Ctx, t TyId, prow int) -> Option[str] {
+    ro pd = ctx.protos.rows[prow]
+    for i in pd.sig_off..(pd.sig_off + pd.sig_cnt) {
+        ro sig = ctx.protos.sigs[i]
+        if !ctx.fns.has_method_for(t, ctx, sig) {
+            return Some(render_sig(ctx, sig))
+        } else {
+            // This requirement is met; the next one decides.
+        }
+    }
+    None
+}
+
+/// One required signature as a person reads it: `size() -> int`.
+fn render_sig(ctx Ctx, sig ProtoSig) -> str {
+    mut out = sig.name
+    out = "${out}("
+    for i in 0..sig.param_cnt {
+        out = "${out}${if i > 0 { ", " } else { "" }}${ty_source_name(ctx, ctx.protos.sig_params[sig.param_off + i])}"
+    }
+    out = "${out})"
+    if is_ty(sig.ret_id) {
+        out = "${out} -> ${ty_source_name(ctx, sig.ret_id)}"
+    } else {
+        // The protocol declared no return type; the rendering says so by
+        // stopping, exactly as the source does.
+    }
+    out
+}
+
+/// Is there a method row on `t` matching this required signature?
+///
+/// Walks the SAME-NAME chain (`heads` plus `next_row`), never a linear scan of
+/// the table -- the names module makes that a guard-red shape.
+#realtime nogc
+export fn FnTable @has_method_for(t TyId, ctx Ctx, sig ProtoSig) -> bool {
+    mut r = @heads.find(sig.name)
+    while r >= 0 {
+        ro fd = @rows[r]
+        r = raw_row(fd.next_row)
+        if !fd.has_recv { continue }
+        if fd.param_cnt != sig.param_cnt + 1 { continue }
+        if @params[fd.param_off].type_id != t { continue }
+        mut ok = true
+        for i in 0..sig.param_cnt {
+            ro want = ctx.protos.sig_params[sig.param_off + i]
+            if !is_ty(want) { continue }
+            if @params[fd.param_off + 1 + i].type_id != want {
+                ok = false
+            } else {
+                // This position matches; the remaining ones decide.
+            }
+        }
+        if !ok { continue }
+        if is_ty(sig.ret_id) && fd.ret_id != sig.ret_id { continue }
+        return true
+    }
+    false
 }
 
 /// Whether a callable with this name exists at all.

@@ -24,6 +24,7 @@ import ../lex.{TokenKind}
 import ../diag.{ice}
 import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
+import ../types.{TyId, no_ty, Interner}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
 /// punctuation. Its last child is not always the body.
@@ -520,6 +521,124 @@ export fn names_of_generics(gk []Node) -> []str {
     out
 }
 
+/// The BOUND of each generics entry, one per parameter, `""` when the entry
+/// declares none.
+///
+/// The mirror of `names_of_generics` and deliberately a SECOND door rather than
+/// a second return value: the two answers are wanted in different places (the
+/// names by everything that resolves a type argument, the bounds only by the
+/// filter), and a pair return would make every existing caller carry a value it
+/// does not use.
+///
+/// Positional, exactly like the names: the first identifier of an entry is the
+/// parameter, the next identifier inside that entry is its bound. `[K Equal +
+/// Hash]` answers `Equal` -- the second protocol of a `+` list is not read by
+/// this wave, and the filter says so by name rather than pretending it checked.
+export fn bounds_of_generics(gk []Node) -> []str {
+    mut out = []str.new()
+    mut expect_name = true
+    mut have_bound = false
+    for g in gk {
+        if g.kind_of() != NodeKind.LeafNode { continue }
+        ro k = leaf_kind(g)
+        if k == TokenKind.Comma {
+            if !have_bound {
+                out.push("")
+            } else {
+                // This entry already contributed its bound.
+            }
+            expect_name = true
+            have_bound = false
+            continue
+        }
+        if k != TokenKind.Ident { continue }
+        if expect_name {
+            expect_name = false
+            continue
+        }
+        if !have_bound {
+            out.push(leaf_text(g))
+            have_bound = true
+        } else {
+            // A second protocol in a `+` list, or the `consume` word: neither
+            // is read here (the consume axis has its own door).
+        }
+    }
+    if !expect_name && !have_bound {
+        out.push("")
+    } else {
+        // Either no entry was open, or its bound is already recorded.
+    }
+    out
+}
+
+/// The method NAME of a `ProtoMethod` node: the identifier after the `@`.
+///
+/// Position, not lookup -- the same rule every other reader of this tree lives
+/// by. An absent name answers `None`: `@` with nothing after it is broken input,
+/// and the checker refuses it by name instead of the registry holding a
+/// signature nobody can require.
+export fn proto_method_name(m Node) -> Option[str] {
+    mut seen_at = false
+    for c in branch_children(m) {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if !seen_at {
+            seen_at = true
+            continue
+        }
+        if leaf_kind(c) == TokenKind.Ident { return Some(leaf_text(c)) }
+    }
+    // ABSENCE, not an empty name. `@` with no identifier after it is broken
+    // input, and a `""` tail would make the registry hold a signature nobody
+    // can require -- the silent-default shape P21 refuses.
+    None
+}
+
+/// The TYPE a protocol signature's parameter declares, or `no_ty()`.
+///
+/// A protocol signature carries no type parameters of its own in this wave, so
+/// the resolution needs no substitution: the door that resolves a type NAME is
+/// asked with an empty parameter list, and a name it does not know answers
+/// absence rather than a guess.
+export fn ty_of_param_node(pm Node, types []TypeDef, defs DefTable, tys Interner) -> TyId {
+    mut seen_name = false
+    for c in branch_children(pm) {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.Ident { continue }
+        if !seen_name {
+            seen_name = true
+            continue
+        }
+        return ty_of_type_name(leaf_text(c), []str.new(), []TyId.new(), types, defs)
+    }
+    no_ty()
+}
+
+/// The RETURN type a protocol signature declares, or `no_ty()` when it declares
+/// none -- the absence is visible because the `RetType` node is absent, and the
+/// checker names it instead of assuming a type.
+export fn ty_of_ret_node(mk []Node, types []TypeDef, defs DefTable, tys Interner) -> TyId {
+    for c in mk {
+        if c.kind_of() != NodeKind.RetType { continue }
+        for r in branch_children(c) {
+            if r.kind_of() != NodeKind.LeafNode { continue }
+            if leaf_kind(r) != TokenKind.Ident { continue }
+            return ty_of_type_name(leaf_text(r), []str.new(), []TyId.new(), types, defs)
+        }
+    }
+    no_ty()
+}
+
+/// The bounds of a declaration's generics list, `[]` when it has none.
+export fn generic_bounds(kids []Node) -> []str {
+    mut out = []str.new()
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        out.append(bounds_of_generics(branch_children(c)))
+    }
+    out
+}
+
 /// Does a generics list constrain a parameter to be MUST-CONSUME
 /// (`[T consume]`, `[T consume Compare]`)?
 ///
@@ -530,10 +649,8 @@ export fn names_of_generics(gk []Node) -> []str {
 /// protocol name). Two questions and two doors, because the two carry different
 /// refusals: linearity is a gap of novac as a whole [INV-TODO: 274 9.1g.3]
 /// (D133/D156 have no tracking; the plan owns the question and defers it to
-/// E2-b3, and no registry number is invented here)
-/// [INV-TODO: 274 9.1g.3 -- deferred by a recorded marker until E2-b3; the plan
-/// owns the question, and no registry number is invented here], a protocol bound
-/// waits for dispatch (D122, E2-b3). One message for both
+/// E2-b3, and no registry number is invented here), a protocol bound waits for
+/// dispatch (D122, E2-b3). One message for both
 /// would name a cause that was not established (the D420 class).
 export fn generics_have_consume(kids []Node) -> bool {
     for c in kids {

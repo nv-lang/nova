@@ -63,8 +63,13 @@ def main():
         sem_files = [pathlib.Path(a[2])]
     else:
         s = root / "novac" / "src"
+        # `protocols.nv` появился 2026-08-23, когда sem.nv перешагнул тысячу
+        # строк и решение 12 разрезало его по смыслу. Файл в списке, потому что
+        # реестр §10.3в судит ПОЛЯ СТРОК, а не файлы: строка, уехавшая в
+        # со-равный файл того же модуля, осталась той же строкой.
         sem_files = [s / "sem" / "sem.nv", s / "sem" / "channel.nv", s / "sem" / "coerce.nv",
-                     s / "sem" / "callables.nv", s / "types" / "types.nv"]
+                     s / "sem" / "callables.nv", s / "sem" / "protocols.nv",
+                     s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"
 

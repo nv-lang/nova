@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/protocols.nv — THE protocol registry: contracts and the
+// signatures they require (E2-b3 wave 3b, plan 274 section 9.1e).
+//
+// Donor: Go -- a method SET is the contract, and a type satisfies it by having
+//        the methods; taken. Not taken: trait selection (rustc) -- no impls, no
+//        coherence, no orphan rules here (D53), so its machinery would answer a
+//        question this language does not ask.
+// Role: layer 3 of the map (sem), registry of CONTRACTS -- the answer to "what
+//       does this protocol require" and "does this type meet it".
+// Used by: `check` at the CALL site (the bound as a filter, E2-b3 wave 3b) and
+//          at the declaration (is this bound a protocol we know); `sem` fills it
+//          in the two collect passes.
+// Guarded by: check-novac-ctx-tables.py (the table is declared in plan 10.3b),
+//             check-novac-row-fields.py (every row field is declared in 10.3v),
+//             sem/protocols_test.nv (the predicate, both directions).
+//
+// A co-equal file of module `novac.sem` (folder = one module), split out of
+// sem.nv the moment that file crossed a thousand lines -- decision 12 of the
+// plan, and the guard cut it the same minute rather than after a baseline was
+// asked for. The cut is by MEANING and not by size: everything here answers
+// one question -- what a contract requires, and whether a type meets it.
+
+module novac.sem
+import ../types.{TyId, no_ty, is_ty}
+import ../names.{NameTable, NamespaceId}
+
+/// ONE required signature of a protocol: `@size() -> int`.
+///
+/// Value row, flat pools, no heap per row -- the same discipline the field and
+/// variant registries live by (P18/P23). The parameter TYPES live in
+/// `ProtoTable.sig_params`, addressed by this row, because a signature with a
+/// vector inside would allocate per row.
+export type ProtoSig value {
+    name str /// the method's spelling, without the `@`
+    ret_id TyId /// declared return type; `no_ty()` = the declaration wrote none
+    param_off int /// first parameter type of this signature in ProtoTable.sig_params
+    param_cnt int /// how many parameters, receiver EXCLUDED (the receiver is the candidate type)
+}
+
+/// One protocol declaration: a NAME and the range of signatures it requires.
+export type ProtoDef value {
+    name str /// the protocol's spelling as declared
+    sig_off int /// first signature in ProtoTable.sigs
+    sig_cnt int /// how many signatures the contract requires
+}
+
+/// THE protocol registry: contracts by name, their required signatures, and the
+/// flat pool of parameter types those signatures address.
+///
+/// Why a table of its own and not a row in `types` (the question P17 wants asked
+/// out loud): a protocol is not a TYPE. No value has it, `types` indexes by
+/// DeclId and every consumer of that table asks layout questions -- size, C
+/// spelling, fields -- that a contract has no answer for. Registering a
+/// protocol there would mean answering them with a lie or an ice, and the first
+/// caller to ask would decide which.
+export type ProtoTable {
+    names NameTable /// protocol name -> row index (NsProtocols)
+    rows []ProtoDef /// one row per declared protocol
+    sigs []ProtoSig /// signatures of every protocol, grouped by ProtoDef.sig_off/cnt
+    sig_params []TyId /// parameter types of every signature, grouped by ProtoSig.param_off/cnt
+}
+
+/// Empty protocol registry with its own namespace.
+export fn ProtoTable.new() -> ProtoTable =>
+    { names: NameTable.new(NamespaceId.NsProtocols), rows: []ProtoDef.new(),
+      sigs: []ProtoSig.new(), sig_params: []TyId.new() }
+
+/// Register one protocol and return its row index.
+export fn ProtoTable mut @add(name str, sig_off int, sig_cnt int) -> int {
+    ro row = @rows.len()
+    @names.put(name, row)
+    @rows.push(ProtoDef { name, sig_off, sig_cnt })
+    row
+}
+
+/// The row of the protocol with this name, or -1: the ONE door callers ask.
+#realtime nogc
+export fn ProtoTable @row_of(name str) -> int => @names.find(name)

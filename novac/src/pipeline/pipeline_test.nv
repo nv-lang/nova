@@ -161,20 +161,31 @@ test "a generic call without type arguments DEDUCES from the arguments (E2-b3 wa
     assert(c.contains("dbl__nova_int__to_nova_int__nova_int"))
 }
 
-test "a protocol declaration is READ, then refused by name (E2-b3 wave 3a)" {
-    // THREE possible answers, and two of them were wrong on the same day
-    // (2026-08-23):
-    //   1. "syntax error: this is not a form of the language" -- what novac said
-    //      before the parser knew `type X protocol { ... }`. A legal form of the
-    //      language called a non-language, which is the worst of the three.
-    //   2. accepted SILENTLY -- what it said once the parser knew the form and
-    //      nobody judged it. A dropped contract is worse than a refused one,
-    //      because the file looks compiled.
-    //   3. refused BY NAME, naming the wave that brings dispatch -- this test.
+test "a protocol declaration is READ and JUDGED, not refused (E2-b3 waves 3a+3b)" {
+    // FOUR answers this line has given, and three of them were wrong -- kept
+    // here because the sequence is the lesson:
+    //   1. "syntax error: this is not a form of the language" (before wave 3a)
+    //      -- a legal form of Nova called a non-language, the worst of the four:
+    //      it sends the author to fix correct code.
+    //   2. accepted SILENTLY (3a's parser without a judge) -- a dropped contract
+    //      looks like a compiled file.
+    //   3. refused BY NAME, naming the wave (3a) -- honest while nothing could
+    //      check a contract.
+    //   4. accepted and REGISTERED (3b) -- the signatures are in the registry
+    //      and the call site filters by them, so refusing the declaration would
+    //      refuse every correct program that declares one.
     //
-    // The form is taken from examples/tour/methods.nv, not invented: the oracle
-    // compiles that file, so the shape is the language's and not a guess.
+    // The form comes from examples/tour/methods.nv, which the oracle compiles.
     ro src = "type Sized protocol {\n    @size() -> int\n}\nfn main() { println(\"ok\") }"
+    assert(n_diags(src) == 0)
+}
+
+test "a bound naming an UNKNOWN protocol is still refused by name (E2-b3 wave 3b)" {
+    // The bound is checked against the REGISTRY, so `Nope` -- declared nowhere --
+    // keeps the refusal that every bound used to get. Without this half, making
+    // known bounds legal would have made unknown ones legal too, which is the
+    // silent-acceptance shape wave 3a already paid for once.
+    ro src = "fn twice[T Nope](a T) -> int => 2\nfn main() { println(twice(1)) }"
     assert(n_diags(src) == 1)
 }
 

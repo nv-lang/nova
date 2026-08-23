@@ -27,8 +27,8 @@ module novac.check
 
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
-import ../builtins.{TypeKind, prim_name}
-import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children}
+import ../builtins.{TypeKind}
+import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children, ty_source_name, missing_sig_of}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
 /// The lookup key of a free call: one slot per written argument, no position
@@ -185,31 +185,6 @@ fn param_slot_is(tys Interner, t TyId, slot int) -> bool {
     }
 }
 
-/// The type's SOURCE name, for a message a person reads (`int`, not `nova_int`).
-///
-/// Primitives are seeded into the declaration registry with their source
-/// spelling, so one door answers for them and for nominal types alike. The
-/// three remaining kinds cannot appear as a call ARGUMENT's type -- an argument
-/// is a value, and a value has no unapplied parameter, no unapplied generic and
-/// no inference variable by the time deduction runs -- so they answer with a
-/// word instead of an ice: a diagnostic must never become the thing that
-/// crashes the compiler (P12).
-fn arg_type_name(ctx Ctx, t TyId) -> str {
-    if !is_ty(t) { return "an unreadable type" }
-    match ctx.tys.kind_of(t) {
-        // A PRIMITIVE names no declaration -- its head is a universe ordinal
-        // (wave B8). Asking the declaration table for one iced on the first
-        // run of this very message, which is how that line was found.
-        TkPrim => prim_name(ctx.tys.prim_ordinal_of(t))
-        TkRecord => decl_of_ty(ctx, t).name
-        TkSum => decl_of_ty(ctx, t).name
-        TkNewtype => decl_of_ty(ctx, t).name
-        TkApp => "a generic instance"
-        TkParam => "a type parameter"
-        TkInfer => "an inference variable"
-    }
-}
-
 /// E2-b3 WAVE 1 -- ARGUMENT-DIRECTED DEDUCTION: the substitution read off the
 /// ARGUMENTS when the call writes no turbofish.
 ///
@@ -264,7 +239,7 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
             // not match what an earlier argument already inferred. Positions
             // are 1-based because the reader counts arguments as written.
             @report_first_leaf_of(kids,
-                "outside the subset: argument ${clash_at + 1} is ${arg_type_name(@ctx, key[clash_at].type_id)}, but argument ${first_at + 1} already fixed this type parameter to ${arg_type_name(@ctx, found)} -- novac names the conflict instead of choosing (E2-b3)")
+                "outside the subset: argument ${clash_at + 1} is ${ty_source_name(@ctx, key[clash_at].type_id)}, but argument ${first_at + 1} already fixed this type parameter to ${ty_source_name(@ctx, found)} -- novac names the conflict instead of choosing (E2-b3)")
             return None
         }
         if !is_ty(found) {
@@ -344,6 +319,27 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             return
         } else {
             // A type the registry knows: it can stand in the substitution.
+        }
+    }
+    // THE BOUND AS A FILTER (wave 3b). The substitution is known here and only
+    // here, so this is where "does the deduced type satisfy the contract" can be
+    // asked at all. The refusal names the MISSING METHOD, not the bound: the
+    // oracle's own message sets that bar ("`Plain` is missing: size() -> int"),
+    // and a refusal that only says "bound not satisfied" leaves the reader to
+    // guess which of the required methods it was.
+    ro bfd = @ctx.fns.rows[raw_row(row)]
+    for slot in 0..bfd.tparam_cnt {
+        if slot >= ids.len() { break }
+        ro bound = @ctx.fns.tbounds[bfd.tparam_off + slot]
+        if bound == "" { continue }
+        ro prow = @ctx.protos.row_of(bound)
+        if prow < 0 { continue }
+        if Some(missing) = missing_sig_of(@ctx, ids[slot], prow) {
+            @report_first_leaf_of(kids,
+                "outside the subset: ${ty_source_name(@ctx, ids[slot])} does not satisfy `${bound}` -- missing ${missing}")
+            return
+        } else {
+            // The contract is met on this slot; the next one decides.
         }
     }
     // THE ARGUMENTS, judged under the substitution. A generic row's parameters
