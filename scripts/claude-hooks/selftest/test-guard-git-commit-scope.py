@@ -31,6 +31,12 @@ cases = [
     # пропускаем: осознанный override с причиной
     ('git -C %s commit -s -F /tmp/m.txt  # index-verified: merge resolution' % R, 0,
      "override index-verified"),
+    # ловим: флаг ПОСЛЕ `--` — после него git считает всё путями, и коммит
+    # не состоится вовсе (2026-08-23: два окна за час на этой форме)
+    ('git -C %s commit -s --only -- a.md -F /tmp/m.txt' % R, 2, "-F posle --"),
+    ('git -C %s commit --only -- a.md -m "text"' % R, 2, "-m posle --"),
+    # порядок верный: флаги до `--`, пути после
+    ('git -C %s commit -s -F /tmp/m.txt --only -- a.md' % R, 0, "flagi do --"),
     # не коммит вовсе / упоминание в тексте
     ('git -C %s status --porcelain' % R, 0, "ne commit"),
     ('echo "nikogda ne delay git commit bez oblasti"', 0, "upominanie v tekste"),

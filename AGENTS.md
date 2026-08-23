@@ -29,6 +29,14 @@ gate rather than passing quietly.
 
 * `git add` **by filename only**. Never `-A`, `.`, `-u`, `git commit -a` — they
   sweep up another session's uncommitted files; observed three times in one day.
+* **Every commit names its scope**, because the index may be someone else's — on
+  2026-08-23 a commit of one file took 49 in a shared worktree. Flags before `--`,
+  paths after it:
+  `git -C <tree> commit -s -F <message-file> --only -- <file1> <file2>`.
+  A new file needs `git add <name>` first (`--only` only sees paths git knows).
+  Enforced by `scripts/claude-hooks/guard-git.py`, which also refuses a flag
+  placed after `--` (there git reads everything as a pathspec). Need the whole
+  index — say so in the command: `# index-verified: <reason>`.
 * Never `git stash`: worktrees share one `.git`, and what you hide surfaces in
   someone else's tree.
 * Never touch `git config user.*` — authorship is the owner's, by hand. (349
