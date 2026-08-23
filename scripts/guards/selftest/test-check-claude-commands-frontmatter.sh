@@ -87,7 +87,29 @@ expect_green "ноль файлов: судить нечего"
 rm -rf "$D"
 expect_green "папки команд нет: судить нечего"
 
-# ── 10. живое дерево репозитория — зелёный ───────────────────────────────
+# ── 10. команда-перепроверка БЕЗ ссылки на общее тело — КРАСНЫЙ ──────────
+#    Правило 2 (2026-08-23): общее тело вынесено в docs/dev/recheck-common.md,
+#    и команда, потерявшая ссылку, продолжит работать, просто перестав
+#    проверять половину — молча. Ровно этот отказ ловим.
+mk_dir; good
+printf -- '---\ndescription: "recheck without the common body"\n---\n\nBody only.\n' \
+    > "$D/thing-recheck.md"
+expect_red "recheck-команда без ссылки на общее тело"
+
+# ── 11. ссылка есть, а файла в дереве нет — КРАСНЫЙ ──────────────────────
+mk_dir; good
+printf -- '---\ndescription: "recheck with a dangling reference"\n---\n\nSee docs/dev/recheck-common.md first.\n' \
+    > "$D/thing-recheck.md"
+mkdir -p "$T/fakeroot"
+if python "$G" "$T/fakeroot" "$D" > "$T/o" 2> "$T/e"; then
+    bad "ссылка на отсутствующий общий файл: зелёный, а должен краснеть"
+elif grep -q "^check-claude-commands-frontmatter FAIL:" "$T/o"; then
+    ok "ссылка на отсутствующий общий файл"
+else
+    bad "ссылка на отсутствующий общий файл: красный без строки FAIL:"
+fi
+
+# ── 12. живое дерево репозитория — зелёный ───────────────────────────────
 if python "$G" "$ROOT" > "$T/o" 2> "$T/e"; then
     ok "живое дерево репозитория зелёное"
 else
