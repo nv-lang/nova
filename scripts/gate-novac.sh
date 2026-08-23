@@ -429,7 +429,11 @@ if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-reg
 # интерпретатора, пересборка без нужды. Здесь она измерена и сравнена с
 # записанным потолком; предел масштабируется калибровкой машины.
 GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
-BUDGET_FILE="$ROOT/scripts/guards/gate-budget.baseline"
+# СВОЙ файл бюджета, а не общий (слияние 2026-08-23). Главный гейт строит
+# компилятор и гоняет мега-CU, его потолки — сотни и тысячи секунд; ярус
+# loop novac стоит 15с. Под общим потолком 240с сегодняшняя находка
+# (loop подорожал до 46с и вышел за предел 40) просто не состоялась бы.
+BUDGET_FILE="$ROOT/scripts/guards/novac-gate-budget.baseline"
 BUDGET=""
 if [ -f "$BUDGET_FILE" ]; then
     while read -r _k _v _rest; do

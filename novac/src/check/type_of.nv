@@ -20,7 +20,7 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow, is_vrow}
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -295,7 +295,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // this call yet (the diagnostics path asks the lattice while
                 // narrowing), so the row's own return type is the answer.
             }
-            return ret
+            // `same_ty` and not `ret` — the oracle's ro-launder analysis does not
+            // peel a newtype down to its carrier, so returning a `ro`-bound
+            // `TyId` is refused where returning a `ro`-bound `int` is fine
+            // (docs/dev/novac-divergences.md, [LEGACY-#TBD-newtype-ro-launder]).
+            // The merge of 2026-08-23 brought main's per-binding provenance
+            // (#672/#717) and this line started paying that tax like the six
+            // before it.
+            return same_ty(ret)
         }
         // A TYPE in call position CONSTRUCTS a value, and the checker recorded
         // which type when it judged the form -- so the answer is a READ, not a
