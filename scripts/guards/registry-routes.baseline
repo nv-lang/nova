@@ -361,4 +361,11 @@ no_caveat=34
 #   we ship for blocks the tag until the failure mode is known, so the count
 #   goes UP by one. A number rising because a new judge started judging is the
 #   plan working, not the tree getting worse.
-blockers=50
+# 2026-08-23, No.740 CLOSED -- 50 -> 49. The row said in its own words that it
+#   was waiting for one thing and not for another edit: "closes with phase F.3
+#   of plan 275 (CI calls the gate tiers), and the row waits for it, not for a
+#   new codegen change". F.3 landed, and the proof is a line in CI's own log --
+#   the loop-tier job runs `no-silent-int-fallback` against
+#   /home/runner/work/nova/nova/compiler-codegen/src. Guards without an external
+#   caller, which this row quoted as unchanged at 56, are now 0 of 82.
+blockers=49
