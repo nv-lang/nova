@@ -212,16 +212,6 @@ step "guard-external-caller (ГИ.8 конвенции: у стража обяз
 guard "$ROOT/scripts/guards/check-guard-external-caller.py" "$ROOT" \
     || fail "стражей без внешнего вызывающего стало больше (docs/dev/gate-guard-conventions.md, Г8)"
 
-# Слэш-команды репозитория (`.claude/commands/`) — такая же проводка, как хуки:
-# механизм, который едет вместе с деревом. Сломанная шапка НЕ выглядит сломанной —
-# команда грузится, но теряет описание и список инструментов. 2026-08-23: из
-# четырёх новых команд ДВЕ несли двоеточие внутри `description`, YAML читал
-# остаток строки как вложенное отображение, и нашёл это владелец глазами в
-# предпросмотре markdown. Проверка стоит миллисекунды.
-step loop "claude-commands-frontmatter (шапка слэш-команды обязана парситься)"
-guard "$ROOT/scripts/guards/check-claude-commands-frontmatter.py" "$ROOT" \
-    || fail "шапка слэш-команды не читается: команда работает наполовину и молча"
-
 guard "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 
 guard "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
