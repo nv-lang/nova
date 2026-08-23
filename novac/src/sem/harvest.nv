@@ -194,5 +194,5 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut fns FnTable) -> (
     // row like any other. Nova's real external declarations are `extern "C" fn`
     // and `extern "nova" fn`, which say so IN THE SOURCE and carry an ABI;
     // neither appears in std's string module (owner, 2026-08-20).
-    fns.add(mname, ret_t, true, param_ids, generic_names(kids))
+    fns.add(mname, ret_t, true, param_ids, generic_names(kids), generic_bounds(kids))
 }
