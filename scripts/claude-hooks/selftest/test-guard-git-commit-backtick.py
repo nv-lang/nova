@@ -8,8 +8,11 @@ BT = chr(96)  # обратный апостроф — сам через пере
 
 cases = [
     ('git -C /r commit -m "text with ' + BT + 'mut sender' + BT + ' inside"', 2, "backtick via -m"),
-    ('git -C /r commit -F /tmp/msg.txt', 0, "-F is fine"),
-    ('git -C /r commit -m "plain text, no backticks"', 0, "plain -m is fine"),
+    # Область (`--only -- <путь>`) добавлена 2026-08-23: с этого дня коммит без
+    # названной области отвергает ДРУГОЕ правило того же хука, и без пути эти
+    # два случая проверяли бы уже не апострофы, а его.
+    ('git -C /r commit -F /tmp/msg.txt --only -- a.md', 0, "-F is fine"),
+    ('git -C /r commit -m "plain text, no backticks" --only -- a.md', 0, "plain -m is fine"),
     ('echo "' + BT + 'date' + BT + '"', 0, "not a commit at all"),
     ('git -C /r commit -m "one" && echo ' + BT + 'x' + BT, 2, "backtick after -m in chain"),
 ]
