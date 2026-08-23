@@ -32,7 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
-import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -288,6 +288,39 @@ fn Cursor mut @type_decl() -> Node {
     // written the canonical way fell into the junk bucket before reaching any
     // rule about sums, which is how the missing exhaustiveness check stayed
     // invisible. The marker is kept in the tree -- the tree is lossless.
+    // A PROTOCOL declaration -- `type Sized protocol { @size() -> int }`.
+    //
+    // Measured 2026-08-23 on the tour example (form taken from
+    // examples/tour/methods.nv, not invented): the oracle compiles that file
+    // and novac answered "syntax error: this is not a form of the language" --
+    // about a form the language HAS. The word `protocol` fell into the
+    // newtype/alias branch below as if it were a representation, and the brace
+    // body behind it became junk. Exactly the shape the newtype branch was
+    // added for on 2026-08-21, one form later.
+    //
+    // The body is read as a BALANCED BRACE RUN and kept whole: the tree is
+    // lossless, and the method signatures inside are not interpreted by this
+    // wave (dispatch is wave 3b). `sem` sees the marker and refuses BY NAME,
+    // which is the whole point -- a named subset refusal instead of calling a
+    // legal form a non-language.
+    if @peek() == TokenKind.Ident && @peek_text() == PROTOCOL_MARKER {
+        kids.push(@take())
+        if @peek() == TokenKind.LBrace {
+            mut depth = 0
+            while !@at_eof() {
+                depth += brace_delta(@peek())
+                kids.push(@take())
+                if depth == 0 { break }
+            }
+        } else {
+            // `type Sized protocol` with no body: broken input, and the top
+            // loop recovers the next token into its own Err branch rather than
+            // this declaration swallowing it.
+        }
+        return @node(NodeKind.TypeDecl, kids)
+    } else {
+        // Not a protocol: the sum marker and the record/newtype tails follow.
+    }
     ro is_sum_marker = @peek() == TokenKind.Ident && @peek_text() == "enum"
     if is_sum_marker {
         kids.push(@take())

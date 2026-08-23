@@ -101,6 +101,13 @@ export fn is_contextual_mode_word(word str) -> bool => word == CONSUME_MODE
 /// word that decides what a `type` declaration means.
 export const ALIAS_MARKER = "alias"
 
+/// The word that marks a PROTOCOL declaration: `type Sized protocol { ... }`.
+///
+/// A contextual word like `alias` and `enum`, not a keyword -- the lexer knows
+/// none of the three. It lives here because P5 keeps every name of the language
+/// in one registry: the parser asks, it does not spell.
+export const PROTOCOL_MARKER = "protocol"
+
 /// The RECEIVER's own type, spelled by its role: `fn T @twin() -> Self`.
 ///
 /// A NAME OF THE LANGUAGE, so it lives here (P5). It names no declaration and

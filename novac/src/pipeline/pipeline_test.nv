@@ -161,6 +161,23 @@ test "a generic call without type arguments DEDUCES from the arguments (E2-b3 wa
     assert(c.contains("dbl__nova_int__to_nova_int__nova_int"))
 }
 
+test "a protocol declaration is READ, then refused by name (E2-b3 wave 3a)" {
+    // THREE possible answers, and two of them were wrong on the same day
+    // (2026-08-23):
+    //   1. "syntax error: this is not a form of the language" -- what novac said
+    //      before the parser knew `type X protocol { ... }`. A legal form of the
+    //      language called a non-language, which is the worst of the three.
+    //   2. accepted SILENTLY -- what it said once the parser knew the form and
+    //      nobody judged it. A dropped contract is worse than a refused one,
+    //      because the file looks compiled.
+    //   3. refused BY NAME, naming the wave that brings dispatch -- this test.
+    //
+    // The form is taken from examples/tour/methods.nv, not invented: the oracle
+    // compiles that file, so the shape is the language's and not a guess.
+    ro src = "type Sized protocol {\n    @size() -> int\n}\nfn main() { println(\"ok\") }"
+    assert(n_diags(src) == 1)
+}
+
 test "deduction refuses BY NAME where it cannot decide (E2-b3 wave 1)" {
     // Two arguments wanting different types for one parameter: whichever one
     // "wins" decides which C symbol the call names, so a silent choice picks

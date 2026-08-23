@@ -22,7 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{is_contextual_mode_word, ALIAS_MARKER}
+import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
@@ -176,6 +176,7 @@ export type DeclShape enum
     | ShapeRecord
     | ShapeNewtype
     | ShapeAlias
+    | ShapeProtocol /// `type Sized protocol { ... }` -- the form parses (wave 3a), dispatch arrives with 3b
 
 /// The shape of this `type` declaration. No lookups, no registry, no order
 /// dependence.
@@ -192,6 +193,12 @@ export fn shape_of_decl(decl Node) -> DeclShape {
             continue
         }
         if leaf_text(c) == ALIAS_MARKER { return DeclShape.ShapeAlias }
+        // The PROTOCOL marker is read BEFORE the field test can lie: a protocol
+        // body holds method signatures, and the record branch would call the
+        // first one "a field that must declare a type" -- a refusal about a
+        // shape the source never wrote (measured 2026-08-23, one form after the
+        // parser learned this declaration).
+        if leaf_text(c) == PROTOCOL_MARKER { return DeclShape.ShapeProtocol }
         tail_ident = true
     }
     if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }

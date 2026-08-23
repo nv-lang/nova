@@ -39,7 +39,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, shape_of_decl, DeclShape}
 import ../types.{TyId, no_ty, is_ty}
 
 /// State of one check run: the source (for positions), the semantic context
@@ -253,6 +253,26 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_return_type_undeclared(children)
                 }
                 TypeDecl | SumDecl => {
+                    // A PROTOCOL declaration parses since wave 3a and is
+                    // refused HERE, by name. Two wrong answers were possible
+                    // and both were measured on 2026-08-23: before the parser
+                    // knew the form, novac called a legal declaration "not a
+                    // form of the language"; after it knew the form and nobody
+                    // judged it, novac ACCEPTED the file and silently dropped
+                    // the declaration -- and a dropped contract is worse than a
+                    // refused one, because the program looks compiled.
+                    //
+                    // The refusal names the wave, so a reader knows it is a
+                    // subset boundary and not a language limit; the bound on a
+                    // type parameter keeps its own refusal (D122).
+                    if shape_of_decl(n) == DeclShape.ShapeProtocol {
+                        @report_first_leaf_of(children,
+                            "outside the subset: a protocol declaration is read but not yet judged -- structural dispatch arrives with E2-b3 wave 3b")
+                        return
+                    } else {
+                        // Not a protocol: the two shape rules below are the
+                        // declaration's business as before.
+                    }
                     // A generic TYPE is not in the subset at all: position
                     // first, so a misplaced form is named as misplaced.
                     @report_if_misplaced_generics(children)

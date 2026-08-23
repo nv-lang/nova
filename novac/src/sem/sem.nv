@@ -618,6 +618,12 @@ export fn collect_types(file Node) -> Ctx {
             continue
         }
         match shape_of_decl(c) {
+            // A PROTOCOL is not a type a value can have (wave 3a): it names a
+            // CONTRACT, and the registry holds types. Registering it as a
+            // record would let `ro x Sized = ...` through, which is a program
+            // the language does not have. The checker refuses the declaration
+            // by name instead; dispatch arrives with wave 3b.
+            ShapeProtocol => {}
             ShapeRecord => {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
@@ -667,6 +673,8 @@ export fn collect_types(file Node) -> Ctx {
             ro mine = types[raw_decl(owner_id)]
             if mine.name != tname { continue }
             match shape_of_decl(c) {
+                // Nothing to fill: pass 1 registered no row for a protocol.
+                ShapeProtocol => {}
                 ShapeRecord => {
                     ro off = fields.rows.len()
                     mut cnt = 0
