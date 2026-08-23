@@ -1,0 +1,23 @@
+module value_record.pos_1
+
+// A VALUE RECORD (`type Pt value { ... }`), and the fixture is built around the
+// one thing the word MEANS: a copy is a copy.
+//
+// `ro snapshot = live` copies, so writing through `live` afterwards must leave
+// `snapshot` alone. Emitted as a GC pointer -- which is what every record was
+// before this wave -- the copy would be an alias and both lines would print the
+// same number. Measured against the fixed point on 2026-08-23: it prints 11 then
+// 1, and novac printed 11 and 11 until the layout landed.
+//
+// The numbers are chosen so the wrong answer cannot look right: 1 and 11 differ
+// in both digits and in length, and the second line is the ORIGINAL, so a
+// fixture that printed the copy twice would still fail.
+type Pt value { n int }
+
+fn main() {
+    mut live = Pt { n: 1 }
+    ro snapshot = live
+    live.n = 11
+    println(live.n)
+    println(snapshot.n)
+}

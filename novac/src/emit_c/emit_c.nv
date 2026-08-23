@@ -66,7 +66,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
 import ../mono.{Reach}
-import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, raw_frow, no_frow, file_decls}
+import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, no_ty}
 
@@ -893,17 +893,30 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
         // and the C would then declare the same variable twice in one
         // block: invalid C from perfectly legal Nova.
         ro tmp = "_novac_tmp_t${@fresh_uniq()}"
-    @body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
+    // A VALUE RECORD IS BUILT ON THE STACK: no `nova_alloc`, no pointer, and
+    // the fields are reached with `.`. The oracle emits the same shape
+    // (`NovaValue_X _nv_tmp;` in shell.tpl.c), and the difference is not a
+    // preference: an allocation would make the copy an alias, which is exactly
+    // the divergence measured on 2026-08-23.
+    ro by_value = is_value_record(@ctx, vtype)
+    ro arrow = if by_value { "." } else { "->" }
+    if by_value {
+        @body.append("    ${rec} ${tmp};\n")
+    } else {
+        @body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
+    }
     for c in branch_children(init) {
         ro ck = c.kind_of()
         if ck == NodeKind.CtorSpread {
-            @body.append("    *${tmp} = *")
+            // Spreading INTO a value is a plain struct assignment; into a
+            // pointer it is a copy through both sides.
+            @body.append(if by_value { "    ${tmp} = " } else { "    *${tmp} = *" })
             @emit_expr(branch_children(c)[1])
             @body.append(";\n")
         } else if ck == NodeKind.CtorField {
             ro fk = branch_children(c)
             ro fname = leaf_text(fk[0])
-            @body.append("    ${tmp}->${fname} = ")
+            @body.append("    ${tmp}${arrow}${fname} = ")
             if fk.len() > 1 {
                 @emit_expr(fk[2])
             } else {
@@ -936,9 +949,13 @@ fn Emitter mut @emit_bind(st Node) -> () {
         return
     }
     if init.kind_of() == NodeKind.RecordCtor {
-        ro rec = c_struct(@ctx, vtype)
+        // THE C TYPE COMES FROM THE ONE DOOR, not from the struct name plus a
+        // star: a VALUE record is not a pointer, and this line was the last
+        // place that assumed every record is. Measured 2026-08-23 -- the C read
+        // `NovaValue_Pt* a = _novac_tmp_t1;`, initializing a pointer with a
+        // struct, and clang is what said so.
         ro tmp = @emit_record_ctor(init, vtype)
-        @body.append("    ${rec}* ${vname} = ${tmp};\n")
+        @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
     } else if is_expr_kind(init.kind_of()) {
         @body.append("    ")
         @body.append(c_type(@ctx, vtype))

@@ -267,10 +267,28 @@ export fn CheckOut mut @record_subst(id NodeId, args []TyId) -> ()
     @res[raw_node(id)] = Resolution.Subst(SubstRef { arg_off, arg_cnt: args.len() })
 }
 
+/// The type of a node WHEN ONE IS RECORDED, and `no_ty()` when none is.
+///
+/// The strict reader below ices on absence, and that is right for a consumer
+/// whose next step needs the type: a hole in the channel is a compiler bug and
+/// must be loud. This one exists for the readers whose question is DIFFERENT --
+/// "is this operand a value record?" is answered by "no" when the channel says
+/// nothing, and icing there would turn a shape novac does not type yet into a
+/// crash (measured 2026-08-23: the field-access emission asked the strict door
+/// and iced on the first record whose operand the checker had not typed).
+#realtime nogc
+export fn CheckOut @type_if_known(id NodeId) -> TyId {
+    if !is_node(id) { return no_ty() }
+    if raw_node(id) >= @types.len() { return no_ty() }
+    @types[raw_node(id)]
+}
+
 /// The type of a node. TOTAL: a hole is an ice, not an Option — an optional
 /// return is an invitation to write "and if there is none, I will work it out
 /// myself", which is the branch that made two answers possible in the first
-/// place (plan 196's lesson).
+/// place (plan 196's lesson). The TOLERANT door above is not that invitation:
+/// it answers a DIFFERENT question, and its callers act on `no_ty()` instead of
+/// working a type out for themselves.
 #realtime nogc
 export fn CheckOut @type_of(id NodeId) -> TyId
     requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"

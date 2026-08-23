@@ -1,0 +1,27 @@
+module value_record.neg_1
+
+// ONE seeded cause: a METHOD on a value record.
+//
+// The fixed point takes the receiver of a value record BY POINTER
+// (`NovaValue_CharsIter*` in the shell it emits), precisely so a `mut` method can
+// write to the caller's record. novac passes a value receiver BY VALUE -- that is
+// what `value` means everywhere else in its emission -- so a `mut` method would
+// write to a copy and the caller would see nothing. Refused by name rather than
+// compiled into a silent no-op.
+//
+// AGREEMENT IS NOT CLAIMED HERE, and that is why the comment says so: the oracle
+// COMPILES this form. The pair is legal as a fixture because `neg_*` files are
+// judged on novac's own diagnostic (one seeded mistake, exactly one refusal), and
+// the divergence is recorded in docs/dev/novac-divergences.md rather than
+// asserted as a rule.
+type Counter value { n int }
+
+fn Counter mut @bump() -> () {
+    @n = @n + 1
+}
+
+fn main() {
+    mut c = Counter { n: 0 }
+    c.bump()
+    println(c.n)
+}

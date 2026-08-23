@@ -104,6 +104,12 @@ export const COERCE_ATTR = "coerce"
 ///
 /// A NAME OF THE LANGUAGE, so it lives here (P5), next to `enum` -- the other
 /// word that decides what a `type` declaration means.
+/// The word that makes a type declaration a SUM: `type Colour enum Red | Green`.
+/// It stood as a bare literal in the parser until 2026-08-23, when the door that
+/// asks about a marker made the four of them one shape -- and a name of the
+/// language spelled in the parser is exactly what P5 forbids.
+export const SUM_MARKER = "enum"
+
 export const ALIAS_MARKER = "alias"
 
 /// The word that makes a record a VALUE: `type Point value { x int, y int }`.

@@ -290,7 +290,7 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 /// What the layout wave owes: `NovaValue_<name>` by value (not `Nova_<name>*`),
 /// `.` where a pointer takes `->`, construction on the stack instead of
 /// `nova_alloc`, and the same for `@field` on a value receiver.
-const VALUE_RECORD_MSG = "outside the subset: a `value` record is read but not laid out yet -- novac would emit it as a GC pointer, and a copy of it would alias its source (measured against the fixed point)"
+const VALUE_METHOD_MSG = "outside the subset: a method on a `value` record needs the receiver taken by POINTER (the fixed point writes `NovaValue_X*`), and novac passes a value receiver by value -- so a `mut` method would write to a copy"
 
 /// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
 /// the grammar is the language's), and D69 -- it must be last -- is a position

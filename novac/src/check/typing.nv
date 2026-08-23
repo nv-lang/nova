@@ -394,6 +394,13 @@ fn Checker mut @type_stmt(st Node) -> () {
         // earlier declaration is not this assignment's business.
         if @out.len() > before { return }
         @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
+        // THE TARGET IS AN EXPRESSION TOO, and the emitter writes it as one --
+        // so it needs the same answers. `a.n = 1` on a VALUE record must be
+        // `a.n`, not `a->n`, and the arrow is chosen from the OPERAND's recorded
+        // type: without this the target kept the pointer form while the reads of
+        // the same field used the dot (measured 2026-08-23, clang: "expression
+        // is not assignable").
+        @type_expr(kids[0])
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         // A head this short was already refused by the subset walk; the same
@@ -642,6 +649,17 @@ fn Checker mut @type_expr(e Node) -> () {
         // Same first floor for a field: the owner is known now, so "this type
         // has no such field" is answerable here, at the field's own position.
         ro owner = type_of(kids[0], @ctx, @scope, @chan)
+        // RECORDED, not merely computed: the emitter has to know whether the
+        // operand is a VALUE record (`.`) or a GC pointer (`->`), and the answer
+        // is a type the checker already established here. Before this, the
+        // emission asked the channel, got nothing and printed `->` for a value
+        // record -- `(a->n)` on a struct, which clang refuses (2026-08-23).
+        if is_ty(owner) {
+            @record(kids[0], owner)
+        } else {
+            // The operand's type is unknown -- the refusal above named it, and a
+            // hole is not something to record.
+        }
         match kids[2] {
             Leaf(t) => {
                 if !@ctx.fields.has_field(owner, t.text) {

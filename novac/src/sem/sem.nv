@@ -103,6 +103,7 @@ export type TypeRows enum
 /// row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
+    by_value bool /// Declared `value`: the type lives INLINE where a plain record is a GC pointer. Written by the source, so it is stored -- `kind` answers which rows a declaration owns, and layout is not that
     ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
@@ -370,7 +371,7 @@ export type Ctx {
 fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, ty_id, name, rows: TypeRows.NoRows })
+    types.push(TypeDef { kind: TypeKind.TkPrim, by_value: false, ty_id, name, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -537,7 +538,9 @@ export fn collect_types(file Node) -> Ctx {
         if k == NodeKind.SumDecl {
             ro d = DeclId(types.len())
             defs.add(tname, DefTarget.DefType(d))
-            types.push(TypeDef { kind: TypeKind.TkSum, ty_id: tys.sum(d), name: tname,
+            // A SUM's value-ness is DERIVED, not declared: `is_value_sum` reads
+            // it off the payloads (A4), so the row says nothing here.
+            types.push(TypeDef { kind: TypeKind.TkSum, by_value: false, ty_id: tys.sum(d), name: tname,
                                  rows: TypeRows.NoRows })
             continue
         }
@@ -570,7 +573,8 @@ export fn collect_types(file Node) -> Ctx {
             ShapeRecord => {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
-                types.push(TypeDef { kind: TypeKind.TkRecord, ty_id: tys.record(d), name: tname,
+                types.push(TypeDef { kind: TypeKind.TkRecord, by_value: decl_is_value(c),
+                                     ty_id: tys.record(d), name: tname,
                                      rows: TypeRows.NoRows })
             }
             ShapeNewtype => {
@@ -578,7 +582,7 @@ export fn collect_types(file Node) -> Ctx {
                 // representation is a type reference and may point forward.
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
-                types.push(TypeDef { kind: TypeKind.TkNewtype, ty_id: no_ty(), name: tname,
+                types.push(TypeDef { kind: TypeKind.TkNewtype, by_value: false, ty_id: no_ty(), name: tname,
                                      rows: TypeRows.NoRows })
             }
             ShapeAlias => {
@@ -654,7 +658,13 @@ export fn collect_types(file Node) -> Ctx {
                         fields.add(mine.ty_id, leaf_text(fk[fnat]), ty_of_row(types, fdecl))
                         cnt += 1
                     }
-                    types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord, ty_id: mine.ty_id,
+                    // THE LAYOUT SURVIVES THE REWRITE: this pass replaces the row
+                    // to attach the field range, and dropping `by_value` here
+                    // would lose the declaration's own word one pass after
+                    // reading it.
+                    types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
+                                                          by_value: types[raw_decl(owner_id)].by_value,
+                                                          ty_id: mine.ty_id,
                                                           name: tname,
                                                           rows: TypeRows.FieldRows(FieldRow(off), cnt) }
                 }
@@ -671,7 +681,7 @@ export fn collect_types(file Node) -> Ctx {
                         Some(spec) => {
                             if raw_decl(spec.under_decl) < types.len() {
                                 types[raw_decl(owner_id)] = TypeDef {
-                                    kind: TypeKind.TkNewtype,
+                                    kind: TypeKind.TkNewtype, by_value: false,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
                                     name: tname, rows: TypeRows.NoRows }
                             } else {

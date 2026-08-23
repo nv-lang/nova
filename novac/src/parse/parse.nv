@@ -32,7 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, SUM_MARKER}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -101,6 +101,21 @@ fn Cursor @peek_text(skip int = 0) -> str {
 /// `builtins` (P5), never here. The two positions that need this question, a
 /// parameter and a qualified receiver, used to answer it with two hand-written
 /// copies of the four words.
+/// Does the next token spell THIS word -- an identifier with that exact text?
+///
+/// The four markers of a type declaration (`protocol`, `value`, `enum`, `alias`)
+/// are contextual: none of them is a keyword in this lexer, so each is an
+/// identifier whose SPELLING decides. The question was written out four times as
+/// `@peek() == Ident && @peek_text() == X`, and a copy is where the next form
+/// lands in three places out of four -- the owner asked for the door on the day
+/// the fourth copy appeared (2026-08-23).
+fn Cursor @peek_ident(word str) -> bool =>
+    @peek() == TokenKind.Ident && @peek_text() == word
+
+/// Is a MODE word standing here -- `mut`, `ro` or `consume`?
+///
+/// All three lex as keywords, so the question is about a token KIND and the door
+/// exists because two positions ask it: a parameter and a qualified receiver.
 fn Cursor @at_mode_word() -> bool =>
     @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
         @peek() == TokenKind.KwConsume
@@ -303,7 +318,7 @@ fn Cursor mut @type_decl() -> Node {
     // wave (dispatch is wave 3b). `sem` sees the marker and refuses BY NAME,
     // which is the whole point -- a named subset refusal instead of calling a
     // legal form a non-language.
-    if @peek() == TokenKind.Ident && @peek_text() == PROTOCOL_MARKER {
+    if @peek_ident(PROTOCOL_MARKER) {
         kids.push(@take())
         if @peek() == TokenKind.LBrace {
             kids.push(@take())
@@ -333,12 +348,12 @@ fn Cursor mut @type_decl() -> Node {
     // not a form of the language" about a form the language has. Six of novac's
     // own files stop on exactly this, the largest single form in the self-build
     // measurement of that day.
-    if @peek() == TokenKind.Ident && @peek_text() == VALUE_MARKER {
+    if @peek_ident(VALUE_MARKER) {
         kids.push(@take())
     } else {
         // No `value` marker: the record is a GC pointer, the language's default.
     }
-    ro is_sum_marker = @peek() == TokenKind.Ident && @peek_text() == "enum"
+    ro is_sum_marker = @peek_ident(SUM_MARKER)
     if is_sum_marker {
         kids.push(@take())
         // The first variant may follow the marker directly:
@@ -455,7 +470,7 @@ fn Cursor mut @type_decl() -> Node {
         // build, run, and enforce the distinction). The plan's own newtype
         // section was half right: the form was missing from NOVAC, not from
         // Nova.
-        ro is_alias = @peek() == TokenKind.Ident && @peek_text() == ALIAS_MARKER
+        ro is_alias = @peek_ident(ALIAS_MARKER)
         if is_alias {
             kids.push(@take())
         } else {

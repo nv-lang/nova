@@ -339,6 +339,26 @@ export fn shape_of_decl(decl Node) -> DeclShape {
     if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }
 }
 
+/// The TYPE NAME of a method's receiver group (`fn Counter mut @bump()` answers
+/// `Counter`), or `None` when the declaration is not a method.
+///
+/// The receiver's type is the FIRST identifier of the group -- a mode word stands
+/// after it, which is the same positional rule `mode_after_first_ident` reads the
+/// mode by. A door because two readers want it: the harvest that builds the row,
+/// and the subset walk that refuses a form the layout cannot carry yet.
+export fn recv_type_name(kids []Node) -> Option[str] {
+    for c in kids {
+        if c.kind_of() != NodeKind.Recv { continue }
+        for r in branch_children(c) {
+            if r.is_ident() { return Some(leaf_text(r)) }
+        }
+    }
+    // NOT `""`: absence is declared by the TYPE, because an empty string as a
+    // tail is the silent default P21 (1a) refuses -- a caller cannot tell "a
+    // receiver named nothing" from "no receiver at all".
+    None
+}
+
 /// Does this type declaration carry the `value` marker?
 ///
 /// Read positionally, like every other marker of a declaration: the word stands

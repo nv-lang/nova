@@ -39,7 +39,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR}
-import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, attr_kids_name, decl_is_value}
+import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, attr_kids_name, recv_type_name, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
 
 /// State of one check run: the source (for positions), the semantic context
@@ -248,25 +248,28 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                         // An ordinary declaration: the three shape rules below
                         // are its business as before.
                     }
+                    // A METHOD ON A VALUE RECORD, refused by name. The fixed
+                    // point takes such a receiver BY POINTER (`NovaValue_X*` in
+                    // the shell it emits) precisely so a `mut` method can write
+                    // to the caller's record; novac passes a value receiver by
+                    // VALUE, which is what the word means everywhere else in its
+                    // emission -- so `@field` through it does not address
+                    // anything. clang said it first ("member reference type
+                    // 'NovaValue_Counter' ... is not a pointer"), and a form we
+                    // accept and then fail to compile is the class a named
+                    // refusal exists to prevent.
+                    if is_value_record(@ctx, @ctx.ty_of_name(recv_type_name(children) ?? "") ?? no_ty()) {
+                        @report_first_leaf_of(children, VALUE_METHOD_MSG)
+                        return
+                    } else {
+                        // A free function, or a method on a pointer record.
+                    }
                     @report_if_default_order(children)
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
                 }
                 TypeDecl | SumDecl => {
-                    // THE `value` MARKER IS READ AND REFUSED, and the reason is
-                    // measured rather than cautious: novac would emit the record
-                    // as a GC pointer, so `ro b = a` would alias instead of
-                    // copying (the fixed point prints 11 then 1; novac printed
-                    // 11 and 11). The refusal goes first: the rules below judge a
-                    // record's shape, and a form we do not lay out has no shape
-                    // worth judging yet.
-                    if decl_is_value(n) {
-                        @report_first_leaf_of(children, VALUE_RECORD_MSG)
-                        return
-                    } else {
-                        // A plain record, sum or newtype: judged below.
-                    }
                     // A PROTOCOL DECLARATION IS JUDGED, NOT REFUSED (wave 3b).
                     // Wave 3a refused it by name -- honest while nothing could
                     // check a contract; now the registry holds the required

@@ -158,6 +158,20 @@ fn module_prefix(ctx Ctx) -> str {
     "${ctx.module_c}_"
 }
 
+/// Is this type a record DECLARED `value`?
+///
+/// A predicate over the stored word, not over the shape: a record's layout is
+/// what the source says, unlike a sum's, whose value-ness `is_value_sum` DERIVES
+/// from having no payloads (A4). One door, so the three readers -- the C type,
+/// the struct name and the emission of a construction -- cannot disagree.
+export fn is_value_record(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    match ctx.tys.kind_of(t) {
+        TkRecord => decl_of_ty(ctx, t).by_value
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer => false
+    }
+}
+
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t TyId) -> str {
@@ -168,7 +182,17 @@ export fn c_type(ctx Ctx, t TyId) -> str {
         // through. The row is reached for below only where the NAME is wanted.
         match ctx.tys.kind_of(t) {
             TkPrim => { return prim_c_name(ctx.tys.prim_ordinal_of(t)) } // universe fact by ordinal, read off the term
-            TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}*" }
+            // A VALUE RECORD IS NOT A POINTER, and that is the whole meaning of
+            // the word: it lives inline, so a copy is a copy. Measured against
+            // the fixed point (2026-08-23): `ro b = a` on a value record must
+            // leave `b` unchanged when `a` is written to, and emitting the
+            // pointer form made the copy an alias. The oracle's own shape is
+            // `struct NovaValue_<name>` by value, with only a RECEIVER taken as
+            // a pointer (shell.tpl.c, `NovaValue_CharsIter*`).
+            TkRecord => {
+                if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+                return "Nova_${decl_of_ty(ctx, t).name}*"
+            }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
                 if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
@@ -201,7 +225,10 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
     }
     match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
-        TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}" }
+        TkRecord => {
+            if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+            return "Nova_${decl_of_ty(ctx, t).name}"
+        }
         TkSum => {
             if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
             return "Nova_${decl_of_ty(ctx, t).name}"
