@@ -215,9 +215,11 @@ shell, а **процесс/регекс на элемент**.
 
 ### Ф.4 ЗАКРЫТА 2026-08-23 — шесть гейтов, все зелёные с первого прогона
 
-`pkg-gate.yml` в каждой из шести реп (`nova-http` `93ef52a`, `nova-tls` `8ceb341`,
-`nova-polaris` `8270f8f`, `nova-compress` `1fa8a3a`, `nova-bignum` `2bdc413`,
-`nova-socks` `1ae5ca1`). Job собирает компилятор из `main` nova, гоняет ВСЕ
+`pkg-gate.yml` в каждой из шести реп (`nova-http@93ef52a`, `nova-tls@8ceb341`,
+`nova-polaris@8270f8f`, `nova-compress@1fa8a3a`, `nova-bignum@2bdc413`,
+`nova-socks@1ae5ca1` — форма `репа@хеш` по doc-conventions §«Ссылки наружу»:
+хеш соседней репы недостижим из нашего `main` и голым писаться не должен).
+Job собирает компилятор из `main` nova, гоняет ВСЕ
 `scripts/guards/check-*.sh` репы (глобом, а не списком — страж, добавленный
 завтра, запустится завтра без правки), сверяет тег на HEAD с версией
 манифеста и запускает `nova test src`. Если `nova.override.toml` вдруг доедет
