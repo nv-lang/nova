@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/strings.nv — what a STRING LITERAL may contain, and how each
+// refusal is named (plan 274, decision 12 cut).
+//
+// Donor: none for the rules -- the escape set is Nova's own (D249 for the byte
+// lens, and the language's `\${` for an escaped interpolation). The SHAPE is
+// clang's: a literal is judged by its BYTES, not by re-lexing it, because the
+// lexer already answered what a token is.
+// Role: layer 7 (check), the subset rules of one subject -- a string literal.
+//       Everything else in `rules.nv` judges the shape of a TREE; these two rules
+//       judge the bytes inside one leaf, and they carry their own alphabet.
+// Used by: check.nv (the subset walk, on every string literal it meets).
+// Guarded by: check-novac-file-size.py (this file exists because rules.nv crossed
+//             a thousand lines), the pipeline module tests (one seeded mistake,
+//             exactly one diagnostic).
+//
+// A co-equal file of module `novac.check` (folder = one module). The cut is by
+// MEANING: this is the only part of the subset walk that reads DATA (bytes)
+// rather than node shapes, and the byte constants belong with the rules that
+// spell them.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+import ../sem.{leaf_kind, leaf_text}
+
+/// The escapes the subset knows. Everything else is REFUSED rather than
+/// copied into the C.
+///
+/// F33: the literal's bytes went into the emitted C verbatim, so `"a\\u{41}b"`
+/// became `"a\\u{41}b"` in C -- which is not a C escape at all -- and `"a\\qb"`
+/// became an undefined escape clang complains about. The oracle accepts both
+/// spellings, so novac was not free to stay silent: it either translates them
+/// or names them. Naming is what the stage allows, and it is honest.
+fn Checker mut @report_if_bad_escape(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.StrLit { continue }
+        // D249: a `str` has three diverging lengths, so bytes are asked for
+        // through the byte lens -- the same door the lexer uses on the source.
+        ro b = leaf_text(c).bytes()
+        mut i = 0
+        ro n = b.len()
+        while i < n {
+            if b[i] != BACKSLASH {
+                i += 1
+                continue
+            }
+            if i + 1 >= n { break }
+            ro e = b[i + 1]
+            // `\\$` is the ESCAPED dollar -- the way the language writes a
+            // literal `${` without opening an interpolation. It is legal Nova
+            // and the pipeline's own test says so; refusing it with the real
+            // rubbish was the first version's mistake. C has no such escape,
+            // so the emitter drops the backslash (emit_strlit_defs).
+            ro known = e == QUOTE || e == BACKSLASH || e == LOWER_N ||
+                e == LOWER_T || e == LOWER_R || e == DOLLAR
+            if !known {
+                @report_first_leaf_of(kids, ESCAPE_MSG)
+                return
+            }
+            i += 2
+        }
+    }
+}
+
+/// The bytes the escape rule compares against. Literals, not named constants,
+/// in the same spirit as the lexer's byte tables -- and the character is in the
+/// comment so a reader never has to decode it.
+const BACKSLASH u8 = 0x5C  // \\
+const QUOTE u8 = 0x22      // "
+const LOWER_N u8 = 0x6E    // n
+const LOWER_T u8 = 0x74    // t
+const LOWER_R u8 = 0x72    // r
+const DOLLAR u8 = 0x24     // $
+
+/// One text for the rule above.
+const ESCAPE_MSG = "outside the subset: this string escape is not compiled yet (the subset knows only \\\" \\\\ \\n \\t \\r)"
+
+/// Does this literal carry an interpolation? `${` is the marker, and it is
+/// looked for in the literal's own text because the lexer -- rightly -- keeps a
+/// string whole: a form the parser must not lose is not a form it must split.
+fn Checker mut @report_if_interpolated(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.StrLit { continue }
+        // Bytes, not a substring search: `\${x}` is the ESCAPED form -- it
+        // prints `${x}` and substitutes nothing -- and it CONTAINS `${`. The
+        // first version searched for the marker and refused that legal
+        // literal; the pipeline's own test caught it. A scan that walks the
+        // bytes knows whether the dollar is escaped, because it saw what
+        // came before it.
+        ro b = leaf_text(c).bytes()
+        mut i = 0
+        while i + 1 < b.len() {
+            if b[i] == BACKSLASH {
+                i += 2
+                continue
+            }
+            if b[i] == DOLLAR && b[i + 1] == LBRACE {
+                @report_first_leaf_of(kids, INTERP_MSG)
+                return
+            }
+            i += 1
+        }
+    }
+}
+
+/// The brace that opens an interpolation, as a byte.
+const LBRACE u8 = 0x7B     // {

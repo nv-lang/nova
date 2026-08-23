@@ -22,7 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
 import ../types.{TyId, no_ty, Interner}
 
@@ -337,6 +337,25 @@ export fn shape_of_decl(decl Node) -> DeclShape {
         tail_ident = true
     }
     if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }
+}
+
+/// Does this type declaration carry the `value` marker?
+///
+/// Read positionally, like every other marker of a declaration: the word stands
+/// after the name (and after the generics), which is where D241 fixes it. The
+/// FIRST identifier is the declared name, so the search starts past it -- a type
+/// named `value` would otherwise answer yes about itself.
+export fn decl_is_value(decl Node) -> bool {
+    mut seen_name = false
+    for c in branch_children(decl) {
+        if !c.is_ident() { continue }
+        if !seen_name {
+            seen_name = true
+            continue
+        }
+        if leaf_text(c) == VALUE_MARKER { return true }
+    }
+    false
 }
 
 /// The representation a type declaration names, or None when it declares a

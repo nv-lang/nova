@@ -106,6 +106,13 @@ export const COERCE_ATTR = "coerce"
 /// word that decides what a `type` declaration means.
 export const ALIAS_MARKER = "alias"
 
+/// The word that makes a record a VALUE: `type Point value { x int, y int }`.
+/// It changes the LAYOUT -- a value record lives inline where a plain one is a
+/// GC pointer -- so it changes the C type, the field access and the
+/// construction. D241 fixes the order of type modifiers (`value priv` is canon),
+/// which is why it is read in the marker position and not in the tail.
+export const VALUE_MARKER = "value"
+
 /// The word that marks a PROTOCOL declaration: `type Sized protocol { ... }`.
 ///
 /// A contextual word like `alias` and `enum`, not a keyword -- the lexer knows

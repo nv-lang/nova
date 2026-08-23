@@ -32,7 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -325,6 +325,18 @@ fn Cursor mut @type_decl() -> Node {
         return @node(NodeKind.TypeDecl, kids)
     } else {
         // Not a protocol: the sum marker and the record/newtype tails follow.
+    }
+    // A VALUE record or a VALUE sum: the word stands where `enum` and
+    // `protocol` stand, and D241 fixes that order. Until 2026-08-23 it fell into
+    // the NEWTYPE tail below -- read as if it were a representation -- and the
+    // brace body behind it became top-level junk, so the refusal said "this is
+    // not a form of the language" about a form the language has. Six of novac's
+    // own files stop on exactly this, the largest single form in the self-build
+    // measurement of that day.
+    if @peek() == TokenKind.Ident && @peek_text() == VALUE_MARKER {
+        kids.push(@take())
+    } else {
+        // No `value` marker: the record is a GC pointer, the language's default.
     }
     ro is_sum_marker = @peek() == TokenKind.Ident && @peek_text() == "enum"
     if is_sum_marker {

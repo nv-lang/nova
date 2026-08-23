@@ -271,6 +271,27 @@ const ATTR_MSG = "outside the subset: an effect attribute is read but not compil
 /// `test "name" { ... }`.
 const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"
 
+/// A VALUE record -- `type Point value { x int, y int }`.
+///
+/// THE FORM IS READ (the parser learned it 2026-08-23, and six of novac's own
+/// files stop here rather than on a syntax lie), and it is REFUSED because the
+/// layout is what the word means. Measured the same hour, and this is why the
+/// refusal exists instead of silence:
+///
+///     type Pt value { n int }
+///     mut a = Pt { n: 1 }   ro b = a   a.n = 11
+///     println(a.n)  println(b.n)
+///
+/// The fixed point prints `11` then `1` -- `b` is a COPY. novac, emitting the
+/// record as a GC pointer like any other, printed `11` and `11`: the copy became
+/// an alias. Accepting a form and miscompiling it is worse than naming it, and a
+/// divergence in the PERMISSIVE direction is the worse kind of divergence.
+///
+/// What the layout wave owes: `NovaValue_<name>` by value (not `Nova_<name>*`),
+/// `.` where a pointer takes `->`, construction on the stack instead of
+/// `nova_alloc`, and the same for `@field` on a value receiver.
+const VALUE_RECORD_MSG = "outside the subset: a `value` record is read but not laid out yet -- novac would emit it as a GC pointer, and a copy of it would alias its source (measured against the fixed point)"
+
 /// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
 /// the grammar is the language's), and D69 -- it must be last -- is a position
 /// rule the checker owns. Until 2026-08-18 the `...` broke the parameter list
@@ -367,90 +388,6 @@ fn default_is_value(d Node) -> bool {
 /// reader was sent looking for a binding that was never meant to exist.
 const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2-b, with the numeric family)"
 
-/// The escapes the subset knows. Everything else is REFUSED rather than
-/// copied into the C.
-///
-/// F33: the literal's bytes went into the emitted C verbatim, so `"a\\u{41}b"`
-/// became `"a\\u{41}b"` in C -- which is not a C escape at all -- and `"a\\qb"`
-/// became an undefined escape clang complains about. The oracle accepts both
-/// spellings, so novac was not free to stay silent: it either translates them
-/// or names them. Naming is what the stage allows, and it is honest.
-fn Checker mut @report_if_bad_escape(kids []Node) -> () {
-    for c in kids {
-        if c.kind_of() != NodeKind.LeafNode { continue }
-        if leaf_kind(c) != TokenKind.StrLit { continue }
-        // D249: a `str` has three diverging lengths, so bytes are asked for
-        // through the byte lens -- the same door the lexer uses on the source.
-        ro b = leaf_text(c).bytes()
-        mut i = 0
-        ro n = b.len()
-        while i < n {
-            if b[i] != BACKSLASH {
-                i += 1
-                continue
-            }
-            if i + 1 >= n { break }
-            ro e = b[i + 1]
-            // `\\$` is the ESCAPED dollar -- the way the language writes a
-            // literal `${` without opening an interpolation. It is legal Nova
-            // and the pipeline's own test says so; refusing it with the real
-            // rubbish was the first version's mistake. C has no such escape,
-            // so the emitter drops the backslash (emit_strlit_defs).
-            ro known = e == QUOTE || e == BACKSLASH || e == LOWER_N ||
-                e == LOWER_T || e == LOWER_R || e == DOLLAR
-            if !known {
-                @report_first_leaf_of(kids, ESCAPE_MSG)
-                return
-            }
-            i += 2
-        }
-    }
-}
-
-/// The bytes the escape rule compares against. Literals, not named constants,
-/// in the same spirit as the lexer's byte tables -- and the character is in the
-/// comment so a reader never has to decode it.
-const BACKSLASH u8 = 0x5C  // \\
-const QUOTE u8 = 0x22      // "
-const LOWER_N u8 = 0x6E    // n
-const LOWER_T u8 = 0x74    // t
-const LOWER_R u8 = 0x72    // r
-const DOLLAR u8 = 0x24     // $
-
-/// One text for the rule above.
-const ESCAPE_MSG = "outside the subset: this string escape is not compiled yet (the subset knows only \\\" \\\\ \\n \\t \\r)"
-
-/// Does this literal carry an interpolation? `${` is the marker, and it is
-/// looked for in the literal's own text because the lexer -- rightly -- keeps a
-/// string whole: a form the parser must not lose is not a form it must split.
-fn Checker mut @report_if_interpolated(kids []Node) -> () {
-    for c in kids {
-        if c.kind_of() != NodeKind.LeafNode { continue }
-        if leaf_kind(c) != TokenKind.StrLit { continue }
-        // Bytes, not a substring search: `\${x}` is the ESCAPED form -- it
-        // prints `${x}` and substitutes nothing -- and it CONTAINS `${`. The
-        // first version searched for the marker and refused that legal
-        // literal; the pipeline's own test caught it. A scan that walks the
-        // bytes knows whether the dollar is escaped, because it saw what
-        // came before it.
-        ro b = leaf_text(c).bytes()
-        mut i = 0
-        while i + 1 < b.len() {
-            if b[i] == BACKSLASH {
-                i += 2
-                continue
-            }
-            if b[i] == DOLLAR && b[i + 1] == LBRACE {
-                @report_first_leaf_of(kids, INTERP_MSG)
-                return
-            }
-            i += 1
-        }
-    }
-}
-
-/// The brace that opens an interpolation, as a byte.
-const LBRACE u8 = 0x7B     // {
 /// A record-form variant (`| Circle { radius f64 }`) shows up as a brace among
 /// the variant's leaves.
 fn Checker mut @report_if_record_variant(kids []Node) -> () {
