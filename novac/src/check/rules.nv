@@ -342,7 +342,13 @@ fn Checker mut @report_if_default_order(kids []Node) -> () {
 
 /// The default's EXPRESSION, judged against the subset: a numeric literal
 /// (`= 0`, `= -1`) or a boolean (`= false`).
-/// Answers whether it REPORTED, because the caller must then stop: the walk
+/// [INV-GUARD: check-novac-no-cascade.sh] Answers whether it REPORTED, and the
+/// caller stopping is held by a MECHANISM rather than by memory: a caller that
+/// walks on emits a second diagnostic for one mistake, and the cascade guard
+/// judges exactly that on every `neg_*` fixture -- which is how this was found in
+/// the first place (`by int = "s".len()` came out twice).
+///
+/// The walk
 /// into a refused default would type its expression and name a second cause for
 /// the same mistake -- `by int = "s".len()` came out as the subset refusal AND
 /// as "no such method", which is the cascade check-novac-no-cascade.sh forbids.

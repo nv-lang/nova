@@ -393,7 +393,9 @@ test "a static method on a GENERIC type is refused by name, never iced" {
     //
     // PINNED HERE AND NOT AS A FIXTURE, with the reason: the oracle COMPILES
     // this form, so a `neg_*` pair would assert a divergence as if it were a
-    // rule. What must never come back is the ICE, and that is a property of
+    // rule. [INV-GUARD: check-novac-module-tests.sh] The ICE not coming back is
+    // held by THIS test and by the gate step that runs it, not by anyone's
+    // memory: revert the door and this file fails. That is a property of
     // novac alone -- exactly what a module test is for.
     ro src = "type P[A] { fst A }
 fn P[A].mk(a A) -> int => 1

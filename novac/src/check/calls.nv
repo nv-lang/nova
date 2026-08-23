@@ -176,9 +176,14 @@ fn Checker @binding_refusal(row FnRow, key []ArgSpec) -> Option[str] {
 /// picking, which is R5 exactly.
 ///
 /// Why a stage of its own and not a widening of `fits`: the exact stage must
+/// [INV-PROPERTY] "the exact stage never touches the pair table" is held by
+/// CONSTRUCTION, not by care: `@fits` does not call `coerce_row`, and it cannot --
+/// the table lives on `Ctx` and the door takes none. Add the call and the no-alloc
+/// guard reddens on the same line, because the walk allocates.
+///
 /// stay exact. A door that accepted a coercible argument would make
 /// `take(bytes)` and `take("s")` one question, and the answer to the second
-/// depends on a table the first must never consult (P14: compilation speed is
+/// depends on a table the first does not consult at all (P14: compilation speed is
 /// priority one, and the pair table is a linear walk).
 fn Checker mut @resolve_coerce_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
     mut winner = no_row()
