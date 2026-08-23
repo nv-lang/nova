@@ -141,7 +141,7 @@ no_route=0
 #   any single count, it is that lowering a ratchet has no external
 #   caller either: the guard prints the drop and passes, and a passing
 #   step is one nobody reads. Rule G8 applies to the baselines too.
-no_caveat=34
+no_caveat=33
 # №728 (`type Bytes []u8` молча значит newtype над `u8`) — новый блокер,
 #   найден 2026-08-18 по дороге к №723. Скобка после имени типа — список
 #   generic-параметров (D52), и парсер принимает его пустым без
@@ -376,4 +376,15 @@ no_caveat=34
 #   ended in a crash after their diagnostic was already printed, and a core of
 #   Nova's reserved fiber arena is tens of gigabytes. #436's canon (a program
 #   error is a controlled exit) simply had not been applied there.
-blockers=48
+# 2026-08-23, No.452 CONFIRMED CLOSED -- 48 -> 47, and the caveat count with it.
+#   This one cost nothing to fix and twelve days to notice: the row was closed
+#   by measurement on 14 August and recorded that as a past-tense sentence
+#   rather than the `**Статус:**` field this scanner reads. Finding no field,
+#   the scanner counts the row open -- so a blocker that was not one sat in the
+#   release count for twelve days. Re-verified today on current main BEFORE
+#   touching the wording: 15 runs of 15 green, 20 rounds each, 300 rounds of
+#   the reported shape with no overflow.
+#   The window's regression fixture, which had been sitting on the unmerged
+#   branch p452-stack-overflow the whole time, is merged in the same commit:
+#   the class had been "closed" with no judge in the corpus at all.
+blockers=47
