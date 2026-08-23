@@ -1,0 +1,21 @@
+module generic_call.pos_2
+
+// DEDUCTION FROM THE ARGUMENTS: the same body instantiated twice with NO
+// turbofish anywhere (E2-b3 wave 1, donor Go 1.18 argument-directed inference).
+//
+// Two instances on purpose. A fixture calling `dbl(21)` alone would pass while
+// the deduction always answered "int" -- the weak-fixture class (registry
+// #465). Here the second call must deduce f64, and the body's `+` differs by
+// type: on int it is the checked helper, on f64 the raw C operator. A
+// deduction that silently answered int for both would print a different number.
+//
+// Measured when the wave landed (2026-08-23): the emission of this file is
+// BYTE-IDENTICAL to the same file with `dbl[int]`/`dbl[f64]` written out, which
+// is the point -- deduction writes into the same channel the turbofish writes
+// into, so mono cannot tell the two apart and no second source of truth exists.
+fn dbl[T](x T) -> T => x + x
+
+fn main() {
+    println(dbl(21))
+    println(dbl(1.5))
+}

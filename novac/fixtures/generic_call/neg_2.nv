@@ -1,0 +1,16 @@
+module generic_call.neg_2
+
+// ONE seeded cause: two arguments want DIFFERENT types for one type parameter.
+// `pick[T](a T, b T)` is called with an int and a str, so no single `T`
+// satisfies both positions.
+//
+// Why this is a refusal and not a choice (E2-b3 wave 1): whichever argument
+// "wins" decides which C symbol the call names. Picking the first one silently
+// would emit a call to `pick` instantiated at int while handing it a str -- a
+// mis-compilation that the C compiler may or may not catch, far from here. The
+// refusal names the conflict instead.
+fn pick[T](a T, b T) -> T => a
+
+fn main() {
+    println(pick(1, "s"))
+}

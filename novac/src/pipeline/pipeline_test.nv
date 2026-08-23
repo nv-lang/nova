@@ -148,11 +148,28 @@ test "a generic call is COMPILED: two instances, two C functions (E2-b2)" {
     assert(!c.contains("dbl(nova_int"))
 }
 
-test "a generic call without type arguments is refused, and says so (no inference in E2-b2)" {
-    // By design, not by omission: the turbofish IS the mapping at this stage,
-    // so its absence is a refusal that names itself. The oracle infers here --
-    // a deliberate divergence, recorded in docs/dev/novac-divergences.md.
-    assert(n_diags("fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl(4)) }") == 1)
+test "a generic call without type arguments DEDUCES from the arguments (E2-b3 wave 1)" {
+    // THE CONTRACT CHANGED ON PURPOSE, 2026-08-23. Until then this test asserted
+    // the opposite -- one diagnostic -- and that was honest for E2-b2, where the
+    // turbofish WAS the whole mapping. Wave 1 of sub-plan 9.1e added
+    // argument-directed deduction (donor Go 1.18), so the same source is now
+    // accepted and instantiated.
+    ro (diags, c) = compile_to_c("fn dbl[T](x T) -> T => x + x\nfn main() { println(dbl(4)) }", std_decls())
+    assert(diags.len() == 0)
+    // The INSTANCE is what deduction has to produce -- accepting the call while
+    // emitting no instance would be the weaker half of the same bug.
+    assert(c.contains("dbl__nova_int__to_nova_int__nova_int"))
+}
+
+test "deduction refuses BY NAME where it cannot decide (E2-b3 wave 1)" {
+    // Two arguments wanting different types for one parameter: whichever one
+    // "wins" decides which C symbol the call names, so a silent choice picks
+    // somebody else's symbol.
+    assert(n_diags("fn pick[T](a T, b T) -> T => a\nfn main() { println(pick(1, \"s\")) }") == 1)
+    // Nothing fixes the parameter: `T` appears only in the return type, and
+    // wave 1 deduces from ARGUMENTS only. The oracle passes this file at `check`
+    // and dies in codegen -- class O-1c, recorded in novac-divergences.md.
+    assert(n_diags("fn make[T]() -> T => make()\nfn main() { println(\"x = \", make()) }") == 1)
 }
 
 /// A declaration text carrying a `#coerce` pair, handed in the way the driver
