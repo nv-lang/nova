@@ -9,7 +9,14 @@
 //     (footgun D417-класс — needs_quoting/is_ascii_ident_char, 2026-07-10)
 //   W_REDUNDANT_OF        — `Vec[int].of(1, 2, 3)` избыточен: литерал `[1, 2, 3]`
 //     дал бы ТОТ ЖЕ `Vec[int]` (§28)
-// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 7 finding(s).
+//   W_MANUAL_CLOSE_AUTO_CLEANUP — хвостовой `.close()` на consume-биндинге
+//     типа, ОБЪЯВЛЕННОГО здесь же с `consume @cleanup` (D432)
+// Прогон: nova lint spec_tests/conformance/lint/conv_pos.nv → exit 1, 8 finding(s).
+//
+// СЧЁТ ЗДЕСЬ И СПИСОК `CONV_POS_RULES` В `scripts/gate.sh` ОБЯЗАНЫ
+// СОВПАДАТЬ С ФАКТОМ. До 2026-08-23 шапка обещала 7, файл давал 6, а
+// гейт сверял лишь «больше нуля» — и `W_STR_CONCAT_LOOP` стояло мёртвым
+// под зелёным самотестом. Теперь гейт сверяет СОСТАВ.
 // Для `nova test` файл — обычный компилируемый unit (main + вызовы).
 
 module lint.conv_pos
@@ -62,7 +69,22 @@ fn redundant_of() -> []int {
     Vec[int].of(1, 2, 3)
 }
 
+// W_MANUAL_CLOSE_AUTO_CLEANUP: тип объявляет `consume @cleanup` здесь же, то есть
+// авто-уборка D432 его точно закроет, и хвостовой `.close()` лишний.
+// До №TBD (2026-08-23) правило судило по СПИСКУ ИМЁН из пяти
+// std-типов и этот сайт НЕ видело.
+type Lease consume { ro id int }
+fn Lease consume @cleanup(_outcome ScopeOutcome) -> () { }
+fn Lease consume @close() -> () { }
+fn lease_take(n int) -> Lease => { id: n }
+
+fn lease_hold() -> () {
+    consume l Lease = lease_take(1)
+    l.close()
+}
+
 fn main() -> () {
+    lease_hold()
     mut w = Widget.of(1)
     w.with_label("x")
     ro _lbl = w.as_label()

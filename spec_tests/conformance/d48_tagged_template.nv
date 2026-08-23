@@ -4,14 +4,19 @@
 // Один folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
+// Канон perf-conventions (№TBD, 2026-08-23): аккумулятор через StringBuilder,
+// а не `out = out.concat(..)` в цикле (O(N²)). Предмет фикстуры — десахар
+// tagged-template в `tag(parts, args)`, тело `d48_fmt` к нему отношения не имеет.
 fn d48_fmt(parts []str, args []int) -> str {
-    mut d48_out = parts[0]
+    consume d48_sb = StringBuilder.new()
+    d48_sb.append(parts[0])
     mut d48_i = 0
     for d48_a in args {
-        d48_out = d48_out.concat(d48_a.to_str()).concat(parts[d48_i + 1])
+        d48_sb.append(d48_a.to_str())
+        d48_sb.append(parts[d48_i + 1])
         d48_i += 1
     }
-    d48_out
+    d48_sb
 }
 
 test "tagged template: desugar в tag(parts, args) (D48)" {

@@ -1101,10 +1101,25 @@ step push "lint registry self-test (правило срабатывает И н�
 # команды БЕЗ `--deny` и потому был красным с самого введения флага: самотест
 # реестра не проверял ничего, и под ним спокойно жило ложное срабатывание
 # (реестр 221.1 №519 и №520).
+# СВЕРКА ПО СОСТАВУ, А НЕ «БОЛЬШЕ НУЛЯ» (№TBD, замер 2026-08-23).
+# Заголовок `conv_pos.nv` обещал 7 находок, фактически файл давал 6:
+# рефакторинг фикстуры на `.concat` (`dda19d40a`) унёс единственный сайт
+# `W_STR_CONCAT_LOOP`, а шаг требовал лишь ненулевого кода возврата —
+# шесть оставшихся правил кормили его, и мёртвое правило жило под
+# зелёным шагом. Тот же класс, что №519: самотест, не умеющий покраснеть.
+# Список НАМЕРЕННО жёсткий: новое правило в фикстуре обязано править
+# и его, и шапку фикстуры — именно этого от самотеста и хочется.
+CONV_POS_RULES="W_DESTRUCTURE_SNAPSHOT W_LEADING_BINOP_CONTINUATION W_MANUAL_CLOSE_AUTO_CLEANUP W_NONVARIADIC_OF W_REDUNDANT_OF W_RETIRED_PREFIX W_STR_CONCAT_LOOP W_WITH_MUTATOR"
 if body_runs; then
     "$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_pos.nv" >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         fail "conv_pos.nv БОЛЬШЕ НЕ даёт находок — conv-правило перестало срабатывать"
+    fi
+    CONV_POS_RAW=$("$NOVA" lint "$ROOT/spec_tests/conformance/lint/conv_pos.nv" 2>&1 | grep -o "\[W_[A-Z_]*\]" | tr -d "[]" | sort -u)
+    CONV_POS_GOT=$(echo $CONV_POS_RAW)
+    CONV_POS_WANT=$(echo $(for _r in $CONV_POS_RULES; do echo "$_r"; done | sort -u))
+    if [ "$CONV_POS_GOT" != "$CONV_POS_WANT" ]; then
+        fail "conv_pos.nv даёт ДРУГОЙ состав правил. ждали: [$CONV_POS_WANT]; получили: [$CONV_POS_GOT]"
     fi
     "$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_clean.nv" >/dev/null 2>&1 \
         || fail "conv_clean.nv даёт находки — ложное срабатывание conv-правила (№520)"
