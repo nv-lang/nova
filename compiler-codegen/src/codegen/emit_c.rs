@@ -12888,12 +12888,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 HandlerMethodBody::Expr(e) => Self::collect_bound_names_expr(e, &mut bound),
                 HandlerMethodBody::Block(b) => Self::collect_bound_names_block(b, &mut bound),
             }
+            // [M-parfor-capture-callee-name-collides-std-local]: the skip
+            // `emit_spawn` has, missing here until #534. Subtracting BOUND
+            // names (above) does not cover a free fn's name, which is bound
+            // nowhere. Fixture p534_interp_callee_not_captured_handler.
+            let mut resolved_fn_call_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            if std::env::var("NOVA_KILL_HANDLER_CALLEE_SKIP").as_deref() != Ok("1") {
+                match &m.body {
+                    HandlerMethodBody::Expr(e) =>
+                        self.collect_resolved_call_target_names_expr(e, &mut resolved_fn_call_names),
+                    HandlerMethodBody::Block(b) =>
+                        self.collect_resolved_call_target_names_block(b, &mut resolved_fn_call_names),
+                }
+            }
             let refs = Self::collect_idents_in_handler_method(m);
             for name in refs {
                 if method_param_names.contains(&name) {
                     continue;
                 }
                 if bound.contains(&name) {
+                    continue;
+                }
+                if resolved_fn_call_names.contains(&name) {
                     continue;
                 }
                 if all_captures.iter().any(|(n, _)| n == &name) {
@@ -16812,6 +16829,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     if let Some(g) = &arm.guard { rce(self, g, out); }
                     self.collect_resolved_call_target_names_block(&arm.body, out);
+                }
+            }
+            // #534: a call inside `${...}` was invisible here, so the skip
+            // above missed it and a stale flat-`var_types` local captured the
+            // CALL (fixture p534_interp_callee_not_captured_spawn, registry
+            // row 534). Kill-switch: NOVA_KILL_INTERP_CALLEE_SKIP=1.
+            ExprKind::InterpolatedStr { parts } => {
+                if std::env::var("NOVA_KILL_INTERP_CALLEE_SKIP").as_deref() != Ok("1") {
+                    for p in parts {
+                        if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
+                            rce(self, expr, out);
+                        }
+                    }
                 }
             }
             _ => {}

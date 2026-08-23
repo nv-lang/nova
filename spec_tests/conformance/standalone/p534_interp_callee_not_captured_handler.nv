@@ -1,0 +1,44 @@
+// EXPECT_STDOUT tag=42
+//
+// Registry 221.1 #534, third door of the same class, measured 2026-08-23.
+//
+// See p534_interp_callee_not_captured_spawn.nv for the shape. This is a
+// handler op body: the third writer of the capture pattern, and the third to
+// miss the callee-skip. Its own comment already names the hazard -- "a stale
+// entry in the flat var_types map (e.g. `i` left behind by a previously
+// emitted std.sort fn)" -- and defends by subtracting names BOUND inside the
+// op body. A free function's name is bound nowhere, so the CALL fell straight
+// through into a ctx capture field.
+//
+// The five capture forms were probed one by one for this row's class-level
+// acceptance ("a function CALL is not captured as a variable"):
+//   spawn    -- was broken (interpolation invisible to the skip), fixed
+//   detach   -- was broken (no skip at all), fixed
+//   handler  -- was broken (no skip at all), this fixture
+//   parallel for -- clean
+//   lambda   -- clean
+// `blocking { }` is not a live shape (D172 removed the block form), and a
+// local cannot shadow a TYPE name (E_REFUTABLE_BINDING), so that door does
+// not exist.
+//
+// Kill-switch NOVA_KILL_HANDLER_CALLEE_SKIP=1 restores the defect on the same
+// binary.
+module standalone.p534_interp_callee_not_captured_handler
+
+type P534Greet effect { hello() -> str }
+
+fn helper() Io -> () {
+    mut tag = 7
+    print("helper=${tag}")
+}
+
+fn tag() -> int => 42
+
+fn use_it() P534Greet Io -> () => print("${P534Greet.hello()}")
+
+fn main() Io -> () {
+    helper()
+    with P534Greet = effect P534Greet { hello() -> str { "tag=${tag()}" } } {
+        use_it()
+    }
+}

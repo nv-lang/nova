@@ -1,0 +1,37 @@
+// EXPECT_STDOUT tag=42
+//
+// Registry 221.1 #534, second door of the same class, measured 2026-08-23.
+//
+// The peer fixture p534_interp_callee_not_captured_spawn.nv explains the
+// shape. This one is the same program under `detach` instead of `spawn`, and
+// it was red for a DIFFERENT reason: `emit_detach` had no callee-skip at all.
+//
+// That file was written from `emit_spawn` and carries two of its three
+// capture markers verbatim -- the module-const one and the mut-param one.
+// The third, the callee-name-collides-with-a-std-local marker, did not come
+// along. (Named in prose, not in brackets: the marker-registry guard scans
+// this corpus and would read a quoted marker as a real, unregistered one.) A
+// walker copied without one of its fixes is how a class survives being
+// closed three times.
+//
+// `parallel for` was probed the same way and is clean; `blocking { }` is not
+// a live shape (D172 removed the block form).
+//
+// Kill-switch NOVA_KILL_DETACH_CALLEE_SKIP=1 restores the defect on the same
+// binary.
+module standalone.p534_interp_callee_not_captured_detach
+
+fn helper() Io -> () {
+    mut tag = 7
+    print("helper=${tag}")
+}
+
+fn tag() -> int => 42
+
+fn main() Io Detach -> () {
+    helper()
+    ro t = CancelToken.new()
+    supervised(cancel: t) {
+        detach { print("tag=${tag()}") }
+    }
+}

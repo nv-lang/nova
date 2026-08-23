@@ -119,9 +119,26 @@ impl CEmitter {
         let mut bound: HashSet<String> = HashSet::new();
         Self::collect_bound_names_block(body, &mut bound);
 
+        // [M-parfor-capture-callee-name-collides-std-local] -- THE SAME SKIP
+        // `emit_spawn` HAS, MISSING HERE UNTIL 2026-08-23 (registry #534).
+        // A name the checker resolved to a real module-fn/method callee is not
+        // a variable, so `var_types` must not be consulted for it: that map is
+        // flat and never scoped per function, so a same-named LOCAL left by an
+        // unrelated function elsewhere in the CU turned the CALL into a ctx
+        // capture field and the emitted C referenced a name it never declared.
+        // This file was written from `emit_spawn` and carries its other two
+        // capture markers verbatim; this one did not come along.
+        let mut resolved_fn_call_names: HashSet<String> = HashSet::new();
+        self.collect_resolved_call_target_names_block(body, &mut resolved_fn_call_names);
+
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) { continue; }
+            if std::env::var("NOVA_KILL_DETACH_CALLEE_SKIP").as_deref() != Ok("1")
+                && resolved_fn_call_names.contains(&name)
+            {
+                continue;
+            }
             // [M-spawn-module-const-capture]: module-level const — resolves to
             // its mangled file-scope global, never a capture (see emit_spawn).
             if self.private_const_c_names

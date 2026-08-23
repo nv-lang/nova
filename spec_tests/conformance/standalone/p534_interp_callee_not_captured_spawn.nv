@@ -1,0 +1,43 @@
+// EXPECT_STDOUT tag=42
+//
+// Registry 221.1 #534, the REMAINDER of the class, measured 2026-08-23.
+//
+// #534's acceptance was never the carrier: "no resolution in the capture
+// analysis goes by a bare name, and a function CALL is not captured as a
+// variable". Three windows closed carriers; this is the first fixture for
+// the sentence itself.
+//
+// The shape. Codegen's `var_types` is a flat name -> C-type map that is never
+// scoped per function, so a local left behind by an EARLIER function is still
+// visible when a later one is emitted. `emit_spawn` already knows this and
+// skips any name the checker resolved to a real callee before consulting that
+// map -- but the walker finding those names had no `InterpolatedStr` arm. So
+// a call written inside `${...}` was invisible to the skip, the stale local
+// won, and the CALL became a ctx capture field: the emitted C referenced a
+// name it never declared. Exactly the words of the original report,
+// `use of undeclared identifier`.
+//
+// How narrow it was: moving the same call one line out (`ro v = tag()`)
+// compiled fine. That is why three passes over this class missed it.
+//
+// `helper` must be emitted BEFORE `main` -- it is what leaves `tag` in
+// `var_types` as an int. `tag()` is a FUNCTION with the same bare name.
+// Kill-switch NOVA_KILL_INTERP_CALLEE_SKIP=1 restores the defect on the same
+// binary; the peer fixture p534_interp_callee_not_captured_detach.nv covers
+// the second door.
+module standalone.p534_interp_callee_not_captured_spawn
+
+fn helper() Io -> () {
+    mut tag = 7
+    print("helper=${tag}")
+}
+
+fn tag() -> int => 42
+
+fn main() Io -> () {
+    helper()
+    ro t = CancelToken.new()
+    supervised(cancel: t) {
+        spawn { print("tag=${tag()}") }
+    }
+}
