@@ -114,8 +114,9 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
 /// its head is an ordinal, wave B8), everything nominal through its declaration
 /// row. The three remaining kinds cannot stand where this door is asked -- a
 /// call argument and a protocol signature are both concrete by then -- so they
-/// answer with a WORD rather than an ice: a diagnostic must never be the thing
-/// that crashes the compiler (P12).
+/// answer with a WORD rather than an ice [INV-PROPERTY]: every arm returns a
+/// string, so there is no path from this door to a crash -- the invariant is
+/// held by the exhaustive match, not by anyone remembering P12.
 ///
 /// Lives here and not in `check` because two callers want it: the deduction
 /// conflict message and the unsatisfied-bound message (P18 -- one question, one

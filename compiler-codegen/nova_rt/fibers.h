@@ -1550,7 +1550,24 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
     if (!t || !q) return;
     if (t->bound_scope != NULL) {
         fprintf(stderr, "nova: panic: token already bound to a live scope\n");
-        abort();
+        /* №7745, вторая фикстура строки: НЕ abort(). Ошибка ПРОГРАММЫ
+         * (D75: один токен нельзя привязать к двум ЖИВЫМ scopeам) уже
+         * диагностирована строкой выше, а abort() добавляет к ней только core
+         * на ВСЁ адресное пространство — а арена файберов резервирует десятки
+         * гигабайт. Замерено: фикстура standalone/supervised_cancel_double_bind
+         * выходила за таймаут 64с, сидя в do_exit. Канон — №7436: ошибка
+         * программы есть УПРАВЛЯЕМЫЙ выход, и обычная паника так и завершается.
+         * Класс шире этого сайта (53 abortа с напечатанной диагностикой
+         * из 77) и заведён отдельной записью реестра.
+         *
+         * `_exit`, А НЕ `nova_exit_program_error()`, и это ЗАМЕР, а не осторожность:
+         * канонический выход зовёт `exit()`, тот гоняет atexit — а мы внутри
+         * ЖИВОГО пула воркеров. Проба с `nova_exit_program_error()` дала ТАЙМАУТ
+         * НА WINDOWS (62с) там, где до правки было зелёно, — то есть поменяла
+         * одно зависание на другое. Код выхода тот же, 101. */
+        fflush(stdout);
+        fflush(stderr);
+        _exit(101);
     }
     t->bound_scope = q;
     /* Plan 65 Ф.10: reverse-pointer for resource cancel-registration lookup. */
