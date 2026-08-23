@@ -30758,6 +30758,13 @@ impl<'a> BoundCtx<'a> {
     ///     его конкретизация требует вывода, которого здесь нет.
     /// Во всех этих случаях поведение остаётся тем же, что было до правки.
     fn call_return_ty(&self, e: &Expr) -> Option<TypeRef> {
+        // NOVA_KILL_BOUND_CALL_RET=1 — kill-switch домашнего образца (как
+        // NOVA_KILL_ALTSTACK у №7745): «зелёно после правки» не доказывает,
+        // что зелёным его сделала именно правка. Без переключателя старое
+        // поведение видно только пересборкой, а пересборка — другой бинарь.
+        if std::env::var("NOVA_KILL_BOUND_CALL_RET").as_deref() == Ok("1") {
+            return None;
+        }
         let ExprKind::Call { func, .. } = &e.kind else { return None };
         let ExprKind::Ident(name) = &func.kind else { return None };
         let cands = self.sig.fn_decls.get(name.as_str())?;
