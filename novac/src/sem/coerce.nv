@@ -50,6 +50,25 @@ export type CoercePair value {
 /// path never touches this table, so the hot resolution does not pay for it.
 /// The comparison is by type ID, not by name; the day a program declares
 /// hundreds of pairs the fix is an index, not a guess made now.
+///
+/// WHY THIS IS NOT THE SCAN THE CONVENTION FORBIDS, asked by the owner
+/// 2026-08-23 and answered by measurement rather than by opinion. The rule
+/// (`check-novac-resolve-discipline`, its first form) is about comparing NAMES
+/// outside `names/`, because a name has an O(1) door -- `NameTable` -- and a
+/// linear scan there is a scan past an index that exists. A pair is keyed by a
+/// PAIR OF TYPE IDS, for which no door exists, and building one is what the
+/// sentence above defers.
+///
+/// WHAT WAVE 5 CHANGED, and it is the fact that could reopen the decision: this
+/// walk is now asked PER CANDIDATE (`coerces_into` runs over the same-name
+/// chain), not once per call. The multiplier is real and it is bounded by two
+/// small numbers -- candidates of one name (one, usually) times pairs declared
+/// (three in std) -- and it is still off the hot path: the exact stage answers
+/// first and never comes here. So the decision stands, and the trigger for
+/// changing it is now WRITTEN rather than remembered: an index the day either
+/// number stops being small, and the shape it would take is the one this
+/// codebase already uses for a keyed registry -- a dense vector of chain heads
+/// indexed by the SOURCE type, exactly like `fn_decl_rows` by node.
 export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
     for p in ctx.coerces {
         if p.from_id == from && p.to_id == to { return Some(p.via_row) }

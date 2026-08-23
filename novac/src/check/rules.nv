@@ -59,7 +59,11 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         // Everything else cannot start one: a keyword of a
                         // declaration or statement, a literal, an operator,
                         // a separator, or the file's end.
-                        KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
+                        // `consume` is a MODE word, not a type qualifier: `ro T`
+                        // and `mut T` name types, `consume T` does not, so a
+                        // second mode word after the first is a different
+                        // mistake and must not be called a type form.
+                        KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern |
                         KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |

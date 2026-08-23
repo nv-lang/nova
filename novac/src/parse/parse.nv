@@ -32,7 +32,7 @@
 module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta}
-import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -103,7 +103,7 @@ fn Cursor @peek_text(skip int = 0) -> str {
 /// copies of the four words.
 fn Cursor @at_mode_word() -> bool =>
     @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
-        (@peek() == TokenKind.Ident && is_contextual_mode_word(@peek_text()))
+        @peek() == TokenKind.KwConsume
 
 /// Take the token if it is the one wanted, and say ONCE what it means when it
 /// is not.
@@ -609,8 +609,15 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
     // modes are KEYWORDS (`mut`, `ro`) rather than identifiers -- entering
     // the loop only on Ident tore the list apart at the first `mut v int`
     // and blamed a missing return type on a signature that declares one.
-    while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
-        @peek() == TokenKind.KwRo || @peek() == TokenKind.Ellipsis {
+    // THE DOOR, not a hand-written list of the mode tokens. This loop spelled
+    // them out, and `consume` was an IDENTIFIER at the time, so it entered
+    // through the first test by accident. The moment it became a keyword
+    // (2026-08-23) the list stopped admitting it, the parameter list ended at
+    // `(`, and the refusal that came out said "fn requires a declared return
+    // type" -- about a signature that declares one. One door, one place to
+    // teach.
+    while @peek() == TokenKind.Ident || @at_mode_word() ||
+        @peek() == TokenKind.Ellipsis {
         mut pk = []Node.new()
         // A VARIADIC parameter is written `...args []T`, and D69 makes it the
         // last of the list. The marker is kept as a leaf: WHERE it may stand
@@ -811,8 +818,7 @@ fn Cursor mut @stmt() -> Node {
     // out said "unknown name" about the USE -- blaming the reader for a form
     // the parser had silently dropped.
     ro binds_here = @peek() == TokenKind.KwMut || @peek() == TokenKind.KwRo ||
-        (@peek() == TokenKind.Ident && is_contextual_mode_word(@peek_text()) &&
-         @peek(skip: 1) == TokenKind.Ident)
+        (@peek() == TokenKind.KwConsume && @peek(skip: 1) == TokenKind.Ident)
     if binds_here {
         // One BindStmt for all three: the first leaf keeps the keyword, C
         // locals are identical either way (the oracle emits no const).

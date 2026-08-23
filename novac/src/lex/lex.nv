@@ -41,6 +41,7 @@
 
 module novac.lex
 
+
 /// Every lexeme class of the subset; two-char operators lex BEFORE their
 /// one-char prefixes; ErrorTok carries unrecognized bytes losslessly.
 export type TokenKind enum
@@ -52,6 +53,7 @@ export type TokenKind enum
     | KwIn
     | KwMut
     | KwRo
+    | KwConsume
     | KwWhile
     | KwType
     | KwMatch
@@ -198,7 +200,7 @@ export fn paren_delta(k TokenKind) -> int {
     match k {
         LParen => 1
         RParen => -1
-        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
@@ -214,7 +216,7 @@ export fn bracket_delta(k TokenKind) -> int {
     match k {
         LBracket => 1
         RBracket => -1
-        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
@@ -231,7 +233,7 @@ export fn brace_delta(k TokenKind) -> int {
     match k {
         LBrace => 1
         RBrace => -1
-        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwWhile | KwType | KwMatch |
+        KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
@@ -250,8 +252,28 @@ fn keyword_kind(t str) -> TokenKind => match t {
     "return" => TokenKind.KwReturn
     "for" => TokenKind.KwFor
     "in" => TokenKind.KwIn
+    // THE KEYWORD SPELLINGS LIVE HERE, and that is the answer to P5 rather than
+    // an exception to it: this table IS the mapping from a word to its token, so
+    // the word has to be written down once, and this is the once. `builtins`
+    // holds the names that appear in code as DATA -- attribute words, markers,
+    // primitive names -- which is why `consume` used to live there while it was
+    // read by spelling, and why it moved here the day it became a token.
+    //
+    // A DETOUR MEASURED AND REJECTED THE SAME DAY: routing these through
+    // constants (`MUT_MODE => ...`) type-checks and MISCOMPILES -- the oracle
+    // emits sum-tag code for a `match` over a `str` whose patterns are constants
+    // (`no member named 'tag' in 'nova_str'`, `undeclared NOVA_TAG_nova_str_...`).
+    // Filed; the literal form is what compiles.
     "mut" => TokenKind.KwMut
     "ro" => TokenKind.KwRo
+    // `consume` IS A KEYWORD OF THE LANGUAGE, and until 2026-08-23 novac read it
+    // by SPELLING instead -- a contextual identifier. The owner asked why there
+    // was no `KwConsume`, and the measurement answered: the oracle refuses
+    // `fn consume() -> int` with "expected identifier, got `consume`" and
+    // `ro consume = 3` with "expected pattern", while novac ACCEPTED both. A
+    // divergence in the permissive direction is the worse kind: it lets a
+    // program through that the shipped compiler rejects.
+    "consume" => TokenKind.KwConsume
     "while" => TokenKind.KwWhile
     "type" => TokenKind.KwType
     "match" => TokenKind.KwMatch

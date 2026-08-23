@@ -22,7 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{is_contextual_mode_word, ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
 import ../types.{TyId, no_ty, Interner}
 
@@ -62,9 +62,13 @@ export fn arm_body_at(ak []Node) -> Option[int] {
 export fn param_name_at(pk []Node) -> Option[int] {
     mut i = 0
     for c in pk {
+        // A MODE WORD CANNOT LAND HERE ANY MORE: `mut`, `ro` and `consume` all
+        // lex as keywords, so the first IDENTIFIER of a parameter is its name by
+        // construction -- the spelling filter this line used to carry is gone
+        // along with the question it answered.
         ro is_ident = c.kind_of() == NodeKind.LeafNode &&
             leaf_kind(c) == TokenKind.Ident
-        if is_ident && !is_param_mode(leaf_text(c)) { return Some(i) }
+        if is_ident { return Some(i) }
         i += 1
     }
     None
@@ -219,12 +223,11 @@ export fn decl_name_at(kids []Node) -> Option[int] {
 /// The CONTEXTUAL half of the set moved to `builtins` on 2026-08-21, where
 /// every string name of the language lives (P5): the parser needs the same
 /// words to read a qualified receiver, and a second copy of a closed set is how
-/// the two start disagreeing about what the language spells.
-///
-/// The keyword half needs no answer here at all: `mut` and `ro` lex as
-/// `KwMut`/`KwRo`, and the only caller asks this AFTER establishing that the
-/// leaf is an identifier -- so a keyword never reaches it.
-fn is_param_mode(word str) -> bool => is_contextual_mode_word(word)
+/// IS THIS IDENTIFIER A MODE WORD? Since 2026-08-23 the answer is always NO,
+/// and the door is gone with the question: all three mode words lex as keywords
+/// (`KwMut`, `KwRo`, `KwConsume`), so an IDENTIFIER can no longer be one. The
+/// caller that asked -- `param_name_at`, looking for the parameter's name --
+/// needs no filter at all now, because a keyword is not an identifier.
 
 /// The MODE this parameter declares -- `ModeRo` when it writes none, which is
 /// the language's default (D32/D246: a bare parameter IS the read-only view).
@@ -239,18 +242,46 @@ export fn param_mode_at(pk []Node) -> ParamMode {
     if Some(n) = param_name_at(pk) { mode_before(pk, n) } else { ParamMode.ModeRo }
 }
 
+/// The MODE this node spells, or `None` when it spells none -- INCLUDING when it
+/// is not a leaf at all.
+///
+/// THE GUARD AGAINST A BRANCH LIVES HERE AND NOWHERE ELSE. Three readers asked
+/// `leaf_kind` of a child directly, and that is a question only a LEAF has an
+/// answer to: a receiver group carrying type arguments (`fn P[A].mk()`) puts a
+/// `Generics` BRANCH exactly where they expected a word, and novac ICED on a
+/// form the oracle compiles. Found 2026-08-23 by the corpus batch -- the batch
+/// died with rc=2, which the batch guard refuses to read as "all accepted", and
+/// that is the only reason it was found at all.
+///
+/// The three readers differ in WHERE they look (before the name, after the
+/// receiver's type, at a statement's head); they do not differ in what a mode
+/// word IS, so that part is one door (P18).
+#realtime nogc
+fn mode_of_leaf(c Node) -> Option[ParamMode] {
+    if c.kind_of() != NodeKind.LeafNode { return None }
+    // A MATCH, because three `if k == ...` in a row IS a table and the
+    // convention says to write a table as one (P21). The residual arm is `None`
+    // -- partiality declared by the return type, which is the form the rule
+    // admits: most token kinds are not mode words, and that is not a refusal.
+    match leaf_kind(c) {
+        KwMut => Some(ParamMode.ModeMut)
+        KwRo => Some(ParamMode.ModeRo)
+        KwConsume => Some(ParamMode.ModeConsume)
+        _ => None
+    }
+}
+
 /// The mode word standing before slot `n`, as a mode.
 fn mode_before(pk []Node, n int) -> ParamMode {
     mut i = 0
     for c in pk {
         if i >= n { return ModeRo }
-        // A keyword mode answers by its token KIND, a contextual one by its
-        // spelling -- the same split the parser reads it with, because the
-        // lexer owns `mut`/`ro` and `builtins` owns the contextual words (P5).
-        ro k = leaf_kind(c)
-        if k == TokenKind.KwMut { return ModeMut }
-        if k == TokenKind.KwRo { return ModeRo }
-        if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(c)) { return ModeConsume }
+        // WHAT a mode word is lives in one door; this reader owns only WHERE it
+        // looks -- before the name, because that is where a parameter's mode
+        // stands.
+        // Not a mode word -- a name, a type, or a branch -- means keep looking;
+        // the `return` IS the other branch (P31 form 2).
+        if Some(m) = mode_of_leaf(c) { return m }
         i += 1
     }
     ModeRo
@@ -367,10 +398,9 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
 /// spelling in `builtins`).
 export fn bind_mode_at(kids []Node) -> ParamMode {
     if kids.len() == 0 { return ModeRo }
-    ro head = kids[0]
-    ro k = leaf_kind(head)
-    if k == TokenKind.KwMut { return ModeMut }
-    if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(head)) { return ModeConsume }
+    // Not a mode word: the default below answers, and the `return` is the
+    // other branch.
+    if Some(m) = mode_of_leaf(kids[0]) { return m }
     // `ro` and anything else: read-only is the language's default, and a
     // statement whose head is neither was refused by the subset walk.
     ModeRo
@@ -403,10 +433,10 @@ fn mode_after_first_ident(rk []Node) -> ParamMode {
             seen_type = c.is_ident()
             continue
         }
-        ro k = leaf_kind(c)
-        if k == TokenKind.KwMut { return ModeMut }
-        if k == TokenKind.KwRo { return ModeRo }
-        if k == TokenKind.Ident && is_contextual_mode_word(leaf_text(c)) { return ModeConsume }
+        // A BRANCH lands in the not-a-mode case too, and that is the fix:
+        // `fn P[A].mk()` puts the type arguments right after the receiver's type
+        // name, and asking a branch for its token kind was an ice.
+        if Some(m) = mode_of_leaf(c) { return m }
     }
     ModeRo
 }
@@ -752,7 +782,7 @@ export fn field_name_at(fk []Node) -> Option[int] {
             i += 1
             continue
         }
-        if !is_mode_word(leaf_text(c)) { return Some(i) }
+        if mode_of_leaf(c).is_none() { return Some(i) }
         i += 1
     }
     None
@@ -775,7 +805,7 @@ export fn field_type_at(fk []Node) -> Option[int] {
             continue
         }
         if seen_name { return Some(i) }
-        if !is_mode_word(leaf_text(c)) {
+        if mode_of_leaf(c).is_none() {
             seen_name = true
         } else {
             // A mode word stands BEFORE the name (`mut n int`): it is neither
@@ -786,11 +816,10 @@ export fn field_type_at(fk []Node) -> Option[int] {
     None
 }
 
-/// Is this word one of the language's MODE words?
-///
-/// The door exists because the same question is asked by the parameter reader,
-/// the field reader and the parser -- three places, one closed set (P5).
-export fn is_mode_word(w str) -> bool => w == "mut" || w == "ro" || is_contextual_mode_word(w)
+// `is_mode_word(w str)` stood here until 2026-08-23 and is gone with the last
+// reader that had only TEXT to go on. All three mode words are keywords now, so
+// the question is about a token KIND, and `mode_of_leaf` answers it -- one door
+// instead of a door plus three spellings kept in step with the lexer by hand.
 
 /// The method NAME of a `ProtoMethod` node: the identifier after the `@`.
 ///
@@ -877,8 +906,7 @@ export fn generics_have_consume(kids []Node) -> bool {
         if c.kind_of() != NodeKind.Generics { continue }
         for g in branch_children(c) {
             if g.kind_of() != NodeKind.LeafNode { continue }
-            if leaf_kind(g) != TokenKind.Ident { continue }
-            if is_contextual_mode_word(leaf_text(g)) { return true }
+            if leaf_kind(g) == TokenKind.KwConsume { return true }
         }
     }
     false
@@ -905,19 +933,16 @@ export fn generics_have_protocol_bound(kids []Node) -> bool {
                 expect_name = true
                 continue
             }
+            // The mode word is a KEYWORD now, so it never reaches the identifier
+            // test below -- it constrains LINEARITY, not dispatch, and the door
+            // above answers about it separately.
             if k != TokenKind.Ident { continue }
             if expect_name {
                 expect_name = false
                 continue
             }
-            // After the name inside one entry: a mode word constrains
-            // linearity, anything else is a protocol.
-            if !is_contextual_mode_word(leaf_text(g)) {
-                extra += 1
-            } else {
-                // The mode word: it constrains LINEARITY, not dispatch, and the
-                // door above answers about that separately.
-            }
+            // After the name inside one entry: anything left is a protocol.
+            extra += 1
         }
         if extra > 0 { return true }
     }

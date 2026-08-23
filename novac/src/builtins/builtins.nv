@@ -89,7 +89,12 @@ export const COERCE_ATTR = "coerce"
 /// with a mode -- `*mut uninit T` (D-amendment 2026-08-05, No 358: a bare
 /// `*uninit T` is not writable). Treating it as a mode would have made novac
 /// ACCEPT a parameter form the language does not have.
-export fn is_contextual_mode_word(word str) -> bool => word == CONSUME_MODE
+// THE MODE WORDS ARE NOT HERE, and that is the decision rather than an
+// oversight (2026-08-23): all three lex as keywords, so the only place that
+// needs their spelling is the lexer's own word-to-token table, and the only
+// question anyone else asks is about a token KIND (`sem.mode_of_leaf`).
+// `is_contextual_mode_word` and `CONSUME_MODE` stood here while `consume` was
+// read by spelling; both are gone with that premise.
 
 /// The word that turns a type declaration into an ALIAS rather than a newtype:
 /// `type Row alias int` is `int` under a second name, while `type Row int` is a
@@ -139,11 +144,6 @@ export const UNIT_TYPE_NAME = "()"
 /// asked `defs` dropped every signature mentioning it, and std spells it 264
 /// times across 50 files (measured 2026-08-21).
 export const SELF_TYPE = "Self"
-
-/// The mode that takes ownership. Named because two readers tell it apart from
-/// the other contextual word (`uninit` promises a write, `consume` a move), and
-/// a name of the language may be spelled in ONE place (P5).
-export const CONSUME_MODE = "consume"
 
 /// One pre-declared type of the universe: (source name, runtime C spelling).
 /// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a

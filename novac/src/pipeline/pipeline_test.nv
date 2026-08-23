@@ -376,3 +376,32 @@ test "escaped interpolation is a literal, not a refusal" {
     ro src = "fn main() { println(\"\\".concat("$").concat("{x}\") }")
     assert(n_diags(src) == 0)
 }
+
+test "a static method on a GENERIC type is refused by name, never iced" {
+    // FOUND BY THE CORPUS BATCH 2026-08-23, and only because a batch that dies
+    // is not read as "all accepted": `novac check` over the 61 corpus files
+    // exited rc=2 with `E_NOVAC_ICE ... leaf_kind on a branch node`. Carrier:
+    // `examples/.../serde_encode_pointer_op.nv`, line 46.
+    //
+    // CAUSE: `fn P[A].mk()` puts the receiver's TYPE ARGUMENTS -- a branch --
+    // exactly where the three mode readers expected a word, and they asked
+    // `leaf_kind` of it. The form became reachable when wave 3g taught the
+    // collector to read a method declared in the compiled file; before that
+    // every non-leaf declaration head was dropped, so the ice had nowhere to
+    // happen. Fixed at the class: what a mode word IS lives in one door
+    // (`mode_of_leaf`), and the guard against a branch lives inside it.
+    //
+    // PINNED HERE AND NOT AS A FIXTURE, with the reason: the oracle COMPILES
+    // this form, so a `neg_*` pair would assert a divergence as if it were a
+    // rule. What must never come back is the ICE, and that is a property of
+    // novac alone -- exactly what a module test is for.
+    ro src = "type P[A] { fst A }
+fn P[A].mk(a A) -> int => 1
+fn main() { println(1) }"
+    ro (diags, _) = compile_to_c(src, std_decls())
+    // Named, and named ONCE: an ice would be `E_NOVAC_ICE`, and a cascade would
+    // be two diagnostics about one form.
+    assert(diags.len() == 1)
+    assert(!diags[0].message.contains("internal compiler error"))
+    assert(diags[0].message.contains("generic parameters are not compiled yet"))
+}
