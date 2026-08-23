@@ -503,7 +503,10 @@ export fn collect_types(file Node) -> Ctx {
     // whoever wrote it -- and until 2026-08-23 only std's were read, so a
     // `#coerce` in the compiled file registered nothing at all.
     mut coerces = []CoercePair.new()
-    ro coerce_marks = coerce_marked(branch_children(file))
+    // THE DECLARATIONS, through the door: an `export`ed declaration is inside a
+    // wrapper, and every walk below wants what the wrapper holds.
+    ro decls_of_file = file_decls(file)
+    ro coerce_marks = coerce_marked(decls_of_file)
     // PASS 1 BUILDS THE ROW, not just the name -- and that is a fix, not a
     // refactor. Until 2026-08-21 pass 1 handed out ids and pass 2 pushed rows,
     // so the two could DISAGREE: an `alias` consumes a name but pushes no row,
@@ -520,7 +523,7 @@ export fn collect_types(file Node) -> Ctx {
     // registry: pass 1 is where names are being registered, so a forward
     // reference cannot be resolved yet -- and asking anyway is what made the
     // shape depend on declaration order.
-    for c in branch_children(file) {
+    for c in decls_of_file {
         ro k = c.kind_of()
         if k != NodeKind.TypeDecl && k != NodeKind.SumDecl { continue }
         ro nk = branch_children(c)
@@ -586,7 +589,7 @@ export fn collect_types(file Node) -> Ctx {
             }
         }
     }
-    for c in branch_children(file) {
+    for c in decls_of_file {
         ro k = c.kind_of()
         if k == NodeKind.TypeDecl {
             ro tkids = branch_children(c)

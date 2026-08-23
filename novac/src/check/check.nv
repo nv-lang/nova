@@ -311,8 +311,13 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     return
                 }
                 ExportDecl => {
-                    @report_first_leaf_of(children, EXPORT_MSG)
-                    return
+                    // JUDGED BY ITS CONTENTS, not refused (2026-08-23). Inside
+                    // ONE compilation unit `export` says nothing novac has to
+                    // act on -- it is what makes a name reachable from ANOTHER
+                    // module, and that question arrives with `import`. Refusing
+                    // the wrapper refused the declaration under it, which is how
+                    // four of novac's own files stopped at their first line.
+                    // The walk continues into the children below.
                 }
                 AttrDecl => {
                     // `#coerce` is JUDGED, not refused (wave 5): it declares a

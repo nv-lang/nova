@@ -16,7 +16,7 @@
 module novac.mono
 
 import ../tree.{Node, NodeKind, is_node}
-import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children}
+import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, file_decls}
 import ../types.{TyId}
 import ../diag.{ice}
 
@@ -142,10 +142,13 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         }
     }
 
+    // Hoisted out of the fixpoint on purpose: the door builds a vector, and the
+    // set of declarations does not change between rounds.
+    ro decls_of_file = file_decls(file)
     mut grew = true
     while grew {
         grew = false
-        for c in branch_children(file) {
+        for c in decls_of_file {
             if c.kind_of() != NodeKind.FnDecl { continue }
             match decl_fn_row(c, ctx) {
                 // A declaration that owns no row is not a callable of this

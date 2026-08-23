@@ -66,7 +66,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
 import ../mono.{Reach}
-import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, raw_frow, no_frow}
+import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, raw_frow, no_frow, file_decls}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, no_ty}
 
@@ -354,7 +354,13 @@ fn Emitter mut @emit_file(file Node) -> () {
         Leaf(_) => ice("emit: file node must be a branch")
         Branch { kind, children, .. } => {
             assert(kind == NodeKind.File, "emit: root is not File")
-            for c in children {
+            // THROUGH THE DOOR, like every other walk over a file's
+            // declarations: an `export`ed one sits inside its visibility
+            // wrapper, and to a raw walk it is not there at all. Measured
+            // 2026-08-23: with the collector taught to see it and this loop not,
+            // the call resolved and the LINKER asked for the body
+            // (`undefined symbol: novac_fn_helper__nova_int__to_nova_int`).
+            for c in file_decls(file) {
                 if c.kind_of() != NodeKind.FnDecl { continue }
                 // E2-b2: a callable NOT reached from a root is not emitted.
                 // The decision belongs to mono, not to the emitter: the
