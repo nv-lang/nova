@@ -144,7 +144,7 @@ export type FnRow int
 /// newtype into its representation -- since the same day.
 export fn raw_row(r FnRow) -> int => r as int
 
-/// "No row", as a ROW rather than a number the caller must recognise
+/// "No row", as a ROW, not a number to be decoded by hand
 /// [INV-GUARD: check-novac-no-unwrap-compare] -- unwrapping in order to compare
 /// is red, so a caller cannot quietly go back to recognising a number.
 /// [INV-GUARD: check-novac-no-unwrap-compare] -- what holds it is the ban on
