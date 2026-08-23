@@ -89,7 +89,9 @@ export type TyId int
 #realtime nogc
 export fn raw_ty(t TyId) -> int => t as int
 
-/// "No type", as a VALUE of the space rather than a −1 the caller must know.
+/// "No type", as a VALUE of the space rather than a −1 the caller decodes
+/// [INV-GUARD: check-novac-no-unwrap-compare] -- the same door discipline that
+/// holds `no_row`: absence cannot silently become a number again.
 /// [INV-GUARD: check-novac-no-unwrap-compare] -- the same door discipline that
 /// holds `no_row`: unwrapping in order to compare is red, so absence cannot
 /// silently become a number again.

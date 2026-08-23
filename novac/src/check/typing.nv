@@ -513,7 +513,7 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // The printer set is int/str/bool/f64. Every other primitive is
             // NAMEABLE (the universe holds all fifteen) but not yet
             // printable, and that boundary belongs here -- the emitter's ice
-            // for a missing printer must never be the first answer.
+            // for a missing printer must never be the first answer. [INV-PROPERTY]
             // [INV-PROPERTY] -- the refusal returns two lines below, so the
             // emitter is not reached at all for this form; violating it would
             // require deleting the check, not merely getting it wrong.
