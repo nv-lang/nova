@@ -194,33 +194,10 @@ _OVERRIDE = re.compile(r"#\s*index-verified", re.IGNORECASE)
 _COMMIT_SCOPE_MSG = (
     "FORBIDDEN: git commit bez oblasti — v indekse mogut lezhat' CHUZHIE pre-staged "
     "pravki (2026-08-23: kommit odnogo fayla zabral 49 v obshchem dereve nova-p274). "
-    "FORMA CELIKOM, flagi DO '--', puti POSLE: "
-    "git -C <derevo> commit -s -F <fayl-soobshcheniya> --only -- <fayl1> <fayl2>. "
-    "Novyy fayl snachala 'git -C <derevo> add <imya>' — --only vidit tol'ko izvestnye "
-    "git puti. Fayl soobshcheniya derzhi DLINNYM putem (kratkaya forma vida B7E3~1 "
-    "git ne chitaet). Nuzhen ves' indeks — napishi v komande kommentariy "
-    "'# index-verified: <prichina>'; pri sliyanii/cherry-pick i --amend pravilo ne "
-    "primenyaetsya."
-)
-
-# ФЛАГ ПОСЛЕ `--`: после двойного дефиса git считает ВСЁ путями.
-#
-# 2026-08-23, дважды за час и у двух разных окон: подсказка предыдущей версии
-# этого же хука называла форму как `commit --only -- <файлы>` и отдельно
-# упоминала `-F`, и оба окна дописали `-F` в конец — то есть ПОСЛЕ `--`. Git
-# ответил `pathspec '-F' did not match any file(s) known to git`, коммит не
-# состоялся, и одно окно ушло обходить это копированием файла сообщения внутрь
-# репозитория. Правило подсказки, которая сама провоцирует ошибку, — дефект
-# подсказки, а не окна; поэтому форма теперь называется целиком, а эта проверка
-# ловит саму ошибку.
-_FLAG_AFTER_DASHDASH = re.compile(
-    r"\bgit\s+(?:-C\s+\S+\s+)?commit\b[^\n]*?\s--\s[^\n]*?\s-(?:F|m|s|S|u)\b")
-
-_FLAG_AFTER_MSG = (
-    "FORBIDDEN: flag posle '--' v git commit — posle dvoynogo defisa git schitaet VSE "
-    "putyami, i '-F' stanovitsya pathspec: 'pathspec -F did not match any file(s)'. "
-    "Poryadok: git -C <derevo> commit -s -F <fayl-soobshcheniya> --only -- <fayly>. "
-    "(2026-08-23: dva okna za chas, oba iz-za formulirovki podskazki etogo zhe huka.)"
+    "Forma, ne zavisyashchaya ot vnimaniya: git -C <derevo> commit -s --only -- <fayly> "
+    "(soobshchenie faylom: -F <fayl>). Nuzhen ves' indeks — napishi v komande "
+    "kommentariy '# index-verified: <prichina>'; pri sliyanii/cherry-pick i --amend "
+    "pravilo ne primenyaetsya."
 )
 
 
@@ -254,10 +231,6 @@ def check_commit_scope(cmd: str, stripped: str):
     """Сообщение об отказе или None. `stripped` — команда без литералов."""
     if not _COMMIT.search(stripped):
         return None
-    # Порядок проверяем ДО области: команда с флагом после `--` формально
-    # «названа областью», но не работает вовсе, и молчать о ней нельзя.
-    if _FLAG_AFTER_DASHDASH.search(stripped):
-        return _FLAG_AFTER_MSG
     if _SCOPED.search(stripped) or _OVERRIDE.search(cmd):
         return None
     if _merge_in_progress(cmd):

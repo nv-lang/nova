@@ -710,6 +710,7 @@ D453). Номер назначает интегратор; спроси.
 | `check-nova-expect-ratchet` | рост числа неразмеченных negative-фикстур |
 | `check-registry-entry-shape` | запись реестра без класса/приоритета/оговорки; строку с `TBD` |
 | `check-rules-page-complete` | завести стража, не объяснив его на ЭТОЙ странице |
+| `check-sigsegv-altstack` | обработчик переполнения стека без `SA_ONSTACK` либо без `sigaltstack` — то есть неспособный запуститься (№745) |
 | `check-single-mco-resume` | новый resume-сайт в обход `nova_resume_fiber` |
 | `check-stale-unimplemented` | пометку «не реализован» на том, что план считает сделанным |
 | `check-test-fixture-coverage` | новый `E_*`/`W_*` без neg-фикстуры |
