@@ -264,6 +264,7 @@ par_add "$ROOT/scripts/guards/check-novac-export-has-caller.py" "экспорт 
 par_add "$ROOT/scripts/guards/check-novac-ratchet-moves.sh" "храповик сдвинут без причины в том же диффе (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-acceptance-donor.py" "приёмка волны не называет донора (П27-класс)"
 par_add "$ROOT/scripts/guards/check-novac-selftest-interpreter.py" "самотест зовёт стража напрямую — на Linux это ноль случаев (274 §9.1д К2)"
+par_add "$ROOT/scripts/guards/check-novac-smoke-wrapper.sh" "POSIX-обёртка перехвата clang-argv сломана — эта машина ею не ходит (274 §9.1д К3)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
@@ -349,6 +350,11 @@ par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 бе�
 par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-temp-edges.py" "временное ребро без срока или истекло (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-module-donor.py" "модуль novac без донора-указателя в заголовке (П27)"
+# П25/П27 п.2а судились только по шапкам модулей и сообщениям коммитов — ТЕКСТ
+# плана не читал никто, и «донор: оракул» прожил в 274 с 20 по 23 августа при
+# зелёном гейте (нашёл владелец глазами). Разрешённые вхождения — списком с
+# причинами, novac-plan-donor.allow, тоже под храповиком.
+par_add "$ROOT/scripts/guards/check-novac-plan-donor.py" "оракул назван донором в тексте плана/конвенций novac (П25/П27 2а)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
