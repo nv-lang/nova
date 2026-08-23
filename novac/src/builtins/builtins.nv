@@ -210,3 +210,23 @@ export fn bool_c_literal(v bool) -> str {
     if v { return "true" }
     "false"
 }
+
+/// A4 (plan 172.14 F.2, atom `sum_placement.rs`): the seven sums whose C name is
+/// pinned by HAND-WRITTEN runtime C (`nova_rt/*.h`, `*.c`). Their shape is fixed
+/// by code the compiler does not emit, so they stay heap pointers whatever their
+/// variants look like: turning one into a value would change a signature the
+/// runtime already holds, and the C compiler would report it far from any sum.
+///
+/// The list is the oracle's `A4_RUNTIME_ABI_SUMS`, copied rather than
+/// re-derived. It lives HERE because P5 keeps every language/std NAME in one
+/// registry -- the mangling door asks, it does not spell.
+export fn is_runtime_abi_sum(name str) -> bool {
+    if name == "Decision" { return true }
+    if name == "MemOrdering" { return true }
+    if name == "OnceState" { return true }
+    if name == "Result" { return true }
+    if name == "RuntimeError" { return true }
+    if name == "ScopeOutcome" { return true }
+    if name == "WaitResult" { return true }
+    false
+}

@@ -317,6 +317,20 @@ export fn Interner @arg_count(t TyId) -> int
     @rows[raw_ty(t)].arg_cnt
 }
 
+/// A4 FENCE (plan 172.14 F.2, atom `sum_placement.rs`): does this type stand as
+/// an ARGUMENT in the pool -- an application's argument, or a newtype's
+/// representation? Both are reasons NOT to move a type off the heap: the
+/// oracle's atom keeps `Option[X]` a bare nullable `Nova_X*` under NPO, so
+/// turning `X` into a value would change a SECOND type's layout as a side
+/// effect. Conservative on purpose: a newtype carrier counts as fenced too,
+/// because its layout is the carrier's by definition.
+export fn Interner @is_arg_anywhere(t TyId) -> bool {
+    for i in 0..@args.len() {
+        if @args[i] == t { return true }
+    }
+    false
+}
+
 /// The i-th argument of an application. Out of range is an ice.
 #realtime nogc
 export fn Interner @arg(t TyId, i int) -> TyId {

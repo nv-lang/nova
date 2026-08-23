@@ -33,7 +33,12 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-novac-emitted-names"
 QUOTED = re.compile(r'"[A-Za-z_][A-Za-z0-9_]*(?:\$\{[^}]*\})?[A-Za-z0-9_]*"')
-ALLOWED_PREFIX = ("Nova_", "nova_", "novac_", "NOVAC_", "_novac_")
+# `NovaValue_` — ТОЖЕ пространство оракула, и оно не сводится к `Nova_`:
+# приставка кончается на `Value_`, а не на `_`. Появилось с атомом A4 плана
+# 172.14 F.2 (суммы без полезной нагрузки живут значением: `NovaValue_X`
+# плюс тег-enum `Nova_X_Tag`). Существование такого имени стережёт
+# check-novac-mangle-fixed-point — оно обязано быть в оболочке.
+ALLOWED_PREFIX = ("Nova_", "NovaValue_", "nova_", "novac_", "NOVAC_", "_novac_")
 ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).

@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../diag.{ice}
-import ../builtins.{prim_c_name}
+import ../builtins.{prim_c_name, is_runtime_abi_sum}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -78,6 +78,42 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
     ice("mangle: a newtype chain longer than the registry -- a cycle reached the carrier door")
 }
 
+/// A4: is this sum emitted BY VALUE (`NovaValue_<X>`) instead of as a heap
+/// `Nova_<X>*`? The rule is the ORACLE's, taken word for word from plan 172.14
+/// F.2 atom A4 (`compiler-codegen/src/codegen/emit_c/sum_placement.rs`, merge
+/// `efbe73ff5`): payload-less, non-generic, unfenced, not runtime-pinned.
+///
+/// Payload-less means ZERO inline edges, so such a sum is non-recursive by
+/// construction and no recursion detector is consulted -- the donor states the
+/// same consequence in the same words.
+///
+/// GENERICS are out of the subset BY CONSTRUCTION, not by check: an applied
+/// type ices in `c_type` ("arrives with E2-b2"), so a generic sum cannot reach
+/// emission at all. When E2-b2 lands, the parameter test joins this door.
+export fn is_value_sum(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    match ctx.tys.kind_of(t) {
+        TkSum => {}
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype => { return false }
+    }
+    ro td = decl_of_ty(ctx, t)
+    if is_runtime_abi_sum(td.name) { return false }
+    if ctx.tys.is_arg_anywhere(t) { return false }
+    ro vr = variant_range_of(td) ?? (no_vrow(), 0)
+    if vr.1 == 0 { return false }
+    ro vstart = raw_vrow(vr.0)
+    for v in vstart..(vstart + vr.1) {
+        if ctx.variant_rows[v].payload_cnt != 0 { return false }
+    }
+    true
+}
+
+/// C name of a sum's TAG ENUM: always `Nova_<X>_Tag`, whether the sum is a
+/// value or a pointer. The oracle names the tag enum off the TYPE's name even
+/// when the value struct is `NovaValue_<X>` -- measured in the fresh shell,
+/// `novac/src/emit_c/shell.tpl.c:56-58`.
+export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${decl_of_ty(ctx, t).name}_Tag"
+
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t TyId) -> str {
@@ -89,7 +125,11 @@ export fn c_type(ctx Ctx, t TyId) -> str {
         match ctx.tys.kind_of(t) {
             TkPrim => { return prim_c_name(ctx.tys.prim_ordinal_of(t)) } // universe fact by ordinal, read off the term
             TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}*" }
-            TkSum => { return "Nova_${decl_of_ty(ctx, t).name}*" }
+            // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
+            TkSum => {
+                if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+                return "Nova_${decl_of_ty(ctx, t).name}*"
+            }
             // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
             // its C spelling is the representation's -- zero cost, and what the
             // oracle emits too (`typedef nova_int Nova_Row;` and then a plain
@@ -118,7 +158,10 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
     match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
         TkRecord => { return "Nova_${decl_of_ty(ctx, t).name}" }
-        TkSum => { return "Nova_${decl_of_ty(ctx, t).name}" }
+        TkSum => {
+            if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+            return "Nova_${decl_of_ty(ctx, t).name}"
+        }
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.
         TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }

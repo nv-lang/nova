@@ -66,7 +66,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
 import ../mono.{Reach}
-import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, raw_frow, no_frow}
+import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, field_range_of, variant_range_of, raw_frow, no_frow}
 import ../builtins.{PRINT_FN, bool_c_literal}
 import ../types.{TyId, no_ty}
 
@@ -212,6 +212,11 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
     // A DECL index; the C name comes from the row's own type id (see above).
     ro td = @ctx.types[sum_id]
     ro sn = c_struct(@ctx, td.ty_id)
+    // A4: the TAG enum keeps the type's own name (`Nova_X_Tag`) even when the
+    // struct is `NovaValue_X` -- the oracle names them that way, and the shell
+    // is the oracle's emission, so novac has no vote here.
+    ro te = c_tag_enum(@ctx, td.ty_id)
+    ro is_val = is_value_sum(@ctx, td.ty_id)
     // The VARIANT range, from the arm that holds one.
     ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
     ro vstart = raw_vrow(vrange.0)
@@ -220,9 +225,9 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
     for v in vstart..vend {
         @body.append("    ${c_tag(@ctx, VariantRow(v))},\n")
     }
-    @body.append("} ${sn}_Tag;\n")
+    @body.append("} ${te};\n")
     @body.append("typedef struct ${sn} ${sn};\n")
-    @body.append("struct ${sn} {\n    ${sn}_Tag tag;\n    union {\n")
+    @body.append("struct ${sn} {\n    ${te} tag;\n    union {\n")
     for v in vstart..vend {
         ro vd = @ctx.variant_rows[v]
         @body.append("        struct {\n")
@@ -236,7 +241,8 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
     @body.append("    } payload;\n};\n\n")
     for v in vstart..vend {
         ro vd = @ctx.variant_rows[v]
-        @body.append("static ${sn}* ${c_maker(@ctx, VariantRow(v))}(")
+        @body.append(if is_val { "static ${sn} ${c_maker(@ctx, VariantRow(v))}(" }
+                     else { "static ${sn}* ${c_maker(@ctx, VariantRow(v))}(" })
         if vd.payload_cnt == 0 {
             @body.append("void")
         } else {
@@ -246,10 +252,14 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
                 @body.append(" _${p}")
             }
         }
-        @body.append(") {\n    ${sn}* _r = (${sn}*)nova_alloc(sizeof(${sn}));\n")
-        @body.append("    _r->tag = ${c_tag(@ctx, VariantRow(v))};\n")
+        // A4: no `nova_alloc` for a value sum -- a payload-less sum is a tag and
+        // nothing else, and the heap round trip was the whole cost the atom removes.
+        ro arrow = if is_val { "." } else { "->" }
+        @body.append(if is_val { ") {\n    ${sn} _r;\n" }
+                     else { ") {\n    ${sn}* _r = (${sn}*)nova_alloc(sizeof(${sn}));\n" })
+        @body.append("    _r${arrow}tag = ${c_tag(@ctx, VariantRow(v))};\n")
         for q in 0..vd.payload_cnt {
-            @body.append("    _r->payload.${vd.name}._${q} = _${q};\n")
+            @body.append("    _r${arrow}payload.${vd.name}._${q} = _${q};\n")
         }
         @body.append("    return _r;\n}\n\n")
     }
@@ -576,10 +586,13 @@ fn Emitter mut @emit_match(m Node, uniq int, res_t TyId) -> () {
     }
 }
 
-/// Tag test of a variant pattern: user sums are GC pointers with novac's own
-/// tag names; std sums (Option) are VALUES with the oracle's tag names.
-fn Emitter mut @emit_tag_test(uniq int, vrow VariantRow) -> () {
-    @body.append("(_novac_scr_t${uniq}->tag == ${c_tag(@ctx, vrow)})")
+/// Tag test of a variant pattern. The ACCESS follows the PLACEMENT (A4): a
+/// value sum is read with `.`, a heap sum with `->`. Before A4 the arrow was
+/// unconditional, which is exactly the shape that breaks silently the day the
+/// oracle moves a type off the heap.
+fn Emitter mut @emit_tag_test(uniq int, vrow VariantRow, scr_t TyId) -> () {
+    ro arrow = if is_value_sum(@ctx, scr_t) { "." } else { "->" }
+    @body.append("(_novac_scr_t${uniq}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
 /// Emit one match arm: pattern test, binder unpacking, optional guard, arm value.
@@ -612,7 +625,7 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId) -> () {
             // arm.
         }
         if is_vrow(vrow) {
-            @emit_tag_test(uniq, vrow)
+            @emit_tag_test(uniq, vrow, scr_t)
         } else {
             @body.append(bool_c_literal(true))
         }
