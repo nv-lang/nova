@@ -306,12 +306,17 @@ fn Cursor mut @type_decl() -> Node {
     if @peek() == TokenKind.Ident && @peek_text() == PROTOCOL_MARKER {
         kids.push(@take())
         if @peek() == TokenKind.LBrace {
-            mut depth = 0
-            while !@at_eof() {
-                depth += brace_delta(@peek())
-                kids.push(@take())
-                if depth == 0 { break }
+            kids.push(@take())
+            // ONE SIGNATURE PER `@`. Wave 3a kept the body as a balanced brace
+            // run, which was enough to stop calling the form a non-language --
+            // but a raw run cannot be COMPARED with a type's method set, and
+            // that comparison is the whole of wave 3b. So the body is read as
+            // signatures now, and anything that is not one stays a leaf: the
+            // tree is lossless and `check` refuses what it cannot judge.
+            while @peek() == TokenKind.At {
+                kids.push(@proto_method())
             }
+            @push_if(kids, TokenKind.RBrace)
         } else {
             // `type Sized protocol` with no body: broken input, and the top
             // loop recovers the next token into its own Err branch rather than
@@ -433,6 +438,40 @@ fn Cursor mut @type_decl() -> Node {
         // its own diagnostic instead of being swallowed by this one.
     }
     @node(NodeKind.TypeDecl, kids)
+}
+
+/// Parse ONE required signature of a protocol body: `@name(params) -> T`.
+///
+/// Narrow on purpose. A protocol method is a SIGNATURE and nothing else -- no
+/// body, no default, no mode -- so this reader is not `@fn_decl` with parts
+/// switched off; sharing that path would mean teaching it a shape it never has.
+/// What this reader does NOT accept it leaves as leaves, and `check` refuses by
+/// name: a parser that guesses is worse than one that stops.
+fn Cursor mut @proto_method() -> Node {
+    mut kids = []Node.of(@take()) // At
+    @push_if(kids, TokenKind.Ident) // method name
+    if @peek() == TokenKind.LParen {
+        kids.push(@take())
+        while @peek() == TokenKind.Ident {
+            mut pk = []Node.of(@take()) // parameter name
+            pk.append(@type_ref())
+            @push_if(pk, TokenKind.Comma)
+            kids.push(@node(NodeKind.Param, pk))
+        }
+        @push_if(kids, TokenKind.RParen)
+    } else {
+        // No parameter list: broken input. The RParen is absent rather than
+        // invented, and `check` sees the absence.
+    }
+    if @peek() == TokenKind.Arrow {
+        mut rt = []Node.of(@take())
+        rt.append(@type_ref())
+        kids.push(@node(NodeKind.RetType, rt))
+    } else {
+        // A protocol method without a declared return type: the absence is
+        // VISIBLE (no RetType node), which is what lets `check` name it.
+    }
+    @node(NodeKind.ProtoMethod, kids)
 }
 
 /// Parse `module a.b.c`.

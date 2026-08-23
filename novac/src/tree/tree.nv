@@ -33,6 +33,7 @@ import ../diag.{ice}
 /// a leaf is NOT an error; see kind_of below).
 export type NodeKind enum
     | LeafNode
+    | ProtoMethod /// one required signature inside `type X protocol { ... }`: `@name(params) -> T`
     | File
     | ModuleDecl
     | FnDecl

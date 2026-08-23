@@ -445,6 +445,10 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                 AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
                 MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
+                // A protocol's signatures are judged together with the
+                // declaration (refused by name until the predicate lands),
+                // so walking into them would report the same thing twice.
+                ProtoMethod => {}
             }
             for c in children {
                 @walk(c)
