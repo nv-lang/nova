@@ -379,6 +379,11 @@ export fn is_expr_kind(k NodeKind) -> bool {
     k == NodeKind.Call ||
     k == NodeKind.MethodCall ||
     k == NodeKind.FieldAccess ||
+    // `@field` is an EXPRESSION, and saying so here is what lets an
+    // expression-bodied method (`fn Box @size() -> int => @n`) reach the
+    // emitter at all: without it the body was "neither a match nor an
+    // expression" and iced (wave 3g, measured 2026-08-23).
+    k == NodeKind.SelfField ||
     k == NodeKind.MatchExpr ||
     k == NodeKind.Cast
 }

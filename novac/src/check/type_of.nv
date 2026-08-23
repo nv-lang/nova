@@ -17,7 +17,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow, is_vrow}
 import ../types.{TyId, no_ty, is_ty, same_ty}
@@ -181,6 +181,16 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
             FnUnknown => { ice("check: method not in the read declarations past check") }
         }
+    }
+    // `@field` inside a method body: the receiver is a BINDING (`@`), so this
+    // is a field access on it and needs no separate rule. Outside a method the
+    // binding does not exist, and the answer is absence -- which `check`
+    // refuses by name rather than icing here (P12).
+    if k == NodeKind.SelfField {
+        ro kids = branch_children(e)
+        assert(kids.len() >= 2, "check: `@field` without a name")
+        if !scope.is_bound(RECV_BINDING) { return no_ty() }
+        return ctx.fields.field_type(scope.type_of_name(RECV_BINDING), leaf_text(kids[1]))
     }
     if k == NodeKind.FieldAccess {
         ro kids = branch_children(e)

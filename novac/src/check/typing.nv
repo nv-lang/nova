@@ -27,7 +27,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow}
 import ../types.{TyId, no_ty, is_ty}
@@ -145,6 +145,19 @@ fn Checker mut @type_fn(f Node) -> () {
     // `name != ENTRY_FN`, so the overload's parameters were never bound and its
     // body refused its own parameter as an unknown name.
     if !@ctx.fns.is_entry_row(row) {
+        // THE RECEIVER IS A BINDING (wave 3g). Slot zero of a method row is the
+        // receiver, and the tree writes it as `@` rather than as a named
+        // parameter -- so it is bound under that very symbol. Nothing in the
+        // language can collide with it (the lexer never makes `@` an
+        // identifier), and `@field` then needs no second mechanism: it is a
+        // field access on an ordinary binding.
+        ro rfd = @ctx.fns.rows[raw_row(row)]
+        if rfd.has_recv && rfd.param_cnt > 0 {
+            @scope.bind(RECV_BINDING, @ctx.fns.params[rfd.param_off].type_id,
+                        @ctx.fns.params[rfd.param_off].mode)
+        } else {
+            // A free function: no receiver to bind.
+        }
         mut slot = 0
         for c in kids {
             if c.kind_of() != NodeKind.Param { continue }
@@ -305,7 +318,12 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // parameter whose type the registry holds. Position is the mapping: plan
     // 273 §4.4 fixes the slot.
     ro fd = @ctx.fns.rows[raw_row(row)]
-    ro pt = if slot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + slot].type_id) } else { no_ty() }
+    // A METHOD's slot zero is the RECEIVER (plan 273), and the tree has no
+    // `Param` node for it -- so the parameter at tree position `slot` is row
+    // slot `slot + 1`. Reading them one-to-one typed every parameter as its
+    // left neighbour, which is a wrong TYPE rather than a refusal.
+    ro rslot = if fd.has_recv { slot + 1 } else { slot }
+    ro pt = if rslot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + rslot].type_id) } else { no_ty() }
     if !is_ty(pt) {
         match tnode {
             Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")

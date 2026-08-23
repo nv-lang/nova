@@ -108,6 +108,23 @@ export const ALIAS_MARKER = "alias"
 /// in one registry: the parser asks, it does not spell.
 export const PROTOCOL_MARKER = "protocol"
 
+/// The name the RECEIVER is bound under inside a method body: `@`.
+///
+/// Not an invented word (`self`, `this`, `nova_self`) but the symbol the
+/// language itself uses -- and one no identifier can collide with, because the
+/// lexer never produces `@` as an identifier. So the receiver is an ordinary
+/// binding in scope, `@field` is a field access on it, and nothing needs a
+/// second mechanism.
+export const RECV_BINDING = "@"
+
+/// The C name of the RECEIVER parameter in novac's own emission.
+///
+/// Ours, in our own prefix (P24): the receiver is a parameter of a function
+/// novac names itself, so this spelling never crosses the ABI and nothing
+/// outside the emitted function can see it. The leading underscore keeps it out
+/// of the way of any user name the mangling might produce.
+export const RECV_C_NAME = "_novac_self"
+
 /// The RECEIVER's own type, spelled by its role: `fn T @twin() -> Self`.
 ///
 /// A NAME OF THE LANGUAGE, so it lives here (P5). It names no declaration and

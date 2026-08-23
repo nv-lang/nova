@@ -1,33 +1,36 @@
 module protocol_decl.pos_1
 
 // A CONTRACT, A TYPE THAT MEETS IT, AND A CALL THROUGH THE BOUND -- the whole
-// path of E2-b3 wave 3b plus 3g, in one file the oracle compiles too.
+// path of E2-b3 waves 3b and 3g in one file the oracle compiles too.
 //
 // What each line is here for:
 //   * `type Sized protocol { ... }` -- the form novac called "not a form of the
 //     language" until wave 3a, and registers as a contract since 3b;
-//   * `fn Box @size() -> int` -- a method declared in THIS file, which the
-//     collector dropped until wave 3g (a method puts a `Recv` branch where a
-//     free function has its name leaf, and the collector required a leaf);
+//   * `fn Box @size() -> int => @n` -- a method declared in THIS file (dropped
+//     by the collector until 3g, because a method puts a `Recv` branch where a
+//     free function has its name leaf) whose body READS a field through `@`;
+//   * `b.size()` -- the method is CALLED, which is what makes mono emit it.
+//     The first version of this fixture never called it, so the emitter's
+//     receiver parameter was never exercised and iced the moment it was
+//     ("the caller handed types the declaration does not write"). A fixture
+//     that cannot fail is the weak-fixture class (registry #465);
 //   * `twice[T Sized]` -- the bound, checked at the CALL against the type the
-//     arguments deduced, not at the declaration;
-//   * the call itself -- so the emission is exercised: `nova test` runs this
-//     binary and compares stdout with the oracle's byte for byte.
-//
-// The method body returns a constant on purpose: `@field` inside a method body
-// is still refused by name (wave 3g part 3), and a fixture must not depend on a
-// form the subset has not reached.
+//     arguments deduced;
+//   * both values are PRINTED, so `nova test` compares this binary's stdout
+//     with the oracle's byte for byte -- 7 comes from the field, not from a
+//     constant the emitter could have folded.
 type Sized protocol {
     @size() -> int
 }
 
 type Box { n int }
 
-fn Box @size() -> int => 3
+fn Box @size() -> int => @n
 
 fn twice[T Sized](a T) -> int => 2
 
 fn main() {
-    ro b = Box { n: 1 }
+    ro b = Box { n: 7 }
+    println("size = ", b.size())
     println("twice = ", twice(b))
 }

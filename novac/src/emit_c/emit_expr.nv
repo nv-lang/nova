@@ -18,7 +18,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
 import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow}
-import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal}
+import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, no_ty}
 
 
@@ -202,6 +202,14 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `nova_bool` IS C `bool`, so the literals are the C keywords -- the
         // same shape the oracle emits.
         @body.append(expr_leaf_name(e))
+    } else if k == NodeKind.SelfField {
+        // `@field` is a field of the receiver, and the receiver is parameter
+        // zero under our own name. A record is a GC pointer, so the access is
+        // `->` exactly like any other field access -- one shape, not two.
+        ro kids = branch_children(e)
+        @body.append("(${RECV_C_NAME}->")
+        @body.append(leaf_text(kids[1]))
+        @body.append(")")
     } else if k == NodeKind.FieldAccess {
         ro kids = branch_children(e)
         @body.append("(")

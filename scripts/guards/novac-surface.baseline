@@ -49,7 +49,14 @@
 # (`type Sized protocol { ... }`). A contextual word like `alias` and `enum`,
 # and P5 keeps every name of the language in this one registry: the parser and
 # `shape_of_decl` ASK for it, neither spells it.
-builtins 18
+# builtins 18 -> 20: два имени приёмника, и оба по спросу (П35).
+# `RECV_BINDING` = "@" — под этим именем приёмник лежит в области видимости,
+# и `@field` становится обычным доступом к полю биндинга: второй механизм не
+# нужен, а столкнуться с ним нельзя (лексер не делает `@` идентификатором).
+# `RECV_C_NAME` = "_novac_self" — имя параметра-приёмника в НАШЕЙ эмиссии;
+# оно не переходит ABI (это параметр функции, которую novac называет сам),
+# и П24 держит выдуманные нами имена в нашей приставке.
+builtins 20
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
