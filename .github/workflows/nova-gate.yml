@@ -77,6 +77,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Nightly, 02:30 UTC. The ONLY caller the `full` tier has: guard selftests
+  # cost 365s and live there, so on push they would tax every commit, and
+  # without a caller at all they are the #748 shape -- a check that is green
+  # only on the author's disk and nobody ever learns. Owner's decision
+  # 2026-08-23.
+  schedule:
+    - cron: "30 2 * * *"
 
 concurrency:
   group: nova-gate-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
@@ -262,7 +269,7 @@ jobs:
   # job and this one has never run. Once `gate-push` has a green history, the
   # duplicated steps of `gate` come out — not before.
   gate-push:
-    name: gate.sh tier push (behaviour — conformance, std, flagships)
+    name: gate.sh tier push (behaviour; tier full on the nightly schedule)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -298,9 +305,20 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/nv-lang/nova-http "${GITHUB_WORKSPACE}/../nova-http"
 
-      - name: scripts/gate.sh — tier push
+      # ЯРУС ЗАВИСИТ ОТ ТРИГГЕРА, А НЕ ОТ ВТОРОГО JOB'А. Ярусы накопительные
+      # (loop ⊂ push ⊂ full), поэтому ночью тот же job просит БОЛЬШИЙ ярус, и
+      # рецепт тулчейна остаётся в одном экземпляре. Второй файл означал бы
+      # вторую копию пина 1.85, apt-строки, подмодулей, кеша cargo и клона
+      # nova-http — а копии рецепта расходятся молча (№509, №524).
+      #
+      # ЗАОДНО ЭТО ПЕРВЫЙ НАСТОЯЩИЙ ЗАМЕР ЯРУСА `full`: его число в
+      # `gate-budget.baseline` (1900с) ВЫВЕДЕНО из пошагового профиля и так и
+      # помечено — Г14 запрещает выдавать одно за другое. Первый ночной прогон
+      # заменит вывод замером; если он выйдет за потолок, это будет честный
+      # красный, а не поломка.
+      - name: scripts/gate.sh — tier push (full on the nightly schedule)
         env:
-          NOVA_GATE_TIER: push
+          NOVA_GATE_TIER: ${{ github.event_name == 'schedule' && 'full' || 'push' }}
         run: bash scripts/gate.sh
 
   gate:
