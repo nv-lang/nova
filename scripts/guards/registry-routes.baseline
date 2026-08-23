@@ -418,4 +418,10 @@ no_caveat=30
 #   маркера `Статус:` — новое поле и старый литерал в прозе («Прежний
 #   статус: Статус: …»). После того как проза перестала употреблять
 #   маркерное слово, счёт стал 40 — ровно 46 минус шесть проверенных.
-blockers=40
+# 2026-08-23, No.370 CONFIRMED -- 40 -> 39. The last of the nine phantoms, and
+#   the only one whose evidence had to be BUILT rather than re-run: the row was
+#   closed on a "probe of three assertions" that was never committed, so the
+#   class stood closed on a run nobody could repeat. The probe is now
+#   standalone/m370_mut_param_and_clone_pos.nv, PASS: 1 FAIL: 0, and proven
+#   both ways -- defect values give PASS: 0 FAIL: 1.
+blockers=39

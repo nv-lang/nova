@@ -1,0 +1,52 @@
+// EXPECT_STDOUT clone-independent=1 mut-param-inout=999 nested-clone-independent=1
+//
+// #370 (registry 221.1): the "sanctioned workaround" — a D326 helper taking a
+// `mut` parameter, recommended in #362 as a replacement for `.clone()` — was
+// found to hand back a SECOND REFERENCE to the same heap storage for
+// heap-backed fields. Class K1: the user believes a copy was made and mutates
+// the original instead.
+//
+// The row was closed on 2026-08-14 by "a probe of three assertions", and that
+// probe was never committed — so the closure rested on a run nobody could
+// repeat. This fixture IS that probe, written into the corpus where the lane
+// runs it, because a class closed without a judge is closed on trust.
+//
+// The three assertions, each printed rather than asserted silently so a
+// regression names itself in the diff:
+//
+//   1. `.clone()` gives INDEPENDENT storage — writing through the copy must
+//      leave the original alone (D230). Prints clone-independent=1.
+//   2. A `mut` parameter is an HONEST, DOCUMENTED in-out (D326 §Р3) — writing
+//      through it is SUPPOSED to reach the caller. Prints mut-param-inout=999.
+//      This is the assertion that matters: the defect was never "the mut
+//      parameter writes through", it was "the recommended COPY silently
+//      aliases". In-out reaching the caller is the contract, not the bug.
+//   3. The same for a heap field one level down — a clone of a value holding a
+//      Vec must not share that Vec. Prints nested-clone-independent=1.
+//
+// If #370 ever regresses, assertion 1 or 3 flips to 999 and the stdout line
+// stops matching.
+module standalone.m370_mut_param_and_clone_pos
+
+// D326 §Р3: the documented in-out. Writing here IS meant to reach the caller.
+fn bump_first(mut xs []int) -> () {
+    xs[0] = 999
+}
+
+fn main() Io -> () {
+    // (1) clone is independent storage
+    mut src = [1, 2, 3]
+    mut copy = src.clone()
+    copy[0] = 999
+    print("clone-independent=", src[0])
+
+    // (2) mut parameter is an honest in-out: the write DOES reach the caller
+    bump_first(src)
+    print(" mut-param-inout=", src[0])
+
+    // (3) a heap field one level down is cloned, not shared
+    mut outer = Vec[Vec[int]].of([1, 2])
+    mut outer_copy = outer.clone()
+    outer_copy[0][0] = 999
+    println(" nested-clone-independent=", outer[0][0])
+}
