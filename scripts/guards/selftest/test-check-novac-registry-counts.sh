@@ -30,36 +30,36 @@ ST="$TMP/scripts/guards/selftest/test-fixture-guard.sh"
 printf '#!/usr/bin/env bash\necho "  ok   one"\necho "  ok   two"\necho "  ok   three"\n' > "$ST"
 
 echo "== проходит =="
-"$G" "$TMP/nowhere" >/dev/null 2>&1
+bash "$G" "$TMP/nowhere" >/dev/null 2>&1
 check "нет плана — зелёный (судить нечего)" "$?" "0"
 
 printf '| правило | `guard.sh` — самотест `selftest/test-fixture-guard.sh`, 3 случая |\n' > "$P"
-OUT=$("$G" "$TMP" "$P" 2>&1); RC=$?
+OUT=$(bash "$G" "$TMP" "$P" 2>&1); RC=$?
 check "число совпало — зелёный" "$RC" "0"
 has "назвал число пар" "$OUT" "1"
 
 printf '| правило | `guard.sh` — самотест `selftest/test-fixture-guard.sh`, без числа |\n' > "$P"
-OUT=$("$G" "$TMP" "$P" 2>&1); RC=$?
+OUT=$(bash "$G" "$TMP" "$P" 2>&1); RC=$?
 check "строка БЕЗ числа — красный (мишень потеряна: пар нет вовсе)" "$RC" "1"
 has "назвал класс потерянной мишени" "$OUT" "519"
 
 printf '| a | `g.sh` — самотест `selftest/test-fixture-guard.sh`, 3 случая |\n| b | 471 имя проверяется |\n' > "$P"
-OUT=$("$G" "$TMP" "$P" 2>&1); RC=$?
+OUT=$(bash "$G" "$TMP" "$P" 2>&1); RC=$?
 check "число НЕ про случаи (471 имя) не судится — зелёный" "$RC" "0"
 
 echo "== краснеет =="
 printf '| правило | `guard.sh` — самотест `selftest/test-fixture-guard.sh`, 9 случаев |\n' > "$P"
-OUT=$("$G" "$TMP" "$P" 2>&1); RC=$?
+OUT=$(bash "$G" "$TMP" "$P" 2>&1); RC=$?
 check "число разошлось — красный" "$RC" "1"
 has "назвал обещанное и фактическое" "$OUT" "обещает 9"
 
 printf '| правило | `guard.sh` — самотест `selftest/test-fixture-guard.sh`, 3 случая, а раньше было 9 случаев |\n' > "$P"
-OUT=$("$G" "$TMP" "$P" 2>&1); RC=$?
+OUT=$(bash "$G" "$TMP" "$P" 2>&1); RC=$?
 check "ДВА числа на один самотест — красный (первая редакция это пропускала)" "$RC" "1"
 has "сказал, что чисел два" "$OUT" "РАЗНЫХ"
 
 printf '| правило | `guard.sh` — самотест `selftest/test-no-such-file.sh`, 3 случая |\n' > "$P"
-OUT=$("$G" "$TMP" "$P" 2>&1); RC=$?
+OUT=$(bash "$G" "$TMP" "$P" 2>&1); RC=$?
 check "самотест назван, а файла нет — красный" "$RC" "1"
 
 echo "самотест check-novac-registry-counts: PASS $PASS FAIL $FAIL"

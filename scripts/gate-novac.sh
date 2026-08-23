@@ -263,12 +263,19 @@ par_add "$ROOT/scripts/guards/check-novac-import-exists.py" "импортиру�
 par_add "$ROOT/scripts/guards/check-novac-export-has-caller.py" "экспорт без вызывающего — имя оправдывает спрос, а не симметрия (П35)"
 par_add "$ROOT/scripts/guards/check-novac-ratchet-moves.sh" "храповик сдвинут без причины в том же диффе (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-acceptance-donor.py" "приёмка волны не называет донора (П27-класс)"
+par_add "$ROOT/scripts/guards/check-novac-selftest-interpreter.py" "самотест зовёт стража напрямую — на Linux это ноль случаев (274 §9.1д К2)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
 par_add "$ROOT/scripts/guards/check-novac-time-ledger.py" "коммит в novac/** без строки в леджере времени (274 §1.4)"
 par_add "$ROOT/scripts/guards/check-novac-deps.py" "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
 par_run
+
+# СВЕЖЕСТЬ ОРАКУЛА — ПЕРЕД РУБЕЖОМ, потому что оракулом судится всё, что за
+# ним: им строится novac, его эмиссией считается оболочка, с ним сверяются
+# мэнгл и корпус. Замер 2026-08-23: бинарь отстал на трое суток, локальный
+# гейт зеленел, CI краснел четырьмя отказами — и объяснить их было нечем.
+guard "$ROOT/scripts/guards/check-novac-oracle-fresh.sh" "$ROOT" || fail "бинарь оракула старше своих исходников: гейт судит вчерашним компилятором (274 §9.1д К4)"
 
 # ── РУБЕЖ F1: дальше идут бинарь-зависимые. Бинарь строит ГЕЙТ. ──
 step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено»)"

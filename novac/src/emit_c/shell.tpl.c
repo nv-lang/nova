@@ -49,9 +49,29 @@ typedef struct NovaValue_StepByIter NovaValue_StepByIter;
 typedef struct NovaValue_SplitIter NovaValue_SplitIter;
 typedef struct NovaValue_RSplitIter NovaValue_RSplitIter;
 typedef struct Nova_Align Nova_Align;
-typedef struct Nova_FloatKind Nova_FloatKind;
-typedef struct Nova_Sign Nova_Sign;
-typedef struct Nova_FmtKind Nova_FmtKind;
+typedef enum {
+    NOVA_TAG_FloatKind_Shortest,
+    NOVA_TAG_FloatKind_Fixed,
+    NOVA_TAG_FloatKind_Sci,
+} Nova_FloatKind_Tag;
+typedef struct NovaValue_FloatKind NovaValue_FloatKind;
+struct NovaValue_FloatKind { Nova_FloatKind_Tag tag; };
+typedef enum {
+    NOVA_TAG_Sign_Minus,
+    NOVA_TAG_Sign_Plus,
+} Nova_Sign_Tag;
+typedef struct NovaValue_Sign NovaValue_Sign;
+struct NovaValue_Sign { Nova_Sign_Tag tag; };
+typedef enum {
+    NOVA_TAG_FmtKind_Display,
+    NOVA_TAG_FmtKind_Debug,
+    NOVA_TAG_FmtKind_Hex,
+    NOVA_TAG_FmtKind_Oct,
+    NOVA_TAG_FmtKind_Bin,
+    NOVA_TAG_FmtKind_Exp,
+} Nova_FmtKind_Tag;
+typedef struct NovaValue_FmtKind NovaValue_FmtKind;
+struct NovaValue_FmtKind { Nova_FmtKind_Tag tag; };
 typedef struct NovaValue_FmtSpec NovaValue_FmtSpec;
 typedef struct Nova_StringBuilder Nova_StringBuilder;
 typedef struct Nova_WriteBuffer Nova_WriteBuffer;
@@ -95,9 +115,9 @@ typedef struct NovaVtable_Fmt {
     NovaOpt_nova_int (*precision)(void*); 
     NovaOpt_nova_int (*align)(void*); 
     nova_char (*fill)(void*); 
-    Nova_Sign* (*sign)(void*); 
+    NovaValue_Sign (*sign)(void*); 
     nova_bool (*alternate)(void*); 
-    Nova_FmtKind* (*kind)(void*); 
+    NovaValue_FmtKind (*kind)(void*); 
     nova_unit (*pad)(void*, Nova_Vec____nova_byte*); 
     nova_unit (*write)(void*, Nova_Vec____nova_byte*); 
 } NovaVtable_Fmt;
@@ -995,110 +1015,69 @@ static Nova_Align* nova_make_Align_Center(void) {
     return _r;
 }
 
-typedef enum {
-    NOVA_TAG_FloatKind_Shortest,
-    NOVA_TAG_FloatKind_Fixed,
-    NOVA_TAG_FloatKind_Sci,
-} Nova_FloatKind_Tag;
-typedef struct Nova_FloatKind Nova_FloatKind;
-struct Nova_FloatKind {
-    Nova_FloatKind_Tag tag;
-    union {
-        char _dummy;
-    } payload;
-};
-
-static Nova_FloatKind* nova_make_FloatKind_Shortest(void) {
-    Nova_FloatKind* _r = (Nova_FloatKind*)nova_alloc(sizeof(Nova_FloatKind));
-    _r->tag = NOVA_TAG_FloatKind_Shortest;
+static NovaValue_FloatKind nova_make_FloatKind_Shortest(void) {
+    NovaValue_FloatKind _r;
+    _r.tag = NOVA_TAG_FloatKind_Shortest;
     return _r;
 }
 
-static Nova_FloatKind* nova_make_FloatKind_Fixed(void) {
-    Nova_FloatKind* _r = (Nova_FloatKind*)nova_alloc(sizeof(Nova_FloatKind));
-    _r->tag = NOVA_TAG_FloatKind_Fixed;
+static NovaValue_FloatKind nova_make_FloatKind_Fixed(void) {
+    NovaValue_FloatKind _r;
+    _r.tag = NOVA_TAG_FloatKind_Fixed;
     return _r;
 }
 
-static Nova_FloatKind* nova_make_FloatKind_Sci(void) {
-    Nova_FloatKind* _r = (Nova_FloatKind*)nova_alloc(sizeof(Nova_FloatKind));
-    _r->tag = NOVA_TAG_FloatKind_Sci;
+static NovaValue_FloatKind nova_make_FloatKind_Sci(void) {
+    NovaValue_FloatKind _r;
+    _r.tag = NOVA_TAG_FloatKind_Sci;
     return _r;
 }
 
-typedef enum {
-    NOVA_TAG_Sign_Minus,
-    NOVA_TAG_Sign_Plus,
-} Nova_Sign_Tag;
-typedef struct Nova_Sign Nova_Sign;
-struct Nova_Sign {
-    Nova_Sign_Tag tag;
-    union {
-        char _dummy;
-    } payload;
-};
-
-static Nova_Sign* nova_make_Sign_Minus(void) {
-    Nova_Sign* _r = (Nova_Sign*)nova_alloc(sizeof(Nova_Sign));
-    _r->tag = NOVA_TAG_Sign_Minus;
+static NovaValue_Sign nova_make_Sign_Minus(void) {
+    NovaValue_Sign _r;
+    _r.tag = NOVA_TAG_Sign_Minus;
     return _r;
 }
 
-static Nova_Sign* nova_make_Sign_Plus(void) {
-    Nova_Sign* _r = (Nova_Sign*)nova_alloc(sizeof(Nova_Sign));
-    _r->tag = NOVA_TAG_Sign_Plus;
+static NovaValue_Sign nova_make_Sign_Plus(void) {
+    NovaValue_Sign _r;
+    _r.tag = NOVA_TAG_Sign_Plus;
     return _r;
 }
 
-typedef enum {
-    NOVA_TAG_FmtKind_Display,
-    NOVA_TAG_FmtKind_Debug,
-    NOVA_TAG_FmtKind_Hex,
-    NOVA_TAG_FmtKind_Oct,
-    NOVA_TAG_FmtKind_Bin,
-    NOVA_TAG_FmtKind_Exp,
-} Nova_FmtKind_Tag;
-typedef struct Nova_FmtKind Nova_FmtKind;
-struct Nova_FmtKind {
-    Nova_FmtKind_Tag tag;
-    union {
-        char _dummy;
-    } payload;
-};
-
-static Nova_FmtKind* nova_make_FmtKind_Display(void) {
-    Nova_FmtKind* _r = (Nova_FmtKind*)nova_alloc(sizeof(Nova_FmtKind));
-    _r->tag = NOVA_TAG_FmtKind_Display;
+static NovaValue_FmtKind nova_make_FmtKind_Display(void) {
+    NovaValue_FmtKind _r;
+    _r.tag = NOVA_TAG_FmtKind_Display;
     return _r;
 }
 
-static Nova_FmtKind* nova_make_FmtKind_Debug(void) {
-    Nova_FmtKind* _r = (Nova_FmtKind*)nova_alloc(sizeof(Nova_FmtKind));
-    _r->tag = NOVA_TAG_FmtKind_Debug;
+static NovaValue_FmtKind nova_make_FmtKind_Debug(void) {
+    NovaValue_FmtKind _r;
+    _r.tag = NOVA_TAG_FmtKind_Debug;
     return _r;
 }
 
-static Nova_FmtKind* nova_make_FmtKind_Hex(void) {
-    Nova_FmtKind* _r = (Nova_FmtKind*)nova_alloc(sizeof(Nova_FmtKind));
-    _r->tag = NOVA_TAG_FmtKind_Hex;
+static NovaValue_FmtKind nova_make_FmtKind_Hex(void) {
+    NovaValue_FmtKind _r;
+    _r.tag = NOVA_TAG_FmtKind_Hex;
     return _r;
 }
 
-static Nova_FmtKind* nova_make_FmtKind_Oct(void) {
-    Nova_FmtKind* _r = (Nova_FmtKind*)nova_alloc(sizeof(Nova_FmtKind));
-    _r->tag = NOVA_TAG_FmtKind_Oct;
+static NovaValue_FmtKind nova_make_FmtKind_Oct(void) {
+    NovaValue_FmtKind _r;
+    _r.tag = NOVA_TAG_FmtKind_Oct;
     return _r;
 }
 
-static Nova_FmtKind* nova_make_FmtKind_Bin(void) {
-    Nova_FmtKind* _r = (Nova_FmtKind*)nova_alloc(sizeof(Nova_FmtKind));
-    _r->tag = NOVA_TAG_FmtKind_Bin;
+static NovaValue_FmtKind nova_make_FmtKind_Bin(void) {
+    NovaValue_FmtKind _r;
+    _r.tag = NOVA_TAG_FmtKind_Bin;
     return _r;
 }
 
-static Nova_FmtKind* nova_make_FmtKind_Exp(void) {
-    Nova_FmtKind* _r = (Nova_FmtKind*)nova_alloc(sizeof(Nova_FmtKind));
-    _r->tag = NOVA_TAG_FmtKind_Exp;
+static NovaValue_FmtKind nova_make_FmtKind_Exp(void) {
+    NovaValue_FmtKind _r;
+    _r.tag = NOVA_TAG_FmtKind_Exp;
     return _r;
 }
 
@@ -1122,8 +1101,6 @@ struct Nova_ReadBuffer {
 };
 
 typedef struct Nova_StringBuilder Nova_StringBuilder;
-typedef struct Nova_Sign Nova_Sign;
-typedef struct Nova_FmtKind Nova_FmtKind;
 typedef struct Nova_FmtCtx Nova_FmtCtx;
 struct Nova_FmtCtx {
     Nova_StringBuilder* sink;
@@ -1132,9 +1109,9 @@ struct Nova_FmtCtx {
     NovaOpt_nova_int precision;
     NovaOpt_Nova_Align_p align;
     nova_char fill;
-    Nova_Sign* sign;
+    NovaValue_Sign sign;
     nova_bool alternate;
-    Nova_FmtKind* kind;
+    NovaValue_FmtKind kind;
     nova_bool pad_consumed;
     nova_bool prec_consumed;
 };
@@ -1526,7 +1503,7 @@ static nova_byte nova_fn_7runtime7fmt_buf9hex_digit(uint64_t d, nova_bool upper)
 static nova_int nova_fn_7runtime7fmt_buf7int_fmt(nova_int v, nova_byte* buf, nova_int cap, NovaValue_FmtSpec spec);
 static nova_int nova_fn_7runtime7fmt_buf8bool_fmt(nova_bool v, nova_byte* buf, nova_int cap);
 static nova_int nova_fn_7runtime7fmt_buf8char_fmt(nova_char v, nova_byte* buf, nova_int cap);
-static nova_int nova_fn_7runtime7fmt_buf7f64_fmt(nova_f64 v, nova_byte* buf, nova_int cap, Nova_FloatKind* kind, nova_int prec);
+static nova_int nova_fn_7runtime7fmt_buf7f64_fmt(nova_f64 v, nova_byte* buf, nova_int cap, NovaValue_FloatKind kind, nova_int prec);
 static nova_int nova_fn_7runtime7fmt_buf7f32_fmt(nova_f32 v, nova_byte* buf, nova_int cap);
 static nova_int nova_fn_7runtime7fmt_buf13write_esc2_at(nova_byte* buf, nova_int cap, nova_int pos, nova_byte second);
 static nova_int nova_fn_7runtime7fmt_buf16write_hex_esc_at(nova_byte* buf, nova_int cap, nova_int pos, nova_byte c);
@@ -1579,9 +1556,9 @@ static NovaOpt_nova_int Nova_FmtCtx_method_width(Nova_FmtCtx* nova_self);
 static NovaOpt_nova_int Nova_FmtCtx_method_precision(Nova_FmtCtx* nova_self);
 static NovaOpt_Nova_Align_p Nova_FmtCtx_method_align(Nova_FmtCtx* nova_self);
 static nova_char Nova_FmtCtx_method_fill(Nova_FmtCtx* nova_self);
-static Nova_Sign* Nova_FmtCtx_method_sign(Nova_FmtCtx* nova_self);
+static NovaValue_Sign Nova_FmtCtx_method_sign(Nova_FmtCtx* nova_self);
 static nova_bool Nova_FmtCtx_method_alternate(Nova_FmtCtx* nova_self);
-static Nova_FmtKind* Nova_FmtCtx_method_kind(Nova_FmtCtx* nova_self);
+static NovaValue_FmtKind Nova_FmtCtx_method_kind(Nova_FmtCtx* nova_self);
 static nova_unit Nova_FmtCtx_method_pad(Nova_FmtCtx* nova_self, Nova_Vec____nova_byte* bytes);
 static nova_unit Nova_int_method_display(nova_int nova_self, Nova_FmtCtx* f);
 static nova_unit Nova_int_method_debug(nova_int nova_self, Nova_FmtCtx* f);
@@ -3891,21 +3868,21 @@ static nova_int nova_fn_7runtime7fmt_buf8char_fmt(nova_char v, nova_byte* buf, n
     return _nv_tmp_246;
 }
 
-static nova_int nova_fn_7runtime7fmt_buf7f64_fmt(nova_f64 v, nova_byte* buf, nova_int cap, Nova_FloatKind* kind, nova_int prec) {
+static nova_int nova_fn_7runtime7fmt_buf7f64_fmt(nova_f64 v, nova_byte* buf, nova_int cap, NovaValue_FloatKind kind, nova_int prec) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "f64_fmt", "cap >= 0", "shell_probe.nv", 57, NULL);
-    Nova_FloatKind* _nv_scr_247 = kind;
+    NovaValue_FloatKind _nv_scr_247 = kind;
     nova_int _nv_match_248;
     int _nv_matched_249 = 0;
-    if (!_nv_matched_249 && ((_nv_scr_247->tag == NOVA_TAG_FloatKind_Shortest))) {
+    if (!_nv_matched_249 && ((_nv_scr_247.tag == NOVA_TAG_FloatKind_Shortest))) {
         _nv_match_248 = ((nova_int)0LL);
         _nv_matched_249 = 1;
     }
-    if (!_nv_matched_249 && ((_nv_scr_247->tag == NOVA_TAG_FloatKind_Fixed))) {
+    if (!_nv_matched_249 && ((_nv_scr_247.tag == NOVA_TAG_FloatKind_Fixed))) {
         _nv_match_248 = ((nova_int)1LL);
         _nv_matched_249 = 1;
     }
-    if (!_nv_matched_249 && ((_nv_scr_247->tag == NOVA_TAG_FloatKind_Sci))) {
+    if (!_nv_matched_249 && ((_nv_scr_247.tag == NOVA_TAG_FloatKind_Sci))) {
         _nv_match_248 = ((nova_int)2LL);
         _nv_matched_249 = 1;
     }
@@ -4415,7 +4392,7 @@ static Nova_StringBuilder* Nova_StringBuilder_method_append__nova_f64(Nova_Strin
             nova_f64 v = __nova_arg_src0;
             nova_byte* buf = __nova_arg_src1;
             nova_int cap = __nova_arg_src2;
-            Nova_FloatKind* kind = (nova_int)(intptr_t)nova_make_FloatKind_Shortest();
+            NovaValue_FloatKind kind = nova_make_FloatKind_Shortest();
             nova_int prec = nova_int_checked_neg(((nova_int)1LL));
             _nv_tmp_340 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(v, buf, cap, kind, prec));
         }
@@ -4734,12 +4711,12 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
                 nova_f64 __nova_arg_src0 = mag;
                 nova_byte* __nova_arg_src1 = Nova_StringBuilder_method_spare(sb);
                 nova_int __nova_arg_src2 = Nova_const_runtime_string_builder_DISPLAY_F64_FIXED_CAP;
-                Nova_FloatKind* __nova_arg_src3 = (nova_int)(intptr_t)nova_make_FloatKind_Fixed();
+                NovaValue_FloatKind __nova_arg_src3 = nova_make_FloatKind_Fixed();
                 nova_int __nova_arg_src4 = clamped_prec;
                 nova_f64 v = __nova_arg_src0;
                 nova_byte* buf = __nova_arg_src1;
                 nova_int cap = __nova_arg_src2;
-                Nova_FloatKind* kind = __nova_arg_src3;
+                NovaValue_FloatKind kind = __nova_arg_src3;
                 nova_int prec = __nova_arg_src4;
                 _nv_tmp_387 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(v, buf, cap, kind, prec));
             }
@@ -4765,7 +4742,7 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
                 nova_f64 v = __nova_arg_src0;
                 nova_byte* buf = __nova_arg_src1;
                 nova_int cap = __nova_arg_src2;
-                Nova_FloatKind* kind = (nova_int)(intptr_t)nova_make_FloatKind_Shortest();
+                NovaValue_FloatKind kind = nova_make_FloatKind_Shortest();
                 nova_int prec = nova_int_checked_neg(((nova_int)1LL));
                 _nv_tmp_390 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(v, buf, cap, kind, prec));
             }
@@ -5009,13 +4986,13 @@ static Nova_FmtCtx* Nova_FmtCtx_static_bare(Nova_StringBuilder* sink, nova_int m
     _nv_tmp_421->precision = ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None});
     _nv_tmp_421->align = ((NovaOpt_Nova_Align_p){.value = NULL});
     _nv_tmp_421->fill = ((nova_char)32U);
-    _nv_tmp_421->sign = (nova_int)(intptr_t)nova_make_Sign_Minus();
+    _nv_tmp_421->sign = nova_make_Sign_Minus();
     _nv_tmp_421->alternate = false;
-    Nova_FmtKind* _nv_if_422;
+    NovaValue_FmtKind _nv_if_422;
     if (is_debug) {
-        _nv_if_422 = (nova_int)(intptr_t)nova_make_FmtKind_Debug();
+        _nv_if_422 = nova_make_FmtKind_Debug();
     } else {
-        _nv_if_422 = (nova_int)(intptr_t)nova_make_FmtKind_Display();
+        _nv_if_422 = nova_make_FmtKind_Display();
     }
     _nv_tmp_421->kind = _nv_if_422;
     _nv_tmp_421->pad_consumed = false;
@@ -5032,13 +5009,13 @@ static Nova_FmtCtx* Nova_FmtCtx_static_bare__sret(Nova_StringBuilder* sink, nova
     _nv_tmp_423->precision = ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None});
     _nv_tmp_423->align = ((NovaOpt_Nova_Align_p){.value = NULL});
     _nv_tmp_423->fill = ((nova_char)32U);
-    _nv_tmp_423->sign = (nova_int)(intptr_t)nova_make_Sign_Minus();
+    _nv_tmp_423->sign = nova_make_Sign_Minus();
     _nv_tmp_423->alternate = false;
-    Nova_FmtKind* _nv_if_424;
+    NovaValue_FmtKind _nv_if_424;
     if (is_debug) {
-        _nv_if_424 = (nova_int)(intptr_t)nova_make_FmtKind_Debug();
+        _nv_if_424 = nova_make_FmtKind_Debug();
     } else {
-        _nv_if_424 = (nova_int)(intptr_t)nova_make_FmtKind_Display();
+        _nv_if_424 = nova_make_FmtKind_Display();
     }
     _nv_tmp_423->kind = _nv_if_424;
     _nv_tmp_423->pad_consumed = false;
@@ -5087,19 +5064,19 @@ static Nova_FmtCtx* Nova_FmtCtx_static_rich(Nova_StringBuilder* sink, nova_int m
     }
     _nv_tmp_426->align = _nv_if_429;
     _nv_tmp_426->fill = fill_c;
-    Nova_Sign* _nv_if_432;
+    NovaValue_Sign _nv_if_432;
     if (sign_plus) {
-        _nv_if_432 = (nova_int)(intptr_t)nova_make_Sign_Plus();
+        _nv_if_432 = nova_make_Sign_Plus();
     } else {
-        _nv_if_432 = (nova_int)(intptr_t)nova_make_Sign_Minus();
+        _nv_if_432 = nova_make_Sign_Minus();
     }
     _nv_tmp_426->sign = _nv_if_432;
     _nv_tmp_426->alternate = alternate;
-    Nova_FmtKind* _nv_if_433;
+    NovaValue_FmtKind _nv_if_433;
     if (is_debug) {
-        _nv_if_433 = (nova_int)(intptr_t)nova_make_FmtKind_Debug();
+        _nv_if_433 = nova_make_FmtKind_Debug();
     } else {
-        _nv_if_433 = (nova_int)(intptr_t)nova_make_FmtKind_Display();
+        _nv_if_433 = nova_make_FmtKind_Display();
     }
     _nv_tmp_426->kind = _nv_if_433;
     _nv_tmp_426->pad_consumed = false;
@@ -5149,19 +5126,19 @@ static Nova_FmtCtx* Nova_FmtCtx_static_rich__sret(Nova_StringBuilder* sink, nova
     }
     _nv_tmp_436->align = _nv_if_439;
     _nv_tmp_436->fill = fill_c;
-    Nova_Sign* _nv_if_442;
+    NovaValue_Sign _nv_if_442;
     if (sign_plus) {
-        _nv_if_442 = (nova_int)(intptr_t)nova_make_Sign_Plus();
+        _nv_if_442 = nova_make_Sign_Plus();
     } else {
-        _nv_if_442 = (nova_int)(intptr_t)nova_make_Sign_Minus();
+        _nv_if_442 = nova_make_Sign_Minus();
     }
     _nv_tmp_436->sign = _nv_if_442;
     _nv_tmp_436->alternate = alternate;
-    Nova_FmtKind* _nv_if_443;
+    NovaValue_FmtKind _nv_if_443;
     if (is_debug) {
-        _nv_if_443 = (nova_int)(intptr_t)nova_make_FmtKind_Debug();
+        _nv_if_443 = nova_make_FmtKind_Debug();
     } else {
-        _nv_if_443 = (nova_int)(intptr_t)nova_make_FmtKind_Display();
+        _nv_if_443 = nova_make_FmtKind_Display();
     }
     _nv_tmp_436->kind = _nv_if_443;
     _nv_tmp_436->pad_consumed = false;
@@ -5200,9 +5177,9 @@ static nova_char Nova_FmtCtx_method_fill(Nova_FmtCtx* nova_self) {
     return _nv_tmp_448;
 }
 
-static Nova_Sign* Nova_FmtCtx_method_sign(Nova_FmtCtx* nova_self) {
+static NovaValue_Sign Nova_FmtCtx_method_sign(Nova_FmtCtx* nova_self) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    Nova_Sign* _nv_tmp_449 = (nova_self->sign);
+    NovaValue_Sign _nv_tmp_449 = (nova_self->sign);
     return _nv_tmp_449;
 }
 
@@ -5212,9 +5189,9 @@ static nova_bool Nova_FmtCtx_method_alternate(Nova_FmtCtx* nova_self) {
     return _nv_tmp_450;
 }
 
-static Nova_FmtKind* Nova_FmtCtx_method_kind(Nova_FmtCtx* nova_self) {
+static NovaValue_FmtKind Nova_FmtCtx_method_kind(Nova_FmtCtx* nova_self) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    Nova_FmtKind* _nv_tmp_451 = (nova_self->kind);
+    NovaValue_FmtKind _nv_tmp_451 = (nova_self->kind);
     return _nv_tmp_451;
 }
 

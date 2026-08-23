@@ -30,43 +30,43 @@ git -C "$R" add -A >/dev/null 2>&1
 git -C "$R" commit -qm base >/dev/null 2>&1
 
 echo "== проходит =="
-"$G" "$TMP/nowhere" >/dev/null 2>&1
+bash "$G" "$TMP/nowhere" >/dev/null 2>&1
 check "нет git-дерева — зелёный (судить нечего)" "$?" "0"
 
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "дифф пуст — зелёный" "$RC" "0"
 
 printf '# base\n# sem 10 -> 11: новое имя наружу, потому что его спрашивает эмиттер\nsem 11\ntypes 5\n' > "$B"
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "сдвиг ВВЕРХ с причиной — зелёный" "$RC" "0"
 has "назвал число файлов со сдвигом" "$OUT" "1"
 
 printf '# base\n# types 5 -> 4: имя удалено, вызывающих не было\nsem 10\ntypes 4\n' > "$B"
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "сдвиг ВНИЗ с причиной — зелёный" "$RC" "0"
 
 printf '# base\nsem 10\ntypes 5\n# хвостовой комментарий без сдвига\n' > "$B"
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "комментарий без сдвига числа — зелёный" "$RC" "0"
 
 echo "== краснеет =="
 printf '# base\nsem 11\ntypes 5\n' > "$B"
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "сдвиг ВВЕРХ без причины — красный" "$RC" "1"
 has "назвал файл" "$OUT" "novac-surface.baseline"
 has "назвал, что причин ноль" "$OUT" "причин 0"
 
 printf '# base\nsem 10\ntypes 4\n' > "$B"
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "сдвиг ВНИЗ без причины — красный (сужение скрывает так же)" "$RC" "1"
 
 printf '# base\n# sem 10 -> 11: причина\nsem 11\ntypes 4\n' > "$B"
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "ОДНА причина на ДВА сдвига в одном файле — зелёный (минимум, не счёт)" "$RC" "0"
 
 printf '# base\nsem 11\ntypes 5\n' > "$B"
 git -C "$R" add -A >/dev/null 2>&1
-OUT=$("$G" "$R" "$R" 2>&1); RC=$?
+OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "тот же сдвиг в ИНДЕКСЕ — красный (индекс основной вход)" "$RC" "1"
 
 echo "самотест check-novac-ratchet-moves: PASS $PASS FAIL $FAIL"
