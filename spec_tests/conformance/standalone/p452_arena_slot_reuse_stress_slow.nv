@@ -54,7 +54,15 @@
 //
 // ENV NOVA_MAXPROCS=16
 
-module standalone.p452_arena_slot_reuse_stress
+// WHY `_slow` (D376, 2026-08-23): this fixture is STOCHASTIC by its own
+// admission above, and it timed out under the load of the full gate -- twice.
+// It was first cut from 20 rounds to 4 for that reason, and still went red on
+// CI. A lane that reddens at random teaches its reader to rerun instead of to
+// read, so a stress shape does not belong in the always-run set. `*_slow.nv`
+// is the convention's own answer: kept in the repository, skipped by default,
+// run by `--include-slow` in the merge gate and nightly -- the class keeps its
+// judge without the daily lane paying for it.
+module standalone.p452_arena_slot_reuse_stress_slow
 
 import std.time.duration
 
