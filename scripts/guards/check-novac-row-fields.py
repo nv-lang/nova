@@ -67,9 +67,14 @@ def main():
         # строк и решение 12 разрезало его по смыслу. Файл в списке, потому что
         # реестр §10.3в судит ПОЛЯ СТРОК, а не файлы: строка, уехавшая в
         # со-равный файл того же модуля, осталась той же строкой.
+        # `binding.nv` — тем же днём и по тому же решению: `ParamDef`, `ArgSpec`,
+        # `ParamMode` и `ArgClass` уехали туда из sem.nv, когда тот снова
+        # перешагнул тысячу строк. Разрез по СМЫСЛУ (что такое параметр, что
+        # такое аргумент, и может ли один заполнить другой), а поля остались
+        # теми же полями — и страж сразу сказал, что перестал их видеть.
         sem_files = [s / "sem" / "sem.nv", s / "sem" / "channel.nv", s / "sem" / "coerce.nv",
                      s / "sem" / "callables.nv", s / "sem" / "protocols.nv",
-                     s / "types" / "types.nv"]
+                     s / "sem" / "binding.nv", s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"
 

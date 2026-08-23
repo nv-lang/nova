@@ -79,7 +79,18 @@ export type CalleeRef value {
     target CalleeTarget /// WHICH callable, variant or type -- each in its own space, because the sum carries the row
     subst_off int /// First type argument of this call in `subst_args`; 0 with subst_cnt 0 = not generic
     subst_cnt int /// How many type arguments the call was written with; 0 = a plain call
+    slot_off int /// First slot of this call's argument BINDING in `arg_slots`
+    slot_cnt int /// How many slots the binding covers -- the callee's parameter count
 }
+
+/// WHY THE BINDING LIVES HERE AND NOT IN THE EMITTER (wave 4, D102). Once an
+/// argument may be written BY NAME and a parameter may be OMITTED, the written
+/// order of a call says nothing about which parameter each argument means. That
+/// mapping is a DECISION -- it is refused when it does not exist -- so it belongs
+/// where the other decisions about a call live, next to the row and the type
+/// arguments in one row that cannot disagree with itself. An emitter that
+/// re-derived it would be a second resolver, and the two would part company on
+/// the first overload.
 
 /// Do two decisions name the SAME target? Asked by the one writer, to hold
 /// "a call is resolved once" -- and asked with a nested match rather than `==`
@@ -182,6 +193,7 @@ export type CheckOut {
     types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
     res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
+    arg_slots []int /// Flat pool of argument BINDINGS: per parameter slot, the index of the argument filling it, or -1 = its declared default.
 }
 
 /// An empty channel sized for a file of `node_count` branch nodes. The size
@@ -195,7 +207,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
     }
-    CheckOut { types, res, subst_args: []TyId.new() }
+    CheckOut { types, res, subst_args: []TyId.new(), arg_slots: []int.new() }
 }
 
 /// Record the type of a node. Writing a DIFFERENT answer over an existing one
@@ -212,7 +224,8 @@ export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
 }
 
 /// Record the decided target of a call.
-export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []TyId) -> ()
+export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []TyId,
+                                     slots []int) -> ()
     requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a call outside this file's id space"
     requires target_present(target), "sem: channel callee write with no row — absence is not a decision"
 {
@@ -227,7 +240,10 @@ export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []Ty
     // _defs + node_args); here they live in one row, so they cannot disagree.
     ro subst_off = @subst_args.len()
     @subst_args.append(subst)
-    @res[raw_node(id)] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len() })
+    ro slot_off = @arg_slots.len()
+    @arg_slots.append(slots)
+    @res[raw_node(id)] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len(),
+                                                      slot_off, slot_cnt: slots.len() })
 }
 
 /// Record the substitution instantiating a generic at a NON-call node (record
@@ -318,6 +334,23 @@ export fn CalleeRef @callable_row() -> FnRow {
         CalleeVariant(_) => ice("sem: the callable row of a variant reference — a variant row is not a callable row")
         CalleeCtor(_) => ice("sem: the callable row of a construction — a type id is not a callable row")
     }
+}
+
+/// The BINDING a call was resolved with: per parameter slot, which written
+/// argument fills it, or -1 when the declaration's default does.
+///
+/// A VIEW into the pool, like the substitution beside it. The emitter walks this
+/// and nothing else: the written order of the arguments is not the order they
+/// are passed in, and a slot may have no argument at all.
+export fn CheckOut @callee_slots_of(id NodeId) -> ro []int
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: callee_slots_of outside this file's id space"
+{
+    ro cr = match @res[raw_node(id)] {
+        Callee(c) => c
+        Unresolved => ice("sem: callee_slots_of on a node with nothing recorded")
+        Subst(_) => ice("sem: callee_slots_of on a node recorded as an instantiation")
+    }
+    @arg_slots[cr.slot_off..cr.slot_off + cr.slot_cnt]
 }
 
 /// The substitution a CALL was written with -- a VIEW into the pool, not a

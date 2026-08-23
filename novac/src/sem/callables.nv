@@ -365,14 +365,49 @@ fn FnTable @fits(row FnRow, args []ArgSpec, form CallForm) -> bool {
     } else {
         // The declaration was written in the form the call site uses.
     }
-    if fd.param_cnt != args.len() {
+    // ARITY IS NO LONGER EQUALITY (wave 4, D102). A call may write FEWER
+    // arguments than the declaration has parameters -- the omitted ones carry
+    // defaults -- and it may write them BY NAME, in which case the written
+    // order says nothing about which parameter each one means. So the question
+    // "does this row take this call" is answered by the BINDING, and the
+    // primitives it is composed of allocate nothing, which is what lets this
+    // door stay a door (check-novac-no-alloc-in-lookup).
+    ro run = positional_run(args)
+    if run < 0 {
+        // A positional argument after a named one: D102 call-rule 3.
         return false
     } else {
-        // Same arity: the positions can be compared one by one below.
+        // Positional first, named after.
     }
-    for i in 0..fd.param_cnt {
-        ro p = @params[fd.param_off + i]
-        if args[i].type_id >= 0 && p.type_id != args[i].type_id {
+    if run > fd.param_cnt {
+        return false
+    } else {
+        // No more positional arguments than parameters to take them.
+    }
+    mut bound = 0
+    for s in 0..fd.param_cnt {
+        ro at = bind_slot_of(@params, fd.param_off, fd.param_cnt, args, s)
+        if at < 0 {
+            // Nothing fills this slot: legal exactly when the declaration says
+            // what to put there.
+            if slot_is_required(@params, fd.param_off, s) { return false } else { continue }
+        } else {
+            // Filled -- by position or by name, and which decides the next rule.
+        }
+        if s < run && !slot_is_required(@params, fd.param_off, s) {
+            // A defaulted parameter is keyword-only (D102 call-rule 1).
+            return false
+        } else {
+            // Named, or required: both are legal ways to fill this slot.
+        }
+        ro p = @params[fd.param_off + s]
+        // THE DOOR, not `>= 0` (2026-08-23). `is_ty` is what says "this position
+        // carries a type"; the bare comparison of a `TyId` against zero answered
+        // TRUE for `no_ty()`, and every generic row stopped fitting because its
+        // type-PARAMETER was then compared against an absent type. The bare form
+        // stood here since the door was written -- it is a newtype, and asking a
+        // newtype an int's question is exactly what the door exists to prevent.
+        if is_ty(args[at].type_id) && p.type_id != args[at].type_id {
             return false
         } else {
             // Either this position is not typed yet (no_ty()), or it matches.
@@ -382,13 +417,17 @@ fn FnTable @fits(row FnRow, args []ArgSpec, form CallForm) -> bool {
         // different callables, so a resolution comparing types alone could not
         // tell them apart -- it answered "overloaded, not narrowed" and refused
         // both (measured 2026-08-21).
-        if !mode_admits(p.mode, args[i].cls) {
+        if !mode_admits(p.mode, args[at].cls) {
             return false
         } else {
             // This argument's class is one this mode accepts.
         }
+        bound += 1
     }
-    true
+    // EVERY WRITTEN ARGUMENT FOUND A SLOT. A name no parameter carries, and a
+    // slot named twice, both leave an argument unbound -- one count refuses
+    // both, and `bind_fault` is what says which it was.
+    bound == args.len()
 }
 
 /// How specific this row is: the sum of its parameters' mode specificities.
@@ -442,6 +481,28 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
     }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
                        tparam_off: toff, tparam_cnt: tparam_names.len(), next_row: head })
+}
+
+/// The SINGLE row of this name, when the name carries exactly one.
+///
+/// `None` when the name is unknown OR overloaded, and the difference matters to
+/// the caller that asks: a refusal may name a parameter only of a declaration
+/// that is the one this call could have meant. With two candidates, "parameter
+/// `by` is passed by name only" would be a statement about a row nobody chose.
+#realtime nogc
+export fn FnTable @only_row_of(name str) -> Option[FnRow] {
+    ro head = FnRow(@heads.find(name))
+    if raw_row(head) < 0 {
+        return None
+    } else {
+        // A row of this name exists; whether it is alone is the next question.
+    }
+    if raw_row(@rows[raw_row(head)].next_row) >= 0 {
+        return None
+    } else {
+        // No second row carries this name.
+    }
+    Some(head)
 }
 
 /// E2-b3 WAVE 3B -- STRUCTURAL SATISFACTION: does `t` have every method the

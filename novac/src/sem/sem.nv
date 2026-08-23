@@ -108,94 +108,6 @@ export type TypeDef value {
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
 }
 
-/// The MODE of a parameter: the third axis of mutability -- and an axis of
-/// OVERLOADING.
-///
-/// `fn f(x T)`, `fn f(mut x T)` and `fn f(consume x T)` are three legal
-/// callables of ONE name (10-overloading.md, the 2026-07-06 amendment to the
-/// D326 revision, rule P13), and which one a call selects is decided by WHAT
-/// the argument is, not by its type. The receiver is parameter zero (plan 273),
-/// so the same axis answers `@m` / `mut @m` / `consume @m` -- which is how std
-/// declares `Vec[T] @ptr() -> *T` beside `Vec[T] mut @ptr() -> *mut T`.
-export type ParamMode enum
-    | ModeRo /// the default: a read-only view, nothing is written through it
-    | ModeMut /// mutation the caller sees (in-out)
-    | ModeConsume /// ownership transfer; `consume` implies `mut`
-
-/// How SPECIFIC a mode is when several candidates fit (P14 filter 4:
-/// `consume` beats `mut` beats `ro`).
-///
-/// A number and not a comparison chain: the winner is the row with the highest
-/// TOTAL over its positions, and a tie is refused as ambiguous rather than
-/// broken by an order nobody declared.
-#realtime nogc
-export fn ParamMode @specificity() -> int => match @ {
-    ModeRo => 0
-    ModeMut => 1
-    ModeConsume => 2
-}
-
-/// One parameter of a callable: its type AND its mode, in one row.
-///
-/// Two parallel vectors would admit a state the language does not have -- a
-/// mode out of step with its type -- and this plan has paid for that shape
-/// twice already (P23). A range of these rows is one range.
-export type ParamDef value {
-    type_id TyId /// the parameter's type; `no_ty()` = unreadable, and backends ice on it rather than invent one
-    mode ParamMode /// as written; `ModeRo` when the declaration writes nothing
-}
-
-/// WHAT an argument IS at a call site -- the classes rule P14 filters on.
-///
-/// Not its type: `tag(r)` and `tag(m)` have the same argument type and select
-/// different callables. That is the whole point of the axis, and it is why the
-/// checker has to know how a name was BOUND, not only what it holds.
-export type ArgClass enum
-    | ArgRo /// a `ro` binding, or a place novac judges conservatively
-    | ArgMut /// a `mut` binding -- a mutable place
-    | ArgOwnedTemp /// an owned temporary: a call result, a literal, a constructor
-    | ArgConsume /// a binding declared `consume` -- its form IS the promise
-
-/// One argument of a call: its type and its class.
-export type ArgSpec value {
-    type_id TyId /// the argument's type, or `no_ty()` while the position is not typed
-    cls ArgClass /// which class P14 filters this position by
-}
-
-/// Rule P14: may a parameter of this MODE take an argument of this CLASS?
-///
-/// The rule as the spec states it, arm by arm:
-///   * `ro` takes ANYTHING -- it promises nothing about the value's future, so
-///     it is always applicable and always least specific;
-///   * `mut` needs a mutable PLACE. An owned temporary has nowhere to write
-///     back to (D133: an rvalue into a mut view is an error) and a `ro`
-///     binding forbids the write;
-///   * `consume` moves ownership, so it takes a temporary (nobody else holds
-///     it) or a binding DECLARED `consume`. Never a live `ro`/`mut` binding:
-///     silent consumption of a binding not declared for it is exactly what the
-///     rule refuses;
-///
-/// The axis has exactly three modes. `uninit` is not one of them: measured
-/// 2026-08-21, the oracle refuses `fn f(uninit v T)` outright and reads
-/// `fn f(v uninit T)` as a TYPE -- so it belongs to the type and to a pointer's
-/// pointee (`*mut uninit T`), never to this rule.
-#realtime nogc
-export fn mode_admits(m ParamMode, c ArgClass) -> bool => match m {
-    ModeRo => true
-    ModeMut => match c {
-        ArgMut => true
-        ArgConsume => true
-        ArgRo => false
-        ArgOwnedTemp => false
-    }
-    ModeConsume => match c {
-        ArgOwnedTemp => true
-        ArgConsume => true
-        ArgRo => false
-        ArgMut => false
-    }
-}
-
 /// One top-level declaration of the unified name registry: what a name IS.
 export type Def value {
     target DefTarget /// What this name IS, carrying the row of its own space: a type id, a variant row (`Ctx.variant_rows`) or a callable row (`Ctx.fns`)
@@ -924,7 +836,8 @@ export fn collect_types(file Node) -> Ctx {
                     // the E2 subset does not read) keeps the -1 sentinel: the
                     // slot must still exist so param_off/param_cnt line up, and
                     // backends ice on -1 rather than invent a type (#652).
-                    param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
+                    param_ids.push(ParamDef { name: param_name_of(pk), type_id: -1,
+                                              mode: ModeRo, default_expr: param_default_slot(pk) })
                     continue
                 }
                 // [LEGACY-#676] var-index-method: same binding hop as in
@@ -932,7 +845,8 @@ export fn collect_types(file Node) -> Ctx {
                 // through the CONTAINER.
                 ro tnode = pk[tat]
                 if tnode.kind_of() != NodeKind.LeafNode {
-                    param_ids.push(ParamDef { type_id: -1, mode: ModeRo })
+                    param_ids.push(ParamDef { name: param_name_of(pk), type_id: -1,
+                                              mode: ModeRo, default_expr: param_default_slot(pk) })
                     continue
                 }
                 // An unknown type is STORED as no_ty() and said so:
@@ -944,7 +858,8 @@ export fn collect_types(file Node) -> Ctx {
                 // Type AND mode in one row: the mode is an axis of overloading
                 // (P14), so a collector that dropped it would make `f(x T)` and
                 // `f(mut x T)` one callable twice over.
-                param_ids.push(ParamDef { type_id: pt, mode: param_mode_at(pk) })
+                param_ids.push(ParamDef { name: param_name_of(pk), type_id: pt,
+                                          mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
             }
             fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk))
             ro frow = FnRow(fns.rows.len() - 1)

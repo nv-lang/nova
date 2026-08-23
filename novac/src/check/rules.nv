@@ -21,7 +21,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds, ret_is_unit}
+import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds, ret_is_unit, param_default_slot}
 import ../types.{TyId, no_ty, is_ty}
 
 
@@ -256,14 +256,89 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 /// signature that declares one.
 const VARIADIC_MSG = "outside the subset: a variadic parameter `...args []T` arrives with generics (E2-b)"
 
-/// A DEFAULT parameter value, `fn bump(v int, by int = 1)`. Same history as the
-/// variadic above: the `=` tore the list apart and the blame landed on the
-/// return type.
-const DEFAULT_PARAM_MSG = "outside the subset: a default parameter value is not compiled yet (E2-b)"
+/// A DEFAULT parameter value whose expression is not a NUMBER or a boolean.
+///
+/// The form itself is in the subset since wave 4; this is the one narrowing, and
+/// it follows from what D102 says a default IS: an expression evaluated AT THE
+/// CALL SITE, each call anew, allowed to mention preceding parameters and
+/// module-level `const`. Emitting such an expression means writing it inside the
+/// CALLER, where those names mean the caller's own bindings or nothing at all --
+/// so what the subset takes is the values that mean the same in both places: a
+/// numeric literal and a boolean. A STRING is refused with them, because a Nova
+/// string literal may interpolate (`"${x}"`) and the interpolation would read
+/// the caller's scope; nothing about the wave needs it (novac's own defaults are
+/// `skip int = 0`, measured), and a refusal by name can be relaxed later.
+const DEFAULT_EXPR_MSG = "outside the subset: a default parameter value is a number or a boolean here (D102 evaluates it at the call site, and any other form would be read in the caller's scope)"
 
-/// A NAMED argument, `bump(1, by: 2)`. Nova passes defaulted parameters BY
-/// NAME, so this form is not exotic -- it arrives with every default.
-const NAMED_ARG_MSG = "outside the subset: a named argument `name: value` is not compiled yet (E2-b)"
+/// D102 declaration-rule 1: defaulted parameters come AFTER the required ones.
+/// Not a subset limit -- the language forbids it, and so does the oracle.
+const DEFAULT_ORDER_MSG = "a parameter with a default value stands before one without (D102: defaulted parameters come last)"
+
+/// D102 declaration-rule 1, judged over the LIST: once a parameter carries a
+/// default, every parameter after it must carry one too.
+///
+/// Judged of the DECLARATION and not of a parameter, because it is a statement
+/// about the ORDER -- a single parameter cannot break it.
+fn Checker mut @report_if_default_order(kids []Node) -> () {
+    mut seen_default = false
+    for c in kids {
+        if c.kind_of() != NodeKind.Param { continue }
+        ro pk = branch_children(c)
+        if param_default_slot(pk).len() > 0 {
+            seen_default = true
+        } else {
+            if seen_default {
+                @report_first_leaf_of(pk, DEFAULT_ORDER_MSG)
+                return
+            } else {
+                // Still inside the run of required parameters.
+            }
+        }
+    }
+}
+
+/// The default's EXPRESSION, judged against the subset: a numeric literal
+/// (`= 0`, `= -1`) or a boolean (`= false`).
+/// Answers whether it REPORTED, because the caller must then stop: the walk
+/// into a refused default would type its expression and name a second cause for
+/// the same mistake -- `by int = "s".len()` came out as the subset refusal AND
+/// as "no such method", which is the cascade check-novac-no-cascade.sh forbids.
+fn Checker mut @report_if_default_not_value(pk []Node) -> bool {
+    ro d = param_default_slot(pk)
+    if d.len() == 0 {
+        return false
+    } else {
+        // A default is written: its shape decides.
+    }
+    if default_is_value(d[0]) {
+        return false
+    } else {
+        // Any other expression would be read in the caller's scope.
+    }
+    @report_first_leaf_of(pk, DEFAULT_EXPR_MSG)
+    true
+}
+
+/// Is this default expression a value that means the same at every call site?
+///
+/// A numeric literal (the `Lit` node, with or without the unary minus the parser
+/// folds into it) or a boolean, which is a NAME in the tree and a C keyword in
+/// the emission -- so neither reads a scope.
+fn default_is_value(d Node) -> bool {
+    ro k = d.kind_of()
+    // A boolean is a NAME in the tree and a C keyword in the emission, so it
+    // reads no scope. Every refusal below is a terminator, which is why no
+    // `else` is written: an `else` closing a check by KIND has to be a refusal
+    // (P21), and these are answers, not refusals.
+    if k == NodeKind.Name { return is_bool_literal(expr_leaf_name(d)) }
+    if k != NodeKind.Lit { return false }
+    ro kids = branch_children(d)
+    if kids.len() == 0 { return false }
+    // The token stands LAST: the unary minus, when written, stands before it.
+    ro t = kids[kids.len() - 1]
+    if t.kind_of() != NodeKind.LeafNode { return false }
+    leaf_kind(t) == TokenKind.IntLit || leaf_kind(t) == TokenKind.FloatLit
+}
 
 /// A CAST, `1 as u8`. `as` was not a keyword of this lexer until 2026-08-18, so
 /// the cast lexed as two names and the refusal read "unknown name" -- the

@@ -1,0 +1,379 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/binding.nv — WHICH argument goes into WHICH parameter slot, and
+// the NAME of every way that can fail (E2-b3 wave 4, plan 274 section 9.1e).
+//
+// Donor: Swift and C# for the FORM — a named argument is part of the call, and a
+//        defaulted parameter is keyword-only; the rules themselves are D102's,
+//        which is the authority here and is stricter than either donor (C# lets
+//        a defaulted parameter be passed positionally and now publicly regrets
+//        it). NOT taken: C++ default arguments — they are declaration-site
+//        substitution with no names at all, so the whole question disappears
+//        along with the readability the rule buys.
+// Role: layer 3 of the map (sem), the answer to "how does this call reach this
+//       declaration" — asked by resolution (does it fit), by the refusal (why
+//       not) and by the emitter (in which order do the arguments come out).
+// Used by: `sem.callables` (@fits, on the hot path), `check.calls` and
+//          `check.typing` (recording and refusing), `emit_c` through the channel.
+// Guarded by: check-novac-no-alloc-in-lookup.py (the primitives below are what
+//             let the lookup door stay allocation-free), check-novac-row-fields.py,
+//             sem/binding_test.nv (every fault, both directions).
+//
+// WHY THREE PRIMITIVES AND NOT ONE FUNCTION RETURNING THE ANSWER. The lookup
+// door may not allocate — compilation speed is priority 1 (P14), and the guard
+// states it — while the ANSWER a caller needs is a vector of slots. So the RULES
+// live in primitives that allocate nothing and answer per slot; `@fits` composes
+// them into a bool, `bind_fault` into a named reason, `bind_slots` into the
+// vector. One rule, three readings, and no reading can disagree with another
+// about what binds where.
+
+// WHAT MOVED HERE, AND WHY IT IS THE SAME MEANING (2026-08-23). `ParamMode`,
+// `ParamDef`, `ArgClass`, `ArgSpec` and `mode_admits` were declared in sem.nv
+// and are declared here now. The cut is not by size -- sem.nv crossed a thousand
+// lines and that is what made it visible, decision 12 -- but by meaning: every
+// one of them answers "what is a parameter, what is an argument, and may this
+// one fill that one", which is the question this file exists for. After the move
+// the binding rules sit beside the rows they judge, and nothing reads a row
+// whose definition lives a file away.
+
+module novac.sem
+
+import ../tree.{Node}
+
+/// The MODE of a parameter: the third axis of mutability -- and an axis of
+/// OVERLOADING.
+///
+/// `fn f(x T)`, `fn f(mut x T)` and `fn f(consume x T)` are three legal
+/// callables of ONE name (10-overloading.md, the 2026-07-06 amendment to the
+/// D326 revision, rule P13), and which one a call selects is decided by WHAT
+/// the argument is, not by its type. The receiver is parameter zero (plan 273),
+/// so the same axis answers `@m` / `mut @m` / `consume @m` -- which is how std
+/// declares `Vec[T] @ptr() -> *T` beside `Vec[T] mut @ptr() -> *mut T`.
+export type ParamMode enum
+    | ModeRo /// the default: a read-only view, nothing is written through it
+    | ModeMut /// mutation the caller sees (in-out)
+    | ModeConsume /// ownership transfer; `consume` implies `mut`
+
+/// How SPECIFIC a mode is when several candidates fit (P14 filter 4:
+/// `consume` beats `mut` beats `ro`).
+///
+/// A number and not a comparison chain: the winner is the row with the highest
+/// TOTAL over its positions, and a tie is refused as ambiguous rather than
+/// broken by an order nobody declared.
+#realtime nogc
+export fn ParamMode @specificity() -> int => match @ {
+    ModeRo => 0
+    ModeMut => 1
+    ModeConsume => 2
+}
+
+/// One parameter of a callable: its type AND its mode, in one row.
+///
+/// Two parallel vectors would admit a state the language does not have -- a
+/// mode out of step with its type -- and this plan has paid for that shape
+/// twice already (P23). A range of these rows is one range.
+///
+/// The NAME and the DEFAULT joined it in wave 4 for the same reason, and
+/// because both are answers about the SAME parameter that resolution needs at
+/// once: D102 binds an argument to a parameter BY NAME and lets a defaulted one
+/// be omitted, so "which parameter is `by`" and "may this slot be left out" are
+/// two readings of one row. The default is kept as the EXPRESSION as written --
+/// D102 evaluates it at the call site, each call anew, so a stored value would
+/// be the wrong thing to store.
+///
+/// WHY A VECTOR OF AT MOST ONE AND NOT `Option[Node]`, which is what this field
+/// means. INTEROP, not taste: the ORACLE CANNOT COMPILE a record field whose
+/// type is a generic SUM instance. Measured 2026-08-23 on three independent
+/// probes -- `Option[int]`, `Option[Nd]` and `Result[int, str]` as a field, in
+/// a `value` record and a plain one alike -- and the emission is wrong in two
+/// different ways: the record literal casts the maker to `nova_int`
+/// (`_nv_tmp.default_expr = (nova_int)(intptr_t)nova_make_Option_None()`) and an
+/// `if Some(v) = r.d` binding comes out typed as the wrong scalar. A plain sum
+/// field and a generic RECORD field both build, so the hole is narrow and it is
+/// the oracle's, not the language's: nothing in `std` or in novac had ever
+/// written an optional FIELD, so the form was simply never tried. Filed in the
+/// registry as CLASS "a field's generic-sum instantiation is lost in codegen".
+///
+/// The END CONDITION is written here so the shape cannot quietly become the
+/// pattern: this field becomes `Option[Node]` the day the oracle compiles one --
+/// or the day novac compiles itself, whichever comes first. Until then the
+/// "at most one" reading lives in ONE door (`param_default_of`), so no caller
+/// has to remember it.
+export type ParamDef value {
+    name str /// as written; `""` when the shape carries no readable name (recovery debris)
+    type_id TyId /// the parameter's type; `no_ty()` = unreadable, and backends ice on it rather than invent one
+    mode ParamMode /// as written; `ModeRo` when the declaration writes nothing
+    default_expr []Node /// the DEFAULT written for it (`by int = 2`): EMPTY = required, one element = declared
+}
+
+/// WHAT an argument IS at a call site -- the classes rule P14 filters on.
+///
+/// Not its type: `tag(r)` and `tag(m)` have the same argument type and select
+/// different callables. That is the whole point of the axis, and it is why the
+/// checker has to know how a name was BOUND, not only what it holds.
+export type ArgClass enum
+    | ArgRo /// a `ro` binding, or a place novac judges conservatively
+    | ArgMut /// a `mut` binding -- a mutable place
+    | ArgOwnedTemp /// an owned temporary: a call result, a literal, a constructor
+    | ArgConsume /// a binding declared `consume` -- its form IS the promise
+
+/// One argument of a call: its type and its class.
+export type ArgSpec value {
+    type_id TyId /// the argument's type, or `no_ty()` while the position is not typed
+    cls ArgClass /// which class P14 filters this position by
+    name str /// the parameter NAME it was passed under (`by: 2`); `""` = positional
+}
+
+/// Rule P14: may a parameter of this MODE take an argument of this CLASS?
+///
+/// The rule as the spec states it, arm by arm:
+///   * `ro` takes ANYTHING -- it promises nothing about the value's future, so
+///     it is always applicable and always least specific;
+///   * `mut` needs a mutable PLACE. An owned temporary has nowhere to write
+///     back to (D133: an rvalue into a mut view is an error) and a `ro`
+///     binding forbids the write;
+///   * `consume` moves ownership, so it takes a temporary (nobody else holds
+///     it) or a binding DECLARED `consume`. Never a live `ro`/`mut` binding:
+///     silent consumption of a binding not declared for it is exactly what the
+///     rule refuses;
+///
+/// The axis has exactly three modes. `uninit` is not one of them: measured
+/// 2026-08-21, the oracle refuses `fn f(uninit v T)` outright and reads
+/// `fn f(v uninit T)` as a TYPE -- so it belongs to the type and to a pointer's
+/// pointee (`*mut uninit T`), never to this rule.
+#realtime nogc
+export fn mode_admits(m ParamMode, c ArgClass) -> bool => match m {
+    ModeRo => true
+    ModeMut => match c {
+        ArgMut => true
+        ArgConsume => true
+        ArgRo => false
+        ArgOwnedTemp => false
+    }
+    ModeConsume => match c {
+        ArgOwnedTemp => true
+        ArgConsume => true
+        ArgRo => false
+        ArgMut => false
+    }
+}
+
+
+/// WHY a call's arguments do not bind to a declaration's parameters — or
+/// `FaultNone` when they do.
+///
+/// Every arm carries the POSITION the reader has to look at, because a refusal
+/// that says "the arguments do not fit" sends them to count commas (D420). The
+/// numbers are internal (0-based slots, 0-based argument indices); the caller
+/// turns them into the 1-based counting a reader does.
+export type BindFault enum
+    | FaultNone /// the arguments bind: every slot filled once, every argument used
+    | FaultPositionalAfterNamed(int) /// argument index: a positional argument stands after a named one (D102 call-rule 3)
+    | FaultTooManyArgs(int) /// how many arguments were written; the declaration takes fewer
+    | FaultPositionalDefaulted(int) /// slot: a parameter with a default was passed positionally (D102 call-rule 1)
+    | FaultUnknownName(int) /// argument index: no parameter of this declaration carries that name
+    | FaultDuplicate(int) /// slot: bound twice — positionally and by name, or twice by name (D102 call-rule 5)
+    | FaultMissing(int) /// slot: a parameter without a default that nobody passed (D102 call-rule 6)
+
+/// How many LEADING positional arguments this call writes, or -1 when a
+/// positional argument stands AFTER a named one (D102 call-rule 3 forbids it,
+/// and the -1 is what carries that refusal out of an allocation-free door).
+///
+/// Positional arguments bind left to right, so their COUNT is all a slot needs
+/// to know whether it was filled positionally — which is what makes the whole
+/// binding answerable per slot, with no buffer.
+#realtime nogc
+fn positional_run(args []ArgSpec) -> int {
+    mut run = 0
+    mut seen_named = false
+    for a in args {
+        if a.name == "" {
+            // A positional argument after a named one: D102 call-rule 3, and the
+            // -1 is what carries the refusal out of an allocation-free door.
+            if seen_named { return -1 }
+            run += 1
+        } else {
+            seen_named = true
+        }
+    }
+    run
+}
+
+/// The argument INDEX that binds parameter slot `s`, or -1 when nothing does.
+///
+/// Allocation-free by construction: a slot inside the positional run is bound by
+/// the argument at the same index, and outside it by an argument written with
+/// this slot's NAME. The LAST match wins on purpose — a duplicate name then
+/// leaves an argument unbound, and the counting in `bind_fault` sees it.
+#realtime nogc
+fn bind_slot_of(params []ParamDef, off int, cnt int, args []ArgSpec, s int) -> int {
+    ro run = positional_run(args)
+    if run >= 0 && s < run && s < cnt {
+        return s
+    } else {
+        // Not filled positionally: a name is the only other way in.
+    }
+    if s >= cnt {
+        return -1
+    } else {
+        // A slot this declaration really has: its name can be looked for.
+    }
+    ro want = params[off + s].name
+    mut at = -1
+    mut i = 0
+    for a in args {
+        if a.name == want && want != "" {
+            at = i
+        } else {
+            // A positional argument, or a name meant for another slot.
+        }
+        i += 1
+    }
+    at
+}
+
+/// Does this slot REQUIRE an argument — that is, does its declaration write no
+/// default? The "at most one element" reading of `ParamDef.default_expr` lives
+/// HERE and nowhere else (see the field's own note on why it is a vector).
+#realtime nogc
+fn slot_is_required(params []ParamDef, off int, s int) -> bool =>
+    params[off + s].default_expr.len() == 0
+
+/// The DEFAULT expression declared for a slot, or `None` when it is required.
+/// The other half of the same reading, for the emitter.
+#realtime nogc
+export fn slot_default_of(params []ParamDef, off int, s int) -> Option[Node] {
+    if params[off + s].default_expr.len() == 0 {
+        None
+    } else {
+        Some(params[off + s].default_expr[0])
+    }
+}
+
+/// WHY these arguments do not bind to these parameters — the whole of D102's
+/// call rules in one place, in the order a reader meets them.
+///
+/// Allocates nothing itself; it is not on the lookup path anyway (it is asked
+/// once, about the row that was already chosen, or about the one whose refusal
+/// has to be named).
+export fn bind_fault(params []ParamDef, off int, cnt int, args []ArgSpec) -> BindFault {
+    ro run = positional_run(args)
+    if run < 0 {
+        // The first positional argument standing after a named one is the one
+        // to name; `positional_run` counted the run, so it is at that index.
+        return BindFault.FaultPositionalAfterNamed(named_break_at(args))
+    } else {
+        // Positional first, named after: the shape D102 requires.
+    }
+    if run > cnt {
+        return BindFault.FaultTooManyArgs(args.len())
+    } else {
+        // No more positional arguments than there are parameters.
+    }
+    mut bound = 0
+    for s in 0..cnt {
+        ro at = bind_slot_of(params, off, cnt, args, s)
+        if at < 0 {
+            if slot_is_required(params, off, s) {
+                return BindFault.FaultMissing(s)
+            } else {
+                // Omitted, and the declaration says what to put there.
+            }
+            continue
+        } else {
+            // Bound: by position or by name, and which decides the next rule.
+        }
+        if s < run && !slot_is_required(params, off, s) {
+            return BindFault.FaultPositionalDefaulted(s)
+        } else {
+            // Either named, or required — both legal.
+        }
+        bound += 1
+    }
+    // EVERY WRITTEN ARGUMENT MUST HAVE FOUND A SLOT. This one count catches the
+    // two remaining rules at once: a name no parameter carries binds nothing,
+    // and a slot named twice (or named after being filled positionally) leaves
+    // its rival unbound. Which of the two it was is named below.
+    if bound != args.len() {
+        return name_fault(params, off, cnt, args, run)
+    } else {
+        // As many slots filled as arguments written: the call binds.
+    }
+    BindFault.FaultNone
+}
+
+/// The index of the first positional argument standing after a named one.
+#realtime nogc
+fn named_break_at(args []ArgSpec) -> int {
+    mut seen_named = false
+    mut i = 0
+    for a in args {
+        if a.name == "" {
+            // The first positional argument standing after a named one.
+            if seen_named { return i }
+        } else {
+            seen_named = true
+        }
+        i += 1
+    }
+    // Unreachable through `bind_fault`, which asks only after `positional_run`
+    // answered -1; a caller asking otherwise gets the harmless 0.
+    0
+}
+
+/// An argument bound nothing: was its NAME unknown to this declaration, or was
+/// the slot it names already taken?
+fn name_fault(params []ParamDef, off int, cnt int, args []ArgSpec, run int) -> BindFault {
+    mut i = 0
+    for a in args {
+        if a.name == "" {
+            i += 1
+            continue
+        } else {
+            // A named argument: it either finds its slot or explains itself.
+        }
+        mut slot = -1
+        for s in 0..cnt {
+            if params[off + s].name == a.name {
+                slot = s
+            } else {
+                // Another parameter of the same declaration.
+            }
+        }
+        if slot < 0 {
+            return BindFault.FaultUnknownName(i)
+        } else {
+            // The name IS a parameter's, so the slot is the story.
+        }
+        if slot < run || bind_slot_of(params, off, cnt, args, slot) != i {
+            return BindFault.FaultDuplicate(slot)
+        } else {
+            // This argument is the one that binds its slot: not the culprit.
+        }
+        i += 1
+    }
+    // A count mismatch with no named argument to blame cannot arise: positional
+    // arguments bind by index and were counted against `cnt` above.
+    BindFault.FaultTooManyArgs(args.len())
+}
+
+/// The IDENTITY binding: slot `i` is filled by argument `i`.
+///
+/// For the calls whose parameters are positional BY CONSTRUCTION -- a variant's
+/// payload and a newtype's representation. They carry no parameter names to bind
+/// by and no defaults to omit, so the mapping is nothing but the count; the
+/// emitter still reads it from the channel, so it has ONE way to walk a call
+/// rather than one per target kind.
+export fn identity_slots(n int) -> []int => (0..n).collect()
+
+/// The BINDING itself: for each parameter slot, the index of the argument that
+/// fills it, or -1 when the declaration's default does.
+///
+/// Asked once, on the row that was chosen, and recorded into the channel — so
+/// the emitter reads a decision instead of making it again.
+export fn bind_slots(params []ParamDef, off int, cnt int, args []ArgSpec) -> []int {
+    mut out = []int.new()
+    for s in 0..cnt {
+        out.push(bind_slot_of(params, off, cnt, args, s))
+    }
+    out
+}

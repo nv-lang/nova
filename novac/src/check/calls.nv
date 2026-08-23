@@ -28,7 +28,7 @@ module novac.check
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children, ty_source_name, missing_sig_of}
+import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, representation_of, generic_names, is_expr_kind, branch_children, ty_source_name, missing_sig_of, bind_fault, bind_slots, identity_slots, no_row}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
 /// The lookup key of a free call: one slot per written argument, no position
@@ -56,6 +56,29 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     } else {
         // The name is known, so the cause is the shape of the call.
     }
+    // BINDING BEFORE ARITY (wave 4). With defaults and named arguments, "how
+    // many arguments" is no longer the first question -- `bump(5, 2)` writes
+    // exactly as many as the declaration takes and is still refused, and
+    // `bump(5)` writes fewer and is legal. The binding names which rule it is,
+    // and it may only do so when the name carries ONE declaration: with two, a
+    // message about `by` would be a statement about a candidate nobody chose.
+    // [LEGACY-#TBD-nested-if-let-return] The natural shape here is one if-let
+    // inside another; the oracle emits the OUTER one's temporary undeclared as
+    // soon as the inner branch carries a `return` and anything follows the outer
+    // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
+    // outer test is flattened to a plain `if` over the Option. The class is the
+    // oracle's, filed in the registry; this shape goes back the day it is fixed.
+    ro only = @ctx.fns.only_row_of(cname)
+    if !only.is_none() {
+        if Some(why) = @binding_refusal(only ?? no_row(), key) {
+            @report_first_leaf_of(kids, why)
+            return
+        } else {
+            // It binds: the cause is the types, named below.
+        }
+    } else {
+        // Overloaded (or unknown): the questions below answer.
+    }
     // The same question with the TYPES removed: if nothing fits by arity
     // alone, the arity is the cause and the types never mattered.
     match @ctx.fns.lookup(cname, free_call_key(kids, @scope), CallForm.FreeCall) {
@@ -74,10 +97,22 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 /// type differs, and say when a `#coerce` pair (D429) makes the call legal.
 fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
     ro fd = @ctx.fns.rows[raw_row(row)]
-    for i in 0..key.len() {
-        ro want = @ctx.fns.params[fd.param_off + i]
-        if want.type_id == key[i].type_id { continue }
-        match coerce_row(@ctx, key[i].type_id, want.type_id) {
+    // BY SLOT, not by written position (wave 4): with a named argument the two
+    // are different, and comparing `key[i]` against `params[off + i]` would name
+    // the wrong parameter -- or none, when the call omits a defaulted one.
+    // The WHOLE binding at once, not slot by slot: this is the refusal path, so
+    // one small vector costs nothing and `check` asks sem ONE question instead
+    // of two (the per-slot primitive stays inside sem, where the lookup door
+    // needs it allocation-free).
+    ro slots = bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key)
+    for s in 0..fd.param_cnt {
+        ro at = slots[s]
+        // Nothing written fills this slot: its default does, and a default has
+        // no type to disagree with. `continue` IS the other branch (P31 form 2).
+        if at < 0 { continue }
+        ro want = @ctx.fns.params[fd.param_off + s]
+        if want.type_id == key[at].type_id { continue }
+        match coerce_row(@ctx, key[at].type_id, want.type_id) {
             // D429: a pair IS declared for this position, so the call is legal
             // Nova -- the value coerces through that method. What novac lacks
             // is the emission: R7 makes the insertion a call to the declared
@@ -90,11 +125,39 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
         }
         return
     }
-    // Every position matched, so `fits` refused for a reason positions cannot
-    // explain -- and it judges only the form, the arity and the positions.
+    // Every slot matched, so `fits` refused for a reason the slots cannot
+    // explain -- and it judges only the form, the binding and the slots.
     ice("check: a candidate of the right arity refused with every position matching")
 }
 
+
+/// WHY this call does not bind to this declaration -- or `None` when it binds
+/// and the cause lies elsewhere (the argument TYPES, judged by the caller).
+///
+/// D102 is the authority and every arm names the RULE, because these are not
+/// subset limits: `bump(5, 2)` is not Nova novac cannot compile yet, it is Nova
+/// the language refuses -- the oracle refuses it too, in its own words. So the
+/// message carries no "outside the subset" and does carry the PARAMETER's name,
+/// which is what the reader has to look at (D420).
+fn Checker @binding_refusal(row FnRow, key []ArgSpec) -> Option[str] {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro off = fd.param_off
+    match bind_fault(@ctx.fns.params, off, fd.param_cnt, key) {
+        FaultNone => None
+        FaultPositionalDefaulted(s) => Some(
+            "parameter `${@ctx.fns.params[off + s].name}` has a default value, so it is passed by name only (D102)")
+        FaultMissing(s) => Some(
+            "this call omits `${@ctx.fns.params[off + s].name}`, a parameter with no default value")
+        FaultDuplicate(s) => Some(
+            "parameter `${@ctx.fns.params[off + s].name}` is bound twice by this call (D102)")
+        FaultUnknownName(i) => Some(
+            "this callable declares no parameter named `${key[i].name}`")
+        FaultPositionalAfterNamed(_) => Some(
+            "a positional argument stands after a named one -- positional arguments come first (D102)")
+        FaultTooManyArgs(_) => Some(
+            "this call writes more arguments than the callable declares")
+    }
+}
 
 /// A TYPE in call position: the construction of a NEWTYPE, or an honest refusal.
 ///
@@ -141,7 +204,10 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     } else {
         // The representation: the construction is legal and gets recorded.
     }
-    @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []TyId.new())
+    // A newtype's construction takes exactly one argument -- verified three
+    // lines up -- so its binding is the identity, recorded like every other so
+    // the emitter has one way to walk a call.
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []TyId.new(), identity_slots(1))
 }
 
 /// A GENERIC candidate cannot fit an exact key: until the turbofish
@@ -269,7 +335,9 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             @report_first_leaf_of(kids,
                 "outside the subset: type arguments on a function that declares none")
         } else {
-            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new())
+            ro pfd = @ctx.fns.rows[raw_row(row)]
+            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
+                bind_slots(@ctx.fns.params, pfd.param_off, pfd.param_cnt, key))
         }
         return
     } else {
@@ -361,5 +429,6 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
     // line was a refusal, because recording a call whose instance nobody
     // emitted would have named a symbol that exists nowhere.
-    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
+        bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
 }

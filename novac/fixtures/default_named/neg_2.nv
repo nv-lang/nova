@@ -1,0 +1,18 @@
+module default_named.neg_2
+
+// ONE seeded cause: a parameter WITHOUT a default stands after one WITH.
+//
+// D102 declaration-rule 1. It is a rule about the ORDER, so no single parameter
+// is wrong on its own -- which is why it is judged of the declaration and named
+// there. Without the rule, `f(x int = 1, y int)` would have no legal call at
+// all: `y` could only be reached by name, and D102 call-rule 3 forbids a
+// positional argument after a named one, so `x` could never be passed
+// positionally either.
+//
+// AGREEMENT, measured 2026-08-23: the oracle refuses it too, naming `y` and the
+// same rule (its wording is Russian; the outcome is what the pair asserts).
+fn bump(x int = 1, y int) -> int => x + y
+
+fn main() {
+    println(bump(y: 2))
+}

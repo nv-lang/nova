@@ -259,8 +259,9 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
                             // declaration wrote it, and the backend must read
                             // both from one row.
                             ro pd = ctx.fns.params[fd.param_off + p]
-                            ptypes.push(ParamDef { type_id: subst_type(ctx, pd.type_id, args),
-                                                   mode: pd.mode })
+                            ptypes.push(ParamDef { name: pd.name,
+                                                   type_id: subst_type(ctx, pd.type_id, args),
+                                                   mode: pd.mode, default_expr: pd.default_expr })
                         }
                         inst.push(Instance { row, subst_off: off, subst_cnt: args.len(),
                                              ptype_off: poff, ptype_cnt: fd.param_cnt,

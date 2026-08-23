@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow}
+import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, no_ty}
 
@@ -165,9 +165,66 @@ fn equal_key(lhs_t TyId) -> []ArgSpec {
     // (P14) has nothing to choose between here -- `ro` is the class every mode
     // accepts, so a synthesised call asks for the least specific candidate and
     // cannot pick a mutating overload by accident.
-    out.push(ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo })
-    out.push(ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo })
+    out.push(ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" })
+    out.push(ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" })
     out
+}
+
+/// A call's arguments, in SLOT order, with omitted slots filled from the
+/// declaration.
+///
+/// ONE door for both call forms. `from` is the child where the written arguments
+/// begin (1 for a free call, 3 for a method call); `recv_slot` says that
+/// argument zero is the RECEIVER and lives at `kids[0]` rather than in that
+/// range. The row is the callee's, and it is asked only when a slot was left to
+/// its default -- a variant's payload has none, so it may arrive as `no_row()`.
+fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
+                                id NodeId, row FnRow) -> () {
+    ro slots = @out.callee_slots_of(id)
+    mut first = true
+    for s in 0..slots.len() {
+        @body.append(if first { "" } else { ", " })
+        first = false
+        ro at = slots[s]
+        if at < 0 {
+            @emit_slot_default(row, s)
+        } else if recv_slot && at == 0 {
+            @emit_expr(kids[0])
+        } else {
+            @emit_expr(call_arg_at(kids, from, if recv_slot { at - 1 } else { at }))
+        }
+    }
+}
+
+/// The DEFAULT of a slot the call omitted, emitted AT THE CALL SITE -- which is
+/// what D102 means by "evaluated at the call site, each call anew".
+///
+/// An absent default here is not a user mistake but a broken channel: the
+/// checker recorded -1 for a slot whose declaration writes nothing, and emitting
+/// anything at all would invent a value. So it ices.
+fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
+    if raw_row(row) < 0 {
+        ice("emit_c: a call with no callable row left a slot to a default")
+    } else {
+        // A callable row: its declaration is what says the value.
+    }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    match slot_default_of(@ctx.fns.params, fd.param_off, s) {
+        Some(d) => @emit_expr(d)
+        None => ice("emit_c: a call left a slot to a default its declaration does not write")
+    }
+}
+
+/// The CALLABLE row a decision names, or `no_row()` when it names something
+/// else -- a variant or a type. The emission of the arguments is the same for
+/// all three; only a DEFAULT needs the row, and only a callable has one.
+#realtime nogc
+fn callee_row_or_none(cr CalleeRef) -> FnRow {
+    match cr.target {
+        CalleeFn(row) => row
+        CalleeVariant(_) => no_row()
+        CalleeCtor(_) => no_row()
+    }
 }
 
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
@@ -230,14 +287,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // carries an empty one, so there is no branch here to get wrong.
         @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         @body.append("(")
-        @emit_expr(kids[0])
-        mut i = 0
-        for c in kids {
-            i += 1 // 1-based position: recv, '.', name occupy 1..3
-            if i <= 3 || !is_expr_kind(c.kind_of()) { continue }
-            @body.append(", ")
-            @emit_expr(c)
-        }
+        // The receiver is parameter ZERO (plan 273), so it is slot zero of the
+        // recorded binding -- not a special case bolted onto the front. The
+        // written arguments start at child 3 (receiver, dot, name).
+        @emit_bound_args(kids, 3, true, e.id_of(), cr.callable_row())
         @body.append(")")
     } else if k == NodeKind.Call {
         ro kids = branch_children(e)
@@ -271,13 +324,11 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 return
             }
         }
-        mut first = true
-        for c in kids {
-            if !is_expr_kind(c.kind_of()) { continue }
-            @body.append(if first { "" } else { ", " })
-            @emit_expr(c)
-            first = false
-        }
+        // BY THE RECORDED BINDING, never by written order (wave 4, D102): a
+        // named argument may stand anywhere among the named ones, and an omitted
+        // one is filled from the declaration. Which argument means which
+        // parameter is the CHECKER's decision, and this reads it.
+        @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr))
         @body.append(")")
     } else if k == NodeKind.Cast {
         // Unwrapping a newtype is FREE: the value is already the

@@ -248,6 +248,7 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                         // An ordinary declaration: the three shape rules below
                         // are its business as before.
                     }
+                    @report_if_default_order(children)
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
@@ -322,8 +323,12 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     return
                 }
                 NamedArg => {
-                    @report_first_leaf_of(children, NAMED_ARG_MSG)
-                    return
+                    // JUDGED, NOT REFUSED (wave 4): `f(by: 2)` is how D102 says
+                    // a defaulted parameter is reached, so the form is in the
+                    // subset. Whether THIS name is a parameter of THAT callable
+                    // is a question about the binding, and resolution answers it
+                    // by name -- refusing the shape here would refuse the legal
+                    // call along with the wrong one.
                 }
                 Cast => {
                     // NOT refused by SHAPE any more: whether a cast is inside
@@ -344,11 +349,15 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     } else {
                         // Not a variadic: judged as an ordinary parameter.
                     }
-                    if has_default_value(children) {
-                        @report_first_leaf_of(children, DEFAULT_PARAM_MSG)
+                    // The default's FORM is in the subset (wave 4); what is
+                    // judged is its EXPRESSION, and the ORDER rule belongs to
+                    // the declaration and is asked there. A refused default
+                    // STOPS the walk: typing its expression would name a second
+                    // cause for one mistake.
+                    if @report_if_default_not_value(children) {
                         return
                     } else {
-                        // No default value written: nothing to refuse here.
+                        // No default, or one the subset takes.
                     }
                     @report_if_qualifier_misplaced(children, "parameter")
                     @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")

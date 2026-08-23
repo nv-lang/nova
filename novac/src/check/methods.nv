@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/methods.nv - WHICH row a METHOD call goes to, and the name of
+// its refusal (plan 274, decision 12 cut).
+//
+// Donor: rustc `probe`/`pick` for the ORDER -- the receiver's type decides the
+//        candidate set, then the arguments narrow it; taken. Swift's two-name
+//        argument labels are NOT taken: D102 gives Nova one name per parameter.
+// Role: layer 7 -- resolution of a method call. `calls.nv` is its sibling for a
+//       FREE call, and the split is the language's own: it keeps the two
+//       spellings apart, so resolution keeps them apart too.
+// Used by: typing.nv (the one caller, from the expression walk).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+//             crossed a thousand lines), check-novac-no-cascade.sh, the pipeline
+//             module tests.
+//
+// A co-equal file of module `novac.check` (folder = one module). The cut is by
+// MEANING: everything here answers one question -- which declaration a
+// `recv.name(args)` names, and what to say when nothing does.
+
+module novac.check
+
+import ../tree.{Node}
+import ../lex.{Token}
+import ../types.{TyId}
+import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnLookup, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
+
+/// The lookup key of a method call: the receiver's type in position ZERO, then
+/// one slot per written argument.
+///
+/// Plan 273 §4.4 fixes the receiver at position zero, so a method call and a
+/// free call build the SAME kind of key and ask the SAME door — the only
+/// difference is that one of them has a position zero to fill. There is no
+/// receiver-shaped path left in resolution (owner, 2026-08-19).
+///
+/// Argument positions are `no_ty()`: `check` walks the tree before local
+/// typing (274.3/C9) and cannot type them yet. ARITY, though, is known here and
+/// discriminates from today — `f()` and `f(a)` stopped being one question.
+fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    // The receiver is parameter zero (plan 273) and carries a CLASS: `mut b`
+    // then `b.m()` selects the `mut @m` overload, which is the precedent the
+    // whole mode axis generalizes from (P14 rule 2).
+    out.push(ArgSpec { type_id: recv_t, cls: arg_class(kids[0], @scope), name: "" })
+    out.append(unknown_args(kids, 3, @scope))
+    out
+}
+
+/// Decide WHICH row a method call goes to, and record the decision.
+///
+/// Finding C9 of 274.3: the pair (receiver type, method name) was resolved
+/// nowhere -- check asked only whether the name existed in some declaration,
+/// and the emitter rebuilt the C name out of the receiver's type. Two answers
+/// to one question, with the second one winning in silence: exactly the shape
+/// plan 196 spends its waves removing from the current compiler.
+///
+/// Overload sets are NOT narrowed here -- that arrives with E2-b3 and needs
+/// argument types. An overloaded name is refused BY NAME instead of being
+/// guessed, because guessing is how the wrong entry point gets emitted.
+fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
+    if kids.len() < 3 {
+        return
+    } else {
+        // Three children are the receiver, the dot and the name: fewer
+        // than that is a recovery shape check has already refused.
+    }
+    match kids[2] {
+        Branch { .. } => {}
+        // The key is built ONCE and handed on: the verdict needs it to record
+        // the binding, and its refusal needs it to name which rule failed.
+        Leaf(t) => {
+            ro key = @method_call_key(kids, recv_t)
+            @judge_method_lookup(e, t, key, @ctx.fns.lookup(t.text, key, CallForm.MethodCall))
+        }
+    }
+}
+
+/// The refusal a method call that fits nothing deserves: the BINDING rule it
+/// broke when that can be established, and "no such method" only when it cannot.
+fn Checker @method_refusal(t Token, key []ArgSpec) -> str {
+    // [LEGACY-#TBD-nested-if-let-return] The natural shape here is one if-let
+    // inside another; the oracle emits the OUTER one's temporary undeclared as
+    // soon as the inner branch carries a `return` and anything follows the outer
+    // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
+    // outer test is flattened to a plain `if` over the Option. The class is the
+    // oracle's, filed in the registry; this shape goes back the day it is fixed.
+    ro only = @ctx.fns.only_row_of(t.text)
+    if !only.is_none() {
+        if Some(why) = @binding_refusal(only ?? no_row(), key) {
+            return why
+        } else {
+            // It binds -- so the receiver's type or an argument's is the cause.
+        }
+    } else {
+        // Unknown or overloaded: no single declaration to speak about.
+    }
+    "outside the subset: this type has no such method in the declarations novac was handed"
+}
+
+/// The whole verdict of one method lookup, in one place: record it, or decline
+/// it BY NAME. THREE outcomes and three answers -- no arm falls through.
+///
+/// `FnOverloaded` was RECORDED here until 2026-08-20, and the justification was
+/// explicit: the spelling of a method discarded parameter types, so whichever
+/// row was picked, the emitted C name was the same. That spelling is gone --
+/// the name is ours and carries the parameter types -- so the pick would decide
+/// the SYMBOL. Measured on `greeting.starts_with("hello")`: with the arguments
+/// untyped (274.3/C9) the walk fitted the `char` overload and emitted its name
+/// for a `str` argument. Narrowing needs argument types (E2-b3); until then the
+/// honest answer is a refusal, because guessing is how the wrong entry point
+/// gets called.
+///
+/// `compiles_body` is the other refusal, and it is the same kind of statement:
+/// novac read the signature of a std method but does not emit its body, so
+/// there is no symbol to call. Owner's decision 2026-08-20 -- refuse by name,
+/// and lower the corpus baseline in the same wave rather than emit C that
+/// cannot link.
+fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLookup) -> () {
+    match found {
+        // NOT FOUND may mean "no such method" or "this method, reached wrongly"
+        // (wave 4): `@peek(nope: 1)` and `@peek(1)` both fit no row, and telling
+        // the reader the method does not exist would send them hunting a name
+        // that is right there. The binding answers when the name carries one row.
+        FnUnknown => @refuse(t, @method_refusal(t, key))
+        FnOverloaded(_) => @refuse(t,
+            "outside the subset: this method name is overloaded and novac does not type arguments yet")
+        FnFound(row) => {
+            if @ctx.fns.compiles_body(row) {
+                // The target carries its OWN row: no unwrap here, and no
+                // `DefKind` beside it. Until 2026-08-21 this line handed the
+                // channel a bare int whose meaning depended on a second
+                // argument -- the pair that made a variant row indistinguishable
+                // from a callable one.
+                ro mfd = @ctx.fns.rows[raw_row(row)]
+                @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
+                    bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
+            } else {
+                @refuse(t,
+                    "outside the subset: novac read this method's signature but compiles no body for it yet")
+            }
+        }
+    }
+}
+

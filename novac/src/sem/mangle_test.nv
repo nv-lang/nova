@@ -42,7 +42,8 @@ test "PARAMETERS are in the name: two overloads cannot collide" {
 /// A parameter with the default mode, for tests that judge NAMES rather than
 /// modes: `ro` is the language's default, so this is what "just a parameter of
 /// this type" means (P14 -- the mode axis is judged by its own tests).
-fn ro_param(t TyId) -> ParamDef => { type_id: t, mode: ParamMode.ModeRo }
+fn ro_param(t TyId) -> ParamDef =>
+    { name: "p", type_id: t, mode: ParamMode.ModeRo, default_expr: []Node.new() }
 
 test "arity is in the name too" {
     mut ctx = collect_types(empty_file())

@@ -29,7 +29,7 @@ module novac.sem
 
 import ../tree.{Node}
 import ../builtins.{COERCE_ATTR}
-import ../types.{TyId}
+import ../types.{TyId, is_ty}
 
 /// ONE declared implicit conversion (D429 V1, form-source): the pair and the
 /// function that performs it.
@@ -86,7 +86,7 @@ fn attr_names(attr Node, word str) -> bool {
 /// invisible to it -- named in plan 274 section 9.1d, not left to be discovered.
 fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
     ro fd = fns.rows[raw_row(via_row)]
-    if !fd.has_recv || fd.param_cnt != 1 || fd.ret_id < 0 {
+    if !fd.has_recv || fd.param_cnt != 1 || !is_ty(fd.ret_id) {
         return
     } else {
         // A no-parameter method with a declared return: the source form D429

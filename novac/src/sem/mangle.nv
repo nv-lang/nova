@@ -268,7 +268,7 @@ export fn c_callable(ctx Ctx, row FnRow, subst []TyId) -> str
     // out would reopen the collision the parameters just closed. It is
     // absent only for the -1 sentinel, which is legal for the entry point
     // alone and answered above.
-    if fd.ret_id >= 0 {
+    if is_ty(fd.ret_id) {
         s.append("__to_")
         s.append(type_tag(ctx, fd.ret_id, subst))
     } else {

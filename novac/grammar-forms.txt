@@ -7,3 +7,4 @@ generic_call
 param_mode
 newtype
 protocol_decl
+default_named

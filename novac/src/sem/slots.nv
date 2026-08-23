@@ -70,6 +70,109 @@ export fn param_name_at(pk []Node) -> Option[int] {
     None
 }
 
+/// Is this child of a call an ARGUMENT? Two shapes are: a bare expression, and
+/// a NAMED argument (`by: 2`), which is a node WRAPPING one.
+///
+/// A door because the answer used to be `is_expr_kind(c.kind_of())` at four
+/// call sites, and a named argument is not an expression kind -- so every one of
+/// them counted the arguments of `f(1, by: 2)` as one.
+export fn is_arg_node(c Node) -> bool =>
+    is_expr_kind(c.kind_of()) || c.kind_of() == NodeKind.NamedArg
+
+/// How many ARGUMENTS a call writes, counting from child `from`.
+///
+/// The same walk the key builders do, without building the key -- asked where
+/// only the count is needed (a variant's payload has no names to bind by).
+export fn arg_count(kids []Node, from int) -> int {
+    mut n = 0
+    mut i = 0
+    for c in kids {
+        if i >= from && is_arg_node(c) {
+            n += 1
+        } else {
+            // Syntax, or a child standing before the first argument.
+        }
+        i += 1
+    }
+    n
+}
+
+/// The i-th ARGUMENT of a call, unwrapped -- the geometry the key was built
+/// with, so a slot recorded by the checker names the same node here.
+///
+/// `from` is where the arguments start: 1 for a free call (child 0 is the
+/// callee's name), 3 for a method call (receiver, dot, name). A method call's
+/// argument ZERO is the receiver and is NOT in this range -- plan 273 puts it at
+/// parameter zero, and the caller hands `kids[0]` for it directly.
+export fn call_arg_at(kids []Node, from int, i int) -> ro Node {
+    mut seen = 0
+    mut at = 0
+    for c in kids {
+        if at >= from && is_arg_node(c) {
+            // The one asked for; anything earlier is counted and passed.
+            if seen == i { return arg_expr_of(c) }
+            seen += 1
+        } else {
+            // Syntax, or a child before the first argument.
+        }
+        at += 1
+    }
+    ice("sem: a call was asked for an argument it does not write")
+}
+
+/// The EXPRESSION an argument carries: itself when positional, and the value
+/// after the colon when it was passed by name.
+/// `ro` in the return by D246: the node comes from the caller's own tree and is
+/// not a copy, so the type says so rather than laundering a frozen source
+/// through a `mut` binding at the call site.
+export fn arg_expr_of(c Node) -> ro Node {
+    // A positional argument IS its expression; the named form wraps one, and
+    // the parser pushes `name`, `:`, expr in that order.
+    if c.kind_of() != NodeKind.NamedArg { return c }
+    ro kids = branch_children(c)
+    if kids.len() >= 3 { kids[2] } else { c }
+}
+
+/// The parameter NAME an argument was passed under, or `""` when positional.
+export fn arg_name_of(c Node) -> str {
+    // Positional means no name at all; the named form carries it as its first
+    // child, a leaf.
+    if c.kind_of() != NodeKind.NamedArg { return "" }
+    ro kids = branch_children(c)
+    if kids.len() >= 1 { leaf_text(kids[0]) } else { "" }
+}
+
+/// The parameter's NAME as written, or `""` when the shape carries none.
+///
+/// A door and not `leaf_text(pk[param_name_at(pk)])` at three call sites: the
+/// index and the text are one question with one answer, and the `??` fallback
+/// spelled out per caller is where the recovery case gets forgotten in one of
+/// them.
+fn param_name_of(pk []Node) -> str {
+    if Some(n) = param_name_at(pk) { leaf_text(pk[n]) } else { "" }
+}
+
+/// The DEFAULT expression written for this parameter (`by int = 2`), in the
+/// shape the row stores it: EMPTY when the declaration writes none.
+///
+/// The parser leaves `=` as a leaf and the expression right after it, so the
+/// door reads the pair rather than a fixed index -- a parameter's children are
+/// mode, name, one or more type nodes, then this.
+///
+/// The vector shape is the oracle's constraint, not a choice: see `ParamDef`.
+export fn param_default_slot(pk []Node) -> []Node {
+    mut seen_assign = false
+    for c in pk {
+        // The child right after the `=` IS the default; everything before it is
+        // the mode, the name and the type.
+        if seen_assign { return []Node.of(c) }
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.Assign { continue }
+        seen_assign = true
+    }
+    []Node.new()
+}
+
 /// The NAME slot of a fn DECLARATION: the first identifier leaf after the
 /// `fn` keyword.
 ///

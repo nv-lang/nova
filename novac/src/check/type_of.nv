@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow, is_vrow}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow, is_vrow, is_arg_node, arg_expr_of, arg_name_of}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
@@ -34,7 +34,7 @@ fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope 
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
     // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
     // the precedent the whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: arg_class(recv, scope) })
+    out.push(ArgSpec { type_id: recv_t, cls: arg_class(recv, scope), name: "" })
     out.append(typed_args(kids, from, ctx, scope, chan))
     out
 }
@@ -51,8 +51,13 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
     mut out = []ArgSpec.new()
     mut i = 0
     for c in kids {
-        if i >= from && is_expr_kind(c.kind_of()) {
-            out.push(ArgSpec { type_id: type_of(c, ctx, scope, chan), cls: arg_class(c, scope) })
+        if i >= from && is_arg_node(c) {
+            // The named form wraps its value, so both the TYPE and the CLASS
+            // are questions about the expression inside -- and the NAME is what
+            // the wrapper adds.
+            ro ax = arg_expr_of(c)
+            out.push(ArgSpec { type_id: type_of(ax, ctx, scope, chan),
+                               cls: arg_class(ax, scope), name: arg_name_of(c) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.

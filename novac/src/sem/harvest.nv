@@ -180,7 +180,11 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut fns FnTable) -> (
     // The receiver is parameter ZERO (plan 273), and its mode is the receiver's
     // own qualifier: `fn StringBuilder consume @into_str()` declares a consuming
     // receiver, and that is what makes it selectable at all (P14).
-    param_ids.push(ParamDef { type_id: recv_t, mode: recv_mode_at(kids) })
+    // The RECEIVER carries neither a name nor a default: it is written before
+    // the method's name, not in the parameter list, so there is no `name:` a
+    // call site could say and no `=` a declaration could write.
+    param_ids.push(ParamDef { name: RECV_BINDING, type_id: recv_t,
+                              mode: recv_mode_at(kids), default_expr: []Node.new() })
     for c in kids {
         if c.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(c)
@@ -211,7 +215,8 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut fns FnTable) -> (
         // The MODE travels with the type: it is an axis of overloading (P14),
         // so a signature read without it would make `@ptr()` and `mut @ptr()`
         // one row twice over.
-        param_ids.push(ParamDef { type_id: pt, mode: param_mode_at(pk) })
+        param_ids.push(ParamDef { name: param_name_of(pk), type_id: pt,
+                                  mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
     }
     // A signature READ from std's own Nova source: the body is there too, and
     // novac does not compile it yet. That is a state of THIS compiler, not a

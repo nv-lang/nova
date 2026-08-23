@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem — tests beside the module (project convention).
+//
+// WHAT THESE TESTS HOLD: the binding of a call's arguments to a declaration's
+// parameter slots, and the NAME of every way it can fail (E2-b3 wave 4, D102).
+//
+// WHY A UNIT TEST BESIDE THE FIXTURES, and not fixtures alone: a fixture can
+// pin ONE outcome per file, and D102 has six failing shapes plus the successful
+// one. Pinning each as its own fixture pair would need six files whose only
+// difference is a comma; here the seven answers are seven asserts against one
+// hand-built declaration, and the fixtures hold what a fixture is for -- that
+// the accepted form COMPILES and behaves like the oracle's.
+//
+// The parameter rows are built by hand for the same reason as in protocols_test:
+// `sem` must not import the parser, and a test is not a licence to add an edge.
+
+module novac.sem
+import ../tree.{Node, NodeKind, branch}
+import ../types.{TyId}
+
+/// `fn bump(x int, by int = 2)` as a row: one required parameter, one defaulted.
+///
+/// The default is a NODE in the real collector; nothing here reads it, so any
+/// node stands for "a default is written" -- what the binding judges is its
+/// PRESENCE, and the emitter is what reads the value (held by the fixture).
+fn bump_params(int_id TyId) -> []ParamDef => []ParamDef.of(
+    ParamDef { name: "x", type_id: int_id, mode: ParamMode.ModeRo,
+               default_expr: []Node.new() },
+    ParamDef { name: "by", type_id: int_id, mode: ParamMode.ModeRo,
+               default_expr: []Node.of(branch(0, NodeKind.Lit, []Node.new())) })
+
+/// A positional argument of type `int`.
+fn pos_arg(int_id TyId) -> ArgSpec =>
+    { type_id: int_id, cls: ArgClass.ArgOwnedTemp, name: "" }
+
+/// An argument passed by NAME.
+fn named_arg(int_id TyId, nm str) -> ArgSpec =>
+    { type_id: int_id, cls: ArgClass.ArgOwnedTemp, name: nm }
+
+/// Is this fault the one the test means? Compared by SHAPE and by POSITION,
+/// because a fault naming the wrong slot is as wrong as the wrong fault.
+fn fault_is(f BindFault, tag str, at int) -> bool {
+    match f {
+        FaultNone => tag == "none"
+        FaultPositionalAfterNamed(i) => tag == "after-named" && i == at
+        FaultTooManyArgs(n) => tag == "too-many" && n == at
+        FaultPositionalDefaulted(s) => tag == "positional-defaulted" && s == at
+        FaultUnknownName(i) => tag == "unknown-name" && i == at
+        FaultDuplicate(s) => tag == "duplicate" && s == at
+        FaultMissing(s) => tag == "missing" && s == at
+    }
+}
+
+test "the required parameter alone binds, and the default fills its slot" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "none", 0))
+    // Slot 0 takes argument 0; slot 1 is left to the declaration.
+    ro slots = bind_slots(ps, 0, 2, args)
+    assert(slots.len() == 2)
+    assert(slots[0] == 0)
+    assert(slots[1] == -1)
+}
+
+test "the defaulted parameter passed BY NAME binds to its own slot" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id), named_arg(ctx.prims.int_id, "by"))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "none", 0))
+    ro slots = bind_slots(ps, 0, 2, args)
+    assert(slots[0] == 0)
+    assert(slots[1] == 1)
+}
+
+test "passing the defaulted parameter POSITIONALLY is refused, by slot" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id), pos_arg(ctx.prims.int_id))
+    // D102 call-rule 1, and the slot named is the DEFAULTED one (1), not the
+    // argument's index -- what the reader has to look at is the parameter.
+    assert(fault_is(bind_fault(ps, 0, 2, args), "positional-defaulted", 1))
+}
+
+test "omitting a REQUIRED parameter is refused, and its slot is named" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    ro args = []ArgSpec.of(named_arg(ctx.prims.int_id, "by"))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "missing", 0))
+}
+
+test "a name no parameter carries is refused, and the ARGUMENT is named" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id), named_arg(ctx.prims.int_id, "nope"))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "unknown-name", 1))
+}
+
+test "binding one slot twice is refused" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    // `bump(1, by: 2, by: 3)`: the second `by` leaves an argument unbound.
+    ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id),
+                           named_arg(ctx.prims.int_id, "by"),
+                           named_arg(ctx.prims.int_id, "by"))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "duplicate", 1))
+}
+
+test "a positional argument after a named one is refused, by argument index" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    // `bump(by: 2, 1)`: D102 call-rule 3. The index is the positional one (1).
+    ro args = []ArgSpec.of(named_arg(ctx.prims.int_id, "by"), pos_arg(ctx.prims.int_id))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "after-named", 1))
+}
+
+test "more positional arguments than parameters is refused" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    ro args = []ArgSpec.of(pos_arg(ctx.prims.int_id), pos_arg(ctx.prims.int_id),
+                           pos_arg(ctx.prims.int_id))
+    assert(fault_is(bind_fault(ps, 0, 2, args), "too-many", 3))
+}
+
+test "the DEFAULT is read from the row, and only where one is written" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+    // The two halves of one reading (`ParamDef.default_expr` is a vector only
+    // because the oracle cannot compile the `Option` this means -- see the
+    // field's own note): required means no default, and defaulted means one.
+    assert(slot_is_required(ps, 0, 0))
+    assert(!slot_is_required(ps, 0, 1))
+    assert(slot_default_of(ps, 0, 0).is_none())
+    assert(!slot_default_of(ps, 0, 1).is_none())
+}

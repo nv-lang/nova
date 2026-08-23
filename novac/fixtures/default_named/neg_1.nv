@@ -1,0 +1,18 @@
+module default_named.neg_1
+
+// ONE seeded cause: a parameter with a DEFAULT is passed POSITIONALLY.
+//
+// D102 makes a defaulted parameter keyword-only, and the reason is the rule's
+// whole purpose: `connect("h", false, true)` is unreadable, so the language
+// turns a style remark into a compile error. For an AI-first language that
+// converts a class of generated bugs into a refusal.
+//
+// AGREEMENT, and it was measured before this file existed (2026-08-23): the
+// oracle refuses the same shape, naming the same parameter and the same rule
+// (its wording is Russian; the outcome is what a fixture pair asserts). So this
+// pins a RULE of the language, not a divergence.
+fn bump(x int, by int = 2) -> int => x + by
+
+fn main() {
+    println(bump(5, 2))
+}
