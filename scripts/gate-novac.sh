@@ -302,6 +302,7 @@ if [ -f "$ROOT/novac/src/main.nv" ]; then
            && [ -z "$(find "$ROOT/novac/src" -name '*.nv' -newer "$NOVAC_OUT" 2>/dev/null | head -n 1)" ]; then
             NOVAC_FRESH=1
         fi
+        BUILD_T0=$(date +%s)
         if [ "$NOVAC_FRESH" -eq 1 ]; then
             echo "novac-build ok: бинарь новее всех .nv и оракула — пересборка не нужна"
         elif ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1; then
@@ -312,6 +313,16 @@ if [ -f "$ROOT/novac/src/main.nv" ]; then
                 fail "novac не собирается текущим оракулом (274.3/F1) - см. target/novac-build.log; регресс оракула по подмножеству novac или регресс novac"
             fi
         fi
+        # ЦЕНА СБОРКИ ВЫЧИТАЕТСЯ ИЗ БЮДЖЕТА ЯРУСА (2026-08-23). Бюджет судит
+        # ПРОВЕРКИ: сколько стоит прогнать стражей. Пересборка novac — не
+        # проверка, а условие, при котором есть что проверять, и её тридцать
+        # секунд появляются ровно тогда, когда сдвинулся оракул. Замер того же
+        # дня: ярус loop идёт 15с на свежем бинаре и 26с сразу после слияния,
+        # которое пересобрало оракула, — и второй прогон краснел на ЗДОРОВОМ
+        # дереве при калибровке 1. Ложный отказ дороже пропущенной проверки: он
+        # учит перезапускать гейт вместо того, чтобы ему верить (тот же довод,
+        # ради которого заведена сама калибровка).
+        GATE_BUILD_SEC=$(( $(date +%s) - BUILD_T0 ))
     else
         fail "оракул nova-cli/target/release/nova не собран — novac нечем строить (274.3/F1)"
     fi
@@ -428,7 +439,8 @@ if [ "$NOVAC_TIER" != "loop" ]; then guard "$ROOT/scripts/guards/check-novac-reg
 # правило. Цену возвращают не проверки, а форма: процессы на учёт, старты
 # интерпретатора, пересборка без нужды. Здесь она измерена и сравнена с
 # записанным потолком; предел масштабируется калибровкой машины.
-GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
+GATE_BUILD_SEC="${GATE_BUILD_SEC:-0}"
+GATE_ELAPSED=$(( $(date +%s) - GATE_T0 - GATE_BUILD_SEC ))
 # СВОЙ файл бюджета, а не общий (слияние 2026-08-23). Главный гейт строит
 # компилятор и гоняет мега-CU, его потолки — сотни и тысячи секунд; ярус
 # loop novac стоит 15с. Под общим потолком 240с сегодняшняя находка
@@ -443,14 +455,14 @@ fi
 if [ -n "$BUDGET" ]; then
     BUDGET_LIMIT=$(( BUDGET * CAL ))
     if [ "$GATE_ELAPSED" -gt "$BUDGET_LIMIT" ]; then
-        echo "novac-gate: ЯРУС $NOVAC_TIER занял ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с (база $BUDGET x калибровка $CAL)" >&2
+        echo "novac-gate: ЯРУС $NOVAC_TIER занял ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с (база $BUDGET x калибровка $CAL; сборка novac ${GATE_BUILD_SEC}с вычтена)" >&2
         echo "  Сначала ищи ФОРМУ, а не проверку: процессы на учёт, старт интерпретатора" >&2
         echo "  на каждого стража, пересборка без нужды — так уже было (558с, 2026-08-19)." >&2
         echo "  Если работа честно выросла — подними число в $BUDGET_FILE ЗАМЕРОМ и тем же" >&2
         echo "  слиянием, назвав, чем она выросла." >&2
         fail "ярус $NOVAC_TIER вышел за бюджет времени (конвенция гейтов, Г4)"
     else
-        echo "novac-gate ok: ярус $NOVAC_TIER — ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с"
+        echo "novac-gate ok: ярус $NOVAC_TIER — ${GATE_ELAPSED}с при бюджете ${BUDGET_LIMIT}с (сборка novac ${GATE_BUILD_SEC}с не в счёт: бюджет судит проверки)"
     fi
 else
     # Молчание тут было бы вечнозелёным: ярус без строки бюджета не судится
