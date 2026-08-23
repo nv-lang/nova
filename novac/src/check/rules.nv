@@ -247,6 +247,24 @@ const IMPORT_MSG = "outside the subset: `import`/`use` arrive with modules (E3)"
 /// keyword, so the token fell into the top-level junk bucket.
 const EXPORT_MSG = "outside the subset: `export` arrives with modules (E3)"
 
+/// An `import` that RENAMES what it brings (`import a.b as c`, `import a.{X as Y}`).
+///
+/// Refused by name and not accepted silently, because section 9.1d point 2 is
+/// IDENTITY: a C name is a function of the DECLARATION, never of the importer, so
+/// an alias must change the spelling in the caller's source and nothing else.
+/// Until cross-file resolution exists there is no declaration to point the alias
+/// at, and accepting the word would leave a promise novac does not keep.
+const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arrives with cross-file resolution -- a C name is a function of the DECLARATION, not of the importer (274 section 9.1d point 2)"
+
+/// Does this import RENAME anything -- `as` anywhere inside it?
+fn import_renames(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) == TokenKind.KwAs { return true }
+    }
+    false
+}
+
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
 

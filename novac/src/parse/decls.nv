@@ -90,7 +90,18 @@ fn Cursor mut @extern_decl() -> Node {
 /// needs to tell them apart.
 fn Cursor mut @import_decl() -> Node {
     mut kids = []Node.of(@take()) // KwImport or KwUse
-    while @peek() == TokenKind.Ident || @peek() == TokenKind.Dot {
+    // THE PATH MAY BE RELATIVE, and the spec writes it with a SLASH:
+    // `import ./sibling.{Name}`, `import ../neighbor.{Name}`
+    // (07-modules.md, rev-4). The loop took only identifiers and dots, so it
+    // stopped at the `/` -- and the rest of the line became top-level junk. That
+    // is why 29 of novac's own 34 files reported a SECOND, meaningless refusal
+    // right after the import: the parser had swallowed the file (measured
+    // 2026-08-23).
+    // `..` IS ONE TOKEN (`DotDot`, the range operator's), and that is why the
+    // first fix here was not enough: the loop learned the slash and still stopped
+    // dead at the two dots in front of it.
+    while @peek() == TokenKind.Ident || @peek() == TokenKind.Dot ||
+        @peek() == TokenKind.DotDot || @peek() == TokenKind.Slash {
         kids.push(@take())
     }
     if @peek() == TokenKind.LBrace {

@@ -307,7 +307,21 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     // that -- refusing here would refuse the legal case too.
                 }
                 ImportDecl => {
-                    @report_first_leaf_of(children, IMPORT_MSG)
+                    // THE FORM IS READ, not refused (2026-08-23). What an import
+                    // BRINGS still has to resolve -- a name no declaration
+                    // answers is refused at its USE, by name, exactly as before.
+                    // What changed is that the file after the import is no longer
+                    // swallowed: the refusal used to be the first of a cascade
+                    // whose rest said nothing (29 of novac's own 34 files).
+                    //
+                    // The ALIAS is the one part still refused: it is a statement
+                    // about identity (section 9.1d point 2), and there is nothing to
+                    // point it at until cross-file resolution lands.
+                    if import_renames(children) {
+                        @report_first_leaf_of(children, IMPORT_ALIAS_MSG)
+                    } else {
+                        // A plain import: nothing here to judge.
+                    }
                     return
                 }
                 ExportDecl => {
