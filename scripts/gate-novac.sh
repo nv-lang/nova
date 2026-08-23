@@ -265,6 +265,7 @@ par_add "$ROOT/scripts/guards/check-novac-ratchet-moves.sh" "храповик с
 par_add "$ROOT/scripts/guards/check-novac-acceptance-donor.py" "приёмка волны не называет донора (П27-класс)"
 par_add "$ROOT/scripts/guards/check-novac-selftest-interpreter.py" "самотест зовёт стража напрямую — на Linux это ноль случаев (274 §9.1д К2)"
 par_add "$ROOT/scripts/guards/check-novac-smoke-wrapper.sh" "POSIX-обёртка перехвата clang-argv сломана — эта машина ею не ходит (274 §9.1д К3)"
+par_add "$ROOT/scripts/guards/check-novac-local-only-work.sh" "работа живёт ровно на одном диске: ветка с невлитым и без копии на origin (274 §9.1д К7)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
