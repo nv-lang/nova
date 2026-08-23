@@ -65,6 +65,22 @@ out=$(NOVA_WORKTREE_ROOT="$TMP/no-such-root-here" bash "$G" "$REPO" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "отсутствующий корень — правило не про эту машину (случай CI)"; else bad "покраснел там, где корня нет (код $rc): $out"; fi
 git -C "$REPO" worktree remove --force "$TMP/elsewhere/wt5" >/dev/null 2>&1
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-worktree-location: 5/5 ok"; exit 0; fi
+# 6. БЕЗ NOVA_WORKTREE_ROOT корень ВЫВОДИТСЯ (родитель главной копии) — и
+#    выведенный обязан кусаться так же, как заданный. Случаи 1–5 задают корень
+#    переменной, то есть дефолт ими не проверен вовсе; с 2026-08-23 дефолт
+#    больше не литерал, и без этого случая его подмена прошла бы незамеченной.
+git -C "$REPO" branch -q wt6 2>/dev/null
+git -C "$REPO" worktree add -q "$TMP/elsewhere/wt6" wt6 >/dev/null 2>&1
+out=$(bash "$G" "$REPO" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "wt6"; then
+    ok "выведенный корень ловит дерево вне себя"
+else
+    bad "выведенный корень не поймал нарушителя (код $rc): $out"
+fi
+git -C "$REPO" worktree remove --force "$TMP/elsewhere/wt6" >/dev/null 2>&1
+out=$(bash "$G" "$REPO" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "выведенный корень не ложнит на своём дереве"; else bad "ложняк на выведенном корне: $out"; fi
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-worktree-location: 7/7 ok"; exit 0; fi
 echo "селфтест check-worktree-location: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

@@ -17,17 +17,22 @@
 # `/mnt/d/Sources`, `C:\Users\<имя>` — в строке, которая НЕ комментарий.
 #
 # ИСКЛЮЧЕНИЯ (осознанные, названные):
-#   * политика «worktree только в d:/Sources/nv-lang» (№561,
-#     check-worktree-location.sh, repo-hygiene.sh) — это ПРАВИЛО владельца,
-#     не раскладка, и оно уже под NOVA_WORKTREE_ROOT; исключено по имени файла;
+#   * этот страж и его самотест — они обязаны НЕСТИ образцы форм, которые ловят;
 #   * docs/plans/repro/** — улики, там пути — часть улики.
+#
+# СНЯТО 2026-08-23: исключение для check-worktree-location.sh и repo-hygiene.sh.
+# Оно держалось на том, что политика worktree «уже под NOVA_WORKTREE_ROOT», но
+# литерал в них при этом стоял — и в публичном репозитории это был путь к машине
+# владельца. Теперь корень в обоих ВЫВОДИТСЯ (родитель главной рабочей копии /
+# каталог скрипта), литерала нет, и исключение стало ненужным: оба файла судятся
+# наравне со всеми.
 #
 # $1 — корень. Самотест — selftest/test-check-no-machine-paths.sh
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 NAME=check-no-machine-paths
 FILES=$(git -C "$ROOT" ls-files -- 'scripts/*.sh' 'scripts/**/*.sh' 'scripts/*.py' 'scripts/**/*.py' '.github/workflows/*.yml' 2>/dev/null \
-    | grep -vE '^scripts/guards/check-worktree-location\.sh$|^scripts/tools/repo-hygiene\.sh$|^scripts/guards/check-no-machine-paths\.sh$|^scripts/guards/selftest/test-check-no-machine-paths\.sh$' \
+    | grep -vE '^scripts/guards/check-no-machine-paths\.sh$|^scripts/guards/selftest/test-check-no-machine-paths\.sh$' \
     | grep -vE '^scripts/claude-hooks/selftest/')
 # scripts/claude-hooks/selftest/** — самотесты хуков ДЕРЖАТ такие пути как
 # ТЕСТОВЫЕ ДАННЫЕ (строки, которые хук обязан распознать) — исключены каталогом.

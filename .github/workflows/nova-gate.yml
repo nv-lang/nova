@@ -39,8 +39,8 @@ name: nova-gate
 # nova.lock: source="git" для tls/compress, source="path" для http). Путь
 # `../../nova-http` резолвится относительно `examples/nova.toml`, то есть
 # ожидает `nova-http` СИБЛИНГОМ каталога `nova` на диске — ровно так, как
-# лежат рабочие копии у автора локально (d:/Sources/nv-lang/{nova,nova-http,
-# nova-tls,...}). Поскольку `examples` — один workspace-package, ЛЮБАЯ
+# лежат рабочие копии локально: один каталог, в нём сиблингами `nova`,
+# `nova-http`, `nova-tls` и остальные. Поскольку `examples` — один workspace-package, ЛЮБАЯ
 # сборка чего-либо внутри examples/ (включая echo_server.nv/echo_client.nv,
 # которые `http` даже не импортируют) требует, чтобы манифест целиком
 # зарезолвился — то есть требует физического наличия `../nova-http` рядом с
