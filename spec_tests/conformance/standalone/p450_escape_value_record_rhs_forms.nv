@@ -1,0 +1,111 @@
+// EXPECT_STDOUT p450 new=11 unit=22 free=33 method=44 field=55 if=66
+//
+// Registry 221.1 #450, the class, measured 2026-08-23.
+//
+// #450 said outright that fixing the carrier (Atomic types) would not be
+// acceptance: what was needed was a general account of WHICH right-hand-side
+// forms produce a value-record source, each covered by a fixture. This is
+// that account. Every form below binds a value-record local whose address
+// then escapes into a returned `Holder`; if escape analysis does not see the
+// source, the local stays on the constructing function's stack and `&c` is
+// dangling the instant it returns.
+//
+// Measured before the fix -- five of the six were dangling:
+//
+//     X.new(...)       11            OK   (the only form the shape rules knew)
+//     X.unit()         1993543081952 DANGLING  (a static ctor not named `new`)
+//     free_fn()        1993543081952 DANGLING
+//     obj.method()     140696294339640 DANGLING
+//     obj.field        140699909633055 DANGLING
+//     if c { A } ...   140699908792814 DANGLING
+//
+// `clobber` between construction and read is not decoration: a dangling read
+// can return the right number by luck if nothing has reused the frame yet.
+//
+// The fix is not a sixth shape rule. The analysis now asks the checker
+// (`resolved_types`, channel 196) what the right-hand side's TYPE is, and
+// keeps the two shape rules only as the fallback for callers with no channel.
+// Kill-switch NOVA_KILL_ESCAPE_TYPE_CHANNEL=1 restores shape-only on the same
+// binary and four of these assertions fail again. (`if` survives the switch:
+// its branch tails are `X.new(...)`, which the shape rules do know -- the
+// If/Match/Block navigation added alongside is what makes the channel
+// reachable there at all, because the checker annotates no If node.)
+module standalone.p450_escape_value_record_rhs_forms
+
+type Cell value { mut n int }
+type Pair value { a Cell, b Cell }
+type Holder value { cell *mut Cell }
+
+fn cell_new(v int) -> Cell => { n: v }
+fn Cell.new(v int) -> Cell => { n: v }
+fn Cell.unit() -> Cell => { n: 22 }
+fn Pair.new(x int, y int) -> Pair => { a: Cell { n: x }, b: Cell { n: y } }
+fn Pair @first() -> Cell => @a
+
+// Reuse the frame the constructing fn just left.
+fn clobber(d int) -> int {
+    mut acc = 0
+    for i in 0..64 {
+        acc += i * d
+    }
+    acc
+}
+
+fn h_new() -> Holder {
+    mut c = Cell.new(11)
+    Holder { cell: &c }
+}
+
+// A static constructor NOT named `new` -- the shape rule matched on the name.
+// (`of` is reserved for variadic collections, nv-coding-style §21б, so the
+// second constructor is `unit`.)
+fn h_unit() -> Holder {
+    mut c = Cell.unit()
+    Holder { cell: &c }
+}
+
+fn h_free() -> Holder {
+    mut c = cell_new(33)
+    Holder { cell: &c }
+}
+
+fn h_method() -> Holder {
+    ro p = Pair.new(44, 0)
+    mut c = p.first()
+    Holder { cell: &c }
+}
+
+fn h_field() -> Holder {
+    ro p = Pair.new(55, 0)
+    mut c = p.a
+    Holder { cell: &c }
+}
+
+fn h_if(flag bool) -> Holder {
+    mut c = if flag { Cell.new(66) } else { Cell.new(0) }
+    Holder { cell: &c }
+}
+
+test "p450: every RHS form that yields a value-record survives the constructing fn" {
+    ro h1 = h_new()
+    ro k1 = clobber(1)
+    ro h2 = h_unit()
+    ro k2 = clobber(2)
+    ro h3 = h_free()
+    ro k3 = clobber(3)
+    ro h4 = h_method()
+    ro k4 = clobber(4)
+    ro h5 = h_field()
+    ro k5 = clobber(5)
+    ro h6 = h_if(true)
+    ro k6 = clobber(6)
+    // Keep the clobber results live so the loops cannot be optimised away.
+    assert(k1 + k2 + k3 + k4 + k5 + k6 > 0)
+    println("p450 new=${h1.cell.n} unit=${h2.cell.n} free=${h3.cell.n} method=${h4.cell.n} field=${h5.cell.n} if=${h6.cell.n}")
+    assert(h1.cell.n == 11)
+    assert(h2.cell.n == 22)
+    assert(h3.cell.n == 33)
+    assert(h4.cell.n == 44)
+    assert(h5.cell.n == 55)
+    assert(h6.cell.n == 66)
+}

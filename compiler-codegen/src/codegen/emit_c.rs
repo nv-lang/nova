@@ -5329,9 +5329,9 @@ impl CEmitter {
         self.consume_reuse_spans = module.consume_reuse_spans.clone();
         // Plan 127 Ф.2/Ф.3: run value-record escape analysis upfront so
         // codegen знает which value-record locals must be heap-promoted
-        // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
-        // is empty (no allocations) если module has no value-records.
-        self.escape_result = Some(crate::escape_analyze::analyze_module(module));
+        // (AllocKind::ValueHeapPromoted). WITH the checker channel: shape-only
+        // analysis missed five of the six RHS forms (#450, dangling stack ptr).
+        self.escape_result = Some(crate::escape_analyze::analyze_module_with_types(module, &self.resolved_types));
 
         // [D52-амендмент, ОКНО-5] `fn_newtype_sigs` pre-scan: `type X fn(A)->B`
         // (newtype, one level) / `type X alias fn(A)->B` (alias, transitive

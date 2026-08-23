@@ -109,7 +109,25 @@ impl EscapeResult {
 /// Conservative V1: if a value-record local is bound to a Pattern other
 /// than `Ident { .. }`, we do NOT track it (destructure binding). If `&v`
 /// is in a context we cannot prove safe — promote.
+/// Escape analysis WITHOUT the checker channel: shape rules only. Kept for
+/// callers that have no `resolved_types` to hand -- the `nova lint` pass and
+/// this module's own unit tests. Codegen must use
+/// `analyze_module_with_types`: see #450 for what the shape rules miss.
 pub fn analyze_module(module: &Module) -> EscapeResult {
+    analyze_module_with_types(module, &std::collections::HashMap::new())
+}
+
+/// Escape analysis WITH channel 196. A binding's source type comes from the
+/// checker (`resolved_types[expr.id]`), not from the syntactic shape of the
+/// right-hand side -- #450: five of six RHS forms were invisible to the
+/// shape rules and produced dangling stack pointers.
+pub fn analyze_module_with_types(
+    module: &Module,
+    resolved_types: &std::collections::HashMap<
+        crate::ast::ExprId,
+        crate::types::ResolvedType,
+    >,
+) -> EscapeResult {
     let value_records = collect_value_record_types(module);
     let mut result = EscapeResult::default();
 
@@ -125,7 +143,7 @@ pub fn analyze_module(module: &Module) -> EscapeResult {
 
     for item in entry_items {
         match item {
-            Item::Fn(fd) => analyze_fn(fd, &value_records, &mut result),
+            Item::Fn(fd) => analyze_fn(fd, &value_records, resolved_types, &mut result),
             // Plan 172.14 (sret/_out §3): тест-тела — ident-эскейп walker с
             // ключом `test::<имя>` (зеркало emit_test's current_fn_id).
             Item::Test(t) => analyze_test_idents(t, &mut result),
@@ -138,7 +156,7 @@ pub fn analyze_module(module: &Module) -> EscapeResult {
         if pf.is_entry_module { continue; }
         for item in &pf.items_here {
             match item {
-                Item::Fn(fd) => analyze_fn(fd, &value_records, &mut result),
+                Item::Fn(fd) => analyze_fn(fd, &value_records, resolved_types, &mut result),
                 Item::Test(t) => analyze_test_idents(t, &mut result),
                 _ => {}
             }
@@ -194,11 +212,16 @@ fn fn_id(fd: &FnDecl) -> String {
 fn analyze_fn(
     fd: &FnDecl,
     value_records: &HashSet<String>,
+    resolved_types: &std::collections::HashMap<
+        crate::ast::ExprId,
+        crate::types::ResolvedType,
+    >,
     result: &mut EscapeResult,
 ) {
     let key = fn_id(fd);
     let mut ctx = EscapeCtx {
         value_records,
+        resolved_types,
         scopes: vec![Scope::default()],
         promoted: HashSet::new(),
     };
@@ -603,6 +626,13 @@ fn ie_expr(e: &Expr, esc: bool, out: &mut HashSet<String>) {
 /// Per-fn analysis context — scope stack + accumulator.
 struct EscapeCtx<'a> {
     value_records: &'a HashSet<String>,
+    /// Channel 196 (#450): the checker's type for every expression id.
+    /// Empty for `analyze_module` (no channel) -- the shape rules then
+    /// carry the analysis alone, exactly as before.
+    resolved_types: &'a std::collections::HashMap<
+        crate::ast::ExprId,
+        crate::types::ResolvedType,
+    >,
     /// Stack of scopes; innermost at the back. Each scope holds Let-bindings
     /// declared in that block (name → was_value_record).
     scopes: Vec<Scope>,
@@ -727,6 +757,23 @@ impl<'a> EscapeCtx<'a> {
     /// garbage and skips the real `net_tcp_close()` call — the peer's FIN
     /// then never gets sent, and `libuv`/Vela were never at fault.
     fn infer_value_record_from_expr(&self, value: &Expr) -> Option<String> {
+        // CHANNEL 196 FIRST (#450). The checker already knows what this
+        // expression's type is; the shape rules below only ever knew two
+        // spellings of it. Kill-switch NOVA_KILL_ESCAPE_TYPE_CHANNEL=1 falls
+        // back to shape-only, restoring the pre-fix behaviour on the same
+        // binary.
+        if std::env::var("NOVA_KILL_ESCAPE_TYPE_CHANNEL").as_deref() != Ok("1") {
+            if let Some(crate::types::ResolvedType::Named { name, .. }) =
+                self.resolved_types.get(&value.id)
+            {
+                if self.value_records.contains(name)
+                    || crate::codegen::emit_c::RUNTIME_VALUE_RECORD_CTOR_TYPES
+                        .contains(&name.as_str())
+                {
+                    return Some(name.clone());
+                }
+            }
+        }
         match &value.kind {
             ExprKind::RecordLit { type_name: Some(path), .. } => {
                 let last = path.last()?;
@@ -760,6 +807,35 @@ impl<'a> EscapeCtx<'a> {
                     }
                 }
                 None
+            }
+            // #450: the checker annotates no `If`/`Match`/`Block` node, so the
+            // channel lookup above misses for `mut c = if f { A } else { B }`
+            // and the value stayed on the stack. Walk to the branch tails,
+            // which the channel DOES know. Agreement is not required: any
+            // branch yielding a value-record makes the binding one, and a
+            // binding cannot be a value-record on one path only.
+            ExprKind::If { then, else_, .. } => {
+                if let Some(t) = then.trailing.as_ref() {
+                    if let Some(n) = self.infer_value_record_from_expr(t) {
+                        return Some(n);
+                    }
+                }
+                match else_.as_ref()? {
+                    ElseBranch::Block(b) => {
+                        self.infer_value_record_from_expr(b.trailing.as_ref()?)
+                    }
+                    ElseBranch::If(e) => self.infer_value_record_from_expr(e),
+                }
+            }
+            ExprKind::Match { arms, .. } => arms.iter().find_map(|arm| match &arm.body {
+                MatchArmBody::Expr(e) => self.infer_value_record_from_expr(e),
+                MatchArmBody::Block(b) => b
+                    .trailing
+                    .as_ref()
+                    .and_then(|t| self.infer_value_record_from_expr(t)),
+            }),
+            ExprKind::Block(b) => {
+                self.infer_value_record_from_expr(b.trailing.as_ref()?)
             }
             _ => None,
         }
