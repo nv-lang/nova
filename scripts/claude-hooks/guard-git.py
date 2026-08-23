@@ -164,6 +164,79 @@ RAW_RULES = [
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"", re.DOTALL)
 _HEREDOC = re.compile(r"<<-?\s*'?(\w+)'?.*?\n\1\b", re.DOTALL)
 
+# ── КОММИТ БЕЗ ОБЛАСТИ: индекс может быть ЧУЖОЙ ──────────────────────────
+#
+# Инцидент 2026-08-23. В общем дереве `nova-p274` окно закоммитило свой один
+# файл — и забрало 49: в индексе лежали pre-staged правки соседнего окна (их
+# волна спеки и фикстур). Проверка `git diff --cached --stat` в брифе БЫЛА и
+# даже выполнялась — но в одной цепочке с коммитом: она печатает вывод, на
+# который уже никто не смотрит. Правило «посмотри индекс перед коммитом» есть
+# в конвенции с первого дня и не удержало ни разу, потому что держится на
+# внимании в момент, когда внимание занято другим.
+#
+# ФОРМА, КОТОРАЯ НЕ ЗАВИСИТ ОТ ВНИМАНИЯ: `git commit --only -- <файлы>`
+# (или `git commit <файлы>`) — коммитится ровно названный путь, что бы ни
+# лежало в индексе.
+#
+# ЗАКОННЫЕ ИСКЛЮЧЕНИЯ (частичный коммит там невозможен либо бессмыслен):
+#   * `--amend` — правка последнего коммита;
+#   * слияние/cherry-pick/revert/rebase в процессе: git ОТКАЗЫВАЕТ в
+#     частичном коммите («cannot do a partial commit during a merge»), значит
+#     запрет требовал бы невозможного. Определяется по дереву, а не по слову;
+#   * осознанный override `# index-verified: <причина>` — коммит всего индекса
+#     остаётся возможным, но становится НАЗВАННЫМ и грепаемым.
+_COMMIT = re.compile(r"\bgit\s+(?:-C\s+\S+\s+|--git-dir[= ]\S+\s+|--work-tree[= ]\S+\s+)*commit\b",
+                     re.IGNORECASE)
+_SCOPED = re.compile(r"(--only\b|\s-o\b|--include\b|\s-i\b|--amend\b|\s--\s)", re.IGNORECASE)
+_DASH_C = re.compile(r"\bgit\s+-C\s+(\S+)")
+_OVERRIDE = re.compile(r"#\s*index-verified", re.IGNORECASE)
+
+_COMMIT_SCOPE_MSG = (
+    "FORBIDDEN: git commit bez oblasti — v indekse mogut lezhat' CHUZHIE pre-staged "
+    "pravki (2026-08-23: kommit odnogo fayla zabral 49 v obshchem dereve nova-p274). "
+    "Forma, ne zavisyashchaya ot vnimaniya: git -C <derevo> commit -s --only -- <fayly> "
+    "(soobshchenie faylom: -F <fayl>). Nuzhen ves' indeks — napishi v komande "
+    "kommentariy '# index-verified: <prichina>'; pri sliyanii/cherry-pick i --amend "
+    "pravilo ne primenyaetsya."
+)
+
+
+def _merge_in_progress(cmd: str) -> bool:
+    """Идёт ли слияние/cherry-pick/revert/rebase в дереве, названном через -C.
+
+    Спрашиваем git, а не угадываем по словам команды. Не смогли спросить —
+    считаем, что не идёт: тогда сработает запрет, а у него есть законный
+    override, то есть цена ошибки — одна строка комментария, а не потерянная
+    работа.
+    """
+    m = _DASH_C.search(cmd)
+    if not m:
+        return False
+    import os
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", m.group(1), "rev-parse", "--absolute-git-dir"],
+                             capture_output=True, text=True, timeout=10)
+        gd = out.stdout.strip()
+        if not gd:
+            return False
+        return any(os.path.exists(os.path.join(gd, n)) for n in
+                   ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
+                    "rebase-merge", "rebase-apply"))
+    except Exception:
+        return False
+
+
+def check_commit_scope(cmd: str, stripped: str):
+    """Сообщение об отказе или None. `stripped` — команда без литералов."""
+    if not _COMMIT.search(stripped):
+        return None
+    if _SCOPED.search(stripped) or _OVERRIDE.search(cmd):
+        return None
+    if _merge_in_progress(cmd):
+        return None
+    return _COMMIT_SCOPE_MSG
+
 
 def main() -> int:
     try:
@@ -185,6 +258,12 @@ def main() -> int:
         if rx.search(cmd):
             print(msg, file=sys.stderr)
             return 2
+    # Коммит без названной области — правило с логикой, а не регэксп: ему нужно
+    # спросить дерево о слиянии (см. check_commit_scope).
+    msg = check_commit_scope(cmd, stripped)
+    if msg:
+        print(msg, file=sys.stderr)
+        return 2
     return 0
 
 
