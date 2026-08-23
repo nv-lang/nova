@@ -70,7 +70,13 @@ def load_allow(path):
     return rows
 
 
-def main(argv):
+def main(argv=None):
+    # ДВА СПОСОБА ЗВАТЬ, ОДНА ПОДПИСЬ. Гейт зовёт стражей ВНУТРИ процесса
+    # (`run-guards.py` -> `mod.main()`), а человек — из оболочки с аргументами.
+    # Подпись без значения по умолчанию проходила ручной запуск и падала в
+    # гейте `TypeError: main() missing 1 required positional argument`, то есть
+    # страж не судил вовсе, а отказ выглядел как его вердикт (2026-08-23).
+    argv = argv if argv is not None else sys.argv
     root = pathlib.Path(argv[1] if len(argv) > 1 else ".").resolve()
     allow_path = pathlib.Path(argv[2]) if len(argv) > 2 else root / "scripts" / "guards" / "novac-plan-donor.allow"
     allow = load_allow(allow_path)

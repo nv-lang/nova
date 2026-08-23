@@ -41,7 +41,14 @@ ORACLE="$(novac_find_oracle "$(pwd)" || true)"
 fi
 read -r ORACLE < "$CACHE/oracle.path"
 ORACLE_STAMP=$(stat -c %Y "$ORACLE")
-REAL_CLANG="${NOVA_CLANG:-C:/Program Files/LLVM/bin/clang.exe}"
+# КАКОЙ clang НАСТОЯЩИЙ. Путь Windows — это ДЕФОЛТ WINDOWS, а не факт мира:
+# на Linux его нет, и инструмент молча уезжал в «нет такого файла». Признак
+# системы здесь — `cygpath`: он есть в MSYS и его нет нигде больше.
+if command -v cygpath >/dev/null 2>&1; then
+    REAL_CLANG="${NOVA_CLANG:-C:/Program Files/LLVM/bin/clang.exe}"
+else
+    REAL_CLANG="${NOVA_CLANG:-$(command -v clang || printf 'clang')}"
+fi
 
 # ---- 1. oracle binary + captured argv, cached ---------------------------
 KEY=$(cksum < "$FILE" | cut -d' ' -f1)-$ORACLE_STAMP
@@ -53,9 +60,24 @@ if [ ! -f "$ORACLE_EXE" ] || [ ! -f "$LINKCMD" ]; then
     STEM=$(basename "$FILE" .nv)
     mkdir -p "$T/pkgless"
     sed "s/^module [a-zA-Z_.]*${STEM}\$/module ${STEM}/" "$FILE" > "$T/pkgless/$STEM.nv"
-    WIN_T=$(cygpath -w "$T"); LOG="$T/cc.log"; : > "$LOG"; WIN_LOG=$(cygpath -w "$LOG")
-    printf '@echo off\r\nsetlocal\r\n:loop\r\nif "%%~1"=="" goto run\r\necho %%1>> "%s"\r\nshift\r\ngoto loop\r\n:run\r\necho __END__>> "%s"\r\n"%s" %%*\r\n' "$WIN_LOG" "$WIN_LOG" "$(cygpath -w "$REAL_CLANG")" > "$T/clang-log.cmd"
-    NOVA_CLANG="$WIN_T\\clang-log.cmd" "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
+    LOG="$T/cc.log"; : > "$LOG"
+    # ПЕРЕХВАТ clang-argv — ОДНА идея в ДВУХ формах, и вторая появилась по
+    # красному CI 2026-08-23 (класс К3, план 274 §9.1д): обёртка была только
+    # `.cmd`, то есть Windows-only, и на Linux инструмент печатал `cygpath:
+    # command not found` на каждой фикстуре, а гейт объявлял «перехват не
+    # сработал» — отказ, по которому идут искать поломку в компиляторе.
+    # Форма разная, потому что оболочка разная; смысл один: записать каждый
+    # аргумент строкой, поставить `__END__` и позвать настоящий clang.
+    if command -v cygpath >/dev/null 2>&1; then
+        WIN_T=$(cygpath -w "$T"); WIN_LOG=$(cygpath -w "$LOG")
+        printf '@echo off\r\nsetlocal\r\n:loop\r\nif "%%~1"=="" goto run\r\necho %%1>> "%s"\r\nshift\r\ngoto loop\r\n:run\r\necho __END__>> "%s"\r\n"%s" %%*\r\n' "$WIN_LOG" "$WIN_LOG" "$(cygpath -w "$REAL_CLANG")" > "$T/clang-log.cmd"
+        WRAPPER="$WIN_T\\clang-log.cmd"
+    else
+        printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a" >> "%s"; done\nprintf "__END__\\n" >> "%s"\nexec "%s" "$@"\n' "$LOG" "$LOG" "$REAL_CLANG" > "$T/clang-log.sh"
+        chmod +x "$T/clang-log.sh"
+        WRAPPER="$T/clang-log.sh"
+    fi
+    NOVA_CLANG="$WRAPPER" "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
         || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
     cp "$T/oracle.exe" "$ORACLE_EXE"
     if [ ! -f "$LINKCMD" ]; then
