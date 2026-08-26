@@ -1,0 +1,29 @@
+// EXPECT_RUNTIME_PANIC unhandled Fail: arm-failure
+//
+// Registry 221.1 #680, the third form its acceptance names: an effect other
+// than `Fail` whose arm is declared `-> never`.
+//
+// This one is correct by construction and the fixture says so rather than
+// leaving it to be re-derived: a `with` handling a user effect pushes no
+// fail-frame (it does not handle `Fail`), so there is no frame of its own to
+// mistake the arm's throw for a handled body error. Nova's `with` takes ONE
+// effect, so "the same with also handles Fail" is not a shape that exists.
+//
+// The peer p680_user_effect_arm_throw_outer_fail_handles.nv covers the case
+// that looks similar and is legitimate: an ENCLOSING `with Fail` is entitled
+// to handle a throw from an inner effect's arm.
+module standalone.p680_user_effect_arm_throw_escapes
+
+type ZBoom effect { boom() -> never }
+
+fn work() ZBoom Io -> () {
+    println("WORK")
+    ZBoom.boom()
+}
+
+fn main() Io -> () {
+    with ZBoom = effect ZBoom { boom() -> never { println("ARM"); throw "arm-failure" } } {
+        work()
+    }
+    println("AFTER")
+}

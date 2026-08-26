@@ -1,0 +1,30 @@
+// EXPECT_STDOUT AFTER
+//
+// Registry 221.1 #680, the case that must NOT change.
+//
+// A user effect's arm throws, and an ENCLOSING `with Fail` handles it. That is
+// legitimate: the outer handler did not install this arm, so its frame is not
+// pretending the arm's error is a body error it already dealt with -- it is
+// genuinely catching an error thrown in its dynamic extent.
+//
+// The shield is per-frame and belongs to the with that installed the arm, so
+// it does not reach here. Expected: `WORK`, `ARM`, `FAILARM`, `AFTER`, exit 0
+// -- and NOT `INNER-AFTER`, because the inner with is abandoned.
+module standalone.p680_user_effect_arm_throw_outer_fail_handles
+
+type ZBoom2 effect { boom() -> never }
+
+fn work() ZBoom2 Io -> () {
+    println("WORK")
+    ZBoom2.boom()
+}
+
+fn main() Io -> () {
+    with Fail = effect Fail { fail(_m) -> never { println("FAILARM"); interrupt () } } {
+        with ZBoom2 = effect ZBoom2 { boom() -> never { println("ARM"); throw "arm-failure" } } {
+            work()
+        }
+        println("INNER-AFTER")
+    }
+    println("AFTER")
+}

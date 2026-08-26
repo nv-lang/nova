@@ -72,7 +72,18 @@ typedef struct NovaFailFrame {
      * (D158 backward-compat silent-suppress idiom preserved). Normal-exit
      * cleanup frames are NOT marked (their failure = primary; handler fires). */
     int                is_cleanup;
+    /* #680: 1 while THIS frame's own handler arm is running. A throw from
+     * that arm must not land here -- this frame's landing pad means "the
+     * body's error was handled", and the arm's error is not the body's.
+     * `nova_fail_landing()` skips shielded frames. Reads and writes still go
+     * through `_nova_fail_top` unchanged: the arm's payload is stamped into
+     * and read out of this very frame. */
     struct NovaFailFrame* prev;
+    /* TAIL, deliberately: putting it before `prev` moved every later offset,
+     * and the prebuilt nova_rt archive still had the old layout -- the two
+     * disagreed about where `prev` and `jmp` live. Additive-at-the-end is the
+     * same discipline the vtables use (#693(2)). */
+    int arm_shield;
 } NovaFailFrame;
 
 /* [221.1 №431 остаток — окно p431b] FIBER-EXIT ANCHOR.
@@ -120,8 +131,34 @@ static inline void nova_fail_push(NovaFailFrame* f) {
      * строки туда уехал бы мусор со стека, по которому nv_compose_suppressed
      * пошёл бы гулять — краш на пути ошибки, то есть самом непроверяемом. */
     f->error_suppressed = NULL;
+    f->arm_shield = 0;  /* #680: stack-allocated frame, must not inherit garbage */
     f->prev = _nova_fail_top;
     _nova_fail_top = f;
+}
+
+
+/* #680: where a throw should land.
+ *
+ * Ordinarily the nearest frame, i.e. `_nova_fail_top`. While a handler arm is
+ * running, the frame that installed that arm is shielded and skipped: its
+ * landing pad means "the body's error was handled", which is a false answer to
+ * an error the ARM raised. Skipping it makes the arm's throw an unhandled error
+ * with a real report, which is what it is.
+ *
+ * With nothing shielded this is exactly `_nova_fail_top`, so every other path
+ * behaves as before.
+ */
+static inline NovaFailFrame* nova_fail_landing(void) {
+    NovaFailFrame* f = _nova_fail_top;
+    /* Kill-switch: pre-fix behaviour on the same binary, for the both-ways
+     * proof the fixtures need. */
+    if (getenv("NOVA_KILL_ARM_SHIELD")) {
+        return f;
+    }
+    while (f && f->arm_shield) {
+        f = f->prev;
+    }
+    return f;
 }
 
 /* Plan 173 Ф.4 #6 (D158 model B): true while the nearest fail-frame is a
@@ -631,17 +668,18 @@ static inline void nova_exit_program_error(void) {
 
 static inline void nova_throw_ex(nova_str msg, NovaErrorChain* suppressed) {
     nova_last_error_set_ex(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE, suppressed);  /* Ф.4 #5 */
-    if (_nova_fail_top) {
-        _nova_fail_top->error_msg = msg;
-        _nova_fail_top->error_kind = NOVA_THROW_USER;
-        _nova_fail_top->error_reason_ptr = NULL;
-        _nova_fail_top->error_user_payload = NULL;
-        _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (_nova_land680) {
+        _nova_land680->error_msg = msg;
+        _nova_land680->error_kind = NOVA_THROW_USER;
+        _nova_land680->error_reason_ptr = NULL;
+        _nova_land680->error_user_payload = NULL;
+        _nova_land680->error_user_type_id = NOVA_TID_NONE;
         /* D414 §1: suppressed chain (NULL for plain throws) — carried in the
          * frame so it survives further rethrow-hops (nova_scope_exit ->
          * nova_rethrow_with_suppressed mirrors the frame). */
-        _nova_fail_top->error_suppressed = suppressed;
-        longjmp(_nova_fail_top->jmp, 1);
+        _nova_land680->error_suppressed = suppressed;
+        longjmp(_nova_land680->jmp, 1);
     }
     /* No handler: abort. Plan 20 Ф.8 follow-up: flush stdout перед
      * abort'ом, чтобы defer cleanup print'ы (буферизованные) попали
@@ -672,14 +710,15 @@ void _nova_cancel_no_handler(void);
  * caller через _reason вариант). */
 static inline void nova_throw_cancel(nova_str msg) {
     nova_last_error_set(msg, NOVA_THROW_CANCEL, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
-    if (_nova_fail_top) {
-        _nova_fail_top->error_msg = msg;
-        _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
-        _nova_fail_top->error_reason_ptr = NULL;
-        _nova_fail_top->error_user_payload = NULL;
-        _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
-        _nova_fail_top->error_suppressed = NULL;  /* D158 */
-        longjmp(_nova_fail_top->jmp, 1);
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (_nova_land680) {
+        _nova_land680->error_msg = msg;
+        _nova_land680->error_kind = NOVA_THROW_CANCEL;
+        _nova_land680->error_reason_ptr = NULL;
+        _nova_land680->error_user_payload = NULL;
+        _nova_land680->error_user_type_id = NOVA_TID_NONE;
+        _nova_land680->error_suppressed = NULL;  /* D158 */
+        longjmp(_nova_land680->jmp, 1);
     }
     /* [221.1 №431] No handler = the addressee scope already unwound
      * (D75 no-op) — quietly retire this fiber instead of abort()ing the
@@ -693,14 +732,15 @@ static inline void nova_throw_cancel(nova_str msg) {
  * указывает на nova_str; для CancelToken[T] (Ф.6) — на box'нутый T. */
 static inline void nova_throw_cancel_reason(nova_str msg, void* reason_ptr) {
     nova_last_error_set(msg, NOVA_THROW_CANCEL, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
-    if (_nova_fail_top) {
-        _nova_fail_top->error_msg = msg;
-        _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
-        _nova_fail_top->error_reason_ptr = reason_ptr;
-        _nova_fail_top->error_user_payload = NULL;
-        _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
-        _nova_fail_top->error_suppressed = NULL;  /* D158 */
-        longjmp(_nova_fail_top->jmp, 1);
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (_nova_land680) {
+        _nova_land680->error_msg = msg;
+        _nova_land680->error_kind = NOVA_THROW_CANCEL;
+        _nova_land680->error_reason_ptr = reason_ptr;
+        _nova_land680->error_user_payload = NULL;
+        _nova_land680->error_user_type_id = NOVA_TID_NONE;
+        _nova_land680->error_suppressed = NULL;  /* D158 */
+        longjmp(_nova_land680->jmp, 1);
     }
     /* [221.1 №431] Same "addressee already gone" case as nova_throw_cancel
      * above — `reason_ptr` needs no special handling here: nobody is left
@@ -794,14 +834,15 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
      * surfaces as an empty pocket (task #7: no leak between unrelated catches;
      * the reset happens per originating throw). */
     _nova_last_error.frame.error_suppressed = frame->error_suppressed;
-    if (_nova_fail_top) {
-        _nova_fail_top->error_msg          = frame->error_msg;
-        _nova_fail_top->error_kind         = frame->error_kind;
-        _nova_fail_top->error_reason_ptr   = frame->error_reason_ptr;
-        _nova_fail_top->error_user_payload = frame->error_user_payload;
-        _nova_fail_top->error_user_type_id = frame->error_user_type_id;
-        _nova_fail_top->error_suppressed   = frame->error_suppressed;
-        longjmp(_nova_fail_top->jmp, 1);
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (_nova_land680) {
+        _nova_land680->error_msg          = frame->error_msg;
+        _nova_land680->error_kind         = frame->error_kind;
+        _nova_land680->error_reason_ptr   = frame->error_reason_ptr;
+        _nova_land680->error_user_payload = frame->error_user_payload;
+        _nova_land680->error_user_type_id = frame->error_user_type_id;
+        _nova_land680->error_suppressed   = frame->error_suppressed;
+        longjmp(_nova_land680->jmp, 1);
     }
     /* No outer fail-frame — abort с dump (primary + chain). */
     fflush(stdout);
@@ -1180,22 +1221,26 @@ static inline void nova_assert_loc(
             msg_heap = (char*)nova_alloc(n + 1);
             for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
         }
+        /* №679 kill-switch: hand out the STACK buffer, exactly as before the
+         * fix, so the fixtures can be shown to redden on the same binary. */
+        if (getenv("NOVA_KILL_ASSERT_MSG_HEAP")) { msg_heap = buf; }
         /* Inside a fiber: route through the nearest NovaFailFrame so longjmp
          * stays on the fiber's own stack — never crosses the mco boundary.
          * Spawn-entry pushes a per-fiber fail-frame; supervised_run re-throws
          * on main flow via nova_throw, which the test runner's _tf_fail catches.
          * On main flow (no fiber): route to _nova_test_frame as before. */
-        if (nova_in_fiber() && _nova_fail_top) {
+        NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+        if (nova_in_fiber() && _nova_land680) {
             nova_last_error_set(nova_str_from_cstr(msg_heap), NOVA_THROW_PANIC,
                                 NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
-            _nova_fail_top->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
+            _nova_land680->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
             /* Plan 140.3 (D13 amend): assert failure is a PANIC-class failure
              * (spec D13: "assert failure = panic"), identical to nv_panic and
              * contract violations. Tag error_kind so ConsumeScope/supervised
              * classify the caught error as Panic(msg), not a recoverable
              * Failure(msg). */
-            _nova_fail_top->error_kind = NOVA_THROW_PANIC;
-            longjmp(_nova_fail_top->jmp, 1);
+            _nova_land680->error_kind = NOVA_THROW_PANIC;
+            longjmp(_nova_land680->jmp, 1);
         }
         if (_nova_test_frame) {
             /* №679: копия уже сделана выше — ОДНА на все ветки,
@@ -1235,15 +1280,16 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
  * ambient relay. */
 static inline void nv_panic_ex(nova_str msg, NovaErrorChain* suppressed) {
     nova_last_error_set_ex(msg, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE, suppressed);  /* Ф.4 #5 */
-    if (_nova_fail_top) {
-        _nova_fail_top->error_msg = msg;
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (_nova_land680) {
+        _nova_land680->error_msg = msg;
         /* Plan 110.1.4.g (D188): mark frame's error_kind = PANIC so
          * ConsumeScope codegen может construct Panic(msg) variant вместо
          * Failure(msg). Сохраняем backwards compatibility: existing
          * defer/errdefer code не reads NOVA_THROW_PANIC специально
          * (treated as throw для cleanup-cascade purposes). */
-        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
-        longjmp(_nova_fail_top->jmp, 1);
+        _nova_land680->error_kind = NOVA_THROW_PANIC;
+        longjmp(_nova_land680->jmp, 1);
     }
     if (_nova_test_frame) {
         /* Аллоцируем буфер, чтобы сообщение пережило stack frame caller'а.
@@ -1518,6 +1564,11 @@ typedef struct NovaVtable_Fail {
      * этот frame вместо _nova_interrupt_top. NULL для legacy handlers что
      * не нуждаются. emit_with инициализирует через `vt->owner_iframe = &iframe`. */
     struct NovaInterruptFrame*   owner_iframe;
+    /* #680: the fail-frame THIS with-block pushed. Shielded while the arm
+     * runs, so the arm's own throw cannot land on it. Tail field, zeroed by
+     * nova_alloc: an older snapshot with an older header leaves it NULL and
+     * behaves exactly as before. */
+    struct NovaFailFrame*        owner_fframe;
 } NovaVtable_Fail;
 
 #ifdef _MSC_VER
@@ -1550,7 +1601,10 @@ static inline nova_unit Nova_Fail_fail(nova_str msg) {
         /* Plan 61 followup #1: handler-arm `interrupt v` использует этот
          * slot вместо _nova_interrupt_top. Critical для cross-effect throw. */
         _nova_current_handler_iframe = current->owner_iframe;
+        int shielded680 = current->owner_fframe && !current->owner_fframe->arm_shield;
+        if (shielded680) { current->owner_fframe->arm_shield = 1; }  /* #680 */
         current->fail(current->ctx, msg);
+        if (shielded680) { current->owner_fframe->arm_shield = 0; }  /* #680 */
         _nova_handler_Fail = current;              /* restore handler chain */
         _nova_current_handler_iframe = saved_handler_iframe;
         /* Handler returned — by D65 Fail-strict, fail() is `Never` from the
@@ -1584,6 +1638,7 @@ typedef struct NovaVtable_Fail_any {
     /* Plan 61 followup #1: same как у NovaVtable_Fail — для cross-effect
      * throw interrupt routing. */
     struct NovaInterruptFrame*        owner_iframe;
+    struct NovaFailFrame*             owner_fframe;  /* #680, see NovaVtable_Fail */
 } NovaVtable_Fail_any;
 
 #ifdef _MSC_VER
@@ -1622,6 +1677,23 @@ static inline nova_unit nova_throw_typed_ex(nova_str msg_repr,
          * in the frame so it survives further rethrow-hops. */
         _nova_fail_top->error_suppressed   = suppressed;
     }
+    /* #680: the head is stamped because a handler ARM reads its payload
+     * back out of it. When a shield redirects the landing, the frame that
+     * will actually CATCH is a different one, and leaving it unstamped is
+     * how the arm's error reached the top with an empty message and exit 0.
+     * With no shield up the two are the same frame and this writes nothing
+     * new. */
+    {
+        NovaFailFrame* land680 = nova_fail_landing();
+        if (land680 && land680 != _nova_fail_top) {
+            land680->error_msg          = msg_repr;
+            land680->error_kind         = NOVA_THROW_USER_TYPED;
+            land680->error_reason_ptr   = NULL;
+            land680->error_user_payload = payload;
+            land680->error_user_type_id = tid;
+            land680->error_suppressed   = suppressed;
+        }
+    }
     /* Step 2: erased typed slot.
      * Plan 173 Ф.4 #6: cleanup-unwind bypasses handler dispatch (model B). */
     if (_nova_handler_Fail_any && !nova_in_cleanup_unwind()) {
@@ -1629,7 +1701,10 @@ static inline nova_unit nova_throw_typed_ex(nova_str msg_repr,
         NovaInterruptFrame* saved_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail_any = current->prev;
         _nova_current_handler_iframe = current->owner_iframe;  /* Plan 61 fu#1 */
+        int shielded680 = current->owner_fframe && !current->owner_fframe->arm_shield;
+        if (shielded680) { current->owner_fframe->arm_shield = 1; }  /* #680 */
         current->fail(current->ctx, payload, tid);
+        if (shielded680) { current->owner_fframe->arm_shield = 0; }  /* #680 */
         _nova_handler_Fail_any = current;
         _nova_current_handler_iframe = saved_iframe;
         /* Handler returned normally → Fail-strict (D65): force unwind. */
@@ -1643,13 +1718,17 @@ static inline nova_unit nova_throw_typed_ex(nova_str msg_repr,
         NovaInterruptFrame* saved_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail = current->prev;
         _nova_current_handler_iframe = current->owner_iframe;  /* Plan 61 fu#1 */
+        int shielded680s = current->owner_fframe && !current->owner_fframe->arm_shield;
+        if (shielded680s) { current->owner_fframe->arm_shield = 1; }  /* #680 */
         current->fail(current->ctx, msg_repr);
+        if (shielded680s) { current->owner_fframe->arm_shield = 0; }  /* #680 */
         _nova_handler_Fail = current;
         _nova_current_handler_iframe = saved_iframe;
     }
     /* Step 4: unwind. fail-frame уже заполнен наверху. */
-    if (_nova_fail_top) {
-        longjmp(_nova_fail_top->jmp, 1);
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (_nova_land680) {
+        longjmp(_nova_land680->jmp, 1);
     }
     /* No fail-frame at all — abort с diagnostic. */
     fflush(stdout);

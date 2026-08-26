@@ -1,0 +1,41 @@
+// EXPECT_RUNTIME_PANIC unhandled Fail
+//
+// Registry 221.1 #680, the reported form: a throw from a `fail(e) -> never`
+// arm was swallowed and the program carried on with exit 0.
+//
+// Measured before the fix, verbatim: `DB: about to throw / HANDLER: entered /
+// AFTER`, EXIT=0. The arm is declared `-> never`, so by the type there is no
+// way back out of it -- and the observable behaviour was exactly "it returned
+// and all is well".
+//
+// The mechanism is a double dispatch, not a mis-aimed landing pad. The
+// dispatcher swaps `_nova_handler_Fail` to `current->prev` before invoking the
+// arm, so the arm's own throw finds NO handler and unwinds to the nearest
+// fail-frame -- which is the frame this very `with` pushed, and whose
+// else-branch means "handled". One frame doing two jobs: landing pad for the
+// body's throws, and "the error was dealt with". The second job ate the arm's
+// throw.
+//
+// Fixed by shielding: the frame is marked while its own arm runs, and
+// `nova_fail_landing()` skips shielded frames when choosing where a throw
+// lands. The frame stays in the chain, because the arm READS its payload out
+// of it -- an earlier attempt that unlinked the frame instead broke five
+// conformance tests for exactly that reason.
+//
+// Kill-switch NOVA_KILL_ARM_SHIELD=1 restores the pre-fix behaviour on the
+// same binary: `AFTER`, exit 0.
+module standalone.p680_arm_throw_escapes_typed
+
+type P680Err { code int }
+
+fn db() Fail[P680Err] Io -> () {
+    println("DB: about to throw")
+    throw P680Err { code: 1 }
+}
+
+fn main() Io -> () {
+    with Fail = effect Fail { fail(_e) -> never { println("HANDLER: entered"); throw P680Err { code: 2 } } } {
+        db()
+    }
+    println("AFTER")
+}

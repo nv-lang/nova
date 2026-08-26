@@ -1,0 +1,24 @@
+// EXPECT_STDOUT AFTER
+//
+// Registry 221.1 #680, the guard against over-reach.
+//
+// The shield must fire ONLY for a throw that comes out of the arm. An arm that
+// does its job -- records the error, `interrupt`s out of the with -- must
+// still be a handler: the body's error is handled, the with-block completes,
+// and execution continues after it. Without this fixture the fix could
+// "succeed" by making every `with Fail` stop handling anything.
+//
+// `DB` then `ARM` then `AFTER`, exit 0.
+module standalone.p680_arm_interrupt_still_handled
+
+fn db() Fail Io -> () {
+    println("DB")
+    throw "body-failure"
+}
+
+fn main() Io -> () {
+    with Fail = effect Fail { fail(_m) -> never { println("ARM"); interrupt () } } {
+        db()
+    }
+    println("AFTER")
+}

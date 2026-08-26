@@ -1325,10 +1325,43 @@ fn read_set_scc_cache() -> &'static Mutex<ScCache> {
 /// enabled via `NOVA_FIELD_CACHE_SCC_CACHE=1`. Default-off semantics
 /// preserve V7.3 deterministic test contract.
 pub fn scc_cache_enabled() -> bool {
+    // THREAD-SCOPED OVERRIDE FIRST. The env var is process-global and the
+    // counters below are too, while cargo runs the crate's tests as threads
+    // in one process: a test that set the variable for itself also switched
+    // it on for every other test running at that moment, and those bumped
+    // the same counters. `v74_write_and_read_caches_isolated` went red on CI
+    // for commits that touch nothing near it. No override is ever set outside
+    // tests, so production still reads the env var and nothing else.
+    if let Some(v) = SCC_CACHE_OVERRIDE.with(|c| c.get()) {
+        return v;
+    }
     matches!(
         std::env::var("NOVA_FIELD_CACHE_SCC_CACHE").ok().as_deref(),
         Some("1") | Some("on") | Some("true") | Some("True") | Some("TRUE")
     )
+}
+
+thread_local! {
+    /// Per-thread answer for `scc_cache_enabled`. `None` = defer to the env
+    /// var. Set only by the test guard, and only for the duration of one test
+    /// body.
+    static SCC_CACHE_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Test-only: scope the V7.4 cache switch to the calling thread. Returns the
+/// previous override so the caller can restore it.
+pub fn set_scc_cache_override(v: Option<bool>) -> Option<bool> {
+    // Kill-switch: also flip the PROCESS variable, i.e. exactly the pre-fix
+    // behaviour, so `v74_switch_does_not_leak_to_sibling_threads` can be shown
+    // to redden on the same binary instead of being taken on trust.
+    if std::env::var("NOVA_KILL_SCC_THREAD_SCOPE").as_deref() == Ok("1") {
+        match v {
+            Some(true) => std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", "1"),
+            _ => std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE"),
+        }
+    }
+    SCC_CACHE_OVERRIDE.with(|c| c.replace(v))
 }
 
 /// Plan 123.7.4 (V7.4): exposed hit/miss telemetry для tests +
@@ -12659,20 +12692,20 @@ fn L1 @use_both() -> int {
     // из соседнего теста, шедшего параллельно.
     static SCC_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Scope the V7.4 switch to THIS thread, never to the process.
+    ///
+    /// This used to set `NOVA_FIELD_CACHE_SCC_CACHE` for the whole process.
+    /// The mutex serialises these tests against each other and against
+    /// nothing else, so while the variable was set every other test in the
+    /// crate -- running as a sibling thread -- also took the cached path and
+    /// bumped the same global counters. Hence a CI-only red on commits that
+    /// touch nothing here.
     fn with_scc_env<F: FnOnce()>(enabled: bool, body: F) {
         let _g = SCC_ENV_GUARD.lock().unwrap_or_else(|p| p.into_inner());
-        let prev = std::env::var("NOVA_FIELD_CACHE_SCC_CACHE").ok();
-        if enabled {
-            std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", "1");
-        } else {
-            std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE");
-        }
+        let prev = super::set_scc_cache_override(Some(enabled));
         reset_scc_caches();
         body();
-        match prev {
-            Some(v) => std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", v),
-            None => std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE"),
-        }
+        super::set_scc_cache_override(prev);
         reset_scc_caches();
     }
 
@@ -12768,6 +12801,29 @@ fn L1 @use_both() -> int {
         });
     }
 
+    /// The switch must NOT leak to sibling threads.
+    ///
+    /// This is the whole of the CI-only red: cargo runs the crate's tests as
+    /// threads in ONE process, and the switch used to be a process-global env
+    /// var, so a test that turned the cache on for itself turned it on for
+    /// every test running beside it -- and those bumped the same global
+    /// counters, costing this file's assertions an extra miss. Deterministic
+    /// where the race is not: hold the guard on this thread, ask another
+    /// thread, and require it to still see the default.
+    #[test]
+    fn v74_switch_does_not_leak_to_sibling_threads() {
+        with_scc_env(true, || {
+            assert!(super::scc_cache_enabled(), "guard thread: cache on");
+            let seen = std::thread::spawn(super::scc_cache_enabled)
+                .join()
+                .expect("sibling thread");
+            assert!(
+                !seen,
+                "a sibling thread saw this thread's V7.4 switch: the counters                  asserted on in this file are global, so that sibling would                  bump them and redden an unrelated test"
+            );
+        });
+    }
+
     /// V7.4.5 positive: write / read caches isolated (don't collide).
     #[test]
     fn v74_write_and_read_caches_isolated() {
@@ -12854,11 +12910,15 @@ fn L1 @use_both() -> int {
     #[test]
     fn v74_cache_hit_preserves_v73_semantics() {
         with_scc_env(true, || {
-            // Baseline: cache disabled, compute fresh.
-            std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE");
+            // Baseline: cache disabled, compute fresh. This used to flip the
+            // PROCESS env var here and never put it back -- so from the moment
+            // this test ran, every later test in the process saw the V7.4
+            // cache enabled. That is the larger half of the CI-only red; the
+            // switch is thread-scoped now, and turning it off is a local act.
+            let restore = super::set_scc_cache_override(Some(false));
             let (mut d_baseline, c) = sample_graph();
             propagate_via_scc(&mut d_baseline, &c);
-            std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", "1");
+            super::set_scc_cache_override(restore);
             reset_scc_caches();
             // V7.4 path: 1 miss + 1 hit, both should equal baseline.
             let (mut d_miss, c2) = sample_graph();
