@@ -1,0 +1,85 @@
+// EXPECT_STDOUT value=53|48|44 proto=8 display=coin-5 coerce=abcd
+//
+// Registry 221.1 #613, and its acceptance rather than its carrier.
+//
+// The row refused a one-case fix outright: "досеять достижимость одним лишь
+// случаем `Type.@method` мало; приёмка — перечисленные ВСЕ способы дотянуться
+// до метода не вызовом (значение, протокольная таблица, авто-прокси `use`,
+// `#coerce`), и на каждый фикстура." So this file is the enumeration, and each
+// form below reaches a method WITHOUT ever calling it by name.
+//
+// Measured 2026-08-26, one form of the four was broken:
+//
+//   method value      lld-link: undefined symbol: Nova_Purse_method_bump
+//   protocol table    clean
+//   user @display     clean  (reached only by interpolation)
+//   implicit #coerce  clean
+//
+// The `use` form the row names is protocol COMPOSITION (D145), not a record
+// embed -- records have no auto-proxy -- and the corpus already pins it in
+// m_embvt_protocolbox_embed_callarg_ok.nv, so it is not repeated here.
+//
+// Why the one form broke: both `Type.@method` and `obj.@method` parse as a
+// Member whose NAME carries the `@`, and the reachability walk inserted that
+// spelling verbatim while method-level DCE looks the name up without it. The
+// two never matched, the method was pruned as dead, and the value thunk still
+// referenced it. Same root as #576 -- the walk goes by NAMES and knows nothing
+// of a type's method set.
+//
+// Kill-switch NOVA_KILL_613=1 restores the pre-fix behaviour on the same
+// binary: the build fails to link Nova_Purse_method_bump.
+//
+// Direct calls are deliberately absent from every form here. A single ordinary
+// call anywhere next to them is what hid the defect for months: with one
+// present, everything links.
+module standalone.p613_method_reached_without_a_call
+
+// ── (1) method value ─────────────────────────────────────────────────────────
+type Purse { balance int }
+
+fn Purse @add(n int) -> int => @balance + n
+
+fn Purse mut @bump(n int) -> int {
+    @balance = @balance + n
+    return @balance
+}
+
+// ── (2) protocol table ───────────────────────────────────────────────────────
+type PGreet protocol { @greet() -> int }
+
+type PImpl { base int }
+
+fn PImpl @greet() -> int => @base + 7
+
+fn via_box(g PGreet) -> int => g.greet()
+
+// ── (3) user @display, reached only by interpolation ─────────────────────────
+type DCoin { n int }
+
+fn DCoin @display(mut f Fmt) -> () => f.write("coin-${@n}")
+
+// ── (4) implicit #coerce ─────────────────────────────────────────────────────
+type CBox { s str }
+
+#coerce
+fn CBox @into_str() -> ro str => @s
+
+fn takes_str(x str) -> str => x
+
+fn main() Io -> () {
+    mut a = Purse { balance: 43 }
+    ro h = Purse.@add
+    ro h2 fn(Purse, int) -> int = Purse.@add
+    ro g fn(mut Purse, int) -> int = Purse.@bump
+    print("value=${h(a, 10)}|${h2(a, 5)}|${g(a, 1)}")
+
+    ro v = PImpl { base: 1 }
+    print(" proto=${via_box(v)}")
+
+    ro c = DCoin { n: 5 }
+    print(" display=${c}")
+
+    ro b = CBox { s: "abcd" }
+    print(" coerce=${takes_str(b)}")
+    println("")
+}
