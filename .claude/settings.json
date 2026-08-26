@@ -33,6 +33,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/inject-flow-delegate.py\""
+          }
+        ]
+      }
     ]
   }
 }
