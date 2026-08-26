@@ -7112,7 +7112,7 @@ followup**.
 
 ## Q24. Шардирование I/O driver thread под high-I/O workload
 
-**Контекст.** [D228](decisions/06-concurrency.md#d228) фиксирует **один** centralized I/O driver thread на process. Это намеренный trade-off (single owner timer-state → cross-thread visibility races eliminated), но driver — потенциальный bottleneck при extreme timer/cancel workload'е (>1M timers/sec на worker pool из 16+ ядер).
+**Контекст.** [D466](decisions/06-concurrency.md#d466) фиксирует **один** centralized I/O driver thread на process. Это намеренный trade-off (single owner timer-state → cross-thread visibility races eliminated), но driver — потенциальный bottleneck при extreme timer/cancel workload'е (>1M timers/sec на worker pool из 16+ ядер).
 
 **Возможное направление.** Sharded driver pool: `driver_id = hash(scope) % N_drivers`, каждый driver — свой `uv_loop_t` + own job queue. Scope привязан к одному driver'у пожизненно (стабильный hash), все timers данного scope'а живут на одном driver loop'е. Cross-scope cancel (cascade через `cancelled_by`) — через scoped routing.
 
@@ -7130,7 +7130,7 @@ followup**.
 
 ## Q25. Explicit `drain-and-cancel` barrier API
 
-**Контекст.** [D228 §6](decisions/06-concurrency.md#d228) описывает `pending_driver_jobs` counter как **internal** runtime invariant — `nova_supervised_run_impl` сам спинит на нём перед return. Но user-code, который хочет «отмени все outstanding и дождись пока driver thread обработает», сейчас не имеет API: `tok.cancel()` возвращается immediately, фактическая обработка асинхронна.
+**Контекст.** [D466 §6](decisions/06-concurrency.md#d466) описывает `pending_driver_jobs` counter как **internal** runtime invariant — `nova_supervised_run_impl` сам спинит на нём перед return. Но user-code, который хочет «отмени все outstanding и дождись пока driver thread обработает», сейчас не имеет API: `tok.cancel()` возвращается immediately, фактическая обработка асинхронна.
 
 **Возможное API.**
 
@@ -7184,7 +7184,7 @@ supervised(cancel: tok) {
 
 ## Q27. Sysmon introspection: экспонировать `pending_driver_jobs`
 
-**Контекст.** [D228 §6](decisions/06-concurrency.md#d228) вводит `pending_driver_jobs` counter per scope. Сейчас он internal — нет API для observability. Long-running cancel storm может зависнуть с large counter (driver не успевает разгребать), и user не увидит этого до timeout'а.
+**Контекст.** [D466 §6](decisions/06-concurrency.md#d466) вводит `pending_driver_jobs` counter per scope. Сейчас он internal — нет API для observability. Long-running cancel storm может зависнуть с large counter (driver не успевает разгребать), и user не увидит этого до timeout'а.
 
 **Возможное API.**
 

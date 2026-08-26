@@ -14509,7 +14509,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
-        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // [196.6 / D466 §6 class]: pending_sweeps++ strictly BEFORE the
         // pending_remote release-decrement (same thread, program order) —
         // the scope owner that observes pending_remote==0 therefore also
         // observes pending_sweeps>0 until the worker's post-mortem sweep
@@ -15681,7 +15681,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
-        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
+        // [196.6 / D466 §6 class]: pending_sweeps++ strictly BEFORE the
         // pending_remote release-decrement (same thread, program order) —
         // the scope owner that observes pending_remote==0 therefore also
         // observes pending_sweeps>0 until the worker's post-mortem sweep

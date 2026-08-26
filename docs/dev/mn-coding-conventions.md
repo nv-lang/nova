@@ -469,7 +469,7 @@ void supervised_run(void) {
 }
 ```
 
-**ХОРОШО** (`pending_sweeps` / `pending_driver_jobs`, D228 §6)
+**ХОРОШО** (`pending_sweeps` / `pending_driver_jobs`, D466 §6)
 ```c
 void supervised_run(void) {
     NovaFiberQueue scope;
