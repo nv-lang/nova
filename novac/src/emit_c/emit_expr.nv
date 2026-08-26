@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row, is_value_record}
+import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, c_instance_method, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row, is_value_record}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, no_ty}
 
@@ -306,7 +306,16 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
         // carries an empty one, so there is no branch here to get wrong.
-        @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
+        if @ctx.fns.compiles_body(cr.callable_row()) {
+            @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
+        } else {
+            // INTEROP (sub-plan L2): a method row with no body of ours is an
+            // instance method the SHELL emits, named by the receiver's
+            // instance -- `Vec____nova_int_method_len`; the checker admitted
+            // it against the lifted surface. Goes the day novac emits the
+            // whole prelude.
+            @body.append(c_instance_method(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
+        }
         @body.append("(")
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the
         // recorded binding -- not a special case bolted onto the front. The
@@ -397,7 +406,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // and the right-hand side after it — the same shape check builds,
             // asked at the same door. The right side's type is not read here:
             // `equal` takes its own type, so the position is left unknown.
-            match @ctx.fns.lookup(EQUAL_METHOD, equal_key(lhs_t), CallForm.MethodCall) {
+            match @ctx.fns.lookup(@ctx.tys, EQUAL_METHOD, equal_key(lhs_t), CallForm.MethodCall) {
                 FnFound(row) => @body.append(c_callable(@ctx, row, no_subst()))
                 FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_subst()))
                 FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")

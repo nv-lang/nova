@@ -31,7 +31,7 @@ import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty, Interner}
 
 // WHY `VariantRow` LIVES IN THIS FILE and not beside `VariantDef`, where it
 // belongs by subject: THE ORACLE'S EMISSION DEPENDS ON DECLARATION ORDER. A
@@ -349,7 +349,7 @@ export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
 /// what it cannot judge would be a guess in the other direction. ARITY,
 /// however, is always known at a call site, so it discriminates from today.
 #realtime nogc
-fn FnTable @fits(row FnRow, args []ArgSpec, form CallForm) -> bool {
+fn FnTable @fits(tys Interner, row FnRow, args []ArgSpec, form CallForm) -> bool {
     ro fd = @rows[raw_row(row)]
     // THE FORM FIRST. A free call cannot reach a callable declared with a
     // receiver, and a method call cannot reach one declared without: the
@@ -407,7 +407,10 @@ fn FnTable @fits(row FnRow, args []ArgSpec, form CallForm) -> bool {
         // type-PARAMETER was then compared against an absent type. The bare form
         // stood here since the door was written -- it is a newtype, and asking a
         // newtype an int's question is exactly what the door exists to prevent.
-        if is_ty(args[at].type_id) && p.type_id != args[at].type_id {
+        // Since sub-plan L2 (2026-08-26) the question is STRUCTURAL, through
+        // `type_admits`: a receiver `Vec[T]` fits `Vec[int]`, a bare parameter
+        // fits anything, and the untyped slot still admits everything.
+        if !type_admits(tys, p.type_id, args[at].type_id) {
             return false
         } else {
             // Either this position is not typed yet (no_ty()), or it matches.
@@ -631,7 +634,7 @@ export fn FnTable @has_name(name str) -> bool {
 /// argument BOTH ways. The winner is the most specific one (P14 filter 4), and
 /// only a TIE at the top is a set -- which is what the spec says to refuse.
 #realtime nogc
-export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
+export fn FnTable @lookup(tys Interner, name str, args []ArgSpec, form CallForm) -> FnLookup {
     mut first = no_row()
     mut best = -1
     mut ties = 0
@@ -639,7 +642,7 @@ export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
     while r >= 0 {
         ro row = FnRow(r)
         r = raw_row(@rows[r].next_row)
-        if !@fits(row, args, form) { continue }
+        if !@fits(tys, row, args, form) { continue }
         ro s = @specificity_of(row)
         if raw_row(first) < 0 {
             first = row
@@ -666,7 +669,7 @@ export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
     } else {
         // One winner at the top of the specificity order.
     }
-    FnLookup.FnFound(@most_specific(name, args, form, best))
+    FnLookup.FnFound(@most_specific(tys, name, args, form, best))
 }
 
 /// The row with this specificity among the fitting candidates of `name`.
@@ -676,12 +679,12 @@ export fn FnTable @lookup(name str, args []ArgSpec, form CallForm) -> FnLookup {
 /// that fitted. Doing it in one pass would mean remembering both the first row
 /// and the best row and then explaining which is which at every call site.
 #realtime nogc
-fn FnTable @most_specific(name str, args []ArgSpec, form CallForm, want int) -> FnRow {
+fn FnTable @most_specific(tys Interner, name str, args []ArgSpec, form CallForm, want int) -> FnRow {
     mut r = @heads.find(name)
     while r >= 0 {
         ro row = FnRow(r)
         r = raw_row(@rows[r].next_row)
-        if !@fits(row, args, form) { continue }
+        if !@fits(tys, row, args, form) { continue }
         if @specificity_of(row) == want { return row }
     }
     // The caller established that a row of this specificity fits; the chain is

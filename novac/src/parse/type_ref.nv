@@ -76,6 +76,15 @@ fn Cursor mut @type_ref() -> []Node {
     // A function type: `fn(int, str) -> bool`. The parameter list is a
     // balanced paren run -- the types inside are read by the same door when
     // the checker walks them, so nothing is lost by taking the run whole.
+    // `@` in type position is the receiver's own type spelled as a sign
+    // (`fn Vec[T] mut @push(v T) -> @`): one leaf, no arguments, and harvest
+    // reads it through the same leaf door as the word `Self`. Until 2026-08-26
+    // the reader stopped here with "not a form", and every std method that
+    // returns its receiver this way was dropped whole (sub-plan L2).
+    if @peek() == TokenKind.At {
+        out.push(@take())
+        return out
+    }
     if @peek() == TokenKind.KwFn {
         out.push(@take())
         if @peek() == TokenKind.LParen {

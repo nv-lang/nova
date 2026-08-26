@@ -1,0 +1,12 @@
+// vec_len.nv -- an array literal, its length, a push, its length again:
+// the first example that BOTH compilers build to the same bytes with a
+// std instance method in it (novac plan 274, sub-plan L3).
+
+module basics.vec_len
+
+fn main() {
+    mut xs = [7, 8, 9]
+    println(xs.len())
+    xs.push(4)
+    println(xs.len())
+}

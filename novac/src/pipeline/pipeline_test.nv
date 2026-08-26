@@ -549,3 +549,36 @@ export type Vec[T] { n int }")
     assert(d5.len() == 1)
     assert(d5[0].message.contains("only as a binding initializer"))
 }
+
+test "an instance method of the shell: deduced on the receiver, named by the shell, refused where the shell has none" {
+    mut std = std_decls()
+    std.push("module std.v
+export type Vec[T] { n int }
+export fn Vec[T] @len() -> int => @n
+export fn Vec[T] mut @push(v T) -> @ => @
+export type Opt[T] enum Got(T) | Nil
+export fn Vec[T] @get(i int) -> Opt[T] => Nil
+export fn Vec[T] @nope() -> int => 0")
+    ro (d1, c1) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.len())\n}", std)
+    assert(d1.len() == 0)
+    assert(c1.contains("Vec____nova_int_method_len"))
+    // `push` returns Self: the substituted return is the receiver's own term.
+    ro (d2, c2) = compile_to_c("fn main() {\n mut v = [7]\n v.push(9)\n println(v.len())\n}", std)
+    assert(d2.len() == 0)
+    assert(c2.contains("Vec____nova_int_method_push"))
+    // No such method at all: the refusal of the wave before, unchanged.
+    ro (d3, _) = compile_to_c("fn main() {\n ro v = [7]\n println(v.zzz())\n}", std)
+    assert(d3.len() == 1)
+    assert(d3[0].message.contains("no such method"))
+    // Declared, generic, and absent from the shell: refused naming the probe.
+    ro (d4, _) = compile_to_c("fn main() {\n ro v = [7]\n println(v.nope())\n}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("shell_probe.nv"))
+    // A return that is an instance of a sum: the family spelling is not taken.
+    // `get` and not a made-up name: the shell IS asked first, and a method the
+    // shell lacks is refused for that reason before its return is judged.
+    ro (d5, _) = compile_to_c("fn main() {\n ro v = [7]\n ro f = v.get(0)\n println(1)\n}", std)
+    assert(d5.len() >= 1)
+    assert(d5[0].message.contains("Opt[int]"))
+    assert(d5[0].message.contains("instance of a sum"))
+}

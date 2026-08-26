@@ -186,6 +186,8 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
 /// honest rejection at the point of use.
 fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut fns FnTable) -> () {
     mut recv_name = ""
+    mut recv_kids = []Node.new()
+    mut recv_at = -1
     mut mname = ""
     mut ret_unit = false
     mut ret_kids = []Node.new()
@@ -197,16 +199,20 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut
             // (`fn[T] []T @map`) or with slice brackets, and `leaf_text` on a
             // branch is an ice -- which is exactly what it became, on EVERY
             // file, because std declarations go through this door.
-            for rc in branch_children(c) {
+            recv_kids = branch_children(c)
+            mut i = 0
+            for rc in recv_kids {
                 ro is_name = rc.is_ident()
                 if is_name && recv_name == "" {
                     recv_name = leaf_text(rc)
+                    recv_at = i
                 } else {
                     // Either the name is already found, or this leaf is not
                     // one: the FIRST identifier under the receiver group is
                     // the name, and what follows belongs to its type
                     // arguments.
                 }
+                i += 1
             }
         } else if ck == NodeKind.RetType {
             ro rk = branch_children(c)
@@ -234,7 +240,24 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut
     // name, and the door below is what reads it -- so an empty name is no longer
     // a dropped signature by itself.
     if recv_name == "" || mname == "" || ret_kids.len() < 2 { return }
-    ro recv_t = ty_or_none(types, defs, recv_name)
+    // TYPE PARAMETERS OF A METHOD (sub-plan L2, 2026-08-26): the receiver's own
+    // (`Vec[T]` -- the Generics right after its name) come first, the method's
+    // (`fn[U]`, a Generics before it) after; one parameter row per slot. The
+    // receiver is then a TERM through the one door -- `app(Vec, [param 0])`
+    // for `Vec[T]`, `app(Vec, [u8])` for the slice sugar `[]u8`, the plain
+    // declaration for `Cel` -- and `Self` in the return (`-> @`) is that term.
+    // Until this wave the receiver was read as a NAME, so every generic method
+    // of std was dropped (`T` unknown), and `v.len()` on `Vec[int]` was refused
+    // as "no such method" about a method std declares.
+    mut tps = recv_type_params(recv_kids, recv_at)
+    ro recv_tp_cnt = tps.len()
+    tps.append(generic_names(kids))
+    mut bounds = []str.new()
+    for _ in 0..recv_tp_cnt { bounds.push("") }
+    bounds.append(generic_bounds(kids))
+    mut prow = []TyId.new()
+    for i in 0..tps.len() { prow.push(tys.param(i)) }
+    ro recv_t = ty_of_type_ref(recv_kids, recv_head_at(recv_kids, recv_at), no_ty(), tps, prow, types, defs, tys)
     // `Self` is the RECEIVER's type, spelled by its role instead of its name.
     // It is not in `defs` and never will be -- it names no declaration -- so a
     // door that only asked the registry dropped the WHOLE signature: measured
@@ -245,7 +268,7 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut
     ro ret_t = if ret_unit {
         ty_or_none(types, defs, UNIT_TYPE_NAME)
     } else {
-        ty_of_type_ref(ret_kids, 1, recv_t, []str.new(), []TyId.new(), types, defs, tys)
+        ty_of_type_ref(ret_kids, 1, recv_t, tps, prow, types, defs, tys)
     }
     if !is_ty(recv_t) || !is_ty(ret_t) { return }
     // A signature is valid only if ALL its types are known, including
@@ -289,7 +312,7 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut
         // the signature -- the door gets no tps here, deliberately: a std
         // generic method's body cannot be emitted anyway, and a half-read
         // signature is the K7 shape.
-        ro pt = ty_of_type_ref(pk, tat, recv_t, []str.new(), []TyId.new(), types, defs, tys)
+        ro pt = ty_of_type_ref(pk, tat, recv_t, tps, prow, types, defs, tys)
         if !is_ty(pt) { return }
         // The MODE travels with the type: it is an axis of overloading (P14),
         // so a signature read without it would make `@ptr()` and `mut @ptr()`
@@ -303,5 +326,42 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut
     // row like any other. Nova's real external declarations are `extern "C" fn`
     // and `extern "nova" fn`, which say so IN THE SOURCE and carry an ABI;
     // neither appears in std's string module (owner, 2026-08-20).
-    fns.add(mname, ret_t, true, param_ids, generic_names(kids), generic_bounds(kids))
+    fns.add(mname, ret_t, true, param_ids, tps, bounds)
+}
+
+/// The type-parameter NAMES a receiver group binds, in SLOT order: the
+/// arguments of its head (`Vec[T]` -- the Generics right after the name) first,
+/// then the method's own (`fn[U] ...` -- a Generics before the name).
+fn recv_type_params(rk []Node, at int) -> []str {
+    mut out = head_type_args(rk, at)
+    for i in 0..at {
+        // Slice brackets or the mode keyword are not a parameter list; the
+        // `continue` is the other branch (P31 form 2). [LEGACY-#676] the
+        // binding hop: `rk[i].kind_of()` with the loop's index is the
+        // var-index-method miscompile (reproduced 2026-08-26 in 14 lines; a
+        // parameter index `rk[at - 1]` compiles, the for-range variable does not).
+        ro c = rk[i]
+        if c.kind_of() != NodeKind.Generics { continue }
+        out.append(names_of_generics(branch_children(c)))
+    }
+    out
+}
+
+/// The head's own type arguments (`Vec[T]`): the Generics right after the
+/// name, or none for a plain receiver (`Cel`, `[]u8`).
+fn head_type_args(rk []Node, at int) -> []str {
+    if at + 1 >= rk.len() { return []str.new() }
+    ro nxt = rk[at + 1]
+    if nxt.kind_of() != NodeKind.Generics { return []str.new() }
+    names_of_generics(branch_children(nxt))
+}
+
+/// Where the receiver's TYPE starts among the group's children: at the name,
+/// or one earlier when slice brackets precede it (`[]u8 @m` is a method of
+/// `Vec[u8]`, D239) -- the type door reads the brackets and the element.
+fn recv_head_at(rk []Node, at int) -> int {
+    if at <= 0 { return at }
+    ro prev = rk[at - 1]
+    if prev.kind_of() == NodeKind.LeafNode && leaf_kind(prev) == TokenKind.EmptyBrackets { return at - 1 }
+    at
 }

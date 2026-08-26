@@ -41,5 +41,8 @@
 # строке, называющей ИМЕННО этот переход, поэтому наперёд она не работает.
 # RATCHET-DOWN contract-match 11 -> 10 (2026-08-20, strings.nv ушёл в отставание)
 # RATCHET-DOWN behavior-match 5 -> 4 (2026-08-20, там же)
-contract-match 10
-behavior-match 4
+# RATCHET-UP contract-match 10 -> 11, behavior-match 4 -> 5 (2026-08-26, подплан Л3:
+# examples/basics/vec_len.nv — литерал, `len`, `push`, `len`; первый файл корпуса
+# с std-методом инстанса, собранный обоими компиляторами байт-в-байт).
+contract-match 11
+behavior-match 5

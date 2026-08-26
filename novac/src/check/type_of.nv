@@ -165,6 +165,19 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ro kids = branch_children(e)
         assert(kids.len() >= 3, "check: method call without a name")
         ro mname = leaf_text(kids[2])
+        // DECIDED BY THE CHECKER FIRST (sub-plan L2): a generic method resolved
+        // on an instance receiver records its callee and its SUBSTITUTED return
+        // in the channel; the lookup below would answer with the row's declared
+        // return -- `T`, or `Vec[T]` -- which is not this call's type. Before
+        // the decision the channel is empty and the signature answers as before.
+        ro nid = e.id_of()
+        if chan.has_callee(nid) {
+            ro known = chan.type_if_known(nid)
+            if is_ty(known) { return known }
+            return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
+        } else {
+            // Not decided yet: read the signature by the typed key below.
+        }
         // The return type — from the READ signature (П5): the
         // compiler does not know std method names, it reads them. Only
         // what check has already accepted reaches here, so a rejection
@@ -177,7 +190,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // (receiver, name) was never enough: `str.contains` has both
         // `(needle str)` and `(c char)`).
         ro key = typed_call_key(kids, 3, kids[0], type_of(kids[0], ctx, scope, chan), ctx, scope, chan)
-        match ctx.fns.lookup(mname, key, CallForm.MethodCall) {
+        match ctx.fns.lookup(ctx.tys, mname, key, CallForm.MethodCall) {
             FnFound(row) => { return ctx.fns.rows[row].ret_id }
             // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote
             // that fits several candidates is a USER situation; check reports

@@ -660,7 +660,7 @@ fn Checker mut @type_expr(e Node) -> () {
                 // arity alone -- accepted here, refused by the oracle, and
                 // emitted as one string argument to a two-parameter function.
                 ro key = typed_free_key(kids, @ctx, @scope, @chan)
-                match @ctx.fns.lookup(cname, key, CallForm.FreeCall) {
+                match @ctx.fns.lookup(@ctx.tys, cname, key, CallForm.FreeCall) {
                     FnFound(row) => @record_free_callee(e, kids, row, key)
                     FnOverloaded(_) => @report_first_leaf_of(kids,
                         "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")

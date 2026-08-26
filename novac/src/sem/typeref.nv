@@ -60,7 +60,9 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
         ro elem = ref_leaf_ty(pk[at + 1], recv_t, tps, param_rows, types, defs)
         return app_term_of(SLICE_HEAD, []TyId.of(elem), types, defs, tys)
     }
-    if leaf_kind(head) != TokenKind.Ident { return no_ty() }
+    // `@` is the receiver's type spelled as a sign (`-> @`); it reaches the
+    // leaf door with `Self`, and every other non-identifier is no type.
+    if leaf_kind(head) != TokenKind.Ident && leaf_kind(head) != TokenKind.At { return no_ty() }
     // `Name[Args]`: the Generics branch, when written, stands right after the
     // head -- the parser keeps the pair adjacent.
     if at + 1 < pk.len() && pk[at + 1].kind_of() == NodeKind.Generics {
@@ -86,8 +88,14 @@ export fn slice_term_of(elem TyId, types []TypeDef, defs DefTable, mut tys Inter
 fn ref_leaf_ty(c Node, recv_t TyId, tps []str, param_rows []TyId,
                types []TypeDef, defs DefTable) -> TyId {
     if c.kind_of() != NodeKind.LeafNode { return no_ty() }
+    // Two spellings of the receiver's type: the word `Self` and the sign `@`
+    // (`fn Vec[T] mut @push(v T) -> @`); std writes both, and reading only the
+    // word dropped every `-> @` signature -- `push` was "no such method"
+    // (measured 2026-08-26, sub-plan L2). The sign is judged BEFORE the
+    // identifier gate below, which it is not. `same_ty`, not `recv_t`:
+    // [LEGACY-#760-newtype-ro-launder].
+    if leaf_kind(c) == TokenKind.At { return same_ty(recv_t) }
     if leaf_kind(c) != TokenKind.Ident { return no_ty() }
-    // `same_ty`, not `recv_t`: [LEGACY-#760-newtype-ro-launder].
     if leaf_text(c) == SELF_TYPE { return same_ty(recv_t) }
     ty_of_type_name(leaf_text(c), tps, param_rows, types, defs)
 }

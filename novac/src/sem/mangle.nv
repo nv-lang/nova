@@ -128,10 +128,29 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkRecord => decl_of_ty(ctx, t).name
         TkSum => decl_of_ty(ctx, t).name
         TkNewtype => decl_of_ty(ctx, t).name
-        TkApp => "a generic instance"
+        TkApp => instance_source_name(ctx, t)
         TkParam => "a type parameter"
         TkInfer => "an inference variable"
     }
+}
+
+/// `Vec[int]`, `Opt[str]`: the head's declared name and its arguments as the
+/// source would spell them. A refusal that says "a generic instance" sends the
+/// reader nowhere; one that says `Opt[int]` names the line to change.
+fn instance_source_name(ctx Ctx, t TyId) -> str {
+    consume s = StringBuilder.new(cap: 32)
+    s.append(decl_of_ty(ctx, t).name)
+    s.append("[")
+    for i in 0..ctx.tys.arg_count(t) {
+        if i > 0 {
+            s.append(", ")
+        } else {
+            // The first argument has nothing before it to separate from.
+        }
+        s.append(ty_source_name(ctx, ctx.tys.arg(t, i)))
+    }
+    s.append("]")
+    s
 }
 
 /// C name of a sum's TAG ENUM: always `Nova_<X>_Tag`, whether the sum is a

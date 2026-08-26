@@ -38,6 +38,8 @@
 module novac.sem
 
 import ../tree.{Node}
+import ../types.{TyId, no_ty, is_ty, same_ty, Interner}
+import ../builtins.{TypeKind}
 
 /// The MODE of a parameter: the third axis of mutability -- and an axis of
 /// OVERLOADING.
@@ -398,4 +400,62 @@ export fn bind_slots(params []ParamDef, off int, cnt int, args []ArgSpec) -> []S
         out.push(SlotBind { arg_row: bind_slot_of(params, off, cnt, args, s), via_row: no_row() })
     }
     out
+}
+
+/// Whether a parameter's declared type ADMITS an argument's type, STRUCTURALLY
+/// (sub-plan L2, 2026-08-26; donor: Go 1.18 `unify` in types2 -- a type
+/// parameter is a unification variable, an application unifies head to head
+/// and argument to argument). A slot with no type yet admits anything; a type
+/// PARAMETER admits anything; an APPLICATION admits an application of the same
+/// head and arity whose arguments it admits, one by one; every other type
+/// admits only itself. `FnTable.fits` asks this door instead of `!=`, so a
+/// generic method whose receiver is `Vec[T]` fits a receiver `Vec[int]`, and
+/// the free generic calls of wave B1 fit exactly as they did.
+export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
+    if !is_ty(got) { return true }
+    if !is_ty(want) { return false }
+    match tys.kind_of(want) {
+        TkParam => { return true }
+        TkApp => {
+            if tys.kind_of(got) != TypeKind.TkApp { return false }
+            if tys.decl_head_of(want) != tys.decl_head_of(got) { return false }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return false }
+            for i in 0..n {
+                if !type_admits(tys, tys.arg(want, i), tys.arg(got, i)) { return false }
+            }
+            return true
+        }
+        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype => { return want == got }
+    }
+}
+
+/// What SLOT takes when `want` is matched against `got` structurally: the type
+/// standing where the parameter of that slot stands in `want`, or `no_ty()`
+/// when the slot does not occur there or the heads disagree. The deduction of
+/// a generic call asks it per argument, so a receiver `Vec[int]` against
+/// `Vec[T]` fixes `T = int` exactly as `int` against a parameter `x T` does.
+/// Where the slot occurs twice inside one type, the FIRST occurrence answers;
+/// agreement between occurrences is the caller's question (it already asks it
+/// between arguments).
+export fn slot_binding_in(tys Interner, want TyId, got TyId, slot int) -> TyId {
+    if !is_ty(want) || !is_ty(got) { return no_ty() }
+    match tys.kind_of(want) {
+        TkParam => {
+            if tys.param_slot_of(want) == slot { return same_ty(got) }
+            return no_ty()
+        }
+        TkApp => {
+            if tys.kind_of(got) != TypeKind.TkApp { return no_ty() }
+            if tys.decl_head_of(want) != tys.decl_head_of(got) { return no_ty() }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return no_ty() }
+            for i in 0..n {
+                ro b = slot_binding_in(tys, tys.arg(want, i), tys.arg(got, i), slot)
+                if is_ty(b) { return b }
+            }
+            return no_ty()
+        }
+        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype => { return no_ty() }
+    }
 }

@@ -16,7 +16,8 @@
 
 module novac.sem
 import ../tree.{Node, NodeKind, branch}
-import ../types.{TyId}
+import ../types.{TyId, is_ty}
+import ../names.{DeclId}
 
 /// `fn bump(x int, by int = 2)` as a row: one required parameter, one defaulted.
 ///
@@ -132,4 +133,37 @@ test "the DEFAULT is read from the row, and only where one is written" {
     assert(!slot_is_required(ps, 0, 1))
     assert(slot_default_of(ps, 0, 0).is_none())
     assert(!slot_default_of(ps, 0, 1).is_none())
+}
+
+test "type_admits: a parameter admits anything, an application by head and by arguments" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro i = ctx.prims.int_id
+    ro s = ctx.prims.str_id
+    ro p0 = ctx.tys.param(0)
+    assert(type_admits(ctx.tys, i, i))
+    assert(!type_admits(ctx.tys, i, s))
+    assert(type_admits(ctx.tys, p0, s))
+    ro want = ctx.tys.app(DeclId(7), []TyId.of(p0))
+    ro got = ctx.tys.app(DeclId(7), []TyId.of(i))
+    ro other = ctx.tys.app(DeclId(8), []TyId.of(i))
+    assert(type_admits(ctx.tys, want, got))
+    assert(!type_admits(ctx.tys, want, other))
+    assert(!type_admits(ctx.tys, got, want))
+    assert(!type_admits(ctx.tys, want, i))
+}
+
+test "slot_binding_in: the slot takes the argument standing where the parameter stands, or nothing" {
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro i = ctx.prims.int_id
+    ro p0 = ctx.tys.param(0)
+    ro p1 = ctx.tys.param(1)
+    assert(slot_binding_in(ctx.tys, p0, i, 0) == i)
+    assert(!is_ty(slot_binding_in(ctx.tys, p0, i, 1)))
+    assert(!is_ty(slot_binding_in(ctx.tys, i, i, 0)))
+    ro want = ctx.tys.app(DeclId(7), []TyId.of(p1))
+    ro got = ctx.tys.app(DeclId(7), []TyId.of(i))
+    ro other = ctx.tys.app(DeclId(8), []TyId.of(i))
+    assert(slot_binding_in(ctx.tys, want, got, 1) == i)
+    assert(!is_ty(slot_binding_in(ctx.tys, want, got, 0)))
+    assert(!is_ty(slot_binding_in(ctx.tys, want, other, 1)))
 }

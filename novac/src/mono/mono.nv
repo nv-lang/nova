@@ -243,7 +243,11 @@ fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Insta
         // next, and the collector would silently stop reaching it.
         match cr.target {
             CalleeFn(row) => {
-                if is_generic(ctx, row) {
+                // A generic row WITH a body of ours grows an instance; one
+                // without is an instance method the SHELL compiled (sub-plan
+                // L2) -- nothing to instantiate, and no declaration of it in
+                // this file for `decl_of_row` to look for.
+                if is_generic(ctx, row) && ctx.fns.compiles_body(row) {
                     // A GENERIC callee is reached per SUBSTITUTION: the element
                     // of the set is the instance, and the same call written
                     // twice adds nothing while two type arguments add two.
