@@ -82,15 +82,16 @@ static inline void nova_contract_violation(
         for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
     }
     /* Routing: fiber → fail-frame → test-frame → stderr+abort. */
-    if (nova_in_fiber() && _nova_fail_top) {
-        _nova_fail_top->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (nova_in_fiber() && _nova_land680) {
+        _nova_land680->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
         /* Plan 140.3 (D24/D13 amend): a contract violation is a PANIC-class
          * failure (a bug), identical to assert and nv_panic. Tag error_kind so
          * ConsumeScope/supervised classify the caught error as Panic(msg), not
          * a recoverable Failure(msg). Without this it defaulted to
          * NOVA_THROW_USER and was indistinguishable from a normal throw. */
-        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
-        longjmp(_nova_fail_top->jmp, 1);
+        _nova_land680->error_kind = NOVA_THROW_PANIC;
+        longjmp(_nova_land680->jmp, 1);
     }
     if (_nova_test_frame) {
         _nova_test_frame->fail_msg = msg_heap;  /* №679: копия одна на все ветки */
@@ -137,10 +138,11 @@ static inline void nova_contract_violation_dyn(
         msg_heap = (char*)nova_alloc(n + 1);
         for (size_t i = 0; i <= n; i++) msg_heap[i] = buf[i];
     }
-    if (nova_in_fiber() && _nova_fail_top) {
-        _nova_fail_top->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
-        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
-        longjmp(_nova_fail_top->jmp, 1);
+    NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
+    if (nova_in_fiber() && _nova_land680) {
+        _nova_land680->error_msg = nova_str_from_cstr(msg_heap);  /* №679 */
+        _nova_land680->error_kind = NOVA_THROW_PANIC;
+        longjmp(_nova_land680->jmp, 1);
     }
     if (_nova_test_frame) {
         _nova_test_frame->fail_msg = msg_heap;  /* №679: копия одна на все ветки */

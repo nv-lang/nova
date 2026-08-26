@@ -1,0 +1,29 @@
+// EXPECT_RUNTIME_PANIC unhandled Fail: arm-failure
+//
+// Registry 221.1 #680, the plain string `Fail` form.
+//
+// #680's acceptance says the body frame must not catch its own arm's throw
+// for `Fail`, for typed `Fail[E]`, and for other effects with `never` arms.
+// This is the first of those; the typed one is
+// p680_arm_throw_escapes_typed.nv, and the user-effect one is
+// p680_user_effect_arm_throw_escapes.nv.
+//
+// The string form dispatches through a different slot than the typed one
+// (`Nova_Fail_fail` versus the erased/per-E path), so it is a separate site
+// with its own shield -- fixing one and assuming the other is how a class
+// survives being closed.
+//
+// Kill-switch NOVA_KILL_ARM_SHIELD=1 restores the swallow on the same binary.
+module standalone.p680_arm_throw_escapes_string
+
+fn db() Fail Io -> () {
+    println("DB")
+    throw "body-failure"
+}
+
+fn main() Io -> () {
+    with Fail = effect Fail { fail(_m) -> never { println("ARM"); throw "arm-failure" } } {
+        db()
+    }
+    println("AFTER")
+}

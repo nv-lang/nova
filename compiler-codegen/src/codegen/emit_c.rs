@@ -2999,6 +2999,8 @@ impl CEmitter {
             out.push_str(&format!("    nova_unit (*fail)(void* ctx, {ea} err);\n", ea = e_arg));
             out.push_str(&format!("    struct NovaVtable_Fail_{m}* prev;\n", m = mangled));
             out.push_str("    struct NovaInterruptFrame* owner_iframe;\n");
+            // #680: the with's own fail-frame, shielded while the arm runs.
+            out.push_str("    struct NovaFailFrame* owner_fframe;\n");
             out.push_str(&format!("}} NovaVtable_Fail_{m};\n", m = mangled));
             // Plan 209 Ф.1: mutable cross-TU TLS state (installer/throw in
             // different `_partK.c` must observe the SAME slot) — promoted
@@ -3039,7 +3041,11 @@ impl CEmitter {
             out.push_str("        NovaInterruptFrame* saved_if = _nova_current_handler_iframe;\n");
             out.push_str(&format!("        _nova_handler_Fail_{m} = current->prev;\n", m = mangled));
             out.push_str("        _nova_current_handler_iframe = current->owner_iframe;\n");
+            // #680: the arm's own throw must not land on the body's frame.
+            out.push_str("        int shielded680 = current->owner_fframe && !current->owner_fframe->arm_shield;\n");
+            out.push_str("        if (shielded680) { current->owner_fframe->arm_shield = 1; }\n");
             out.push_str("        current->fail(current->ctx, payload);\n");
+            out.push_str("        if (shielded680) { current->owner_fframe->arm_shield = 0; }\n");
             out.push_str(&format!("        _nova_handler_Fail_{m} = current;\n", m = mangled));
             out.push_str("        _nova_current_handler_iframe = saved_if;\n");
             out.push_str("    }\n");
@@ -12534,6 +12540,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     "{hv}->owner_iframe = &{iframe};",
                     hv = handler_val, iframe = iframe
                 ));
+                // #680: publish the frame so the dispatcher can shield it.
+                if let Some(ff) = &fframe {
+                    self.line(&format!(
+                        "{hv}->owner_fframe = &{ff};",
+                        hv = handler_val, ff = ff
+                    ));
+                }
             }
         }
 
