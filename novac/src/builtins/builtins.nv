@@ -140,6 +140,17 @@ export const PROTOCOL_MARKER = "protocol"
 /// to stop.
 export const SLICE_HEAD = "Vec"
 
+/// The std constructor the TYPED array literal is written with: `[]int.of(7, 8)`.
+/// Not a word of the language grammar but the one spelling the subset reads as
+/// a literal -- and a spelled name lives here (P5), so a second reader cannot
+/// drift from the first.
+export const LITERAL_CTOR = "of"
+
+/// The std method the literal LOWERS to, one call per element (the oracle
+/// builds `[7, 8]` as `static_new(0)` + `push` + `push`; measured 2026-08-26 on
+/// its own emission). Spelled once, here.
+export const LITERAL_PUSH = "push"
+
 export const RECV_BINDING = "@"
 
 /// The C name of the RECEIVER parameter in novac's own emission.

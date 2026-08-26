@@ -50,6 +50,9 @@ ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  # Куски имён ИНСТАНСА у оракула (интероп, сняты с оболочки 2026-08-26):
                  # конструктор `Nova_<body>_static_new`, метод `<body>_method_<name>`.
                  "_static_new", "_method_",
+                 # Куски тега ИНСТАНСА внутри НАШИХ имён (`Vec_of_nova_int`): выбраны
+                 # так, чтобы не совпасть с разделителем параметров `__`.
+                 "_of_", "_and_",
                  # MODE marks of a parameter inside the name (P14: a mode is an
                  # axis of overloading, so two same-named callables differing
                  # only by a mode are two C functions). Letters, not the

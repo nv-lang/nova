@@ -203,6 +203,12 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ro recv_t = type_of(kids[0], ctx, scope, chan)
         return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
     }
+    if k == NodeKind.ArrayLit {
+        // Decided by `type_array_lit` and RECORDED before anyone asks; the
+        // lattice reads it back. Tolerant, not strict: a literal the checker
+        // refused has no type, and its readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
         if kids[0].kind_of() == NodeKind.Name {

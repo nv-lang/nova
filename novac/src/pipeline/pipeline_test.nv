@@ -514,3 +514,38 @@ fn main() { println(1) }",
     assert(d3.len() == 1)
     assert(d3[0].message.contains("type form"))
 }
+
+test "an array literal is built from the SHELL's instance set, and refused by name outside it" {
+    // Sub-plan L, wave L1. The real surface is read from the embedded shell (the
+    // wrappers hand `interop_surface()`), so this test is against what the shell
+    // actually carries: an instance for `int`, none for a record of this file.
+    // Both spellings are one form -- the typed `[]int.of(7, 8)` used to fall
+    // apart into two diagnostics for one literal (the cascade class).
+    // The hand-written std of these tests declares no `Vec`; the literal needs
+    // the HEAD to exist (the slice sugar resolves to `Vec[elem]`), so a generic
+    // record head is handed beside it -- the same shape `harvest_types` builds
+    // from the real std.
+    mut std = std_decls()
+    std.push("module std.v
+export type Vec[T] { n int }")
+    ro (d1, _) = compile_to_c("fn take(xs []int) -> int => 1\nfn main() {\n ro v = [7, 8]\n ro w = []int.of(4)\n println(take(v))\n println(take(w))\n}", std)
+    assert(d1.len() == 0)
+    // The element type the shell has no instance for: refused naming the SHELL
+    // and the type -- the fix is in the probe program, not in this file.
+    ro (d2, _) = compile_to_c("type P { n int }\nfn main() {\n ro a = P { n: 1 }\n ro v = [a, a]\n println(1)\n}", std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("carries no"))
+    // Mixed elements: named by position and by both types.
+    ro (d3, _) = compile_to_c("fn main() {\n ro v = [1, \"s\"]\n println(1)\n}", std)
+    assert(d3.len() == 1)
+    assert(d3[0].message.contains("element 2 is str"))
+    // Empty: the oracle compiles it and panics at run time; novac refuses
+    // rather than diverge in behaviour.
+    ro (d4, _) = compile_to_c("fn main() {\n ro v = []int.of()\n println(1)\n}", std)
+    assert(d4.len() == 1)
+    assert(d4[0].message.contains("empty array literal"))
+    // Outside initializer position: the same threshold the record ctor has.
+    ro (d5, _) = compile_to_c("fn main() {\n println([7, 8])\n}", std)
+    assert(d5.len() == 1)
+    assert(d5[0].message.contains("only as a binding initializer"))
+}

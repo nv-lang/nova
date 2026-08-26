@@ -74,6 +74,13 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     ref_leaf_ty(head, recv_t, tps, param_rows, types, defs)
 }
 
+/// The slice term over `elem` -- `Vec[elem]` through the D239 sugar -- or
+/// `no_ty()` when the head is not in the handed declarations. The literal asks
+/// this at CHECK time (the interner is written through `Ctx`), the signature
+/// readers ask it through `ty_of_type_ref`; one construction, two askers.
+export fn slice_term_of(elem TyId, types []TypeDef, defs DefTable, mut tys Interner) -> TyId =>
+    app_term_of(SLICE_HEAD, []TyId.of(elem), types, defs, tys)
+
 /// One identifier leaf of a type reference: `Self` is the receiver's type
 /// spelled by role, everything else resolves by name.
 fn ref_leaf_ty(c Node, recv_t TyId, tps []str, param_rows []TyId,

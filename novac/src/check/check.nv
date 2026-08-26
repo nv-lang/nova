@@ -416,14 +416,19 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     }
                 }
                 ArrayLit => {
-                    // Owner's rollback 2026-08-15: []int was taken as a
-                    // hard-coded std instance (one seed row + C_VEC_INT_*
-                    // constants) -- a K7 half-capability (novac 'knows'
-                    // []int, silently not []str). Arrays return with generics
-                    // through `mono` (E2-b); until then this is an honest
-                    // subset refusal, not a fake take.
-                    @report_first_leaf_of(children, "outside the subset: arrays arrive with generics (E2-b), not as one hard-coded instance")
-                    return
+                    // JUDGED, not refused wholesale (sub-plan L, 2026-08-26).
+                    // The owner's rollback of 2026-08-15 stands: no hard-coded
+                    // instance -- the element type is resolved like any other
+                    // and the SHELL'S surface, read as an input, decides whether
+                    // the instance can be built. Initializer position only, the
+                    // same threshold the record constructor has.
+                    if !init_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: array literal only as a binding initializer")
+                        return
+                    } else {
+                        // In initializer position the literal is legal; typing
+                        // judges its elements and the shell's surface.
+                    }
                 }
                 MatchExpr => {
                     if !init_pos {

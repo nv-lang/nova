@@ -74,6 +74,49 @@ export fn param_name_at(pk []Node) -> Option[int] {
     None
 }
 
+/// The ELEMENT nodes of an array literal, in order -- for `[7, 8]` the
+/// expressions between the brackets, for `[]int.of(7, 8)` the arguments of
+/// the constructor. Spread and named-argument nodes are returned AS THEY ARE, so
+/// check can refuse them by kind rather than this door hiding them.
+///
+/// One geometry for two spellings: the checker types the elements and the
+/// emitter pushes them, and a second walk in either would be the second door.
+export fn literal_elems(kids []Node) -> []Node {
+    mut out = []Node.new()
+    mut after_paren = false
+    ro typed = literal_head_name(kids).is_some()
+    for c in kids {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.LParen {
+            after_paren = true
+            continue
+        }
+        if typed && !after_paren { continue }
+        // Brackets, commas, the dot and the constructor's name are syntax and
+        // are skipped; the `continue` is the other branch (P31 form 2).
+        ro is_elem = is_expr_kind(c.kind_of()) || c.kind_of() == NodeKind.ArraySpread ||
+            c.kind_of() == NodeKind.NamedArg
+        if !is_elem { continue }
+        out.push(c)
+    }
+    out
+}
+
+/// The ELEMENT TYPE NAME of a typed literal (`[]int.of(...)` -> `int`), or
+/// `None` for the bracket form, whose element type comes from its elements.
+export fn literal_head_name(kids []Node) -> Option[str] {
+    if kids.len() < 2 { return None }
+    if kids[0].kind_of() != NodeKind.LeafNode || leaf_kind(kids[0]) != TokenKind.EmptyBrackets { return None }
+    if kids[1].kind_of() != NodeKind.LeafNode || leaf_kind(kids[1]) != TokenKind.Ident { return None }
+    Some(leaf_text(kids[1]))
+}
+
+/// The CONSTRUCTOR name a typed literal was written with (`of`), or `None`.
+export fn literal_ctor_name(kids []Node) -> Option[str] {
+    if kids.len() < 4 { return None }
+    if kids[3].kind_of() != NodeKind.LeafNode || leaf_kind(kids[3]) != TokenKind.Ident { return None }
+    Some(leaf_text(kids[3]))
+}
+
 /// Is this child of a call an ARGUMENT? Two shapes are: a bare expression, and
 /// a NAMED argument (`by: 2`), which is a node WRAPPING one.
 ///

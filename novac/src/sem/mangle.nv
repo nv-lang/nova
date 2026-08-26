@@ -476,6 +476,23 @@ fn mode_tag(m ParamMode) -> str => match m {
     ModeConsume => "c_"
 }
 
+/// The tag of an INSTANCE inside one of our names: head, `_of_`, the argument
+/// tags joined by `_and_` -- `Vec_of_nova_int`, `Pair_of_nova_int_and_nova_str`.
+fn instance_tag(ctx Ctx, t TyId, subst []TyId) -> str {
+    consume s = StringBuilder.new(cap: 48)
+    s.append(decl_of_ty(ctx, t).name)
+    s.append("_of_")
+    for i in 0..ctx.tys.arg_count(t) {
+        if i > 0 {
+            s.append("_and_")
+        } else {
+            // The first argument follows `_of_` directly.
+        }
+        s.append(type_tag(ctx, ctx.tys.arg(t, i), subst))
+    }
+    s
+}
+
 /// An identifier-safe tag for a type, for use INSIDE a C name.
 ///
 /// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
@@ -496,7 +513,14 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // The newtype's OWN name, never the representation's: `f(Row)` and
         // `f(int)` are two callables, and the C name is what keeps them apart.
         TkNewtype => decl_of_ty(ctx, t).name
-        TkApp => ice("mangle: type_tag of an applied type — the instance door arrives with E2-b2")
+        // An INSTANCE inside one of OUR names: `Vec_of_nova_int`. This is not
+        // the shell's spelling (`Vec____nova_int`) on purpose -- a callable's C
+        // name is ours (274 section 7.0), and the pieces are chosen so no
+        // parameter separator (`__`) can be mistaken for an argument separator:
+        // `take__Vec__nova_int` would read as two parameters. Found by the first
+        // literal that reached emission (2026-08-26): `fn first(xs []int)` iced
+        // here while its call site had already been accepted.
+        TkApp => instance_tag(ctx, t, subst)
         // A type parameter resolved through the substitution -- by the ONE
         // door that applies one, so the mangler and mono cannot disagree about
         // what `T` stands for.

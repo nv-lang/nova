@@ -325,7 +325,26 @@ fn Cursor mut @atom() -> Node {
     // non-empty literal still opens with a bare `[`. Both are array literals
     // and both enter here.
     if @peek() == TokenKind.EmptyBrackets {
-        return @node(NodeKind.ArrayLit, []Node.of(@take()))
+        mut kids = []Node.of(@take())
+        // THE TYPED LITERAL `[]int.of(7, 8)` is ONE node (sub-plan L). Until
+        // 2026-08-26 the `[]` was a literal on its own and `int.of(7, 8)` fell
+        // out as a second statement -- two diagnostics for one form, the cascade
+        // class. The element type, the constructor's name and the arguments are
+        // all children of the literal now, and check reads each by its slot.
+        if @peek() == TokenKind.Ident && @peek(skip: 1) == TokenKind.Dot {
+            kids.push(@take()) // element type
+            kids.push(@take()) // '.'
+            @push_if(kids, TokenKind.Ident) // the constructor's name -- check judges it
+            if @peek() == TokenKind.LParen {
+                kids.push(@take())
+                @call_args(kids)
+            } else {
+                // No argument list: check names the shape.
+            }
+        } else {
+            // A bare `[]`: an empty literal, judged by check.
+        }
+        return @node(NodeKind.ArrayLit, kids)
     }
     if @peek() == TokenKind.LBracket {
         // Array literal `[e, ...spread, e]` — comma-separated; a spread

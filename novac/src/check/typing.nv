@@ -27,9 +27,9 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING}
+import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node, arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
+import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node, arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt, literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method, ty_source_name}
 import ../types.{TyId, no_ty, is_ty}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -500,128 +500,6 @@ fn Checker mut @type_call_stmt(call Node) -> () {
         }
     }
 }
-
-/// A binding. The initializer's type is decided BEFORE the initializer's own
-/// binders exist -- the emitter's order, kept because changing it would change
-/// which programs compile (a match whose first arm uses its binders is
-/// refused today, and that refusal is a fact of the subset, not an accident
-/// of this walk).
-fn Checker mut @type_bind(st Node) -> () {
-    ro kids = branch_children(st)
-    if kids.len() < 2 {
-        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer")
-        return
-    }
-    ro vname = leaf_text(kids[1])
-    ro init = kids[kids.len() - 1]
-    ro ik = init.kind_of()
-    // A plain expression initializer is verified before it is typed. A match
-    // initializer is NOT: the emitter decides its type before the arms bind
-    // their binders, and that order is what makes "a match whose first arm
-    // uses its binders" a refusal of the subset rather than a silent success.
-    if ik != NodeKind.MatchExpr && ik != NodeKind.RecordCtor && is_expr_kind(ik) {
-        ro before = @out.len()
-        @type_expr(init)
-        // The mark, not the file's count: a refusal in an EARLIER declaration
-        // used to stop this walk too, and `@type_bind` then skipped its
-        // `@scope.bind` -- every later name came out "unknown" (probe
-        // 2026-08-20). The question is about THIS expression.
-        if @out.len() > before { return }
-    } else {
-        // A match or record-ctor initializer is walked BELOW, after its type is
-        // decided; any other form was refused by the subset walk. Neither has
-        // anything to verify here.
-    }
-    // A binding whose initializer mentions the name it binds is REFUSED
-    // (274.3/F28). Measured 2026-08-17, and the measurement is why this is a
-    // refusal and not a fix: `ro x = 7` then, inside a block,
-    // `ro x = x < 3` prints `true` for x = 7 AND for x = 1, while
-    // `ro x = x + 100` prints exactly 100. The inner name is visible in its
-    // own initializer and reads as ZERO -- in the ORACLE, not only here. Both
-    // compilers agree, so the differential gate is green while the answer is
-    // wrong; that is the shape a silent miscompilation takes.
-    //
-    // Until the spec says what the form means (escalated with the probe), the
-    // subset refuses it. Rust reads the OUTER binding here (`let x = x + 1`),
-    // which is the reading I expect to win, but expecting is not knowing.
-    @self_probe.clear()
-    @self_probe.put(vname, 0)
-    if @init_reads_self(init) {
-        @report_first_leaf_of([]Node.of(init), SELF_INIT_MSG)
-        return
-    }
-    ro vtype = type_of(init, @ctx, @scope, @chan)
-    @record(init, vtype)
-    if ik == NodeKind.MatchExpr {
-        @type_match(init)
-    } else if ik == NodeKind.RecordCtor {
-        for c in branch_children(init) {
-            ro ck = c.kind_of()
-            if ck == NodeKind.CtorSpread {
-                ro sk = branch_children(c)
-                if sk.len() < 2 { continue }
-                @type_expr(sk[1])
-            } else if ck == NodeKind.CtorField {
-                ro fk = branch_children(c)
-                if fk.len() < 3 { continue }
-                @type_expr(fk[2])
-            } else {
-                // The type name and the braces of the ctor are children too,
-                // and they hold no expression to type.
-            }
-        }
-    } else {
-        // A plain expression initializer was walked above and its type is
-        // recorded; it has no sub-form left to visit.
-    }
-    // The BINDING's own mode, read from the keyword the author wrote: `ro x`,
-    // `mut x` and `consume x` are three different classes at every call site
-    // that passes `x` on (P14).
-    @scope.bind(vname, vtype, bind_mode_at(kids))
-}
-
-/// One text for the rule.
-const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the name it binds"
-
-/// Does the initializer read the binding that is being declared?
-///
-/// The question is asked through the NAME DOOR, not by comparing identifier
-/// text: `names.NameTable` is the one place where a name becomes an id
-/// (rule 1 of the resolve discipline, and its guard is right to insist --
-/// my first version compared identifier TEXT against the declared name in
-/// a walk, which is the linear resolve the rule bans). The declared name
-/// goes into a one-entry table owned by the Checker, every identifier leaf
-/// is asked for its id, and the comparison is on integers.
-#realtime nogc
-fn Checker @init_reads_self(n Node) -> bool {
-    match n {
-        Leaf(t) => leaf_kind(n) == TokenKind.Ident && @self_probe.find(t.text) >= 0
-        Branch { children, .. } => {
-            mut found = false
-            for c in children {
-                // A flag that only turns on IS a disjunction (P31).
-                found = found || @init_reads_self(c)
-            }
-            found
-        }
-    }
-}
-
-
-/// A match: the scrutinee's type is the answer the emitter needs (it declares
-/// the C temporary with it); the arms bind their binders and are typed after.
-/// One text for the method-declaration limit. novac does not DECLARE methods
-/// in the subset (it reads std's declarations to build the method table, P5);
-/// the form is parsed so the refusal can name it.
-const METHOD_DECL_MSG = "outside the subset: novac does not declare methods yet (the form is read from std declarations only)"
-
-/// One text for the exhaustiveness rule; the oracle's own code is named so a
-/// reader can find the other half of the story.
-const NOT_EXHAUSTIVE_MSG = "outside the subset: match on a sum leaves a variant uncovered (oracle: E_MATCH_NON_EXHAUSTIVE, registry 703)"
-
-/// One text for the rule: the reader must not guess whether two wordings
-/// mean two limits.
-const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
 
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
