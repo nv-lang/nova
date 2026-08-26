@@ -38,6 +38,10 @@ LIST_REL = os.path.join(".claude", "after-compact.list")
 HEADER = (u"# Режим работы после сжатия контекста (хук inject-after-compact; "
           u"список — .claude/after-compact.list, команда /after-compact)")
 
+MISSING = (u"\n## %s — ФАЙЛА НЕТ, правило не приехало\n\n"
+           u"Строка есть в `.claude/after-compact.list`, файла на диске нет: "
+           u"верни путь либо убери строку (команда /after-compact).")
+
 
 def out(text):
     data = text.encode("utf-8")
@@ -94,7 +98,13 @@ def inject(root):
     for rel in entries(root):
         text = read_entry(root, rel)
         if text is None:
+            # И в stderr (для журнала хука), И В STDOUT — то есть в само окно.
+            # stderr хука в контекст НЕ попадает, а код возврата остаётся 0 —
+            # значит правило переставало приезжать, а окно об этом не узнавало.
+            # Молчание читается как успех (класс №770); гейт ловит это стражем
+            # `check-after-compact-budget`, а здесь видит тот, кому этого текста не хватит.
             err(u"inject-after-compact: нет файла %s — пропущен" % rel)
+            parts.append(MISSING % rel)
             continue
         body = body_without_frontmatter(text).replace(u"$ARGUMENTS", u"(текущая очередь)")
         parts.append(u"\n## %s\n\n%s" % (rel, body))
