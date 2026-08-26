@@ -22,11 +22,24 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 fails=0
+# №765 (2026-08-26): при провале печатаем СЛОВА стража, а не только коды. Все
+# три фикстурных случая красны на раннере и зелены на Windows, и по ночному
+# логу нельзя было сказать почему — «ожидался 0, получен 1» и всё. Самотест,
+# который не говорит, ЧТО увидел, стоит трёх ночей.
+LAST_OUT=""
+run_guard() { # каталог -> код в $?, вывод в $LAST_OUT
+    LAST_OUT="$("$GUARD" "$1" 2>&1)"
+}
 check() { # имя, ожидаемый_код, фактический_код
     if [ "$2" -eq "$3" ]; then
         echo "  ok: $1"
     else
         echo "  ПРОВАЛ: $1 — ожидался код $2, получен $3" >&2
+        if [ -n "${LAST_OUT:-}" ]; then
+            printf '%s\n' "$LAST_OUT" | sed 's/^/      | /' >&2
+        else
+            echo "      | (страж не сказал ничего)" >&2
+        fi
         fails=$((fails + 1))
     fi
 }
@@ -82,7 +95,7 @@ static void test_x(void) {
     mco_resume(co);
 }
 EOF
-"$GUARD" "$tmp/clean" >/dev/null 2>&1
+run_guard "$tmp/clean"
 check "НЕ ловит чистую фикстуру (единственный вызов + allowlist'ы)" 0 $?
 
 # ── Фикстура «грязная»: посторонний mco_resume() в runtime.c ──────────
@@ -96,7 +109,7 @@ static void _worker_run_one_fiber_NEW(mco_coro* co) {
     (void)r;
 }
 EOF
-"$GUARD" "$tmp/dirty" >/dev/null 2>&1
+run_guard "$tmp/dirty"
 check "ловит посторонний mco_resume() в runtime.c" 1 $?
 
 # ── Фикстура «сабботаж внутри fibers.h»: mco_resume ВНЕ тела
@@ -119,11 +132,11 @@ static inline void nova_sneaky_resume(mco_coro* co) {
     mco_resume(co);   /* VIOLATION: second call site outside nova_resume_fiber */
 }
 EOF
-"$GUARD" "$tmp/dirty2" >/dev/null 2>&1
+run_guard "$tmp/dirty2"
 check "ловит второй resume-сайт внутри fibers.h вне тела nova_resume_fiber" 1 $?
 
 # ── Реальная репа nova не считается нарушением (страж не ломает себя) ──
-"$GUARD" "$REPO_ROOT" >/dev/null 2>&1
+run_guard "$REPO_ROOT"
 check "НЕ ловит настоящую репу nova (после фикса №446/№447)" 0 $?
 
 if [ "$fails" -ne 0 ]; then

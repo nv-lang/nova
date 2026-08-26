@@ -33,11 +33,22 @@ step "рабочие деревья только в d:/Sources/nv-lang (№561)"
 out=$(bash "$G" "$TMP/r" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "текст шага гейта — не считается"; else bad "ложный красный на тексте шага: $out"; fi
 
-mk; addf scripts/claude-hooks/selftest/t.py 'CASES = [("git -C /d/Sources/nv-lang/nova status", False)]'
+# №765 (2026-08-26): раньше здесь доказывалось, что данные самотеста хука не
+# считаются, — и доказывалось тем, что страж вообще НЕ СМОТРЕЛ в эту папку
+# (`grep -vE '^scripts/claude-hooks/selftest/'`). Случай проходил по той же
+# причине, по которой три ночи жил настоящий дефект: самотест
+# `test-guard-git-commit-backtick.py` был зашит на абсолютный windows-путь и на
+# CI не проверял ничего. Теперь исключение ИМЕНОВАННОЕ и стоит НА СТРОКЕ, а
+# ниже добавлен случай, которого не хватало: без отметки — красный.
+mk; addf scripts/claude-hooks/selftest/t.py 'CASES = [("git -C /d/Sources/nv-lang/nova status", False)]  # machine-path-fixture'
 addf scripts/tools/clean.sh '#!/bin/sh
 echo ok'
 out=$(bash "$G" "$TMP/r" 2>&1); rc=$?
-if [ "$rc" -eq 0 ]; then ok "тестовые данные самотеста хука — не считаются"; else bad "ложный красный на самотесте хука: $out"; fi
+if [ "$rc" -eq 0 ]; then ok "данные самотеста хука с отметкой machine-path-fixture — не считаются"; else bad "ложный красный на помеченной фикстуре: $out"; fi
+
+mk; addf scripts/claude-hooks/selftest/t.py 'H = r"d:\\Sources\\nv-lang\\nova\\scripts\\claude-hooks\\guard-git.py"'
+out=$(bash "$G" "$TMP/r" 2>&1); rc=$?
+if [ "$rc" -ne 0 ]; then ok "самотест хука БЕЗ отметки — красный (№765)"; else bad "не поймал зашитый путь в самотесте хука — ровно тот дефект, что жил три ночи"; fi
 
 echo "== ловит =="
 mk; addf scripts/tools/x.sh '#!/bin/sh
