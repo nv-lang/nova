@@ -458,14 +458,14 @@ export type Pair value { a int }"))
     assert(diags[0].message.contains("does not know this type yet"))
 }
 
-test "a handed-over GENERIC declaration registers nothing -- the permissive hole stays closed" {
-    // Step A of the boundary wave (plan, 2026-08-26): registered as a plain
-    // record, `type Box[T]` would make a bare `Box` in a signature RESOLVE --
-    // novac accepting what the oracle refuses, the permissive kind of
-    // divergence. So the generic is skipped until the application step gives
-    // `Box[int]` a term to resolve to, and this test is the "feed it something
-    // rotten" probe of that criterion: the refusal must stay "does not know",
-    // not become an acceptance.
+test "a handed-over GENERIC declaration is a HEAD: bare use refused by the TRUTH" {
+    // THE CONTRACT MOVED WITH STEP B1, in the same merge as the code. Step A
+    // skipped generics so a bare `Box` could not RESOLVE; B1 registers the head
+    // and moves the hole's lid into the RESOLVER (`ty_or_none` answers no_ty
+    // for a head) -- so the refusal stays, and its text stops lying: the
+    // registry KNOWS `Box`, what is missing is the arguments. The oracle
+    // accepts the bare head (measured 2026-08-26, PASS with no call); the
+    // strictness is deliberate and named in the plan.
     ro handed = "module std.box
 export type Box[T] { v T }
 export type Meta { n int }"
@@ -474,7 +474,7 @@ fn take(b Box) -> int => 1
 fn main() { println(1) }",
                               []str.of(handed))
     assert(d1.len() == 1)
-    assert(d1[0].message.contains("does not know this type yet"))
+    assert(d1[0].message.contains("write its type arguments"))
     // And the NON-generic neighbour from the same handed text IS visible: the
     // skip is a hole for generics, not a hole for the file that carries one.
     ro (d2, _) = compile_to_c("module m.g2

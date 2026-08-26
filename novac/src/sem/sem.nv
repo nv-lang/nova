@@ -59,22 +59,6 @@ import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
 import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
-/// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
-/// a SUM, not int constants (owner 2026-08-14: the language's own type
-/// safety judges kind dispatch, an arbitrary int cannot leak in).
-/// The payload lives INSIDE the arm (owner's question 2026-08-21, the second
-/// carrier of the same class as `CalleeRef.target_row`): `Def` used to be
-/// `kind DefKind` beside `payload int`, and the int meant a type id, a variant
-/// row or a callable row depending on the neighbouring tag. Three index spaces
-/// in one number is the state this sum makes unbuildable -- `DefFn` carries an
-/// `FnRow` and nothing else can be put there. The ARM NAMES are unchanged, so
-/// every reader still says `DefVariant`; what changed is that it now binds the
-/// row it needs instead of reaching for a second field.
-export type DefTarget enum
-    | DefType(DeclId)
-    | DefVariant(VariantRow)
-    | DefFn(FnRow)
-
 /// WHICH ROWS a type declaration owns, and IN WHICH SPACE.
 ///
 /// FOUND BY WAVE B5, and found the way the good ones are: by the type system
@@ -107,87 +91,7 @@ export type TypeDef value {
     ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
-}
-
-/// One top-level declaration of the unified name registry: what a name IS.
-export type Def value {
-    target DefTarget /// What this name IS, carrying the row of its own space: a type id, a variant row (`Ctx.variant_rows`) or a callable row (`Ctx.fns`)
-}
-
-/// THE unified name registry: the O(1) name door and the row it answers
-/// with — one record, because they only ever travel together (owner
-/// 2026-08-15: a pair that always walks in pairs belongs in one record).
-export type DefTable {
-    names NameTable /// name -> row in `rows` (NsDefs namespace).
-    rows []Def /// What each registered name is.
-    foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
-}
-
-/// Empty registry with the NsDefs namespace.
-export fn DefTable.new() -> DefTable =>
-    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), foreign_cnt: 0 }
-
-/// Register one name. LAST PUT WINS, and that is the rule rather than a
-/// shortcut: `collect_types` gives the id to the FIRST declaration that owns
-/// it, so a later duplicate resolves to the same id and pushes no second row.
-/// Judging the duplicate is CHECK's ground — sem builds the picture and does
-/// not refuse; two truths for one name is what this shape prevents.
-/// LAST PUT WINS, AND SINCE 2026-08-23 THAT IS THE SHADOWING RULE ITSELF.
-///
-/// The handed-over types are registered FIRST (see `collect_types_with`), so a
-/// name the compiled file also declares is overwritten by the file's own row --
-/// which is what the language means: a program is compiled against what it
-/// declares, and a foreign declaration of that name answers only where the file
-/// has none.
-///
-/// A CHAIN OF SAME-NAMED ROWS WAS BUILT HERE AND REMOVED THE SAME HOUR, and the
-/// reason is worth keeping: with the foreign types entering first, the chain was
-/// UNOBSERVABLE -- every question it could answer differently was already
-/// answered right by the order. A construction nobody can see the effect of is
-/// the K7 class this plan refuses, so the order stayed and the chain went. The
-/// day two FOREIGN declarations of one name can arrive (that is `import`, which
-/// brings nothing yet), the ambiguity is a REFUSAL to write, not a chain to walk.
-export fn DefTable mut @add(name str, target DefTarget) -> () {
-    @names.put(name, @rows.len())
-    @rows.push(Def { target })
-}
-
-/// Everything registered so far came from ELSEWHERE; every row after this is the
-/// compiled file's own.
-export fn DefTable mut @seal_foreign() -> () {
-    @foreign_cnt = @rows.len()
-}
-
-/// Did the compiled FILE declare this name, or does it only exist because novac
-/// was handed a declaration that uses it?
-///
-/// THE QUESTION EXISTS BECAUSE OF A MEASURED COLLISION (2026-08-23). Pass one
-/// skips a name the registry already holds -- correct while every row came from
-/// one file, where a duplicate means the same declaration seen twice. With
-/// handed-over types entering first, that same rule made the FILE'S OWN
-/// declaration look like a duplicate and skipped it: a file declaring
-/// `type Pair { b int }` beside a handed-over `type Pair value { a int }` was
-/// compiled against the FOREIGN layout (`NovaValue_Pair` in the emission), which
-/// is somebody else's type under your name.
-#realtime nogc
-export fn DefTable @declared_by_file(name str) -> bool => @names.find(name) >= @foreign_cnt
-
-/// WHAT this name IS, or None -- the registry's ONE public question.
-///
-/// WAVE B4 EXPECTED A WRAPPER HERE AND FOUND THAT THERE IS NO SPACE TO WRAP.
-/// The plan said "wrap the `defs` row index, 10 sites, and answer `Option[DefRow]`
-/// instead of −1". The measurement said otherwise: every one of the five readers
-/// did `find(name)` and then `rows[d]` on the very next line, and nothing ever
-/// carried the index anywhere. An index that never outlives the indexing it feeds
-/// is not an identity -- it is a step, and typing a step is ceremony.
-///
-/// So the space is DELETED rather than named: the door answers with the ROW. The
-/// −1 goes with it, and so do the five `d >= 0` guards that had to know about it.
-#realtime nogc
-export fn DefTable @def_of(name str) -> Option[Def] {
-    ro d = @names.find(name)
-    if d < 0 { return None }
-    Some(@rows[d])
+    tparam_cnt int /// how many type parameters the declaration binds; 0 = not generic. A FIELD and not a derivation: a handed-over declaration's NODE is not retained after collect, so the count cannot be re-read -- and it is the one fact of the generics a HEAD needs (step B1)
 }
 
 /// The callable row a DECLARATION NODE owns, or None.
@@ -221,49 +125,6 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
     // the day): `no_row()` is the absence, and the door answers `None` for it,
     // so no caller sees the sentinel at all.
     Some(row)
-}
-
-/// The CALLABLE row a name owns, or None when the registry knows no such fn.
-///
-/// The registry's own question, and therefore the registry's door. Before
-/// 2026-08-18 it lived nowhere, so every consumer wrote the two-step
-/// (`find` then `rows[..]`) itself: ten sites across three modules, two of them
-/// identical body for body -- and I wrote the second one myself while
-/// commenting that it asked "the same question". A door is found by NAME; if
-/// the name does not exist, the next author writes their own. That is how
-/// second doors get in, and the answer is not vigilance but a door.
-#realtime nogc
-export fn DefTable @fn_row(name str) -> Option[FnRow] {
-    // `?`, not `??` and not a two-armed if: this door RETURNS an Option, so an
-    // unknown name propagates by the operator made for it (D86 retracted
-    // `?? return` precisely because an early return is control flow, and the
-    // refusal's own hint names `?` first). A name the registry does not know is
-    // an ANSWER for a tolerant door -- check refuses the program elsewhere.
-    ro def = @def_of(name)?
-    // The arm that means "a callable" is the arm that HOLDS the callable row;
-    // the other two are not a fn row.
-    match def.target {
-        DefFn(row) => Some(row)
-        // A type or a variant is not a callable: one answer, one arm.
-        DefType(_) | DefVariant(_) => None
-    }
-}
-
-/// Type by name during COLLECTION: None if the name is unknown or not a
-/// type. Collection is DELIBERATELY tolerant of broken input
-/// (274.3/F-B4): the file picture is built for check too, and check
-/// must issue a diagnostic, not die in an ICE. check is the judge (the
-/// rule "a type in type position must be declared"); sem invents
-/// nothing — it just does not register what it did not understand.
-#realtime nogc
-export fn DefTable @type_decl(name str) -> Option[DeclId] {
-    // `?` for the unknown name (this door returns an Option), then the kind.
-    ro def = @def_of(name)?
-    match def.target {
-        DefType(decl) => Some(decl)
-        // A variant or a callable is not a type, and that is ONE answer.
-        DefVariant(_) | DefFn(_) => None
-    }
 }
 
 // `DefTable.type_decl_of` lived here until 2026-08-22 and is gone: it was the
@@ -407,7 +268,7 @@ export type Ctx {
 fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, by_value: false, ty_id, name, rows: TypeRows.NoRows })
+    types.push(TypeDef { kind: TypeKind.TkPrim, by_value: false, ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -480,9 +341,28 @@ fn ty_or_none(types []TypeDef, defs DefTable, name str) -> TyId {
     // into a sentinel and then testing the sentinel is a detour that makes
     // "absent" into a number somebody must remember to check.
     if Some(d) = defs.type_decl(name) {
-        if raw_decl(d) < types.len() { ty_of_row(types, d) } else { no_ty() }
+        if raw_decl(d) >= types.len() { return no_ty() }
+        // A GENERIC HEAD is not a type (step B1): `Vec` names a family, and only
+        // an APPLICATION (`Vec[int]`) names a member of it. The oracle ACCEPTS a
+        // bare head in a signature (measured 2026-08-26, PASS with no call) --
+        // this refusal is deliberately STRICTER, and the message at the refusal
+        // site says the truth ("write its type arguments") instead of "unknown".
+        if types[raw_decl(d)].tparam_cnt > 0 { return no_ty() }
+        ty_of_row(types, d)
     } else {
         no_ty()
+    }
+}
+
+/// How many type parameters the declaration behind `name` binds; 0 = not a
+/// generic head (or not a type at all). The question the refusal site asks to
+/// tell "novac does not know this type" from "novac knows it and it wants
+/// arguments" -- two different mistakes, and D420 wants each named as itself.
+export fn generic_head_cnt(types []TypeDef, defs DefTable, name str) -> int {
+    if Some(d) = defs.type_decl(name) {
+        if raw_decl(d) < types.len() { types[raw_decl(d)].tparam_cnt } else { 0 }
+    } else {
+        0
     }
 }
 
@@ -603,7 +483,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             defs.add(tname, DefTarget.DefType(d))
             // A SUM's value-ness is DERIVED, not declared: `is_value_sum` reads
             // it off the payloads (A4), so the row says nothing here.
-            types.push(TypeDef { kind: TypeKind.TkSum, by_value: false, ty_id: tys.sum(d), name: tname,
+            types.push(TypeDef { kind: TypeKind.TkSum, by_value: false,
+                                 tparam_cnt: generic_names(nk).len(), ty_id: tys.sum(d), name: tname,
                                  rows: TypeRows.NoRows })
             continue
         }
@@ -636,7 +517,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             ShapeRecord => {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
-                types.push(TypeDef { kind: TypeKind.TkRecord, by_value: decl_is_value(c),
+                types.push(TypeDef { kind: TypeKind.TkRecord,
+                                     tparam_cnt: generic_names(nk).len(), by_value: decl_is_value(c),
                                      ty_id: tys.record(d), name: tname,
                                      rows: TypeRows.NoRows })
             }
@@ -645,7 +527,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // representation is a type reference and may point forward.
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
-                types.push(TypeDef { kind: TypeKind.TkNewtype, by_value: false, ty_id: no_ty(), name: tname,
+                types.push(TypeDef { kind: TypeKind.TkNewtype, by_value: false,
+                                     tparam_cnt: 0, ty_id: no_ty(), name: tname,
                                      rows: TypeRows.NoRows })
             }
             ShapeAlias => {
@@ -727,6 +610,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                     // reading it.
                     types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
                                                           by_value: types[raw_decl(owner_id)].by_value,
+                                                          tparam_cnt: types[raw_decl(owner_id)].tparam_cnt,
                                                           ty_id: mine.ty_id,
                                                           name: tname,
                                                           rows: TypeRows.FieldRows(FieldRow(off), cnt) }
@@ -745,6 +629,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                             if raw_decl(spec.under_decl) < types.len() {
                                 types[raw_decl(owner_id)] = TypeDef {
                                     kind: TypeKind.TkNewtype, by_value: false,
+                                    tparam_cnt: 0,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
                                     name: tname, rows: TypeRows.NoRows }
                             } else {
@@ -838,7 +723,9 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt })
                 vcnt += 1
             }
-            types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum, ty_id: sum_ty, name: sname,
+            types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
+                                                  tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
+                                                  ty_id: sum_ty, name: sname,
                                                   rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)

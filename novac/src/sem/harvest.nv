@@ -133,13 +133,13 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
             if nk.len() < 2 { continue }
             if nk[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(nk[1])
-            // A GENERIC declaration is SKIPPED, and the skip is a criterion of
-            // the plan's step A, not thrift: registered as a plain record,
-            // `type Vec[T]` would make a bare `Vec` in a signature RESOLVE --
-            // novac accepting what the oracle refuses, the permissive kind of
-            // divergence, the worst kind. Generics enter with the application
-            // step, which is where `Vec[int]` gets a term to resolve TO.
-            if generic_names(nk).len() > 0 { continue }
+            // A GENERIC declaration registers as a HEAD (step B1): the row
+            // carries how many parameters it binds, and the RESOLVER is what
+            // keeps a bare `Vec` from becoming a type -- `ty_or_none` answers
+            // no_ty for a head, so the hole step A closed by skipping stays
+            // closed by construction, and the refusal site can now say the
+            // truth ("write its type arguments") instead of "unknown type".
+            ro tp_cnt = generic_names(nk).len()
             // A name the registry already holds is not registered twice: the
             // chain would grow a second foreign row for one declaration, and
             // the reader would answer with whichever came last -- the very
@@ -160,6 +160,7 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
                 // compile, so reading them now would be a capability with no
                 // obligation.
                 types.push(TypeDef { kind: TypeKind.TkSum, by_value: false,
+                                     tparam_cnt: tp_cnt,
                                      ty_id: tys.sum(id), name: tname,
                                      rows: TypeRows.NoRows })
                 continue
@@ -170,6 +171,7 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
             // here would drop the declaration and take the methods that mention
             // it down with it.
             types.push(TypeDef { kind: TypeKind.TkRecord, by_value: decl_is_value(c),
+                                 tparam_cnt: tp_cnt,
                                  ty_id: tys.record(id), name: tname,
                                  rows: TypeRows.NoRows })
         }

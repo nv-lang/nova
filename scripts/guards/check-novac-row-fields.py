@@ -72,9 +72,14 @@ def main():
         # перешагнул тысячу строк. Разрез по СМЫСЛУ (что такое параметр, что
         # такое аргумент, и может ли один заполнить другой), а поля остались
         # теми же полями — и страж сразу сказал, что перестал их видеть.
+        # `defs.nv` -- 2026-08-26, the same decision-12 cut: the NAME registry
+        # (Def, DefTable) moved out of sem.nv when it crossed a thousand lines
+        # again. The rows are the same rows; the guard said it stopped seeing
+        # them within minutes of the cut, which is this list working as meant.
         sem_files = [s / "sem" / "sem.nv", s / "sem" / "channel.nv", s / "sem" / "coerce.nv",
                      s / "sem" / "callables.nv", s / "sem" / "protocols.nv",
-                     s / "sem" / "binding.nv", s / "types" / "types.nv"]
+                     s / "sem" / "binding.nv", s / "sem" / "defs.nv",
+                     s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"
 

@@ -29,7 +29,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node, arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls}
+import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of, representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node, arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../types.{TyId, no_ty, is_ty}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -312,7 +312,17 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     ro pt = if rslot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + rslot].type_id) } else { no_ty() }
     if !is_ty(pt) {
         match tnode {
-            Leaf(tt) => @refuse(tt, "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types this file declares)")
+            // TWO different mistakes, each named as itself (D420, step B1): a
+            // name the registry holds as a GENERIC HEAD wants arguments -- and
+            // "does not know this type" about `Vec` was a lie the moment the
+            // head registered. The oracle accepts the bare head (measured
+            // 2026-08-26); this refusal is deliberately stricter, and it says
+            // what to write.
+            Leaf(tt) => @refuse(tt, if generic_head_cnt(@ctx.types, @ctx.defs, tt.text) > 0 {
+                "outside the subset: this type is generic -- write its type arguments (for `Vec` the language spells the instance `[]int`)"
+            } else {
+                "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types of this file)"
+            })
             Branch { .. } => {}
         }
         return false

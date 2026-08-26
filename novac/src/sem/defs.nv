@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/defs.nv -- THE unified name registry: what a top-level name IS.
+//
+// Donor: rustc `Res` -- one lookup answers "what is this name", and the answer
+//        is a SUM carrying the row of its own space; taken. Go's `types2.Object`
+//        splits the same way. NOT taken: rustc's rib stack -- novac has no
+//        nested scopes at the top level, so a flat table is the honest shape.
+// Role: layer 3 of the map (sem) -- the O(1) name door and the rows it answers
+//       with; the shadowing rule (a file's own declaration beats a handed-over
+//       one) lives in the REGISTRATION ORDER plus the `foreign_cnt` boundary.
+// Used by: the collector (registration), `check` (resolution and the honest
+//          refusal texts), `emit_c`/`mono` through Ctx.
+// Guarded by: check-novac-ctx-tables.py (the table is declared in plan 10.3b),
+//             check-novac-row-fields.py (every row field justified in 10.3v),
+//             the pipeline module tests (shadowing, generic heads).
+//
+// A co-equal file of module `novac.sem` (folder = one module), split out of
+// sem.nv the moment that file crossed a thousand lines -- decision 12, the same
+// cut that produced protocols.nv and binding.nv before it. The cut is by
+// MEANING: everything here answers one question -- what does this NAME mean.
+
+module novac.sem
+
+import ../names.{NameTable, NamespaceId, DeclId, raw_decl}
+
+/// What a top-level name IS (the rustc Res model: ONE lookup answers it) —
+/// a SUM, not int constants (owner 2026-08-14: the language's own type
+/// safety judges kind dispatch, an arbitrary int cannot leak in).
+/// The payload lives INSIDE the arm (owner's question 2026-08-21, the second
+/// carrier of the same class as `CalleeRef.target_row`): `Def` used to be
+/// `kind DefKind` beside `payload int`, and the int meant a type id, a variant
+/// row or a callable row depending on the neighbouring tag. Three index spaces
+/// in one number is the state this sum makes unbuildable -- `DefFn` carries an
+/// `FnRow` and nothing else can be put there. The ARM NAMES are unchanged, so
+/// every reader still says `DefVariant`; what changed is that it now binds the
+/// row it needs instead of reaching for a second field.
+export type DefTarget enum
+    | DefType(DeclId)
+    | DefVariant(VariantRow)
+    | DefFn(FnRow)
+
+/// One top-level declaration of the unified name registry: what a name IS.
+export type Def value {
+    target DefTarget /// What this name IS, carrying the row of its own space: a type id, a variant row (`Ctx.variant_rows`) or a callable row (`Ctx.fns`)
+}
+
+/// THE unified name registry: the O(1) name door and the row it answers
+/// with — one record, because they only ever travel together (owner
+/// 2026-08-15: a pair that always walks in pairs belongs in one record).
+export type DefTable {
+    names NameTable /// name -> row in `rows` (NsDefs namespace).
+    rows []Def /// What each registered name is.
+    foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
+}
+
+/// Empty registry with the NsDefs namespace.
+export fn DefTable.new() -> DefTable =>
+    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), foreign_cnt: 0 }
+
+/// Register one name. LAST PUT WINS, and that is the rule rather than a
+/// shortcut: `collect_types` gives the id to the FIRST declaration that owns
+/// it, so a later duplicate resolves to the same id and pushes no second row.
+/// Judging the duplicate is CHECK's ground — sem builds the picture and does
+/// not refuse; two truths for one name is what this shape prevents.
+/// LAST PUT WINS, AND SINCE 2026-08-23 THAT IS THE SHADOWING RULE ITSELF.
+///
+/// The handed-over types are registered FIRST (see `collect_types_with`), so a
+/// name the compiled file also declares is overwritten by the file's own row --
+/// which is what the language means: a program is compiled against what it
+/// declares, and a foreign declaration of that name answers only where the file
+/// has none.
+///
+/// A CHAIN OF SAME-NAMED ROWS WAS BUILT HERE AND REMOVED THE SAME HOUR, and the
+/// reason is worth keeping: with the foreign types entering first, the chain was
+/// UNOBSERVABLE -- every question it could answer differently was already
+/// answered right by the order. A construction nobody can see the effect of is
+/// the K7 class this plan refuses, so the order stayed and the chain went. The
+/// day two FOREIGN declarations of one name can arrive (that is `import`, which
+/// brings nothing yet), the ambiguity is a REFUSAL to write, not a chain to walk.
+export fn DefTable mut @add(name str, target DefTarget) -> () {
+    @names.put(name, @rows.len())
+    @rows.push(Def { target })
+}
+
+/// Everything registered so far came from ELSEWHERE; every row after this is the
+/// compiled file's own.
+export fn DefTable mut @seal_foreign() -> () {
+    @foreign_cnt = @rows.len()
+}
+
+/// Did the compiled FILE declare this name, or does it only exist because novac
+/// was handed a declaration that uses it?
+///
+/// THE QUESTION EXISTS BECAUSE OF A MEASURED COLLISION (2026-08-23). Pass one
+/// skips a name the registry already holds -- correct while every row came from
+/// one file, where a duplicate means the same declaration seen twice. With
+/// handed-over types entering first, that same rule made the FILE'S OWN
+/// declaration look like a duplicate and skipped it: a file declaring
+/// `type Pair { b int }` beside a handed-over `type Pair value { a int }` was
+/// compiled against the FOREIGN layout (`NovaValue_Pair` in the emission), which
+/// is somebody else's type under your name.
+#realtime nogc
+export fn DefTable @declared_by_file(name str) -> bool => @names.find(name) >= @foreign_cnt
+
+/// WHAT this name IS, or None -- the registry's ONE public question.
+///
+/// WAVE B4 EXPECTED A WRAPPER HERE AND FOUND THAT THERE IS NO SPACE TO WRAP.
+/// The plan said "wrap the `defs` row index, 10 sites, and answer `Option[DefRow]`
+/// instead of −1". The measurement said otherwise: every one of the five readers
+/// did `find(name)` and then `rows[d]` on the very next line, and nothing ever
+/// carried the index anywhere. An index that never outlives the indexing it feeds
+/// is not an identity -- it is a step, and typing a step is ceremony.
+///
+/// So the space is DELETED rather than named: the door answers with the ROW. The
+/// −1 goes with it, and so do the five `d >= 0` guards that had to know about it.
+#realtime nogc
+export fn DefTable @def_of(name str) -> Option[Def] {
+    ro d = @names.find(name)
+    if d < 0 { return None }
+    Some(@rows[d])
+}
+
+/// The CALLABLE row a name owns, or None when the registry knows no such fn.
+///
+/// The registry's own question, and therefore the registry's door. Before
+/// 2026-08-18 it lived nowhere, so every consumer wrote the two-step
+/// (`find` then `rows[..]`) itself: ten sites across three modules, two of them
+/// identical body for body -- and I wrote the second one myself while
+/// commenting that it asked "the same question". A door is found by NAME; if
+/// the name does not exist, the next author writes their own. That is how
+/// second doors get in, and the answer is not vigilance but a door.
+#realtime nogc
+export fn DefTable @fn_row(name str) -> Option[FnRow] {
+    // `?`, not `??` and not a two-armed if: this door RETURNS an Option, so an
+    // unknown name propagates by the operator made for it (D86 retracted
+    // `?? return` precisely because an early return is control flow, and the
+    // refusal's own hint names `?` first). A name the registry does not know is
+    // an ANSWER for a tolerant door -- check refuses the program elsewhere.
+    ro def = @def_of(name)?
+    // The arm that means "a callable" is the arm that HOLDS the callable row;
+    // the other two are not a fn row.
+    match def.target {
+        DefFn(row) => Some(row)
+        // A type or a variant is not a callable: one answer, one arm.
+        DefType(_) | DefVariant(_) => None
+    }
+}
+
+/// Type by name during COLLECTION: None if the name is unknown or not a
+/// type. Collection is DELIBERATELY tolerant of broken input
+/// (274.3/F-B4): the file picture is built for check too, and check
+/// must issue a diagnostic, not die in an ICE. check is the judge (the
+/// rule "a type in type position must be declared"); sem invents
+/// nothing — it just does not register what it did not understand.
+#realtime nogc
+export fn DefTable @type_decl(name str) -> Option[DeclId] {
+    // `?` for the unknown name (this door returns an Option), then the kind.
+    ro def = @def_of(name)?
+    match def.target {
+        DefType(decl) => Some(decl)
+        // A variant or a callable is not a type, and that is ONE answer.
+        DefVariant(_) | DefFn(_) => None
+    }
+}
