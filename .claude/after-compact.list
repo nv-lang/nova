@@ -1,0 +1,6 @@
+# Что приезжает в окно контекста ПОСЛЕ СЖАТИЯ (хук SessionStart/compact,
+# scripts/claude-hooks/inject-after-compact.py). Одна строка — один путь от корня
+# репозитория; пустые строки и # пропускаются. Смотреть/добавлять: /after-compact.
+# Каждый файл ложится в контекст целиком в каждом окне после сжатия — держи коротко.
+.claude/commands/flow.md
+.claude/commands/delegate.md

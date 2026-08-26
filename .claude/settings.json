@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/inject-flow-delegate.py\""
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/inject-after-compact.py\""
           }
         ]
       }
