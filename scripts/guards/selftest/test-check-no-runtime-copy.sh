@@ -39,26 +39,26 @@ echo "самотест check-no-runtime-copy:"
 # (1) ЛОВИТ: пакетная репа с копией рантайма — код 1.
 mkdir -p "$tmp/fake-pkg/compiler-codegen/nova_rt"
 touch "$tmp/fake-pkg/compiler-codegen/nova_rt/effects.h"
-"$GUARD" "$tmp/fake-pkg" >/dev/null 2>&1
+bash "$GUARD" "$tmp/fake-pkg" >/dev/null 2>&1
 check "ловит копию рантайма в пакетной репе" 1 $?
 
 # (2) НЕ ловит: главная репа (у неё есть compiler-codegen/Cargo.toml) — код 0.
 mkdir -p "$tmp/fake-main/compiler-codegen/nova_rt"
 touch "$tmp/fake-main/compiler-codegen/Cargo.toml"
-"$GUARD" "$tmp/fake-main" >/dev/null 2>&1
+bash "$GUARD" "$tmp/fake-main" >/dev/null 2>&1
 check "НЕ ловит главную репу (дом рантайма законен)" 0 $?
 
 # (3) НЕ ловит: обычная пакетная репа без копии — код 0.
 mkdir -p "$tmp/clean-pkg/src"
-"$GUARD" "$tmp/clean-pkg" >/dev/null 2>&1
+bash "$GUARD" "$tmp/clean-pkg" >/dev/null 2>&1
 check "НЕ ловит чистую пакетную репу" 0 $?
 
 # (4) ЛОВИТ среди нескольких: одна грязная в наборе чистых — код 1.
-"$GUARD" "$tmp/clean-pkg" "$tmp/fake-pkg" "$tmp/fake-main" >/dev/null 2>&1
+bash "$GUARD" "$tmp/clean-pkg" "$tmp/fake-pkg" "$tmp/fake-main" >/dev/null 2>&1
 check "ловит одну грязную среди чистых" 1 $?
 
 # (5) Реальная главная репа не считается нарушением (страж не ломает себя).
-"$GUARD" "$REPO_ROOT" >/dev/null 2>&1
+bash "$GUARD" "$REPO_ROOT" >/dev/null 2>&1
 check "НЕ ловит настоящую репу nova" 0 $?
 
 if [ "$fails" -ne 0 ]; then

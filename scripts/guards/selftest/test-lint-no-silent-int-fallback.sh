@@ -49,7 +49,7 @@ fn f(&self) -> Result<String, String> {
     self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback("param", &e))
 }
 RS
-"$GUARD" "$tmp/clean" >/dev/null 2>&1
+bash "$GUARD" "$tmp/clean" >/dev/null 2>&1
 check "НЕ ловит дерево на каноне (счёт ниже базы)" 0 $?
 
 # (2) ЛОВИТ: три голые площадки Cat A1 при базе 2.
@@ -59,7 +59,7 @@ let a = self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into());
 let b = self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".to_string());
 let c = self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into());
 RS
-"$GUARD" "$tmp/dirty" >/dev/null 2>&1
+bash "$GUARD" "$tmp/dirty" >/dev/null 2>&1
 check "ловит рост Cat A1 над базой" 1 $?
 
 # (3) НЕ ловит: намеренные обёртки erase_unk — сколько бы их ни было.
@@ -71,7 +71,7 @@ let c = erase_unk(self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()));
 let d = erase_unk(self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()));
 let e = erase_unk(self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()));
 RS
-"$GUARD" "$tmp/erased" >/dev/null 2>&1
+bash "$GUARD" "$tmp/erased" >/dev/null 2>&1
 check "НЕ ловит намеренные обёртки erase_unk (иначе счёт снова разойдётся)" 0 $?
 
 # (4) ЛОВИТ голую площадку РЯДОМ с намеренными — исключение по форме не
@@ -83,7 +83,7 @@ let b = self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into());
 let c = self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into());
 let d = self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into());
 RS
-"$GUARD" "$tmp/mixed" >/dev/null 2>&1
+bash "$GUARD" "$tmp/mixed" >/dev/null 2>&1
 check "ловит голую площадку рядом с намеренными" 1 $?
 
 # (5) ЛОВИТ рост Cat A2 (wildcard) над базой 14.
@@ -94,7 +94,7 @@ while [ "$i" -lt 15 ]; do
     echo '        _ => "nova_int",' >> "$tmp/wild/compiler-codegen/src/emit.rs"
     i=$((i + 1))
 done
-"$GUARD" "$tmp/wild" >/dev/null 2>&1
+bash "$GUARD" "$tmp/wild" >/dev/null 2>&1
 check "ловит рост Cat A2 над базой" 1 $?
 
 # (6) Печатает строку ok: — иначе обёртка `guard` в gate.sh засчитает шаг
@@ -104,7 +104,7 @@ printf '%s\n' "$out" | grep -q 'ok:'
 check "печатает строку ok: на зелёном" 0 $?
 
 # (7) НЕ ловит настоящее дерево nova (страж не ломает сам себя).
-"$GUARD" "$REPO_ROOT" >/dev/null 2>&1
+bash "$GUARD" "$REPO_ROOT" >/dev/null 2>&1
 check "НЕ ловит настоящую репу nova" 0 $?
 
 if [ "$fails" -ne 0 ]; then
