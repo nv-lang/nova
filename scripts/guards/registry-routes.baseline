@@ -141,7 +141,7 @@ no_route=0
 #   any single count, it is that lowering a ratchet has no external
 #   caller either: the guard prints the drop and passes, and a passing
 #   step is one nobody reads. Rule G8 applies to the baselines too.
-no_caveat=30
+no_caveat=29
 # №728 (`type Bytes []u8` молча значит newtype над `u8`) — новый блокер,
 #   найден 2026-08-18 по дороге к №723. Скобка после имени типа — список
 #   generic-параметров (D52), и парсер принимает его пустым без
@@ -432,4 +432,14 @@ no_caveat=30
 #   false refusals the corpus caught on the way -- a return mentioning a type
 #   parameter, and a bare generic container (D135 carve-out) -- both excluded.
 #   Corpus: conformance one CU PASS: 844 FAIL: 0, std PASS: 75 FAIL: 0.
-blockers=38
+# 2026-08-26 — БАЗА ОПУЩЕНА ПО ФАКТУ, А НЕ ИСПРАВЛЕНА.
+#     blockers  38 -> 32 — закрыты №450, №520, №613, №679, №765 (починены),
+#                          №534 и №567 перестали быть блокерами по замеру
+#                          (достижимого неверного поведения не осталось, остаток
+#                          архитектурный), заведён №756.
+#     no_caveat 30 -> 29.
+#   ПОЧЕМУ ЭТО ОТДЕЛЬНАЯ РАБОТА, А НЕ УБОРКА: страж краснеет только на
+#   РОСТ, падение пропускает молча. База 38 при фактических 32 разрешала
+#   откатиться на шесть строк без единого слова — то есть храповик провисает
+#   ровно на величину продвижения. Зафиксировано в `.claude/commands/release.md`.
+blockers=32
