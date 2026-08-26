@@ -419,7 +419,7 @@ typedef struct NovaFiberQueue {
      * Initial value 0 — для single-thread (без runtime.init) остаётся 0
      * navсегда, behaviour identical. */
     nova_atomic_int pending_remote;
-    /* [196.6 / D228 §6 class, 2026-07-13] pending_sweeps — count of remote
+    /* [196.6 / D466 §6 class, 2026-07-13] pending_sweeps — count of remote
      * children whose fiber body (epilogue) has finished but whose WORKER-side
      * post-mortem sweep (_worker_main: mco_destroy → nova_scope_retain_or_
      * release_child → nova_spawn_pool_release) has not completed yet.
@@ -435,7 +435,7 @@ typedef struct NovaFiberQueue {
      * the Plan 198 floating corruption / 0xC0000005 at
      * `parent->child_capacity` (offset 0x74 off a NULL/garbage reload).
      * Same class as §12.31 `pending_driver_jobs` (stack scope must outlive
-     * all async references — D228 §6); same counter-based-wait fix:
+     * all async references — D466 §6); same counter-based-wait fix:
      *   - increment: child epilogue (codegen), program-order BEFORE its
      *     pending_remote release-decrement — the acquire that sees
      *     pending_remote==0 therefore also sees pending_sweeps>0 until the
@@ -926,7 +926,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * Single-thread baseline (без runtime.init) — оба остаются нулевыми
      * forever, behaviour identical. */
     nova_aint_init(&q->pending_remote, 0);
-    nova_aint_init(&q->pending_sweeps, 0);   /* [196.6 / D228 §6 class] */
+    nova_aint_init(&q->pending_sweeps, 0);   /* [196.6 / D466 §6 class] */
     nova_aptr_init(&q->first_error_atomic, NULL);
     q->first_error_atomic_kind = NOVA_THROW_USER;
     q->first_error_atomic_reason = NULL;
@@ -2845,7 +2845,7 @@ static inline bool nova_scope_retain_or_release_child(NovaSpawnCtxBase* dead_ctx
  * tail to release retained child ctx buffers back to their pool. */
 void nova_spawn_pool_release(void* ctx, size_t size);
 
-/* [196.6 / D228 §6 class, 2026-07-13]: the ONE post-mortem sweep for a dead
+/* [196.6 / D466 §6 class, 2026-07-13]: the ONE post-mortem sweep for a dead
  * remote child — retain-or-release the ctx, then RELEASE-decrement the parent
  * scope's pending_sweeps (see the field doc at NovaFiberQueue.pending_sweeps).
  * All worker-side dead-fiber sites MUST route through this helper (three in
@@ -3100,7 +3100,7 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                 (void*)q, (int)nova_aint_load(&q->pending_sweeps));
         fflush(stderr);
     }
-    /* [196.6 / D228 §6 class]: wait for worker-side sweeps of this scope's
+    /* [196.6 / D466 §6 class]: wait for worker-side sweeps of this scope's
      * remote children (see pending_sweeps field doc / supervised_run_impl
      * tail). The orphan scope is static, but drain is also the pre-exit
      * fence — keep the sweep/ctx-pool accounting symmetric. */
@@ -3764,7 +3764,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             }
         }
     }
-    /* [196.6 / D228 §6 class]: same guarantee for the WORKER-side post-mortem
+    /* [196.6 / D466 §6 class]: same guarantee for the WORKER-side post-mortem
      * sweep of remote children (mco_destroy → retain_or_release_child →
      * pool_release). A child's epilogue decrements pending_remote INSIDE the
      * fiber; the sweep runs after the fiber returns and dereferences THIS

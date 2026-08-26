@@ -514,7 +514,7 @@ Bootstrap-runtime реализует `blocking { }` через **libuv threadpoo
 
 ##### Аменд: Plan 83.11 Ф.4 (2026-06-08) — offload через centralized driver
 
-После [D228](#d228) (centralized I/O driver) шаг 1 выше уточнён: когда
+После [D466](#d466) (centralized I/O driver) шаг 1 выше уточнён: когда
 driver-thread запущен (production M:N), `nova_blocking_offload` **не**
 вызывает `uv_queue_work(nova_current_loop())` на loop'е home-worker'а, а
 submit'ит job `NOVA_DRV_JOB_ARM_BLOCKING` в driver queue. Driver thread в
@@ -522,7 +522,7 @@ submit'ит job `NOVA_DRV_JOB_ARM_BLOCKING` в driver queue. Driver thread в
 loop'е (`&_nova_driver.loop`). Соответственно шаг 4 (`after_work_cb`)
 исполняется на **driver thread**, а не на home-worker'е, и будит fiber
 кросс-потоково через `nova_sched_wake` (тот же dispatch-путь, что
-driver-routed `Time.sleep` из [D228](#d228)). Legacy per-worker путь
+driver-routed `Time.sleep` из [D466](#d466)). Legacy per-worker путь
 сохранён для bootstrap/single-thread режима (`nova_driver_is_started()`
 == false).
 
@@ -6304,7 +6304,12 @@ D174 введён в Plan 103.9 (2026-05-27) как финальный D-бло�
 
 ---
 
-## D228. Centralized I/O driver — sleep cancel state-machine + scope-lifetime invariants (Plan 83.11)
+## D466. Centralized I/O driver — sleep cancel state-machine + scope-lifetime invariants (Plan 83.11)
+> **Перенумерован 2026-08-26 из D228** (решение владельца; реестр 221.1 №772). Номер D228 несли ДВА разных решения: это и `### D228 NEW — Value-record
+> allocation contract` в [02-types.md](02-types.md). Номер оставлен value-record — на него
+> ссылаются сотни мест, включая фикстуру и имя типа; переехал менее вросший блок —
+> тот же принцип, что в №123 (D435 → D440) и у D375 (ex-D277).
+> Ссылки вида «D228» в смысле I/O-драйвера читай как D466.
 
 > **Принято 2026-06-05.** Закрывает Plan 83.11 Ф.9 design debt
 > ([83.11-centralized-io-driver.md](../../docs/plans/83.11-centralized-io-driver.md)).
@@ -6521,7 +6526,7 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
 | Подход | Cross-thread visibility | Race surface | Cost |
 |---|---|---|---|
 | Per-worker loop (старое [D98](#d98) для всех handles) | timer на worker A, cancel из worker B — нужно сериализовать через handle migration или `uv_async_send` | Большая (N×N pair'ов worker↔worker) | Cheap parallelism — каждый сам себе хозяин |
-| Centralized driver (D228) | Любой worker → driver через single MPSC job queue | Линейная (только worker↔driver) | Driver = single point of contention, но cheap для timer/cancel workloads |
+| Centralized driver (D466) | Любой worker → driver через single MPSC job queue | Линейная (только worker↔driver) | Driver = single point of contention, но cheap для timer/cancel workloads |
 | Sharded driver pool | Hash(scope) → driver_id | Линейная per shard | Сложность codegen + load balancing |
 
 **Конкретные обоснования:**
@@ -6572,21 +6577,21 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
 
 ### Связь
 
-- [D14](#d14) — fiber-runtime; D228 уточняет structure cancel-path.
+- [D14](#d14) — fiber-runtime; D466 уточняет structure cancel-path.
 - [D50](#d50) — `spawn` / `supervised`; scope-frame инвариант усиливается.
 - [D71](#d71) — bootstrap concurrency, `cancel_requested` flag;
-  D228 раскрывает механику пробуждения parked-fiber'ов на cancel.
+  D466 раскрывает механику пробуждения parked-fiber'ов на cancel.
 - [D75](#d75) — `supervised(cancel: tok)`; **обе invariant'а
   (`ctx_pins[]` pin для token + `pending_driver_jobs` wait) обязательны
   для корректной реализации D75 при ≥1 worker thread.**
-- [D93](#d93) — park/wake; D228 строит timer-cancel путь поверх него.
-- [D98](#d98) — per-worker libuv loop; **D228 сужает D98** — timer/sleep
+- [D93](#d93) — park/wake; D466 строит timer-cancel путь поверх него.
+- [D98](#d98) — per-worker libuv loop; **D466 сужает D98** — timer/sleep
   handles теперь живут на driver loop'е, не на worker'ском TLS-loop'е.
   Остальные планируемые handle-классы (Net, Fs, channels-select-timer)
   следуют centralized-driver pattern по умолчанию; per-worker — только
   для handles, у которых нет cross-worker cancel semantics.
 - [D103](#d103) — preemption; orthogonal.
-- [D167](#d167) — memory ordering; D228 §6 фиксирует ACQ_REL/RELEASE/ACQUIRE
+- [D167](#d167) — memory ordering; D466 §6 фиксирует ACQ_REL/RELEASE/ACQUIRE
   contract как нормативный для любого job-pointer-to-stack pattern.
 - [Plan 83.11](../../docs/plans/83.11-centralized-io-driver.md) — full
   implementation history; §10 (STALE-slot post-mortem), §11.6
@@ -6699,7 +6704,7 @@ concurrency suite 105/4. adversarial diff-review: fence_hazards VERIFIED CLEAN, 
 ## D244 — gopark/goready park/wake ordering (Plan 83-go-cmn Ф.2)
 
 > **Создан:** 2026-06-11 (Plan 83-go-cmn Ф.2). Порт принципа Go runtime·gopark/goready.
-> Заменяет pending_wake-счётчик + t1-t4 dance + TLS-deferred-unlock (D228-эры) единым
+> Заменяет pending_wake-счётчик + t1-t4 dance + TLS-deferred-unlock (D466-эры) единым
 > lost-wakeup-free протоколом. Хранилище — D243 (chunked stable-address).
 
 ### Контракт

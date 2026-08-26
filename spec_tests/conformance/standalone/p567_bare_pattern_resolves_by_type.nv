@@ -1,0 +1,58 @@
+// EXPECT_STDOUT a=42 b=yes c=7
+//
+// Registry 221.1 #567, the positive half of its acceptance.
+//
+// A bare pattern used to resolve by NAME across the whole compile unit. With
+// `MyOutcome[T] enum Done(T) | Cancelled`, matching `Done(x)` landed on
+// `OnceState.Done` -- a sum hardcoded in nova_rt, present in every program
+// without an import -- so the arm compared a foreign tag, missed BOTH arms,
+// and the binding was read from uninitialised stack memory. Measured before
+// the fix: `got=4` for an input of 42. No diagnostic of any kind.
+//
+// The scrutinee-authoritative rule already existed and was carved out for
+// exactly the broken case: "only trust the scrutinee for NON-generic sums",
+// because a mono'd sum spells its tag `NOVA_TAG_Nova_<mono>_<V>` and the
+// registry only knows the base name. True premise, wrong conclusion -- the
+// answer is to verify the variant against the BASE schema and build the tag
+// from the MONO'd spelling, not to abandon the scrutinee and guess by name.
+//
+// This file is the acceptance's "fixture with TWO different enums carrying a
+// same-named variant, where both matches give the right result": OutA is
+// generic (the broken path), OutB is plain (the path that already worked), and
+// both declare `Done`/`Cancelled`. The third pair repeats it under a name that
+// collides with the runtime's own sum, which is the original report.
+//
+// Kill-switch NOVA_KILL_567=1 restores the pre-fix behaviour on the same
+// binary: `a=4`.
+//
+// The negative half lives in neg/p567_match_foreign_variant_neg.nv.
+module standalone.p567_bare_pattern_resolves_by_type
+
+type OutA[T] enum Done(T) | Cancelled
+type OutB enum Done(str) | Cancelled
+type OutC[T] enum Pending | Ready(T)
+
+fn ua(o OutA[int]) -> int {
+    match o {
+        Done(x) => x
+        Cancelled => -1
+    }
+}
+
+fn ub(o OutB) -> str {
+    match o {
+        Done(s) => s
+        Cancelled => "no"
+    }
+}
+
+fn uc(o OutC[int]) -> int {
+    match o {
+        Ready(v) => v
+        Pending => -1
+    }
+}
+
+fn main() Io -> () {
+    println("a=${ua(Done(42))} b=${ub(OutB.Done("yes"))} c=${uc(Ready(7))}")
+}

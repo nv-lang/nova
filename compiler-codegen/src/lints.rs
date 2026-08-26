@@ -1211,6 +1211,18 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             // lint this is a harmless over-approximation — a name reachable
             // as `obj.name` is conservatively treated as used.)
             out.insert(name.clone());
+            // №613: ЗНАЧЕНИЕ МЕТОДА ТОЖЕ ЕГО ИСПОЛЬЗУЕТ. Обе формы
+            // (`Type.@method` и `obj.@method`) парсер отдаёт как `Member` с `@` В
+            // ИМЕНИ, а методный DCE ищет имя БЕЗ `@` — совпадения не
+            // было никогда, метод считался мёртвым и вычищался, а переходник
+            // значения на него ссылался: `lld-link: undefined symbol`. Класс №576 —
+            // обход ходит по ИМЕНАМ и не знает про метод-сет типа.
+            // Сырая форма тоже остаётся — это переоценка в сторону СОХРАНЕНИЯ.
+            if std::env::var("NOVA_KILL_613").as_deref() != Ok("1") {
+                if let Some(bare) = name.strip_prefix('@') {
+                    out.insert(bare.to_string());
+                }
+            }
         }
         ExprKind::Index { obj, index } => {
             collect_expr(obj, out);

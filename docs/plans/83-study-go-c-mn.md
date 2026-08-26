@@ -310,7 +310,7 @@ validation (no STALE / no lost-cancel impossible-state signatures).
   nova_sched_grow_state realloc; закрывает grow-vs-wake). Будущие фазы:
   **D244** (Ф.2 gopark/goready ordering + READY-sentinel latch, retires D243-era pending_wake),
   **D245** (Ф.3 nspinning + re-scan + Go-note, worker-wakeup decoupled from uv_async),
-  **D246** (Ф.6 per-worker 4-ary timer heap + cancel-during-fire exactly-once, amends D228),
+  **D246** (Ф.6 per-worker 4-ary timer heap + cancel-during-fire exactly-once, amends D466),
   **AMEND D103** (Ф.7 sysmon tick-edge + observe/recover),
   **D247** (Ф.8 conditional: netpoll-in-scheduler + IOCP, или deferral decision).
 - `docs/dev/debugging-races.md`: §3 Tooling + §4 Lessons — RELAXED-atomic ring-buffer counters;

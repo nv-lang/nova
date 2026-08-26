@@ -196,7 +196,7 @@ Once root cause is identified:
    that fails before fix, passes after. Lives forever.
 
 3. **Author spec D-block** if this introduces a new invariant. Example:
-   - §12.31 → D228 §6: `pending_driver_jobs` lifetime counter
+   - §12.31 → D466 §6: `pending_driver_jobs` lifetime counter
    - §11.6 → D228 §7: `ctx_pins[]` GC-root anchor pattern
 
 4. **Update plan doc** with closure section (root cause analysis +
