@@ -108,9 +108,25 @@ run_check() {
             target_dir=$(printf '%s' "$meta" | grep -o '"target_directory":"[^"]*"' | head -1 | sed 's/"target_directory":"//;s/"$//' | sed 's/\\\\/\//g')
             expected=$(norm_path "$root/target")
             if [ -n "$target_dir" ]; then
-                local target_dir_abs
+                local target_dir_abs same
                 target_dir_abs=$(norm_path "$target_dir")
-                if [ "$target_dir_abs" != "$expected" ]; then
+                # СРАВНИВАЕМ КАТАЛОГ, А НЕ БАЙТЫ ЕГО ИМЕНИ (№766, 2026-08-26).
+                # `cargo metadata` отдаёт путь в UTF-8, а `$root` приходит в кодировке
+                # оболочки: у разработчика с не-ASCII именем пользователя это ОДИН
+                # и тот же каталог в двух написаниях, и строковое сравнение врёт.
+                # На CI было зелёно только потому, что там `/home/runner`.
+                # `-ef` сравнивает устройство+inode, то есть сами каталоги; строки
+                # остаются запасным путём для ещё НЕ СОЗДАННОГО каталога.
+                # СРАВНИВАЕМ СЫРЫЕ ПУТИ: именно `norm_path` (cygpath/realpath) и
+                # портит кодировку — после неё каталога с таким именем не существует
+                # вовсе, и `-ef` нечего сравнивать.
+                same=0
+                if [ -d "$target_dir" ] && [ -d "$root/target" ]; then
+                    [ "$target_dir" -ef "$root/target" ] && same=1
+                elif [ "$target_dir_abs" = "$expected" ]; then
+                    same=1
+                fi
+                if [ "$same" -ne 1 ]; then
                     echo "check-lsp-launch-path: НАРУШЕНИЕ — cargo target-dir у nova-lsp = '$target_dir_abs', ожидался '$expected'" >&2
                     echo "    (nova-lsp/.cargo/config.toml с target-dir=\"../target\" отсутствует или переопределён)" >&2
                     fail=1

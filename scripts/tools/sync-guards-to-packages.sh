@@ -37,10 +37,17 @@ PACKAGES="nova-tls nova-http nova-polaris nova-compress nova-socks nova-bignum"
 DRIFT=0
 MISSING=0
 SYNCED=0
+# №767: СКОЛЬКО РЕП ДЕЙСТВИТЕЛЬНО СРАВНИЛИ. Без этого счётчика итог
+# говорил «копии совпадают с эталоном» и тогда, когда не открыл ни одного файла:
+# на CI ни одной пакетной репы нет, все уходят в «пропуск», DRIFT и MISSING
+# остаются нулями. Гейт видел зелёный шаг, утверждающий факт о файлах,
+# которых не читал (Г15).
+COMPARED=0
 
 for pkg in $PACKAGES; do
     dst="$SIBLINGS_DIR/$pkg"
     [ -d "$dst/.git" ] || { echo "  $pkg: репы нет локально — пропуск"; continue; }
+    COMPARED=$((COMPARED + 1))
 
     for g in $GUARDS; do
         src="$NOVA/scripts/guards/$g"
@@ -87,5 +94,13 @@ if [ "$DRIFT" -gt 0 ] || [ "$MISSING" -gt 0 ]; then
     echo "sync-guards: раздать эталон — bash scripts/tools/sync-guards-to-packages.sh --write" >&2
     exit 1
 fi
-echo "sync-guards ok: копии стражей в пакетных репах совпадают с эталоном"
+if [ "$COMPARED" -eq 0 ]; then
+    # НЕ ОТКАЗ: шести соседних реп на раннере и не бывает, а красный шаг
+    # каждый прогон учит его не читать. ГГ ГОВОРИТ ПРАВДУ ВСЛУХ — тогда
+    # видно, что здесь проверки не было, и что её надо где-то сделать.
+    echo "sync-guards: ПРОВЕРЯТЬ БЫЛО НЕЧЕГО — ни одной пакетной репы рядом (сравнено 0 из $(printf '%s\n' $PACKAGES | grep -c .))"
+    echo "sync-guards: это НЕ подтверждение совпадения копий; настоящая сверка идёт там, где репы склонированы"
+    exit 0
+fi
+echo "sync-guards ok: копии стражей в пакетных репах совпадают с эталоном (сравнено реп: $COMPARED)"
 exit 0

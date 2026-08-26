@@ -85,15 +85,27 @@ import std.time.duration
 // reader to rerun instead of to read. Four rounds keep the SHAPE that
 // matters -- one arena driven past slot 501 with cancellers racing the
 // sleepers -- and the class is caught over many runs rather than in one.
-test "p452: single-arena burst past slot 501 + 8x80 racing cancellers, MAXPROCS=16, 4 rounds (slot reuse)" {
-    for _round in 0..4 {
+// SIZE, THIRD CUT (2026-08-26). 20 rounds -> 4 -> 2, and the fibre counts with
+// them: 6560 fibres per run became 1680. The reason is the same each time and
+// it is measured, not felt: on the CI runner this fixture is `TIMEOUT ...
+// killed after 61244ms` against a 60s per-test ceiling, so in the ONE tier that
+// runs it (`full`, nightly) it judged nothing at all -- it only reddened. A
+// fixture that always times out is not a stricter judge than one that fits;
+// it is not a judge.
+//
+// What is preserved is the SHAPE, and only the shape matters here: 600 fibres
+// spawned back-to-back on one calling thread still drive that arena past slot
+// 501 (the reported crash site), and two rounds still force slot REUSE rather
+// than fresh allocation, with cancellers racing the sleepers throughout.
+test "p452: single-arena burst past slot 501 + 4x60 racing cancellers, MAXPROCS=16, 2 rounds (slot reuse)" {
+    for _round in 0..2 {
         ro tok = CancelToken.new()
         supervised(cancel: tok) {
-            for _ in 0..1000 {
+            for _ in 0..600 {
                 spawn { 200.to_millis().sleep() }
             }
-            for _cluster in 0..8 {
-                for _ in 0..80 {
+            for _cluster in 0..4 {
+                for _ in 0..60 {
                     spawn {
                         0.to_millis().sleep()
                         tok.cancel()

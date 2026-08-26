@@ -77,6 +77,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    # Ярус ПО ТРЕБОВАНИЮ (№765, 2026-08-26). До этого единственным каллером
+    # яруса `full` было расписание, то есть фикс того, что падает ТОЛЬКО
+    # там, можно было проверить раз в сутки. Три ночи подряд — ровно
+    # столько жили красными три самотеста №765. Цикл отладки длиною в сутки —
+    # это отсутствие отладки.
+    inputs:
+      tier:
+        description: "Ярус гейта (loop | push | full)"
+        required: false
+        default: push
+        type: choice
+        options: [push, full, loop]
   # Nightly, 02:30 UTC. The ONLY caller the `full` tier has: guard selftests
   # cost 365s and live there, so on push they would tax every commit, and
   # without a caller at all they are the #748 shape -- a check that is green
@@ -318,7 +330,7 @@ jobs:
       # красный, а не поломка.
       - name: scripts/gate.sh — tier push (full on the nightly schedule)
         env:
-          NOVA_GATE_TIER: ${{ github.event_name == 'schedule' && 'full' || 'push' }}
+          NOVA_GATE_TIER: ${{ github.event_name == 'schedule' && 'full' || (inputs.tier || 'push') }}
         run: bash scripts/gate.sh
 
   gate:

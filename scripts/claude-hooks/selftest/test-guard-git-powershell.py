@@ -38,9 +38,9 @@ CASES = [
      u'@"\ntext\n"@ | Out-File a.md', True),
     # Законное — блокироваться НЕ должно.
     (u"обычный git-вызов с -C",
-     u'git -C /d/Sources/nv-lang/nova status', False),
+     u'git -C /d/Sources/nv-lang/nova status', False),  # machine-path-fixture
     (u"PowerShell без записи текста",
-     u'Get-ChildItem d:\\Sources | Select-Object Name', False),
+     u'Get-ChildItem d:\\Sources | Select-Object Name', False),  # machine-path-fixture
     (u"Set-Content с ОДИНАРНЫМИ кавычками (безопасная форма)",
      u"Set-Content -Path a.txt -Value 'plain text'", False),
     (u"чтение файла с апострофом в пути — не запись",

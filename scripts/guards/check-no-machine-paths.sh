@@ -40,7 +40,12 @@ ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 NAME=check-no-machine-paths
 FILES=$(git -C "$ROOT" ls-files -- 'scripts/*.sh' 'scripts/**/*.sh' 'scripts/*.py' 'scripts/**/*.py' '.github/workflows/*.yml' 2>/dev/null \
     | grep -vE '^scripts/guards/check-no-machine-paths\.sh$|^scripts/guards/selftest/test-check-no-machine-paths\.sh$' \
-    | grep -vE '^scripts/claude-hooks/selftest/')
+    )
+# ИСКЛЮЧЕНИЕ `scripts/claude-hooks/selftest/` СНЯТО (№765, 2026-08-26).
+# Оно прикрывало РОВНО ОДИН файл — `test-guard-git-commit-backtick.py`
+# с абсолютным windows-путём к перехватчику, из-за которого тот
+# самотест на CI не проверял ничего вообще. Страж, которому велели
+# не смотреть туда, где дефект, — не страж. Файл починен тем же слиянием.
 # scripts/claude-hooks/selftest/** — самотесты хуков ДЕРЖАТ такие пути как
 # ТЕСТОВЫЕ ДАННЫЕ (строки, которые хук обязан распознать) — исключены каталогом.
 # `Prichina:` — текст подсказки хука с примером команды; `step "` — текст шага
@@ -58,7 +63,13 @@ RAW=$(printf '%s\n' "$FILES" | sed "s#^#$ROOT/#" \
     | xargs -d '\n' -r grep -nHE '([Dd]:[/\\]+Sources|/d/Sources|/mnt/d/Sources|[Cc]:[/\\]+Users[/\\])' 2>/dev/null \
     | sed "s#^$ROOT/##" \
     | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' \
-    | grep -vE 'Проверялся|проверялся|# |Prichina:|^[^:]*:[0-9]+:step ')
+    | grep -vE 'Проверялся|проверялся|# |Prichina:|machine-path-fixture|^[^:]*:[0-9]+:step ')
+# `machine-path-fixture` — ИМЕНОВАННОЕ исключение НА СТРОКЕ (№765, 2026-08-26):
+# путь лежит ВНУТРИ строки-аргумента, которую хук получает как данные, и в этом
+# весь смысл случая. Пришло на смену исключению целой папки
+# `scripts/claude-hooks/selftest/`, которое прикрывало и настоящий дефект —
+# самотест, зашитый на абсолютный windows-путь, три ночи «проходивший» на CI по
+# совпадению кодов возврата.
 # Группировка по файлу — тем же порядком, каким grep выдаёт совпадения
 # (файлы обходятся в порядке $FILES, строки внутри файла — по возрастанию
 # номера), поэтому один проход awk без сортировки воспроизводит ровно то

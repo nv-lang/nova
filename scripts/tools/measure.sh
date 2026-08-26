@@ -66,8 +66,18 @@ for exe in cargo.exe clang.exe cl.exe link.exe rustc.exe nova.exe; do
 done
 
 # (3) фоновая загрузка ЦП: даже без опознанных имён машина может быть занята
+# ДВА ИСТОЧНИКА, ПОТОМУ ЧТО `wmic` ЕСТЬ ТОЛЬКО НА WINDOWS (№765, 2026-08-26).
+# На Linux он не находится, `CPU` оставался пуст, и вся защита «не мерить
+# на занятой машине» там просто НЕ РАБОТАЛА — проверка, зелёная оттого, что
+# никогда не исполнялась. `/proc/loadavg` даёт среднюю за минуту очередь;
+# нормируем на число ядер и переводим в проценты — тот же смысл, что у wmic.
 CPU=$(wmic cpu get loadpercentage //value 2>/dev/null \
       | tr -d '\r' | sed -n 's/^LoadPercentage=//p' | head -1)
+if [ -z "${CPU:-}" ] && [ -r /proc/loadavg ]; then
+    CPU=$(awk -v n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)" \
+              '{ p = ($1 / (n > 0 ? n : 1)) * 100; printf "%d", (p < 0 ? 0 : p) }' \
+              /proc/loadavg 2>/dev/null)
+fi
 CPU_MAX=${NOVA_MEASURE_CPU_MAX:-35}
 if [ -n "${CPU:-}" ] && [ "$CPU" -gt "$CPU_MAX" ]; then
     BUSY="$BUSY загрузка-ЦП(${CPU}%>${CPU_MAX}%)"

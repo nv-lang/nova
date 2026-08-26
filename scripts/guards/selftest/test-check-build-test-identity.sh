@@ -72,7 +72,7 @@ static int nova_fn_bar(int y) {
     return _nv_tmp_2;
 }
 EOF
-"$TOOL" --compare "$tmp/a_base.c" "$tmp/a_divergent.c" >"$tmp/out1.log" 2>&1
+bash "$TOOL" --compare "$tmp/a_base.c" "$tmp/a_divergent.c" >"$tmp/out1.log" 2>&1
 check "ловит реальное расхождение (--compare)" 1 $?
 grep -q "nova_fn_bar" "$tmp/out1.log" || {
     echo "  ПРОВАЛ: отчёт не называет разошедшуюся функцию nova_fn_bar" >&2
@@ -96,7 +96,7 @@ static int nova_fn_bar(int y) {
     return _nv_tmp_3;
 }
 EOF
-"$TOOL" --compare "$tmp/a_base.c" "$tmp/b_known_exception.c" >"$tmp/out2.log" 2>&1
+bash "$TOOL" --compare "$tmp/a_base.c" "$tmp/b_known_exception.c" >"$tmp/out2.log" 2>&1
 check "НЕ ловит известное исключение (extra dead-функция + renumbering)" 0 $?
 grep -q "EXCEPTION APPLIED" "$tmp/out2.log" || {
     echo "  ПРОВАЛ: отчёт не подтвердил применение исключения" >&2
@@ -120,7 +120,7 @@ static int nova_fn_bar(int y) {
     return _nv_tmp_3;
 }
 EOF
-"$TOOL" --compare "$tmp/a_base.c" "$tmp/c_exception_with_call.c" >"$tmp/out3.log" 2>&1
+bash "$TOOL" --compare "$tmp/a_base.c" "$tmp/c_exception_with_call.c" >"$tmp/out3.log" 2>&1
 check "исключение НЕ применяется, если у dead-функции есть реальный вызов" 1 $?
 grep -q "EXCEPTION SKIPPED" "$tmp/out3.log" || {
     echo "  ПРОВАЛ: отчёт не подтвердил, что исключение пропущено (вызов нарушает инвариант)" >&2
@@ -128,7 +128,7 @@ grep -q "EXCEPTION SKIPPED" "$tmp/out3.log" || {
 }
 
 # (4) Побайтно идентичные файлы — код 0, без ложняка.
-"$TOOL" --compare "$tmp/a_base.c" "$tmp/a_base.c" >"$tmp/out4.log" 2>&1
+bash "$TOOL" --compare "$tmp/a_base.c" "$tmp/a_base.c" >"$tmp/out4.log" 2>&1
 check "идентичные файлы — PASS" 0 $?
 
 # ---------------------------------------------------------------------

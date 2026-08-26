@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 # Проверка нового правила перехватчика: сообщение коммита с обратным апострофом
 # через -m должно отвергаться, а -F и обычный текст — проходить.
-import json, subprocess, sys
+import json, os, subprocess, sys
 
-H = r"d:\Sources\nv-lang\nova\scripts\claude-hooks\guard-git.py"
+# Путь ОТ СЕБЯ, не от машины автора (№765, 2026-08-26). Здесь стоял
+# абсолютный windows-путь. На раннере его нет, python выходит с кодом 2
+# для КАЖДОГО случая — и два случая, которые ЖДУТ 2, «проходят» по совпадению,
+# а три, которые ждут 0, падают. Три ночи красного яруса `full`.
+H = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "guard-git.py")
+if not os.path.exists(H):
+    sys.stderr.write("самотест: не найден перехватчик %s\n" % H)
+    sys.exit(1)
 BT = chr(96)  # обратный апостроф — сам через переменную, чтобы не подставить его
 
 cases = [

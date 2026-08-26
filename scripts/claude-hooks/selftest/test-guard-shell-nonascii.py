@@ -45,7 +45,7 @@ def check(label, got, want):
 
 print("== propuskaet ==")
 check("chistyi ASCII", run("git status --porcelain"), 0)
-check("puti bez kirillicy", run("python C:/Temp/x.py && ls -la /d/Sources"), 0)
+check("puti bez kirillicy", run("python C:/Temp/x.py && ls -la /d/Sources"), 0)  # machine-path-fixture
 check("pustaya komanda", run(""), 0)
 
 print("== lovit ==")
