@@ -204,7 +204,10 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // `nova_int` local; measured 2026-08-21). The DISTINCTION lives in
             // the registry and in `type_tag`, never in the layout.
             TkNewtype => { return c_type(ctx, representation_of(ctx, t)) }
-            TkApp => { ice("mangle: c_type of an applied type — the instance door arrives with E2-b2") }
+            // An INSTANCE of a generic record is a GC pointer like the record
+            // itself; its struct is spelled the oracle's way (interop -- see
+            // `instance_struct_name`).
+            TkApp => { return "${instance_struct_name(ctx, t)}*" }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
         }
@@ -236,9 +239,73 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.
         TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }
-        TkApp => { ice("mangle: struct name of an applied type — the instance door arrives with E2-b2") }
+        TkApp => { return instance_struct_name(ctx, t) }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
+    }
+}
+
+/// INTEROP -- the ORACLE's spelling of a generic INSTANCE, and this door says so
+/// out loud (P27 p.2a): `Nova_<Head>____<arg>__<arg>` for a RECORD head, each
+/// argument spelled as the oracle spells a type INSIDE a name. Measured off
+/// shell.tpl.c 2026-08-26, not guessed: `Nova_Vec____Nova_EmbeddedEntry_p`,
+/// `Nova_Vec____Nova_Slot____nova_int__nova_unit_p`, `NovaOpt_NovaValue_Utf8Error`.
+///
+/// WHY THE ORACLE'S SPELLING AND NOT OURS: one type, one C name (274 section
+/// 7.0). Our emission is glued into the oracle's shell, and an instance the
+/// shell already lays out must be the SAME struct -- two spellings of `Vec[int]`
+/// are two structs, and the linker is where that is found. END CONDITION: the day
+/// novac emits the whole prelude, the instance is ours and this door spells it
+/// our way (`novac_` prefix, P24); until then it is interop and named as such.
+///
+/// A SUM head (`Option[T]`, `Result[T, E]`) has a FAMILY spelling of its own in
+/// the oracle (`NovaOpt_...`, `NovaRes_...`) -- measured, and deliberately NOT
+/// taken here: it arrives with the Option wave, and the ice names that instead
+/// of guessing a name a linker would then find. No program reaches it today: an
+/// instance of a handed-over sum cannot be constructed (its variants are not
+/// harvested), so nothing carrying one is ever emitted.
+fn instance_struct_name(ctx Ctx, t TyId) -> str {
+    ro head = decl_of_ty(ctx, t)
+    match head.kind {
+        TkRecord => {}
+        TkSum => ice("mangle: an instance of a generic SUM has the oracle's family spelling (NovaOpt_/NovaRes_) — arrives with the Option wave")
+        // A head is a declaration; these are not declarations a `[T]` can hang on.
+        TkPrim | TkApp | TkParam | TkInfer | TkNewtype =>
+            ice("mangle: an application whose head is not a record or sum declaration")
+    }
+    consume s = StringBuilder.new(cap: 64)
+    s.append("Nova_")
+    s.append(head.name)
+    s.append("____")
+    for i in 0..ctx.tys.arg_count(t) {
+        if i > 0 {
+            s.append("__")
+        } else {
+            // The first argument follows the head's separator directly.
+        }
+        s.append(instance_arg_spelling(ctx, ctx.tys.arg(t, i)))
+    }
+    s
+}
+
+/// How the oracle spells a type ARGUMENT inside an instance name: a primitive by
+/// its C name (`nova_int`), a value record as its struct (`NovaValue_P`), a
+/// heap record as its struct plus the pointer suffix (`Nova_P_p`), a nested
+/// instance recursively with the same suffix. The other kinds are not measured
+/// on the shell and are named rather than guessed -- and none is reachable
+/// today, for the same reason as the sum head above.
+fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
+    match ctx.tys.kind_of(a) {
+        TkPrim => prim_c_name(ctx.tys.prim_ordinal_of(a))
+        TkRecord => {
+            ro nm = decl_of_ty(ctx, a).name
+            if is_value_record(ctx, a) { "NovaValue_${nm}" } else { "Nova_${nm}_p" }
+        }
+        TkApp => "${instance_struct_name(ctx, a)}_p"
+        TkSum => ice("mangle: a SUM as an instance argument — its in-name spelling is not measured on the shell")
+        TkNewtype => ice("mangle: a NEWTYPE as an instance argument — its in-name spelling is not measured on the shell")
+        TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
+        TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
     }
 }
 

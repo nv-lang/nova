@@ -27,10 +27,18 @@ NAME = "check-novac-mangling-one-way"
 RULES = (
     (re.compile(r'(starts_with|contains|find|index_of)\(\s*"(Nova_|NovaValue_)'),
      "строковая проверка ABI-приставки"),
-    (re.compile(r'"____"'),
+    # ЧТЕНИЕ по разделителю, не ЗАПИСЬ (сужено 2026-08-26): дверь имени инстанса
+    # ОБЯЗАНА писать `____` -- это разделитель оракула (`Nova_Vec____nova_int`,
+    # снят с оболочки), и `s.append("____")` есть дверь, делающая свою работу.
+    # Прежний образец ловил любой литерал и покраснел на первой же записи.
+    (re.compile(r'(split|find|index_of|contains|starts_with|ends_with|rfind)\(\s*"____"'),
      "разбор по разделителю мономорфизации ____"),
     (re.compile(r'(strip|trim_start|trim_prefix)[a-z_]*\(\s*"(Nova_|NovaValue_)'),
      "срезание ABI-приставки"),
+    # НЕ судится в `*_test.nv` (2026-08-26): тест, сравнивающий выход двери с
+    # написанием, СНЯТЫМ С ОБОЛОЧКИ, -- это спецификация интеропа, а не дверь,
+    # читающая имя обратно. Код по-прежнему судится: решение по ABI-строке в
+    # коде остаётся тем, что правило запрещает.
     (re.compile(r'==\s*"(Nova_|NovaValue_)'),
      "сравнение с ABI-именем как со значением"),
     (re.compile(r'c_(type|struct|method|fn|tag|maker)\([^)]*\)\.[a-z_]+\('),
@@ -61,6 +69,9 @@ def main():
                 continue
             for rx, why in RULES:
                 if rx.search(line):
+                    # Правило 4 в тесте -- спецификация, не разбор (см. RULES).
+                    if why.startswith("сравнение с ABI") and rel.endswith("_test.nv"):
+                        continue
                     bad.append(f"  {rel}:{i}: {why}: {line.strip()[:60]}")
                     break
 

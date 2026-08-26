@@ -15,6 +15,7 @@ import ../tree.{Node, NodeKind, branch, leaf}
 import ../builtins.{TypeKind}
 import ../lex.{Token, TokenKind}
 import ../types.{TyId, no_ty, is_ty}
+import ../names.{DeclId}
 
 /// An empty file node: these tests need a Ctx with the primitives seeded and
 /// nothing else. Building it here keeps `sem` from importing the parser -- the
@@ -177,4 +178,34 @@ test "the MODULE PATH is part of a C name: two modules, two names" {
     // which would leave a hole where the identity is missing.
     ctx.module_c = ""
     assert(c_callable(ctx, row, []TyId.new()).contains("novac_fn_helper"))
+}
+
+/// A generic RECORD head registered by hand -- the shape `harvest_types` builds
+/// for a handed-over `type Vec[T]`: a row that knows its arity, and a def that
+/// answers the name.
+fn seed_head(mut ctx Ctx, name str, arity int) -> DeclId {
+    ro id = DeclId(ctx.types.len())
+    ctx.defs.add(name, DefTarget.DefType(id))
+    ctx.types.push(TypeDef { kind: TypeKind.TkRecord, by_value: false, tparam_cnt: arity,
+                             ty_id: ctx.tys.record(id), name, rows: TypeRows.NoRows })
+    id
+}
+
+test "an INSTANCE is spelled the oracle's way -- interop named, measured off the shell" {
+    // Step B3. The spellings are the ones shell.tpl.c carries (2026-08-26):
+    // `Nova_Vec____nova_byte`, `Nova_Vec____Nova_EmbeddedEntry_p` -- a primitive
+    // by its C name, a heap record with the pointer suffix. One type, one C
+    // name: our emission is glued into that shell, so a second spelling of
+    // `Vec[int]` would be a second struct.
+    mut ctx = collect_types(empty_file())
+    ro vec = seed_head(ctx, "Vec", 1)
+    ro of_int = ctx.tys.app(vec, []TyId.of(ctx.prims.int_id))
+    assert(c_struct(ctx, of_int) == "Nova_Vec____nova_int")
+    assert(c_type(ctx, of_int) == "Nova_Vec____nova_int*")
+    // A heap RECORD argument carries `_p`; a nested instance carries it too.
+    ro p_id = seed_head(ctx, "P", 0)
+    ro of_p = ctx.tys.app(vec, []TyId.of(ctx.tys.record(p_id)))
+    assert(c_struct(ctx, of_p) == "Nova_Vec____Nova_P_p")
+    ro of_of = ctx.tys.app(vec, []TyId.of(of_int))
+    assert(c_struct(ctx, of_of) == "Nova_Vec____Nova_Vec____nova_int_p")
 }

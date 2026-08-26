@@ -85,6 +85,37 @@ grep -q "судить нечего" "$T/out" && ok "нет директории 
 # --- 9. настоящее дерево -------------------------------------------------
 python "$G" "$ROOT" >/dev/null 2>&1 && ok "настоящий novac/src — зелёный" || bad "настоящее дерево покраснело: $(python "$G" "$ROOT" 2>&1 | head -3)"
 
+# --- ЗАПИСЬ разделителя -- работа двери, зелёный (сужение 2026-08-26) ------
+mk g9 <<'EOF'
+module a
+fn instance_struct_name(ctx Ctx, t int) -> str {
+    consume s = StringBuilder.new(cap: 64)
+    s.append("Nova_")
+    s.append("____")
+    s
+}
+EOF
+run "$T/g9" && ok "append разделителя ____ -- запись, не разбор" \
+    || bad "запись разделителя покраснела: страж шире правила"
+
+# --- ЧТЕНИЕ по разделителю -- красный ------------------------------------
+mk g10 <<'EOF'
+module a
+fn head_of(name str) -> str => name.split("____")[0]
+EOF
+run "$T/g10" && bad "split по ____ прошёл" || ok "split по разделителю пойман"
+
+# --- сравнение с ABI-именем: в ТЕСТЕ -- спецификация интеропа, зелёный; в коде -- красный
+d="$T/g11"; mkdir -p "$d/sem"
+printf '%s\n' "module a" 'test "x" { assert(c_struct(ctx, t) == "Nova_Vec____nova_int") }' > "$d/sem/m_test.nv"
+run "$d" && ok "сравнение с ABI-именем в *_test.nv не судится" \
+    || bad "тест-спецификация покраснела"
+mk g12 <<'EOF'
+module a
+fn is_vec(ctx Ctx, t int) -> bool => c_struct(ctx, t) == "Nova_Vec____nova_int"
+EOF
+run "$T/g12" && bad "сравнение с ABI-именем в КОДЕ прошло" || ok "сравнение с ABI-именем в коде поймано"
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-mangling-one-way ok: все случаи, включая алгоритм D285 §3"

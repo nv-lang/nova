@@ -43,6 +43,10 @@ ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).
                  "__", "__to_",
+                 # Разделитель ИНСТАНСА у оракула (`Nova_Vec____nova_int`): кусок
+                 # имени интеропа, снят с оболочки 2026-08-26 -- см.
+                 # `instance_struct_name`.
+                 "____",
                  # MODE marks of a parameter inside the name (P14: a mode is an
                  # axis of overloading, so two same-named callables differing
                  # only by a mode are two C functions). Letters, not the
