@@ -56,20 +56,44 @@ import ../types.{TyId}
 /// filesystem and does not resolve packages (§1): the door (main) hands
 /// it declaration texts, the way a driver hands a real compiler the std
 /// interface.
-fn context(tree Node, decl_texts []str) -> Ctx {
-    mut decls = []Node.new()
-    for d in decl_texts { decls.push(parse(tokens_of(d))) }
-    collect(tree, decls)
+fn context(tree Node, decls []Node) -> Ctx => collect(tree, decls)
+
+/// The declaration TEXTS, parsed once.
+///
+/// THE COST THIS DOOR EXISTS FOR, measured 2026-08-24: the texts used to be
+/// parsed inside `context`, that is once per COMPILED FILE. With six declaration
+/// files it hid in the noise; handing novac the whole std interface (184 files)
+/// took the corpus batch from 1308ms to 17548ms -- thirteen times, while ONE file
+/// only doubled. The quadratic was in the batch, not in the parser: sixty-one
+/// files times a hundred and eighty-four declarations.
+///
+/// So the door that parses is separate from the door that compiles, and the
+/// batch calls it ONCE. P14 is the reason and it is not decoration: the cost of
+/// the "edit -> verdict" loop is what this compiler is measured by.
+export fn parse_decls(decl_texts []str) -> []Node {
+    mut out = []Node.new()
+    for d in decl_texts {
+        out.push(parse(tokens_of(d)))
+    }
+    out
 }
 
 /// The whole E1 front half: text in, diagnostics out. Always returns the
 /// full list; no Result (274 §4 item 1). `decl_texts` — std declaration
 /// texts (empty = no methods are known at all, and every method call
 /// gets an honest subset rejection).
-export fn compile(text str, decl_texts []str) -> []Diagnostic {
+export fn compile(text str, decl_texts []str) -> []Diagnostic =>
+    compile_with(text, parse_decls(decl_texts))
+
+/// The same, given declarations ALREADY parsed -- what a batch hands over.
+///
+/// Two doors and not a flag: a caller with texts (every module test) says so by
+/// calling the wrapper above, and a caller compiling many files parses once and
+/// calls this. The wrapper is the whole difference between them.
+export fn compile_with(text str, decls []Node) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro ctx = context(tree, decl_texts)
+    ro ctx = context(tree, decls)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 { return diags }
     // A generic body's mistakes exist only once an INSTANCE does, so `check`
@@ -133,10 +157,14 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnosti
 /// an empty list — the emitter never sees broken input (poisoning). Returns
 /// (diags, c_text): non-empty diags means c_text is empty and must not be
 /// used; no Result in signatures (274 p4.1).
-export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) {
+export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) =>
+    compile_to_c_with(text, parse_decls(decl_texts))
+
+/// The same, given declarations ALREADY parsed.
+export fn compile_to_c_with(text str, decls []Node) -> ([]Diagnostic, str) {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro ctx = context(tree, decl_texts)
+    ro ctx = context(tree, decls)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 {
         return (diags, "")

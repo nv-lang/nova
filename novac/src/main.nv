@@ -26,7 +26,7 @@
 
 module novac
 
-import ./pipeline.{compile, compile_to_c}
+import ./pipeline.{compile_with, compile_to_c_with, parse_decls}
 import ./diag.{to_json, json_escape}
 import std.fs.{read, read_dir, real_fs}
 import std.os.{args, env, exit_process, real_os}
@@ -54,8 +54,8 @@ fn Verdict @code() -> int => match @ {
 fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else { a }
 
 /// Emit C for one file: print diagnostics, or the C text when there are none.
-fn emit_one(text str, file str, decls []str) -> Verdict {
-    ro (diags, c_text) = compile_to_c(text, decls)
+fn emit_one(text str, file str, decls []Node) -> Verdict {
+    ro (diags, c_text) = compile_to_c_with(text, decls)
     if diags.len() > 0 {
         mut i = 0
         for d in diags {
@@ -69,8 +69,8 @@ fn emit_one(text str, file str, decls []str) -> Verdict {
 }
 
 /// Check one file: print §7 diagnostics one per line, one JSON per line.
-fn compile_one(text str, file str, decls []str) -> Verdict {
-    ro diags = compile(text, decls)
+fn compile_one(text str, file str, decls []Node) -> Verdict {
+    ro diags = compile_with(text, decls)
     mut i = 0
     for d in diags {
         println(to_json(d, i, file))
@@ -128,7 +128,7 @@ fn read_decls(dir str) Fs -> []str {
 
 /// Check one path (read + compile), printing diagnostics; the outcome is
 /// this file's contribution to the batch verdict.
-fn check_path(path str, decls []str) -> Verdict {
+fn check_path(path str, decls []Node) -> Verdict {
     match read(path.to_path()) {
         Ok(bytes) => {
             match bytes.to_str() {
@@ -261,7 +261,13 @@ fn run(a []str) -> int {
         // std interface novac READS instead of knowing by heart (П5); an
         // unreadable dir gives an empty table and honest subset refusals.
         ro std_dir = env("NOVA_STD_PATH") ?? "std/src"
-        ro decls = read_decls("${std_dir}/runtime/string")
+                // PARSED ONCE, not per file. The texts used to be re-parsed inside every
+        // `compile`, and with six declaration files that hid in the noise; the
+        // measurement that found it handed novac the whole std interface and the
+        // corpus batch went from 1308ms to 17548ms, thirteen times, while a
+        // single file only doubled. Sixty-one files times a hundred and
+        // eighty-four declarations is a quadratic nobody wrote down.
+        ro decls = parse_decls(read_decls("${std_dir}/runtime/string"))
         ro argi = 2
         if argi >= a.len() {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")
