@@ -40,7 +40,7 @@ type Purse { balance int }
 fn Purse @add(n int) -> int => @balance + n
 
 fn Purse mut @bump(n int) -> int {
-    @balance = @balance + n
+    @balance += n
     return @balance
 }
 
