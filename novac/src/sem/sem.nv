@@ -260,7 +260,8 @@ export type Ctx {
     payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
-    protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b).
+    protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b)
+    interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -382,7 +383,7 @@ export fn ty_of_row(types []TypeDef, d DeclId) -> TyId
 /// The two halves live in two files for a reason, and the doc said so twice
 /// because the paragraph had been orphaned from its function by an insertion --
 /// noticed while cutting `harvest.nv` out on 2026-08-21.
-export fn collect(file Node, decls []Node) -> Ctx {
+export fn collect(file Node, decls []Node, interop InteropTable) -> Ctx {
     // THE HANDED-OVER TYPES GO IN FIRST, inside the collector, and the order is
     // the measurement rather than a preference: the file's own signatures are
     // read by that same collector, and a signature naming `CharsIter` resolves
@@ -393,6 +394,10 @@ export fn collect(file Node, decls []Node) -> Ctx {
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
     harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces)
+    // The interop surface is HANDED, like the declarations: the collector never
+    // reads the shell itself -- one reader per input, and the reader of this one
+    // lives beside the shell (emit_c.shell_surface).
+    ctx.interop = interop
     ctx
 }
 
@@ -869,5 +874,5 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut own = fns
     own.own_cnt = own.rows.len()
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
-          module_c: module_path_c(file), coerces, protos }
+          module_c: module_path_c(file), coerces, protos, interop: InteropTable.new() }
 }

@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/interop.nv -- THE interop surface: which C identifiers the shell
+// our emission links into already carries.
+//
+// Donor: none -- this is a fact about OUR boundary, not a design borrowed from
+//        anyone. The nearest kin is a linker's symbol table, and that is exactly
+//        the question this answers one step earlier than the linker would.
+// Role: layer 3 of the map (sem) -- an INPUT of compilation beside the std
+//       declarations: read from the embedded shell once per process, never
+//       remembered by the compiler (the hard-coded `[]int` the owner rolled back
+//       on 2026-08-15 is the shape this table exists to make impossible).
+// Used by: `check` (a literal whose instance the shell does not carry is refused
+//          BY NAME instead of failing in clang), `emit_c` (which names to print).
+// Guarded by: check-novac-ctx-tables.py (declared in plan 10.3b),
+//             check-novac-row-fields.py (10.3v), check-novac-mangle-fixed-point
+//             (every name we print exists in the shell -- the same fact, judged
+//             after the fact at the gate; this table judges it before).
+//
+// INTEROP, and said so: the shell is the oracle's emission of the probe program
+// (`novac/probe/shell_probe.nv`), so what the probe USES the shell CARRIES -- the
+// probe is the declared interop surface, and widening it is a visible edit. END
+// CONDITION: the day novac emits the whole prelude, the surface is ours and this
+// table describes our own emission rather than a foreign one.
+
+module novac.sem
+
+import ../names.{NameTable, NamespaceId}
+
+/// The set of C identifiers the linked shell carries.
+///
+/// A NameTable and not a vector, for the one reason every table here is a table:
+/// the question is asked per literal and per call, and it must be O(1) (P18).
+/// The id is meaningless -- membership is the whole answer -- so it is the row
+/// count at insertion, which also makes `len` free.
+export type InteropTable {
+    names NameTable /// identifier -> insertion index; presence is the fact, the index is incidental (NsInterop namespace)
+    sym_cnt int /// how many identifiers were lifted; printed by the gate so a shell that lost its symbols is loud
+}
+
+/// An empty surface -- what a test builds when it wants no interop at all.
+export fn InteropTable.new() -> InteropTable =>
+    { names: NameTable.new(NamespaceId.NsInterop), sym_cnt: 0 }
+
+/// Register one identifier the shell carries. A repeat is a no-op: the shell
+/// mentions a symbol as often as it uses it, and the table records THAT it does.
+export fn InteropTable mut @add(sym str) -> () {
+    if @names.find(sym) >= 0 { return }
+    @names.put(sym, @sym_cnt)
+    @sym_cnt += 1
+}
+
+/// Does the shell carry this identifier? The O(1) door -- asked before printing
+/// a name, so the answer "no" becomes a refusal by name rather than a linker error.
+#realtime nogc
+export fn InteropTable @has(sym str) -> bool => @names.find(sym) >= 0

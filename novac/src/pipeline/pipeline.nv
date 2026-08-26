@@ -46,9 +46,9 @@ import ../parse.{parse}
 import ../tree.{Node, NodeKind, raw_node}
 import ../check.{check, check_instance}
 import ../diag.{Diagnostic, ice}
-import ../emit_c.{emit, Instantiation}
+import ../emit_c.{emit, Instantiation, shell_surface}
 import ../mono.{Reach, reachable}
-import ../sem.{Ctx, collect, decl_fn_row, branch_children}
+import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable}
 import ../types.{TyId}
 
 /// A file's semantic context: the file's types + method signatures, READ
@@ -56,7 +56,12 @@ import ../types.{TyId}
 /// filesystem and does not resolve packages (§1): the door (main) hands
 /// it declaration texts, the way a driver hands a real compiler the std
 /// interface.
-fn context(tree Node, decls []Node) -> Ctx => collect(tree, decls)
+fn context(tree Node, decls []Node, interop InteropTable) -> Ctx => collect(tree, decls, interop)
+
+/// The interop surface, read from the embedded shell ONCE per process -- the
+/// driver calls this beside `parse_decls` and hands both down; a test that wants
+/// the real surface calls it too, one that wants none passes `InteropTable.new()`.
+export fn interop_surface() -> InteropTable => shell_surface()
 
 /// The declaration TEXTS, parsed once.
 ///
@@ -83,17 +88,17 @@ export fn parse_decls(decl_texts []str) -> []Node {
 /// texts (empty = no methods are known at all, and every method call
 /// gets an honest subset rejection).
 export fn compile(text str, decl_texts []str) -> []Diagnostic =>
-    compile_with(text, parse_decls(decl_texts))
+    compile_with(text, parse_decls(decl_texts), interop_surface())
 
 /// The same, given declarations ALREADY parsed -- what a batch hands over.
 ///
 /// Two doors and not a flag: a caller with texts (every module test) says so by
 /// calling the wrapper above, and a caller compiling many files parses once and
 /// calls this. The wrapper is the whole difference between them.
-export fn compile_with(text str, decls []Node) -> []Diagnostic {
+export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro ctx = context(tree, decls)
+    ro ctx = context(tree, decls, interop)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 { return diags }
     // A generic body's mistakes exist only once an INSTANCE does, so `check`
@@ -158,13 +163,13 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnosti
 /// (diags, c_text): non-empty diags means c_text is empty and must not be
 /// used; no Result in signatures (274 p4.1).
 export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) =>
-    compile_to_c_with(text, parse_decls(decl_texts))
+    compile_to_c_with(text, parse_decls(decl_texts), interop_surface())
 
 /// The same, given declarations ALREADY parsed.
-export fn compile_to_c_with(text str, decls []Node) -> ([]Diagnostic, str) {
+export fn compile_to_c_with(text str, decls []Node, interop InteropTable) -> ([]Diagnostic, str) {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro ctx = context(tree, decls)
+    ro ctx = context(tree, decls, interop)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 {
         return (diags, "")

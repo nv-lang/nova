@@ -47,6 +47,9 @@ ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  # имени интеропа, снят с оболочки 2026-08-26 -- см.
                  # `instance_struct_name`.
                  "____",
+                 # Куски имён ИНСТАНСА у оракула (интероп, сняты с оболочки 2026-08-26):
+                 # конструктор `Nova_<body>_static_new`, метод `<body>_method_<name>`.
+                 "_static_new", "_method_",
                  # MODE marks of a parameter inside the name (P14: a mode is an
                  # axis of overloading, so two same-named callables differing
                  # only by a mode are two C functions). Letters, not the

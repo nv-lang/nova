@@ -26,7 +26,8 @@
 
 module novac
 
-import ./pipeline.{compile_with, compile_to_c_with, parse_decls}
+import ./sem.{InteropTable}
+import ./pipeline.{compile_with, compile_to_c_with, parse_decls, interop_surface}
 import ./diag.{to_json, json_escape}
 import std.fs.{read, read_dir, real_fs}
 import std.os.{args, env, exit_process, real_os}
@@ -54,8 +55,8 @@ fn Verdict @code() -> int => match @ {
 fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else { a }
 
 /// Emit C for one file: print diagnostics, or the C text when there are none.
-fn emit_one(text str, file str, decls []Node) -> Verdict {
-    ro (diags, c_text) = compile_to_c_with(text, decls)
+fn emit_one(text str, file str, decls []Node, interop InteropTable) -> Verdict {
+    ro (diags, c_text) = compile_to_c_with(text, decls, interop)
     if diags.len() > 0 {
         mut i = 0
         for d in diags {
@@ -69,8 +70,8 @@ fn emit_one(text str, file str, decls []Node) -> Verdict {
 }
 
 /// Check one file: print §7 diagnostics one per line, one JSON per line.
-fn compile_one(text str, file str, decls []Node) -> Verdict {
-    ro diags = compile_with(text, decls)
+fn compile_one(text str, file str, decls []Node, interop InteropTable) -> Verdict {
+    ro diags = compile_with(text, decls, interop)
     mut i = 0
     for d in diags {
         println(to_json(d, i, file))
@@ -145,11 +146,11 @@ fn read_decls(dir str) Fs -> []str {
 
 /// Check one path (read + compile), printing diagnostics; the outcome is
 /// this file's contribution to the batch verdict.
-fn check_path(path str, decls []Node) -> Verdict {
+fn check_path(path str, decls []Node, interop InteropTable) -> Verdict {
     match read(path.to_path()) {
         Ok(bytes) => {
             match bytes.to_str() {
-                Ok(text) => compile_one(text, path, decls)
+                Ok(text) => compile_one(text, path, decls, interop)
                 Err(_) => {
                     println("novac: not UTF-8: ", path)
                     Verdict.DoorError
@@ -285,6 +286,9 @@ fn run(a []str) -> int {
         // single file only doubled. Sixty-one files times a hundred and
         // eighty-four declarations is a quadratic nobody wrote down.
         ro decls = parse_decls(read_decls(std_dir))
+        // The interop surface, lifted from the embedded shell ONCE -- the second
+        // input of every compile beside the declarations (sub-plan L).
+        ro interop = interop_surface()
         ro argi = 2
         if argi >= a.len() {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")
@@ -293,7 +297,7 @@ fn run(a []str) -> int {
         if a[1] == "check" {
             mut worst = Verdict.Clean
             for path in a[argi..] {
-                worst = worse(worst, check_path(path, decls))
+                worst = worse(worst, check_path(path, decls, interop))
             }
             return worst.code()
         }
@@ -301,7 +305,7 @@ fn run(a []str) -> int {
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
-                    Ok(text) => { return emit_one(text, path, decls).code() }
+                    Ok(text) => { return emit_one(text, path, decls, interop).code() }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)
                         return Verdict.DoorError.code()

@@ -264,7 +264,24 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
 /// of guessing a name a linker would then find. No program reaches it today: an
 /// instance of a handed-over sum cannot be constructed (its variants are not
 /// harvested), so nothing carrying one is ever emitted.
-fn instance_struct_name(ctx Ctx, t TyId) -> str {
+fn instance_struct_name(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}"
+
+/// The constructor the shell emits for an instance: `Nova_<body>_static_new`
+/// (measured: `Nova_Vec____nova_int_static_new(nova_int cap)`). Interop, same
+/// end condition as the struct name. Whether the shell CARRIES it for this
+/// instance is the table's question (`Ctx.interop`), asked by check before
+/// anything is printed.
+export fn c_instance_ctor(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}_static_new"
+
+/// An instance METHOD as the shell emits it: `<body>_method_<name>` -- note the
+/// missing `Nova_` prefix, which is how the oracle spells methods
+/// (`Vec____nova_int_method_push`, measured 2026-08-26). Interop, same end
+/// condition.
+export fn c_instance_method(ctx Ctx, t TyId, name str) -> str =>
+    "${instance_body(ctx, t)}_method_${name}"
+
+/// The body every instance name is built from: `<Head>____<arg>__<arg>`.
+fn instance_body(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
     match head.kind {
         TkRecord => {}
@@ -274,7 +291,6 @@ fn instance_struct_name(ctx Ctx, t TyId) -> str {
             ice("mangle: an application whose head is not a record or sum declaration")
     }
     consume s = StringBuilder.new(cap: 64)
-    s.append("Nova_")
     s.append(head.name)
     s.append("____")
     for i in 0..ctx.tys.arg_count(t) {

@@ -79,6 +79,10 @@ def main():
         sem_files = [s / "sem" / "sem.nv", s / "sem" / "channel.nv", s / "sem" / "coerce.nv",
                      s / "sem" / "callables.nv", s / "sem" / "protocols.nv",
                      s / "sem" / "binding.nv", s / "sem" / "defs.nv",
+                     # `interop.nv` -- 2026-08-26, sub-plan L: the interop surface
+                     # is a registry table of Ctx like the others, and its rows are
+                     # judged like the others.
+                     s / "sem" / "interop.nv",
                      s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"

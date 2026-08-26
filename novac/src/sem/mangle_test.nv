@@ -202,6 +202,10 @@ test "an INSTANCE is spelled the oracle's way -- interop named, measured off the
     ro of_int = ctx.tys.app(vec, []TyId.of(ctx.prims.int_id))
     assert(c_struct(ctx, of_int) == "Nova_Vec____nova_int")
     assert(c_type(ctx, of_int) == "Nova_Vec____nova_int*")
+    // The constructor and a method, as the shell emits them -- the method WITHOUT
+    // the `Nova_` prefix, which is the oracle's own asymmetry and not ours.
+    assert(c_instance_ctor(ctx, of_int) == "Nova_Vec____nova_int_static_new")
+    assert(c_instance_method(ctx, of_int, "push") == "Vec____nova_int_method_push")
     // A heap RECORD argument carries `_p`; a nested instance carries it too.
     ro p_id = seed_head(ctx, "P", 0)
     ro of_p = ctx.tys.app(vec, []TyId.of(ctx.tys.record(p_id)))

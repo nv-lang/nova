@@ -12,7 +12,7 @@ module novac.check
 import ../source.{SourceText}
 import ../lex.{lex}
 import ../parse.{parse}
-import ../sem.{collect}
+import ../sem.{collect, InteropTable}
 import ../tree.{Node}
 
 /// One door for every case below: text in, number of diagnostics out. The
@@ -21,7 +21,7 @@ import ../tree.{Node}
 fn diagnose(text str) -> int {
     ro src = SourceText { text }
     ro tree = parse(lex(text))
-    ro (diags, _) = check(tree, src, collect(tree, []Node.new()))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
     diags.len()
 }
 

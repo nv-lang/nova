@@ -160,11 +160,11 @@ fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b ==
 fn is_digit(b u8) -> bool => b >= ('0' as u8) && b <= ('9' as u8)
 
 /// Byte that may start an identifier: ASCII letter or underscore.
-fn is_ident_start(b u8) -> bool =>
+export fn is_ident_start(b u8) -> bool =>
     (b >= ('a' as u8) && b <= ('z' as u8)) || (b >= ('A' as u8) && b <= ('Z' as u8)) || b == ('_' as u8)
 
 /// Byte that may continue an identifier: start byte or digit.
-fn is_ident_byte(b u8) -> bool => is_ident_start(b) || is_digit(b)
+export fn is_ident_byte(b u8) -> bool => is_ident_start(b) || is_digit(b)
 
 /// The byte at `k`, or 0 past the end -- so a lookahead needs no bounds test
 /// at the call site. Zero starts no lexeme, so it can stand for "nothing".

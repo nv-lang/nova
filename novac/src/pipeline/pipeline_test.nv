@@ -16,7 +16,7 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
-import ../sem.{branch_children, leaf_text, is_value_record}
+import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
@@ -113,7 +113,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     // would have passed while nothing whatever had happened.
     ro src = "fn twice[T](x T) -> T => x + x\nfn main() { println(1) }"
     ro tree = parse(tokens_of(src))
-    ro ctx = context(tree, parse_decls(std_decls()))
+    ro ctx = context(tree, parse_decls(std_decls()), InteropTable.new())
     ro decl = generic_decl_of(tree, "twice")
     ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx,
         []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1)
@@ -308,7 +308,7 @@ test "a BOUND is not a type parameter: the arity is ONE, not two" {
     ro src = "fn pick[T Compare](a T) -> T => a
 fn main() { println(1) }"
     ro tree = parse(tokens_of(src))
-    ro ctx = context(tree, parse_decls(std_decls()))
+    ro ctx = context(tree, parse_decls(std_decls()), InteropTable.new())
     match ctx.defs.fn_row("pick") {
         None => assert(false)
         Some(row) => assert(ctx.fns.rows[row].tparam_cnt == 1)
@@ -442,7 +442,7 @@ fn main() {
     // answer about a type, and the type comes from the registry by name. The
     // architecture has no `pipeline -> names` edge, and a test does not get to
     // add one -- an edge is a line in the table of section 3, with a contract.
-    ro ctx = context(parse(tokens_of(src)), parse_decls([]str.of(handed)))
+    ro ctx = context(parse(tokens_of(src)), parse_decls([]str.of(handed)), InteropTable.new())
     assert(!is_value_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
 }
 
