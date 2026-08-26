@@ -392,7 +392,7 @@ export fn collect(file Node, decls []Node) -> Ctx {
     mut ctx = collect_types_with(file, decls)
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
-    harvest_methods(decls, ctx.types, ctx.defs, ctx.fns, ctx.coerces)
+    harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces)
     ctx
 }
 
@@ -746,7 +746,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // with type parameters before the name, which `check` refuses
                 // by position. The TERMINATOR is the branch (P21).
                 if fk[1].kind_of() != NodeKind.Recv { continue }
-                if Some(mrow) = harvest_own_method(fk, types, defs, fns) {
+                if Some(mrow) = harvest_own_method(fk, types, defs, tys, fns) {
                     ro mdid = c.id_of()
                     while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
                     fn_decl_rows[mdid] = mrow
@@ -790,7 +790,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // no_ty() = no declared return. Legal ONLY for main (check
             // refuses it elsewhere); backends ice on it as the second floor —
             // never a silent int (#652 class).
-            ro ret = ret_ty_of_decl(fk, tps, param_rows, types, defs)
+            ro ret = ret_ty_of_decl(fk, tps, param_rows, types, defs, tys)
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
             ro fname = leaf_text(fk[1])
@@ -818,21 +818,11 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                               mode: ModeRo, default_expr: param_default_slot(pk) })
                     continue
                 }
-                // [LEGACY-#676] var-index-method: same binding hop as in
-                // harvest_fn -- a method on a variable-index element resolves
-                // through the CONTAINER.
-                ro tnode = pk[tat]
-                if tnode.kind_of() != NodeKind.LeafNode {
-                    param_ids.push(ParamDef { name: param_name_of(pk), type_id: -1,
-                                              mode: ModeRo, default_expr: param_default_slot(pk) })
-                    continue
-                }
-                // An unknown type is STORED as no_ty() and said so:
-                // collection is tolerant, and check is the judge. A type
-                // PARAMETER of this declaration is not unknown -- it is the
-                // row built above.
-                ro pname = leaf_text(tnode)
-                ro pt = ty_of_type_name(pname, tps, param_rows, types, defs)
+                // The TYPE through the ONE reference door (step B2): a plain
+                // name, `Self` (not here -- no receiver), `Name[Args]` or the
+                // `[]Elem` sugar. An unknown or unreadable shape is STORED as
+                // no_ty() and said so: collection is tolerant, check judges.
+                ro pt = ty_of_type_ref(pk, tat, no_ty(), tps, param_rows, types, defs, tys)
                 // Type AND mode in one row: the mode is an axis of overloading
                 // (P14), so a collector that dropped it would make `f(x T)` and
                 // `f(mut x T)` one callable twice over.

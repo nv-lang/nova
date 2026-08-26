@@ -483,3 +483,34 @@ fn main() { println(1) }",
                               []str.of(handed))
     assert(d2.len() == 0)
 }
+
+test "an application in TYPE position resolves -- Vec[int], and []T is its D239 sugar" {
+    // Step B2's acceptance, pinned at the level it changes: the SIGNATURE. Both
+    // spellings are one term (D239: `[]T` IS `Vec[T]`), read by one door at
+    // collection -- so a file whose parameters and return carry them checks
+    // CLEAN, where before the wave the form rule refused the shape wholesale
+    // (159 such refusals across novac's own files; 16 after).
+    ro handed = "module std.v
+export type Vec[T] { n int }"
+    ro (d1, _) = compile_to_c("module m.a
+fn take(xs Vec[int]) -> int => 1
+fn f(xs []int) -> []int => xs
+fn main() { println(1) }",
+                              []str.of(handed))
+    assert(d1.len() == 0)
+    // The rotten pair, both directions of the lid: a WRONG-ARITY application is
+    // not a type (the head refusal names what to write), and the forms B2 did
+    // NOT take -- a fn type here -- stay refused by name.
+    ro (d2, _) = compile_to_c("module m.b
+fn t(xs Vec[int, str]) -> int => 1
+fn main() { println(1) }",
+                              []str.of(handed))
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("write its type arguments"))
+    ro (d3, _) = compile_to_c("module m.c
+fn t(f fn(int) -> int) -> int => 1
+fn main() { println(1) }",
+                              []str.of(handed))
+    assert(d3.len() == 1)
+    assert(d3[0].message.contains("type form"))
+}

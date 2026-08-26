@@ -286,10 +286,19 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // whole workaround.
     ro tnode = pk[tat]
     ro nnode = pk[nat]
-    if !tnode.is_ident() {
+    // THE ROW DECIDES, not the tree shape (step B2): `xs []int` carries an
+    // application term the collector interned, and a binder gated on "is the
+    // type node a plain identifier" skipped the binding -- the body then said
+    // "unknown name" about a parameter written right above (measured
+    // 2026-08-26, the first probe of the wave). The shapes B2 did NOT take
+    // (`*T`, fn types, tuples) keep today's path: the form rule already named
+    // them, and a second refusal here would be the cascade class.
+    ro slice_start = tnode.kind_of() == NodeKind.LeafNode &&
+        leaf_kind(tnode) == TokenKind.EmptyBrackets
+    if !tnode.is_ident() && !slice_start {
         return true
     } else {
-        // A plain identifier stands where the type belongs: it can be resolved.
+        // An identifier or the slice sugar: the row's type is resolvable.
     }
     // FIRST FLOOR for a type novac does not know (owner 2026-08-16, "not all
     // builtin types are parsed -- does that make sense?"). Its universe is four

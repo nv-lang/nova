@@ -133,6 +133,13 @@ export const PROTOCOL_MARKER = "protocol"
 /// lexer never produces `@` as an identifier. So the receiver is an ordinary
 /// binding in scope, `@field` is a field access on it, and nothing needs a
 /// second mechanism.
+/// The head the slice sugar desugars to: `[]T` IS `Vec[T]` (D239 -- a type
+/// alias, not a distinct container). A name of the LANGUAGE, so it lives here
+/// (P5): the resolver asks the registry for this head by name, and a hard-coded
+/// "Vec" at the resolution site is exactly what the name-hardcode guard exists
+/// to stop.
+export const SLICE_HEAD = "Vec"
+
 export const RECV_BINDING = "@"
 
 /// The C name of the RECEIVER parameter in novac's own emission.
