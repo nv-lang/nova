@@ -4,3 +4,4 @@
 # Каждый файл ложится в контекст целиком в каждом окне после сжатия — держи коротко.
 .claude/commands/flow.md
 .claude/commands/delegate.md
+.claude/commands/explain.md
