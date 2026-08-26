@@ -1,0 +1,33 @@
+// EXPECT_STDOUT got=42
+//
+// Registry 221.1 #567, the shape that actually reddens.
+//
+// The peer fixture p567_bare_pattern_resolves_by_type.nv is the acceptance's
+// "two enums sharing a variant name". It is a good statement of intent and a
+// poor judge: with several sums declaring `Done` in one module, the old
+// first-wins lookup happened to pick a right-enough one, so that file stays
+// green with the fix disabled. A fixture that cannot redden proves nothing,
+// so the defect gets its own file, in the reported shape.
+//
+// Here exactly ONE user sum declares `Done`, and it is generic. First-wins
+// then reached past it to `OnceState.Done` -- a sum hardcoded in nova_rt and
+// present in every program with no import at all. The arm compared a foreign
+// tag, missed BOTH arms, and `x` came out of uninitialised stack memory:
+// `got=4` for an input of 42, silently.
+//
+// Kill-switch NOVA_KILL_567=1 restores that on the same binary, and this file
+// goes red -- which is the whole reason it exists next to its peer.
+module standalone.p567_variant_name_collides_with_runtime_sum
+
+type P567Outcome[T] enum Done(T) | Cancelled
+
+fn unwrap(out P567Outcome[int]) -> int {
+    match out {
+        Done(x) => x
+        Cancelled => -1
+    }
+}
+
+fn main() Io -> () {
+    println("got=${unwrap(Done(42))}")
+}

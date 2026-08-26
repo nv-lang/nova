@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR E_MATCH_FOREIGN_VARIANT
+//
+// Registry 221.1 #567, the negative half of its acceptance: "вариант,
+// которого нет в типе значения, — ошибка компиляции".
+//
+// Before this, such an arm was accepted in silence. It cannot match, so a
+// reader takes it for working code while it never runs -- and until the
+// positive half landed, a name colliding with another sum made it worse than
+// dead: the match picked the foreign tag and returned uninitialised memory.
+//
+// The check is the mirror of exhaustiveness and sits in the same place: that
+// pass already computes the sum's variants and the arms' coverage, and only
+// ever asked which of the former were missing. A guard against this shape did
+// exist and was removed by window W6 (#705) because it disabled exhaustiveness
+// wholesale on a name collision; the replacement names the foreign variant
+// instead of giving up, which is safe now that resolution is import-aware.
+//
+// Kill-switch NOVA_KILL_567_NEG=1 restores the silence on the same binary.
+module neg.p567_match_foreign_variant_neg
+
+type P567Out enum Done(int) | Cancelled
+type P567Other enum Missing | Present
+
+fn f(o P567Out) -> int {
+    match o {
+        Done(x) => x
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- `Missing` belongs to P567Other, not to the scrutinee's sum P567Out; the arm can never match (#567)
+        Missing => 0
+        Cancelled => -1
+    }
+}
+
+fn main() Io -> () => println("${f(P567Out.Done(1))}")

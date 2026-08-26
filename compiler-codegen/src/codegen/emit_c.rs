@@ -52996,18 +52996,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
-                    // Only trust scr_sum for NON-generic sums: a mono'd name
-                    // (`Slot____nova_int__nova_str`) uses a different tag spelling
-                    // (NOVA_TAG_Nova_<mono>_<V>), so deferring to find_variant_compat
-                    // (base name `Slot`) stays correct there. The collision this
-                    // fixes is between plain (non-generic) sum-types.
+                    // №567: the scrutinee stays authoritative for a mono'd sum
+                    // too -- verify the variant against the BASE schema (what the
+                    // registry holds), build the tag from the mono'd spelling
+                    // (what the emitted enum uses). Deferring to first-wins here
+                    // reached past the user's sum into `OnceState.Done` and
+                    // returned uninitialised memory. Fixtures: p567_*.
                     let scr_is_mono = Self::debt_contains_mono_sep(&scr_sum);
-                    let scr_has_variant = !scr_is_mono && self.sum_schema_registry
-                        .lookup_sum_schema(&scr_sum)
+                    let scr_registry_key = if scr_is_mono {
+                        scr_sum.split("____").next().unwrap_or(&scr_sum).to_string()
+                    } else {
+                        scr_sum.clone()
+                    };
+                    let kill_567 = std::env::var("NOVA_KILL_567").as_deref() == Ok("1");
+                    let scr_has_variant = (!scr_is_mono || !kill_567) && self.sum_schema_registry
+                        .lookup_sum_schema(&scr_registry_key)
                         .map(|e| e.variants.iter().any(|v| v.variant_name == variant_name))
                         .unwrap_or(false);
+                    // Тег mono-суммы несёт префикс `Nova_`, который `scr_sum` срезал.
+                    let scr_tag_base = if scr_is_mono {
+                        scr_ty.trim_end_matches('*').trim().to_string()
+                    } else {
+                        scr_sum.clone()
+                    };
                     if scr_has_variant {
-                        scr_sum
+                        scr_tag_base
                     } else if let Some(checker_sum) = self.pattern_variant_types.get(span) { checker_sum.clone() // №279: scr_ty heuristic missed
                     } else {
                         // Plan 62.A.bis Ф.2.1: registry-driven lookup. Fallback when

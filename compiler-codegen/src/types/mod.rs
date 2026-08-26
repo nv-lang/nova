@@ -14648,6 +14648,10 @@ impl<'a> TypeCheckCtx<'a> {
 
         // 2. Покрытие. Guard'ованный арм не покрывает НИЧЕГО.
         let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // №567: где ИМЕННО назван каждый вариант — чтобы отказ сел на ВИНОВАТЫЙ
+        // РУКАВ, а не на весь `match`: читателю нужна строка с ошибкой, а не со словом
+        // `match`. Он же делает возможным line-pinned `nova:expect` на самом рукаве.
+        let mut covered_at: Vec<(String, Span)> = Vec::new();
         for arm in arms {
             if arm.guard.is_some() {
                 continue;
@@ -14655,7 +14659,12 @@ impl<'a> TypeCheckCtx<'a> {
             match arm_coverage(&arm.pattern) {
                 // catch-all (`_`, голое имя-биндинг) — покрыто всё, разбор окончен
                 ArmCoverage::CatchAll => return,
-                ArmCoverage::Variants(vs) => covered.extend(vs),
+                ArmCoverage::Variants(vs) => {
+                    for v in &vs {
+                        covered_at.push((v.clone(), arm.pattern.span()));
+                    }
+                    covered.extend(vs);
+                }
                 // форма вне разбора — снимаем проверку целиком (см. доктрину выше)
                 ArmCoverage::Unknown => return,
             }
@@ -14679,6 +14688,29 @@ impl<'a> TypeCheckCtx<'a> {
         // `xmodule_struct_variant_ctor_test` (две функции из разных
         // модулей возвращают одноимённый тип — судья только span
         // самого типа).
+        // №567, НЕГАТИВНАЯ ПОЛОВИНА: арм назвал вариант, КОТОРОГО У ТИПА НЕТ.
+        // Зеркальный вопрос к исчерпаемости, и оба множества уже здесь. До этого
+        // такая ветка принималась МОЛЧА: она не входит в `all`, значит не влияет на
+        // `missing` — и человек читает её как рабочую, а она не сработает никогда.
+        //
+        // Защита от этого здесь СТОЯЛА и была снята окном W6 (№705) — потому что
+        // гасила проверку исчерпаемости ЦЕЛИКОМ при коллизии имён. Снятие было
+        // верным; замена — не сдаваться, а НАЗВАТЬ чужой вариант, и это безопасно
+        // только теперь, когда разрешение импорто-осведомлённое.
+        if std::env::var("NOVA_KILL_567_NEG").as_deref() != Ok("1") {
+            for (v, at) in &covered_at {
+                if all.contains(v) {
+                    continue;
+                }
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_MATCH_FOREIGN_VARIANT] ветка `match` называет `{}` — этого варианта нет у суммы `{}`, так что ветка НЕ СРАБОТАЕТ никогда, а читается как рабочая. До №567 совпадение имени с чужой суммой было хуже мёртвой ветки: матч уходил в чужой тег и возвращал мусор из неинициализированной памяти. Убери ветку либо назови вариант этой суммы.",
+                        v, sum_name
+                    ),
+                    *at,
+                ));
+            }
+        }
         let missing: Vec<&String> = all.iter().filter(|v| !covered.contains(*v)).collect();
         if missing.is_empty() {
             return;
