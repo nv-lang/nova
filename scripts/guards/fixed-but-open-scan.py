@@ -2,7 +2,8 @@
 """Ядро стража check-fixed-but-open.
 
 Считает строки реестра, которые стоят ОТКРЫТЫМИ, хотя коммит с заголовком
-`fix(#N)` / `feat(#N)` уже в истории.
+`fix(#N)` / `feat(#N)` уже в истории СУДИМОГО ДЕРЕВА (`HEAD`, не `--all`:
+ссылки других worktree в общем .git — не его история).
 
 Вывод — машинно-читаемые строки:
     unexpected=<N>      строк вне базы (это и есть отказ)
@@ -45,8 +46,14 @@ def fixed_numbers(root, histfile):
     if histfile:
         raw = io.open(histfile, encoding="utf-8", newline="").read()
     else:
+        # HEAD, а не `--all` (2026-08-26, окно 274): worktree делят один .git, и
+        # `--all` видит НЕПУШЕННЫЙ коммит `fix(#567)` на локальном main другого
+        # окна — а судит ЭТО дерево, где строка 567 честно открыта. Правка
+        # «приземлилась» только там, откуда её видит судимое дерево; чужая
+        # ветка — не история этого дерева. Тот же класс, что «git add -A
+        # подметает чужой индекс»: общий .git, чужие ссылки.
         raw = subprocess.check_output(
-            ["git", "-C", root, "log", "--format=%h|%s", "--all"],
+            ["git", "-C", root, "log", "--format=%h|%s", "HEAD"],
             stderr=subprocess.STDOUT).decode("utf-8", "replace")
     seen = {}
     for line in raw.split("\n"):
