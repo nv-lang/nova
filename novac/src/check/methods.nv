@@ -77,7 +77,7 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
 /// The refusal a method call that fits nothing deserves: the BINDING rule it
 /// broke when that can be established, and "no such method" only when it cannot.
 fn Checker @method_refusal(t Token, key []ArgSpec) -> str {
-    // [LEGACY-#TBD-nested-if-let-return] The natural shape here is one if-let
+    // [LEGACY-#764-nested-if-let-return] The natural shape here is one if-let
     // inside another; the oracle emits the OUTER one's temporary undeclared as
     // soon as the inner branch carries a `return` and anything follows the outer
     // `if` (measured 2026-08-23 on a four-line probe, both return types). So the

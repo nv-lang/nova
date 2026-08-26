@@ -59,7 +59,7 @@ export fn representation_of(ctx Ctx, t TyId) -> TyId
 /// A loop and not one step: `type A B` over `type B int` peels twice.
 export fn carrier_of(ctx Ctx, t TyId) -> TyId {
     // `same_ty`, not `t`: assigning a `ro`-bound newtype into a `mut` binding is
-    // the same refusal as returning one ([LEGACY-#TBD-newtype-ro-launder]).
+    // the same refusal as returning one ([LEGACY-#760-newtype-ro-launder]).
     mut cur = same_ty(t)
     // Bounded by the number of declarations: each step moves to the
     // representation of a DIFFERENT declaration, and a cycle among them is a
@@ -367,7 +367,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         // a new kind must come here and say what it does (P21).
         TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype => {}
     }
-    // `same_ty`, not `t`: [LEGACY-#TBD-newtype-ro-launder].
+    // `same_ty`, not `t`: [LEGACY-#760-newtype-ro-launder].
     same_ty(t)
 }
 

@@ -78,7 +78,7 @@ fn Checker mut @type_cast(e Node) -> () {
 /// about a type that may well be an ordinary one, and "it is not a newtype" is
 /// an ANSWER here rather than a broken invariant.
 fn Checker @representation_of_or_self(t TyId) -> TyId {
-    // `same_ty` on both hand-backs: [LEGACY-#TBD-newtype-ro-launder].
+    // `same_ty` on both hand-backs: [LEGACY-#760-newtype-ro-launder].
     if !is_ty(t) { return same_ty(t) }
     match @ctx.tys.kind_of(t) {
         TkNewtype => representation_of(@ctx, t)

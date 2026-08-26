@@ -47,7 +47,7 @@ import ../types.{TyId, no_ty, is_ty}
 // `TyId` and `DeclId` never met the defect because they already sit in files (or
 // modules) emitted earlier; that is luck of ordering, not design.
 //
-// So this POSITION is a workaround under [LEGACY-#TBD-newtype-order-in-sum-arm],
+// So this POSITION is a workaround under [LEGACY-#761-newtype-order-in-sum-arm],
 // not a decision about where the type belongs. When the oracle stops caring
 // about declaration order, it moves next to `VariantDef`.
 

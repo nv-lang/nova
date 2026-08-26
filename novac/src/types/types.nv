@@ -105,7 +105,7 @@ export fn no_ty() -> TyId => TyId(-1)
 #realtime nogc
 export fn is_ty(t TyId) -> bool => raw_ty(t) >= 0
 
-/// [LEGACY-#TBD-newtype-ro-launder] THE SAME id, rebuilt -- because the oracle
+/// [LEGACY-#760-newtype-ro-launder] THE SAME id, rebuilt -- because the oracle
 /// refuses to RETURN a `ro`-bound newtype even when its carrier is a primitive.
 ///
 /// Measured 2026-08-21 on a three-line file: `fn pass_int(v int) -> int => v`
@@ -380,7 +380,7 @@ export fn Interner @is_concrete(t TyId) -> bool {
 export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
     ro row = @rows[raw_ty(t)]
     match row.kind {
-        // `same_ty`, not `t`: see [LEGACY-#TBD-newtype-ro-launder] above.
+        // `same_ty`, not `t`: see [LEGACY-#760-newtype-ro-launder] above.
         TkPrim => { return same_ty(t) }
         TkRecord => { return same_ty(t) }
         TkSum => { return same_ty(t) }

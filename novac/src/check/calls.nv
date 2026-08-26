@@ -62,7 +62,7 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     // `bump(5)` writes fewer and is legal. The binding names which rule it is,
     // and it may only do so when the name carries ONE declaration: with two, a
     // message about `by` would be a statement about a candidate nobody chose.
-    // [LEGACY-#TBD-nested-if-let-return] The natural shape here is one if-let
+    // [LEGACY-#764-nested-if-let-return] The natural shape here is one if-let
     // inside another; the oracle emits the OUTER one's temporary undeclared as
     // soon as the inner branch carries a `return` and anything follows the outer
     // `if` (measured 2026-08-23 on a four-line probe, both return types). So the

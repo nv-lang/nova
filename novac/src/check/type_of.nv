@@ -313,7 +313,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // `same_ty` and not `ret` — the oracle's ro-launder analysis does not
             // peel a newtype down to its carrier, so returning a `ro`-bound
             // `TyId` is refused where returning a `ro`-bound `int` is fine
-            // (docs/dev/novac-divergences.md, [LEGACY-#TBD-newtype-ro-launder]).
+            // (docs/dev/novac-divergences.md, [LEGACY-#760-newtype-ro-launder]).
             // The merge of 2026-08-23 brought main's per-binding provenance
             // (#672/#717) and this line started paying that tax like the six
             // before it.
