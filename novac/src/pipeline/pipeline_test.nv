@@ -457,3 +457,29 @@ export type Pair value { a int }"))
     assert(diags.len() == 1)
     assert(diags[0].message.contains("does not know this type yet"))
 }
+
+test "a handed-over GENERIC declaration registers nothing -- the permissive hole stays closed" {
+    // Step A of the boundary wave (plan, 2026-08-26): registered as a plain
+    // record, `type Box[T]` would make a bare `Box` in a signature RESOLVE --
+    // novac accepting what the oracle refuses, the permissive kind of
+    // divergence. So the generic is skipped until the application step gives
+    // `Box[int]` a term to resolve to, and this test is the "feed it something
+    // rotten" probe of that criterion: the refusal must stay "does not know",
+    // not become an acceptance.
+    ro handed = "module std.box
+export type Box[T] { v T }
+export type Meta { n int }"
+    ro (d1, _) = compile_to_c("module m.g
+fn take(b Box) -> int => 1
+fn main() { println(1) }",
+                              []str.of(handed))
+    assert(d1.len() == 1)
+    assert(d1[0].message.contains("does not know this type yet"))
+    // And the NON-generic neighbour from the same handed text IS visible: the
+    // skip is a hole for generics, not a hole for the file that carries one.
+    ro (d2, _) = compile_to_c("module m.g2
+fn take(m Meta) -> int => 1
+fn main() { println(1) }",
+                              []str.of(handed))
+    assert(d2.len() == 0)
+}

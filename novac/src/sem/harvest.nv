@@ -133,6 +133,13 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
             if nk.len() < 2 { continue }
             if nk[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(nk[1])
+            // A GENERIC declaration is SKIPPED, and the skip is a criterion of
+            // the plan's step A, not thrift: registered as a plain record,
+            // `type Vec[T]` would make a bare `Vec` in a signature RESOLVE --
+            // novac accepting what the oracle refuses, the permissive kind of
+            // divergence, the worst kind. Generics enter with the application
+            // step, which is where `Vec[int]` gets a term to resolve TO.
+            if generic_names(nk).len() > 0 { continue }
             // A name the registry already holds is not registered twice: the
             // chain would grow a second foreign row for one declaration, and
             // the reader would answer with whichever came last -- the very

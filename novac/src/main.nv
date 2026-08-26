@@ -96,7 +96,24 @@ fn read_decls(dir str) Fs -> []str {
                 // same door as all other input.
                 ro nm = e.name.os_bytes().to_str() ?? ""
                 if nm == "" { continue }
+                // RECURSIVE since 2026-08-26, and the boundary decision is in
+                // the plan: novac reads the WHOLE std interface, because any
+                // narrower line is arbitrary and hand-maintained (today
+                // runtime/string, tomorrow collections/vec, the third one gets
+                // forgotten). The cost is measured, not assumed: the corpus
+                // batch pays 2.6s at the full interface after the parse-once
+                // fix -- and paid 17.5s before it, which is why the order of
+                // these two steps was the other way around.
+                if e.kind.is_dir() {
+                    out.append(read_decls("${dir}/${nm}"))
+                    continue
+                } else {
+                    // A file: judged by its name below.
+                }
                 if !nm.ends_with(".nv") { continue }
+                // Tests live beside the module (house rule), and a test is not
+                // an interface: it declares nothing a signature could name.
+                if nm.ends_with("_test.nv") { continue }
                 ro full = "${dir}/${nm}"
                 match read(full.to_path()) {
                     Ok(bytes) => {
@@ -267,7 +284,7 @@ fn run(a []str) -> int {
         // corpus batch went from 1308ms to 17548ms, thirteen times, while a
         // single file only doubled. Sixty-one files times a hundred and
         // eighty-four declarations is a quadratic nobody wrote down.
-        ro decls = parse_decls(read_decls("${std_dir}/runtime/string"))
+        ro decls = parse_decls(read_decls(std_dir))
         ro argi = 2
         if argi >= a.len() {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")
