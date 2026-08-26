@@ -27,9 +27,14 @@
 #   www, www.nv-lang.ru           — сайт, компилятором не собирается
 #
 
-nova-bignum    d:/Sources/nv-lang/nova-bignum
-nova-compress  d:/Sources/nv-lang/nova-compress
-nova-http      d:/Sources/nv-lang/nova-http
-nova-polaris   d:/Sources/nv-lang/nova-polaris
-nova-socks     d:/Sources/nv-lang/nova-socks
-nova-tls       d:/Sources/nv-lang/nova-tls
+# ПУТЬ — ИМЯ КАТАЛОГА РЯДОМ С РЕПОЙ, А НЕ АБСОЛЮТНЫЙ ПУТЬ (№768, 2026-08-26).
+# Здесь стояло `d:/Sources/nv-lang/...` — путь ОДНОЙ машины. Страж
+# `check-no-machine-paths` смотрит .sh/.py/.yml и в .txt не заглядывает, поэтому
+# жило незамеченным, пока ярус `full` не дошёл до этого шага.
+# Вызывающий разворачивает имя от родителя главной рабочей копии.
+nova-bignum
+nova-compress
+nova-http
+nova-polaris
+nova-socks
+nova-tls

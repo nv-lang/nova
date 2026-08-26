@@ -1190,10 +1190,26 @@ if body_runs; then
         PKG_ENV_CG="$ROOT/compiler-codegen"
         PKG_FAILED=""
         PKG_N=0
+        PKG_ABSENT=0
+        PKG_TOTAL=0
+        # №768: корень соседей ВЫВОДИТСЯ, а не пишется — та же деривация,
+        # что у стража расположения worktree.
+        PKG_ROOT="${NOVA_WORKTREE_ROOT:-$(cd "$ROOT/.." && pwd)}"
         tr -d "$(printf '\r')" < "$PKG_LIST" > "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
         while read -r _pname _ppath _pcmd; do
             case "$_pname" in ''|\#*) continue ;; esac
-            [ -d "$_ppath" ] || { echo "пакеты :: НЕТ КАТАЛОГА $_pname ($_ppath)"; PKG_FAILED="$PKG_FAILED $_pname"; continue; }
+            PKG_TOTAL=$((PKG_TOTAL + 1))
+            # Путь из списка — имя рядом с репой; абсолютный ещё понимается
+            # ради совместимости со старыми копиями списка.
+            case "${_ppath:-}" in
+                "") _ppath="$PKG_ROOT/$_pname" ;;
+                /*|?:*) : ;;
+                *) _ppath="$PKG_ROOT/$_ppath" ;;
+            esac
+            # ОТСУТСТВИЕ — НЕ КРАСНОТА ПАКЕТА (№768). Несклонированная репа
+            # ничего не провалила — просто проверки не было. На раннере шести
+            # соседних реп не бывает вовсе, и шаг объявлял их красными все шесть.
+            [ -d "$_ppath" ] || { echo "пакеты :: нет рядом $_pname ($_ppath) — пропуск"; PKG_ABSENT=$((PKG_ABSENT + 1)); continue; }
             PKG_N=$((PKG_N + 1))
             _plog="${TMPDIR:-/tmp}/gate_pkg_$$.log"
             ( cd "$_ppath" \
@@ -1209,7 +1225,12 @@ if body_runs; then
             rm -f "$_plog"
         done < "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
         rm -f "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
-        echo "пакеты :: проверено $PKG_N"
+        if [ "$PKG_N" -eq 0 ]; then
+            echo "пакеты :: ПРОВЕРЯТЬ БЫЛО НЕЧЕГО — ни одной пакетной репы рядом (0 из $PKG_TOTAL)"
+            echo "пакеты :: это НЕ подтверждение, что пакеты зелёные; сверка идёт там, где репы склонированы"
+        else
+            echo "пакеты :: проверено $PKG_N из $PKG_TOTAL (не склонировано рядом: $PKG_ABSENT)"
+        fi
         [ -z "$PKG_FAILED" ] || fail "пакетные репозитории красные:$PKG_FAILED"
     fi
 fi
