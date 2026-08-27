@@ -24,7 +24,7 @@ type D628Bag { ro xs Vec[int] }
 fn D628Bag @index(key int) -> int => @xs[key]
 
 fn main() Io -> () {
-    ro b = D628Bag { xs: Vec[int].of(10, 20, 30) }
+    ro b = D628Bag { xs: [10, 20, 30] }
 
     // The path the protocol dispatch was always known to take.
     ro direct = b.index(1)
