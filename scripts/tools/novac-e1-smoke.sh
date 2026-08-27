@@ -138,7 +138,12 @@ eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/novac.exe\" \"$T/body.
 # ---- 4. behavior diff ---------------------------------------------------
 "$ORACLE_EXE" > "$T/out.oracle" 2>&1; e_o=$?
 "$T/novac.exe"  > "$T/out.novac"  2>&1; e_n=$?
-cmp -s "$T/out.oracle" "$T/out.novac" || fail "stdout расходится: $(diff "$T/out.oracle" "$T/out.novac" | head -3)"
+# `head -3` показывал только «1c1», строку оракула и разделитель — НАШЕЙ строки
+# в отчёте не было вовсе (замерено 2026-08-27 на `[7, 8].cap()`: видно «< 8»,
+# не видно «> 2»). Отчёт, показывающий одну сторону расхождения, заставляет
+# лезть за второй руками — и это тот же класс, что «молчание читается как
+# успех». Двенадцать строк: хватает на несколько расходящихся строк вывода.
+cmp -s "$T/out.oracle" "$T/out.novac" || fail "stdout расходится (< оракул, > novac): $(diff "$T/out.oracle" "$T/out.novac" | head -12)"
 [ "$e_o" -eq "$e_n" ] || fail "exit-коды расходятся: oracle=$e_o novac=$e_n"
 echo "novac-e1-smoke ok: $FILE — поведение идентично оракулу (stdout байт-в-байт, exit $e_o)"
 exit 0
