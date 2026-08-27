@@ -1,0 +1,75 @@
+// D196 form-2 (`consume X = expr? { body }`) inside a function that returns
+// `Result[T, E]` -- the configuration registry 221.1 #476 reported as a runtime
+// crash (`fiber stack overflow in slot 0`) on 2026-08-08, with `nova check` and
+// `nova build` both clean.
+//
+// WHY THIS FILE EXISTS. The corpus already pinned form-2, but only inside
+// functions carrying `Fail[E]` (`d196_consume_scope_init_forms.nv`,
+// `check_consume_unwrap_form.nv`). The Result-returning configuration -- the one
+// std's wrappers were being moved to so that `?` works through a whole body, and
+// the one that crashed -- was covered by nothing at all. A form that crashed
+// once and is pinned nowhere is a regression waiting to be unnoticed.
+//
+// Measured 2026-08-26 on the merged tree: all three shapes below check, build
+// and run clean. No commit naming #476 exists; the closest neighbour is the
+// same-day consume-scope fix for #456. The row is closed on this measurement
+// plus this fixture, and the fixture is what keeps it closed.
+module spec_tests.conformance
+
+type D196RF { ro id int }
+
+fn D196RF.new(id int) -> D196RF => { id }
+
+fn D196RF.try_new(id int) -> Result[D196RF, str] => Ok(D196RF.new(id))
+
+fn D196RF consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn d196rf_double(x int) -> Result[int, str] => Ok(x * 2)
+
+// Shape A: the block writes into a `mut` and the function returns after it.
+fn d196rf_via_mut() -> Result[int, str] {
+    mut got = 0
+    consume r = D196RF.try_new(7)? {
+        got = r.id
+    }
+    return Ok(got)
+}
+
+// Shape B: the block RETURNS directly -- the shape #476 quotes as trivial.
+fn d196rf_return_inside() -> Result[int, str] {
+    consume r = D196RF.try_new(7)? {
+        return Ok(r.id)
+    }
+    return Err("consume block fell through")
+}
+
+// Shape C: the body itself propagates with `?`, on top of the form-2 init --
+// "`?` through the whole body", which is the occasion the row was found on.
+fn d196rf_nested_try() -> Result[int, str] {
+    mut got = 0
+    consume r = D196RF.try_new(7)? {
+        got = d196rf_double(r.id)?
+    }
+    return Ok(got)
+}
+
+test "D196 form-2 in a Result-returning fn: block writes a mut (221.1 #476)" {
+    match d196rf_via_mut() {
+        Ok(v) => assert(v == 7)
+        Err(_) => assert(false)
+    }
+}
+
+test "D196 form-2 in a Result-returning fn: block returns directly (221.1 #476)" {
+    match d196rf_return_inside() {
+        Ok(v) => assert(v == 7)
+        Err(_) => assert(false)
+    }
+}
+
+test "D196 form-2 in a Result-returning fn: `?` inside the body too (221.1 #476)" {
+    match d196rf_nested_try() {
+        Ok(v) => assert(v == 14)
+        Err(_) => assert(false)
+    }
+}
