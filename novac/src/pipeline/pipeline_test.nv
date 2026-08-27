@@ -562,10 +562,13 @@ export fn Vec[T] @nope() -> int => 0")
     ro (d1, c1) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.len())\n}", std)
     assert(d1.len() == 0)
     assert(c1.contains("Vec____nova_int_method_len"))
+    // The literal's capacity is exact: `[7, 8]` constructs with 2, not 0.
+    assert(c1.contains("_static_new(2)"))
     // `push` returns Self: the substituted return is the receiver's own term.
     ro (d2, c2) = compile_to_c("fn main() {\n mut v = [7]\n v.push(9)\n println(v.len())\n}", std)
     assert(d2.len() == 0)
     assert(c2.contains("Vec____nova_int_method_push"))
+    assert(c2.contains("_static_new(1)"))
     // No such method at all: the refusal of the wave before, unchanged.
     ro (d3, _) = compile_to_c("fn main() {\n ro v = [7]\n println(v.zzz())\n}", std)
     assert(d3.len() == 1)

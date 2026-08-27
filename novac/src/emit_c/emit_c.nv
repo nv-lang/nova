@@ -809,8 +809,15 @@ fn Emitter mut @emit_stmt(st Node) -> () {
 /// printed here can be missing at link time.
 fn Emitter mut @emit_array_lit(init Node, vtype TyId) -> str {
     ro tmp = "_novac_tmp_t${@fresh_uniq()}"
-    @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${c_instance_ctor(@ctx, vtype)}(0);\n")
-    for e in literal_elems(branch_children(init)) {
+    // CAPACITY IS EXACT (owner, 2026-08-27): the literal knows its element
+    // count, so the constructor gets it and no push reallocates. The oracle
+    // prints `0` here -- a deliberate FORM divergence (divergence registry,
+    // group V): behaviour is identical, capacity is not observable. When a
+    // form with an unknown count arrives (spread), its cap becomes an
+    // estimate -- the rule is "exact when known, approximate otherwise".
+    ro elems = literal_elems(branch_children(init))
+    @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${c_instance_ctor(@ctx, vtype)}(${elems.len()});\n")
+    for e in elems {
         @body.append("    (void)${c_instance_method(@ctx, vtype, LITERAL_PUSH)}(${tmp}, ")
         @emit_expr(e)
         @body.append(");\n")
