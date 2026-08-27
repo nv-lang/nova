@@ -1,0 +1,118 @@
+// EXPECT_STDOUT ok r=1 p=2 s=3 t=4/four wr=5 wp=6 ws=7 wt=8/eight
+//
+// Registry 221.1 #483. An infinite loop in TAIL position used to break code
+// generation whenever the function's success payload was a record: the tail
+// fallthrough emitted a unit temporary where a pointer to the result type
+// belonged, and the C compiler refused it. The first diagnosis blamed the
+// spelling and claimed one loop form worked where the other did not; that was
+// false, both forms failed identically, and the class was widened to any
+// infinite loop in tail position.
+//
+// The row's acceptance is what this file exists for: the construct must work
+// for EVERY success payload shape, with a case for each. Eight cases here --
+// four payload shapes (record, primitive, sum, tuple) times both spellings of
+// an infinite loop. Each function returns early with a distinct value, so a
+// wrong lowering shows up as a wrong number rather than as a crash, and the
+// two spellings sit side by side because the retracted diagnosis was
+// precisely that they differ.
+//
+// The loop bodies are unreachable by construction: every call below passes
+// `true`, so the early return fires and the loop is never entered. What is
+// under test is the CODE GENERATED for the tail position, not the looping.
+module standalone.d483_tail_infinite_loop_payloads
+
+type D483Rec { ro n int }
+
+type D483Kind enum
+    | Small(int)
+    | Large(str)
+
+type D483Err enum
+    | Bad(str)
+
+fn rec_loop(stop bool) -> Result[D483Rec, D483Err] {
+    if stop { return Ok(D483Rec { n: 1 }) }
+    loop { }
+}
+
+fn prim_loop(stop bool) -> Result[int, D483Err] {
+    if stop { return Ok(2) }
+    loop { }
+}
+
+fn sum_loop(stop bool) -> Result[D483Kind, D483Err] {
+    if stop { return Ok(D483Kind.Small(3)) }
+    loop { }
+}
+
+fn tup_loop(stop bool) -> Result[(int, str), D483Err] {
+    if stop { return Ok((4, "four")) }
+    loop { }
+}
+
+fn rec_while(stop bool) -> Result[D483Rec, D483Err] {
+    if stop { return Ok(D483Rec { n: 5 }) }
+    while true { }
+}
+
+fn prim_while(stop bool) -> Result[int, D483Err] {
+    if stop { return Ok(6) }
+    while true { }
+}
+
+fn sum_while(stop bool) -> Result[D483Kind, D483Err] {
+    if stop { return Ok(D483Kind.Small(7)) }
+    while true { }
+}
+
+fn tup_while(stop bool) -> Result[(int, str), D483Err] {
+    if stop { return Ok((8, "eight")) }
+    while true { }
+}
+
+fn kind_value(k D483Kind) -> int {
+    match k {
+        Small(v) => v
+        Large(_) => -1
+    }
+}
+
+fn show_rec(r Result[D483Rec, D483Err]) -> str {
+    match r {
+        Ok(p) => "${p.n}"
+        Err(_) => "err"
+    }
+}
+
+fn show_int(r Result[int, D483Err]) -> str {
+    match r {
+        Ok(v) => "${v}"
+        Err(_) => "err"
+    }
+}
+
+fn show_kind(r Result[D483Kind, D483Err]) -> str {
+    match r {
+        Ok(k) => "${kind_value(k)}"
+        Err(_) => "err"
+    }
+}
+
+fn show_tup(r Result[(int, str), D483Err]) -> str {
+    match r {
+        Ok(t) => "${t.0}/${t.1}"
+        Err(_) => "err"
+    }
+}
+
+fn main() Io -> () {
+    ro r = show_rec(rec_loop(true))
+    ro p = show_int(prim_loop(true))
+    ro s = show_kind(sum_loop(true))
+    ro t = show_tup(tup_loop(true))
+    ro wr = show_rec(rec_while(true))
+    ro wp = show_int(prim_while(true))
+    ro ws = show_kind(sum_while(true))
+    ro wt = show_tup(tup_while(true))
+    print("ok r=${r} p=${p} s=${s} t=${t} wr=${wr} wp=${wp} ws=${ws} wt=${wt}\n")
+}
