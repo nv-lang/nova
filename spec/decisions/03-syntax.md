@@ -10990,7 +10990,10 @@ mut a []int = [1, 2, 3]
 mut b Vec[int] = [1, 2, 3]
 
 // Литерал desugars в Vec[T]:
-[1, 2, 3]  →  Vec[int].with_capacity(3); push 1; push 2; push 3
+[1, 2, 3]  →  Vec[int].new(3); push 1; push 2; push 3
+//   вместимость = числу элементов (канон: 02-types.md#d239,
+//   Amended 2026-08-27). Здесь стоял `with_capacity(3)` — снят амендментом
+//   vec-sweep 2026-07-06, а зеркало осталось на ретрактированном имени.
 
 // []T.new() = Vec[T].new()
 mut v []int = []int.new()

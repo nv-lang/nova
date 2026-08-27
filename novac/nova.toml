@@ -46,7 +46,22 @@
 # now counted along main's own line with `--no-merges`, so a commit that merely
 # CARRIED someone else's decisions (a merge) no longer counts as a decision, and
 # branch and CI agree. Class K8, plan 274 section 9.1d.
-#   spec-queue: 26
+# 26 -> 28 (2026-08-27): two commits from the integrator, both inside D239.
+# The first writes the literal-capacity rule into the canon: an array literal is
+# built with capacity EQUAL to its element count when that count is known at
+# compile time, and NOT LESS than the number of known elements when it is not (a
+# spread form). The rule is stated over the observable -- `[7, 8].cap() == 2` --
+# rather than over the shape of the lowering, so it does not depend on which
+# constructor an implementation uses. The second commit only puts the block's
+# amendments back in chronological order.
+# For novac this is not debt but the specification it was waiting for: its own
+# emission already prints `_static_new(<count>)`. The oracle answers `cap=8`
+# because with no capacity given a literal falls onto D232's default growth
+# ("x2 growth, initial 8") -- it follows the canon as the canon was written,
+# which is why the rule went into the spec instead of being filed as an
+# implementation defect. Registry 221.1 #783 carries the measurement and the
+# owner's routing: novac implements it, the oracle does not, not before the tag.
+#   spec-queue: 28
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

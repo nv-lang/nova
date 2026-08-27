@@ -1,0 +1,40 @@
+// EXPECT_STDOUT direct=20 bracket=20 same=true
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #628. A custom type implementing the Index protocol compiled,
+// but `a[i]` fell through in codegen to raw C pointer arithmetic -- right for
+// built-ins, wrong for a user carrier -- and crashed at RUNTIME rather than
+// failing to build. Silent, and on correct code.
+//
+// Re-run 2026-08-26 on the merged tree: it does not reproduce. The bracket form
+// answers exactly what the direct `.index(...)` call answers. This file pins
+// that, because the row's caveat asks for a minimal fixture over the carrier
+// rather than for the absence of a crash, and because a form that crashed once
+// and is pinned nowhere regresses unnoticed.
+//
+// The two forms are printed SIDE BY SIDE on purpose: the defect was a
+// divergence between them, so equality is the thing worth checking, not the
+// value alone. `same=` states it outright so a future reader does not have to
+// compare two numbers by eye.
+module standalone.d628_user_index_bracket
+
+#impl(Index[int, int])
+type D628Bag { ro xs Vec[int] }
+
+fn D628Bag @index(key int) -> int => @xs[key]
+
+fn main() Io -> () {
+    ro b = D628Bag { xs: [10, 20, 30] }
+
+    // The path the protocol dispatch was always known to take.
+    ro direct = b.index(1)
+
+    // The path that used to fall through to pointer arithmetic.
+    ro bracket = b[1]
+
+    assert(direct == 20)
+    assert(bracket == 20)
+    assert(direct == bracket)
+
+    println("direct=${direct} bracket=${bracket} same=${direct == bracket}")
+}

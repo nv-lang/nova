@@ -27,7 +27,8 @@ HIST="$TMP/hist.txt"
 printf '%s\n' \
   'aaaaaaa|fix(#901): a landed fix' \
   'bbbbbbb|registry(#902): only a registry note, not a fix' \
-  'ccccccc|fix(#903): another landed fix' > "$HIST"
+  'ccccccc|fix(#903): another landed fix' \
+  'ddddddd|fix(#905) measure(#906): closes 905, only measures 906' > "$HIST"
 
 run() { sh "$G" "$TMP" "$HIST" >/dev/null 2>&1; echo $?; }
 
@@ -43,6 +44,14 @@ CLOSED_RU = u"ЗАКРЫТ"    # ЗАКРЫТ
 rows = []
 for k in kinds:
     num, state = k.split(":")
+    if state == "chronicle":
+        # Снятый статус реестр пишет хроникой «Статус был:», И ОНА ИДЁТ РАНЬШЕ
+        # живой. Пока двоеточие в выражении было необязательным, `search` брал
+        # это первое вхождение и читал слово «был» — строка считалась НЕ
+        # открытой, а страж молчал на приземлённом фиксе (реестр 221.1 №775).
+        rows.append(u"| %s | K1 | text. **%s был:** %s 2026-08-01. **%s:** %s 2026-08-19. |"
+                    % (num, ST, CLOSED_RU, ST, OPEN_RU))
+        continue
     word = {"open": OPEN_RU, "openen": u"OPEN", "closed": CLOSED_RU}[state]
     rows.append(u"| %s | K1 | text. **%s:** %s 2026-08-19. |" % (num, ST, word))
 io.open(p, "w", encoding="utf-8", newline="\n").write(
@@ -98,6 +107,32 @@ check "a number inside a comment does not count" "$(run)" "1"
 printf '%s\n' '901  carrier fixed, class open' > "$BASE"
 rm -f "$REG"
 check "a missing registry refuses instead of passing" "$(run)" "1"
+
+# 11. Живой статус читается ПОСЛЕ хроники снятого (реестр 221.1 №775).
+# Пока двоеточие было необязательным, `search` брал первое вхождение
+# «Статус был:» и читал «был» — строка считалась не открытой, и приземлённый
+# фикс проходил молча. Здесь строка ОТКРЫТА и фикс слит, базы нет -> отказ.
+: > "$BASE"
+mk "901:chronicle"
+check "a chronicle of the retired status does not hide the live one" "$(run)" "1"
+
+# 12. И та же форма, когда номер В БАЗЕ, -> зелёный: правило не стало строже
+# самого себя, оно лишь стало читать нужное слово.
+printf '%s\n' '901  carrier fixed, class open' > "$BASE"
+mk "901:chronicle"
+check "the same row, once baselined, is green" "$(run)" "0"
+
+# 13. Номер, лишь УПОМЯНУТЫЙ в заголовке рядом с `fix(...)`, не считается
+# починенным (реестр 221.1 №777). Заголовок `fix(#905) measure(#906)` закрывает
+# 905 и лишь ПОДТВЕРЖДАЕТ 906; строка 906 открыта, базы нет -> зелёный.
+: > "$BASE"
+mk "906:open"
+check "a number merely mentioned beside fix(...) is not a fix" "$(run)" "0"
+
+# 14. И обратная сторона: номер ВНУТРИ скобки по-прежнему считается.
+: > "$BASE"
+mk "905:open"
+check "a number inside fix(...) still counts" "$(run)" "1"
 
 echo "  passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

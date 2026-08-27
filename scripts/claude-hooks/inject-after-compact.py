@@ -23,8 +23,7 @@ inject-flow-delegate.py, в тот же день обобщён до списк�
 
 СПИСОК. `.claude/after-compact.list`: одна строка — один путь от корня, пустые
 строки и `#`-комментарии пропускаются. Файл из списка, которого нет на диске, —
-строка ВНИМАНИЯ в stdout (то есть в само окно: правило не приехало, и окно это
-видит) плюс строка в stderr, код 0: старт окна не ломаем из-за переименования.
+строка в stderr и код 0: хук не должен ломать старт окна из-за переименования.
 
 Цена: stdout хука ложится в контекст ЦЕЛИКОМ и в каждом окне после сжатия —
 `--list` показывает байты именно поэтому.
@@ -38,6 +37,10 @@ ROOT = os.environ.get("CLAUDE_PROJECT_DIR") or os.path.dirname(
 LIST_REL = os.path.join(".claude", "after-compact.list")
 HEADER = (u"# Режим работы после сжатия контекста (хук inject-after-compact; "
           u"список — .claude/after-compact.list, команда /after-compact)")
+
+MISSING = (u"\n## %s — ФАЙЛА НЕТ, правило не приехало\n\n"
+           u"Строка есть в `.claude/after-compact.list`, файла на диске нет: "
+           u"верни путь либо убери строку (команда /after-compact).")
 
 
 def out(text):
@@ -95,14 +98,13 @@ def inject(root):
     for rel in entries(root):
         text = read_entry(root, rel)
         if text is None:
-            # В STDOUT, а не в stderr: stderr хука окно не видит, и правило,
-            # переставшее приезжать, исчезло бы молча — тот же класс, что №770
-            # («молчание читается как успех»; замечание окна-интегратора
-            # 2026-08-27). Код возврата остаётся 0: старт окна не ломаем.
-            parts.append(u"\n## %s\n\n**ВНИМАНИЕ: файла нет на диске — это правило в окно НЕ приехало.** "
-                         u"Список — .claude/after-compact.list; поправь путь командой /after-compact "
-                         u"или прочитай правило сам." % rel)
-            err(u"inject-after-compact: нет файла %s — сказано в окне" % rel)
+            # И в stderr (для журнала хука), И В STDOUT — то есть в само окно.
+            # stderr хука в контекст НЕ попадает, а код возврата остаётся 0 —
+            # значит правило переставало приезжать, а окно об этом не узнавало.
+            # Молчание читается как успех (класс №770); гейт ловит это стражем
+            # `check-after-compact-budget`, а здесь видит тот, кому этого текста не хватит.
+            err(u"inject-after-compact: нет файла %s — пропущен" % rel)
+            parts.append(MISSING % rel)
             continue
         body = body_without_frontmatter(text).replace(u"$ARGUMENTS", u"(текущая очередь)")
         parts.append(u"\n## %s\n\n%s" % (rel, body))
