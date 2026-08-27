@@ -187,10 +187,7 @@ fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx in
 export fn aggregate_live_health(budget Duration) Net Time Emit -> Report {
     ro hosts = health_live_hosts()
     ro t0 Monotonic = Monotonic.now()
-    // [M-187-monotonic-plus-operator-mono] workaround: use `t0.plus(budget)`
-    // instead of `t0 + budget` — the operator form CC-fails when used at
-    // multiple call sites within one compile unit.
-    ro shared_deadline Monotonic = t0.plus(budget)
+    ro shared_deadline Monotonic = t0 + budget
     ro results = parallel for idx int in 0..hosts.len() {
         live_lane_tcp(hosts[idx], shared_deadline, idx)
     }
@@ -206,7 +203,7 @@ export fn aggregate_live_health(budget Duration) Net Time Emit -> Report {
 export fn aggregate_live_weather(budget Duration) Net Time Emit -> Report {
     ro cities = weather_live_cities()
     ro t0 Monotonic = Monotonic.now()
-    ro shared_deadline Monotonic = t0.plus(budget)
+    ro shared_deadline Monotonic = t0 + budget
     ro results = parallel for idx int in 0..cities.len() {
         ro city = cities[idx]
         live_lane_weather(city.0, city.1, city.2, shared_deadline, idx)
@@ -241,8 +238,3 @@ export fn weather_live_sources() -> []Source {
     out
 }
 
-// [M-187-monotonic-plus-operator-mono] workaround: use `t0.plus(budget)`
-// instead of `t0 + budget`. The `+` operator CC-fails when the same
-// operator+types pair is lowered more than once in one compile unit — a
-// generics/operator-wrapper mono-cache collision, not specific to
-// `Monotonic`/`Duration`.
