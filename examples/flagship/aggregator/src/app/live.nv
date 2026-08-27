@@ -64,13 +64,20 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
 
 /// A real `https://api.open-meteo.com/v1/forecast` GET for `(lat, lon)`:
 /// resolve → TCP connect → TLS handshake → GET → read → close.
-/// [M-187-tls-cross-pkg-consume-cleanup] workaround: `TlsStream.connect`
-/// consumes its `TcpStream` argument inside nova-tls, but the consume-
-/// cleanup symbol for `TcpStream` is only emitted when the consume site
-/// is in the root package's own code — so the TLS handshake fails to link
-/// from a downstream package. This lane does real DNS + TCP + builds the
-/// `ClientConfig` (proving cross-package `tls` symbols link), then
-/// honestly fails at the handshake step with the marker's error.
+/// [M-187-tls-cross-pkg-consume-cleanup]: this lane no longer works around
+/// anything, and the note that said it did was stale (corrected 2026-08-27,
+/// audit A-V8). The marker's defect was that the consume-cleanup symbol for
+/// `TcpStream` is emitted only when the consume site sits in the root
+/// package's own code, so `TlsStream.connect` — which consumes its
+/// `TcpStream` inside nova-tls — failed to link from downstream. The link
+/// gap is closed: the aggregator builds under `--strict-effects` with this
+/// call in place, and `examples/tls/echo_client.nv` builds the same call
+/// too. The code below runs the handshake and, on success, the full GET and
+/// read — it does not stop after `ClientConfig` as the old note claimed.
+///
+/// What is NOT verified: whether the handshake SUCCEEDS against the real
+/// host. This lane needs the public internet, so the package sweep skips it
+/// and no run here proves it. The marker stays until someone runs it live.
 fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, AggError] {
     ro host = "api.open-meteo.com"
     match resolve(host, 443 as u16) {
@@ -79,22 +86,18 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
                 Err(AggError.Transport("resolve: no address for ${host}"))
             } else {
                 // Full live HTTPS: TCP connect -> TLS handshake -> GET -> read.
-                // [M-187-tls-cross-pkg-consume-cleanup]: `TlsStream.connect`
-                // (consumes the TcpStream inside nova-tls) links if the
-                // codegen gap is closed.
                 ro cfg = ClientConfig.new(host)
                 match TcpStream.connect(addrs[0]) {
                     Err(e) => Err(AggError.Transport(e.to_str()))
                     Ok(consume tcp) => match TlsStream.connect(tcp, cfg) {
                         Err(e) => Err(AggError.Transport("tls handshake: ${e}"))
                         Ok(consume tls) => {
-                            consume stream = tls
                             ro req = "GET /v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&forecast_days=1 HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n"
-                            match stream.write_all(req.bytes()) {
-                                Err(e) => { stream.close(); Err(AggError.Transport("tls write: ${e}")) }
-                                Ok(_) => match stream.read_bytes(8192) {
-                                    Err(e) => { stream.close(); Err(AggError.Transport("tls read: ${e}")) }
-                                    Ok(bytes) => { stream.close(); Ok(SourceData { id, payload: bytes }) }
+                            match tls.write_all(req.bytes()) {
+                                Err(e) => { tls.close(); Err(AggError.Transport("tls write: ${e}")) }
+                                Ok(_) => match tls.read_bytes(8192) {
+                                    Err(e) => { tls.close(); Err(AggError.Transport("tls read: ${e}")) }
+                                    Ok(bytes) => { tls.close(); Ok(SourceData { id, payload: bytes }) }
                                 }
                             }
                         }
