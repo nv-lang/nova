@@ -85,8 +85,8 @@
       <div class="eyebrow">Nova · plan 274 · 2026-08-27</div>
       <h1 class="ru">Архитектура <code>novac</code>: компилятор Nova, написанный на Nova</h1>
       <h1 class="en"><code>novac</code> architecture: the Nova compiler written in Nova</h1>
-      <p class="lead ru">Один конвейер из тринадцати модулей, один писатель семантической модели, один владелец порядка проходов — и нынешний компилятор рядом не как образец, а как неподвижная точка поведения: тот же stdout, тот же код возврата, байт в байт.</p>
-      <p class="lead en">One pipeline of thirteen modules, one writer of the semantic model, one owner of the pass order — and the current compiler beside it not as a model to copy but as a fixed point of behaviour: same stdout, same exit code, byte for byte.</p>
+      <p class="lead ru">Один конвейер из тринадцати модулей, один писатель семантической модели, один владелец порядка проходов — и нынешний компилятор рядом не как образец, а как неподвижная точка поведения: на программах, где оба правы, — тот же stdout и тот же код возврата, байт в байт; где оракул ошибается, novac расходится сознательно, и расхождение записано в реестр.</p>
+      <p class="lead en">One pipeline of thirteen modules, one writer of the semantic model, one owner of the pass order — and the current compiler beside it not as a model to copy but as a fixed point of behaviour: on programs where both are right — same stdout and same exit code, byte for byte; where the oracle is wrong, novac diverges deliberately, and the divergence is written into a registry.</p>
     </div>
     <div class="lang" role="group" aria-label="Language">
       <button type="button" data-set="ru" aria-pressed="true">RU</button>
@@ -217,8 +217,8 @@
         <path d="M1028,418 L1028,452" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)" fill="none"/>
         <rect x="958" y="454" width="140" height="44" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
         <text x="1028" y="473" text-anchor="middle" font-weight="500">clang → exe</text>
-        <text x="1028" y="489" text-anchor="middle" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="ru">= оракул, байт в байт</text>
-        <text x="1028" y="489" text-anchor="middle" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="en">= oracle, byte for byte</text>
+        <text x="1028" y="489" text-anchor="middle" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="ru">= оракул, где он прав</text>
+        <text x="1028" y="489" text-anchor="middle" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="en">= the oracle where it's right</text>
         <!-- emit_c -> C: vertical from emit_c box bottom, bypass the bus -->
         <path d="M1098,160 L1112,160 L1112,340 L1028,340" stroke="currentColor" stroke-width="1.5" fill="none"/>
 
@@ -255,8 +255,8 @@
 
         <text x="20" y="450" font-size="11.5" fill="var(--oracle)" font-weight="500" class="ru">интероп, названный интеропом: уходит в день, когда novac эмитит прелюдию целиком</text>
         <text x="20" y="450" font-size="11.5" fill="var(--oracle)" font-weight="500" class="en">interop named as interop: it goes the day novac emits the whole prelude itself</text>
-        <text x="20" y="470" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="ru">оракул — не донор устройства и имён (П25/П27); он неподвижная точка ПОВЕДЕНИЯ: тот же stdout, тот же код возврата</text>
-        <text x="20" y="470" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="en">the oracle is no donor of design or names (P25/P27); it is a fixed point of BEHAVIOUR: same stdout, same exit code</text>
+        <text x="20" y="470" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="ru">оракул — не донор устройства и имён (П25/П27) и не образец там, где ошибается: сознательное расхождение записывается в реестр расхождений, а не копируется</text>
+        <text x="20" y="470" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)" class="en">the oracle is no donor of design or names (P25/P27), nor a model where it is wrong: a deliberate divergence is written into the divergence registry, not copied</text>
 
         <!-- diagnostics out -->
         <rect x="20" y="236" width="150" height="44" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
@@ -321,8 +321,8 @@
       <p class="en"><b>The corpus.</b> 61 example files run through both compilers: did the check verdict match (11), did the file build byte-identical with the same behaviour (5). The numbers are a ratchet: down only with a written reason.</p>
       <p class="ru"><b>Стражи.</b> 76 проверок только для <code>novac</code>: размер файла, полнота ветвлений, документированность, одностороннее мэнглинг, отсутствие аллокаций в дверях поиска, свежесть живой строки плана — каждая с самотестом, который умеет краснеть.</p>
       <p class="en"><b>Guards.</b> 76 checks for <code>novac</code> alone: file size, complete branching, documentation, one-way mangling, no allocation in lookup doors, freshness of the plan's live line — each with a selftest that knows how to go red.</p>
-      <p class="ru"><b>Отказ по имени.</b> Всё вне подмножества компилятор отвергает диагностикой, которая называет форму и причину; молчаливое принятие не-языка — худший вид расхождения, и его ищут отдельно.</p>
-      <p class="en"><b>Refusal by name.</b> Everything outside the subset is refused with a diagnostic that names the form and the reason; silently accepting non-language is the worst kind of divergence, and it is hunted separately.</p>
+      <p class="ru"><b>Отказ по имени.</b> Всё вне подмножества компилятор отвергает диагностикой, которая называет форму и причину; молчаливое принятие не-языка — худший вид расхождения, и его ищут отдельно. Где оракул неправ, novac уже строже: пустой литерал массива оракул компилирует и роняет программу в рантайме — novac отказывает на компиляции, и это записанное расхождение.</p>
+      <p class="en"><b>Refusal by name.</b> Everything outside the subset is refused with a diagnostic that names the form and the reason; silently accepting non-language is the worst kind of divergence, and it is hunted separately. Where the oracle is wrong, novac is already stricter: an empty array literal compiles under the oracle and panics at run time — novac refuses it at compile time, a written-down divergence.</p>
     </div>
   </section>
 
