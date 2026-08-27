@@ -52,6 +52,16 @@ MIN_HEADER_LINES=8
 problems=0
 report() { echo "  ✗ $1" >&2; problems=$((problems + 1)); }
 
+# ССЫЛКА НА ПЛАН — ХРАПОВИК, А НЕ ЖЁСТКИЙ ОТКАЗ (реестр 221.1 №785,
+# 2026-08-27). Остальные два свойства — подключён и покрыт самотестом — остаются
+# жёсткими. Почему именно это свойство смягчено: у него ОДНОГО набралось 52
+# нарушителя, все в одной области, а вердикт «всё или ничего» не даёт гасить
+# долг по одному. Страж, который либо зелен, либо валит ярус целиком, стоит
+# выключенного: его красноту начинают обходить. Рост по-прежнему красный.
+noref=0
+NOREF_NAMES=""
+WIRING_BASELINE="${NOVA_WIRING_BASELINE:-$(dirname "${BASH_SOURCE[0]}")/guard-wiring.baseline}"
+
 echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh и check-*.py"
 
 shopt -s nullglob
@@ -119,7 +129,8 @@ for g in "${guards[@]}"; do
         ok=0
     fi
     if [ "${HAS_PLAN_REF[$g]:-0}" -ne 1 ]; then
-        report "$name: нет ссылки на план/реестр в шапке"
+        noref=$((noref + 1))
+        NOREF_NAMES="$NOREF_NAMES $name"
         ok=0
     fi
 
@@ -153,6 +164,22 @@ for g in "${guards[@]}"; do
     [ "$ok" -eq 1 ] && echo "  ok: $name — документирован, подключён, покрыт самотестом"
 done
 
+WIRING_BASE=0
+if [ -f "$WIRING_BASELINE" ]; then
+    WIRING_BASE=$(sed -n 's/^no_plan_ref=\([0-9][0-9]*\).*/\1/p' "$WIRING_BASELINE" | head -1)
+    WIRING_BASE=${WIRING_BASE:-0}
+else
+    echo "check-guard-wiring: базы нет ($WIRING_BASELINE) — считаю базой 0" >&2
+fi
+echo "check-guard-wiring: без ссылки на план $noref (база $WIRING_BASE)"
+if [ "$noref" -gt "$WIRING_BASE" ]; then
+    echo "check-guard-wiring: ВЫРОСЛО — $noref > базы $WIRING_BASE" >&2
+    for n in $NOREF_NAMES; do echo "    ✗ $n: нет ссылки на план/реестр в шапке" >&2; done
+    problems=$((problems + 1))
+elif [ "$noref" -lt "$WIRING_BASE" ]; then
+    echo "check-guard-wiring: долг СНИЗИЛСЯ ($noref < базы $WIRING_BASE) — опусти базу в $WIRING_BASELINE с летописью"
+fi
+
 if [ "$problems" -ne 0 ]; then
     cat >&2 <<'HINT'
 
@@ -168,4 +195,4 @@ HINT
     exit 1
 fi
 
-echo "check-guard-wiring ok: все стражи документированы, подключены и покрыты самотестами"
+echo "check-guard-wiring ok: все стражи подключены и покрыты самотестами; без ссылки на план $noref при базе $WIRING_BASE (не выросло)"

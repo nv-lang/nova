@@ -79,8 +79,20 @@ check "ловит тонкую шапку" 1 $?
 r3="$tmp/r3"; make_repo "$r3"
 { printf '#!/usr/bin/env bash\n'; for i in $(seq 1 10); do printf '# строка шапки %s\n' "$i"; done; printf 'exit 0\n'; } > "$r3/scripts/guards/check-baz.sh"
 touch "$r3/scripts/guards/selftest/test-check-baz.sh"
-bash "$GUARD" "$r3" >/dev/null 2>&1
-check "ловит отсутствие ссылки на план" 1 $?
+# С 2026-08-27 это свойство — ХРАПОВИК (реестр 221.1 №785), поэтому судится
+# НЕ сам факт, а РОСТ над базой. База берётся от каталога САМОГО стража, а не
+# подопытного дерева, поэтому подложному дереву база задаётся переменной —
+# иначе один нарушитель сравнивался бы с настоящей базой репы и молча проходил.
+wb0="$tmp/wb0"; printf 'no_plan_ref=0
+' > "$wb0"
+NOVA_WIRING_BASELINE="$wb0" bash "$GUARD" "$r3" >/dev/null 2>&1
+check "ловит рост безадресных над базой 0" 1 $?
+
+# (3а) НЕ ЛОВИТ: тот же один безадресный при базе 1 — долг не вырос.
+wb1="$tmp/wb1"; printf 'no_plan_ref=1
+' > "$wb1"
+NOVA_WIRING_BASELINE="$wb1" bash "$GUARD" "$r3" >/dev/null 2>&1
+check "равенство базе — не ложное срабатывание" 0 $?
 
 # (4) НЕ ловит: полностью корректный страж (шапка + план + самотест + цикл в gate).
 r4="$tmp/r4"; make_repo "$r4"
