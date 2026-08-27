@@ -1,0 +1,63 @@
+// EXPECT_STDOUT interp=Green debug=<Green> direct=Green ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #584. The row reported that interpolating a sum carrying a
+// hand-written `@display`/`@debug` died with `nova: out of memory`, while
+// WITHOUT the hand-written method it printed a number like 2884744404960
+// instead of the variant -- and that a DIRECT `.display(...)` call worked fine,
+// so the interpolation plumbing was what diverged.
+//
+// The premise was re-run on 2026-08-19 and did not reproduce, yet the row
+// stayed open for a stated reason: its acceptance asks for a fixture that
+// COMPARES WHAT IS PRINTED against what is expected in THREE forms -- `${c}`,
+// `${c:?}` and the direct call -- rather than for the absence of a crash. This
+// file is that fixture, so the row closes on evidence rather than on quiet.
+//
+// The comparison is doubled on purpose: each form is asserted against its
+// expected string INSIDE the test, and the same three values are printed so the
+// stdout marker on line 1 pins them from outside too. A wrong value therefore
+// fails even if the assert machinery is what breaks.
+//
+// The marker's NAME is deliberately not spelled again anywhere below: the runner
+// scans for it literally, and a second mention in prose becomes the pattern it
+// tries to match. Cost measured here on the first run of this very file.
+module standalone.d584_sum_display_three_forms
+
+type D584Colour enum Red | Green | Blue
+
+fn D584Colour @display(mut f Fmt) -> () {
+    match @ {
+        Red => f.write("Red")
+        Green => f.write("Green")
+        Blue => f.write("Blue")
+    }
+}
+
+fn D584Colour @debug(mut f Fmt) -> () {
+    match @ {
+        Red => f.write("<Red>")
+        Green => f.write("<Green>")
+        Blue => f.write("<Blue>")
+    }
+}
+
+fn main() Io -> () {
+    ro c = D584Colour.Green
+
+    // Form 1: interpolation through `@display`.
+    ro interp = "${c}"
+    assert(interp == "Green")
+
+    // Form 2: interpolation through `@debug`.
+    ro debug = "${c:?}"
+    assert(debug == "<Green>")
+
+    // Form 3: the direct call, which the row said always worked -- pinned so a
+    // future divergence between it and interpolation is caught here.
+    consume sb = StringBuilder.new()
+    c.display(FmtCtx.bare(sb, 0, false))
+    ro direct = sb.into_str()
+    assert(direct == "Green")
+
+    println("interp=${interp} debug=${debug} direct=${direct} ok")
+}
