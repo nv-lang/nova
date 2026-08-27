@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Архитектура novac</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F4F6F8; --panel: #FFFFFF; --panel-2: #EEF2F5; --ink: #151A20; --muted: #5B6772;
+    --line: #CBD3DA; --grid: #E3E8EC;
+    --accent: #0F7C6E; --accent-soft: #DDEFEB; --accent-ink: #FFFFFF;
+    --oracle: #B7791F; --oracle-soft: #F6ECD8;
+    --hollow: #8A97A3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1418; --panel: #161D23; --panel-2: #1C252D; --ink: #E4E9EE; --muted: #93A0AC;
+      --line: #2C3742; --grid: #222C35;
+      --accent: #3FB8A6; --accent-soft: #163B36; --accent-ink: #08201C;
+      --oracle: #D9A441; --oracle-soft: #3A2E14;
+      --hollow: #6F7D8A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1418; --panel: #161D23; --panel-2: #1C252D; --ink: #E4E9EE; --muted: #93A0AC;
+    --line: #2C3742; --grid: #222C35;
+    --accent: #3FB8A6; --accent-soft: #163B36; --accent-ink: #08201C;
+    --oracle: #D9A441; --oracle-soft: #3A2E14;
+    --hollow: #6F7D8A;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; font-size: 16px; line-height: 1.55;
+  }
+  code, .mono { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.92em; }
+  h1, h2, h3 { font-family: "Sora", "IBM Plex Sans", sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(30px, 4.2vw, 44px); font-weight: 700; letter-spacing: -0.01em; line-height: 1.12; }
+  h2 { font-size: 22px; font-weight: 600; }
+  h3 { font-size: 16px; font-weight: 600; }
+  p { margin: 0; }
+  main { max-width: 1120px; margin: 0 auto; padding: 44px 24px 80px; display: grid; gap: 40px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+  .eyebrow { font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .lead { max-width: 68ch; color: var(--muted); font-size: 17px; margin-top: 12px; }
+  .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .lang button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+  .lang button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .lang button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  [data-lang="ru"] .en, [data-lang="en"] .ru { display: none; }
+  figure { margin: 0; display: grid; gap: 12px; }
+  figure svg { width: 100%; height: auto; display: block; color: var(--ink); }
+  figcaption { color: var(--muted); font-size: 14px; max-width: 80ch; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px 24px; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .fact { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .fact b { display: block; font-family: "Sora", sans-serif; font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fact span { color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  td.n { font-family: "JetBrains Mono", monospace; color: var(--muted); font-variant-numeric: tabular-nums; width: 2.5em; }
+  .tablewrap { overflow-x: auto; }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; }
+  .pill.have { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .pill.sketch { color: var(--muted); border-style: dashed; }
+  .pill.none { color: var(--muted); }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .card h3 { margin-bottom: 8px; }
+  .card p + p { margin-top: 8px; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); align-items: center; }
+  .legend i { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--ink); vertical-align: middle; margin-right: 6px; }
+  .legend i.dash { border-top-style: dashed; }
+  .legend i.oracle { border-top-color: var(--oracle); }
+  .legend i.hollow { border-top: 2px dashed var(--hollow); }
+  footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+  @media (prefers-reduced-motion: no-preference) { .lang button { transition: background .15s, color .15s; } }
+</style>
+</head>
+<body>
+<main id="root" data-lang="ru">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Nova · plan 274 · 2026-08-27</div>
+      <h1 class="ru">Архитектура <code>novac</code>: компилятор Nova, написанный на Nova</h1>
+      <h1 class="en"><code>novac</code> architecture: the Nova compiler written in Nova</h1>
+      <p class="lead ru">Один конвейер из тринадцати модулей, один писатель семантической модели, один владелец порядка проходов — и нынешний компилятор рядом не как образец, а как неподвижная точка поведения: тот же stdout, тот же код возврата, байт в байт.</p>
+      <p class="lead en">One pipeline of thirteen modules, one writer of the semantic model, one owner of the pass order — and the current compiler beside it not as a model to copy but as a fixed point of behaviour: same stdout, same exit code, byte for byte.</p>
+    </div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-set="ru" aria-pressed="true">RU</button>
+      <button type="button" data-set="en" aria-pressed="false">EN</button>
+    </div>
+  </header>
+
+  <section class="facts" aria-label="numbers">
+    <div class="fact"><b>41</b><span class="ru">файлов <code>.nv</code> в <code>novac/src</code>, 15 400 строк</span><span class="en"><code>.nv</code> files in <code>novac/src</code>, 15,400 lines</span></div>
+    <div class="fact"><b>13</b><span class="ru">модулей, папка = модуль</span><span class="en">modules, a folder is a module</span></div>
+    <div class="fact"><b>10</b><span class="ru">файлов модульных тестов рядом с кодом</span><span class="en">module-test files beside the code</span></div>
+    <div class="fact"><b>76</b><span class="ru">стражей гейта только для <code>novac</code>, каждый с самотестом</span><span class="en">gate guards for <code>novac</code> alone, each with a selftest</span></div>
+    <div class="fact"><b>11 / 5</b><span class="ru">корпус: файлов с тем же вердиктом check / собранных байт в байт</span><span class="en">corpus: files with the same check verdict / built byte-identical</span></div>
+    <div class="fact"><b>1</b><span class="ru">инвариант на слое компилятора: читает только переданное</span><span class="en">invariant on the compiler layer: reads only what it is given</span></div>
+  </section>
+
+  <figure>
+    <svg viewBox="0 0 1120 560" role="img" aria-label="Pipeline of novac: source text flows through lex, parse, sem, check, mono and emit_c into C text; the checker writes the channel that mono and emit_c only read; the oracle emits the shell that the C text is linked with">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+        <marker id="ah-o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--oracle)"/>
+        </marker>
+      </defs>
+
+      <!-- pipeline row: y=120..200 -->
+      <g font-family="JetBrains Mono, monospace" font-size="13" fill="currentColor">
+        <!-- source -->
+        <rect x="20" y="130" width="96" height="60" rx="6" fill="var(--panel-2)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="68" y="156" text-anchor="middle" font-weight="500">source</text>
+        <text x="68" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">текст файла</text>
+        <text x="68" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">file text</text>
+
+        <line x1="116" y1="160" x2="160" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="138" y="150" text-anchor="middle" font-size="10.5" fill="var(--muted)">str</text>
+
+        <!-- lex -->
+        <rect x="162" y="130" width="96" height="60" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="210" y="156" text-anchor="middle" font-weight="500">lex</text>
+        <text x="210" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">токены + тривия</text>
+        <text x="210" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">tokens + trivia</text>
+
+        <line x1="258" y1="160" x2="302" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="280" y="150" text-anchor="middle" font-size="10.5" fill="var(--muted)">Token[]</text>
+
+        <!-- parse + tree -->
+        <rect x="304" y="130" width="120" height="60" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="364" y="156" text-anchor="middle" font-weight="500">parse · tree</text>
+        <text x="364" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">зелёное дерево</text>
+        <text x="364" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">green tree</text>
+
+        <line x1="424" y1="160" x2="468" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="446" y="150" text-anchor="middle" font-size="10.5" fill="var(--muted)">Node</text>
+
+        <!-- sem -->
+        <rect x="470" y="130" width="130" height="60" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="535" y="156" text-anchor="middle" font-weight="500">sem</text>
+        <text x="535" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">декларации, типы, имена</text>
+        <text x="535" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">declarations, types, names</text>
+
+        <line x1="600" y1="160" x2="644" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="622" y="150" text-anchor="middle" font-size="10.5" fill="var(--muted)">Ctx</text>
+
+        <!-- check -->
+        <rect x="646" y="130" width="120" height="60" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="706" y="156" text-anchor="middle" font-weight="500">check</text>
+        <text x="706" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">решает тип каждого узла</text>
+        <text x="706" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">decides every node's type</text>
+
+        <line x1="766" y1="160" x2="810" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+
+        <!-- mono -->
+        <rect x="812" y="130" width="100" height="60" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="862" y="156" text-anchor="middle" font-weight="500">mono</text>
+        <text x="862" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">инстансы (row, subst)</text>
+        <text x="862" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">instances (row, subst)</text>
+
+        <line x1="912" y1="160" x2="956" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)"/>
+
+        <!-- emit_c -->
+        <rect x="958" y="130" width="140" height="60" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="1028" y="156" text-anchor="middle" font-weight="500">emit_c</text>
+        <text x="1028" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">C-текст, имена — одной дверью</text>
+        <text x="1028" y="174" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">C text, names through one door</text>
+
+        <!-- the channel bus: check writes, mono / emit_c read -->
+        <rect x="646" y="236" width="452" height="44" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="0"/>
+        <text x="872" y="254" text-anchor="middle" font-weight="500" fill="var(--accent)">sem.CheckOut</text>
+        <text x="872" y="270" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">канал: тип узла · выбранный кандидат · подстановка · слоты аргументов</text>
+        <text x="872" y="270" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">the channel: node type · chosen candidate · substitution · argument slots</text>
+
+        <line x1="706" y1="190" x2="706" y2="234" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ah)"/>
+        <text x="716" y="214" font-size="10.5" fill="var(--accent)" class="ru">пишет</text>
+        <text x="716" y="214" font-size="10.5" fill="var(--accent)" class="en">writes</text>
+
+        <line x1="862" y1="234" x2="862" y2="192" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        <text x="870" y="214" font-size="10.5" fill="var(--muted)" class="ru">читает</text>
+        <text x="870" y="214" font-size="10.5" fill="var(--muted)" class="en">reads</text>
+
+        <line x1="1028" y1="234" x2="1028" y2="192" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        <text x="1036" y="214" font-size="10.5" fill="var(--muted)" class="ru">читает</text>
+        <text x="1036" y="214" font-size="10.5" fill="var(--muted)" class="en">reads</text>
+
+        <text x="872" y="304" text-anchor="middle" font-size="11.5" fill="var(--accent)" font-weight="500" class="ru">после чекера никто не выводит типы</text>
+        <text x="872" y="304" text-anchor="middle" font-size="11.5" fill="var(--accent)" font-weight="500" class="en">after the checker nobody infers</text>
+
+        <!-- pipeline as the single owner of order: bracket above -->
+        <path d="M162,104 L162,92 L1098,92 L1098,104" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <rect x="560" y="76" width="140" height="30" rx="15" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="630" y="96" text-anchor="middle" font-weight="500">pipeline</text>
+        <text x="740" y="86" font-size="10.5" fill="var(--muted)" class="ru">единственный владелец порядка проходов</text>
+        <text x="740" y="86" font-size="10.5" fill="var(--muted)" class="en">the single owner of the pass order</text>
+        <text x="20" y="40" font-family="Sora, sans-serif" font-size="14" font-weight="600" class="ru">compile(files, cfg) → (Diagnostic[], Artifact[])</text>
+        <text x="20" y="40" font-family="Sora, sans-serif" font-size="14" font-weight="600" class="en">compile(files, cfg) → (Diagnostic[], Artifact[])</text>
+        <text x="20" y="60" font-size="11.5" fill="var(--muted)" class="ru">компилятор читает только переданное — ни обхода файловой системы, ни резолва пакетов</text>
+        <text x="20" y="60" font-size="11.5" fill="var(--muted)" class="en">the compiler reads only what it is handed — no file-system walk, no package resolution</text>
+
+        <!-- output: C text -> clang -> binary -->
+        <line x1="1028" y1="130" x2="1028" y2="116" stroke="none"/>
+        <line x1="1098" y1="160" x2="1108" y2="160" stroke="none"/>
+        <path d="M1028,340 L1028,372" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)" fill="none"/>
+        <rect x="958" y="374" width="140" height="44" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="1028" y="393" text-anchor="middle" font-weight="500">C</text>
+        <text x="1028" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">один файл, argv оракула</text>
+        <text x="1028" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">one file, the oracle's argv</text>
+        <path d="M1028,418 L1028,452" stroke="currentColor" stroke-width="1.5" marker-end="url(#ah)" fill="none"/>
+        <rect x="958" y="454" width="140" height="44" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="1028" y="473" text-anchor="middle" font-weight="500">clang → exe</text>
+        <text x="1028" y="489" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">поведение = оракул, байт в байт</text>
+        <text x="1028" y="489" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">behaviour = the oracle, byte for byte</text>
+        <!-- emit_c -> C: vertical from emit_c box bottom, bypass the bus -->
+        <path d="M1098,160 L1112,160 L1112,340 L1028,340" stroke="currentColor" stroke-width="1.5" fill="none"/>
+
+        <!-- ORACLE RAIL (amber): probe -> oracle -> shell -> linked; surface read by sem/check -->
+        <rect x="20" y="374" width="150" height="44" rx="6" fill="var(--panel)" stroke="var(--oracle)" stroke-width="1.4"/>
+        <text x="95" y="393" text-anchor="middle" font-weight="500" fill="var(--oracle)">shell_probe.nv</text>
+        <text x="95" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">пробная программа</text>
+        <text x="95" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">the probe program</text>
+
+        <line x1="170" y1="396" x2="238" y2="396" stroke="var(--oracle)" stroke-width="1.5" marker-end="url(#ah-o)"/>
+        <rect x="240" y="374" width="150" height="44" rx="6" fill="var(--oracle-soft)" stroke="var(--oracle)" stroke-width="1.4"/>
+        <text x="315" y="393" text-anchor="middle" font-weight="500" fill="var(--oracle)" class="ru">оракул (nova)</text>
+        <text x="315" y="393" text-anchor="middle" font-weight="500" fill="var(--oracle)" class="en">the oracle (nova)</text>
+        <text x="315" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">нынешний компилятор, как есть</text>
+        <text x="315" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">today's compiler, as is</text>
+
+        <line x1="390" y1="396" x2="458" y2="396" stroke="var(--oracle)" stroke-width="1.5" marker-end="url(#ah-o)"/>
+        <text x="424" y="386" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ru">эмитит</text>
+        <text x="424" y="386" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="en">emits</text>
+        <rect x="460" y="374" width="170" height="44" rx="6" fill="var(--panel)" stroke="var(--oracle)" stroke-width="1.4"/>
+        <text x="545" y="393" text-anchor="middle" font-weight="500" fill="var(--oracle)">shell.tpl.c</text>
+        <text x="545" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">оболочка: рантайм + инстансы std</text>
+        <text x="545" y="409" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">the shell: runtime + std instances</text>
+
+        <!-- shell linked into C -->
+        <line x1="630" y1="396" x2="956" y2="396" stroke="var(--oracle)" stroke-width="1.5" marker-end="url(#ah-o)"/>
+        <text x="793" y="386" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ru">линкуется вместе с эмиссией novac</text>
+        <text x="793" y="386" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="en">linked together with novac's emission</text>
+
+        <!-- surface lifted into Ctx.interop: shell -> sem/check (dashed amber, upward) -->
+        <path d="M545,374 L545,330 L706,330 L706,192" stroke="var(--oracle)" stroke-width="1.5" stroke-dasharray="5 4" fill="none" marker-end="url(#ah-o)"/>
+        <text x="560" y="322" font-size="10.5" fill="var(--oracle)" class="ru">Ctx.interop — имена оболочки, снятые один раз; чекер спрашивает их до печати</text>
+        <text x="560" y="322" font-size="10.5" fill="var(--oracle)" class="en">Ctx.interop — the shell's names lifted once; the checker asks them before printing</text>
+
+        <text x="20" y="450" font-size="11.5" fill="var(--oracle)" font-weight="500" class="ru">интероп, названный интеропом: уходит в день, когда novac эмитит прелюдию целиком</text>
+        <text x="20" y="450" font-size="11.5" fill="var(--oracle)" font-weight="500" class="en">interop named as interop: it goes the day novac emits the whole prelude itself</text>
+        <text x="20" y="470" font-size="11" fill="var(--muted)" class="ru">оракул — не донор устройства и имён (П25/П27); он неподвижная точка ПОВЕДЕНИЯ: тот же stdout, тот же код возврата</text>
+        <text x="20" y="470" font-size="11" fill="var(--muted)" class="en">the oracle is no donor of design or names (P25/P27); it is a fixed point of BEHAVIOUR: same stdout, same exit code</text>
+
+        <!-- diagnostics out -->
+        <rect x="20" y="236" width="150" height="44" rx="6" fill="var(--panel)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="95" y="255" text-anchor="middle" font-weight="500">diag</text>
+        <text x="95" y="271" text-anchor="middle" font-size="11" fill="var(--muted)" class="ru">структура §7, текст — из неё</text>
+        <text x="95" y="271" text-anchor="middle" font-size="11" fill="var(--muted)" class="en">structure §7, text rendered from it</text>
+        <path d="M364,190 L364,258 L172,258" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" fill="none" marker-end="url(#ah)"/>
+        <path d="M646,175 L640,175 L640,296 L172,296 L172,280" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" fill="none" marker-end="url(#ah)"/>
+        <text x="410" y="252" font-size="10.5" fill="var(--muted)" class="ru">синтаксис · «вне подмножества», по имени</text>
+        <text x="410" y="252" font-size="10.5" fill="var(--muted)" class="en">syntax · "outside the subset", by name</text>
+      </g>
+    </svg>
+    <figcaption class="ru">Конвейер <code>novac</code>: текст проходит <code>lex → parse → sem → check → mono → emit_c</code> и становится одним C-файлом, который линкуется с оболочкой оракула. Сплошная стрелка — данные текут; пунктир — только чтение; янтарь — интероп с нынешним компилятором, у которого есть названное условие конца. Единственный писатель канала — <code>check</code>.</figcaption>
+    <figcaption class="en">The <code>novac</code> pipeline: text runs through <code>lex → parse → sem → check → mono → emit_c</code> and becomes one C file linked with the oracle's shell. Solid arrow — data flows; dashed — read only; amber — interop with today's compiler, with a named end condition. The channel has one writer: <code>check</code>.</figcaption>
+    <div class="legend">
+      <span><i></i><span class="ru">данные текут</span><span class="en">data flows</span></span>
+      <span><i class="dash"></i><span class="ru">только читает</span><span class="en">reads only</span></span>
+      <span><i class="oracle"></i><span class="ru">интероп с оракулом</span><span class="en">interop with the oracle</span></span>
+    </div>
+  </figure>
+
+  <section class="card">
+    <h2 class="ru">Слои — с донором на каждый и честным статусом</h2>
+    <h2 class="en">Layers — a donor for each, and an honest status</h2>
+    <p class="lead ru" style="font-size:15px;margin:8px 0 16px">Общая форма четырёх эталонов (rustc, Swift, Go 1.18+, Roslyn) — одиннадцать слоёв и донор на каждый, как в документе архитектуры. Статус — по коду в <code>novac/src</code> на 2026-08-27: таблица в документе снята 2026-08-16 и отстала (там <code>types</code>, <code>check</code> и <code>mono</code> ещё значатся отсутствующими).</p>
+    <p class="lead en" style="font-size:15px;margin:8px 0 16px">The common shape of four reference compilers (rustc, Swift, Go 1.18+, Roslyn) — eleven layers with a donor for each, as in the architecture document. Status is by the code in <code>novac/src</code> as of 2026-08-27: the document's own table was taken on 2026-08-16 and lags (it still lists <code>types</code>, <code>check</code> and <code>mono</code> as absent).</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>#</th><th class="ru">слой</th><th class="en">layer</th><th class="ru">что известно на нём</th><th class="en">what is known there</th><th class="ru">донор</th><th class="en">donor</th><th class="ru">статус</th><th class="en">status</th></tr></thead>
+      <tbody>
+        <tr><td class="n">1</td><td><code>lex</code></td><td class="ru">байты и границы токенов, тривия</td><td class="en">bytes and token bounds, trivia</td><td>Roslyn · rust-analyzer</td><td><span class="pill have">ЕСТЬ</span></td></tr>
+        <tr><td class="n">2</td><td><code>tree</code> + <code>parse</code></td><td class="ru">форма, не смысл; дерево ре-сериализуемо побайтово</td><td class="en">form, not meaning; the tree re-serializes byte for byte</td><td class="ru">общая форма всех четырёх</td><td class="en">common to all four</td><td><span class="pill have">ЕСТЬ</span></td></tr>
+        <tr><td class="n">3</td><td><code>names</code></td><td class="ru">«имя → объявление», стабильный <code>DeclId</code></td><td class="en">"name → declaration", a stable <code>DeclId</code></td><td>rustc <code>DefId</code> · Go <code>types.Object</code> · Roslyn <code>Symbol</code></td><td><span class="pill have">ЕСТЬ</span></td></tr>
+        <tr><td class="n">4</td><td><code>types</code></td><td class="ru">интернированный терм; равенство типов = равенство индексов</td><td class="en">interned term; type equality is index equality</td><td>rustc <code>Ty</code></td><td><span class="pill have">ЕСТЬ</span></td></tr>
+        <tr><td class="n">5</td><td><code>infer</code></td><td class="ru">вывод внутри одного тела: ожидаемый тип вниз, унификация вверх</td><td class="en">inference inside one body: expected type down, unification up</td><td>rustc <code>InferCtxt</code> · Go 1.18 <code>unify</code></td><td><span class="pill sketch ru">ЧАСТИЧНО</span><span class="pill sketch en">PARTIAL</span></td></tr>
+        <tr><td class="n">6</td><td><code>bounds</code></td><td class="ru">удовлетворяет ли тип протоколу и каким набором методов</td><td class="en">does a type satisfy a protocol, and by which method set</td><td class="ru">Go — множества методов, структурно</td><td class="en">Go — method sets, structurally</td><td><span class="pill sketch ru">ЧАСТИЧНО</span><span class="pill sketch en">PARTIAL</span></td></tr>
+        <tr><td class="n">7</td><td><code>check</code></td><td class="ru">тип каждого узла, выбранный кандидат, подстановка на месте вызова; пишет канал</td><td class="en">every node's type, the chosen candidate, substitution at the call site; writes the channel</td><td>rustc <code>TypeckResults</code> · Go <code>types2.Info</code> · Roslyn BoundTree</td><td><span class="pill have">ЕСТЬ</span></td></tr>
+        <tr><td class="n">8</td><td><code>lower</code> / MIR</td><td class="ru">типизированное полиморфное тело</td><td class="en">a typed, still polymorphic body</td><td>rustc MIR · Swift SIL · Go IR</td><td><span class="pill sketch ru">ЭСКИЗ, Э4</span><span class="pill sketch en">SKETCH, E4</span></td></tr>
+        <tr><td class="n">9</td><td><code>mono</code></td><td class="ru">множество достижимых <code>(row, subst)</code></td><td class="en">the set of reachable <code>(row, subst)</code></td><td>rustc mono collector · Go stenciling · Zig Sema</td><td><span class="pill have">ЕСТЬ</span></td></tr>
+        <tr><td class="n">10</td><td><code>layout</code></td><td class="ru">размер, выравнивание, C-имя — только для типа без параметров; сегодня решено лишь размещение (сумма без нагрузки — значением, запись — указателем)</td><td class="en">size, alignment, C name — only for a type without parameters; today only placement is decided (payload-less sum by value, record by pointer)</td><td>rustc <code>layout_of</code></td><td><span class="pill sketch ru">ЧАСТИЧНО</span><span class="pill sketch en">PARTIAL</span></td></tr>
+        <tr><td class="n">11</td><td><code>emit_c</code></td><td class="ru">всё конкретно; имена — одной дверью <code>sem/mangle</code></td><td class="en">everything concrete; names through the one door <code>sem/mangle</code></td><td>—</td><td><span class="pill have">ЕСТЬ</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <h3 class="ru">Три решения, которые держат форму</h3>
+      <h3 class="en">Three decisions that hold the shape</h3>
+      <p class="ru"><b>Один писатель.</b> Семантическую модель <code>sem</code> пишет только <code>check</code>; <code>mono</code> и <code>emit_c</code> читают канал и ничего не выводят сами — поэтому эмиттеру не нужно ребро к чекеру.</p>
+      <p class="en"><b>One writer.</b> Only <code>check</code> writes the semantic model <code>sem</code>; <code>mono</code> and <code>emit_c</code> read the channel and infer nothing themselves — which is why the emitter needs no edge to the checker.</p>
+      <p class="ru"><b>Один владелец порядка.</b> <code>pipeline</code> — единственный, кто зовёт фазы; снаружи — <code>compile(files, cfg)</code>, внутри — ни обхода файловой системы, ни резолва пакетов: это дело драйвера на Rust, который остаётся как есть.</p>
+      <p class="en"><b>One owner of order.</b> <code>pipeline</code> alone calls the phases; outside — <code>compile(files, cfg)</code>, inside — no file-system walk and no package resolution: that is the Rust driver's job, and it stays as it is.</p>
+      <p class="ru"><b>Одна дверь для имён.</b> C-имена печатает только <code>sem/mangle</code>, и мэнглинг односторонний: из имени ничего не читают обратно; страж сверяет напечатанные имена с оболочкой после факта, <code>Ctx.interop</code> — до.</p>
+      <p class="en"><b>One door for names.</b> Only <code>sem/mangle</code> prints C names, and mangling is one-way: nothing is ever read back out of a name; a guard checks the printed names against the shell after the fact, <code>Ctx.interop</code> before it.</p>
+    </div>
+    <div class="card">
+      <h3 class="ru">Как это судится</h3>
+      <h3 class="en">How it is judged</h3>
+      <p class="ru"><b>Корпус.</b> 61 файл примеров прогоняется обоими компиляторами: совпал ли вердикт проверки (11) и собрался ли файл байт в байт с тем же поведением (5). Цифры — храповик: вниз только с записанной причиной.</p>
+      <p class="en"><b>The corpus.</b> 61 example files run through both compilers: did the check verdict match (11), did the file build byte-identical with the same behaviour (5). The numbers are a ratchet: down only with a written reason.</p>
+      <p class="ru"><b>Стражи.</b> 76 проверок только для <code>novac</code>: размер файла, полнота ветвлений, документированность, одностороннее мэнглинг, отсутствие аллокаций в дверях поиска, свежесть живой строки плана — каждая с самотестом, который умеет краснеть.</p>
+      <p class="en"><b>Guards.</b> 76 checks for <code>novac</code> alone: file size, complete branching, documentation, one-way mangling, no allocation in lookup doors, freshness of the plan's live line — each with a selftest that knows how to go red.</p>
+      <p class="ru"><b>Отказ по имени.</b> Всё вне подмножества компилятор отвергает диагностикой, которая называет форму и причину; молчаливое принятие не-языка — худший вид расхождения, и его ищут отдельно.</p>
+      <p class="en"><b>Refusal by name.</b> Everything outside the subset is refused with a diagnostic that names the form and the reason; silently accepting non-language is the worst kind of divergence, and it is hunted separately.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span class="ru">Источник фактов — <code>docs/dev/novac-architecture.md</code> (слои, рёбра, доноры) и дерево <code>novac/src</code> на 2026-08-27 (статусы, числа). Статусы слоёв и числа корпуса меняются волнами и переснимаются вместе со страницей; «ЧАСТИЧНО» — суждение по коду, а не запись документа.</span>
+    <span class="en">Facts from <code>docs/dev/novac-architecture.md</code> (layers, edges, donors) and the <code>novac/src</code> tree as of 2026-08-27 (statuses, numbers). Layer statuses and corpus numbers move by waves and are re-taken with the page; "PARTIAL" is a judgement from the code, not a line of the document.</span>
+  </footer>
+</main>
+
+<script>
+  (function () {
+    var root = document.getElementById('root');
+    var btns = document.querySelectorAll('.lang button');
+    function set(l) {
+      root.setAttribute('data-lang', l);
+      for (var i = 0; i < btns.length; i++) btns[i].setAttribute('aria-pressed', btns[i].getAttribute('data-set') === l ? 'true' : 'false');
+      try { localStorage.setItem('novac-arch-lang', l); } catch (e) {}
+    }
+    for (var i = 0; i < btns.length; i++) btns[i].addEventListener('click', function () { set(this.getAttribute('data-set')); });
+    var saved = null;
+    try { saved = localStorage.getItem('novac-arch-lang'); } catch (e) {}
+    if (saved === 'en' || saved === 'ru') set(saved);
+  })();
+</script>
+</body>
+</html>
