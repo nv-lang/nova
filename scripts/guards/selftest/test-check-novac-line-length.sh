@@ -60,7 +60,7 @@ run "$T/absent"; grep -q "судить нечего" "$T/out" && ok "нет ди
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-line-length ok: все случаи, включая четыре исключения и судимую прозу"
+    echo "test-check-novac-line-length ok: все случаи, включая три исключения и судимый import и судимую прозу"
     exit 0
 fi
 exit 1
