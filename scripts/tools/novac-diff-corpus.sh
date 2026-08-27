@@ -192,11 +192,23 @@ done < "$T/list"
 
 # Поведенческое число: каждый совпали-принятый файл через смоук (эмиссия
 # novac + релинк драйвером + побайтовый дифф stdout/exit против оракула).
-beh=0; behfail=0
+# СТРОКА allow ДЕЙСТВУЕТ И ЗДЕСЬ (2026-08-27). Её контракт (шапка
+# `novac/divergences.allow`) говорит: «одна строка = одна фикстура, на которой
+# novac и оракул расходятся НАРОЧНО», а реестр расхождений велит заводить строку
+# ровно в тот день, когда расхождение стало ВИДИМЫМ ПОВЕДЕНИЕМ. Код же спрашивал
+# allow только в ветке «novac принял, оракул отверг» — то есть про поведение
+# контракт обещал то, чего не делал, и первое же сознательное поведенческое
+# расхождение (вместимость литерала, амендмент D239) красило прогон.
+# Сознательное расхождение считается ОТДЕЛЬНО и в behavior-match не входит:
+# «сошлись байт-в-байт» и «разошлись, и мы правы» — разные факты.
+beh=0; behfail=0; behallow=0
 if [ -f "$T/acc" ]; then
     while IFS= read -r rel; do
         if sh "$ROOT/scripts/tools/novac-e1-smoke.sh" "$rel" >/dev/null 2>&1; then
             beh=$((beh+1))
+        elif [ -f "$ALLOW" ] && grep -Fxq "$rel" "$ALLOW"; then
+            behallow=$((behallow+1))
+            echo "  РАЗОШЛИСЬ СОЗНАТЕЛЬНО (allow): $rel — история в docs/dev/novac-divergences.md" >> "$T/note"
         else
             echo "  ПОВЕДЕНИЕ РАЗОШЛОСЬ: $rel (оба check-принимают, но бинарь novac != оракула)" >> "$T/red"
             behfail=$((behfail+1))
@@ -256,6 +268,9 @@ if [ "$danger" -gt 0 ] || [ "$panic" -gt 0 ] || [ "$behfail" -gt 0 ]; then
     exit 1
 fi
 # Машинная строка — её парсит check-novac-differential.sh (храповик §10.4).
-echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total"
+if [ -s "$T/note" ]; then
+    cat "$T/note"
+fi
+echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh behavior-allowed=$behallow out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total"
 echo "novac-diff-corpus ok"
 exit 0
