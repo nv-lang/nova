@@ -71,9 +71,17 @@ def fixed_numbers(root, histfile):
             continue
         sha, subj = line.split("|", 1)
         head = subj.split(":", 1)[0]
-        if not head.startswith(("fix(", "feat(")):
+        # Номера берутся ТОЛЬКО из скобки самого `fix(...)`/`feat(...)`, а не из
+        # всего заголовка до двоеточия (реестр 221.1 №777, замер 2026-08-26).
+        # Прежняя форма брала любые `#N` перед двоеточием, и заголовок
+        # `fix(#628) measure(#692)` объявлял ПОЧИНЕННЫМ и №692 — строку, которая
+        # тем же коммитом была лишь ПОДТВЕРЖДЕНА ЖИВОЙ. Страж покраснел на
+        # здоровом дереве и потребовал закрыть или забазировать открытый дефект:
+        # ложная краснота, ведущая ровно в неверную сторону.
+        m = re.match(r"^(?:fix|feat)\(([^)]*)\)", head)
+        if not m:
             continue
-        for num in re.findall(r"#(\d{2,4})", head):
+        for num in re.findall(r"#(\d{2,4})", m.group(1)):
             seen.setdefault(int(num), sha.strip())
     return seen
 

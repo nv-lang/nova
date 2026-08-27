@@ -27,7 +27,8 @@ HIST="$TMP/hist.txt"
 printf '%s\n' \
   'aaaaaaa|fix(#901): a landed fix' \
   'bbbbbbb|registry(#902): only a registry note, not a fix' \
-  'ccccccc|fix(#903): another landed fix' > "$HIST"
+  'ccccccc|fix(#903): another landed fix' \
+  'ddddddd|fix(#905) measure(#906): closes 905, only measures 906' > "$HIST"
 
 run() { sh "$G" "$TMP" "$HIST" >/dev/null 2>&1; echo $?; }
 
@@ -120,6 +121,18 @@ check "a chronicle of the retired status does not hide the live one" "$(run)" "1
 printf '%s\n' '901  carrier fixed, class open' > "$BASE"
 mk "901:chronicle"
 check "the same row, once baselined, is green" "$(run)" "0"
+
+# 13. Номер, лишь УПОМЯНУТЫЙ в заголовке рядом с `fix(...)`, не считается
+# починенным (реестр 221.1 №777). Заголовок `fix(#905) measure(#906)` закрывает
+# 905 и лишь ПОДТВЕРЖДАЕТ 906; строка 906 открыта, базы нет -> зелёный.
+: > "$BASE"
+mk "906:open"
+check "a number merely mentioned beside fix(...) is not a fix" "$(run)" "0"
+
+# 14. И обратная сторона: номер ВНУТРИ скобки по-прежнему считается.
+: > "$BASE"
+mk "905:open"
+check "a number inside fix(...) still counts" "$(run)" "1"
 
 echo "  passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
