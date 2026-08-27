@@ -44,5 +44,10 @@
 # RATCHET-UP contract-match 10 -> 11, behavior-match 4 -> 5 (2026-08-26, подплан Л3:
 # examples/basics/vec_len.nv — литерал, `len`, `push`, `len`; первый файл корпуса
 # с std-методом инстанса, собранный обоими компиляторами байт-в-байт).
-contract-match 11
+# RATCHET-UP contract-match 11 -> 12 (2026-08-27): examples/basics/vec_cap.nv —
+# вместимость литерала по амендменту D239. Оба компилятора файл ПРИНИМАЮТ (отсюда
+# рост contract-match), а поведение расходится сознательно: у нас `2`, у оракула
+# `8` — это первое ВИДИМОЕ расхождение, оно в строке novac/divergences.allow и
+# считается отдельным числом behavior-allowed, в behavior-match не входит.
+contract-match 12
 behavior-match 5

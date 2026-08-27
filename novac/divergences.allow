@@ -10,3 +10,4 @@
 # forbid.
 #
 # Empty is the healthy state.
+examples/basics/vec_cap.nv
