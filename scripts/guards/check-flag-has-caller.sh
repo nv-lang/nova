@@ -50,34 +50,32 @@ BASELINE="${NOVA_FLAGCALLER_BASELINE:-$ROOT/scripts/guards/flag-has-caller.basel
 
 [ -d "$ROOT" ] || { echo "check-flag-has-caller: нет каталога $ROOT" >&2; exit 1; }
 
-SRC_DIRS=""
-for d in compiler-codegen/src nova-cli/src; do
-    [ -d "$ROOT/$d" ] && SRC_DIRS="$SRC_DIRS $ROOT/$d"
-done
-if [ -z "$SRC_DIRS" ]; then
-    echo "check-flag-has-caller ok: нет исходников компилятора в $ROOT"
-    exit 0
-fi
+CORE="$(dirname "${BASH_SOURCE[0]}")/flag-caller-scan.py"
+[ -f "$CORE" ] || { echo "check-flag-has-caller: нет ядра $CORE" >&2; exit 1; }
 
-# Имена флагов, читаемые кодом.
-FLAGS=$(grep -rhoE 'env::var(_os)?\("NOVA_[A-Z_0-9]+"' $SRC_DIRS 2>/dev/null \
-        | grep -oE 'NOVA_[A-Z_0-9]+' | sort -u)
+# СКОРОСТЬ — ЧАСТЬ РАБОТОСПОСОБНОСТИ (замер 2026-08-27, реестр 221.1 №784).
+# Здесь стоял ЦИКЛ по флагам с полным рекурсивным `grep` на КАЖДЫЙ: флагов
+# 114, зона включает `docs` с реестром на 2.2 МБ — 113 секунд на ОДНОМ шаге
+# яруса, чей весь бюджет 240с. Под чужой нагрузкой шаг раздувался до 160с и валил
+# ярус по бюджету шесть прогонов подряд. Скан переехал в ядро, которое
+# читает зону ОДИН раз; вердикт совпадает до флага — проверено сверкой
+# со старой редакцией на том же дереве. Образец — `check-commit-refs.sh` и его
+# `commit-refs-scan.py`. Самотест держит равенство вердиктов.
+OUT=$(python "$CORE" "$ROOT" 2>&1) || {
+    echo "check-flag-has-caller: ядро отказало:" >&2
+    printf '%s\n' "$OUT" >&2
+    exit 1
+}
 
-[ -n "$FLAGS" ] || { echo "check-flag-has-caller ok: флагов не найдено"; exit 0; }
+case "$OUT" in
+    *"flags=0"*)
+        echo "check-flag-has-caller ok: флагов не найдено"
+        exit 0 ;;
+esac
 
-SILENT=""
-COUNT=0
-for f in $FLAGS; do
-    # Ищем упоминание ВНЕ Rust-исходников: тот, кто взводит, или тот, кто описывает.
-    if grep -rqF "$f" \
-            --include="*.sh" --include="*.yml" --include="*.yaml" \
-            --include="*.md" --include="*.toml" --include="*.py" \
-            "$ROOT/scripts" "$ROOT/docs" "$ROOT/.github" "$ROOT/AGENTS.md" 2>/dev/null; then
-        continue
-    fi
-    SILENT="$SILENT $f"
-    COUNT=$((COUNT + 1))
-done
+COUNT=$(printf '%s\n' "$OUT" | sed -n 's/^silent=\([0-9][0-9]*\)$/\1/p' | head -1)
+[ -n "$COUNT" ] || { echo "check-flag-has-caller: ядро не назвало число" >&2; exit 1; }
+SILENT=$(printf '%s\n' "$OUT" | sed -n 's/^SILENT //p')
 
 BASE=0
 if [ -f "$BASELINE" ]; then
