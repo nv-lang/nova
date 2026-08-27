@@ -4164,7 +4164,6 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 | `[M-d73-d77-retraction-migration]` | Retraction-миграция D73/D77-форм: старый синтаксис убран, кодовая база приведена к актуальной spec-форме. | spec cleanup | ✅ DONE |
 | `[M-flagship-...]` | Флагманский маркер: `report_json_test` — расшифровка лога флагманского теста. Аналитический маркер (не баг, not actionable). | floating (analytics) | P3 |
 | `[M-flagship-monotonic-now-bare-binding-ice]` | `Monotonic.now()` bare binding ICE: вызов статического метода на bare type-name (без скобок) в single-file контексте. Починен. | Plan 196 | ✅ DONE |
-| `[M-flagship-spawn-capture-value-struct-ptr-mismatch]` | CC-FAIL: spawn capture value-struct передавался как `*` вместо inline value — mismatch в C-типе замыкания. Починен (value-record capture-path). | Plan 187 | ✅ DONE |
 | `[M-flagship-spawn-throw-segfault]` | Segfault при `spawn throw` с multifield payload — раскладка payload'а на стеке не учитывала multi-slot эффект-значения. Починен. | Plan 187 | ✅ DONE |
 | `[M-fmt-buf-module-path]` | `fmt_buf` module path isolation: отдельный модуль от `runtime.string_builder` для переиспользования без циклической зависимости. Реализовано. | std | ✅ DONE |
 | `[M-freefn-named-default-arg-shift]` | Freefn named default arg shift: при nameonly-вызове аргументы со сдвигом пропускали default filler. Починен (call-site arg alignment). | Plan 196 | ✅ DONE |

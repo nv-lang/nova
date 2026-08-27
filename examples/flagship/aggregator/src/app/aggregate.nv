@@ -29,28 +29,32 @@ import std.time.duration
 const BASE_PORT = 20000
 
 // [M-flagship-spawn-throw-segfault] workaround: `fetch_one` returns
-// `Result[SourceData, AggError]` instead of using `Fail[AggError]` + `throw`,
-// because throwing a multi-field enum from inside `spawn` caused a segfault.
+// `Result[SourceData, AggError]` instead of using `Fail[AggError]` + `throw`.
+//
+// The reason has CHANGED, and the old one is gone. The segfault this marker
+// names (throwing a multi-field enum from inside `spawn`) was fixed — probed
+// 2026-08-27 on a standalone case: throw of a two-field variant from a
+// spawned fiber under `supervised` runs clean, exit 0. What keeps the
+// workaround alive now is a different defect: registry 221.1 #782, a single
+// `throw` runs its `Fail` handler TWICE. Switching this to `throw` would
+// double every error's handling — two log lines, two metrics, two
+// compensations — silently, since control flow and the exit code stay
+// correct. Remove this workaround when #782 closes, not before.
 /// Fetch a single source. Demo/Chaos: sleeps first (simulated latency),
 /// then either a simulated-upstream `Err` or the real `Net` round-trip.
-// [M-flagship-spawn-capture-value-struct-ptr-mismatch] workaround:
-// `fetch_one` takes scalar/`str` params instead of the whole `Source`
-// struct — capturing a multi-field value struct into a nested spawn context
-// CC-fails. `fetch_guarded` destructures `source` into locals before the
-// spawn and captures only those.
-fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Result[SourceData, AggError] {
-    if latency_ms > 0 {
-        latency_ms.to_millis().sleep()
+fn fetch_one(source Source, idx int) Net Time -> Result[SourceData, AggError] {
+    if source.latency_ms > 0 {
+        source.latency_ms.to_millis().sleep()
     }
-    if should_fail {
-        return Err(AggError.Upstream(id))
+    if source.should_fail {
+        return Err(AggError.Upstream(source.id))
     }
     ro addr = SocketAddr.loopback(BASE_PORT + idx)
     // No explicit `close()`: `TcpStream consume @cleanup` (D432 affine) closes
     // the stream on every scope exit, including the `?` early-return paths.
     consume stream = TcpStream.connect(addr).map_err(|e| AggError.Transport(e.to_str()))?
     ro bytes = stream.read_bytes(64).map_err(|e| AggError.Transport(e.to_str()))?
-    Ok(SourceData { id, payload: bytes })
+    Ok(SourceData { id: source.id, payload: bytes })
 }
 
 // Chain broken into separate bindings (a deep method chain can confuse
@@ -69,10 +73,6 @@ fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emi
     ro t0 = Monotonic.now()
     ro sid = source.id
     Emit.lane_started(sid, idx)
-    // [M-flagship-spawn-capture-value-struct-ptr-mismatch] workaround:
-    // destructure `source` into scalar/`str` locals before the spawn.
-    ro slatency = source.latency_ms
-    ro sfail = source.should_fail
     ro { tx, rx } = Channel[TaskStatus].new(1)
     // Plan 238 (D441 §3, модель памяти между файберами): `with Fail[T]`
     // handler исполняется В ФАЙБЕРЕ падающей операции, не вызывающего
@@ -82,7 +82,7 @@ fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emi
     with Fail[TimeoutError] = |_e| { timed_out.store(true) } {
         supervised(deadline: shared_deadline) {
             spawn {
-                ro outcome = fetch_one(sid, slatency, sfail, idx)
+                ro outcome = fetch_one(source, idx)
                 ro st = match outcome {
                     Ok(data) => TaskStatus.Done(data)
                     Err(e)   => TaskStatus.Failed(e.to_str())
