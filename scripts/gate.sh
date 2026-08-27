@@ -452,6 +452,8 @@ step loop 'retracted-try-semantics (снятая трактовка `?` в до�
 guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
 step loop "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
+step loop "registry-row-closed (каждая строка реестра закрыта трубой — №781)"
+guard "$ROOT/scripts/guards/check-registry-row-closed.sh" "$ROOT" || fail "строка реестра без замыкающей трубы: общий приём дописки (срезать трубу, дописать, вернуть) съедает на ней последний символ — так пропали точки у №467 и №387 (№781)"
 step loop "registry-single-verdict (одна строка — один вердикт и статус — №730)"
 guard "$ROOT/scripts/guards/check-registry-single-verdict.sh" "$ROOT" || fail "в реестре строка с ДВУМЯ вердиктами или статусами: сканеры читают первое вхождение, дописки идут в хвост — заглавные числа релиза начинают врать в обе стороны (№730)"
 step loop "fixed-but-open (правка слита — строка не числится открытой — №731)"
