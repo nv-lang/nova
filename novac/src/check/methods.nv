@@ -23,7 +23,8 @@ import ../tree.{Node}
 import ../lex.{Token}
 import ../types.{TyId}
 import ../builtins.{TypeKind}
-import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnLookup, FnRow, CalleeTarget, raw_row, no_row, bind_slots, c_instance_method, ty_source_name, decl_of_ty}
+import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnLookup, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
+import ../sem.{c_instance_method, ty_source_name, decl_of_ty}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
 /// one slot per written argument.

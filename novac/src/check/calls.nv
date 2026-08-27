@@ -28,7 +28,9 @@ module novac.check
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row, subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children, ty_source_name, missing_sig_of, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
+import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
+import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
+import ../sem.{ty_source_name, missing_sig_of, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The lookup key of a free call: one slot per written argument, no position
