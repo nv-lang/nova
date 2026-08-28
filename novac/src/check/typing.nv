@@ -618,6 +618,28 @@ fn Checker mut @type_expr(e Node) -> () {
             }
             Branch { .. } => {}
         }
+    } else if k == NodeKind.SelfField {
+        // `@field` in an instance body: the receiver is a BINDING (wave 3g),
+        // so the owner's type is in scope, and the field's type is a DECISION
+        // recorded here (274.4 step 3) -- the lattice reads it back. Outside
+        // a method body the walk records nothing and readers act on no_ty().
+        ro kids = branch_children(e)
+        if kids.len() >= 2 && @scope.is_bound(RECV_BINDING) {
+            match kids[1] {
+                Leaf(t) => {
+                    ro owner = @scope.type_of_name(RECV_BINDING)
+                    if @ctx.fields.has_field(owner, t.text) {
+                        @record(e, @ctx.fields.field_type(owner, t.text))
+                    } else {
+                        @refuse(t, "unknown field: this type has no field with this name")
+                    }
+                }
+                Branch { .. } => {}
+            }
+        } else {
+            // No receiver bound: `@field` outside a method body is refused
+            // by the subset walk; nothing to decide here.
+        }
     } else if k == NodeKind.FieldAccess {
         // REACHABLE, unlike the three above: `s.` with nothing after the dot
         // gives two children (parse stops rather than inventing a name), and
@@ -653,9 +675,11 @@ fn Checker mut @type_expr(e Node) -> () {
                 if !@ctx.fields.has_field(owner, t.text) {
                     @refuse(t, "unknown field: this type has no field with this name")
                 } else {
-                    // The field exists: nothing to refuse, and nothing to
-                    // record -- the lattice answers a field access from the
-                    // owner's type, which the walk above verified.
+                    // The field exists -- and ITS TYPE IS A DECISION (274.4
+                    // step 3): recorded here, read by everyone. Until this
+                    // wave the lattice re-resolved the field NAME on every
+                    // ask -- the same second door the method calls had.
+                    @record(e, @ctx.fields.field_type(owner, t.text))
                 }
             }
             Branch { .. } => {}

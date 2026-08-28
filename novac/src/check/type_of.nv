@@ -195,16 +195,17 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     // binding does not exist, and the answer is absence -- which `check`
     // refuses by name rather than icing here (P12).
     if k == NodeKind.SelfField {
-        ro kids = branch_children(e)
-        assert(kids.len() >= 2, "check: `@field` without a name")
-        if !scope.is_bound(RECV_BINDING) { return no_ty() }
-        return ctx.fields.field_type(scope.type_of_name(RECV_BINDING), leaf_text(kids[1]))
+        // THE CHANNEL IS THE ONLY SOURCE (274.4 step 3): the walk records the
+        // field's type where it verifies the field exists. `@field` outside a
+        // method body records nothing, and no_ty() is that answer.
+        return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.FieldAccess {
-        ro kids = branch_children(e)
-        assert(kids.len() >= 3, "check: field access without a name")
-        ro recv_t = type_of(kids[0], ctx, scope, chan)
-        return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
+        // Same rule: the walk decided, this door reads. Re-resolving the
+        // field NAME here was the second door of the field root -- the exact
+        // shape the method calls lost in step 2. Silence is a refused or
+        // unwalked access, and readers act on no_ty().
+        return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.ArrayLit {
         // Decided by `type_array_lit` and RECORDED before anyone asks; the
