@@ -45,5 +45,20 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "deny": [
+      "Read(./**/.env*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.p12)",
+      "Read(./**/*.pfx)",
+      "Read(./**/id_rsa*)",
+      "Read(./**/id_ed25519*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -fd:*)",
+      "PowerShell(git reset --hard:*)",
+      "PowerShell(git clean -fd:*)"
+    ]
   }
 }

@@ -39,6 +39,7 @@ gate rather than passing quietly.
   index — say so in the command: `# index-verified: <reason>`.
 * Never `git stash`: worktrees share one `.git`, and what you hide surfaces in
   someone else's tree.
+* **Secrets are unreadable by the environment, not by your good behaviour.** `.claude/settings.json` carries a `permissions.deny` list: env files, private keys and certificates cannot be read at all, and `git reset --hard` / `git clean -fd` cannot be run (the git hook judges commit scope and stash, not those two — they erase someone else's uncommitted work in a shared tree without a trace). The list itself is NOT repeated here: a second copy would drift, and the file is the thing that actually enforces it. A leaked secret is leaked forever — no later commit removes it, you have to rotate the secret.
 * Never touch `git config user.*` — authorship is the owner's, by hand. (349
   commits once went out under the wrong name this way.)
 * No `Co-Authored-By` trailers.
