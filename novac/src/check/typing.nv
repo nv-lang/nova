@@ -628,8 +628,8 @@ fn Checker mut @type_expr(e Node) -> () {
             match kids[1] {
                 Leaf(t) => {
                     ro owner = @scope.type_of_name(RECV_BINDING)
-                    if @ctx.fields.has_field(owner, t.text) {
-                        @record(e, @ctx.fields.field_type(owner, t.text))
+                    if @fres.has_field(@ctx.fields, owner, t.text) {
+                        @record(e, @fres.field_type(@ctx.fields, owner, t.text))
                     } else {
                         @refuse(t, "unknown field: this type has no field with this name")
                     }
@@ -672,14 +672,14 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         match kids[2] {
             Leaf(t) => {
-                if !@ctx.fields.has_field(owner, t.text) {
+                if !@fres.has_field(@ctx.fields, owner, t.text) {
                     @refuse(t, "unknown field: this type has no field with this name")
                 } else {
                     // The field exists -- and ITS TYPE IS A DECISION (274.4
                     // step 3): recorded here, read by everyone. Until this
                     // wave the lattice re-resolved the field NAME on every
                     // ask -- the same second door the method calls had.
-                    @record(e, @ctx.fields.field_type(owner, t.text))
+                    @record(e, @fres.field_type(@ctx.fields, owner, t.text))
                 }
             }
             Branch { .. } => {}

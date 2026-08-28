@@ -42,7 +42,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, recv_type_name, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
-import ../resolve.{FnIndex}
+import ../resolve.{FnIndex, FieldIndex}
 
 /// State of one check run: the source (for positions), the semantic context
 /// and the diagnostics collected so far. A receiver, not a triple of
@@ -64,6 +64,10 @@ type Checker {
     /// nowhere else -- emit_c and mono get a Ctx and no index, so resolution
     /// after the checker is not merely forbidden, there is nothing to call.
     res FnIndex
+    /// THE name index over ctx.fields (274.4 step 3): the same lock for the
+    /// field root -- fields resolve only through a receiver type, and only
+    /// the checker can ask.
+    fres FieldIndex
     out []Diagnostic /// diagnostics collected by this run
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
     scope Scope /// locals of the function body being typed; reset per function
@@ -110,6 +114,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     mut c = Checker {
         src, ctx,
         res: FnIndex.build(ctx.fns),
+        fres: FieldIndex.build(ctx.fields),
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
@@ -158,6 +163,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
     mut c = Checker {
         src, ctx,
         res: FnIndex.build(ctx.fns),
+        fres: FieldIndex.build(ctx.fields),
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),

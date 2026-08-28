@@ -39,6 +39,7 @@ import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
 import ../types.{TyId, is_ty, Interner}
 import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm}
+import ../sem.{FieldTable, FieldRow, raw_frow, no_frow, is_frow}
 import ../sem.{positional_run, bind_slot_of, slot_is_required, mode_admits, type_admits}
 import ../sem.{ty_source_name}
 
@@ -170,6 +171,65 @@ export fn FnIndex @entry_row(fns FnTable) -> Option[FnRow] {
         if fns.is_entry_row(row) { return Some(row) }
     }
     None
+}
+
+/// THE name index over `FieldTable.rows`: field name -> chain of same-named
+/// rows (NsFields). Same construction as FnIndex, same reason (274.4 step 3):
+/// fields resolve ONLY through a receiver type, and while the chain lived on
+/// the table, any holder of Ctx could resolve field names -- the emitter is a
+/// holder of Ctx. The chain compares the owner as an INTEGER: the first shape
+/// keyed by text ("${owner_id}.${name}"), which allocated on every access and
+/// put structure into a string right after §4а ruled "identity is not a name".
+export type FieldIndex {
+    names NameTable /// field name -> LAST registered row of that name; `next` walks the earlier ones
+    next []FieldRow /// parallel to FieldTable.rows: next row carrying the SAME name, `no_frow()` at the end
+}
+
+/// Build the index over these rows: an empty FieldIndex, then one registering
+/// pass.
+export fn FieldIndex.build(fields FieldTable) -> FieldIndex {
+    mut ix = FieldIndex { names: NameTable.new(NamespaceId.NsFields), next: []FieldRow.new() }
+    ix.fill(fields)
+    ix
+}
+
+/// Register every row -- the chain `FieldTable.add` grew in place before the
+/// split. The MUTATING form on purpose (П18): registration may allocate, a
+/// lookup door may not.
+fn FieldIndex mut @fill(fields FieldTable) -> () {
+    for i in 0..fields.rows.len() {
+        ro name = fields.rows[i].name
+        @next.push(FieldRow(@names.find(name)))
+        @names.put(name, i)
+    }
+}
+
+/// Does `owner_id` have a field named `fname`? The tolerant half again:
+/// `check` asks first, so a misspelled field is a diagnostic, not an ice.
+#realtime nogc
+export fn FieldIndex @has_field(fields FieldTable, owner_id TyId, fname str) -> bool {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return true }
+        r = @next[raw_frow(r)]
+    }
+    false
+}
+
+/// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
+#realtime nogc
+export fn FieldIndex @field_type(fields FieldTable, owner_id TyId, fname str) -> TyId {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return fd.type_id }
+        r = @next[raw_frow(r)]
+    }
+    // [LEGACY-#700-user-error-as-ice until:E2b3] a typo in a field name is a
+    // USER error and must be a diagnostic, not an ice; check gets local typing
+    // at E2-b3 and takes this over. Integrator review 2026-08-16.
+    ice("resolve: unknown field past check (type checker is a later wave)")
 }
 
 /// Does this row take a call with these argument types?

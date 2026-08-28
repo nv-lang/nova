@@ -138,61 +138,28 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
 export type FieldDef value {
     name str /// Field spelling; the backend uses it for the member name verbatim.
     type_id TyId /// The field's type id.
-    owner_id TyId /// Owning type id; the door takes the NAME and compares this as a type id.
-    next_row FieldRow /// Next row carrying the SAME field name, or `no_frow()`; see FieldTable. STORING it here is what makes the row an identity rather than a step
+    owner_id TyId /// Owning type id; the resolver compares this as a type id while walking its chain.
 }
 
-/// Record-field registry: fields resolve ONLY through a receiver type —
-/// never as bare names (same as Go/rustc). The door therefore takes the
-/// field name and walks a chain of same-named rows, comparing the owner as
-/// an INTEGER. The first shape built the key as text ("${owner_id}.${name}"),
-/// which allocated and formatted a string on every field access and put
-/// structure back into a string right after §4а spent a rule on "identity
-/// is not a name"; the chain does the same job with one integer compare per
-/// candidate and no allocation. Rows stay in per-type insertion order, so
-/// the FieldRows arm of TypeDef.rows still addresses a contiguous range.
+/// Record-field registry: rows and their payload, grouped per type via
+/// TypeDef.rows (the FieldRows arm), in per-type insertion order. Resolution
+/// -- fields resolve ONLY through a receiver type, never as bare names (same
+/// as Go/rustc) -- lives in `resolve.FieldIndex` since 274.4 step 3: with
+/// the name chain on this table, any holder of Ctx could resolve field
+/// names, and the emitter is a holder of Ctx. The chain rationale (integer
+/// compares, no text keys, no allocation) moved with it.
 export type FieldTable {
-    names NameTable /// field name -> FIRST row with that name (NsFields); FieldDef.next walks the rest.
     rows []FieldDef /// The field rows, grouped per type via TypeDef.rows (the FieldRows arm)
 }
 
-/// Empty field registry with the NsFields namespace.
+/// Empty field registry.
 export fn FieldTable.new() -> FieldTable =>
-    { names: NameTable.new(NamespaceId.NsFields), rows: []FieldDef.new() }
+    { rows: []FieldDef.new() }
 
-/// Register one field of `owner_id`, keeping the same-name chain linked.
+/// Register one field of `owner_id`. The same-name chain is not grown here:
+/// the resolver builds its index FROM these rows (274.4 step 3).
 export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
-    ro head = FieldRow(@names.find(name))
-    @names.put(name, @rows.len())
-    @rows.push(FieldDef { name, type_id, owner_id, next_row: head })
-}
-
-/// Does `owner_id` have a field named `fname`? The tolerant half again:
-/// `check` asks first, so a misspelled field is a diagnostic, not an ice.
-#realtime nogc
-export fn FieldTable @has_field(owner_id TyId, fname str) -> bool {
-    mut r = FieldRow(@names.find(fname))
-    while is_frow(r) {
-        ro fd = @rows[raw_frow(r)]
-        if fd.owner_id == owner_id { return true }
-        r = fd.next_row
-    }
-    false
-}
-
-/// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
-#realtime nogc
-export fn FieldTable @field_type(owner_id TyId, fname str) -> TyId {
-    mut r = FieldRow(@names.find(fname))
-    while is_frow(r) {
-        ro fd = @rows[raw_frow(r)]
-        if fd.owner_id == owner_id { return fd.type_id }
-        r = fd.next_row
-    }
-    // [LEGACY-#700-user-error-as-ice until:E2b3] a typo in a field name is a
-    // USER error and must be a diagnostic, not an ice; check gets local typing
-    // at E2-b3 and takes this over. Integrator review 2026-08-16.
-    ice("sem: unknown field past check (type checker is a later wave)")
+    @rows.push(FieldDef { name, type_id, owner_id })
 }
 
 /// One sum_id variant; a variant row is this record's index in Ctx.variant_rows.
