@@ -211,11 +211,6 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     CheckOut { entry: no_row(), types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new() }
 }
 
-/// Record the type of a node. Writing a DIFFERENT answer over an existing one
-/// is an ice: two answers to one question is precisely the disease the channel
-/// exists to cure, and it must not be curable by ordering. Writing the SAME
-/// answer twice is legal -- the emitter asks for a binding's initializer type
-/// and then emits that same expression, and both paths mean one fact.
 /// THE ENTRY DECISION (274.4 step 2): which row is this program's entry
 /// point. It is a name resolution -- the checker's job -- and mono used to
 /// take it itself by calling the registry; now mono READS it here, so the
@@ -231,6 +226,11 @@ export fn CheckOut @entry_of() -> Option[FnRow] {
     Some(@entry)
 }
 
+/// Record the type of a node. Writing a DIFFERENT answer over an existing one
+/// is an ice: two answers to one question is precisely the disease the channel
+/// exists to cure, and it must not be curable by ordering. Writing the SAME
+/// answer twice is legal -- the emitter asks for a binding's initializer type
+/// and then emits that same expression, and both paths mean one fact.
 export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
     requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
 {

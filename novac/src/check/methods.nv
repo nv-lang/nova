@@ -23,7 +23,8 @@ import ../tree.{Node}
 import ../lex.{Token}
 import ../types.{TyId}
 import ../builtins.{TypeKind}
-import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnLookup, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
+import ../resolve.{FnLookup}
+import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{c_instance_method, ty_source_name, decl_of_ty}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
@@ -71,7 +72,7 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
         // the binding, and its refusal needs it to name which rule failed.
         Leaf(t) => {
             ro key = @method_call_key(kids, recv_t)
-            @judge_method_lookup(e, t, key, @ctx.fns.lookup(@ctx.tys, t.text, key, CallForm.MethodCall))
+            @judge_method_lookup(e, t, key, @res.lookup(@ctx.fns, @ctx.tys, t.text, key, CallForm.MethodCall))
         }
     }
 }
@@ -85,7 +86,7 @@ fn Checker @method_refusal(t Token, key []ArgSpec) -> str {
     // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
     // outer test is flattened to a plain `if` over the Option. The class is the
     // oracle's, filed in the registry; this shape goes back the day it is fixed.
-    ro only = @ctx.fns.only_row_of(t.text)
+    ro only = @res.only_row_of(t.text)
     if !only.is_none() {
         if Some(why) = @binding_refusal(only ?? no_row(), key) {
             return why

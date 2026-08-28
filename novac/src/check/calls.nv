@@ -28,10 +28,11 @@ module novac.check
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
-import ../sem.{ArgSpec, CallForm, FnLookup, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
+import ../sem.{ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
-import ../sem.{ty_source_name, missing_sig_of, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
+import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
 import ../types.{TyId, no_ty, is_ty}
+import ../resolve.{FnLookup, missing_sig_of}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -52,7 +53,7 @@ fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut) -> []ArgSpec
 /// that does not fit -- and in the last case, whether D429 makes the call legal
 /// Nova that novac merely cannot emit yet.
 fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
-    if !@ctx.fns.has_name(cname) {
+    if !@res.has_name(cname) {
         @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
         return
     } else {
@@ -70,7 +71,7 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
     // outer test is flattened to a plain `if` over the Option. The class is the
     // oracle's, filed in the registry; this shape goes back the day it is fixed.
-    ro only = @ctx.fns.only_row_of(cname)
+    ro only = @res.only_row_of(cname)
     if !only.is_none() {
         if Some(why) = @binding_refusal(only ?? no_row(), key) {
             @report_first_leaf_of(kids, why)
@@ -83,7 +84,7 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     }
     // The same question with the TYPES removed: if nothing fits by arity
     // alone, the arity is the cause and the types never mattered.
-    match @ctx.fns.lookup(@ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
+    match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
         FnUnknown => @report_first_leaf_of(kids,
             "outside the subset: no function of this name takes this many arguments")
         // Several rows take this many arguments and none of them fits the
@@ -191,10 +192,10 @@ fn Checker mut @resolve_coerce_or_refuse(e Node, kids []Node, cname str, key []A
     mut second = no_row()
     // The chain, walked through the two doors rather than materialised: the same
     // walk `lookup` does, and for the same reason it allocates nothing.
-    mut row = @ctx.fns.first_row_of(cname)
+    mut row = @res.first_row_of(cname)
     while raw_row(row) >= 0 {
         ro here = row
-        row = @ctx.fns.next_row_of(row)
+        row = @res.next_row_of(row)
         if !@coerces_into(here, key) { continue }
         if raw_row(winner) < 0 {
             winner = here
@@ -350,7 +351,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
 /// exists. A PLAIN row of the right arity that the exact key rejected is not
 /// accepted here: its types are the cause, and the refusal says so.
 fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
-    match @ctx.fns.lookup(@ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
+    match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
         FnFound(row) => {
             if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
                 @record_free_callee(e, kids, row, key)
@@ -523,7 +524,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
         if bound == "" { continue }
         ro prow = @ctx.protos.row_of(bound)
         if prow < 0 { continue }
-        if Some(missing) = missing_sig_of(@ctx, ids[slot], prow) {
+        if Some(missing) = missing_sig_of(@ctx, @res, ids[slot], prow) {
             @report_first_leaf_of(kids,
                 "outside the subset: ${ty_source_name(@ctx, ids[slot])} does not satisfy `${bound}` -- missing ${missing}")
             return

@@ -22,7 +22,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
+import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
 import ../sem.{is_vrow, variant_range_of}
 import ../types.{TyId, no_ty, is_ty}

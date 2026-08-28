@@ -170,6 +170,7 @@ parse 1
 # pipeline 5 -> 6 (2026-08-26): `interop_surface` — вход компиляции рядом с
 # `parse_decls`: `main` берёт его один раз и раздаёт каждому `compile`.
 pipeline 6
+resolve 11
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -483,7 +484,12 @@ pipeline 6
 # символ несёт, и эмиттер — чтобы напечатать. Инстансная форма
 # (`Vec____nova_int_method_push`, без приставки `Nova_`) у оракула другая, и без
 # отдельной двери novac угадывал бы, какая из двух ему нужна.
-sem 175
+# 2026-08-28 (274.4 step 2): the resolver split. sem 175 -> 171: FnLookup,
+# entry_row, first/next/only_row_of, has_name, has_method_for, missing_sig_of
+# moved OUT to the new `resolve` module (8 doors), and positional_run,
+# bind_slot_of, slot_is_required are exported TO it (3 readers of the binding
+# rules the resolver applies). resolve 11: the moved doors plus FnIndex/build.
+sem 171
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

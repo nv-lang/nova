@@ -29,8 +29,9 @@ import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD}
+import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
@@ -526,7 +527,7 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
     // P18: a door that ASKS the table builds no text -- the
     // messages live in the refusers below, each with its own
     // reason.
-    match @ctx.fns.lookup(@ctx.tys, EQUAL_METHOD, equality_key(lhs_t), CallForm.MethodCall) {
+    match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, equality_key(lhs_t), CallForm.MethodCall) {
         FnFound(row) => @accept_equality_row(e, kids, lhs_t, row)
         FnOverloaded(_) => @refuse_equality_overloaded(kids)
         FnUnknown => @refuse_equality_unknown(kids)
@@ -756,7 +757,7 @@ fn Checker mut @type_expr(e Node) -> () {
                 // arity alone -- accepted here, refused by the oracle, and
                 // emitted as one string argument to a two-parameter function.
                 ro key = typed_free_key(kids, @ctx, @scope, @chan)
-                match @ctx.fns.lookup(@ctx.tys, cname, key, CallForm.FreeCall) {
+                match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
                     FnFound(row) => @record_free_callee(e, kids, row, key)
                     FnOverloaded(_) => @report_first_leaf_of(kids,
                         "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")

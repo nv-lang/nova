@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// novac/src/sem — tests beside the module (project convention).
+// novac/src/resolve — tests beside the module (project convention).
 //
 // WHAT THESE TESTS HOLD: the structural satisfaction predicate of E2-b3 wave 3b
 // -- does a type have every method a protocol requires, and when it does not,
@@ -13,61 +13,84 @@
 // with no obligation. So the predicate is observed HERE, against a registry
 // built by hand, until method declarations land.
 
-module novac.sem
+module novac.resolve
 import ../tree.{Node, NodeKind, branch}
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId}
+import ../sem.{collect_types, Ctx, ProtoSig, ParamDef, ParamMode}
 
 /// An empty file node: the predicate needs a Ctx with primitives seeded and
 /// nothing else. Same reason as in mangle_test -- `sem` must not import the
 /// parser, and a test is not a licence to add an edge.
 fn empty_file_p() -> Node => branch(0, NodeKind.File, []Node.new())
 
-/// Register a protocol requiring exactly `@size() -> int`, and answer its row.
-fn seed_sized(mut ctx Ctx) -> int {
-    ro off = ctx.protos.sigs.len()
-    ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
-                                    param_off: 0, param_cnt: 0 })
-    ctx.protos.add("Sized", off, 1)
-}
+/// A plain `ro` parameter of this type -- same helper mangle_test carries:
+/// `ro` is the language's default, so this is what "just a parameter" means.
+fn ro_param(t TyId) -> ParamDef =>
+    { name: "p", type_id: t, mode: ParamMode.ModeRo, default_expr: []Node.new() }
+
 
 test "a type WITH the required method satisfies the contract" {
     mut ctx = collect_types(empty_file_p())
-    ro prow = seed_sized(ctx)
+    // A protocol requiring exactly `@size() -> int`, seeded inline: a mut
+    // aggregate must not travel as a parameter (274 rule 4.5), and each test
+    // owns its registry anyway.
+    ro sized_off = ctx.protos.sigs.len()
+    ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
+                                    param_off: 0, param_cnt: 0 })
+    ro prow = ctx.protos.add("Sized", sized_off, 1)
     // A method row: the receiver is parameter ZERO (plan 273), so `int @size()`
     // is a row named `size` whose only parameter is int.
     ctx.fns.add("size", ctx.prims.int_id, true,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
-    assert(!missing_sig_of(ctx, ctx.prims.int_id, prow).is_some())
+    assert(!missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
 }
 
 test "a type WITHOUT it is refused, and the MISSING signature is named" {
     mut ctx = collect_types(empty_file_p())
-    ro prow = seed_sized(ctx)
+    // A protocol requiring exactly `@size() -> int`, seeded inline: a mut
+    // aggregate must not travel as a parameter (274 rule 4.5), and each test
+    // owns its registry anyway.
+    ro sized_off = ctx.protos.sigs.len()
+    ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
+                                    param_off: 0, param_cnt: 0 })
+    ro prow = ctx.protos.add("Sized", sized_off, 1)
     // `str` has no `size` row registered, so the contract is unmet -- and the
     // answer carries the signature, not merely "unsatisfied": the bar is the
     // oracle's own message, "`Plain` is missing: size() -> int".
-    ro missing = missing_sig_of(ctx, ctx.prims.str_id, prow) ?? "none"
+    ro missing = missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.str_id, prow) ?? "none"
     assert(missing == "size() -> int")
 }
 
 test "the RETURN TYPE is part of the requirement, not decoration" {
     mut ctx = collect_types(empty_file_p())
-    ro prow = seed_sized(ctx)
+    // A protocol requiring exactly `@size() -> int`, seeded inline: a mut
+    // aggregate must not travel as a parameter (274 rule 4.5), and each test
+    // owns its registry anyway.
+    ro sized_off = ctx.protos.sigs.len()
+    ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
+                                    param_off: 0, param_cnt: 0 })
+    ro prow = ctx.protos.add("Sized", sized_off, 1)
     // Same name, same arity, WRONG return type: a row that answers `str` where
     // the contract wants `int` does not satisfy it. Without this the predicate
     // would be a name check wearing a signature's clothes.
     ctx.fns.add("size", ctx.prims.str_id, true,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
-    assert(missing_sig_of(ctx, ctx.prims.int_id, prow).is_some())
+    assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
 }
 
 test "a FREE function of the same name does not satisfy a method requirement" {
     mut ctx = collect_types(empty_file_p())
-    ro prow = seed_sized(ctx)
+    // A protocol requiring exactly `@size() -> int`, seeded inline: a mut
+    // aggregate must not travel as a parameter (274 rule 4.5), and each test
+    // owns its registry anyway.
+    ro sized_off = ctx.protos.sigs.len()
+    ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
+                                    param_off: 0, param_cnt: 0 })
+    ro prow = ctx.protos.add("Sized", sized_off, 1)
     // `has_recv: false` -- a free `size(x int)` is not a method, and the two
     // spellings are kept apart by the language, so the predicate keeps them
     // apart too (the same rule `@fits` lives by).
     ctx.fns.add("size", ctx.prims.int_id, false,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
-    assert(missing_sig_of(ctx, ctx.prims.int_id, prow).is_some())
+    assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
 }
