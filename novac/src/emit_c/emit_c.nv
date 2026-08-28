@@ -72,7 +72,7 @@ import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, r
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
 import ../sem.{c_instance_ctor, c_instance_method}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
-import ../types.{TyId, no_ty}
+import ../types.{TyId}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
 /// so the day substitutions arrive there is one place to stop passing it.

@@ -17,12 +17,13 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx, CheckOut}
+import ../sem.{carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
+import ../sem.{CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
-import ../types.{TyId, no_ty}
+import ../types.{TyId}
 
 
 /// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
@@ -371,13 +372,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `a == b` is `a.@equal(b)`), and `!=` is DERIVED from it — the spec
         // states the derivation, so novac spells it the same way instead of
         // inventing a second method name (owner's reminder 2026-08-16).
-        // WHICH CALLABLE — решение ЧЕКЕРА, и оно в канале (274.4 шаг 1).
-        // До 2026-08-28 эмиттер разрешал метод `equal` здесь сам: единственное
-        // разрешение вне `check/` и ВТОРАЯ ДВЕРЬ к одному корню — при
-        // неоднозначности чекер отказывает по имени, а эта ветка молча брала
-        // первого кандидата. Теперь НАЛИЧИЕ вызываемого и есть решение: он
-        // записан для оператора, который диспетчеризуется, и отсутствует там,
-        // где выходит примитивная форма C.
+        // WHICH CALLABLE is the CHECKER's decision, and it is
+        // in the channel (274.4 §1). Until 2026-08-28 the
+        // emitter resolved the `equal` method here itself: the
+        // only resolution outside `check/` and a SECOND DOOR to
+        // one root -- on an ambiguous overload the checker
+        // refuses by name while this branch silently took the
+        // first candidate. Now the PRESENCE of a callee is the
+        // decision: recorded for an operator that dispatches,
+        // absent where a primitive C form comes out.
         if @out.has_callee(e.id_of()) {
             ro row = @out.callee_of(e.id_of()).callable_row()
             @body.append("((nova_int)(")
