@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, c_instance_method, arm_body_at, Ctx, CheckOut}
+import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx, CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record}
@@ -118,14 +118,6 @@ fn is_call_form(op BinOp, is_float bool) -> bool {
     }
 }
 
-/// Is this the equality pair? They are the operators whose C form depends on
-/// the OPERAND type: scalars compare with `==`, `str` goes through `@equal`.
-fn is_equality(op BinOp) -> bool {
-    match op {
-        Equal | NotEqual => true
-        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
-    }
-}
 
 /// `!=` is not a second protocol method: the spec DERIVES it from `@equal`
 /// (D46 rule 3), so the emitter negates the same call.
@@ -159,19 +151,6 @@ fn c_unary_form(op UnOp) -> str {
 /// a function, not a second table), and exhaustive so a new operator must
 /// answer here too.
 
-/// The lookup key of the synthesised `equal` call: receiver, then one unknown
-/// argument. A named builder rather than a literal vector at the call site, so
-/// the shape of a key lives in one place per module.
-fn equal_key(lhs_t TyId) -> []ArgSpec {
-    mut out = []ArgSpec.new()
-    // Both positions are `ro`: `equal` READS its operands, and the mode axis
-    // (P14) has nothing to choose between here -- `ro` is the class every mode
-    // accepts, so a synthesised call asks for the least specific candidate and
-    // cannot pick a mutating overload by accident.
-    out.push(ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" })
-    out.push(ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" })
-    out
-}
 
 /// A call's arguments, in SLOT order, with omitted slots filled from the
 /// declaration.
@@ -392,27 +371,27 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `a == b` is `a.@equal(b)`), and `!=` is DERIVED from it — the spec
         // states the derivation, so novac spells it the same way instead of
         // inventing a second method name (owner's reminder 2026-08-16).
-        ro lhs_t = @out.type_of(kids[0].id_of())
-        if lhs_t == @ctx.prims.str_id && is_equality(op) {
+        // WHICH CALLABLE — решение ЧЕКЕРА, и оно в канале (274.4 шаг 1).
+        // До 2026-08-28 эмиттер разрешал метод `equal` здесь сам: единственное
+        // разрешение вне `check/` и ВТОРАЯ ДВЕРЬ к одному корню — при
+        // неоднозначности чекер отказывает по имени, а эта ветка молча брала
+        // первого кандидата. Теперь НАЛИЧИЕ вызываемого и есть решение: он
+        // записан для оператора, который диспетчеризуется, и отсутствует там,
+        // где выходит примитивная форма C.
+        if @out.has_callee(e.id_of()) {
+            ro row = @out.callee_of(e.id_of()).callable_row()
             @body.append("((nova_int)(")
             @body.append(if op_is_not_equal(op) { "!" } else { "" })
-            // A SYNTHESISED call: `a == b` on strings becomes the oracle's
-            // `equal` method, and no node in the tree carries that decision --
-            // the emitter makes it here, so it spells the name here too. The
-            // one door takes a row; this has none, which is precisely why the
-            // exception is written out instead of being hidden in a second
-            // door (owner's question 2026-08-18).
-            // The row, then the ONE door -- the same path an ordinary method
-            // call takes. Spelling the name here would be a second decision
-            // about a symbol the registry already knows.
-            // The key of a two-parameter call: the receiver in position zero
-            // and the right-hand side after it — the same shape check builds,
-            // asked at the same door. The right side's type is not read here:
-            // `equal` takes its own type, so the position is left unknown.
-            match @ctx.fns.lookup(@ctx.tys, EQUAL_METHOD, equal_key(lhs_t), CallForm.MethodCall) {
-                FnFound(row) => @body.append(c_callable(@ctx, row, no_subst()))
-                FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_subst()))
-                FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")
+            // NAMED BY WHOEVER HAS THE BODY. `str.equal` is std's, and novac
+            // compiles no std bodies — so the definition lives in the SHELL and
+            // must be called by the shell's name. Until 2026-08-28 this branch
+            // printed `c_callable`, i.e. OUR `novac_fn_equal__...`, and the link
+            // failed on an undefined symbol; nobody saw it because not one file
+            // of the corpus that novac accepts compares strings (measured).
+            if @ctx.fns.compiles_body(row) {
+                @body.append(c_callable(@ctx, row, no_subst()))
+            } else {
+                @body.append(c_shell_method(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
             }
             @body.append("(")
             @emit_expr(kids[0])

@@ -25,9 +25,10 @@
 module novac.check
 
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{EQUAL_METHOD}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, FnLookup, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
@@ -35,7 +36,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name}
+import ../sem.{ty_source_name, c_shell_method}
 import ../types.{TyId, no_ty, is_ty}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -508,6 +509,66 @@ fn Checker mut @type_call_stmt(call Node) -> () {
 }
 
 /// One expression: record what the emitter asks about, walk what it emits.
+/// Равенство `str` — вызов метода, а не оператор C: подмножество опускает его в
+/// `str.equal` (D46, правило 3 выводит `!=` из того же метода). Строку выбирает
+/// ЧЕКЕР и кладёт в канал; неоднозначность отвергается ЗДЕСЬ, по имени, а не
+/// разрешается молча на эмиссии (274.4 шаг 1).
+///
+/// Всякая другая пара оператор-операнды опускается в оператор C и вызываемого не
+/// записывает — отсутствие И ЕСТЬ решение, и эмиттер читает его именно так.
+fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
+    ro op = bin_op_of(leaf_kind(kids[1]))
+    if !is_equality(op) { return }
+    ro lhs_t = type_of(kids[0], @ctx, @scope, @chan)
+    if lhs_t != @ctx.prims.str_id { return }
+    match @ctx.fns.lookup(@ctx.tys, EQUAL_METHOD, equality_key(lhs_t), CallForm.MethodCall) {
+        FnFound(row) => @accept_equality_row(e, kids, lhs_t, row)
+        FnOverloaded(_) => @report_first_leaf_of(kids,
+            "outside the subset: `==` on `str` reaches more than one `${EQUAL_METHOD}` method, and novac does not choose between them")
+        FnUnknown => @report_first_leaf_of(kids,
+            "outside the subset: `==` on `str` needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed")
+    }
+}
+
+/// Строка найдена — остаётся вопрос, КТО несёт её тело. Своё тело — печатаем своё
+/// имя; чужое (std, как у `str.equal`) — тело живёт в ОБОЛОЧКЕ, и она обязана его
+/// нести. Спрашиваем поверхность ДО печати, как у литерала и у инстансных методов:
+/// иначе отказ приходит от линкера, а не от компилятора (замер 2026-08-28 —
+/// `undefined symbol: novac_fn_equal__nova_str__nova_str__to_nova_bool`).
+fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) -> () {
+    if !@ctx.fns.compiles_body(row) {
+        ro sym = c_shell_method(@ctx, lhs_t, EQUAL_METHOD)
+        if !@ctx.interop.has(sym) {
+            @report_first_leaf_of(kids, "outside the subset: `==` on `${ty_source_name(@ctx, lhs_t)}` needs `${sym}`, and the shell novac links into does not carry it -- the interop surface is the probe program (novac/probe/shell_probe.nv)")
+            return
+        } else {
+            // Carried: the emitter prints exactly this name.
+        }
+    } else {
+        // Our own body: our own name, no shell involved.
+    }
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
+}
+
+/// `==` и `!=` — пара, которая диспетчеризуется протоколом `Equal` (D46).
+fn is_equality(op BinOp) -> bool {
+    match op {
+        Equal | NotEqual => true
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// Ключ синтезированного вызова `equal`: приёмник в нулевой позиции, правая
+/// часть за ним. Обе позиции `ro` — `equal` ЧИТАЕТ операнды, а `ro` принимает
+/// любой режим, поэтому синтезированный вызов не подхватит мутирующую перегрузку
+/// по случайности. Тип правой части не читается: `equal` берёт свой собственный.
+fn equality_key(lhs_t TyId) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    out.push(ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" })
+    out.push(ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" })
+    out
+}
+
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
     if k == NodeKind.Name {
@@ -741,6 +802,13 @@ fn Checker mut @type_expr(e Node) -> () {
         @record(kids[0], type_of(kids[0], @ctx, @scope, @chan))
         @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
         @record(e, type_of(e, @ctx, @scope, @chan))
+        // И САМО РЕШЕНИЕ (274.4 шаг 1): к какому вызываемому оператор
+        // диспетчеризуется — если диспетчеризуется вообще. Записывается здесь,
+        // потому что после чекера никто не решает: эмиттер читает канал и
+        // печатает. Равенство `str` — единственный оператор подмножества,
+        // который опускается в ВЫЗОВ; все прочие пары дают оператор C, и
+        // ОТСУТСТВИЕ вызываемого — это и есть их решение.
+        @record_operator_callee(e, kids)
     } else {
         // The kinds `is_expr_kind` admits and this chain does not name are
         // Lit and MatchExpr, and neither has work HERE: a literal's type is
