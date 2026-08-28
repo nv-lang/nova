@@ -35,6 +35,18 @@ from __future__ import annotations
 import json
 import re
 import sys
+
+# stdout/stderr ОБЯЗАНЫ быть utf-8: сообщения хука по-русски, а запускают его
+# и под C-локалью. Без явной кодировки `print` с кириллицей либо падает, либо
+# калечит текст — и в обоих случаях хук МОЛЧА пропускает нарушение, потому что
+# вердикта на stdout нет, а стек уходит в stderr, которого никто не читает.
+# Замерено 2026-08-29 на `guard-stop.py`: самотест PASS 6 FAIL 3 под `LC_ALL=C`
+# при 9/9 под utf-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 _TARGET = re.compile(r"memory[\\/]+feedback-[^\\/]*\.md$", re.IGNORECASE)
 

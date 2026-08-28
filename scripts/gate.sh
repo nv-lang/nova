@@ -333,6 +333,10 @@ guard "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новы�
 # nova_resume_fiber (fibers.h).
 step loop "expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453)"
 step loop "накопление несведённых веток (никогда не копи)"
+step loop "границы новой волны плана («Не делаем» и открытые вопросы рядом с критериями)"
+guard "$ROOT/scripts/guards/check-plan-wave-boundaries.py" "$ROOT" \
+    || fail "волна с критериями приёмки, но без границ и открытых вопросов"
+
 step loop "форма записей реестра (класс, приоритет, оговорка)"
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
 step loop "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
@@ -398,9 +402,9 @@ if body_runs; then
     unset _LNV _LN _LNLOG _LNRC _LNLINE _ups _f
 fi
 
-step loop "бюджет впрыска после сжатия (потолок и целостность списка)"
-guard "$ROOT/scripts/guards/check-after-compact-budget.py" "$ROOT" \
-    || fail "впрыск после сжатия вышел за потолок либо потерял файл списка"
+step loop "бюджет постоянного слоя контекста (обе половины: впрыск и импорты)"
+guard "$ROOT/scripts/guards/check-context-layer-budget.py" "$ROOT" \
+    || fail "постоянный слой контекста вышел за потолок либо потерял файл (списка или импорта)"
 
 step loop "claude-commands-frontmatter (шапка слэш-команды обязана парситься)"
 guard "$ROOT/scripts/guards/check-claude-commands-frontmatter.py" "$ROOT" \

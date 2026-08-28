@@ -79,6 +79,7 @@ gate rather than passing quietly.
 
 **Changing the language**
 
+* **Order of precedence, when two sources disagree:** the specification (`spec/decisions/` — D-blocks are normative) → the conventions in `docs/dev/` → the compiler (`nova check <file>`) → whatever you remember about how languages usually work. Your memory is LAST, and it is not a tiebreaker. A contradiction BETWEEN levels is not yours to resolve: report it to the owner with both places quoted. Half of this was already here — «the compiler is the authority, not your memory» — but the order among spec, conventions and compiler was not, so an agent meeting a contradiction picked one. This is the single home of that order; `/explain` («Правило поиска ответа») points here rather than repeating it.
 * **The spec is written BEFORE the implementation.** A language-changing merge
   without a D-block in `spec/decisions/` and its overview page does not get
   pushed.

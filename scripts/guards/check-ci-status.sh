@@ -116,7 +116,7 @@ fi
 SHORT="$(echo "$SHA" | cut -c1-9)"
 
 RUNS="$(gh run list --limit 40 \
-        --json name,status,conclusion,headSha,createdAt 2>/dev/null || true)"
+        --json name,status,conclusion,headSha,createdAt,event,databaseId 2>/dev/null || true)"
 [ -n "$RUNS" ] || skip "gh не вернул список прогонов (сеть/лимит?)"
 
 # Интерпретатор: в Ubuntu (и на CI) `python` ОТСУТСТВУЕТ — есть только
@@ -165,7 +165,14 @@ noverdict=[r for r in canc if not _newer_exists(r)]
 superseded=[r for r in canc if _newer_exists(r)]
 run=[r for r in mine if r.get('status') != 'completed']
 if red:
-    print('RED|' + ', '.join(sorted({r['name'] for r in red})))
+    # ИМЯ ОДНО НЕ ГОВОРИТ, ЧЕЙ ЭТО КРАСНЫЙ (реестр 221.1 №785, 2026-08-27).
+    # Ночной прогон (event=schedule) идёт ярусом full и доходит до
+    # самотестов стражей, куда ярус push не доходит вовсе, — то есть
+    # его краснота обычно СТАРШЕ твоей отправки и не про неё.
+    def _tag(r):
+        return '%s(%s #%s)' % (r['name'], r.get('event') or '?',
+                               r.get('databaseId') or '?')
+    print('RED|' + ', '.join(sorted(_tag(r) for r in red)))
 elif noverdict:
     print('NOVERDICT|' + ', '.join(sorted({r['name'] for r in noverdict})))
 elif run:
@@ -208,6 +215,17 @@ case "$KIND" in
         say "RED — ВНЕШНИЙ ГЕЙТ КРАСНЫЙ на $SHORT: $DETAIL"
         say "  локальный зелёный вердикт этого НЕ отменяет: gate.sh гоняет"
         say "  \`nova check std\`, CI — \`nova test std\` (реестр №402)."
+        case "$DETAIL" in
+            *"(schedule "*)
+                say "  СРЕДИ КРАСНЫХ ЕСТЬ НОЧНОЙ ПРОГОН (event=schedule)."
+                say "  Он идёт ярусом full и доходит до самотестов стражей, куда"
+                say "  ярус push не доходит вовсе. Значит его краснота, скорее"
+                say "  всего, СТАРШЕ этой отправки и не про твой коммит — открой"
+                say "  прогон по номеру выше, прежде чем чинить своё. 2026-08-27"
+                say "  на выяснении этого ушёл целый заход: страж знал событие и"
+                say "  не называл его (реестр 221.1 №785)."
+                ;;
+        esac
         [ "$STRICT" -eq 1 ] && exit 1
         exit 0
         ;;
