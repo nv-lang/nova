@@ -666,30 +666,13 @@ export fn field_name_at(fk []Node) -> Option[int] {
 
 /// The TYPE slot of a record-field node -- the leaf after its name -- or None.
 export fn field_type_at(fk []Node) -> Option[int] {
-    // POSITIONAL WALK, no indexing. The indexed form (`fk[i].kind_of()`) was
-    // refused by the oracle's codegen with `E_RECV_METHOD_MISMATCH` -- it typed
-    // the INDEXED EXPRESSION as the vector itself and looked for `kind_of` on
-    // `Vec`. NOT a new find: that is [LEGACY-#676], the var-index-method defect
-    // this tree already works around in `harvest_fn` and in the collector. The
-    // walk below says the same thing without the form that trips it, so no
-    // marker is needed here -- there is nothing to remove when #676 is fixed.
-    mut i = 0
-    mut seen_name = false
-    for c in fk {
-        if c.kind_of() != NodeKind.LeafNode {
-            i += 1
-            continue
-        }
-        if seen_name { return Some(i) }
-        if mode_of_leaf(c).is_none() {
-            seen_name = true
-        } else {
-            // A mode word stands BEFORE the name (`mut n int`): it is neither
-            // the name nor the type, so the walk just steps over it.
-        }
-        i += 1
-    }
-    None
+    // THE SAME DOOR PARAMETERS USE (274.5 wave B1): the slot right after the
+    // name, whatever its KIND. The walk here used to skip every non-leaf, so a
+    // field whose type is a read type REFERENCE (`xs []int`, `rows Vec[T]` --
+    // branches since the parser learned them) answered None, the field never
+    // reached the registry, and the refusal said "unknown field" about a field
+    // written right there. One question, one door (P18).
+    if Some(n) = field_name_at(fk) { type_slot_after(fk, n) } else { None }
 }
 
 // `is_mode_word(w str)` stood here until 2026-08-23 and is gone with the last

@@ -453,7 +453,13 @@ fn Cursor mut @type_decl() -> Node {
                 // No mode: the field is read-only by default (D176).
             }
             @push_if(fk, TokenKind.Ident) // field name
-            @push_if(fk, TokenKind.Ident) // field type
+            // THE TYPE IS READ BY THE SAME DOOR PARAMETERS USE (274.5 wave
+            // B1). It used to be one Ident, so `xs []int` and `rows Vec[T]`
+            // were unreadable in a field while both are read in a parameter
+            // and in a return type since step B2 -- one form, two answers,
+            // which is the shape this compiler exists to stop repeating.
+            // Measured 2026-08-29: seven of novac's own files stop here.
+            fk.append(@type_ref())
             kids.push(@node(NodeKind.Field, fk))
         }
         @push_if(kids, TokenKind.RBrace)

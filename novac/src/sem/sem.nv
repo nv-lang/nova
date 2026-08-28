@@ -570,10 +570,16 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                         ro fnat = field_name_at(fk) ?? -1
                         ro ftat = field_type_at(fk) ?? -1
                         if fnat < 0 || ftat < 0 { continue }
-                        ro fdecl = defs.type_decl(leaf_text(fk[ftat])) ?? no_decl()
-                        if !is_decl(fdecl) { continue }
-                        if raw_decl(fdecl) >= types.len() { continue }
-                        fields.add(mine.ty_id, leaf_text(fk[fnat]), ty_of_row(types, fdecl))
+                        // THE TYPE THROUGH THE ONE REFERENCE DOOR (274.5 wave
+                        // B1), exactly as a parameter reads it: a plain name,
+                        // `Name[Args]`, or the `[]Elem` sugar. Reading the leaf
+                        // text instead saw only the first token, so a field of
+                        // a slice type was dropped from the registry -- the
+                        // parser had grown the form and this pass had not.
+                        ro ft = ty_of_type_ref(fk, ftat, no_ty(), []str.new(),
+                                               []TyId.new(), types, defs, tys)
+                        if !is_ty(ft) { continue }
+                        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft)
                         cnt += 1
                     }
                     // THE LAYOUT SURVIVES THE REWRITE: this pass replaces the row

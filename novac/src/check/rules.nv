@@ -129,7 +129,14 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                     return
                 }
             }
-            Branch { .. } => {}
+            // A BRANCH in the type slot is a type REFERENCE the parser read
+            // whole -- `[]int`, `Vec[T]`, a generics node (274.5 wave B1, and
+            // the same answer the mode-carrying path above already gives).
+            // The type is declared; whether it RESOLVES is the resolver's
+            // question, answered at the point of use. Falling through to
+            // "must declare a type" here was the lying message the census of
+            // 2026-08-29 caught on seven of novac's own files.
+            Branch { .. } => { return }
         }
     } else {
         // Fewer than two children means there is no type slot to look at, so this
