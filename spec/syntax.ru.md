@@ -642,6 +642,8 @@ export type Job priv {                   // priv на типе — поля modu
 type InternalState { ... }               // приватный тип
 
 export const ACCOUNT_MIN_BALANCE money = 0
+export const RETRY_LIMIT = 3             // тип НЕОБЯЗАТЕЛЕН и выводится (D184);
+                                           // в std эта форма основная — 157 против 61
 const INTERNAL_TIMEOUT_MS int = 5_000    // без export уже module-private (D47);
                                            // `_`-префикс не нужен, тут не поле
 
