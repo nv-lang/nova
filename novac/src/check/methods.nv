@@ -140,6 +140,12 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
             } else {
                 @refuse(t,
                     "outside the subset: novac read this method's signature but compiles no body for it yet")
+                // A refusal is ALSO a decision (274.4 step 2): the row is
+                // known, so its declared return goes into the channel. The
+                // walk continues past a refusal (poisoning discipline), and
+                // the parent asking this node's type must read the checker's
+                // answer -- type_of re-resolving the name was the second door.
+                @chan.record_type(e.id_of(), @ctx.fns.rows[raw_row(row)].ret_id)
             }
         }
     }
@@ -168,11 +174,16 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
     ro sym = c_instance_method(@ctx, key[0].type_id, t.text)
     if !@ctx.interop.has(sym) {
         @refuse(t, "outside the subset: the shell novac links into carries no `${t.text}` for ${ty_source_name(@ctx, key[0].type_id)} -- the interop surface is the probe program (novac/probe/shell_probe.nv); the method arrives when the probe calls it")
+        // Refused, but judged: the deduced return is this node's type
+        // (274.4 §2 -- a refusal records its decision too).
+        @record(e, @ctx.tys.subst(fd.ret_id, ids))
         return
     }
     ro ret = @ctx.tys.subst(fd.ret_id, ids)
     if @ctx.tys.kind_of(ret) == TypeKind.TkApp && decl_of_ty(@ctx, ret).kind == TypeKind.TkSum {
         @refuse(t, "outside the subset: this method returns `${ty_source_name(@ctx, ret)}` -- an instance of a sum, whose family spelling novac does not take yet")
+        // Refused, but judged: the substituted return is known (274.4 §2).
+        @record(e, ret)
         return
     }
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,

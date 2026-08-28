@@ -87,7 +87,11 @@ test "E2 strings surface: the shapes are in, a std method with no compiled body 
     // name a symbol that exists nowhere. The subset says that instead, and the
     // corpus baseline was lowered 11/5 -> 10/4 in the same wave.
     ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
-    assert(n_diags(src) == 1)
+    // THREE refusals, one per call (274.4 step 2): until the mark replaced
+    // the file-count guard in the MethodCall arm, every call after the first
+    // refusal was silently resolved by type_of's own lookup -- the second
+    // door -- and this line asserted 1. More refusals required, not fewer.
+    assert(n_diags(src) == 3)
     // The SHAPES are still in the subset: the same `ro` and `while` without a
     // std body are clean, so the refusal above is about the missing body and
     // not about the form.

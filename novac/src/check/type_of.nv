@@ -173,34 +173,22 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // return -- `T`, or `Vec[T]` -- which is not this call's type. Before
         // the decision the channel is empty and the signature answers as before.
         ro nid = e.id_of()
-        if chan.has_callee(nid) {
-            ro known = chan.type_if_known(nid)
-            if is_ty(known) { return known }
-            return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
-        } else {
-            // Not decided yet: read the signature by the typed key below.
+        // THE CHANNEL IS THE ONLY SOURCE (274.4 §2): the checker records the
+        // callee BEFORE any node above asks for this call's type (see the doc
+        // of this fn), so by the time type_of runs the decision exists. Until
+        // 274.4 this arm re-ran its own fns.lookup when the channel was
+        // silent -- a second resolution of the same root, and the exact door
+        // the resolver split closes. A silent channel is now a pass-order
+        // violation and answers as one: an ice, not a retry.
+        // The TYPE is asked first: a refused call carries a recorded type
+        // and no callee (a refusal is a decision too), and only then the
+        // callee's declared return. Silence on both is the violation.
+        ro known = chan.type_if_known(nid)
+        if is_ty(known) { return known }
+        if !chan.has_callee(nid) {
+            ice("check: method call reached type_of with no decision in the channel (274.4 pass-order)")
         }
-        // The return type — from the READ signature (П5): the
-        // compiler does not know std method names, it reads them. Only
-        // what check has already accepted reaches here, so a rejection
-        // here is an ice (a poisoning-discipline violation).
-        // The key is built the SAME way a free call builds it: the receiver
-        // stands in position zero because plan 273 §4.4 puts it there, and the
-        // arguments follow. Here every position CAN be typed, so the door does
-        // the narrowing itself and there is no separate narrowing step to keep
-        // in sync (the language overloads on parameters -- the pair
-        // (receiver, name) was never enough: `str.contains` has both
-        // `(needle str)` and `(c char)`).
-        ro key = typed_call_key(kids, 3, kids[0], type_of(kids[0], ctx, scope, chan), ctx, scope, chan)
-        match ctx.fns.lookup(ctx.tys, mname, key, CallForm.MethodCall) {
-            FnFound(row) => { return ctx.fns.rows[row].ret_id }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote
-            // that fits several candidates is a USER situation; check reports
-            // it once it owns the candidate set.
-            FnOverloaded(_) => { ice("check: overload set still ambiguous with every argument typed") }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
-            FnUnknown => { ice("check: method not in the read declarations past check") }
-        }
+        return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
     }
     // `@field` inside a method body: the receiver is a BINDING (`@`), so this
     // is a field access on it and needs no separate rule. Outside a method the
