@@ -299,6 +299,18 @@ export fn c_instance_ctor(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, 
 export fn c_instance_method(ctx Ctx, t TyId, name str) -> str =>
     "${instance_body(ctx, t)}_method_${name}"
 
+/// A method of a PLAIN (non-instance) type as the SHELL spells it:
+/// `Nova_<type>_method_<name>` — measured on the shell 2026-08-28
+/// (`Nova_str_method_equal`, `Nova_str_method_byte_len`). Note the `Nova_`
+/// prefix, which the INSTANCE form deliberately does NOT have
+/// (`Vec____nova_int_method_push`): the oracle spells the two differently, and
+/// this door exists so that novac never guesses which of the two it needs.
+///
+/// Interop, with the same end condition as the rest of it: the door goes the day
+/// novac emits the prelude itself and every method has a body of ours.
+export fn c_shell_method(ctx Ctx, t TyId, name str) -> str =>
+    "Nova_${ty_source_name(ctx, t)}_method_${name}"
+
 /// The body every instance name is built from: `<Head>____<arg>__<arg>`.
 fn instance_body(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
