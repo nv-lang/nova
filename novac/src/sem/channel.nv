@@ -190,6 +190,7 @@ export type Resolution enum
 /// THE checker's channel: what the checker decided, read by everyone after it
 /// and re-derived by no one.
 export type CheckOut {
+    entry FnRow /// THE entry row of this file; `no_row()` = the file declares none. One writer: check.
     types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
     res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
@@ -207,7 +208,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
     }
-    CheckOut { types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new() }
+    CheckOut { entry: no_row(), types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new() }
 }
 
 /// Record the type of a node. Writing a DIFFERENT answer over an existing one
@@ -215,6 +216,21 @@ export fn CheckOut.new(node_count int) -> CheckOut {
 /// exists to cure, and it must not be curable by ordering. Writing the SAME
 /// answer twice is legal -- the emitter asks for a binding's initializer type
 /// and then emits that same expression, and both paths mean one fact.
+/// THE ENTRY DECISION (274.4 step 2): which row is this program's entry
+/// point. It is a name resolution -- the checker's job -- and mono used to
+/// take it itself by calling the registry; now mono READS it here, so the
+/// resolver needs no edge from mono at all. One writer: check, once per file.
+export fn CheckOut mut @record_entry(row FnRow) -> () {
+    @entry = row
+}
+
+/// The entry row the checker recorded, or None when the file declares none.
+#realtime nogc
+export fn CheckOut @entry_of() -> Option[FnRow] {
+    if raw_row(@entry) < 0 { return None }
+    Some(@entry)
+}
+
 export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
     requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
 {

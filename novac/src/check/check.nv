@@ -111,6 +111,16 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     }
     c.walk(file)
     if c.out.len() == 0 {
+        // THE ENTRY IS A RESOLUTION (274.4 step 2): a name chain is walked to
+        // find it, and after the checker nobody resolves -- mono reads the
+        // channel instead of asking the registry itself.
+        match c.ctx.fns.entry_row() {
+            Some(r) => { c.chan.record_entry(r) }
+            None => {
+                // A file with no entry point: nothing to record, and mono
+                // answers "nothing reachable" from the same silence.
+            }
+        }
         c.type_file(file)
         // The disjointness walk that stood here is gone (2026-08-18): the
         // channel holds ONE sum per node now, so "a call and an

@@ -125,7 +125,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     mut subst = []TyId.new()
     mut ptypes = []ParamDef.new()
 
-    match entry_row(ctx) {
+    match out.entry_of() {
         // No entry point in this file: nothing is reachable, and that is an
         // ANSWER, not a hole -- check refuses such a file by name long before
         // the emitter is asked anything.
@@ -225,10 +225,6 @@ fn has_row_instance(inst []Instance, row FnRow) -> bool {
     }
     false
 }
-
-/// The row of the entry point, or None when this file declares none.
-#realtime nogc
-fn entry_row(ctx Ctx) -> Option[FnRow] => ctx.fns.entry_row()
 
 /// Mark every callee of this subtree; answer whether anything was newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
