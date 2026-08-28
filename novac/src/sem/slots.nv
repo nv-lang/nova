@@ -680,6 +680,49 @@ export fn field_type_at(fk []Node) -> Option[int] {
 // the question is about a token KIND, and `mode_of_leaf` answers it -- one door
 // instead of a door plus three spellings kept in step with the lexer by hand.
 
+/// The `ConstDecl` node itself, unwrapped from an `export` wrapper when there
+/// is one: `export const N = 7` builds `Export[ConstDecl]`, and every reader
+/// asks the same question of both spellings (274.5 wave B2).
+export fn const_decl_of(c Node) -> Option[Node] {
+    if c.kind_of() == NodeKind.ConstDecl { return Some(c) }
+    if c.kind_of() != NodeKind.ExportDecl { return None }
+    for k in branch_children(c) {
+        if k.kind_of() == NodeKind.ConstDecl { return Some(k) }
+    }
+    None
+}
+
+/// The slot of a constant's NAME: the first identifier leaf after `const`.
+export fn const_name_at(kids []Node) -> int {
+    mut i = 0
+    for c in kids {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident { return i }
+        i += 1
+    }
+    -1
+}
+
+/// The slot of a constant's INITIALIZER: the child right after `=`.
+///
+/// By the ASSIGN leaf rather than by a fixed index, because a declared type may
+/// stand between the name and `=` and its own shape varies (`int`, `[]int`,
+/// `Vec[T]` are one child each, but that is the type door's business, not this
+/// one's).
+export fn const_init_at(kids []Node) -> int {
+    mut i = 0
+    mut seen_assign = false
+    for c in kids {
+        if seen_assign { return i }
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Assign {
+            seen_assign = true
+        } else {
+            // Before the `=`: the keyword, the name, and possibly a type.
+        }
+        i += 1
+    }
+    -1
+}
+
 /// The method NAME of a `ProtoMethod` node: the identifier after the `@`.
 ///
 /// Position, not lookup -- the same rule every other reader of this tree lives

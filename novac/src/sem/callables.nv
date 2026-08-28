@@ -50,6 +50,26 @@ import ../types.{TyId, no_ty, is_ty, Interner}
 // not a decision about where the type belongs. When the oracle stops caring
 // about declaration order, it moves next to `VariantDef`.
 
+/// THE row of a module-level constant in `Ctx.consts` (274.5 wave B2).
+///
+/// HERE, and not beside `ConstTable` in defs.nv, for the reason written at the
+/// top of this file: a newtype used by a SUM ARM (`DefTarget.DefConst`) has to
+/// be declared in a file the oracle emits EARLIER, or its own
+/// `typedef nova_int Nova_ConstRow` collides with the boxed struct the sum arm
+/// makes of it. Measured 2026-08-29, the same failure `FieldRow` and
+/// `VariantRow` are here to avoid: [LEGACY-#761-newtype-order-in-sum-arm].
+export type ConstRow int
+
+/// The row's index, for the one thing a row is for: addressing a vector.
+export fn raw_crow(r ConstRow) -> int => r as int
+
+/// "No constant row", as a ROW rather than a number to be decoded by hand.
+export fn no_crow() -> ConstRow => ConstRow(-1)
+
+/// Is this a real constant row, or the absence?
+#realtime nogc
+export fn is_crow(r ConstRow) -> bool => raw_crow(r) >= 0
+
 /// THE row of a record's FIELD in `Ctx.field_rows`.
 ///
 /// A space of its own, and the criterion the previous wave produced says why it

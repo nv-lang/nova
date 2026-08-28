@@ -62,6 +62,7 @@ export type TokenKind enum
     | KwUse
     | KwExport
     | KwTest
+    | KwConst
     | KwElse
     | KwExtern
     | KwUnsafe
@@ -201,7 +202,7 @@ export fn paren_delta(k TokenKind) -> int {
         LParen => 1
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
@@ -217,7 +218,7 @@ export fn bracket_delta(k TokenKind) -> int {
         LBracket => 1
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
@@ -234,7 +235,7 @@ export fn brace_delta(k TokenKind) -> int {
         LBrace => 1
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
@@ -290,6 +291,7 @@ fn keyword_kind(t str) -> TokenKind => match t {
     "use" => TokenKind.KwUse
     "export" => TokenKind.KwExport
     "test" => TokenKind.KwTest
+    "const" => TokenKind.KwConst
     // The FFI words (D282, plan 91.12 F.-1): `extern "nova" fn` and
     // `extern "C" fn`, with `unsafe` allowed between the ABI and `fn`. Until
     // 2026-08-20 neither was a keyword, so the whole FFI layer of std answered

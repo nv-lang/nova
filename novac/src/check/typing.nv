@@ -29,6 +29,7 @@ import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD}
+import ../sem.{raw_crow}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -593,6 +594,23 @@ fn equality_key(lhs_t TyId) -> []ArgSpec {
 }
 
 /// One expression: record what the emitter asks about, walk what it emits.
+/// The TYPE of a module constant, or `no_ty()` when the name is not one.
+///
+/// The type is read off the INITIALIZER, because the subset's constants
+/// declare none (`export const TYPE_KIND_COUNT = 7`) and the written form is
+/// optional (D200 spells the full one; the oracle accepts both). Reading it
+/// here rather than at collection keeps one answer to one question: sem
+/// registers the name, the checker types it.
+fn Checker mut @const_type_of(name str) -> TyId {
+    ro row = match @ctx.defs.const_row(name) {
+        None => return no_ty()
+        Some(r) => r
+    }
+    ro cd = @ctx.consts.rows[raw_crow(row)]
+    if cd.init.len() == 0 { return no_ty() }
+    type_of(cd.init[0], @ctx, @scope, @chan)
+}
+
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
     if k == NodeKind.Name {
@@ -609,11 +627,26 @@ fn Checker mut @type_expr(e Node) -> () {
         assert(nk.len() > 0, "check: a name node without its identifier leaf")
         match nk[0] {
             Leaf(t) => {
-                if !is_bool_literal(t.text) && !@scope.is_bound(t.text) {
-                    @refuse(t, "unknown name: nothing with this name is bound at this point")
-                } else {
+                // A NAME MAY BE BOUND AT FILE LEVEL TOO (274.5 wave B2): a
+                // module constant lives in the declaration registry, not in
+                // the block scope, and asking only the scope called it
+                // unbound. The order is deliberate -- a local shadows a
+                // constant, which is what every reader expects.
+                if is_bool_literal(t.text) || @scope.is_bound(t.text) {
                     // Bound, or `true`/`false`: nothing to refuse and nothing
                     // to record -- the lattice reads a Name from the scope.
+                } else if @const_type_of(t.text) != no_ty() {
+                    // A constant: BOTH decisions are recorded here -- the type
+                    // from its initializer, and WHICH constant it is, so the
+                    // emitter substitutes the initializer instead of resolving
+                    // the name itself (274.4 rule E).
+                    @record(e, @const_type_of(t.text))
+                    match @ctx.defs.const_row(t.text) {
+                        Some(row) => @chan.record_const(e.id_of(), row)
+                        None => ice("check: a constant typed by name that the registry does not carry")
+                    }
+                } else {
+                    @refuse(t, "unknown name: nothing with this name is bound at this point")
                 }
             }
             Branch { .. } => {}
@@ -800,6 +833,11 @@ fn Checker mut @type_expr(e Node) -> () {
             // form (`Cel(1.5)`, which the oracle accepts positionally) is
             // refused BY NAME, because novac emits the brace form only.
             DefType(decl) => @record_newtype_ctor(e, kids, ty_of_decl(@ctx, decl))
+            // A CONSTANT in call position: a constant is a value, and a value
+            // is not callable. Refused by name rather than left to the
+            // lattice, for the same reason the type arm above is judged here.
+            DefConst(_) => @report_first_leaf_of(kids,
+                "outside the subset: a constant is a value, and a value is not callable")
         }
     } else if k == NodeKind.Cast {
         @type_cast(e)

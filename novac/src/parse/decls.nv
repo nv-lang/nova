@@ -43,6 +43,8 @@ fn Cursor mut @export_decl() -> Node {
         kids.push(@type_decl())
     } else if k == TokenKind.KwImport || k == TokenKind.KwUse {
         kids.push(@import_decl())
+    } else if k == TokenKind.KwConst {
+        kids.push(@const_decl())
     } else {
         // `export` in front of something that is not a declaration. The leaf is
         // already in the tree (nothing is lost); naming the mistake is check's
@@ -134,6 +136,33 @@ fn Cursor mut @attr_decl() -> Node {
 }
 
 /// `test "name" { ... }`.
+/// A module-level constant: `const NAME = expr` and `const NAME Type = expr`.
+///
+/// THE TYPE IS OPTIONAL, and that is a measurement rather than a preference:
+/// D200 spells the full form (`const <name> <Type> = <value>`), while every
+/// constant in our own sources omits it (`export const TYPE_KIND_COUNT = 7`,
+/// builtins.nv:48) and the oracle compiles them. The parser reads the language
+/// the oracle accepts; which of the two the SPEC should carry is the
+/// integrator's question, filed in plan 274.5.
+///
+/// The value is an EXPRESSION, read by the same door every initializer uses --
+/// there is no second grammar for constants, and a literal is just the shape
+/// most of them happen to have.
+fn Cursor mut @const_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwConst
+    @push_if(kids, TokenKind.Ident) // the name
+    if @peek() != TokenKind.Assign {
+        // A declared type stands between the name and `=`, read by the ONE
+        // type-reference door (274.5 wave B1 put fields on it too).
+        kids.append(@type_ref())
+    } else {
+        // No type written: the initializer carries it.
+    }
+    @push_if(kids, TokenKind.Assign)
+    kids.push(@expr())
+    @node(NodeKind.ConstDecl, kids)
+}
+
 fn Cursor mut @test_decl() -> Node {
     mut kids = []Node.of(@take()) // KwTest
     @push_if(kids, TokenKind.StrLit)

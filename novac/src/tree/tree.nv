@@ -51,6 +51,7 @@ export type NodeKind enum
     | MethodCall
     | FieldAccess
     | TypeDecl
+    | ConstDecl
     | Field
     | RecordCtor
     | CtorField

@@ -38,6 +38,37 @@ export type DefTarget enum
     | DefType(DeclId)
     | DefVariant(VariantRow)
     | DefFn(FnRow)
+    | DefConst(ConstRow)
+
+/// One module-level constant: its name, its type, and the NODE of its
+/// initializer.
+///
+/// The initializer is kept as a NODE (a one-element slot, the shape
+/// `ParamDef.default_expr` already uses) rather than as a value because the subset
+/// prints it by SUBSTITUTION at each use (274.5 wave B2): a constant introduces
+/// no C symbol of its own, so the emitter needs the expression, not a name. A
+/// folded value would also decide, here, a question the emitter answers -- and
+/// the whole point of this compiler is that one question has one owner.
+export type ConstDef value {
+    name str /// name as written in the declaration
+    type_id TyId /// the constant's type: written, or read off the initializer
+    init []Node /// the initializer expression, ONE element; the emitter prints THIS at a use
+}
+
+/// THE registry of module-level constants, addressed by `ConstRow`.
+export type ConstTable {
+    rows []ConstDef /// every constant of this file, in declaration order
+}
+
+/// An empty constant registry.
+export fn ConstTable.new() -> ConstTable => { rows: []ConstDef.new() }
+
+/// Register one constant and answer its row.
+export fn ConstTable mut @add(name str, type_id TyId, init []Node) -> ConstRow {
+    ro row = ConstRow(@rows.len())
+    @rows.push(ConstDef { name, type_id, init })
+    row
+}
 
 /// One top-level declaration of the unified name registry: what a name IS.
 export type Def value {
@@ -141,8 +172,21 @@ export fn DefTable @fn_row(name str) -> Option[FnRow] {
     // the other two are not a fn row.
     match def.target {
         DefFn(row) => Some(row)
-        // A type or a variant is not a callable: one answer, one arm.
-        DefType(_) | DefVariant(_) => None
+        // A type, a variant or a constant is not a callable: one answer.
+        DefType(_) | DefVariant(_) | DefConst(_) => None
+    }
+}
+
+/// The CONSTANT row this name stands for, or None when the name is unknown or
+/// is something else. Same shape as the two doors around it: the sum holds the
+/// row, so no caller has to know which space a payload belongs to.
+#realtime nogc
+export fn DefTable @const_row(name str) -> Option[ConstRow] {
+    ro def = @def_of(name)?
+    match def.target {
+        DefConst(row) => Some(row)
+        // A type, a variant or a callable is not a constant.
+        DefType(_) | DefVariant(_) | DefFn(_) => None
     }
 }
 
@@ -158,7 +202,7 @@ export fn DefTable @type_decl(name str) -> Option[DeclId] {
     ro def = @def_of(name)?
     match def.target {
         DefType(decl) => Some(decl)
-        // A variant or a callable is not a type, and that is ONE answer.
-        DefVariant(_) | DefFn(_) => None
+        // A variant, a callable or a constant is not a type: ONE answer.
+        DefVariant(_) | DefFn(_) | DefConst(_) => None
     }
 }

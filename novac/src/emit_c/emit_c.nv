@@ -557,7 +557,7 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId) -> () {
         if Some(def) = @ctx.defs.def_of(leaf_text(p0)) {
             vrow = match def.target {
                 DefVariant(row) => row
-                DefType(_) | DefFn(_) => no_vrow()
+                DefType(_) | DefFn(_) | DefConst(_) => no_vrow()
             }
         } else {
             // A name the registry never saw is a fresh binder, and `no_vrow()`

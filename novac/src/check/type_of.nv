@@ -161,6 +161,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     if k == NodeKind.Name {
         ro nm = expr_leaf_name(e)
         if is_bool_literal(nm) { return ctx.prims.bool_id }
+        // A LOCAL SHADOWS A CONSTANT, so the scope answers first; a name the
+        // scope does not bind may still be a module constant, and its type is
+        // a DECISION the walk recorded (274.5 wave B2) -- read, never redone.
+        if !scope.is_bound(nm) {
+            return chan.type_if_known(e.id_of())
+        } else {
+            // Bound locally: the scope is the answer, as it has always been.
+        }
         return scope.type_of_name(nm)
     }
     if k == NodeKind.MethodCall {

@@ -186,6 +186,7 @@ export type Resolution enum
     | Unresolved
     | Callee(CalleeRef)
     | Subst(SubstRef)
+    | Const(ConstRow)
 
 /// THE checker's channel: what the checker decided, read by everyone after it
 /// and re-derived by no one.
@@ -231,6 +232,29 @@ export fn CheckOut @entry_of() -> Option[FnRow] {
 /// exists to cure, and it must not be curable by ordering. Writing the SAME
 /// answer twice is legal -- the emitter asks for a binding's initializer type
 /// and then emits that same expression, and both paths mean one fact.
+/// THE CONSTANT this name stands for (274.5 wave B2). The emitter prints a
+/// constant by SUBSTITUTING its initializer -- a constant has no C symbol of
+/// its own -- so it needs the ROW, and asking the registry by name would be a
+/// resolution outside check/, which is exactly what rule E of
+/// `check-novac-channel-one-writer` forbids. One writer: check.
+export fn CheckOut mut @record_const(id NodeId, row ConstRow) -> ()
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a node outside this file's id space"
+{
+    @res[raw_node(id)] = Resolution.Const(row)
+}
+
+/// The constant row recorded for this node, or None when it is not a constant.
+#realtime nogc
+export fn CheckOut @const_of(id NodeId) -> Option[ConstRow] {
+    if !is_node(id) { return None }
+    if raw_node(id) >= @res.len() { return None }
+    match @res[raw_node(id)] {
+        Const(row) => Some(row)
+        // Anything else is not a constant use, and that is one answer.
+        Unresolved | Callee(_) | Subst(_) => None
+    }
+}
+
 export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
     requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
 {
@@ -250,6 +274,7 @@ export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []Ty
         Callee(prev) => assert(same_target(prev.target, target),
             "sem: a call was resolved twice to different targets")
         Subst(_) => ice("sem: record_callee on a node already recorded as an instantiation")
+        Const(_) => ice("sem: record_callee on a node already recorded as a constant")
     }
     // The call's decision is the WHOLE answer: which row, and with which type
     // arguments. rustc keeps the same two facts about one node (type_dependent
@@ -277,6 +302,7 @@ export fn CheckOut mut @record_subst(id NodeId, args []TyId) -> ()
         Unresolved => {}
         Callee(_) => ice("sem: record_subst on a node already recorded as a call")
         Subst(_) => ice("sem: record_subst twice on one node")
+        Const(_) => ice("sem: record_subst on a node already recorded as a constant")
     }
     ro arg_off = @subst_args.len()
     @subst_args.append(args)
@@ -323,6 +349,7 @@ export fn CheckOut @callee_of(id NodeId) -> CalleeRef
         Callee(c) => c
         Unresolved => ice("sem: callee_of on a node with nothing recorded — a hole in the channel")
         Subst(_) => ice("sem: callee_of on a node recorded as an instantiation")
+        Const(_) => ice("sem: callee_of on a node recorded as a constant")
     }
 }
 
@@ -335,7 +362,7 @@ export fn CheckOut @has_callee(id NodeId) -> bool
 {
     match @res[raw_node(id)] {
         Callee(_) => true
-        Unresolved | Subst(_) => false
+        Unresolved | Subst(_) | Const(_) => false
     }
 }
 
@@ -348,7 +375,7 @@ export fn CheckOut @has_subst(id NodeId) -> bool
 {
     match @res[raw_node(id)] {
         Subst(_) => true
-        Unresolved | Callee(_) => false
+        Unresolved | Callee(_) | Const(_) => false
     }
 }
 
@@ -383,6 +410,7 @@ export fn CheckOut @callee_slots_of(id NodeId) -> ro []SlotBind
         Callee(c) => c
         Unresolved => ice("sem: callee_slots_of on a node with nothing recorded")
         Subst(_) => ice("sem: callee_slots_of on a node recorded as an instantiation")
+        Const(_) => ice("sem: callee_slots_of on a node recorded as a constant")
     }
     @arg_slots[cr.slot_off..cr.slot_off + cr.slot_cnt]
 }
@@ -401,6 +429,7 @@ export fn CheckOut @callee_subst_of(id NodeId) -> ro []TyId
         Callee(c) => c
         Unresolved => ice("sem: callee_subst_of on a node with nothing recorded")
         Subst(_) => ice("sem: callee_subst_of on a node recorded as an instantiation")
+        Const(_) => ice("sem: callee_subst_of on a node recorded as a constant")
     }
     @subst_args[cr.subst_off..cr.subst_off + cr.subst_cnt]
 }
@@ -414,6 +443,7 @@ export fn CheckOut @subst_of(id NodeId) -> ro []TyId
         Subst(s) => s
         Unresolved => ice("sem: subst_of on a node with nothing recorded — a hole in the channel")
         Callee(_) => ice("sem: subst_of on a node recorded as a call")
+        Const(_) => ice("sem: subst_of on a node recorded as a constant")
     }
     // A VIEW into the pool, not a copy: the arguments live once (nv-coding-style
     // section 18a; a counted push loop here would allocate per question).

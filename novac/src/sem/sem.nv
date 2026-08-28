@@ -228,6 +228,7 @@ export type Ctx {
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
     protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b)
+    consts ConstTable /// THE module-level constants of this file: name, type, initializer node (274.5 B2).
     interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).
 }
 
@@ -381,6 +382,7 @@ export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new
 /// handed-over types and the file's own passes -- and a caller cannot place it.
 export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut types = []TypeDef.new()
+    mut consts = ConstTable.new()
     mut defs = DefTable.new()
     mut tys = Interner.new()
     // Pre-declared types come from the ONE builtins table (P5), in Prims
@@ -437,6 +439,23 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // registry: pass 1 is where names are being registered, so a forward
     // reference cannot be resolved yet -- and asking anyway is what made the
     // shape depend on declaration order.
+    // MODULE-LEVEL CONSTANTS (274.5 wave B2), before the types: a constant is
+    // a NAME like any other, and the registry is one door for all of them. The
+    // TYPE is not resolved here -- an initializer's type is the checker's
+    // answer, and sem inventing one would be a second truth about it.
+    for c in decls_of_file {
+        ro ck = const_decl_of(c)
+        if !ck.is_some() { continue }
+        ro kids = branch_children(ck ?? c)
+        ro cname_at = const_name_at(kids)
+        if cname_at < 0 { continue }
+        ro cname = leaf_text(kids[cname_at])
+        if defs.declared_by_file(cname) { continue }
+        ro init_at = const_init_at(kids)
+        if init_at < 0 { continue }
+        defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(),
+                 []Node.of(kids[init_at]))))
+    }
     for c in decls_of_file {
         ro k = c.kind_of()
         if k != NodeKind.TypeDecl && k != NodeKind.SumDecl { continue }
@@ -847,5 +866,5 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut own = fns
     own.own_cnt = own.rows.len()
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
-          module_c: module_path_c(file), coerces, protos, interop: InteropTable.new() }
+          module_c: module_path_c(file), coerces, protos, consts, interop: InteropTable.new() }
 }

@@ -115,7 +115,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
                         covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
                     }
                     // Not a variant: an exhaustiveness count learns nothing.
-                    DefType(_) | DefFn(_) => return
+                    DefType(_) | DefFn(_) | DefConst(_) => return
                 }
             }
         }
@@ -211,7 +211,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     ro vrow = if Some(def) = head_def {
         match def.target {
             DefVariant(row) => row
-            DefType(_) | DefFn(_) => no_vrow()
+            DefType(_) | DefFn(_) | DefConst(_) => no_vrow()
         }
     } else {
         no_vrow()

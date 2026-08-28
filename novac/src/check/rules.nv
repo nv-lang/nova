@@ -71,7 +71,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         // mistake and must not be called a type form.
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
-                        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern |
+                        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
                         KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |

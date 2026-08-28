@@ -1,0 +1,20 @@
+// A module-level constant, in the form the language actually writes it: D184
+// ("Keyword refresh", spec/decisions/03-syntax.md) spells `const X = expr` with
+// no type and gives its examples that way; the typed form stands beside it and
+// both compile. D200 is about ASSOCIATED constants (`const Type.NAME`) and only
+// quotes the module form, which is why its quotation carries a type.
+//
+// A constant introduces no C symbol of its own: novac substitutes the
+// initializer at each use, which is what the C compiler does with a
+// file-scope `static const` anyway.
+module basics.module_const
+
+const LIMIT = 7
+const GREETING = "hi"
+export const TYPED int = 8
+
+fn main() {
+    println(LIMIT)
+    println(GREETING)
+    println(TYPED)
+}
