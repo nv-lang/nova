@@ -39,7 +39,7 @@ import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
 import ../types.{TyId, is_ty, Interner}
 import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm}
-import ../sem.{FieldTable, FieldRow, raw_frow, no_frow, is_frow}
+import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
 import ../sem.{positional_run, bind_slot_of, slot_is_required, mode_admits, type_admits}
 import ../sem.{ty_source_name}
 
@@ -75,7 +75,7 @@ export type FnLookup enum
 /// `FnTable.heads` -- on the table, where any Ctx holder could walk it; it
 /// moved here whole (274.4 step 2), and the walk semantics are identical:
 /// `heads` answers the LAST registered row, `next` steps to earlier ones.
-export type FnIndex {
+export type FnIndex priv {
     heads NameTable /// name -> LAST registered row of that name; `next` walks the earlier ones
     next []FnRow /// parallel to FnTable.rows: next row carrying the SAME name, `no_row()` at the end
 }
@@ -180,7 +180,7 @@ export fn FnIndex @entry_row(fns FnTable) -> Option[FnRow] {
 /// holder of Ctx. The chain compares the owner as an INTEGER: the first shape
 /// keyed by text ("${owner_id}.${name}"), which allocated on every access and
 /// put structure into a string right after §4а ruled "identity is not a name".
-export type FieldIndex {
+export type FieldIndex priv {
     names NameTable /// field name -> LAST registered row of that name; `next` walks the earlier ones
     next []FieldRow /// parallel to FieldTable.rows: next row carrying the SAME name, `no_frow()` at the end
 }

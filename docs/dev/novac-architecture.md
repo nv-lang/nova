@@ -68,6 +68,7 @@
 | `names` | резолв имён и модулей: «имя → объявление»; **порядконезависим**: collect → resolve, два прохода (урок B10m: write-once pre-scan ломал forward-reference) | резолв имени | 2 |
 | `builtins` | ЕДИНСТВЕННЫЙ файл, где имена ЯЗЫКА законны строковыми литералами (П5, страж `check-novac-no-name-hardcode.py`; модель `rustc_span::sym`/Go `Universe`): universe-примитивы с ABI-именами рантайма и точки входа языка (`main`, `println`). Лист графа. НЕ содержит: имён типов и методов std (это ДЕКЛАРАЦИИ — читаются `sem` из сигнатур, поданных двери), инстансов дженериков, C-имён неприм. типов (вердикт владельца 2026-08-15, исполнено 2026-08-16 — таблица методов удалена) | имена-константы | 0 |
 | `check` | чекер; **единственный писатель** `sem` | типизация и правила | 1 |
+| `resolve` | ЕДИНСТВЕННЫЙ модуль, превращающий ИМЯ (вызываемого, поля) в строку: `FnIndex`/`FieldIndex` + подбор по П14; значения индексов живут только в `Checker` (274.4) | подбор по имени | 1 |
 | `sem` | семантическая модель: `resolved_types`, `resolved_callees`, `node_substs` — дом каналов 196; **`sem/mangle` — дверь мэнглинга**: каждый C-идентификатор — функция от сущности реестра (rustc_symbol_mangling), правило держит `check-novac-mangle-fixed-point.sh` | правда о типах/вызовах; C-имя сущности | 2 |
 | `lower` | понижение в бэкенд-агностик форму; **место будущего MIR** | понижение | 1 |
 | `mono` | сбор инстанцирований | мономорфизация | 1 |
@@ -1787,7 +1788,8 @@ assert(d.rev == Free or d.guard != "")
 |---|---|---|---|
 | какой ТИП у узла | `check` | `chan.record_type` / `out.type_of` | `check-novac-channel-one-writer` (правила A, D, B) |
 | какой ВЫЗЫВАЕМЫЙ у вызова | `check` | `chan.record_callee` / `out.callee_of` | правило E того же стража — **волна 274.4** |
-| подбор перегрузки | `sem/callables` (после разреза — модуль-резольвер) | `lookup`, `fits`, `most_specific` | модульная граница: у `emit_c`/`mono` нет ребра — **волна 274.4** |
+| подбор поля | `resolve` (разрез СДЕЛАН, 274.4 шаг 3) | `FieldIndex.has_field`, `field_type` | значение `FieldIndex` живёт только в `Checker` (`fres`); поля обоих индексов `priv` (D47) |
+| подбор перегрузки | `resolve` (разрез СДЕЛАН, 274.4 шаг 2; `priv` на индексе — шаг 3) | `FnIndex.lookup`, `fits`, `most_specific` | значение `FnIndex` живёт только в `Checker`; модульная граница вторым замком: у `emit_c`/`mono` нет ребра — **волна 274.4** |
 | КОНСТРУКЦИЯ типа | `types` | `Interner.intern` и его обёртки | `check-novac-tyid-door` |
 | C-ИМЯ сущности | `sem/mangle` | `c_callable`, `c_type`, `c_instance_*` | `check-novac-mangling-one-way`, `check-novac-emitted-names` |
 | ИМЯ ЯЗЫКА строкой | `builtins` | константы модуля | `check-novac-no-name-hardcode` (П5) |
