@@ -487,4 +487,11 @@ no_caveat=27
 #   бинаре. Число поднято потому, что найден НОВЫЙ дефект, а не потому,
 #   что старый вернулся: прятать его ради нерастущего числа значило бы
 #   сделать храповик врать в ту сторону, где это опаснее всего.
-blockers=29
+
+# 2026-08-27 (vtoroy shag za den) -- blockers 29 -> 30, ROST OT NOVOGO DEFEKTA.
+#   Zavedena N786: metod, pishushchiy v @-polya, ne obyazan obyavlyat sebya mut --
+#   i etim obhodyatsya oba strazha ro-garantii (E_POINTER_RO_MUT_METHOD i
+#   E_READONLY_FIELD sprashivayut 'eto mut-metod?', a otvet nikem ne proveryaetsya).
+#   Naydeno razborom vozrazheniya vladeltsa k moemu zhe nevernomu zameru N387:
+#   doslovnaya forma N387 LOVITSYA, proshlo drugoe. Chetyre proby na e118667ef.
+blockers=30
