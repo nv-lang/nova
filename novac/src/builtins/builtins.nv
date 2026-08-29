@@ -66,6 +66,15 @@ export const EQUAL_METHOD = "equal"
 /// the word that declares them.
 export const COERCE_ATTR = "coerce"
 
+/// The `#realtime` attribute (D172, `06-concurrency.md:5499`), optionally with
+/// its `nogc` modifier (amendment #273). novac READS it and enforces nothing:
+/// the guarantee is about what a body may CALL, and the subset compiles no
+/// effect machinery. Measured 2026-08-29: the oracle accepts an allocating
+/// body under `#realtime nogc`, so reading-and-ignoring matches the fixed
+/// point of behaviour exactly -- the day the oracle starts enforcing it, the
+/// differential corpus reddens and this decision comes back.
+export const REALTIME_ATTR = "realtime"
+
 /// The CONTEXTUAL mode word of the language -- the one a token kind cannot
 /// answer for.
 ///

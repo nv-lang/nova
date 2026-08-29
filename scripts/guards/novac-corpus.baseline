@@ -85,5 +85,14 @@
 # форма «match only as a binding initializer» стояла первым отказом у ПЯТИ своих
 # файлов и после волны исчезла целиком. Носитель храповика —
 # `examples/basics/match_stmt.nv`: обе позиции в одном файле.
-contract-match 18
-behavior-match 11
+# 2026-08-29 (274.5 wave B6): 18/11 -> 19/12. The `#realtime` attribute (D172,
+# `nogc` modifier of amendment #273) is READ and NOT ENFORCED -- measured the
+# same day: the oracle accepts an allocating body under it, so ignoring the
+# guarantee matches the fixed point of behaviour rather than widening past it.
+# 88 lines of novac's own sources carry the attribute; it was the first refusal
+# of six files. Ratchet carrier: `examples/basics/realtime_attr.nv`.
+# THE HEADLINE OF THIS WAVE IS NOT THE CORPUS: self-distance moved off the
+# floor for the first time, 53/53 -> 41/53 -- novac reads twelve of its own
+# files end to end.
+contract-match 19
+behavior-match 12

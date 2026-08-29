@@ -38,7 +38,7 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR, REALTIME_ATTR}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, recv_type_name, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
@@ -390,15 +390,22 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> ()
                     // The walk continues into the children below.
                 }
                 AttrDecl => {
-                    // `#coerce` is JUDGED, not refused (wave 5): it declares a
-                    // PAIR (D429), and the pair is read by the collector. Every
-                    // other attribute is still outside the subset -- an effect
-                    // attribute changes what the body may do, and novac compiles
-                    // none of that yet.
-                    if !attr_kids_name(children, COERCE_ATTR) {
-                        @report_first_leaf_of(children, ATTR_MSG)
+                    // TWO attributes are read (274.5 wave B6). `#coerce` is
+                    // JUDGED: it declares a PAIR (D429) the collector reads.
+                    // `#realtime` (with or without `nogc`) is READ AND NOT
+                    // ENFORCED: the guarantee is about what a body may call,
+                    // the subset compiles no effect machinery, and the oracle
+                    // -- measured 2026-08-29 on an allocating body -- does not
+                    // enforce it on these shapes either. Any OTHER attribute
+                    // stays outside the subset: an unknown attribute may
+                    // change what the declaration means, and accepting it
+                    // unread is how a subset becomes WIDER than the language.
+                    if attr_kids_name(children, COERCE_ATTR) {
+                        // The pair attribute: the collector owns it.
+                    } else if attr_kids_name(children, REALTIME_ATTR) {
+                        // Read, not enforced -- see the constant's doc.
                     } else {
-                        // The one attribute the subset reads.
+                        @report_first_leaf_of(children, ATTR_MSG)
                     }
                     return
                 }
