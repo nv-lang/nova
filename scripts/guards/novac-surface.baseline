@@ -93,7 +93,10 @@
 # `LITERAL_PUSH` («push») — имена std, в которые опускается литерал; пишутся
 # один раз здесь (П5), их читают и check (какой конструктор — литерал), и emit
 # (какой метод печатать).
-builtins 24
+# 2026-08-29 (274.5 B3): builtins 24 -> 25 -- PRIV_MARKER, the D281 type-privacy
+# word, read by the parser the way VALUE_MARKER is; the spelling lives in
+# builtins by P5 (language names are data, written once).
+builtins 25
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

@@ -31,8 +31,8 @@
 
 module novac.parse
 
-import ../lex.{Token, TokenKind, brace_delta}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, SUM_MARKER}
+import ../lex.{Token, TokenKind, brace_delta, paren_delta}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -354,6 +354,32 @@ fn Cursor mut @type_decl() -> Node {
         kids.push(@take())
     } else {
         // No `value` marker: the record is a GC pointer, the language's default.
+    }
+    // The PRIVACY marker (D281), read the same way `value` is -- a leaf
+    // between the name and the body -- PLUS its optional qualifier group:
+    // `priv`, `priv(type)`, `priv(file)` are all one form, and reading only
+    // the bare word would drop the qualified spellings into the junk bucket
+    // half-read. The group is a balanced paren run, the same walk a tuple
+    // type takes; what stands inside is not judged yet (one-file compilation
+    // has no cross-module privacy to enforce).
+    if @peek_ident(PRIV_MARKER) {
+        kids.push(@take())
+        if @peek() == TokenKind.LParen {
+            mut depth = 0
+            while !@at_eof() {
+                ro pk = @peek()
+                ro delta = paren_delta(pk)
+                depth += delta
+                kids.push(@take())
+                if depth == 0 { break }
+            }
+        } else {
+            // Bare `priv`: no qualifier written, fields are module-private.
+        }
+    } else {
+        // No privacy marker: fields keep the default visibility. (The `value`
+        // marker above needs no else of its own: its absence IS the default,
+        // a GC-pointer record, and the walk simply moves on.)
     }
     ro is_sum_marker = @peek_ident(SUM_MARKER)
     if is_sum_marker {

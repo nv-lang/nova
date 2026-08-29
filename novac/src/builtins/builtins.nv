@@ -119,6 +119,14 @@ export const ALIAS_MARKER = "alias"
 /// which is why it is read in the marker position and not in the tail.
 export const VALUE_MARKER = "value"
 
+/// The field-privacy marker of a type declaration (D281): `type X priv { }`,
+/// `type X priv(type) { }`, `type X priv(file) { }`. Read as a leaf plus an
+/// optional balanced qualifier group, exactly like `value` plus a tuple; the
+/// subset records the form and does not judge it yet -- novac compiles one
+/// file, and inside one module a `priv` field is readable by D47, so there is
+/// nothing to refuse until cross-module compilation arrives.
+export const PRIV_MARKER = "priv"
+
 /// The word that marks a PROTOCOL declaration: `type Sized protocol { ... }`.
 ///
 /// A contextual word like `alias` and `enum`, not a keyword -- the lexer knows
