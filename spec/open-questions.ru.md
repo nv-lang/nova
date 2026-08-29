@@ -324,8 +324,13 @@ closed, A1-A40 acceptance criteria, 65/65 fixtures PASS на release nova-cli.
 формальный список. (Plan 91.18: bare `to_lower`/`to_upper`/`trim` — Unicode
 под `import std.unicode`; `_ascii_`-варианты — из prelude.)
 
-**Escape sequences** в string literals (`"\n"`, `"\t"`, `"\""`,
-`"\\"`) — в bootstrap'е поддержаны, в спеке упоминаются только
+**Escape sequences** в string literals — **✅ ЗАКРЫТО (2026-08-29):**
+полный ЗАКРЫТЫЙ список для `"..."`-литералов зафиксирован в
+[D467 §2](decisions/03-syntax.md#d467-строковые-литералы-продолжение-строки-полный-набор-escape-тело-backtick-2026-08-29)
+(девять форм, уже жившие в реализации, плюс продолжение строки `\` перед
+переносом); для backtick набор закрыт тремя (D467 §6). Оригинальный текст ниже
+сохранён для истории.
+Был: в bootstrap'е поддержаны, в спеке упоминаются только
 для tagged templates ([D48](decisions/03-syntax.md#d48):1510),
 не для обычных `"..."`-литералов. Нужно явно зафиксировать список
 поддерживаемых escapes для обычных string-литералов.
