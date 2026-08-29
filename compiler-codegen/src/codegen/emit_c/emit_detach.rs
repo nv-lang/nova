@@ -630,6 +630,9 @@ impl CEmitter {
                     self.indent -= 1;
                     self.line("}");
                     self.var_boxed.insert(cap.clone(), bv.clone());
+                    // Registry #790: mark this box as the lazily-initialized
+                    // kind — the Ident arm NULL-guards only these.
+                    self.lazy_detach_boxes.insert(bv.clone());
                     bv
                 };
                 self.line(&format!("{ctx_var}->{cap} = {box_ptr};"));
