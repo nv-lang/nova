@@ -16399,6 +16399,54 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_bound_names_block(&arm.body, out);
                 }
             }
+            // Registry #799 — THE SAME ASYMMETRY THAT BIT ON 2026-07-21, FROM
+            // THE OTHER SIDE. The spawn/detach capture decision is
+            // `refs - bound`; `collect_idents_expr` grew an `InterpolatedStr`
+            // arm that day because an identifier mentioned ONLY inside `${…}`
+            // never reached `refs` and the closure struct reserved no field for
+            // it (`[M-str-interp-closure-capture-miss]`). This walker never got
+            // the twin arm, so a name BOUND only inside `${…}` never reached
+            // `bound` — and the subtraction went wrong in the opposite
+            // direction.
+            //
+            // What that cost: `callnorm` (D102) rewrites a call carrying a
+            // defaulted parameter into a Block whose locals are NAMED AFTER THE
+            // CALLEE'S PARAMETERS — deliberately, so default expressions resolve
+            // without a substitution walk. Written as a statement
+            // (`ro r = callee(pol)`) that Block is hoisted to statement level
+            // and `collect_bound_names_block` sees its lets. Written inside an
+            // interpolation (`println("${callee(pol)}")`, or polaris's
+            // `serve_router(lst, routes(), policy)` in a spawned body) it stays
+            // nested in the expression, invisible here. The flat CU-wide
+            // `var_types` then matched the callee's parameter names and the
+            // emitter wrote `ctx->p = p;` into a function where no `p` exists.
+            //
+            // Measured, not assumed: with this arm the interpolation form
+            // compiles and runs; without it, it does not. The statement forms
+            // compile either way — which is why a broader "make both walkers
+            // symmetric everywhere" edit was written first, measured against a
+            // control binary, found to change nothing, and removed.
+            // Both arms are required, and each alone was measured useless: the
+            // interpolation is an ARGUMENT of `println`, so without the Call arm
+            // the walk never reaches it, and with the Call arm but no
+            // InterpolatedStr arm it stops at the string. Two separate builds
+            // proved each half inert before this pair was settled on.
+            ExprKind::Call { func, args, trailing, .. } => {
+                Self::collect_bound_names_expr(func, out);
+                for a in args {
+                    Self::collect_bound_names_expr(a.expr(), out);
+                }
+                if let Some(crate::ast::Trailing::Block(b)) = trailing {
+                    Self::collect_bound_names_block(b, out);
+                }
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
+                        Self::collect_bound_names_expr(expr, out);
+                    }
+                }
+            }
             _ => {}
         }
     }
