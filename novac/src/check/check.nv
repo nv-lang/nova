@@ -466,6 +466,16 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> ()
                         // its children are walked below like any other node.
                     }
                 }
+                Index => {
+                    // READ, and refused BY NAME (274.5 wave B8): the index
+                    // expression has a node now, so the refusal finally names
+                    // the form instead of calling it an array literal -- 35 of
+                    // the census's 56 "array literal only" marks were this.
+                    // Compiling it is its own wave: the emitter needs the
+                    // bounds-checked element read the oracle runtime carries.
+                    @report_first_leaf_of(children, "outside the subset: an index expression is read but not compiled yet")
+                    return
+                }
                 ArrayLit => {
                     // JUDGED, not refused wholesale (sub-plan L, 2026-08-26).
                     // The owner's rollback of 2026-08-15 stands: no hard-coded

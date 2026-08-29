@@ -91,6 +91,30 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
 ///
 /// The SAME node kind a declaration uses for its type parameters, so both ends
 /// of the mapping read the same shape — one question, one answer.
+/// The token that stands AFTER the bracket run starting at the CURRENT `[`,
+/// or Eof. A read-only walk over the token vector -- nothing is consumed, so
+/// the cursor invariant (`take()` is the only advancer) holds. Nested `[`
+/// (as in `Vec[Vec[int]]`) is depth-counted; `[]` is one EmptyBrackets token
+/// and never enters here.
+fn Cursor @after_bracket_run() -> TokenKind {
+    mut j = @i
+    mut depth = 0
+    while j < @toks.len() {
+        ro k = @toks[j].kind
+        if k == TokenKind.LBracket { depth += 1 }
+        if k == TokenKind.RBracket {
+            depth -= 1
+            if depth == 0 {
+                if j + 1 < @toks.len() { return @toks[j + 1].kind }
+                return TokenKind.Eof
+            }
+        }
+        if k == TokenKind.Eof { return TokenKind.Eof }
+        j += 1
+    }
+    TokenKind.Eof
+}
+
 fn Cursor mut @turbofish() -> Node {
     mut gk = []Node.of(@take())            // '['
     while !@at_eof() && @peek() != TokenKind.RBracket {
@@ -127,7 +151,20 @@ fn Cursor mut @primary() -> Node {
     // nests MethodCall inside MethodCall; a dot WITHOUT a call is field
     // access (E2-records). Both are subset forms now; check judges the
     // method name against the one subset table.
-    while @peek() == TokenKind.Dot {
+    while @peek() == TokenKind.Dot || @peek() == TokenKind.LBracket {
+        if @peek() == TokenKind.LBracket {
+            // AN INDEX EXPRESSION HAS A NODE NOW (274.5 wave B8). Until this
+            // wave `[` after an expression fell into the array-literal branch
+            // of `@atom`, and 35 of the census's 56 "array literal only as a
+            // binding initializer" marks were index expressions wearing the
+            // wrong refusal. The parser reads the language; whether the subset
+            // COMPILES the form is check's question, answered by name.
+            mut ik = []Node.of(e, @take()) // recv, '['
+            ik.push(@expr())
+            @push_if(ik, TokenKind.RBracket)
+            e = @node(NodeKind.Index, ik)
+            continue
+        }
         mut kids = []Node.of(e, @take()) // recv, '.'
         @push_if(kids, TokenKind.Ident)
         if @peek() == TokenKind.LParen {
@@ -376,11 +413,25 @@ fn Cursor mut @atom() -> Node {
     }
     if @peek() == TokenKind.Ident {
         ro name = @take()
+        if @peek() == TokenKind.LBracket && @after_bracket_run() != TokenKind.LParen {
+            // INDEX: `xs[0]` (274.5 wave B8). A bracket after a name stopped
+            // being unambiguous the moment the index expression got a node --
+            // the disambiguator is the token AFTER the bracket run, read
+            // without consuming: a turbofish is mandatory-called (`id[int](7)`,
+            // E2-b2 refuses the bare form anyway), so `(` and only `(` says
+            // "type arguments".
+            mut ik = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take()) // recv, '['
+            ik.push(@expr())
+            @push_if(ik, TokenKind.RBracket)
+            // The postfix loop of the CALLER picks the chain up from here
+            // (`xs[0].len()` nests this node as a receiver), the same way it
+            // does for every other atom.
+            return @node(NodeKind.Index, ik)
+        }
         if @peek() == TokenKind.LBracket {
             // TURBOFISH: `id[int](7)` — the type arguments of an EXPLICIT
-            // instantiation. The form is unambiguous here: the subset has no
-            // index expression at all (there is no Index node), so a bracket
-            // after a name can only be this. Mandatory by plan 274 E2-b2 —
+            // instantiation, told apart from an index by the `(` after the
+            // bracket run (see above). Mandatory by plan 274 E2-b2 —
             // there is no inference, and the order of the arguments IS the
             // whole mapping to the declaration's type parameters.
             mut kids = []Node.of(name, @turbofish())
