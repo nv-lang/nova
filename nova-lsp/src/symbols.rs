@@ -384,7 +384,7 @@ fn tokenize_ref_occurrences(src: &str) -> HashMap<String, Vec<Range>> {
 /// Returns empty Vec on parse failure (graceful — no crash, no error to client).
 /// Suitable for running in `run_with_large_stack`.
 pub fn compute_document_symbols(src: &str) -> Vec<DocumentSymbol> {
-    let module = match nova_codegen::parser::parse(src) {
+    let module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };
@@ -398,7 +398,7 @@ pub fn compute_document_symbols(src: &str) -> Vec<DocumentSymbol> {
 
 /// Index all symbols in `src` for workspace-wide search.
 pub fn index_file_symbols(uri: &Url, src: &str) -> Vec<WorkspaceSymbolEntry> {
-    let module = match nova_codegen::parser::parse(src) {
+    let module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };

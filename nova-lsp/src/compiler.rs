@@ -236,7 +236,7 @@ pub fn check_source_inner(
     workspace_root: Option<&Path>,
 ) -> Vec<Diagnostic> {
     // Step 1: parse
-    let mut module = match nova_codegen::parser::parse(src) {
+    let mut module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(diag) => return vec![diag],
     };
@@ -442,6 +442,19 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 /// never competes with the editor's own UI thread for CPU time when the
 /// machine is under load. This is a background aide, not the foreground
 /// workload.
+/// Registry 221.1 #800, the LSP door. Every parse in this crate goes through
+/// here, because the parser's own nesting limit (512) was chosen against the
+/// 64 MiB check-thread stack — and a tokio worker or the main thread dies of
+/// stack overflow around depth ~250, BEFORE the limit can fire. Measured live
+/// 2026-08-30: the m800 fixture (600 nested `if`) killed the LSP's warm-start
+/// indexing on `thread 'main'` in an endless extension restart loop, one day
+/// AFTER the parser limit had landed — the limit never got the chance.
+/// One door instead of twenty call sites each remembering to wrap.
+pub fn parse_guarded(src: &str) -> Result<nova_codegen::ast::Module, nova_codegen::diag::Diagnostic> {
+    let owned = src.to_string();
+    run_with_large_stack(move || nova_codegen::parser::parse(&owned))
+}
+
 pub fn run_with_large_stack<F, T>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,

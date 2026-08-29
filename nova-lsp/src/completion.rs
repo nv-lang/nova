@@ -2020,7 +2020,7 @@ fn main() -> () {
             let dot = method_dot_offset(src, src.len())
                 .unwrap_or_else(|| panic!("{name}: no dot found"));
             let repaired = repair_completion_buffer(src, dot);
-            if let Err(e) = nova_codegen::parser::parse(&repaired) {
+            if let Err(e) = crate::compiler::parse_guarded(&repaired) {
                 panic!("{name}: repaired buffer does not parse: {}\n{:?}", e.message, repaired);
             }
             // The whole point of repairing rather than truncating: every offset

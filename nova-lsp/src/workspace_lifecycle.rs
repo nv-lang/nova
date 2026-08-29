@@ -211,7 +211,7 @@ pub fn compute_rename_import_edits(
             if uri == &rn.old_uri {
                 continue;
             }
-            let module = match nova_codegen::parser::parse(text) {
+            let module = match crate::compiler::parse_guarded(text) {
                 Ok(m) => m,
                 Err(_) => continue, // un-parseable importer → skip gracefully
             };
