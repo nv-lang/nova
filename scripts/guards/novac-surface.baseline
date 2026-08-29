@@ -96,7 +96,11 @@
 # 2026-08-29 (274.5 B3): builtins 24 -> 25 -- PRIV_MARKER, the D281 type-privacy
 # word, read by the parser the way VALUE_MARKER is; the spelling lives in
 # builtins by P5 (language names are data, written once).
-builtins 25
+# 2026-08-29 (274.5 wave B6): builtins 25 -> 26. One name: REALTIME_ATTR --
+# the spelling of the `#realtime` attribute. It belongs here by P5 (a language
+# name written as a string literal lives in builtins and nowhere else), and it
+# is asked by check's attribute arm, the one caller it needs.
+builtins 26
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
