@@ -242,6 +242,22 @@ fn Checker mut @type_block(b Node) -> () {
                     i += 1
                     continue
                 }
+                if i == tail_at && c.kind_of() == NodeKind.MatchExpr {
+                    // The tail MATCH is a value (274.5 wave B5): typed by the
+                    // value door -- the fold demands the arms agree -- and its
+                    // type recorded for the emitter, which declares the
+                    // result temporary with it (the same contract the
+                    // FnExprBody entrance has carried since the start).
+                    @type_match(c)
+                    ro t = type_of(c, @ctx, @scope, @chan)
+                    if is_ty(t) {
+                        @record(c, t)
+                    } else {
+                        // A refused tail match: the diagnostics carry it.
+                    }
+                    i += 1
+                    continue
+                }
                 @type_stmt(c)
             }
         }
@@ -492,6 +508,13 @@ fn Checker mut @type_stmt(st Node) -> () {
         @scope.bind(leaf_text(kids[1]), @ctx.prims.int_id, ParamMode.ModeRo)
         @type_block(kids[4])
         @scope.release(mark)
+    } else if k == NodeKind.MatchExpr {
+        // A match in STATEMENT position (274.5 wave B5): the arms run for
+        // effect, so the statement variant types them as statements and asks
+        // no value question -- the generic @type_expr below has an EMPTY
+        // MatchExpr arm, and routing there left arms untyped and coverage
+        // unjudged (the recon of 2026-08-29 measured exactly that).
+        @type_match_stmt(st)
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else {

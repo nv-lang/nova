@@ -27,6 +27,56 @@ import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_
 import ../sem.{is_vrow, variant_range_of}
 import ../types.{TyId, no_ty, is_ty}
 
+/// A match in STATEMENT position (274.5 wave B5): the scrutinee is typed and
+/// recorded, the binders bound, the guards typed, the bodies walked AS
+/// STATEMENTS, and coverage judged -- but no value question is asked: the
+/// arms run for effect, and demanding that `{}` agree in type with
+/// `{ println(x) }` would refuse legal code the census counts five files of.
+fn Checker mut @type_match_stmt(m Node) -> () {
+    ro kids = branch_children(m)
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
+        return
+    }
+    ro scr = kids[1]
+    @type_expr(scr)
+    if @out.len() > 0 { return }
+    ro scr_t = type_of(scr, @ctx, @scope, @chan)
+    @record(scr, scr_t)
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        @type_arm_stmt(c, scr_t)
+    }
+    if @out.len() > 0 { return }
+    @report_if_not_exhaustive(kids, scr_t)
+}
+
+/// One statement-position arm: the value path minus the value -- binders and
+/// guards through the same door (`@type_arm` owns them), the BODY walked as
+/// a block or a statement, and the answer deliberately not asked.
+fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
+    ro mark = @scope.mark()
+    ro ak = branch_children(arm)
+    if ak.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        return
+    }
+    @bind_arm_pattern(ak, scr_t)
+    for g in ak {
+        if g.kind_of() != NodeKind.Guard { continue }
+        ro gk = branch_children(g)
+        if gk.len() < 2 { continue }
+        @type_expr(gk[1])
+    }
+    ro body = ak[arm_body_at(ak) ?? ice("check: a statement-position match arm with no body reached the checker")]
+    if body.kind_of() == NodeKind.Block {
+        @type_block(body)
+    } else {
+        @type_stmt(body)
+    }
+    @scope.release(mark)
+}
+
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
@@ -189,18 +239,15 @@ fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId]) -> Option[
 /// the arm-agreement rule (F36) asked for it after the walk, outside the
 /// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
 /// diagnostic -- the binders were gone by then.
-fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
-    // An arm's binders live in the arm and nowhere else.
-    ro mark = @scope.mark()
-    ro ak = branch_children(arm)
-    if ak.len() < 1 {
-        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
-        return None
-    }
+/// Bind one arm's PATTERN into the scope: the variant's payload binders, or
+/// the whole scrutinee under a plain binder. ONE door for both arm variants
+/// (value and statement, 274.5 wave B5) -- the second copy of this walk is
+/// exactly what would drift. Answers false when the pattern is refused.
+fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
     ro pat = branch_children(ak[0])
     if pat.len() < 1 {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
-        return None
+        return false
     }
     ro p0 = pat[0]
     ro is_ident = leaf_kind(p0) == TokenKind.Ident
@@ -251,6 +298,22 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         // `_` and a non-identifier head bind nothing by definition: an arm
         // sees the scrutinee only through a name, and there is no name here.
     }
+    true
+}
+
+/// One arm in VALUE position: bind its pattern, type its guards, type its
+/// body, and answer the body's type -- which the fold compares against the
+/// first arm's. None means the arm reported a diagnostic and has no type to
+/// offer.
+fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
+    // An arm's binders live in the arm and nowhere else.
+    ro mark = @scope.mark()
+    ro ak = branch_children(arm)
+    if ak.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        return None
+    }
+    if !@bind_arm_pattern(ak, scr_t) { return None }
     for g in ak {
         if g.kind_of() != NodeKind.Guard { continue }
         ro gk = branch_children(g)

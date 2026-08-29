@@ -1,0 +1,25 @@
+// A `match` in the two positions wave B5 adds: as a STATEMENT (the arms run
+// for effect and agree on no type) and as the TAIL of a block body, where it
+// IS the returned value and the arms therefore must agree. Both were refused
+// as "match only as a binding initializer" until 2026-08-29; five of novac's
+// own files stop exactly there.
+module basics.match_stmt
+
+fn name_of(n int) -> str {
+    match n {
+        0 => "zero"
+        1 => "one"
+        _ => "many"
+    }
+}
+
+fn main() {
+    ro k = 1
+    match k {
+        0 => println("nothing")
+        _ => println("something")
+    }
+    println(name_of(0))
+    println(name_of(1))
+    println(name_of(7))
+}

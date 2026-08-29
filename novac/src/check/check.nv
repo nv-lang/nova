@@ -237,7 +237,7 @@ fn Checker @run_end_of(children []Node, best int) -> int {
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
 /// is the common case, so only the two places that actually open an
 /// initializer position say so.
-fn Checker mut @walk(n Node, init_pos bool = false) -> () {
+fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -471,11 +471,17 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     }
                 }
                 MatchExpr => {
-                    if !init_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: match only as a binding initializer")
+                    // Three legal positions since 274.5 wave B5: a binding
+                    // initializer, a STATEMENT (a direct child of a block --
+                    // the arms run for effect), and through init_pos also the
+                    // tail of a value body (`=>` bodies took it earlier; the
+                    // `{...}` tail is a statement position plus the typing
+                    // route of wave B4's tail machinery).
+                    if !init_pos && !stmt_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: match only as an initializer, a statement, or a body tail")
                         return
                     } else {
-                        // Initializer position: legal, walked below.
+                        // A legal position: walked below.
                     }
                 }
                 BindStmt => {
@@ -539,7 +545,10 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                 ProtoMethod => {}
             }
             for c in children {
-                @walk(c)
+                // STATEMENT POSITION is "a direct child of a Block" (274.5
+                // wave B5): the one place the flag is computed, the same way
+                // init_pos is computed at its two call sites.
+                @walk(c, stmt_pos: kind == NodeKind.Block)
             }
         }
     }

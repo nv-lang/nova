@@ -526,6 +526,49 @@ fn Emitter mut @emit_match(m Node, uniq int, res_t TyId) -> () {
     }
 }
 
+/// The BODY of one arm: assigned to the result temporary in value position,
+/// run for effect in statement position (274.5 wave B5). A statement arm's
+/// body may be a block (`{}` included) or a single statement, and both go
+/// through the doors that already print those shapes.
+fn Emitter mut @emit_arm_value(arm_e Node, uniq int, as_stmt bool) -> () {
+    if !as_stmt {
+        @body.append("        _novac_match_t${uniq} = ")
+        @emit_expr(arm_e)
+        @body.append(";\n")
+        return
+    } else {
+        // Statement position: the body runs, and nothing holds its answer.
+    }
+    // TERMINATOR, not an else: the two shape guards meet on a node-kind test
+    // (274.5 section 2g), and a `return` satisfies both.
+    if arm_e.kind_of() == NodeKind.Block {
+        @emit_block_stmts_fn(arm_e, false)
+        return
+    }
+    @emit_stmt(arm_e)
+}
+
+/// A match in STATEMENT position: the scrutinee temporary and the `matched`
+/// flag, then the arms -- and NO result temporary, because the statement form
+/// answers nothing. The arms print their bodies as STATEMENTS through
+/// `@emit_arm_stmt`, so `{}` and `println(...)` both work where a value form
+/// would demand an expression.
+fn Emitter mut @emit_match_stmt(m Node, uniq int) -> () {
+    ro kids = branch_children(m)
+    ro scr = kids[1]
+    ro scr_t = @out.type_of(scr.id_of())
+    @body.append("    ")
+    @body.append(c_type(@ctx, scr_t))
+    @body.append(" _novac_scr_t${uniq} = ")
+    @emit_expr(scr)
+    @body.append(";\n")
+    @body.append("    int _novac_matched_t${uniq} = 0;\n")
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        @emit_arm(c, uniq, scr_t, as_stmt: true)
+    }
+}
+
 /// Tag test of a variant pattern. The ACCESS follows the PLACEMENT (A4): a
 /// value sum is read with `.`, a heap sum with `->`. Before A4 the arrow was
 /// unconditional, which is exactly the shape that breaks silently the day the
@@ -535,8 +578,12 @@ fn Emitter mut @emit_tag_test(uniq int, vrow VariantRow, scr_t TyId) -> () {
     @body.append("(_novac_scr_t${uniq}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
-/// Emit one match arm: pattern test, binder unpacking, optional guard, arm value.
-fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId) -> () {
+/// Emit one match arm: pattern test, binder unpacking, optional guard, arm
+/// value. `as_stmt` (274.5 wave B5) switches only the TAIL: a statement-position
+/// arm runs its body for effect instead of assigning it to a result temporary.
+/// One door with a parameter rather than two copies -- the pattern walk below
+/// is sixty lines, and a second copy of it would drift on the first fix.
+fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, as_stmt bool = false) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
@@ -629,13 +676,11 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId) -> () {
             @emit_expr(branch_children(g)[1])
             @body.append(") {\n")
         }
-        @body.append("            _novac_match_t${uniq} = ")
-        @emit_expr(arm_e)
-        @body.append(";\n            _novac_matched_t${uniq} = 1;\n        }\n")
+        @emit_arm_value(arm_e, uniq, as_stmt)
+        @body.append("            _novac_matched_t${uniq} = 1;\n        }\n")
     } else {
-        @body.append("        _novac_match_t${uniq} = ")
-        @emit_expr(arm_e)
-        @body.append(";\n        _novac_matched_t${uniq} = 1;\n")
+        @emit_arm_value(arm_e, uniq, as_stmt)
+        @body.append("        _novac_matched_t${uniq} = 1;\n")
     }
     @body.append("    }\n")
 }
@@ -663,7 +708,16 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
         match c {
             Leaf(_) => {} // the block's own braces -- trivia carriers, not statements
             Branch { .. } => {
-                if tail && j == last_branch && is_expr_kind(c.kind_of()) {
+                if tail && j == last_branch && c.kind_of() == NodeKind.MatchExpr {
+                    // The TAIL match is the returned value (274.5 wave B5):
+                    // the same pair the `=>` body has always emitted -- lay
+                    // the match down into its temporary, then return it. Its
+                    // result type is the checker's answer, read from the
+                    // channel like every other type here.
+                    ro u = @fresh_uniq()
+                    @emit_match(c, u, @out.type_of(c.id_of()))
+                    @body.append("    return _novac_match_t${u};\n")
+                } else if tail && j == last_branch && is_expr_kind(c.kind_of()) {
                     @body.append("    return ")
                     @emit_expr(c)
                     @body.append(";\n")
@@ -679,7 +733,13 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
 /// Emit one statement by node kind (call/if/while/return/bind/assign/for/expr).
 fn Emitter mut @emit_stmt(st Node) -> () {
     ro k = st.kind_of()
-    if k == NodeKind.Call {
+    if k == NodeKind.MatchExpr {
+        // A match in STATEMENT position (274.5 wave B5): the arms run for
+        // effect. No result temporary is declared -- nobody asked this match
+        // for a value, and emitting a variable to hold an answer no one wants
+        // is the shape this compiler keeps refusing elsewhere.
+        @emit_match_stmt(st, @fresh_uniq())
+    } else if k == NodeKind.Call {
         @emit_call_stmt(st)
     } else if k == NodeKind.IfStmt {
         ro kids = branch_children(st)
