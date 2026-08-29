@@ -1,0 +1,24 @@
+// EXPECT_STDOUT path=12 tick=1 dollar=3
+// D467 §6 (план 277 Ф.4): набор escape в backtick — РОВНО три (`\` перед
+// backtick, `\\`, `\$`). `\n` и `\t` больше НЕ раскрываются: backtick
+// многострочный, а раскрытие ломало пути и regex. Проба обе стороны: вернуть
+// `\n`/`\t` в split_tagged_template — `path` станет 10 (перенос+таб вместо
+// `\n\t` двумя символами), фикстура покраснеет.
+module standalone.d467_backtick_escapes
+
+fn join(parts []str, args []str) -> str {
+    mut s = ""
+    for p in parts {
+        s = s.concat(p)
+    }
+    s
+}
+
+fn main() Io -> () {
+    // `\n` и `\t` — по два символа: C:\new\table = 12 байт.
+    ro path = join`C:\new\table`
+    // три законных escape: сам backtick, слеш, буквальный ${
+    ro tick = join`\``
+    ro dollar = join`\${}`
+    println("path=${path.byte_len()} tick=${tick.byte_len()} dollar=${dollar.byte_len()}")
+}
