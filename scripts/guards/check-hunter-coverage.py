@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# scripts/guards/check-hunter-coverage.py — план 278 Ф.3, §15 исследования.
+#
+# ЗАЧЕМ. Сетка клеток (модуль novac x класс К1..К7) — КАРТА ПОКРЫТИЯ охоты, не
+# очередь: клетки, где никогда не охотились, буквально и есть «цели, о которых
+# никто не думает», и сегодня они невидимы ровно потому, что не названы.
+#
+# ВЫВОДИТСЯ ИЗ ДЕРЕВА, НЕ ПИШЕТСЯ РУКАМИ (прецедент
+# check-no-handwritten-plan-index.sh): ось модулей — таблица рёбер §3
+# docs/dev/novac-architecture.md; ось классов — К1..К7; факт охоты — строка
+# «КЛЕТКА | <модуль> | К<n>» в отчёте docs/dev/hunts/*.md (формат задаётся
+# здесь и брифом Ф.4 ВМЕСТЕ — бриф ссылается сюда, второго дома нет).
+#
+# ЧТО КРАСНИТ:
+#   1. отчёт охоты без разбираемой строки «КЛЕТКА |» — по уроку №801 генератор
+#      ОТКАЗЫВАЕТ на непонятой форме, а не молчит;
+#   2. клетка с модулем, которого нет в таблице рёбер, — охота мимо карты;
+#   3. рукописный файл сетки в дереве (второй дом);
+#   4. рост числа неохваченных клеток над базой (храповик вниз; база засеяна
+#      СЕГОДНЯШНИМ числом, чтобы страж не краснел на всей истории).
+#      Рост законен только с правкой базы и хроникой в ней — как у всех баз.
+#
+# Самотест: selftest/test-check-hunter-coverage.sh.
+import io
+import os
+import re
+import subprocess
+import sys
+
+ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "..")
+ROOT = os.path.abspath(ROOT)
+ARCH = os.path.join(ROOT, "docs", "dev", "novac-architecture.md")
+HUNTS = os.environ.get("NOVA_HUNTS_DIR", os.path.join(ROOT, "docs", "dev", "hunts"))
+BASE_FILE = os.environ.get("NOVA_HUNTER_GRID_BASELINE",
+                           os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                        "hunter-grid.baseline"))
+CLASSES = [u"К%d" % i for i in range(1, 8)]
+
+def fail(msg):
+    sys.stderr.write(u"check-hunter-coverage: FAIL — %s\n" % msg)
+    sys.exit(1)
+
+# ── ось модулей: таблица рёбер §3 ────────────────────────────────────────
+try:
+    arch = io.open(ARCH, encoding="utf-8", errors="replace").read()
+except IOError:
+    fail(u"нет %s — ось модулей взять неоткуда" % ARCH)
+sec = arch.split(u"## 3.")[1].split(u"\n## ")[0]
+modules = sorted(set(re.findall(r"^\|\s*`([a-z_]+)`", sec, re.M)))
+if len(modules) < 5:
+    fail(u"в §3 таблицы рёбер разобрано только %d модулей — форма таблицы уехала, чинить разбор, а не молчать" % len(modules))
+
+grid_size = len(modules) * len(CLASSES)
+
+# ── факт охоты: отчёты ───────────────────────────────────────────────────
+hunted = set()
+if os.path.isdir(HUNTS):
+    for fn in sorted(os.listdir(HUNTS)):
+        if not fn.endswith(".md"):
+            continue
+        p = os.path.join(HUNTS, fn)
+        t = io.open(p, encoding="utf-8", errors="replace").read()
+        m = re.search(u"^КЛЕТКА \\| *([a-z_]+) *\\| *(К[1-7])\\b", t, re.M)
+        if not m:
+            fail(u"отчёт %s без разбираемой строки «КЛЕТКА | <модуль> | К<n>» — отказ на непонятой форме (№801)" % fn)
+        mod, cls = m.group(1), m.group(2)
+        if mod not in modules:
+            fail(u"отчёт %s называет модуль «%s», которого нет в таблице рёбер §3 (%s)" % (fn, mod, u", ".join(modules)))
+        hunted.add((mod, cls))
+
+never = grid_size - len(hunted)
+
+# ── рукописная сетка — второй дом ────────────────────────────────────────
+try:
+    ls = subprocess.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True).stdout
+    hand = [l for l in ls.split("\n")
+            if re.search(r"hunter.?grid", l, re.I) and l.endswith(".md")]
+    if hand:
+        fail(u"рукописная сетка в дереве: %s — сетка только выводится, вторых домов нет" % hand[0])
+except OSError:
+    pass  # без git судим остальное
+
+# ── храповик ─────────────────────────────────────────────────────────────
+try:
+    base_t = io.open(BASE_FILE, encoding="utf-8", errors="replace").read()
+    m = re.search(r"^never_hunted=(\d+)", base_t, re.M)
+    base = int(m.group(1)) if m else None
+except IOError:
+    base = None
+if base is None:
+    fail(u"нет базы %s (ключ never_hunted=N) — храповик судить нечем" % BASE_FILE)
+if never > base:
+    fail(u"неохваченных клеток стало БОЛЬШЕ: %d > базы %d (модулей %d x классов %d) — так бывает, когда ось модулей выросла; двигай базу С ХРОНИКОЙ" % (never, base, len(modules), len(CLASSES)))
+
+print(u"check-hunter-coverage ok: модулей %d, клеток %d, охочено %d, никогда не охочено %d (база %d) — карта выведена из дерева"
+      % (len(modules), grid_size, len(hunted), never, base))
