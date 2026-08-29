@@ -293,6 +293,14 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
                 }
+                ConstDecl => {
+                    // A CONSTANT IS JUDGED BY ITS INITIALIZER, and the walk
+                    // has nothing of its own to refuse here: the name goes
+                    // into the registry at collection, the type comes from
+                    // the initializer at the point of USE (274.5 wave B2),
+                    // and an initializer the subset cannot compile is refused
+                    // where it is used, with the position the user can see.
+                }
                 TypeDecl | SumDecl => {
                     // A PROTOCOL DECLARATION IS JUDGED, NOT REFUSED (wave 3b).
                     // Wave 3a refused it by name -- honest while nothing could

@@ -492,7 +492,14 @@ resolve 15
 # moved OUT to the new `resolve` module (8 doors), and positional_run,
 # bind_slot_of, slot_is_required are exported TO it (3 readers of the binding
 # rules the resolver applies). resolve 11: the moved doors plus FnIndex/build.
-sem 169
+# 2026-08-29 (274.5 волна В2): sem 169 -> 181. Наружу вышли двери модульной
+# константы: тип `ConstRow` с `raw_crow`, `ConstDef`/`ConstTable` с `new`/`add`,
+# дверь `defs.const_row`, доступ к строкам, плюс три слот-двери разбора
+# (`const_decl_of`, `const_name_at`, `const_init_at`) и две двери канала
+# (`record_const`, `const_of`). Каждое имя спрошено: чекер — типизацией,
+# эмиттер — подстановкой; `no_crow`/`is_crow` НЕ заведены, потому что отсутствие
+# везде отвечается через `Option` (П35).
+sem 181
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

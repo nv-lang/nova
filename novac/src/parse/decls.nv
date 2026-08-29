@@ -163,6 +163,7 @@ fn Cursor mut @const_decl() -> Node {
     @node(NodeKind.ConstDecl, kids)
 }
 
+/// A `test "name" { ... }` block: read whole, judged by the subset walk.
 fn Cursor mut @test_decl() -> Node {
     mut kids = []Node.of(@take()) // KwTest
     @push_if(kids, TokenKind.StrLit)

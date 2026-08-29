@@ -611,6 +611,7 @@ fn Checker mut @const_type_of(name str) -> TyId {
     type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
+/// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
     if k == NodeKind.Name {

@@ -63,12 +63,12 @@ export type ConstRow int
 /// The row's index, for the one thing a row is for: addressing a vector.
 export fn raw_crow(r ConstRow) -> int => r as int
 
-/// "No constant row", as a ROW rather than a number to be decoded by hand.
-export fn no_crow() -> ConstRow => ConstRow(-1)
-
-/// Is this a real constant row, or the absence?
-#realtime nogc
-export fn is_crow(r ConstRow) -> bool => raw_crow(r) >= 0
+// `no_crow()` and `is_crow()` are NOT here, and their absence is the rule
+// rather than an oversight (P35): a constant row is answered as `Option`
+// everywhere -- `defs.const_row` and `chan.const_of` both do -- so the
+// sentinel never leaves the storage and nobody has an absence to test. The
+// pair would have been written for symmetry with `FnRow`, and symmetry is
+// exactly what P35 refuses as a reason for a name.
 
 /// THE row of a record's FIELD in `Ctx.field_rows`.
 ///

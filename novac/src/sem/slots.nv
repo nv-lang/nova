@@ -693,10 +693,18 @@ export fn const_decl_of(c Node) -> Option[Node] {
 }
 
 /// The slot of a constant's NAME: the first identifier leaf after `const`.
+///
+/// The TERMINATOR is the branch (P21), as in `field_name_at`: a node that is
+/// not a leaf simply is not the name, and saying that with a `continue` keeps
+/// the closed set of node kinds out of an `else` that would swallow a new one.
 export fn const_name_at(kids []Node) -> int {
     mut i = 0
     for c in kids {
-        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident { return i }
+        if c.kind_of() != NodeKind.LeafNode {
+            i += 1
+            continue
+        }
+        if leaf_kind(c) == TokenKind.Ident { return i }
         i += 1
     }
     -1
@@ -713,11 +721,22 @@ export fn const_init_at(kids []Node) -> int {
     mut seen_assign = false
     for c in kids {
         if seen_assign { return i }
-        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Assign {
-            seen_assign = true
-        } else {
-            // Before the `=`: the keyword, the name, and possibly a type.
+        // The TERMINATOR is the branch (P21), as in the two doors above: a
+        // node that is not a leaf is not the `=` either, and a `continue`
+        // says so without an `else` that a new node kind could fall into.
+        if c.kind_of() != NodeKind.LeafNode {
+            i += 1
+            continue
         }
+        // TERMINATOR, not an `else`: two guards meet on this line -- one
+        // wants every branch complete, the other forbids an `else` that
+        // stands for "every other variant" of a closed set. A `continue`
+        // satisfies both, and it is the shape the two doors above use.
+        if leaf_kind(c) != TokenKind.Assign {
+            i += 1
+            continue
+        }
+        seen_assign = true
         i += 1
     }
     -1
