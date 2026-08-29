@@ -1455,21 +1455,47 @@ mod tests {
             index.index_file(uri.clone(), src);
         }
 
-        // Baseline: the V1 per-request full scan over all 100 files.
-        let t0 = std::time::Instant::now();
-        let scan = find_references("target", &files, None, true);
-        let scan_dur = t0.elapsed();
+        // Registry 221.1 #796: this used to time ONE run of each and assert
+        // `idx_dur < scan_dur`. Both are microseconds, so on a loaded machine
+        // either side gets preempted and the comparison becomes a coin flip —
+        // it reddened the authoritative gate twice on 2026-08-29 while passing
+        // solo in 0.01s, with the 432 neighbouring tests green both times. A
+        // timing assertion in a FUNCTIONAL lane does not own its clock.
+        //
+        // Two changes make the claim survive noise without weakening it:
+        // MINIMUM OF N runs (the minimum is the robust estimator here — noise
+        // only ever adds time, never removes it, so the smallest sample is the
+        // one least polluted), and a stated MARGIN instead of a bare `<`. The
+        // margin is what the property actually promises: one index lookup
+        // against a scan of 100 files should not be a photo finish.
+        const RUNS: usize = 5;
+        const MARGIN: u32 = 2; // the scan must cost at least this much more
 
-        // New path: a single index lookup (what each request now costs).
-        let t1 = std::time::Instant::now();
-        let idx = index.find("target", None, true);
-        let idx_dur = t1.elapsed();
+        let mut scan_min = std::time::Duration::MAX;
+        let mut scan = Vec::new();
+        for _ in 0..RUNS {
+            let t0 = std::time::Instant::now();
+            scan = find_references("target", &files, None, true);
+            scan_min = scan_min.min(t0.elapsed());
+        }
 
+        let mut idx_min = std::time::Duration::MAX;
+        let mut idx = Vec::new();
+        for _ in 0..RUNS {
+            let t1 = std::time::Instant::now();
+            idx = index.find("target", None, true);
+            idx_min = idx_min.min(t1.elapsed());
+        }
+
+        // The deterministic half — correctness — is asserted first and does not
+        // depend on any clock.
         assert_eq!(idx.len(), scan.len(), "index and scan must agree ({} vs {})", idx.len(), scan.len());
         assert_eq!(idx.len(), 100, "one `target` per file");
         assert!(
-            idx_dur < scan_dur,
-            "index lookup ({idx_dur:?}) should beat the full scan ({scan_dur:?})"
+            idx_min * MARGIN <= scan_min,
+            "index lookup (best of {RUNS}: {idx_min:?}) should beat the full scan \
+             (best of {RUNS}: {scan_min:?}) by at least {MARGIN}x — both minima are \
+             printed so a real regression is told apart from machine load"
         );
     }
 
