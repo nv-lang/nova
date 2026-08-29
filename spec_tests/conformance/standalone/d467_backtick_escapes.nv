@@ -7,11 +7,15 @@
 module standalone.d467_backtick_escapes
 
 fn join(parts []str, args []str) -> str {
-    mut s = ""
+    // StringBuilder — канон perf-conventions (см. W_STR_CONCAT_LOOP):
+    // `s = s.concat(p)` в цикле есть O(N²) и линт корпуса его отвергает.
+    consume sb = StringBuilder.new()
     for p in parts {
-        s = s.concat(p)
+        sb.append(p)
     }
-    s
+    // хвостовая позиция с ожидаемым типом str — `sb` коэрсится сам (D429 R9),
+    // явный `.into_str()` линт отвергает как избыточный
+    sb
 }
 
 fn main() Io -> () {
