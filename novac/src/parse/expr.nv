@@ -101,16 +101,26 @@ fn Cursor @after_bracket_run() -> TokenKind {
     mut depth = 0
     while j < @toks.len() {
         ro k = @toks[j].kind
-        if k == TokenKind.LBracket { depth += 1 }
-        if k == TokenKind.RBracket {
-            depth -= 1
-            if depth == 0 {
-                if j + 1 < @toks.len() { return @toks[j + 1].kind }
-                return TokenKind.Eof
-            }
-        }
         if k == TokenKind.Eof { return TokenKind.Eof }
-        j += 1
+        if k == TokenKind.LBracket {
+            depth += 1
+            j += 1
+            continue
+        }
+        // TERMINATOR forms throughout (the two shape guards, 274.5 s2g):
+        // each token kind either answers or steps, and no bare `if` is left
+        // half-branched.
+        if k != TokenKind.RBracket {
+            j += 1
+            continue
+        }
+        depth -= 1
+        if depth > 0 {
+            j += 1
+            continue
+        }
+        if j + 1 < @toks.len() { return @toks[j + 1].kind }
+        return TokenKind.Eof
     }
     TokenKind.Eof
 }
