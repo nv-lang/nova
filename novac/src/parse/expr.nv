@@ -125,6 +125,9 @@ fn Cursor @after_bracket_run() -> TokenKind {
     TokenKind.Eof
 }
 
+/// The bracketed TYPE-argument run of an explicit instantiation: `[int]`,
+/// `[K, V]`. Children are type references read by the one reference door;
+/// check judges arity and known-ness at the point of use.
 fn Cursor mut @turbofish() -> Node {
     mut gk = []Node.of(@take())            // '['
     while !@at_eof() && @peek() != TokenKind.RBracket {
