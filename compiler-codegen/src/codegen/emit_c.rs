@@ -2004,6 +2004,17 @@ pub struct CEmitter {
     /// reads/writes go through the box. The closure env stores `_box_x` directly
     /// (no dangling-ptr risk on escape). Cleared and #undef'd at function exit.
     var_boxed: HashMap<String, String>,
+    // Registry #790: the subset of `var_boxed` VALUES that are the hoisted,
+    // NULL-initialized detach boxes (`hoist_box_decl` + the `if (!bv)` lazy
+    // alloc at the detach site, Plan 248). Only these can legally be NULL at
+    // a use site (the site never executed), so only these get the
+    // `*(p ? p : &local)` fallback in the Ident arm; every other var_boxed
+    // value (`_c->…`/`_env->…` ctx and closure fields) has no local of that
+    // name in the emitted function and is never NULL. Append-only across the
+    // CU on purpose: the `_nova_detach_N_box_<var>` shape is produced by no
+    // other registrar, so a same-named entry in a later function is again a
+    // lazy box, and the per-function var_boxed take/restore needs no twin.
+    lazy_detach_boxes: std::collections::HashSet<String>,
     /// №240 [M-detach-box-while-loop-read-after]: `(byte-offset, indent)`
     /// into `self.out`, set once per top-level C function body by
     /// `emit_block_stmts` (right after the function's own opening brace).
@@ -2797,6 +2808,7 @@ impl CEmitter {
             zero_on_move_types: HashMap::new(),
             loop_body_has_scope: Vec::new(),
             var_boxed: HashMap::new(),
+            lazy_detach_boxes: std::collections::HashSet::new(),
             detach_box_hoist: None,
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
@@ -35308,9 +35320,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if self.sum_schemas.get(name.as_str()).map_or(false, |m| m.is_empty()) {
                     return Ok(format!("((Nova_{})0)", name));
                 }
-                // Heap-promoted mut-capture: dereference the box pointer.
+                // Heap-promoted mut-capture: go through the box pointer.
                 // Avoids #define which corrupts struct field access (foo->name).
+                //
+                // Registry #790: when the box is one of the hoisted,
+                // NULL-initialized detach boxes (lazy alloc at the detach site,
+                // Plan 248), a site emitted after the detach can still find it
+                // NULL — the site never executed (detach inside an untaken `if`,
+                // a zero-iteration loop, an accept() cancelled before its first
+                // Ok), and the read dereferenced NULL (the arena VEH then
+                // misreported it as a fiber stack overflow). Fall back to the
+                // local: while the box is NULL the local IS the only storage,
+                // and once the site runs, the box takes over. The
+                // `*(p ? p : &local)` shape (not `p ? *p : local`) stays an
+                // lvalue — Stmt::Assign lowers its target through this same arm.
+                // Ctx/env-field box values (`_c->…`, `_env->…`) have no local of
+                // that name in the emitted function and are never NULL, so they
+                // keep the plain deref.
                 if let Some(box_var) = self.var_boxed.get(name) {
+                    if self.lazy_detach_boxes.contains(box_var) {
+                        return Ok(format!(
+                            "(*({bx} ? {bx} : &{local}))",
+                            bx = box_var,
+                            local = Self::mangle_field_name(name)
+                        ));
+                    }
                     return Ok(format!("(*{})", box_var));
                 }
                 // Plan 118 Ф.1 fix (Plan 116 Ф.3, [M-116-handshake-socket-deadlock]
