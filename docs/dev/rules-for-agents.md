@@ -156,7 +156,10 @@
   `check-novac-commit-donor.sh` — коммит novac без строки `Donor:` (и оракул
   донором быть не может, П25); `check-novac-effects-at-door.sh` — способность
   ниже двери (П15); `check-novac-emission-size.sh` — объём эмиссии novac
-  разошёлся с базой; `check-novac-fuzz-zero-panic.sh` — паника на мутациях
+  разошёлся с базой; `check-oracle-nesting-depth.sh` — оракул умирает на глубокой
+  вложенности вместо честной диагностики `E_NESTING_TOO_DEEP` — либо, наоборот,
+  отвергает законную глубину (№0800);
+  `check-novac-fuzz-zero-panic.sh` — паника на мутациях
   корпуса; `check-novac-iteration-cost.sh` — цена цикла «правка → вердикт» вышла
   за бюджет (П14); `check-novac-lint.sh` — свод `nv-coding-style` по
   `novac/src`; `check-novac-local-only-work.sh` — ветка с невлитой работой и без

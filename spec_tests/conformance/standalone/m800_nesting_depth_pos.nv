@@ -1,0 +1,12 @@
+// EXPECT_STDOUT depth-ok=1
+// Registry 221.1 #800, the other half: the depth limit must NOT touch legal
+// code. 200 nested parens is far deeper than anything written by hand (the
+// whole corpus stays under 40) and still well under the 512 limit, so this
+// must compile and run. Without this file a future 'fix' could set the limit
+// to 8 and the negative fixture would still pass.
+module standalone.m800_nesting_depth_pos
+
+fn main() Io -> () {
+    ro x = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+    println("depth-ok=${x}")
+}

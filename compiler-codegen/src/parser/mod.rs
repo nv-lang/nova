@@ -139,6 +139,18 @@ pub struct Parser {
     /// immediately afterwards in `parse_fn` to build the structured receiver
     /// type (`Receiver.receiver_ty`); never persists across fn declarations.
     last_carrier_slot_types: Vec<TypeRef>,
+    /// Registry #800: nesting depth of the recursive descent. Without a
+    /// limit the parser rides the native stack down and DIES on it —
+    /// `thread 'nova-check-0' has overflowed its stack`, no file, no line,
+    /// no `E_*`, which is the first thing an outsider feeding the compiler
+    /// generated code would see. Measured 2026-08-29: nested parens 2000 ok
+    /// / 2500 dead, nested `if` 500 ok / 1810 dead, value-blocks 1810 dead,
+    /// deterministic. `novac` has had this standard mechanized at rank CORE
+    /// since 274 (`check-novac-fuzz-zero-panic.sh`); the oracle had no
+    /// fuzzing at all. Counted in ONE place — `depth_guard()` — so a new
+    /// recursive form cannot forget it: every recursion below flows through
+    /// `parse_expr`/`parse_block`.
+    depth: u32,
 }
 
 /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** build the
@@ -369,7 +381,45 @@ impl Parser {
             pointee_ctx: false,
             receiver_elem_ctx: false,
             last_carrier_slot_types: Vec::new(),
+            depth: 0,
         }
+    }
+
+    /// Registry #800: the one place nesting depth is counted. Returns the
+    /// honest diagnostic when the limit is crossed; the caller pairs it with
+    /// `depth_leave()` on every exit path.
+    ///
+    /// The limit is 512, not "as deep as the stack happens to allow": a
+    /// number tied to the stack is a number that changes with the build, the
+    /// thread and the machine, and a diagnostic that appears only on some
+    /// machines is worse than none. 512 is far above anything a human writes
+    /// (the whole corpus of 2967 `.nv` files never exceeds 40) and far below
+    /// the measured death (~1800-2500 on the check thread's stack), so the
+    /// error is reached long before the stack is.
+    fn depth_enter(&mut self, span: Span) -> Result<(), Diagnostic> {
+        const MAX_NESTING_DEPTH: u32 = 512;
+        self.depth += 1;
+        if self.depth > MAX_NESTING_DEPTH {
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_NESTING_TOO_DEEP] nesting is deeper than {max} levels — \
+                     the parser refuses it instead of running out of stack. \
+                     This limit exists so that machine-generated or corrupted \
+                     input gets a diagnostic with a file and a line rather than \
+                     a dead thread; hand-written Nova never comes close (the \
+                     whole standard library and test corpus stay under 40). If \
+                     this is generated code, emit it flatter: bind \
+                     sub-expressions to `ro` names, or split the function.",
+                    max = MAX_NESTING_DEPTH,
+                ),
+                span,
+            ));
+        }
+        Ok(())
+    }
+
+    fn depth_leave(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** consume the parser
@@ -8146,7 +8196,13 @@ impl Parser {
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_implication()
+        // Registry #800: every expression recursion in this parser reaches
+        // here, so counting once here covers parens, unary chains, calls,
+        // indexing and the operator ladder alike.
+        self.depth_enter(self.peek().span)?;
+        let r = self.parse_implication();
+        self.depth_leave();
+        r
     }
 
     /// Plan 33.1 (D24): `==>` (impl) и `<==>` (iff) — приоритет ниже `||`,
@@ -11896,6 +11952,17 @@ impl Parser {
     // ─── block & stmts ───────────────────────────────────────────────────
 
     fn parse_block(&mut self) -> Result<Block, Diagnostic> {
+        // Registry #800: blocks nest independently of expressions — `if` in
+        // `if` in `if` never touches `parse_expr` on the way down — so the
+        // count is taken here too. Same counter, so mixed nesting (a block
+        // inside an expression inside a block) is judged by total depth.
+        self.depth_enter(self.peek().span)?;
+        let r = self.parse_block_inner();
+        self.depth_leave();
+        r
+    }
+
+    fn parse_block_inner(&mut self) -> Result<Block, Diagnostic> {
         let start = self.expect(&TokenKind::LBrace)?.span;
         let mut stmts = Vec::new();
         let mut trailing: Option<Box<Expr>> = None;

@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR [E_NESTING_TOO_DEEP] nesting is deeper than 512 levels
+// Registry 221.1 #800: before this limit the parser rode the native stack
+// down and DIED on it -- `thread 'nova-check-0' has overflowed its stack`,
+// with no file, no line and no `E_*`. Measured 2026-08-29 (each probe in its
+// OWN directory, because `nova check` pulls a folder in as a module):
+// nested parens 2000 ok / 2500 dead, nested `if` 500 ok / 1810 dead, value
+// blocks 1810 dead, deterministic 3/3. A crash with no diagnostic is the
+// first thing an outsider feeding the compiler generated code would see, and
+// `novac` has had this exact standard at rank CORE since plan 274 while the
+// oracle had no fuzzing at all.
+//
+// 600 nested parens: above the 512 limit, below the ~2500 where the stack
+// used to die -- so this fixture proves the DIAGNOSTIC, not the crash.
+module neg.m800_nesting_depth_neg
+
+fn m800_deep() -> int {
+    // nova:expect E_NESTING_TOO_DEEP -- the parser must refuse deep nesting with a diagnostic instead of running out of stack
+    ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+}
