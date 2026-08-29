@@ -403,7 +403,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> ()
                     if attr_kids_name(children, COERCE_ATTR) {
                         // The pair attribute: the collector owns it.
                     } else if attr_kids_name(children, REALTIME_ATTR) {
-                        // Read, not enforced -- see the constant's doc.
+                        // Read, not enforced [INV-GUARD: check-novac-differential]
+                        // -- the corpus compares OUTCOMES against the oracle on
+                        // every file, so the day the oracle starts policing the
+                        // guarantee, this decision reddens there. See the doc of
+                        // REALTIME_ATTR for the measurement behind it.
                     } else {
                         @report_first_leaf_of(children, ATTR_MSG)
                     }
