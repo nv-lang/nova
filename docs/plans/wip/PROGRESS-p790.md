@@ -86,4 +86,28 @@ conformance-тестов (var_boxed несёт и ctx/env-поля) — пойм
 
 После пуша nova main: влить `serve_accept_loop` обратно в `serve()`, оба смока
 (`serve_graceful_shutdown_smoke`, `serve_router_shutdown_smoke`) PASS, пуш
-polaris. Потом закрытие строки №790 с хроникой 31→30. Затем — №791.
+polaris. Потом закрытие строки №790 с хроникой 31→30.
+
+### Шаг 5. №791 — матрица снята 2026-08-29, класс сужен до трёх условий
+
+Девять зондов (все в скратчпаде сессии `av9/`, формы восстановимы из строки
+реестра №791). Виснут детерминированно ровно формы, где сходятся ВСЕ ТРИ:
+uv-accept-парковка отменяемого scope × cancel из spawn-ребёнка под вложенным
+supervised (run_request-форма) × uv-запись в сокет соединения из той же фибры
+(позиция записи не важна). Убери любое — выходит чисто:
+
+| зонд | park | форма cancel | сокет-запись | итог |
+|---|---|---|---|---|
+| p791_inside | таймер | инлайн в detach | нет | выход 520мс |
+| p791_uv_inside | uv | инлайн в detach | нет | выход 707мс |
+| p791_conn_cancel | uv | инлайн в фибре соединения | да | выход 828мс |
+| p791_nested_cancel | uv | supervised{spawn} ИНЛАЙН в detach | да | CC-FAIL → №797 |
+| p791_helper_cancel | uv | helper supervised{spawn} | да (после) | **ВИСИТ** 3/3 |
+| p791_timer_helper | таймер | helper supervised{spawn} | нет | выход 644мс |
+| p791_marked | uv | helper supervised{spawn} | НЕТ (fs-метки) | выход 926мс, все метки |
+| p791_nospawn | uv | helper supervised БЕЗ spawn | да | выход 1299мс |
+| p791_writefirst | uv | helper supervised{spawn} | да (ДО) | **ВИСИТ** |
+
+Следующее: driver.c/net.c — жизнь write-req и close_cb сокета, когда cancel
+пришёл из spawn-ребёнка; кто не даёт процессу выйти (drain orphans? живой
+handle на лупе?). Инструмент: `nova_evloop_active_handles` (map, тема 5).
