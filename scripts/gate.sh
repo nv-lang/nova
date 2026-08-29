@@ -333,6 +333,14 @@ guard "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новы�
 # nova_resume_fiber (fibers.h).
 step loop "expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453)"
 step loop "накопление несведённых веток (никогда не копи)"
+step loop "определения субагентов связаны с командами в обе стороны"
+guard "$ROOT/scripts/guards/check-agent-definitions-wired.sh" "$ROOT" \
+    || fail "агент, о котором не говорит ни одна команда, либо команда, зовущая несуществующего агента"
+
+step loop "у каждого хука среды есть самотест (хук ломается молча и раньше стража)"
+guard "$ROOT/scripts/guards/check-hooks-have-selftests.sh" "$ROOT" \
+    || fail "хук без самотеста: ломается молча, а руками его никто не гоняет"
+
 step loop "границы новой волны плана («Не делаем» и открытые вопросы рядом с критериями)"
 guard "$ROOT/scripts/guards/check-plan-wave-boundaries.py" "$ROOT" \
     || fail "волна с критериями приёмки, но без границ и открытых вопросов"

@@ -61,6 +61,10 @@
 # which is why the rule went into the spec instead of being filed as an
 # implementation defect. Registry 221.1 #783 carries the measurement and the
 # owner's routing: novac implements it, the oracle does not, not before the tag.
+# 2026-08-29: 28 -> 29 -- the D200 clarification (module-const type is
+# optional; the home of the rule is D184) is one more commit touching
+# spec/decisions after spec-point. For novac's parser this is CONFIRMATION,
+# not new work: bare `const X = 7` was already the shape its sources use.
 #   spec-queue: 29
 #   oracle-pin: 2803de2d9
 #   stage: E2
