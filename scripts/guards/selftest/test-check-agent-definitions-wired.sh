@@ -57,6 +57,23 @@ printf 'take the spec-reader agent, do not roll your own\n' > "$CMD/delegate.md"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "упоминание прозой засчитывается"; else bad "проза тоже осведомляет: $out"; fi
 
+# 5b. упомянут ТОЛЬКО в СКИЛЛЕ, ни одна команда о нём не говорит — зелено.
+#     Это главный путь осведомления: скилл всплывает сам, команду надо звать
+#     слэшем, а слэш-меню принадлежит владельцу, не агенту.
+mk
+mkdir -p "$TMP/.claude/skills/read-spec"
+printf 'agent def\n' > "$AG/spec-reader.md"
+printf 'take the spec-reader agent\n' > "$TMP/.claude/skills/read-spec/SKILL.md"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "упоминание только в скилле засчитывается"; else bad "скилл обязан осведомлять наравне с командой: $out"; fi
+
+# 5c. ссылка subagent_type из СКИЛЛА на несуществующего агента — красно.
+mk
+mkdir -p "$TMP/.claude/skills/x"
+printf 'subagent_type: "phantom"\n' > "$TMP/.claude/skills/x/SKILL.md"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "phantom"; then ok "висячая ссылка из скилла — красно"; else bad "скилл, зовущий несуществующего агента, обязан краснеть (код $rc): $out"; fi
+
 # 6. ни каталогов, ни файлов — зелено, судить нечего.
 rm -rf "$TMP/.claude"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
@@ -68,6 +85,6 @@ printf 'no agents here\n' > "$CMD/x.md"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "команды без агентов — зелено"; else bad "отсутствие агентов не нарушение: $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-agent-definitions-wired: 7/7 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-agent-definitions-wired: 9/9 ok"; exit 0; fi
 echo "селфтест check-agent-definitions-wired: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
