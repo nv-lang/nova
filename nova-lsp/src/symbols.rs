@@ -1455,21 +1455,36 @@ mod tests {
             index.index_file(uri.clone(), src);
         }
 
-        // Baseline: the V1 per-request full scan over all 100 files.
-        let t0 = std::time::Instant::now();
-        let scan = find_references("target", &files, None, true);
-        let scan_dur = t0.elapsed();
+        // BEST OF N, not a single shot. A single pair of `Instant::elapsed`
+        // readings over microsecond-scale work compares scheduling luck as
+        // much as code: one preemption between the two measurements flips the
+        // inequality, and under a loaded gate that happened on three pushes in
+        // one shift (window 274, 2026-08-29 -- the test passed 3/3 when run
+        // alone and failed inside the full crate run). Noise can only make a
+        // run SLOWER, so the minimum of several runs is the reading closest to
+        // the real cost; comparing the two minima asks exactly the question
+        // this test was written to ask, and asks it about the code rather than
+        // about the scheduler.
+        const RUNS: usize = 5;
+        let mut scan_best = std::time::Duration::MAX;
+        let mut idx_best = std::time::Duration::MAX;
+        let mut scan = Vec::new();
+        let mut idx = Vec::new();
+        for _ in 0..RUNS {
+            let t0 = std::time::Instant::now();
+            scan = find_references("target", &files, None, true);
+            scan_best = scan_best.min(t0.elapsed());
 
-        // New path: a single index lookup (what each request now costs).
-        let t1 = std::time::Instant::now();
-        let idx = index.find("target", None, true);
-        let idx_dur = t1.elapsed();
+            let t1 = std::time::Instant::now();
+            idx = index.find("target", None, true);
+            idx_best = idx_best.min(t1.elapsed());
+        }
 
         assert_eq!(idx.len(), scan.len(), "index and scan must agree ({} vs {})", idx.len(), scan.len());
         assert_eq!(idx.len(), 100, "one `target` per file");
         assert!(
-            idx_dur < scan_dur,
-            "index lookup ({idx_dur:?}) should beat the full scan ({scan_dur:?})"
+            idx_best < scan_best,
+            "index lookup (best of {RUNS}: {idx_best:?}) should beat the full scan (best of {RUNS}: {scan_best:?})"
         );
     }
 
