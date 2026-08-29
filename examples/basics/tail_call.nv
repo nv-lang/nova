@@ -1,0 +1,15 @@
+// A body that ENDS with a call: the call is the returned value, the same rule
+// every other tail expression already lives by. Eight of novac's own files
+// end a function exactly like `wrap` does here (census 2026-08-29), which is
+// what named this wave.
+module basics.tail_call
+
+fn double(x int) -> int => x * 2
+
+fn wrap(x int) -> int {
+    double(x)
+}
+
+fn main() {
+    println(wrap(21))
+}

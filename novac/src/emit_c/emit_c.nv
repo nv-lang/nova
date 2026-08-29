@@ -663,7 +663,7 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
         match c {
             Leaf(_) => {} // the block's own braces -- trivia carriers, not statements
             Branch { .. } => {
-                if tail && j == last_branch && is_expr_kind(c.kind_of()) && c.kind_of() != NodeKind.Call {
+                if tail && j == last_branch && is_expr_kind(c.kind_of()) {
                     @body.append("    return ")
                     @emit_expr(c)
                     @body.append(";\n")

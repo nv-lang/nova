@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_hir_typeck::op` -- operator dispatch is its own corner
+// of the checker, beside expression typing, not inside it.
+// Role: layer 6 (check) -- WHICH CALLABLE an operator dispatches to. Today
+// exactly one operator of the subset lowers to a call: `==`/`!=` on `str`
+// (D46 rule 3 derives `!=` from the same method).
+// Used by: typing.nv (the Bin arm calls the one door here).
+// Guarded by: check-novac-channel-one-writer.py (rule E: resolution doors
+// only in check/ and resolve/), check-novac-file-size.py (this file exists
+// because typing.nv crossed 1000 lines on 2026-08-29 -- the cut sem.nv took),
+// and the str_eq.nv fixture through check-novac-differential.sh.
+// novac/src/check/operators.nv -- the operator-to-callable decision.
+
+module novac.check
+
+import ../tree.{Node, BinOp, bin_op_of}
+import ../sem.{leaf_kind, leaf_text}
+import ../types.{TyId, no_ty}
+import ../builtins.{EQUAL_METHOD}
+import ../resolve.{FnLookup}
+import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
+import ../sem.{identity_slots, branch_children, ParamMode}
+
+/// One expression: record what the emitter asks about, walk what it emits.
+/// Equality on `str` is a method call, not a C operator: the
+/// subset lowers it to `str.equal` (D46 rule 3 derives `!=`
+/// from the same method). The CHECKER picks the row and writes
+/// it into the channel; ambiguity is refused HERE, by name,
+/// instead of being resolved silently at emission (274.4 §1).
+///
+/// Every other operator-operand pair lowers to a C operator and
+/// records no callee -- the ABSENCE is the decision, and the
+/// emitter reads it as one.
+fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
+    ro op = bin_op_of(leaf_kind(kids[1]))
+    if !is_equality(op) { return }
+    ro lhs_t = type_of(kids[0], @ctx, @scope, @chan)
+    if lhs_t != @ctx.prims.str_id { return }
+    // P18: a door that ASKS the table builds no text -- the
+    // messages live in the refusers below, each with its own
+    // reason.
+    match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, equality_key(lhs_t), CallForm.MethodCall) {
+        FnFound(row) => @accept_equality_row(e, kids, lhs_t, row)
+        FnOverloaded(_) => @refuse_equality_overloaded(kids)
+        FnUnknown => @refuse_equality_unknown(kids)
+    }
+}
+
+/// More than one `equal` of that name: choosing between them is
+/// overload resolution, which the subset does not do -- and
+/// taking the first one silently is what this wave removes.
+fn Checker mut @refuse_equality_overloaded(kids []Node) -> () {
+    @report_first_leaf_of(kids, "outside the subset: `==` on `str` reaches more than one `${EQUAL_METHOD}` method, and novac does not choose between them")
+}
+
+/// The method is not among the declarations novac was handed,
+/// so there is nothing to emit `==` on strings with -- and the
+/// compiler must say so, not the linker.
+fn Checker mut @refuse_equality_unknown(kids []Node) -> () {
+    @report_first_leaf_of(kids, "outside the subset: `==` on `str` needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed")
+}
+
+/// The row is found; the question left is WHO carries its body.
+/// Ours -- we print our own name; std's (as `str.equal` is) --
+/// the body lives in the SHELL, and the shell must carry it. The
+/// surface is asked BEFORE printing, as it is for a literal and
+/// for instance methods: otherwise the refusal comes from the
+/// linker rather than the compiler (measured 2026-08-28:
+/// `undefined symbol: novac_fn_equal__...`).
+fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) -> () {
+    if !@ctx.fns.compiles_body(row) {
+        ro sym = c_shell_method(@ctx, lhs_t, EQUAL_METHOD)
+        if !@ctx.interop.has(sym) {
+            @report_first_leaf_of(kids, "outside the subset: `==` on `${ty_source_name(@ctx, lhs_t)}` needs `${sym}`, and the shell it links into does not carry it -- the interop surface is novac/probe/shell_probe.nv")
+            return
+        } else {
+            // Carried: the emitter prints exactly this name.
+        }
+    } else {
+        // Our own body: our own name, no shell involved.
+    }
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
+}
+
+/// True for `==` and `!=` -- the pair that dispatches through
+/// the `Equal` protocol (D46).
+fn is_equality(op BinOp) -> bool {
+    match op {
+        Equal | NotEqual => true
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
+/// The key of the synthesised `equal` call: the receiver in
+/// position zero, the right-hand side after it. Both positions
+/// are `ro` -- `equal` READS its operands, and `ro` is the class
+/// every mode accepts, so the synthesised call cannot pick a
+/// mutating overload by accident. The right side's type is left
+/// unknown: `equal` takes its own.
+fn equality_key(lhs_t TyId) -> []ArgSpec => [
+    ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" },
+    ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" },
+]

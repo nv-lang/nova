@@ -18,7 +18,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
@@ -603,7 +603,9 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // `println(...)`. The oracle refuses all four; novac emitted a
         // function that falls off its end. Asking a deny-list about an open
         // set is how a rule looks complete while covering two cases of six.
-        if k == NodeKind.RetStmt || (is_expr_kind(k) && k != NodeKind.Call) { return }
+        // `Call` LEFT the exclusion with 274.5 wave B4: a tail call is the
+        // returned value -- eight of novac's own files end a body exactly so.
+        if k == NodeKind.RetStmt || is_expr_kind(k) { return }
         @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }
@@ -861,17 +863,66 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
 /// statement — the #652 class again, where the boundary belongs in check and
 /// the ice is only the second floor. Expression-position calls are a
 /// different question and go through the emitter's Call branch.
-fn Checker mut @report_if_bad_call_stmt(stmts []Node) -> () {
+fn Checker mut @report_if_bad_call_stmt(stmts []Node, tail_is_value bool) -> () {
+    // The LAST statement of a value-returning fn body is not in statement
+    // position at all -- it is the returned value (274.5 wave B4). The caller
+    // says which block that is: the Block arm compares the block's id with
+    // the body the walk marked, every other block passes false, and the
+    // exemption cannot leak past the one position it names.
+    ro last = last_branch_at(stmts)
+    mut i = 0
     for st in stmts {
         match st {
             Leaf(_) => {}
             Branch { kind, children, .. } => {
-                if kind != NodeKind.Call { continue }
-                if call_callee_text(children) == PRINT_FN { continue }
-                @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
+                ro exempt = kind != NodeKind.Call ||
+                    (tail_is_value && i == last) ||
+                    call_callee_text(children) == PRINT_FN
+                if !exempt {
+                    @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
+                } else {
+                    // Not a call, the returned tail, or println: all legal.
+                }
             }
         }
+        i += 1
     }
+}
+
+/// The index of the LAST branch child, or -1: trailing leaves (the closing
+/// brace) are not statements, and "the last statement" must skip them.
+fn last_branch_at(stmts []Node) -> int {
+    mut last = -1
+    mut i = 0
+    for st in stmts {
+        match st {
+            Leaf(_) => {}
+            Branch { .. } => { last = i }
+        }
+        i += 1
+    }
+    last
+}
+
+/// The BODY block of this fn when it declares a return value, else `no_node()`:
+/// the one block whose tail call is a returned value. Asked by BOTH phases --
+/// the subset walk marks it for the statement rule, and the typing walk marks
+/// it for its own tail handling -- so the answer lives in one door. NOT
+/// exported: both phases are this module, and nobody else has the question.
+fn value_body_of(fk []Node) -> NodeId {
+    mut declares = false
+    for c in fk {
+        if c.kind_of() == NodeKind.RetType {
+            declares = declares_a_value(branch_children(c))
+        } else {
+            // Not the return type: the body search below handles the rest.
+        }
+    }
+    if !declares { return no_node() }
+    for c in fk {
+        if c.kind_of() == NodeKind.Block { return c.id_of() }
+    }
+    no_node()
 }
 
 /// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is

@@ -93,6 +93,7 @@ fn Checker @is_generic_decl(f Node) -> bool {
 
 /// One function: fresh scope, parameters bound, then the body.
 fn Checker mut @type_fn(f Node) -> () {
+    @tail_value_body = value_body_of(branch_children(f))
     ro kids = branch_children(f)
     if kids.len() < 2 {
         @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
@@ -216,13 +217,51 @@ fn Checker mut @type_fn(f Node) -> () {
 /// Statements of a block, in order.
 fn Checker mut @type_block(b Node) -> () {
     ro mark = @scope.mark()
-    for c in branch_children(b) {
+    ro kids = branch_children(b)
+    // The tail call of a value-returning fn body is an EXPRESSION, not a
+    // statement (274.5 wave B4): typed through the expression walk, which
+    // resolves the callee and records it -- the statement door skips
+    // non-println calls silently, and a tail call typed there would reach
+    // mono with no callee and the linker would report it, not the compiler.
+    ro tail_at = if b.id_of() == @tail_value_body { last_branch_of(kids) } else { -1 }
+    mut i = 0
+    for c in kids {
         match c {
             Leaf(_) => {}
-            Branch { .. } => @type_stmt(c)
+            Branch { .. } => {
+                if i == tail_at && c.kind_of() == NodeKind.Call {
+                    // TERMINATOR, not an else (the two shape guards meet on
+                    // a variant test, and continue satisfies both).
+                    @type_expr(c)
+                    ro t = type_of(c, @ctx, @scope, @chan)
+                    if is_ty(t) {
+                        @record(c, t)
+                    } else {
+                        // An unresolved tail call was refused by the walk.
+                    }
+                    i += 1
+                    continue
+                }
+                @type_stmt(c)
+            }
         }
+        i += 1
     }
     @scope.release(mark)
+}
+
+/// The index of the last BRANCH child: trailing leaves are not statements.
+fn last_branch_of(kids []Node) -> int {
+    mut last = -1
+    mut i = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last = i }
+        }
+        i += 1
+    }
+    last
 }
 
 /// One `no_ty()` slot per argument child from `from` on. Children before
@@ -508,89 +547,6 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // punctuation children carry no type the emitter asks for.
         }
     }
-}
-
-/// One expression: record what the emitter asks about, walk what it emits.
-/// Equality on `str` is a method call, not a C operator: the
-/// subset lowers it to `str.equal` (D46 rule 3 derives `!=`
-/// from the same method). The CHECKER picks the row and writes
-/// it into the channel; ambiguity is refused HERE, by name,
-/// instead of being resolved silently at emission (274.4 §1).
-///
-/// Every other operator-operand pair lowers to a C operator and
-/// records no callee -- the ABSENCE is the decision, and the
-/// emitter reads it as one.
-fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
-    ro op = bin_op_of(leaf_kind(kids[1]))
-    if !is_equality(op) { return }
-    ro lhs_t = type_of(kids[0], @ctx, @scope, @chan)
-    if lhs_t != @ctx.prims.str_id { return }
-    // P18: a door that ASKS the table builds no text -- the
-    // messages live in the refusers below, each with its own
-    // reason.
-    match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, equality_key(lhs_t), CallForm.MethodCall) {
-        FnFound(row) => @accept_equality_row(e, kids, lhs_t, row)
-        FnOverloaded(_) => @refuse_equality_overloaded(kids)
-        FnUnknown => @refuse_equality_unknown(kids)
-    }
-}
-
-/// More than one `equal` of that name: choosing between them is
-/// overload resolution, which the subset does not do -- and
-/// taking the first one silently is what this wave removes.
-fn Checker mut @refuse_equality_overloaded(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` on `str` reaches more than one `${EQUAL_METHOD}` method, and novac does not choose between them")
-}
-
-/// The method is not among the declarations novac was handed,
-/// so there is nothing to emit `==` on strings with -- and the
-/// compiler must say so, not the linker.
-fn Checker mut @refuse_equality_unknown(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` on `str` needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed")
-}
-
-/// The row is found; the question left is WHO carries its body.
-/// Ours -- we print our own name; std's (as `str.equal` is) --
-/// the body lives in the SHELL, and the shell must carry it. The
-/// surface is asked BEFORE printing, as it is for a literal and
-/// for instance methods: otherwise the refusal comes from the
-/// linker rather than the compiler (measured 2026-08-28:
-/// `undefined symbol: novac_fn_equal__...`).
-fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) -> () {
-    if !@ctx.fns.compiles_body(row) {
-        ro sym = c_shell_method(@ctx, lhs_t, EQUAL_METHOD)
-        if !@ctx.interop.has(sym) {
-            @report_first_leaf_of(kids, "outside the subset: `==` on `${ty_source_name(@ctx, lhs_t)}` needs `${sym}`, and the shell it links into does not carry it -- the interop surface is novac/probe/shell_probe.nv")
-            return
-        } else {
-            // Carried: the emitter prints exactly this name.
-        }
-    } else {
-        // Our own body: our own name, no shell involved.
-    }
-    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
-}
-
-/// True for `==` and `!=` -- the pair that dispatches through
-/// the `Equal` protocol (D46).
-fn is_equality(op BinOp) -> bool {
-    match op {
-        Equal | NotEqual => true
-        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
-    }
-}
-
-/// The key of the synthesised `equal` call: the receiver in
-/// position zero, the right-hand side after it. Both positions
-/// are `ro` -- `equal` READS its operands, and `ro` is the class
-/// every mode accepts, so the synthesised call cannot pick a
-/// mutating overload by accident. The right side's type is left
-/// unknown: `equal` takes its own.
-fn equality_key(lhs_t TyId) -> []ArgSpec {
-    mut out = []ArgSpec.new()
-    out.push(ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" })
-    out.push(ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" })
-    out
 }
 
 /// One expression: record what the emitter asks about, walk what it emits.

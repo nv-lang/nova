@@ -36,7 +36,7 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
@@ -82,6 +82,11 @@ type Checker {
     /// is nothing to type it under. One copy of the body is typed per
     /// instance (Go stenciling), so nothing here is parametric afterwards.
     substs []TyId
+    /// The ONE block whose tail call is a returned value: the body of the fn
+    /// being walked, when that fn declares a return type (274.5 wave B4). Set
+    /// by the FnDecl arm of each phase, read by the Block arm; there are no
+    /// nested fns, so one slot is the whole state.
+    tail_value_body NodeId
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -118,6 +123,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        tail_value_body: no_node(),
         substs: []TyId.new(),
     }
     c.walk(file)
@@ -167,6 +173,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        tail_value_body: no_node(),
         substs,
     }
     c.type_fn(decl)
@@ -254,7 +261,7 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_err_branch(children)
                     return
                 }
-                Block => @report_if_bad_call_stmt(children)
+                Block => @report_if_bad_call_stmt(children, n.id_of() == @tail_value_body)
                 MethodCall => {
                     @report_if_unknown_method(children)
                     @report_if_ordered_args(children)
@@ -288,6 +295,7 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     } else {
                         // A free function, or a method on a pointer record.
                     }
+                    @tail_value_body = value_body_of(children)
                     @report_if_default_order(children)
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
