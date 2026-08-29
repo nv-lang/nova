@@ -237,7 +237,7 @@ fn Checker @run_end_of(children []Node, best int) -> int {
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
 /// is the common case, so only the two places that actually open an
 /// initializer position say so.
-fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> () {
+fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -483,12 +483,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> ()
                     // and the SHELL'S surface, read as an input, decides whether
                     // the instance can be built. Initializer position only, the
                     // same threshold the record constructor has.
-                    if !init_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: array literal only as a binding initializer")
+                    // Three legal positions since wave B8: an initializer, a
+                    // call argument, and a constructor field -- the census
+                    // counted 12 field carriers and 9 argument carriers in
+                    // novac's own sources, and zero bare tails or assignments,
+                    // so those two stay out by measurement, not symmetry.
+                    if !init_pos && !arg_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: array literal only as an initializer, a call argument, or a constructor field")
                         return
                     } else {
-                        // In initializer position the literal is legal; typing
-                        // judges its elements and the shell's surface.
+                        // A legal position; typing judges the elements and
+                        // the shell's surface.
                     }
                 }
                 MatchExpr => {
@@ -567,9 +572,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false) -> ()
             }
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5
-                // wave B5): the one place the flag is computed, the same way
-                // init_pos is computed at its two call sites.
-                @walk(c, stmt_pos: kind == NodeKind.Block)
+                // wave B5) and ARGUMENT POSITION is "a direct child of a call
+                // or a constructor field" (wave B8): both flags are computed
+                // in this ONE recursion, the same way init_pos is computed at
+                // its two call sites -- a position has a single definition.
+                @walk(c, stmt_pos: kind == NodeKind.Block,
+                      arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
+                               kind == NodeKind.CtorField)
             }
         }
     }

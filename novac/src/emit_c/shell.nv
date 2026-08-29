@@ -77,6 +77,7 @@ type Emitter consume {
     reach Reach /// WHICH callables are reached from a root (mono, E2-b2): the emitter
         /// asks, it does not decide
     next_tmp int /// counter behind @fresh_uniq — the ONLY source of temporary names (F30)
+    lit_tmp []str /// node id -> the hoisted temporary of an array literal in argument position; "" = none (wave B8)
 }
 
 /// Splice string literals and the emitted body into the shell's two slots.

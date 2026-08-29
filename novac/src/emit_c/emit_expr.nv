@@ -15,7 +15,7 @@
 module novac.emit_c
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of, raw_node}
 import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
 import ../sem.{CheckOut}
@@ -254,6 +254,18 @@ fn Emitter mut @emit_expr(e Node) -> () {
         } else {
             ice("emit_c: literal kind outside the subset")
         }
+    } else if k == NodeKind.ArrayLit {
+        // Printed as the TEMPORARY its hoist built (wave B8): the literal is
+        // a multi-statement construction, and the statement that owns this
+        // expression hoisted it before printing. An empty name here is a
+        // hole in that contract, not a user mistake.
+        ro tmp = @lit_tmp[raw_node(e.id_of())]
+        if tmp == "" {
+            ice("emit: an array literal in expression position was never hoisted (wave B8)")
+        } else {
+            // Hoisted: the temporary carries the built vector.
+        }
+        @body.append(tmp)
     } else if k == NodeKind.Name {
         // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
         // C symbol of its own, and WHICH constant this is came from the
@@ -466,6 +478,9 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
     if call_callee_text(kids) != PRINT_FN {
         ice("emit: the subset knows only println calls in statement position")
     }
+    // Array literals anywhere in the arguments are hoisted before the first
+    // print line (wave B8); the printers below read their temporaries.
+    @hoist_array_lits(call)
     for c in kids {
         ro ck = c.kind_of()
         if ck == NodeKind.Lit && leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {

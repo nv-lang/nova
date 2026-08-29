@@ -882,6 +882,17 @@ fn Checker mut @type_expr(e Node) -> () {
         // lowers to a CALL; every other pair lowers to a C
         // operator, and the ABSENCE of a callee says so.
         @record_operator_callee(e, kids)
+    } else if k == NodeKind.ArrayLit {
+        // The literal DECIDES ITS OWN TYPE -- the bind path's rule, reused in
+        // the two positions wave B8 adds: `type_array_lit` interns `Vec[elem]`
+        // (a WRITE the lattice must not do) and refuses by name; the recorded
+        // type is what a call key or a constructor field reads back.
+        ro lit_t = @type_array_lit(e)
+        if is_ty(lit_t) {
+            @record(e, lit_t)
+        } else {
+            // Refused inside type_array_lit, by name; nothing to record.
+        }
     } else {
         // The kinds `is_expr_kind` admits and this chain does not name are
         // Lit and MatchExpr, and neither has work HERE: a literal's type is

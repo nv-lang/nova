@@ -548,10 +548,14 @@ export type Vec[T] { n int }")
     ro (d4, _) = compile_to_c("fn main() {\n ro v = []int.of()\n println(1)\n}", std)
     assert(d4.len() == 1)
     assert(d4[0].message.contains("empty array literal"))
-    // Outside initializer position: the same threshold the record ctor has.
+    // Argument position is LEGAL since wave B8 -- the literal itself passes,
+    // and the one diagnostic left is about the PRINTER: println covers the
+    // four primitives, and a vector is not one of them. The wave moved the
+    // refusal from the literal's position to the argument's type, which is
+    // the honest place for it.
     ro (d5, _) = compile_to_c("fn main() {\n println([7, 8])\n}", std)
     assert(d5.len() == 1)
-    assert(d5[0].message.contains("only as a binding initializer"))
+    assert(d5[0].message.contains("println covers"))
 }
 
 test "an instance method of the shell: deduced on the receiver, named by the shell, refused where the shell has none" {

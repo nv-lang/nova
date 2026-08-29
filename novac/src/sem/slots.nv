@@ -600,6 +600,10 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // expression" and iced (wave 3g, measured 2026-08-23).
     k == NodeKind.SelfField ||
     k == NodeKind.MatchExpr ||
+    // An array literal is an expression since wave B8 let it stand in
+    // argument and constructor-field position; the walks that skip
+    // non-expressions must not skip it, or its type is never recorded.
+    k == NodeKind.ArrayLit ||
     k == NodeKind.Cast
 }
 
