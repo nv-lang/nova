@@ -462,8 +462,9 @@ fn render_sig(ctx Ctx, sig ProtoSig) -> str {
         // The protocol declared no return type; the rendering says so by
         // stopping, exactly as the source does.
     }
-    // Хвост БЕЗ `.into_str()`: место несёт явный ожидаемый тип, и `#coerce`
-    // даёт тот же результат (D429 R9) -- lint зовёт явный вызов здесь лишним.
+    // The tail carries NO `.into_str()`: this position has an explicit
+    // expected type, so `#coerce` yields the same result (D429 R9) and
+    // lint calls the explicit call redundant here.
     sb
 }
 
