@@ -361,6 +361,12 @@ fn specificity_of(fns FnTable, row FnRow) -> int {
 #realtime nogc
 export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, form CallForm) -> FnLookup {
     mut first = no_row()
+    // THE WINNER, kept in the same pass. It used to be recomputed by a second
+    // walk (`most_specific`), and that walk needed an invariant to guard it:
+    // "a row of this specificity will be found again". An invariant held by an
+    // `ice` where one local would do is a finding, not a detail -- so the local
+    // is here and the invariant is gone.
+    mut winner = no_row()
     mut best = -1
     mut ties = 0
     mut r = @heads.find(name)
@@ -377,6 +383,7 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
         }
         if s > best {
             best = s
+            winner = row
             ties = 1
         } else if s == best {
             ties += 1
@@ -394,28 +401,7 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
     } else {
         // One winner at the top of the specificity order.
     }
-    FnLookup.FnFound(@most_specific(fns, tys, name, args, form, best))
-}
-
-/// The row with this specificity among the fitting candidates of `name`.
-///
-/// A second walk of a chain that is one to three rows long, and it buys the
-/// property that matters: `lookup` hands back the WINNER, not the first row
-/// that fitted. Doing it in one pass would mean remembering both the first row
-/// and the best row and then explaining which is which at every call site.
-#realtime nogc
-fn FnIndex @most_specific(fns FnTable, tys Interner, name str, args []ArgSpec, form CallForm, want int) -> FnRow {
-    mut r = @heads.find(name)
-    while r >= 0 {
-        ro row = FnRow(r)
-        r = raw_row(@next[r])
-        if !fits(fns, tys, row, args, form) { continue }
-        if specificity_of(fns, row) == want { return row }
-    }
-    // The caller established that a row of this specificity fits; the chain is
-    // walked with the same predicate, so failing to find it twice is a broken
-    // invariant.
-    ice("resolve: the most specific candidate vanished between two walks of one chain")
+    FnLookup.FnFound(winner)
 }
 
 /// E2-b3 WAVE 3B -- STRUCTURAL SATISFACTION: does `t` have every method the
