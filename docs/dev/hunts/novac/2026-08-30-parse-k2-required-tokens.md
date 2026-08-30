@@ -65,6 +65,27 @@
 (методы протокола) описывают «один или больше» формой «ноль или больше». Какие
 именно — вопрос следующей охоты, и у неё уже есть точный список мест.
 
+## Находки машинной строкой
+
+Мера плана 278 считается ГРЕПОМ (`check-hunter-mark`), поэтому находки стоят не
+только таблицей выше, но и строками ниже. Таблица — для человека, строки — для
+счёта; расходиться им нельзя, и потому обе перечисляют одни и те же тринадцать
+проб в одном порядке.
+
+НАХОДКА | К2 | parse | fn_no_lparen | novac rc0 принял тихо / oracle rc1 (отверг) | `fn main {` — имя функции без `(`, сигнатура не начата
+НАХОДКА | К2 | parse | bind_no_name | novac rc0 принял тихо / oracle rc1 (отверг) | `mut = 1` — привязка без имени
+НАХОДКА | К2 | parse | bind_no_assign | novac rc0 принял тихо / oracle rc1 (отверг) | `mut b int` — привязка без `=` (оракул: E_BINDING_REQUIRES_INIT)
+НАХОДКА | К2 | parse | const_no_name | novac rc0 принял тихо / oracle rc1 (отверг) | `const = 1` — константа без имени
+НАХОДКА | К2 | parse | const_no_assign | novac rc0 принял тихо / oracle rc1 (отверг) | `const A int 1` — константа без `=`
+НАХОДКА | К2 | parse | type_no_name | novac rc0 принял тихо / oracle rc1 (отверг) | `type { n int }` — тип без имени
+НАХОДКА | К2 | parse | field_no_name | novac rc0 принял тихо / oracle rc1 (отверг) | `type Counter { mut []int }` — поле без имени
+НАХОДКА | К2 | parse | variant_no_name | novac rc0 принял тихо / oracle rc1 (отверг) | `type Color enum | Red | | Blue` — вариант суммы без имени
+НАХОДКА | К2 | parse | proto_no_name | novac rc0 принял тихо / oracle rc1 (отверг) | `type Sized protocol { @() -> int }` — метод протокола без имени
+НАХОДКА | К2 | parse | match_no_lbrace | novac rc0 принял тихо / oracle rc1 (отверг) | `match n` без `{` — тело не начато
+НАХОДКА | К2 | parse | match_no_fatarrow | novac rc0 принял тихо / oracle rc1 (отверг) | плечо `0 1` без `=>`
+НАХОДКА | К2 | parse | import_no_path | novac rc0 принял тихо / oracle rc1 (отверг) | `import` без пути — цикл пути допускает ноль итераций
+НАХОДКА | К2 | parse | arraylit_no_ctor | novac rc0 принял тихо / oracle rc1 (отверг) | `[]int.(1, 2)` — литерал массива без конструктора
+
 ## Три пробы, на которых расхождения НЕТ, и это тоже результат
 
 | проба | что показывает |
