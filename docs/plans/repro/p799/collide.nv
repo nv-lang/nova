@@ -1,0 +1,49 @@
+// Registry 221.1 #799 (K1) — MINIMAL CARRIER. Reproduces on 2026-08-31.
+//
+// The row named a file `p799_default_in_spawn.nv` that did not exist anywhere
+// in the tree — the carrier lived only in prose. This is it, rebuilt and
+// verified, next to its control.
+//
+// SHAPE: a callee with a DEFAULT parameter is called inside a `spawn` body,
+// and the caller's captured variable bears THE SAME NAME as one of the
+// callee's parameters (`policy`).
+//
+// WHAT HAPPENS: callnorm (D102, Plan 46 Ф.2) rewrites the call into a block —
+// phase 1 emits `let __nova_arg_src0 = policy` reading the CALLER's `policy`
+// (a capture inside the spawn body), phase 2 emits `let policy = ...`, a LOCAL
+// named exactly like the callee's parameter. The capture rewrite is flat and
+// does not distinguish scopes, so it stops treating `policy` as a capture and
+// the phase-1 read lands above the local's declaration.
+//
+// MEASURED OUTPUT (nova build, 2026-08-31):
+//   error: use of undeclared identifier 'policy'
+//     NovaValue_Pol __nova_arg_src0 = policy;
+//
+// RUN:
+//   nova-cli/target/release/nova.exe build docs/plans/repro/p799/collide.nv -o /tmp/p799.exe
+//
+// No network, no cancellation, no Router — everything the polaris carrier had
+// around it turned out to be irrelevant.
+
+type Pol value {
+    a int
+    b int
+    c int
+}
+
+fn callee(policy Pol, stop Option[int] = None) -> int => policy.a + policy.b + policy.c
+
+fn main() Io -> () {
+    ro policy = Pol { a: 1, b: 1, c: 1 }
+    ro (tx, rx) = Channel[int].new(1)
+    supervised {
+        spawn {
+            ro n = callee(policy)
+            ro _ = tx.try_send(n)
+        }
+    }
+    match rx.recv() {
+        Some(v) => print("ok ${v}")
+        None    => print("no value")
+    }
+}
