@@ -819,9 +819,29 @@ if body_runs; then
     SELFTEST_FAILDIR="${TMPDIR:-/tmp}/gate_selftest_fails_$$"
     rm -rf "$SELFTEST_FAILDIR"
     mkdir -p "$SELFTEST_FAILDIR"
-    find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print0 2>/dev/null \
+    # САМОТЕСТЫ, ЗОВУЩИЕ CARGO, ИДУТ ПЕРВЫМИ И ПООДИНОЧКЕ (реестр №818, замер
+    # 2026-08-30). Их сегодня четыре, и cargo берёт блокировку на каталог
+    # сборки — под `-P 8` они встают в очередь ДРУГ ЗА ДРУГОМ, а срок при этом
+    # тикает. Замер: `test-check-crate-tests.sh` в одиночку 72с, в общем пуле
+    # убит пределом 360с — впятеро, и это не нагрузка машины, а именно
+    # очередь за блокировкой. Калибровка (выше) такое не лечит: она множит
+    # срок всем, тогда как ждут четверо. Родня №804 — гейт, дерущийся сам с
+    # собой за артефакты сборки.
+    # Список ВЫВОДИТСЯ грепом, а не пишется руками: рукописный разошёлся бы с
+    # деревом на первом новом самотесте, и молча.
+    HEAVY_LIST="$SELFTEST_FAILDIR.heavy"
+    grep -l 'cargo ' "$ROOT"/scripts/guards/selftest/test-*.sh 2>/dev/null | sort > "$HEAVY_LIST" || :
+    echo "selftest :: тяжёлых (зовут cargo) $(grep -c . "$HEAVY_LIST" 2>/dev/null || echo 0) — поодиночке, остальные по $SELFTEST_JOBS"
+    while IFS= read -r _hv; do
+        [ -n "$_hv" ] || continue
+        bash "$ROOT/scripts/tools/run-guard-selftest.sh" "$_hv" "$SELFTEST_FAILDIR" "$ROOT"
+    done < "$HEAVY_LIST"
+    find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print 2>/dev/null | sort \
+        | grep -vxF -f "$HEAVY_LIST" \
+        | tr '\n' '\0' \
         | xargs -0 -r -P "$SELFTEST_JOBS" -I{} \
             bash "$ROOT/scripts/tools/run-guard-selftest.sh" {} "$SELFTEST_FAILDIR" "$ROOT"
+    rm -f "$HEAVY_LIST"
     for _f in "$SELFTEST_FAILDIR"/*; do
         [ -e "$_f" ] || continue
         fail "самотест стража: $(basename "$_f")"
