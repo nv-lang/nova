@@ -543,6 +543,92 @@ test "an integer literal too large for `int` is refused, not silently wrapped (#
     assert(d3.len() == 0)
 }
 
+test "an unclosed bracket is refused, not accepted in silence (#809)" {
+    // Registry #809, found by the hunter 2026-08-30 (probe `brace_only_fn`):
+    // `fn main() {` with no `}` compiled with code 0 and NOT ONE diagnostic.
+    // The mechanism was one door doing two jobs. `@push_if` means "the token
+    // is optional at this position, and its absence is a valid outcome" --
+    // true of a trailing comma, false of a bracket whose opener has already
+    // been consumed. Sixteen closing brackets went through it.
+    //
+    // The test holds the CLASS: all three closers, because all three shared
+    // the door -- 5 `}`, 6 `)` and 5 `]` call sites.
+    ro std = std_decls()
+    ro (d1, _) = compile_to_c("fn main() {", std)
+    assert(d1.len() >= 1)
+
+    ro (d2, _) = compile_to_c("fn main() {
+ println(1
+}", std)
+    assert(d2.len() >= 1)
+
+    ro (d3, _) = compile_to_c("fn main() {
+ ro xs = [1, 2
+ println(1)
+}", std)
+    assert(d3.len() >= 1)
+
+    // The other direction of the lid: the same forms CLOSED are clean, so the
+    // rule refuses the ABSENCE and not the shape. The brace and the paren are
+    // shown here; the bracket is not, and the reason is the harness rather
+    // than the rule -- an array literal is built from the SHELL's instance
+    // set, which `std_decls()` does not carry, so a CLOSED `[1, 2]` is
+    // refused here for a reason of its own (measured 2026-08-30). Its clean
+    // side is held by the corpus fixture `array_lit_positions.nv` instead.
+    ro (d4, _) = compile_to_c("fn main() {
+ println(1)
+}", std)
+    assert(d4.len() == 0)
+}
+
+test "a record construction is judged against its declaration (#812)" {
+    // Registry #812, same hunt. `Pt { }` on a record with a required field
+    // checked CLEAN and the emitted C read a member nobody wrote. The fork
+    // "is an empty literal legal" was decided by the SPEC, not by the oracle:
+    // `02-types.md:152` and the numbered rules at `:1677` -- construction
+    // always requires every declared field, and a name the type does not have
+    // is an error.
+    ro std = std_decls()
+
+    // a declared field nobody named
+    ro (d1, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { }
+ println(p.n)
+}", std)
+    assert(d1.len() >= 1)
+    assert(d1[0].message.contains("omits a declared field"))
+
+    // a field the type does not declare
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { n: 1, z: 2 }
+ println(p.n)
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("does not declare"))
+
+    // one field named twice fills the count and leaves the record short
+    ro (d3, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { n: 1, n: 2 }
+ println(p.n)
+}", std)
+    assert(d3.len() >= 1)
+
+    // The other direction: a complete construction is clean. ONE field, not
+    // two, and that is a measurement rather than a preference -- novac does
+    // not read a record whose fields are separated by a comma yet (2026-08-30:
+    // the refusal lands on the comma itself), so a two-field record would
+    // test the parser's gap and not this rule.
+    ro (d4, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { n: 1 }
+ println(p.n)
+}", std)
+    assert(d4.len() == 0)
+}
+
 test "an application in TYPE position resolves -- Vec[int], and []T is its D239 sugar" {
     // Step B2's acceptance, pinned at the level it changes: the SIGNATURE. Both
     // spellings are one term (D239: `[]T` IS `Vec[T]`), read by one door at

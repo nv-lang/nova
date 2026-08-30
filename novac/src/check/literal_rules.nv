@@ -17,7 +17,9 @@ module novac.check
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
-import ../sem.{branch_children, leaf_text, leaf_kind}
+import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
+import ../sem.{raw_frow, no_frow}
+import ../types.{TyId, is_ty}
 
 /// The MAGNITUDE of an integer literal -- the question nobody asked until
 /// registry #810 (hunter, 2026-08-30). The lexer makes an IntLit of any run of
@@ -79,3 +81,91 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
     }
 }
 
+/// A record construction judged against the DECLARATION it names (#812).
+///
+/// Until the hunt of 2026-08-30 nothing compared the two: `Pt { }` on
+/// `type Pt { n int }` checked clean, and the emitted C read a member nobody
+/// wrote. The oracle refuses the same file, but for another reason entirely --
+/// it reads `Pt { }` as an expression followed by a block -- so the verdict
+/// here is the SPEC's (`02-types.md:152`, and the numbered rules at `:1677`),
+/// not the oracle's. That distinction is the whole reason the registry row
+/// calls the fork resolved rather than guessed.
+///
+/// Three ways to disagree, one refusal each and only the first of them:
+/// a name the type does not declare (the author can see that one), a declared
+/// field nobody named, and a field named twice -- which fills the count while
+/// leaving a field empty.
+///
+/// A SPREAD fills the rest by construction (`{ ...src, x: 1 }`), so a ctor
+/// carrying one is judged only for names the type lacks.
+fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
+    if !is_ty(t) {
+        // The type itself was refused already; one cause, one diagnostic.
+        return
+    } else {
+        // The construction names a type this file knows.
+    }
+    ro kids = branch_children(ctor)
+    mut spread = false
+    mut named_cnt = 0
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.CtorSpread {
+            spread = true
+        } else if ck == NodeKind.CtorField {
+            named_cnt += 1
+            ro fk = branch_children(c)
+            ro want = leaf_text(fk[0])
+            if !@fres.has_field(@ctx.fields, t, want) {
+                @report_first_leaf_of(fk, CTOR_UNKNOWN_FIELD_MSG)
+                return
+            } else {
+                // The type has this field; whether every OTHER one is here is
+                // the question below.
+            }
+        } else {
+            // The type name and the braces are children too, and neither
+            // names a field.
+        }
+    }
+    if spread {
+        // What the author did not write, the spread wrote.
+        return
+    } else {
+        // Nothing fills the gaps: every declared field has to be named.
+    }
+    ro td = decl_of_ty(@ctx, t)
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    ro first = raw_frow(frange.0)
+    for j in first..first + frange.1 {
+        ro fd = @ctx.fields.rows[j]
+        mut seen = false
+        for c in kids {
+            // The terminator form on purpose: a single-variant test inside a
+            // loop has no honest empty `else` to write, and inverting it says
+            // the same thing with nothing left over.
+            if c.kind_of() != NodeKind.CtorField { continue }
+            // The scan is bounded by the RECORD's own arity -- a handful of
+            // names from one declaration, the same bound a binder scans
+            // under. It is not name resolution in a registry, which is what
+            // the discipline rule is about.
+            ro fk = branch_children(c)
+            if leaf_text(fk[0]) != fd.name { continue }
+            seen = true
+        }
+        if !seen {
+            @report_first_leaf_of(kids, CTOR_MISSING_FIELD_MSG)
+            return
+        } else {
+            // Named; on to the next declared field.
+        }
+    }
+    if named_cnt > frange.1 {
+        // Every declared field was found and the literal still has more
+        // entries than the record has fields: a name repeats.
+        @report_first_leaf_of(kids, CTOR_FIELD_TWICE_MSG)
+        return
+    } else {
+        // Counts agree: the construction fills the record exactly.
+    }
+}

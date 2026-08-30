@@ -105,6 +105,11 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.MatchExpr {
         @type_match(init)
     } else if ik == NodeKind.RecordCtor {
+        // The construction against its declaration (#812), asked HERE because
+        // this is where its type is already known -- the walk in check.nv sees
+        // the node but not the type, and deriving it twice would be two
+        // answers waiting to disagree.
+        @report_if_ctor_fields_wrong(init, vtype)
         for c in branch_children(init) {
             ro ck = c.kind_of()
             if ck == NodeKind.CtorSpread {

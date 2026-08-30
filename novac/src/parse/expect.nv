@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn's `EatToken` / `EatTokenAsKind` pair for the QUESTION -- a
+// parser that reads broken input needs TWO answers to "the token is not here",
+// and they are not the same answer. NOT taken: Roslyn's skipped-token trivia
+// and its error-recovery ranking; this subset plants one lossless Err leaf and
+// lets `check` do the talking.
+// Role: layer 2 (parse) -- taking a token that is EXPECTED at this position,
+// and the difference between "optional here" and "required here". That
+// difference is the whole of registry #809: for a year the closing bracket was
+// taken by the optional door, and `fn main() {` with no `}` compiled with code
+// 0 and not one diagnostic. Sixteen call sites carried it.
+// Used by: parse.nv, expr.nv, decls.nv -- every place a comma, a keyword or a
+// bracket is taken.
+// Guarded by: check-novac-closer-mandatory.py (a closing token through the
+// optional door is red, base zero), and the class test
+// "an unclosed bracket is refused, not accepted in silence (#809)".
+// novac/src/parse/expect.nv -- is this token optional here, or required.
+
+module novac.parse
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+
+/// Take the token if it is the one wanted, and say ONCE what it means when it
+/// is not.
+///
+/// The phrase `if @peek() == X { kids.push(@take()) }` stood at fifty-four
+/// places in this parser: every optional comma and keyword. Each was an
+/// incomplete branching (P31) whose missing half means the same thing
+/// everywhere -- the token is optional here, there is nothing to take, and
+/// that is a valid outcome. Fifty-four empty `else` comments would say it
+/// fifty-four times; a named door says it once, and the call site gets
+/// shorter into the bargain.
+///
+/// A CLOSING bracket is not one of those, and saying it was is #809: this
+/// door used to take `}` too, so a file ending mid-body was accepted in
+/// silence. Closers go through `@push_closer` below, and the guard
+/// check-novac-closer-mandatory keeps them there.
+fn Cursor mut @push_if(mut kids []Node, k TokenKind) -> () {
+    if @peek() == k {
+        kids.push(@take())
+    } else {
+        // Nothing to take: the token is optional at this position. This is
+        // THE empty branch P31 asks to be named, and it is named here for
+        // every call site at once.
+    }
+}
+
+/// Take the CLOSING token, and REFUSE when it is not there.
+///
+/// The twin of `@push_if`, and the difference between them is the whole of
+/// #809. A comma is optional at its position; a closer is not -- every call
+/// site below has already consumed its opener, so the language requires the
+/// match. Taken with the optional door, `fn main() {` with no `}` parsed
+/// clean and compiled to rc=0 with no diagnostic at all.
+///
+/// The Err leaf planted here is the one the rest of the parser plants for a
+/// run it cannot read, so `check` refuses it through `report_err_branch` with
+/// the syntax message and a position: one rule, one shape, one place to
+/// change it.
+fn Cursor mut @push_closer(mut kids []Node, k TokenKind) -> () {
+    if @peek() == k {
+        kids.push(@take())
+    } else if @at_eof() && !holds_err(kids) {
+        // The file ENDED and this construct was whole until it did: the pair
+        // that never arrived is the cause, and a zero-width Err keeps the
+        // tree lossless while giving the refusal a position. This is the
+        // carrier of #809 -- `fn main() {` used to compile clean.
+        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+    } else {
+        // Silence here, and both halves of the condition earned it by
+        // measurement against the oracle (2026-08-30).
+        //
+        // NOT at end of file: tokens still stand ahead, so the pair went
+        // missing because an earlier failure moved the cursor -- the cause is
+        // elsewhere and someone else names it (`fn main junk here () { }`:
+        // one diagnostic, on the junk).
+        //
+        // Already failed INSIDE: the missing pair is the wake of that
+        // failure, not a second cause (`fn main() { mut i`, `fn main()
+        // { "oops }`: one diagnostic each, and the oracle agrees). Two
+        // causes at DIFFERENT levels still get two, because only this
+        // construct's own subtree is asked.
+    }
+}
+
+/// Did this construct already fail, at ANY depth? Asked by the closer door and
+/// by nobody else: the answer decides whether a missing pair is a cause of its
+/// own or the wake of one already named.
+///
+/// IN DEPTH, and that is a measurement rather than caution: `fn main() { mut i`
+/// leaves the block's failure inside the BINDING, not among the block's own
+/// children, so a one-level look answered "intact" and the file got two
+/// diagnostics where the oracle gives one.
+fn holds_err(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(_) => continue
+            Branch { kind, children, .. } => {
+                if kind == NodeKind.Err { return true }
+                if holds_err(children) { return true }
+            }
+        }
+    }
+    false
+}
+

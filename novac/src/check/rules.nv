@@ -239,6 +239,17 @@ const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 lev
 
 const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice in one file -- the second body is dropped in silence (#811)"
 
+/// The three ways a record construction can disagree with its declaration
+/// (#812). The spec states the first two as numbered rules
+/// (`02-types.md:1677`): every declared field must be present, and a name the
+/// type does not have is an error. The third is the same rule read once more:
+/// naming one field twice fills the count without filling the record.
+const CTOR_MISSING_FIELD_MSG = "this record construction omits a declared field -- construction always requires every field (D17, spec 02-types.md:152 and :1677) (#812)"
+
+const CTOR_UNKNOWN_FIELD_MSG = "this record construction names a field the type does not declare (#812)"
+
+const CTOR_FIELD_TWICE_MSG = "this record construction names a field twice, so another declared field is missing (#812)"
+
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
 
@@ -865,11 +876,6 @@ fn Checker mut @report_err_branch(children []Node) -> () {
                 // The whole run is the subject, so the whole run is underlined.
                 ro lo = @src.offset_of(t.text)
                 ro hi = @run_end_of(children, lo + t.text.byte_len())
-                // NOT "outside the subset" any more (S9.4a closed on
-                // 2026-08-18): the parser reads the whole LANGUAGE, so a run
-                // it could not read is a SYNTAX error and the message says
-                // that. The old text blamed the subset for the parser's own
-                // ignorance -- and it was the last carrier of that class.
                 @refuse_span(lo, hi, SYNTAX_MSG)
                 return
             }
