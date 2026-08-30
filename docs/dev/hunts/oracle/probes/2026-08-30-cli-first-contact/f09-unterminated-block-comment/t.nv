@@ -1,0 +1,4 @@
+/* a C-style block comment: Nova has none, and this one is never closed
+module t
+
+fn main() Io -> () => print("hi")

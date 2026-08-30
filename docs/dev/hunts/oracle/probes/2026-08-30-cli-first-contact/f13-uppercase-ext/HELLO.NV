@@ -1,0 +1,2 @@
+module upper
+fn main() Io -> () => print("hi")

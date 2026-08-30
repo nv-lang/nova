@@ -1,0 +1,6 @@
+[package]
+name = "f11-test-nopath-order"
+version = "0.1.0"
+[lib]
+src = "."
+[dependencies]
