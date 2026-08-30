@@ -8,7 +8,10 @@ T="${TMPDIR:-/tmp}/novac-closer-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
-ok()  { echo "  ok: $1"; }
+# Форма строки НЕ украшение: check-novac-registry-counts.sh считает случаи
+# по шаблону "^[[:space:]]+ok[[:space:]]", то есть двоеточие после ok делает
+# случай невидимым для счёта, а число в строке реестра — ложью.
+ok()  { echo "  ok   $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 mk()  { d="$T/$1"; mkdir -p "$d/m"; shift; printf "%s\n" "$@" > "$d/m/m.nv"; echo "$d"; }
