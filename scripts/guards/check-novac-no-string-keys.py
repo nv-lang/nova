@@ -58,6 +58,14 @@ def main():
         for n, line in enumerate(f.read_bytes().decode("utf-8", "replace").split("\n"), 1):
             if line.endswith("\r"):
                 line = line[:-1]
+            # Комментарий, ЦИТИРУЮЩИЙ запрещённую форму, законен — та же правка,
+            # что у check-novac-resolve-discipline и -no-grammar-excuse
+            # (2026-08-17). Без неё страж красит гейт на объяснении ПРИЧИНЫ и
+            # заставляет стереть объяснение, чтобы стать зелёным: страж, стирающий
+            # причину вместе с симптомом. Поймано 2026-08-30 на фразе
+            # `HashMap[str, int].new()` в комментарии о разводке скобочного прогона.
+            if line.lstrip(" \t\v\f").startswith("//"):
+                continue
             if "Map[str" in line and not (in_names and "NamespaceId" in line):
                 bad.append(f"  {rel}:{n}:{line}")
             if RE_SYNTH.search(line):
