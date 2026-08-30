@@ -451,8 +451,20 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     return
                 }
                 TestDecl => {
-                    @report_first_leaf_of(children, TEST_MSG)
-                    return
+                    // READ, not refused wholesale (274.5 B10). A `test` block
+                    // is a name and a body, and the body is statements like
+                    // any other -- refusing the whole block hid every mistake
+                    // inside it behind one diagnostic.
+                    //
+                    // Not emitting it is CORRECT rather than a silent drop,
+                    // and that is the oracle's behaviour, not an argument:
+                    // `nova build` leaves test bodies out of the program and
+                    // `nova test` is what runs them. So the emitter's loop
+                    // skipping a TestDecl matches, and what was actually
+                    // missing was the READING -- which is the whole subject of
+                    // sub-plan 274.5.
+                    //
+                    // The walk continues into the children below.
                 }
                 NamedArg => {
                     // JUDGED, NOT REFUSED (wave 4): `f(by: 2)` is how D102 says
@@ -512,6 +524,20 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // accepts. ONE diagnostic for the whole over-deep run: the
                     // parser drained it into this single node.
                     @report_first_leaf_of(children, NESTING_TOO_DEEP_MSG)
+                    return
+                }
+                Unsafe => {
+                    // READ, and refused BY NAME (274.5 B10). The parser gives
+                    // `unsafe { ... }` its own node now, so the refusal finally
+                    // names the form: before this, one line produced TWO wrong
+                    // refusals -- a syntax error plus a record-constructor
+                    // complaint -- and neither said `unsafe`.
+                    //
+                    // Compiling it is not this wave: the emitter has no arm for
+                    // it, and letting the form through check while emission
+                    // drops it is the silent-acceptance class this compiler
+                    // keeps closing (#809, #812, #815).
+                    @report_first_leaf_of(children, UNSAFE_MSG)
                     return
                 }
                 Index => {

@@ -308,6 +308,9 @@ fn import_renames(kids []Node) -> bool {
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
 
+/// `unsafe { ... }` -- D216 s8. Read since 274.5 B10, not compiled yet.
+const UNSAFE_MSG = "outside the subset: an `unsafe` block is read but not compiled yet"
+
 /// `test "name" { ... }`.
 const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"
 

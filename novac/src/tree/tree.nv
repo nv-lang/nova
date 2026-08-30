@@ -53,6 +53,7 @@ export type NodeKind enum
     | TypeDecl
     | ConstDecl
     | Index
+    | Unsafe /// `unsafe { ... }` -- a BLOCK expression (D216 s8): the value is the block's tail
     | DepthErr
     | Field
     | RecordCtor

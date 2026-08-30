@@ -405,6 +405,18 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
 
 /// Parse a literal, match, array/record constructor, call or name; recover otherwise.
 fn Cursor mut @atom() -> Node {
+    if @peek() == TokenKind.KwUnsafe && @peek(skip: 1) == TokenKind.LBrace {
+        // `unsafe { ... }` is an EXPRESSION whose value is the tail of its body
+        // (D216 s8). The body is taken by `@block()` deliberately: left to the
+        // general expression path the brace would be read as a record
+        // constructor, and one line then produced TWO refusals -- exactly how
+        // `source.nv` looked before this branch (a syntax error and a
+        // `record constructor only as a binding initializer`, both pointing at
+        // `ro d = unsafe { s.ptr().dist(@text.ptr()) }`).
+        mut uk = []Node.of(@take()) // 'unsafe'
+        uk.push(@block())
+        return @node(NodeKind.Unsafe, uk)
+    }
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit {
         return @node(NodeKind.Lit, []Node.of(@take()))
     }
