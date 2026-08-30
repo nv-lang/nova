@@ -1772,7 +1772,7 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
   как маркер str-keyed map-типа ВООБЩЕ, а `:2529` прямо обрабатывает случай
   «`#from_fields` type OTHER than `HashMap`». Значит любой пользовательский
   тип, объявивший `#from_fields`/`#from_pairs` и давший протокольные
-  `static with_capacity` и `mut @insert_new` (см. пункт ниже), получает ту же
+  `Self.new(cap)`, `mut @cap(n)` и `mut @insert_new` (см. пункт ниже), получает ту же
   коерсию — точка расширения открыта, отдельный `FromFields[V]` не понадобился.
   Абзац оставлен зачёркнутым, а не удалён: он объясняет, почему в коде рядом
   живут упоминания «bootstrap».
@@ -1783,10 +1783,27 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
   оговорив, что предыдущую свою находку (про `HashMap` без D-блока) оно само
   же отозвало как ложную аналогию.
 - **Протокол `#from_fields`:** тип обязан иметь:
-  - `static with_capacity(n int) -> Self` — предаллоцировать под `n` записей;
+  - `Self.new(cap int = …) -> Self` — конструктор с ёмкостью параметром-умолчанием;
+  - `mut @cap(n int) -> ()` — сеттер ёмкости (предаллокация под `n` записей);
   - `mut @insert_new(key str, val V) -> ()` — вставить новую запись
     (без возврата `Option`; дублей нет по construction).
   Отсутствие любого из методов → CC-FAIL при десугаринге.
+
+  **АМЕНДМЕНТ 2026-08-30 (реестр №844): здесь требовался
+  `static with_capacity(n int) -> Self` — МЕТОД, СНЯТЫЙ АМЕНДМЕНТОМ D372
+  ОТ 2026-07-06.** То есть тип, написанный ПО ЭТОЙ СПЕКЕ, реализовал бы
+  несуществующий контракт и получил CC-FAIL на ровном месте.
+  Сверено КОДОМ, четыре адреса: `std/src/collections/hash_map/core.nv:173`
+  («instance-method replacement for the **removed** `HashMap[K, V].with_capacity`»),
+  `:108` («sizing-helper для `new()` и сеттера `mut @cap(n)` (**ex-`with_capacity`**)»),
+  `:123` (живой конструктор `export fn HashMap[K, V].new(cap int = 16)`) и
+  `compiler-codegen/src/ast/mod.rs:893` — оракул требует дословно
+  «`ExpectedType.new()` + `.cap(n)` + `insert_new(k, v)` per pair».
+
+  **Найдено окном 274 и владельцем; способ нахождения есть часть урока:**
+  окно скопировало эту строку в свой план КАК ФАКТ О РЕАЛИЗАЦИИ, не сверив с
+  кодом. Правило отсюда: **цитата из спеки, говорящая о том, ЧТО
+  КОМПИЛЯТОР ТРЕБУЕТ, сверяется с компилятором, а не пересказывается.**
 
 **Правила:**
 
@@ -1801,10 +1818,10 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
    // "alice" → Str("alice"), 30.0 → Num(30.0); оба → JsonValue
    ```
 4. **Десугаринг — без промежуточных объектов:** block-expression с
-   `with_capacity` + `@insert_new`, никакой промежуточный record не
+   `new(cap)` + `@insert_new`, никакой промежуточный record не
    материализуется (литерал — только синтаксис):
    ```nova
-   { mut _m0 = HashMap[str, V].with_capacity(n)
+   { mut _m0 = HashMap[str, V].new(n)
      _m0.insert_new("debug", true)
      _m0.insert_new("verbose", false)
      _m0 }
