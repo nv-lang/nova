@@ -515,13 +515,15 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     return
                 }
                 Index => {
-                    // READ, and refused BY NAME (274.5 wave B8): the index
-                    // expression has a node now, so the refusal finally names
-                    // the form instead of calling it an array literal -- 35 of
-                    // the census's 56 "array literal only" marks were this.
-                    // Compiling it is its own wave: the emitter needs the
-                    // bounds-checked element read the oracle runtime carries.
-                    @report_first_leaf_of(children, "outside the subset: an index expression is read but not compiled yet")
+                    // TYPED since wave B10, not refused wholesale. B8 gave the
+                    // form its own node so the refusal could name it; this wave
+                    // asks the receiver's application for its element and
+                    // records the answer. What the subset still cannot do stays
+                    // refused BY NAME inside `type_index` -- a receiver that is
+                    // not an application, an index that is not `int` -- so no
+                    // form is accepted in silence, which is the whole of #815.
+                    ro t = @type_index(n)
+                    @record(n, t)
                     return
                 }
                 ArrayLit => {

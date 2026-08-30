@@ -136,6 +136,60 @@ fn Checker mut @type_bind(st Node) -> () {
 }
 
 
+/// The type of `xs[i]` — the ELEMENT of the receiver's application (274.5 B10).
+///
+/// The door was already there: an applied type keeps its arguments in the
+/// interner, so `Vec[int]`'s element is `tys.arg(t, 0)` and nothing new had to
+/// be built. What this adds is the JUDGEMENT around it.
+///
+/// Everything the subset cannot do stays refused BY NAME rather than accepted
+/// in silence -- a receiver that is not an application (so not a Vec), an index
+/// that is not an integer, an element type nobody knows. Registry #815 was
+/// exactly the other choice, and it cost thirteen probes.
+fn Checker mut @type_index(e Node) -> TyId {
+    ro kids = branch_children(e)
+    if kids.len() < 3 {
+        // SILENT-OK: recv, '[' and an index are the very least this node can
+        // hold, so fewer children means the parser planted a gap right here.
+        // The gap IS the diagnostic, and saying a second thing about it would
+        // describe one mistake twice.
+        return no_ty()
+    } else {
+        // A whole index expression: judged below.
+    }
+    @type_expr(kids[0])
+    ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
+    if !is_ty(recv_t) {
+        // SILENT-OK: the receiver was refused already, and one cause gets one
+        // diagnostic. Its refusal names the position; a second one here would
+        // point at the same mistake from the other side.
+        return no_ty()
+    } else {
+        // A typed receiver: its shape decides.
+    }
+    if @ctx.tys.kind_of(recv_t) != TypeKind.TkApp {
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type")
+        return no_ty()
+    } else {
+        // An application: `Vec[T]` and its `[]T` spelling both land here.
+    }
+    if @ctx.tys.arg_count(recv_t) != 1 {
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for a ONE-argument application (`[]T`), and this receiver has more")
+        return no_ty()
+    } else {
+        // One argument: it is the element.
+    }
+    @type_expr(kids[2])
+    ro idx_t = type_of(kids[2], @ctx, @scope, @chan)
+    if is_ty(idx_t) && idx_t != @ctx.prims.int_id {
+        @report_first_leaf_of(kids, "outside the subset: an index must be `int`")
+        return no_ty()
+    } else {
+        // Either an int, or already refused where it was typed.
+    }
+    @ctx.tys.arg(recv_t, 0)
+}
+
 /// The type of an array literal, or `no_ty()` after a NAMED refusal.
 ///
 /// Four refusals, each its own text (D420): an empty literal (the oracle
