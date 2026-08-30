@@ -1,0 +1,14 @@
+// D467 sec.7 p.2: the common indent is stripped, and the algorithm is not
+// invented -- it is D104 p.5, "the common leading WHITESPACE" (and the
+// Java text-block rule, which strips tabs as well as spaces).
+// Here every body line and the closing-backtick line start with ONE TAB,
+// so the common indent is that tab and the value must be "aaa\nbbb\n" = 8.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = `
+	aaa
+	bbb
+	`
+    println("len=${s.byte_len()}")
+}

@@ -50,27 +50,44 @@ fi
 rc=0
 NEEDY=0
 CHECKED=0
-for g in "$GUARDS_DIR"/check-*.sh "$GUARDS_DIR"/check-*.py; do
-    [ -f "$g" ] || continue
-    name=${g##*/}
-    # сам себя не судим: этот страж бинаря не резолвит, но упоминает путь в шапке
-    [ "$name" = "check-gate-build-order.sh" ] && continue
-    # Образец обязан отличать `nova` от `nova-lsp`/`nova-codegen`: первая
-    # редакция ловила `target/release/nova-lsp.exe` как подстроку и объявляла
-    # носителем стража, который к оракульскому бинарю не притрагивается.
-    grep -qE 'target/release/nova($|[^-a-zA-Z0-9_])' "$g" || continue
-    NEEDY=$((NEEDY + 1))
-    # где он вызывается в гейте (строки вызова, не комментарии)
-    calls=$(awk -v n="$name" 'index($0, n) && $0 !~ /^[[:space:]]*#/ {print NR}' "$GATE")
-    for ln in $calls; do
-        CHECKED=$((CHECKED + 1))
-        if [ "$ln" -lt "$BARRIER" ]; then
-            echo "check-gate-build-order: FAIL — $name резолвит nova-cli/target/release/nova, а вызван в gate.sh строкой $ln — ВЫШЕ сборки (строка $BARRIER)." >&2
-            echo "    На CI он будет судить бинарь ИЗ КЕША, а локально — тот, что случайно лежит свежим (реестр №813). Перенеси шаг за барьер." >&2
-            rc=1
-        fi
-    done
-done
+
+# ЦЕНА ШАГА (замер 2026-08-30): первая редакция звала grep и awk НА КАЖДЫЙ файл
+# — около трёхсот процессов на 158 стражей, 6 секунд яруса `loop`. Теперь два
+# запуска на весь прогон: один grep по всем исходникам сразу, один awk по
+# `gate.sh`. Правило гейта — «чини цену шага, а не число в базе».
+#
+# Образец обязан отличать `nova` от `nova-lsp`/`nova-codegen`: первая редакция
+# ловила `target/release/nova-lsp.exe` как подстроку и объявляла носителем
+# стража, который к оракульскому бинарю не притрагивается.
+NEEDY_LIST=$(grep -lE 'target/release/nova($|[^-a-zA-Z0-9_])' \
+    "$GUARDS_DIR"/check-*.sh "$GUARDS_DIR"/check-*.py 2>/dev/null \
+    | sed 's#.*/##' | grep -vx 'check-gate-build-order.sh' | sort)
+NEEDY=$(printf '%s\n' "$NEEDY_LIST" | grep -c . || true)
+
+# Строки вызова каждого нужного стража в гейте — ОДНИМ проходом по файлу.
+# Комментарии отбрасываются здесь же (строка вызова не начинается с `#`).
+CALLS=$(printf '%s\n' "$NEEDY_LIST" | awk -v gate="$GATE" '
+    NF { names[$0] = 1 }
+    END {
+        n = 0
+        while ((getline line < gate) > 0) {
+            n++
+            if (line ~ /^[[:space:]]*#/) continue
+            for (nm in names) if (index(line, nm)) print nm, n
+        }
+    }')
+
+while read -r name ln; do
+    [ -n "$name" ] || continue
+    CHECKED=$((CHECKED + 1))
+    if [ "$ln" -lt "$BARRIER" ]; then
+        echo "check-gate-build-order: FAIL — $name резолвит nova-cli/target/release/nova, а вызван в gate.sh строкой $ln — ВЫШЕ сборки (строка $BARRIER)." >&2
+        echo "    На CI он будет судить бинарь ИЗ КЕША, а локально — тот, что случайно лежит свежим (реестр №813). Перенеси шаг за барьер." >&2
+        rc=1
+    fi
+done <<EOF
+$CALLS
+EOF
 
 if [ "$rc" -eq 0 ]; then
     echo "check-gate-build-order ok: стражей, которым нужен бинарь: $NEEDY, их вызовов в гейте: $CHECKED, все ниже сборки (строка $BARRIER)"

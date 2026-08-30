@@ -1,0 +1,13 @@
+// Second syntax of the same class as a01: a TAGGED template (D48) instead of
+// a bare backtick, and a 4-byte character after the backslash instead of a
+// 2-byte one. D467 §6 says the backslash passes through as two characters;
+// the lexer skips the escape by a fixed two BYTES and lands inside the
+// character.
+module probe.p
+
+fn sql(parts []str, args []str) -> str => parts[0]
+
+fn main() Io -> () => {
+    ro s = sql`ok\😀`
+    print(s)
+}

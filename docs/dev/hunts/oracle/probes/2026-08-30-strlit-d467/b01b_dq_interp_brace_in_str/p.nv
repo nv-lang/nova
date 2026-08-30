@@ -1,0 +1,11 @@
+// Twin of b01: the SAME interpolation body inside a quoted literal.
+// The lexer scans it with the string-aware `scan_interpolation_body`, so the
+// closing brace inside the nested string does not end the interpolation.
+module probe.p
+
+fn id(s str) -> str => s
+
+fn main() Io -> () => {
+    print("dq=${id("a}b")}")
+    print("\n")
+}

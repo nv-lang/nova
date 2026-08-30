@@ -65,7 +65,16 @@ export fn url(parts []str, args []str) -> Url => ...
 ro u = url`https://api.example.com/users/${user_id}`
 ```
 
-Details — [D48](decisions/03-syntax.md#d48).
+**Escapes inside a backtick body — exactly three:** `` \` ``, `\\`, `\$`.
+Anything else after `\` passes through as TWO characters, which is what makes
+`` regex`\d{3}-\d{4}` `` work without doubling. A backtick literal needs no tag:
+a bare one interpolates just like `"..."`.
+
+Details — [D48](decisions/03-syntax.md#d48), amended by
+[D467](decisions/03-syntax.md#d467) §5–§7 (2026-08-30): the escape set is closed
+to three (`\n`/`\t` removed — the form is multi-line, so a newline is typed, and
+expanding them broke paths and regexes), a bare backtick became a legal form, and
+the body's indentation and CRLF are normalised.
 
 ## String interpolation — `"... ${expr} ..."`
 
@@ -86,7 +95,18 @@ hooks in by implementing `Display` (`@display(mut w Write)`,
 [D73](decisions/08-runtime.md#d73)). A literal `${` in a string — via
 escape: `"\${name}"`.
 
-Details — [D44 — string literals and interpolation](decisions/03-syntax.md#d44).
+**The escape set inside `"..."` is CLOSED** ([D467](decisions/03-syntax.md#d467)
+§2, 2026-08-29): `\n \t \r \\ \" \0 \$ \xNN \u{H…}` plus `\` before a line break,
+which continues the line and eats the next line's leading spaces (§3). Anything
+else after `\` is an error, not a pass-through — an open set would mean that
+adding a form tomorrow changes the meaning of text written today.
+
+`\xNN` is a CODE POINT U+00NN, not a raw byte (amended 2026-08-30): `str` is
+UTF-8 only, so a byte reading would let one escape build an invalid string. For
+raw bytes the door is `Buffer`/`[]byte`.
+
+Details — [D44 — string literals and interpolation](decisions/03-syntax.md#d44),
+amended by [D467](decisions/03-syntax.md#d467).
 
 ## Separators: newline, `;` and `,`
 

@@ -422,6 +422,27 @@ impl Parser {
         self.depth = self.depth.saturating_sub(1);
     }
 
+    /// Реестр №829: подпарсер интерполяции ПРОДОЛЖАЕТ счёт глубины, а не
+    /// начинает его заново.
+    ///
+    /// Тело `${…}` разбирается НОВЫМ `Parser::with_src`, у которого `depth`
+    /// стартует с нуля. Значит `"${"${"${…}"}"}"` уходит вглубь рекурсией по
+    /// парсерам, каждый из которых честно считает СВОЮ глубину и до предела
+    /// 512 не доходит никогда. Замер 2026-08-30 (охота по оракулу, план 278
+    /// Ф.7): вложенность 20000 даёт `thread 'nova-check-0' has overflowed its
+    /// stack` БЕЗ ЕДИНОЙ СТРОКИ диагностики, тогда как та же глубина обычными
+    /// скобками даёт чистый `[E_NESTING_TOO_DEEP]` с файлом и строкой.
+    ///
+    /// То есть страж №800 обещал дословно «диагностика с файлом и строкой
+    /// вместо мёртвого треда» — и обходился второй дверью, о существовании
+    /// которой обещание не знало.
+    fn sub_parser(&self, tokens: Vec<Token>, src: String) -> Parser {
+        let mut p = Parser::with_src(tokens, src);
+        // +1 — сам факт входа в интерполяцию есть уровень вложенности.
+        p.depth = self.depth.saturating_add(1);
+        p
+    }
+
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** consume the parser
     /// and return collected warnings. Driver merges these with post-parse
     /// lint_module() warnings.
@@ -8191,6 +8212,7 @@ impl Parser {
     /// открывающим backtick). `rel_off` сплиттера отсчитывается от него, и без
     /// сдвига диагностика внутри `${…}` указала бы в начало файла.
     fn parse_template_args(
+        &self,
         arg_srcs: &[(String, usize)],
         raw_base: usize,
         file_id: crate::diag::FileId,
@@ -8205,7 +8227,7 @@ impl Parser {
                 t.span.start += abs_off;
                 t.span.end += abs_off;
             }
-            let mut sub = Parser::with_src(toks, src_text.clone());
+            let mut sub = self.sub_parser(toks, src_text.clone());
             let e = sub.parse_expr()?;
             if !matches!(sub.peek().kind, TokenKind::Eof | TokenKind::Newline) {
                 return Err(Diagnostic::new(
@@ -9307,7 +9329,7 @@ impl Parser {
                     let (parts, arg_srcs) =
                         Self::split_tagged_template(&tpl, tok_span)?;
                     let arg_exprs =
-                        Self::parse_template_args(&arg_srcs, raw_base, file_id)?;
+                        self.parse_template_args(&arg_srcs, raw_base, file_id)?;
                     let span = expr.span.merge(tok_span);
                     let parts_arr = Expr::new(
                         ExprKind::ArrayLit(
@@ -9515,7 +9537,7 @@ impl Parser {
                     return Ok(Expr::new(ExprKind::StrLit(parts.concat()), start));
                 }
                 let arg_exprs =
-                    Self::parse_template_args(&arg_srcs, raw_base, start.file_id)?;
+                    self.parse_template_args(&arg_srcs, raw_base, start.file_id)?;
                 // Чередование parts[0] arg[0] parts[1] … по тому же инварианту.
                 let mut ast_parts: Vec<crate::ast::InterpStrPart> =
                     Vec::with_capacity(parts.len() + arg_exprs.len());
@@ -12915,7 +12937,7 @@ impl Parser {
                 for t in &mut tokens {
                     t.span.file_id = span.file_id;
                 }
-                let mut sub = Parser::with_src(tokens, expr_src.to_string());
+                let mut sub = self.sub_parser(tokens, expr_src.to_string());
                 let inner = sub.parse_expr().map_err(|e| {
                     Diagnostic::new(
                         format!("invalid expression in `${{...}}`: {}", e.message),

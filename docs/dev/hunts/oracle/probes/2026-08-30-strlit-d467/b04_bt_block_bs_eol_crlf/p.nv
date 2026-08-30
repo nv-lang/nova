@@ -1,0 +1,16 @@
+// D467 sec.6: in a backtick only \` \\ \$ are escapes; a backslash before a
+// newline is NOT one, so it passes through as TWO characters.
+// D467 sec.7 p.2: the common indent (4 spaces here, the closing backtick line
+// included) is stripped from EVERY body line.
+// Expected value: "aaa" + backslash + LF + "bbb" + LF  =  9 bytes.
+// D467 sec.7 p.4: CRLF in the body normalizes to LF, so the twin file that
+// differs only in line terminator must print the same number.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = `
+    aaa\
+    bbb
+    `
+    println("len=${s.byte_len()}")
+}

@@ -172,7 +172,7 @@ This is an early release; treat it accordingly.
 - **A vector literal reserves the default growth capacity, not the
   element count.** `[7, 8]` gives `len=2 cap=8` today; the spec (D239)
   pins the capacity to the element count, and the self-hosted compiler
-  implements it that way. Observable only through `.cap()`; correctness
+  (Carina, in development) implements it that way. Observable only through `.cap()`; correctness
   and `len` are unaffected.
 - **The garbage collector is stop-the-world** (Boehm GC); a concurrent,
   incremental collector is on the post-1.0 roadmap, not in this release.

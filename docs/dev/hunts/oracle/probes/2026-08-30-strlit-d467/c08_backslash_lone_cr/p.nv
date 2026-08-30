@@ -1,0 +1,9 @@
+// D467 sec.2/sec.3: the closed escape list ends with `\` + a NEWLINE.
+// Here the backslash is followed by a lone CR (U+000D), which is not a
+// newline; sec.2 says any other character after `\` is `unknown escape`.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = "abc\   def"
+    println("len=${s.byte_len()}")
+}

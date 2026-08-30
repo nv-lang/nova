@@ -1,0 +1,2 @@
+module bad
+fn main() Io -> () { ro x int = "str" }

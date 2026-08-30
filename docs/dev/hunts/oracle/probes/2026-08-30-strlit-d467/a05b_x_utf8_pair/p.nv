@@ -1,0 +1,12 @@
+// D467 sec.2 table: `\xNN` is a BYTE given by two hex digits, 00..FF.
+// Two such escapes therefore give two bytes -- and C3 A9 is the UTF-8
+// encoding of e-acute, so this literal must be 2 bytes long and print as
+// the single character e-acute.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = "\xC3\xA9"
+    print(s)
+    print("\n")
+    println("len=${s.byte_len()}")
+}

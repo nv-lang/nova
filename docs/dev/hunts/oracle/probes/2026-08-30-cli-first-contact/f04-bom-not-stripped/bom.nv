@@ -1,0 +1,3 @@
+﻿module bom_probe
+
+fn main() Io -> () => print("Hello, Nova!")

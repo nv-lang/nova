@@ -1,0 +1,11 @@
+// This file contains exactly one defect, and it is on the LAST code line:
+// an unknown escape inside a nested string inside a backtick interpolation.
+// D467 sec.2 requires the error `unknown escape`; the caret must point at
+// that escape. Line 1 here is plain ASCII with no string and no backtick.
+module probe.p
+
+fn id(s str) -> str => s
+
+fn main() Io -> () => {
+    print(`v=${id("\q")}`)
+}
