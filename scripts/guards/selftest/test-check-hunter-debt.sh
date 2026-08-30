@@ -73,5 +73,49 @@ if NOVA_HUNTER_DEBT_BASELINE="$T/base2" sh "$GUARD" "$T/repo" >"$T.o4" 2>&1; the
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-hunter-debt ok: три подделки покраснели, гашение отчётом работает, живая половина зелёная"
+# ── подделка 4: КОПИЯ прежнего отчёта под новым именем ──────────────────
+# Дерево сейчас: долг красный (см. подделку 2). Копируем старый отчёт.
+cp "$T/repo/docs/dev/hunts/novac/2026-01-01-parse-k1.md" \
+   "$T/repo/docs/dev/hunts/novac/2026-03-03-copy-k1.md"
+git -C "$T/repo" add docs/dev/hunts/novac/2026-03-03-copy-k1.md
+git -C "$T/repo" commit -qm "copy of an old report"
+if NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o5" 2>&1; then
+    echo "FAIL: копия прежнего отчёта погасила долг — часы двигает содержимое, которое уже было" >&2
+    rc=1
+fi
+git -C "$T/repo" rm -q docs/dev/hunts/novac/2026-03-03-copy-k1.md
+git -C "$T/repo" commit -qm "drop the copy"
+
+# ── подделка 5: ВОСКРЕШЕНИЕ удалённого отчёта тем же путём ──────────────
+git -C "$T/repo" checkout HEAD~3 -- docs/dev/hunts/novac/2026-02-02-lex-k2.md 2>/dev/null \
+    || git -C "$T/repo" checkout HEAD~2 -- docs/dev/hunts/novac/2026-02-02-lex-k2.md
+git -C "$T/repo" add docs/dev/hunts/novac/2026-02-02-lex-k2.md
+git -C "$T/repo" commit -qm "resurrect the folded report"
+if NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o6" 2>&1; then
+    echo "FAIL: возврат удалённого отчёта погасил долг — путь, добавленный дважды, стал часами" >&2
+    rc=1
+fi
+git -C "$T/repo" rm -q docs/dev/hunts/novac/2026-02-02-lex-k2.md
+git -C "$T/repo" commit -qm "drop it again"
+
+# ── подделка 6: мусорный .md в ПОДКАТАЛОГЕ на «20» ──────────────────────
+# git-глоб «20*.md» пересекает «/», и такой файл обнулял долг, оставаясь
+# невидимым для mark-стража (его glob нерекурсивен).
+mkdir -p "$T/repo/docs/dev/hunts/novac/2026-06-06-junk"
+printf 'junk\n' > "$T/repo/docs/dev/hunts/novac/2026-06-06-junk/x.md"
+git -C "$T/repo" add docs/dev/hunts/novac/2026-06-06-junk/x.md
+git -C "$T/repo" commit -qm "junk md in a subdir"
+if NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o7" 2>&1; then
+    echo "FAIL: мусорный .md в подкаталоге погасил долг — часы берут путь глобом git, а не формой имени отчёта" >&2
+    rc=1
+fi
+
+# ── подделка 7: дописанная вторая строка бюджета ────────────────────────
+printf 'budget_novac=5\nbudget_oracle=5\nanchor=%s\nbudget_novac=999999\n' "$ANCHOR" > "$T/base3"
+if NOVA_HUNTER_DEBT_BASELINE="$T/base3" sh "$GUARD" "$T/repo" >"$T.o8" 2>&1; then
+    echo "FAIL: дописка budget_novac= в конец раскрутила бюджет молча (исходная строка осталась на виду)" >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-hunter-debt ok: семь подделок покраснели, гашение отчётом работает, живая половина зелёная"
 exit "$rc"

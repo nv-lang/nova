@@ -61,5 +61,36 @@ if NOVA_HUNTS_DIR="$T/hunts2" python "$GUARD" "$ROOT" >"$T/o4" 2>&1; then
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-hunter-coverage ok: четыре подделки покраснели, многоклеточность и леджер зелёные, живая половина зелёная"
+# ── здоровье 2: модуль СВЁРНУТОЙ охоты выбыл из §3 — не красный ─────────
+# Леджер — запись о прошлом, ось модулей живёт: честное переименование модуля
+# краснило стража навсегда на замороженной истории (панель 2026-08-30).
+rm -f "$T/hunts2/grid.md"
+printf 'СВЁРНУТО | 2026-01-01-oldmod-k1 | oldmod | К1 | находок 1 | №810\n' > "$T/hunts2/LEDGER.md"
+printf 'never_hunted=98\n' > "$T/hi.baseline"
+if ! NOVA_HUNTS_DIR="$T/hunts2" NOVA_HUNTER_GRID_BASELINE="$T/hi.baseline" python "$GUARD" "$ROOT" >"$T/o5" 2>&1; then
+    echo "FAIL: свёрнутая охота по выбывшему модулю краснит — история замерла, а ось живёт:" >&2
+    tail -2 "$T/o5" | sed 's/^/    /' >&2
+    rc=1
+fi
+# но ОТКРЫТЫЙ отчёт с чужим модулем обязан краснеть по-прежнему
+printf 'КЛЕТКА | oldmod | К1\nНАХОДКА | x\n' > "$T/hunts2/2026-08-30-open.md"
+if NOVA_HUNTS_DIR="$T/hunts2" NOVA_HUNTER_GRID_BASELINE="$T/hi.baseline" python "$GUARD" "$ROOT" >"$T/o6" 2>&1; then
+    echo "FAIL: ОТКРЫТЫЙ отчёт с модулем мимо §3 прошёл — послабление леджеру утекло на отчёты" >&2
+    rc=1
+fi
+rm -f "$T/hunts2/LEDGER.md" "$T/hunts2/2026-08-30-open.md"
+
+# ── подделка 5: в архитектуре нет «## 3.» — своё сообщение, не трейсбек ──
+mkdir -p "$T/fakeroot/docs/dev"
+printf '# novac\n## 2. Nothing\ntext\n' > "$T/fakeroot/docs/dev/novac-architecture.md"
+if python "$GUARD" "$T/fakeroot" >"$T/o7" 2>&1; then
+    echo "FAIL: архитектура без «## 3.» прошла" >&2
+    rc=1
+elif grep -q "Traceback" "$T/o7"; then
+    echo "FAIL: страж умер трейсбеком вместо своего сообщения — «отказ на непонятой форме» обязан ОБЪЯСНЯТЬ:" >&2
+    tail -3 "$T/o7" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-hunter-coverage ok: пять подделок покраснели, многоклеточность, леджер и замороженная история зелёные, живая половина зелёная"
 exit "$rc"

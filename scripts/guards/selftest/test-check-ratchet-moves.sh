@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Самотест check-novac-ratchet-moves.sh — обе стороны, на фикстурном git-дереве.
+# Самотест check-ratchet-moves.sh — обе стороны, на фикстурном git-дереве.
 #
 # ЦЕНТРАЛЬНЫЙ СЛУЧАЙ — СДВИГ ВНИЗ СУДИТСЯ ТАК ЖЕ. Сужение храповика выглядит
 # безобидным («стало лучше»), но без причины оно ровно так же скрывает: сегодня
@@ -11,7 +11,7 @@
 set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-G="$ROOT/scripts/guards/check-novac-ratchet-moves.sh"
+G="$ROOT/scripts/guards/check-ratchet-moves.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
@@ -69,5 +69,5 @@ git -C "$R" add -A >/dev/null 2>&1
 OUT=$(bash "$G" "$R" "$R" 2>&1); RC=$?
 check "тот же сдвиг в ИНДЕКСЕ — красный (индекс основной вход)" "$RC" "1"
 
-echo "самотест check-novac-ratchet-moves: PASS $PASS FAIL $FAIL"
+echo "самотест check-ratchet-moves: PASS $PASS FAIL $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -17,10 +17,22 @@ if ! sh "$GUARD" "$ROOT" >"$T.live" 2>&1; then
 fi
 rm -f "$T.live"
 
+# Макет с НАСТОЯЩИМ git: страж требует, чтобы свёрнутый отчёт когда-то
+# существовал в истории (дыра панели: фантомная свёртка закрывала клетку без
+# охоты). Значит и здоровый макет обязан иметь историю.
 mk_root() {
     rm -rf "$T"
     mkdir -p "$T/docs/plans" "$T/docs/dev/hunts/novac/probes/2026-03-03-parse-k3" \
              "$T/docs/dev/hunts/oracle"
+    git -C "$T" init -q
+    git -C "$T" config user.email selftest@example.com
+    git -C "$T" config user.name selftest
+    git -C "$T" config commit.gpgsign false
+    printf 'свёрнутый отчёт\n' > "$T/docs/dev/hunts/novac/2026-01-01-lex-k2.md"
+    git -C "$T" add docs/dev/hunts/novac/2026-01-01-lex-k2.md
+    git -C "$T" commit -qm "hunt report that will be folded"
+    git -C "$T" rm -q docs/dev/hunts/novac/2026-01-01-lex-k2.md
+    git -C "$T" commit -qm "fold it"
     printf 'открытый отчёт\n' > "$T/docs/dev/hunts/novac/2026-03-03-parse-k3.md"
     printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 2 | №810,№811\n' \
         > "$T/docs/dev/hunts/novac/LEDGER.md"
@@ -69,5 +81,55 @@ if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o4" 2>&1; then
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-hunter-fold ok: четыре подделки покраснели, здоровый макет и живая половина зелёные"
+# ── подделка 5: фантомная свёртка — отчёта не было в истории ────────────
+mk_root
+printf 'СВЁРНУТО | 2026-05-05-mono-k7 | mono | К7 | находок 0 | —\n' \
+    >> "$T/docs/dev/hunts/novac/LEDGER.md"
+if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o5" 2>&1; then
+    echo "FAIL: свёртка отчёта, которого не было в истории, прошла — рукописная строка закрывает клетку без охоты" >&2
+    rc=1
+fi
+
+# ── подделка 6: одна ссылка в двух строках леджера ──────────────────────
+mk_root
+printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 1 | №810\n' \
+    > "$T/docs/dev/hunts/novac/LEDGER.md"
+printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К3 | находок 1 | №810\n' \
+    >> "$T/docs/dev/hunts/novac/LEDGER.md"
+if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o6" 2>&1; then
+    echo "FAIL: одна строка реестра засчитана двум свёрткам — знаменатель меры надувается" >&2
+    rc=1
+fi
+
+# ── подделка 7: ссылка на ЧУЖУЮ охоту (дата метки не та) ────────────────
+mk_root
+printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 1 | №810\n' \
+    > "$T/docs/dev/hunts/novac/LEDGER.md"
+printf '| 810 | t | НАЙДЕНО ОХОТНИКОМ 2026-07-07 (novac). |\n' \
+    > "$T/docs/plans/221.1-bug-sweep.md"
+if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o7" 2>&1; then
+    echo "FAIL: свёртка подтверждена строкой реестра ЧУЖОЙ охоты (дата метки не совпадает со стемом)" >&2
+    rc=1
+fi
+
+# ── подделка 8: ссылок больше, чем находок ──────────────────────────────
+mk_root
+printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 1 | №810,№811\n' \
+    > "$T/docs/dev/hunts/novac/LEDGER.md"
+if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o8" 2>&1; then
+    echo "FAIL: две ссылки при одной находке прошли — счёт свёртки не сходится" >&2
+    rc=1
+fi
+
+# ── подделка 9: два max_open в базе (дописка побеждает) ─────────────────
+mk_root
+printf 'max_open=2\nmax_open=999\n' > "$T/base"
+printf 'x\n' > "$T/docs/dev/hunts/novac/2026-03-04-a.md"
+printf 'x\n' > "$T/docs/dev/hunts/novac/2026-03-05-b.md"
+if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o9" 2>&1; then
+    echo "FAIL: дописанная вторая строка max_open= раскрутила предел молча" >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-hunter-fold ok: девять подделок покраснели, здоровый макет и живая половина зелёные"
 exit "$rc"

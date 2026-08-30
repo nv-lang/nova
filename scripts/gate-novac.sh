@@ -261,7 +261,7 @@ par_add "$ROOT/scripts/guards/check-novac-cursor-is-range.py" "курсор с �
 par_add "$ROOT/scripts/guards/check-novac-wrapper-is-stored.py" "завёрнутое пространство нигде не хранится — обёртка вокруг шага, а не личности (§9.1г.1)"
 par_add "$ROOT/scripts/guards/check-novac-import-exists.py" "импортируется имя, которого нет — оракул этого не сверяет (замер 2026-08-22)"
 par_add "$ROOT/scripts/guards/check-novac-export-has-caller.py" "экспорт без вызывающего — имя оправдывает спрос, а не симметрия (П35)"
-par_add "$ROOT/scripts/guards/check-novac-ratchet-moves.sh" "храповик сдвинут без причины в том же диффе (274 §10.4)"
+par_add "$ROOT/scripts/guards/check-ratchet-moves.sh" "храповик сдвинут без причины в том же диффе (274 §10.4)"
 par_add "$ROOT/scripts/guards/check-novac-acceptance-donor.py" "приёмка волны не называет донора (П27-класс)"
 par_add "$ROOT/scripts/guards/check-novac-selftest-interpreter.py" "самотест зовёт стража напрямую — на Linux это ноль случаев (274 §9.1д К2)"
 par_add "$ROOT/scripts/guards/check-novac-smoke-wrapper.sh" "POSIX-обёртка перехвата clang-argv сломана — эта машина ею не ходит (274 §9.1д К3)"
