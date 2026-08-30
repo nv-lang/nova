@@ -37,9 +37,12 @@ import sys
 
 # Вывод стабилен в UTF-8 независимо от кодовой страницы консоли (cp1251 под
 # Windows молча портит кириллицу в перенаправленном выводе — самотест грепает).
+# newline="\n" обязателен, а не украшение: python на Windows пишет CRLF там, где
+# shell писал LF, и вывод стража расходится сам с собой между платформами —
+# это ловит check-guard-honesty.py и ловил на этом файле 2026-08-30.
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "..")
 ROOT = os.path.abspath(ROOT)

@@ -8120,6 +8120,65 @@ impl Parser {
     /// `$` (интерполяцию не открывает); скобки внутри `${…}` считаются по
     /// глубине (вложенные `{}` в выражении допустимы).
     /// Инвариант: parts.len() == args.len() + 1.
+    /// D467 §7 (план 277 Ф.5): форма БЛОЧНОГО backtick-литерала.
+    ///
+    /// Возвращает `(block, indent, content_end)`:
+    /// * `block` — сразу за открывающим backtick идёт перевод строки; только
+    ///   тогда правила §7 включаются (однострочная форма не меняется);
+    /// * `indent` — общий отступ по правилу Java text blocks: минимум по
+    ///   непустым содержательным строкам И по строке закрывающего backtick
+    ///   (сдвинул закрывающий backtick левее — получил более широкое поле);
+    /// * `content_end` — байтовая граница содержимого: строка закрывающего
+    ///   backtick содержимого не даёт (§7 п.3, хвост симметричен голове), и
+    ///   тогда литерал кончается на `\n`; если backtick стоит сразу за
+    ///   последним символом, хвостового перевода нет.
+    ///
+    /// ПОЧЕМУ ЭТО СЧИТАЕТСЯ ЗДЕСЬ, А НЕ В ЛЕКСЕРЕ. Смещения интерполяций
+    /// (`rel_off` ниже) меряются по СЫРОМУ тексту токена, и диагностика внутри
+    /// `${…}` указывает в файл через `tok_span.start + 1 + rel_off`. Перепиши
+    /// лексер тело литерала — и все спаны в блочной форме уехали бы на снятый
+    /// отступ. Поэтому текст остаётся сырым, а гигиена применяется при СБОРКЕ
+    /// частей.
+    fn backtick_block_shape(raw: &str) -> (bool, usize, usize) {
+        let b = raw.as_bytes();
+        let head = if b.first() == Some(&b'\n') {
+            1
+        } else if b.first() == Some(&b'\r') && b.get(1) == Some(&b'\n') {
+            2
+        } else {
+            return (false, 0, raw.len());
+        };
+        let body = &raw[head..];
+        let lines: Vec<&str> = body.split('\n').collect();
+        let ws_only = |l: &str| l.trim_matches(|c| c == ' ' || c == '\t' || c == '\r').is_empty();
+        // Закрывающий backtick на своей строке = последняя строка из одних
+        // пробелов. Иначе последняя строка содержательна, и хвоста нет.
+        let closing_own_line = lines.len() > 1 && ws_only(lines[lines.len() - 1]);
+        let content_lines = if closing_own_line {
+            &lines[..lines.len() - 1]
+        } else {
+            &lines[..]
+        };
+        let lead = |l: &str| l.bytes().take_while(|&c| c == b' ').count();
+        let mut indent = content_lines
+            .iter()
+            .filter(|l| !ws_only(l))
+            .map(|l| lead(l))
+            .min()
+            .unwrap_or(0);
+        if closing_own_line {
+            indent = indent.min(lead(lines[lines.len() - 1]));
+        }
+        let content_end = if closing_own_line {
+            // граница — перевод строки ПЕРЕД строкой закрывающего backtick:
+            // он и есть тот самый хвостовой `\n`, который остаётся
+            raw.len() - lines[lines.len() - 1].len()
+        } else {
+            raw.len()
+        };
+        (true, indent, content_end)
+    }
+
     fn split_tagged_template(
         raw: &str,
         tok_span: crate::diag::Span,
@@ -8127,9 +8186,42 @@ impl Parser {
         let bytes = raw.as_bytes();
         let mut parts: Vec<String> = vec![String::new()];
         let mut args: Vec<(String, usize)> = Vec::new();
+        // D467 §7 (Ф.5): в блочной форме голова (перевод строки сразу за
+        // открывающим backtick) не содержимое, общий отступ снимается, хвост
+        // симметричен голове. Смещения `rel_off` при этом остаются сырыми.
+        let (block, indent, content_end) = Self::backtick_block_shape(raw);
         let mut i = 0usize;
+        if block {
+            i = if bytes[0] == b'\r' { 2 } else { 1 };
+            // отступ первой содержательной строки снимается так же, как у
+            // остальных: она идёт сразу за съеденным переводом
+            let mut k = 0;
+            while k < indent && bytes.get(i) == Some(&b' ') {
+                i += 1;
+                k += 1;
+            }
+        }
         while i < bytes.len() {
+            if block && i >= content_end {
+                break;
+            }
             let b = bytes[i];
+            // §7 п.4: `\r\n` в теле нормализуется в `\n` — значение константы
+            // не должно зависеть от того, как файл выкачали.
+            if block && b == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                i += 1;
+                continue;
+            }
+            if block && b == b'\n' {
+                parts.last_mut().expect("parts non-empty").push('\n');
+                i += 1;
+                let mut k = 0;
+                while k < indent && bytes.get(i) == Some(&b' ') {
+                    i += 1;
+                    k += 1;
+                }
+                continue;
+            }
             if b == b'\\' && i + 1 < bytes.len() {
                 let cur = parts.last_mut().expect("parts non-empty");
                 match bytes[i + 1] {
@@ -9381,8 +9473,19 @@ impl Parser {
             }
             TokenKind::Backtick(s) => {
                 self.bump();
-                // bare backtick без tag-функции = строка.
-                Ok(Expr::new(ExprKind::StrLit(s), start))
+                // bare backtick без tag-функции = строка. Гигиена тела (D467
+                // §7, план 277 Ф.5) применяется и здесь: правило про голову,
+                // отступ, хвост и CRLF — про ФОРМУ ЛИТЕРАЛА, а не про наличие
+                // тега, и разойтись эти два пути не имеют права (ровно этой
+                // разошедшейся формой болен сегодняшний backtick — см. D467).
+                let (block, _, _) = Self::backtick_block_shape(&s);
+                let body = if block {
+                    let (parts, _) = Self::split_tagged_template(&s, start)?;
+                    parts.concat()
+                } else {
+                    s
+                };
+                Ok(Expr::new(ExprKind::StrLit(body), start))
             }
             TokenKind::At => {
                 self.bump();
@@ -13062,6 +13165,46 @@ mod tests {
     fn empty_module() {
         let m = parse_or_panic("");
         assert!(m.items.is_empty());
+    }
+
+    /// D467 §7 п.4 (план 277 Ф.5): `\r\n` в теле backtick нормализуется в `\n`.
+    ///
+    /// ПОЧЕМУ ЮНИТ-ТЕСТОМ, А НЕ ФИКСТУРОЙ. Остальные три правила §7 закреплены
+    /// фикстурой `d467_backtick_hygiene.nv` (голова, отступ, хвост), но CRLF
+    /// фикстурой не закрепить честно: файл в git хранится с LF, и что окажется
+    /// в рабочей копии, решают настройки выкачки — фикстура мерила бы `core.
+    /// autocrlf`, а не компилятор. Здесь вход задан строкой в коде и от git не
+    /// зависит вовсе. Ровно за это правило и держится п.4: значение константы
+    /// не должно зависеть от того, как файл выкачали.
+    #[test]
+    fn backtick_block_crlf_normalized() {
+        let crlf = parse_or_panic("module t\nfn f() -> str => `\r\n    a\r\n    b\r\n    `\n");
+        let lf = parse_or_panic("module t\nfn f() -> str => `\n    a\n    b\n    `\n");
+        // Сравнивается ЗНАЧЕНИЕ литерала, а не отладочный дамп модуля: спаны у
+        // двух исходников РАЗНЫЕ по построению (CRLF-файл длиннее на байт в
+        // строке), и сравнение дампов целиком краснело бы на верной работе —
+        // ровно то, что этот тест и поймал у первой своей редакции.
+        let body = |m: &Module| -> String {
+            let Item::Fn(f) = &m.items[0] else {
+                panic!("ожидалась функция");
+            };
+            let FnBody::Expr(e) = &f.body else {
+                panic!("ожидалось выражение-тело");
+            };
+            let ExprKind::StrLit(s) = &e.kind else {
+                panic!("ожидался строковый литерал, получено {:?}", e.kind);
+            };
+            s.clone()
+        };
+        assert_eq!(
+            body(&crlf),
+            body(&lf),
+            "CRLF-тело backtick разошлось с LF-телом: §7 п.4 не применён"
+        );
+        // И отдельно — что нормализованное тело действительно то, что ждём:
+        // "a\nb\n" (отступ 4 снят, хвостовая строка закрывающего backtick
+        // содержимого не даёт).
+        assert_eq!(body(&lf), "a\nb\n");
     }
 
     #[test]
