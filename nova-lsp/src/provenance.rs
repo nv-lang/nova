@@ -96,7 +96,7 @@ fn resolve_module_impl(path: &Path, src: &str, record_expr_types: bool) -> Resol
 
     // Parse. On failure we still return a usable (empty) module so callers
     // degrade gracefully instead of crashing.
-    let mut module = match nova_codegen::parser::parse(src) {
+    let mut module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => {
             let mut file_map = HashMap::new();

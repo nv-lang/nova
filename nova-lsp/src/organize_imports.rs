@@ -59,7 +59,7 @@ pub fn compute_organize_imports(
     uri: &tower_lsp::lsp_types::Url,
     src: &str,
 ) -> Option<CodeAction> {
-    let module = nova_codegen::parser::parse(src).ok()?;
+    let module = crate::compiler::parse_guarded(src).ok()?;
     if module.imports.is_empty() {
         return None; // NEG: empty import list → no-op.
     }

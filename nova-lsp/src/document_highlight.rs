@@ -212,7 +212,7 @@ fn boundary_ok_end(text: &str, at: usize) -> bool {
 /// Empty on a parse failure (all occurrences degrade to reads).
 fn collect_write_offsets(text: &str, name: &str) -> HashSet<usize> {
     let mut out = HashSet::new();
-    let Ok(module) = nova_codegen::parser::parse(text) else {
+    let Ok(module) = crate::compiler::parse_guarded(text) else {
         return out;
     };
     for item in &module.items {

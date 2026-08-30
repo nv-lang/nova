@@ -64,7 +64,7 @@ use crate::symbol::{find_fn_by_name, find_method_by_name, format_fn_signature,
 /// - No function with that name is found in the module.
 /// - Parse fails.
 pub fn compute_signature_help(src: &str, pos: Position) -> Option<SignatureHelp> {
-    let module = nova_codegen::parser::parse(src).ok()?;
+    let module = crate::compiler::parse_guarded(src).ok()?;
     signature_help_from_parts(&module, None, src, pos)
 }
 

@@ -1323,7 +1323,7 @@ mod tests {
     use super::*;
 
     fn parse_module(src: &str) -> Module {
-        nova_codegen::parser::parse(src)
+        crate::compiler::parse_guarded(src)
             .unwrap_or_else(|_| panic!("parse failed for: {}", &src[..src.len().min(80)]))
     }
 

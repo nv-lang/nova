@@ -1,0 +1,50 @@
+// EXPECT_STDOUT interp=1
+// Registry 221.1 #799 (the interpolation half): a call carrying a DEFAULTED
+// parameter, made from inside a `spawn` body and sitting inside a STRING
+// INTERPOLATION, used to fail C-codegen with `use of undeclared identifier`
+// naming the CALLEE'S parameters.
+//
+// Mechanism, read in the generated C rather than guessed. `callnorm` (D102 F.2)
+// rewrites such a call into a Block whose locals are NAMED AFTER THE CALLEE'S
+// PARAMETERS -- deliberately, so default expressions resolve without a
+// substitution walk. The spawn capture decision is `refs - bound`, and the two
+// walkers disagreed on where to look: `collect_idents_expr` grew an
+// `InterpolatedStr` arm on 2026-07-21 (a name used ONLY inside `${...}` was
+// missing from the capture list -- [M-str-interp-closure-capture-miss]), while
+// `collect_bound_names_expr` never got the twin arm. So a name BOUND only
+// inside `${...}` never reached `bound`, the flat CU-wide `var_types` matched
+// the callee's parameter names, and the emitter wrote `ctx->p = p;` into a
+// function where no `p` exists. The same asymmetry, biting from the other side.
+//
+// Both walker arms are needed and each alone was measured inert: the
+// interpolation is an ARGUMENT of `println`, so without the Call arm the walk
+// never reaches it, and with the Call arm alone it stops at the string.
+//
+// Nothing is written to an outer `mut` from inside the spawn: that is
+// E_CONCURRENT_MUT_CAPTURE by D415 section 2, and the first version of this
+// fixture earned exactly that diagnostic.
+module standalone.m799_default_arg_call_in_spawn
+
+type Pol value { a int, b int, c int }
+
+fn Pol.new() -> Pol => { a: 1, b: 2, c: 3 }
+
+fn callee(p Pol, stop Option[int] = None) -> int {
+    match stop { Some(v) => p.a + v, None => p.a }
+}
+
+fn main() Io -> () {
+    ro pol = Pol.new()
+    supervised {
+        spawn {
+            // The interpolated call stands ALONE on purpose. A sibling
+            // statement-level call to the same callee (`ro r = callee(pol)`)
+            // is hoisted by callnorm to statement level, which puts `p` and
+            // `stop` into `bound` through the Block arm that always existed --
+            // and that MASKS this defect entirely. The first version of this
+            // fixture had exactly that shape and passed on a control binary
+            // WITHOUT the fix: green for the wrong reason.
+            println("interp=${callee(pol)}")
+        }
+    }
+}

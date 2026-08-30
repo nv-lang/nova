@@ -2270,7 +2270,7 @@ const CACHED_MOD_BIT: u32 = (1 << 0) | (1 << 1); // readonly + cached
 /// editor keeps existing syntax highlighting without inflicting
 /// errors).
 pub fn compute_field_cache_semantic_tokens(src: &str) -> Option<Vec<SemanticToken>> {
-    let mut module = nova_codegen::parser::parse(src).ok()?;
+    let mut module = crate::compiler::parse_guarded(src).ok()?;
     // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
     // sees the same unique-named AST as the real build. No-op without a rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);
@@ -2376,7 +2376,7 @@ pub fn compute_pure_annotation_actions(
     src: &str,
     range: Range,
 ) -> Option<Vec<(Range, String)>> {
-    let mut module = nova_codegen::parser::parse(src).ok()?;
+    let mut module = crate::compiler::parse_guarded(src).ok()?;
     // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
     // sees the same unique-named AST as the real build. No-op without a rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);
@@ -2497,7 +2497,7 @@ fn last_meaningful_line(s: &str) -> Option<String> {
 
 /// Plan 123.5.1: compute code-lens list для source text.
 pub fn compute_field_cache_lenses(src: &str) -> Option<Vec<CodeLens>> {
-    let mut module = nova_codegen::parser::parse(src).ok()?;
+    let mut module = crate::compiler::parse_guarded(src).ok()?;
     // Best-effort pipeline (skip if type-check fails).
     // Plan 181 (D347): alpha-rename first so field-cache analysis sees the same
     // unique-named AST as the real build. No-op without a rebind.
@@ -2570,7 +2570,7 @@ pub fn compute_field_cache_hover(src: &str, pos: Position) -> Option<Hover> {
     if field_name.is_empty() { return None; }
 
     // Parse module + analyze.
-    let mut module = nova_codegen::parser::parse(src).ok()?;
+    let mut module = crate::compiler::parse_guarded(src).ok()?;
     // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
     // sees the same unique-named AST as the real build. No-op without a rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);

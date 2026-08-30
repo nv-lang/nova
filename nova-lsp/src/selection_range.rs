@@ -61,7 +61,7 @@ use crate::diagnostic_mapping::{byte_offset_to_position, position_to_byte_offset
 /// cursor. Safe to run inside `run_with_large_stack`.
 pub fn compute_selection_ranges(src: &str, positions: &[Position]) -> Vec<SelectionRange> {
     let rope = Rope::from_str(src);
-    let module = nova_codegen::parser::parse(src).ok();
+    let module = crate::compiler::parse_guarded(src).ok();
 
     positions
         .iter()

@@ -1,0 +1,48 @@
+// EXPECT_STDOUT pre=4 post=4 zero=4
+// Registry 221.1 #790: a mut local captured by a detach body is heap-boxed,
+// but the box used to be allocated LAZILY at the detach site, while every
+// read/write emitted after that site already went through the box pointer.
+// On a path where the site never executed (a detach inside an untaken `if`,
+// a zero-iteration `while`, an accept() cancelled before its first Ok) the
+// post-site access dereferenced NULL, and the fiber-arena VEH misreported
+// the crash as a fiber stack overflow. The fix falls back to the local while
+// the box is NULL: the local is the only storage until the site runs.
+// All three shapes below crashed before the fix and must print instead.
+module standalone.m790_detach_box_unexecuted_site
+import std.runtime.sync.{Semaphore}
+
+fn untaken_if() Io Detach -> int {
+    mut s = Semaphore.new(4)
+    mut run = false
+    if run {
+        detach { ro _ = s.try_acquire() }
+    }
+    s.available_permits()
+}
+
+fn pre_and_post() Io Detach -> int {
+    mut s = Semaphore.new(4)
+    ro before = s.available_permits()
+    mut run = false
+    if run {
+        detach { ro _ = s.try_acquire() }
+    }
+    before + s.available_permits() - 4
+}
+
+fn zero_iteration_while() Io Detach -> int {
+    mut s = Semaphore.new(4)
+    mut go = false
+    while go {
+        detach { ro _ = s.try_acquire() }
+        go = false
+    }
+    s.available_permits()
+}
+
+fn main() Io Detach -> () {
+    ro a = pre_and_post()
+    ro b = untaken_if()
+    ro c = zero_iteration_while()
+    println("pre=${a} post=${b} zero=${c}")
+}

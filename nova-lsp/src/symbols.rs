@@ -384,7 +384,7 @@ fn tokenize_ref_occurrences(src: &str) -> HashMap<String, Vec<Range>> {
 /// Returns empty Vec on parse failure (graceful — no crash, no error to client).
 /// Suitable for running in `run_with_large_stack`.
 pub fn compute_document_symbols(src: &str) -> Vec<DocumentSymbol> {
-    let module = match nova_codegen::parser::parse(src) {
+    let module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };
@@ -398,7 +398,7 @@ pub fn compute_document_symbols(src: &str) -> Vec<DocumentSymbol> {
 
 /// Index all symbols in `src` for workspace-wide search.
 pub fn index_file_symbols(uri: &Url, src: &str) -> Vec<WorkspaceSymbolEntry> {
-    let module = match nova_codegen::parser::parse(src) {
+    let module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };
@@ -1455,36 +1455,47 @@ mod tests {
             index.index_file(uri.clone(), src);
         }
 
-        // BEST OF N, not a single shot. A single pair of `Instant::elapsed`
-        // readings over microsecond-scale work compares scheduling luck as
-        // much as code: one preemption between the two measurements flips the
-        // inequality, and under a loaded gate that happened on three pushes in
-        // one shift (window 274, 2026-08-29 -- the test passed 3/3 when run
-        // alone and failed inside the full crate run). Noise can only make a
-        // run SLOWER, so the minimum of several runs is the reading closest to
-        // the real cost; comparing the two minima asks exactly the question
-        // this test was written to ask, and asks it about the code rather than
-        // about the scheduler.
+        // Registry 221.1 #796: this used to time ONE run of each and assert
+        // `idx_dur < scan_dur`. Both are microseconds, so on a loaded machine
+        // either side gets preempted and the comparison becomes a coin flip —
+        // it reddened the authoritative gate twice on 2026-08-29 while passing
+        // solo in 0.01s, with the 432 neighbouring tests green both times. A
+        // timing assertion in a FUNCTIONAL lane does not own its clock.
+        //
+        // Two changes make the claim survive noise without weakening it:
+        // MINIMUM OF N runs (the minimum is the robust estimator here — noise
+        // only ever adds time, never removes it, so the smallest sample is the
+        // one least polluted), and a stated MARGIN instead of a bare `<`. The
+        // margin is what the property actually promises: one index lookup
+        // against a scan of 100 files should not be a photo finish.
         const RUNS: usize = 5;
-        let mut scan_best = std::time::Duration::MAX;
-        let mut idx_best = std::time::Duration::MAX;
+        const MARGIN: u32 = 2; // the scan must cost at least this much more
+
+        let mut scan_min = std::time::Duration::MAX;
         let mut scan = Vec::new();
-        let mut idx = Vec::new();
         for _ in 0..RUNS {
             let t0 = std::time::Instant::now();
             scan = find_references("target", &files, None, true);
-            scan_best = scan_best.min(t0.elapsed());
-
-            let t1 = std::time::Instant::now();
-            idx = index.find("target", None, true);
-            idx_best = idx_best.min(t1.elapsed());
+            scan_min = scan_min.min(t0.elapsed());
         }
 
+        let mut idx_min = std::time::Duration::MAX;
+        let mut idx = Vec::new();
+        for _ in 0..RUNS {
+            let t1 = std::time::Instant::now();
+            idx = index.find("target", None, true);
+            idx_min = idx_min.min(t1.elapsed());
+        }
+
+        // The deterministic half — correctness — is asserted first and does not
+        // depend on any clock.
         assert_eq!(idx.len(), scan.len(), "index and scan must agree ({} vs {})", idx.len(), scan.len());
         assert_eq!(idx.len(), 100, "one `target` per file");
         assert!(
-            idx_best < scan_best,
-            "index lookup (best of {RUNS}: {idx_best:?}) should beat the full scan (best of {RUNS}: {scan_best:?})"
+            idx_min * MARGIN <= scan_min,
+            "index lookup (best of {RUNS}: {idx_min:?}) should beat the full scan \
+             (best of {RUNS}: {scan_min:?}) by at least {MARGIN}x — both minima are \
+             printed so a real regression is told apart from machine load"
         );
     }
 

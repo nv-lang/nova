@@ -1169,7 +1169,7 @@ fn is_keyword(kind: &TokenKind) -> bool {
 /// byte-for-byte compatible with the Plan 123.5.2 behaviour. Returns an empty
 /// vec on any parse / check failure (no cached decoration, never a panic).
 fn cached_field_spans(src: &str) -> Vec<(usize, usize, HashSet<String>)> {
-    let mut module = match nova_codegen::parser::parse(src) {
+    let mut module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };

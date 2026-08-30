@@ -67,6 +67,18 @@ for suite in $SUITES; do
 
     [ -f "$ROOT/$CRATE/Cargo.toml" ] || fail_hard "нет $ROOT/$CRATE/Cargo.toml"
 
+    # Реестр 221.1 №804: свой target-каталог для nova-cli — НЕ оптимизация.
+    # Набор nova-cli без `--lib` пересобирает и bin-цель, то есть пытается
+    # ПЕРЕЛИНКОВАТЬ тот самый `nova.exe`, которым пользуются другие шаги
+    # гейта и внешние наблюдатели (антивирус на свежем бинаре, LSP редактора).
+    # На Windows занятый файл не заменить: cargo падал `failed to remove
+    # file … nova.exe (os error 5)` ДО запуска тестов — четыре прогона гейта
+    # 2026-08-29 умерли на этом, каждый раз выглядя по-разному. Отдельный
+    # каталог снимает зависимость от того, кто и когда держит общий бинарь;
+    # цена — одна лишняя сборка при первом прогоне, дальше кэш.
+    TDIR_ENV=""
+    [ "$CRATE" = "nova-cli" ] && TDIR_ENV="$ROOT/nova-cli/target/crate-tests"
+
     if [ -n "${NOVA_CRATE_TESTS_CMD:-}" ]; then
         OUT=$(eval "$NOVA_CRATE_TESTS_CMD" 2>&1)
     elif command -v cargo >/dev/null 2>&1; then
@@ -74,10 +86,20 @@ for suite in $SUITES; do
         # RUST_MIN_STACK — не украшение: без него compiler-codegen падает
         # переполнением стека, не дойдя до конца (см. шапку).
         OUT=$(cd "$ROOT/$CRATE" \
-              && RUST_MIN_STACK=134217728 cargo test --release --no-fail-fast $ARGS 2>&1)
+              && RUST_MIN_STACK=134217728 \
+                 CARGO_TARGET_DIR="${TDIR_ENV:-$ROOT/$CRATE/target}" \
+                 cargo test --release --no-fail-fast $ARGS 2>&1)
     else
         echo "$NAME ok: cargo недоступен — судить нечем"
         exit 0
+    fi
+
+    # №804, вторая половина: сборка, упавшая ДО тестов, называется сборкой,
+    # а не «не отчитался». У стража в руках полный вывод — судить по нему.
+    if printf '%s\n' "$OUT" | grep -qE '^error(\[|:)|build failed'; then
+        echo "$NAME: FAIL — $CRATE: СБОРКА упала до тестов (это не отказ тестов):" >&2
+        printf '%s\n' "$OUT" | grep -E '^error(\[|:)|os error|build failed' | head -4 | sed 's/^/    /' >&2
+        exit 1
     fi
 
     # Строки вердикта обязаны БЫТЬ. Их отсутствие — не «прошло», а «неизвестно».

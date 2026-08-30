@@ -1,0 +1,1223 @@
+// EXPECT_COMPILE_ERROR [E_NESTING_TOO_DEEP] nesting is deeper than 512 levels
+// Registry 221.1 #800: before this limit the parser rode the native stack
+// down and DIED on it -- `thread 'nova-check-0' has overflowed its stack`,
+// with no file, no line and no `E_*`. Measured 2026-08-29 (each probe in its
+// OWN directory, because `nova check` pulls a folder in as a module):
+// nested parens 2000 ok / 2500 dead, nested `if` 500 ok / 1810 dead, value
+// blocks 1810 dead, deterministic 3/3. A crash with no diagnostic is the
+// first thing an outsider feeding the compiler generated code would see, and
+// `novac` has had this exact standard at rank CORE since plan 274 while the
+// oracle had no fuzzing at all.
+//
+// The shape is nested `if`, not nested parens: parens deep enough to cross
+// the limit are by definition W_REDUNDANT_PAREN (nv-coding-style 39), and the
+// corpus canon is zero lint findings -- the lint caught exactly that on the
+// first version of this file. 600 levels is above the 512 limit and well
+// below the ~1810 where the stack used to die, so this fixture proves the
+// DIAGNOSTIC, not the crash.
+module neg.m800_nesting_depth_neg
+
+fn m800_deep() Io -> () {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    // nova:expect E_NESTING_TOO_DEEP -- the parser must refuse deep nesting with a diagnostic instead of running out of stack
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    if true {
+    println("unreachable")
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+}

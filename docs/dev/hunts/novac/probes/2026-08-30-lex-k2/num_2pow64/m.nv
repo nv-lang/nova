@@ -1,0 +1,5 @@
+module num_2pow64
+
+fn main() {
+    println(18446744073709551616)
+}

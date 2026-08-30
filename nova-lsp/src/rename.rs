@@ -498,7 +498,7 @@ enum RenameScope {
 /// On a parse failure we return [`RenameScope::TopLevel`] (the safe, V1-compatible
 /// default): rename stays cross-file rather than silently doing nothing.
 fn classify_scope(text: &str, cursor_byte: usize, old_name: &str) -> RenameScope {
-    let Ok(module) = nova_codegen::parser::parse(text) else {
+    let Ok(module) = crate::compiler::parse_guarded(text) else {
         return RenameScope::TopLevel;
     };
     // Innermost enclosing top-level fn/test whose span contains the cursor.
@@ -548,7 +548,7 @@ pub(crate) fn resolve_highlight_scope(
 /// `name` — the shadow scopes a top-level rename must skip. Empty on parse
 /// failure (degrade to "no shadows", i.e. the V1 cross-file behaviour).
 fn shadow_scopes_in_text(text: &str, name: &str) -> Vec<(usize, usize)> {
-    let Ok(module) = nova_codegen::parser::parse(text) else {
+    let Ok(module) = crate::compiler::parse_guarded(text) else {
         return Vec::new();
     };
     let mut out = Vec::new();

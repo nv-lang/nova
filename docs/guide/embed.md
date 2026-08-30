@@ -33,6 +33,7 @@ ro index = site.get("index.html")       // Option[[]u8]
 ## Contents
 
 - [`embed("path")` — a single file](#embedpath--a-single-file)
+- [`embed_str("path")` — a single file as `str`](#embed_strpath--a-single-file-as-str)
 - [`embed_dir("dir")` — a whole directory, recursively](#embed_dirdir--a-whole-directory-recursively)
 - [`EmbeddedDir` API](#embeddeddir-api)
 - [Materialization: zero-copy](#materialization-zero-copy)
@@ -71,6 +72,35 @@ test "embed(\"path\") round-trips the fixture bytes exactly" {
   separators are ignored, an odd digit count is `E_HEX_BLOB_ODD`).
   `embed(...)` is, in essence, "read a file and substitute its bytes as
   `x"…"`" at compile time.
+
+## `embed_str("path")` — a single file as `str`
+
+```nova
+test "embed_str(\"path\") reads a file's content as str" {
+    ro greeting = embed_str("greeting.txt")   // path — relative to THIS .nv file
+    assert(greeting == "Hello, Nova!")
+}
+```
+
+(the fixture `greeting.txt` holds exactly `Hello, Nova!`, no trailing
+newline; adapted from `spec_tests/conformance/d412e_embed_str.nv`.)
+
+- `embed_str` is `embed`'s compile-time sister intrinsic: the same
+  single-file read, but the result is a `str` instead of `[]u8`. The
+  argument contract is identical — a string literal only, resolved relative
+  to the calling `.nv` file, bounded by the caller's package root — and
+  every diagnostic `embed` can raise on the same input is reused verbatim:
+  file not found → `E_EMBED_NOT_FOUND`, a directory instead of a file →
+  `E_EMBED_IS_A_DIR` ("use `embed_dir(...)`"), escaping the project root →
+  `E_EMBED_OUTSIDE_PROJECT`, a `\` in the literal → `E_EMBED_PATH_BACKSLASH`.
+- The one extra check `embed` doesn't have: the file's bytes must be valid
+  UTF-8 (the `str` invariant). Invalid content is a compile error,
+  `E_EMBED_NOT_UTF8`, pointing at the byte offset of the FIRST invalid byte.
+- Materialization goes through the same interned-`str`-literal path as any
+  hand-written `"…"` — zero new codegen primitives, and the same zero-copy
+  `.rodata` story as `embed`.
+- `embed_str` is a reserved name, exactly like `embed`/`embed_dir` — it
+  cannot be shadowed by your own function or variable.
 
 ## `embed_dir("dir")` — a whole directory, recursively
 

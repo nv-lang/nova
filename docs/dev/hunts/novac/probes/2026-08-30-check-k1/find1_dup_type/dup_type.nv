@@ -1,0 +1,10 @@
+module find1.dup_type
+// Two conflicting top-level declarations of the SAME name `Pt`.
+// Oracle: E "duplicate top-level name `Pt`" (rejects, rc1).
+// novac: rc0 -- silently accepts, resolves `Pt { v: 1.5 }` against one of the two.
+type Pt { n int }
+type Pt { v f64 }
+fn main() {
+    ro p = Pt { v: 1.5 }
+    println(1)
+}

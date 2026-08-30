@@ -54,7 +54,7 @@ use crate::diagnostic_mapping::byte_offset_to_position;
 /// Returns an empty `Vec` on parse failure (graceful — the editor simply shows
 /// no folds rather than an error). Safe to run inside `run_with_large_stack`.
 pub fn compute_folding_ranges(src: &str) -> Vec<FoldingRange> {
-    let module = match nova_codegen::parser::parse(src) {
+    let module = match crate::compiler::parse_guarded(src) {
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };
