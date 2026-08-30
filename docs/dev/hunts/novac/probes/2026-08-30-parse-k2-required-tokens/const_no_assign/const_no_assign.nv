@@ -1,0 +1,11 @@
+// PROBE H8: a `const` declaration with no `=` before its value.
+// site  : novac/src/parse/decls.nv:161 -- @push_if(kids, TokenKind.Assign)
+// novac : check rc=0, ZERO diagnostics; emit rc=0.
+// oracle: rc=1, "error: expected `=`, got int literal" at 7:13
+module const_no_assign
+
+const A int 1
+
+fn main() {
+    println("ok")
+}

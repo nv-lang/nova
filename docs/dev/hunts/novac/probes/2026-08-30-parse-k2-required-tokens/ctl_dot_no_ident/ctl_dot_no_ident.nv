@@ -1,0 +1,12 @@
+// CONTROL C2: the SAME class of missing token at a call site that IS guarded --
+// `@push_if(kids, TokenKind.Ident)` after a `.` (novac/src/parse/expr.nv:264).
+// Both implementations refuse, so the door itself is not universally silent:
+// the gap is per-call-site.
+// novac : rc=1, E_NOVAC_SUBSET "a field access needs a name after the dot"
+// oracle: rc=1, "error: expected field name or index after `.`" at 11:15
+module ctl_dot_no_ident
+
+fn main() {
+    ro s = "ab"
+    println(s.)
+}

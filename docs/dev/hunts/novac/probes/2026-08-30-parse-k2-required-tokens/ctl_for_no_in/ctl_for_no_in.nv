@@ -1,0 +1,16 @@
+// CONTROL C3: `for` with the `in` keyword missing -- @push_if(kids,
+// TokenKind.KwIn) at novac/src/parse/parse.nv:923, a token the grammar
+// REQUIRES. novac does refuse, but NOT at the parser: the refusal comes from a
+// downstream subset rule about the head shape, so it names a false cause.
+// Recorded as "checked, refused" rather than a K2 finding; the false cause is
+// a separate class and is left to the window.
+// novac : rc=1, E_NOVAC_SUBSET "the head of a `for` is a range `lo..hi` here;
+//         a collection head arrives with generics (E2-b)"
+// oracle: rc=1, "error: expected type, got int literal" at 13:11
+module ctl_for_no_in
+
+fn main() {
+    for i 0..3 {
+        println("x")
+    }
+}
