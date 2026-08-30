@@ -239,6 +239,14 @@ self_rej=0
 if [ "$self_total" -gt 0 ]; then
     eval "timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
+    # ПАЧКА С ICE НЕДОСТОВЕРНА (замер 2026-08-30): ice обрывает процесс кодом 2,
+    # который ПРОХОДИТ порог «код вне 0/1/2», и файлы ПОСЛЕ точки смерти выходят
+    # «чистыми», не будучи досуженными вовсе. Так родилось ложное 41/53 волны В6:
+    # двенадцать «принятых» стояли в списке позади interop.nv, чей ice убил
+    # пачку. ICE в выводе — тот же откат на пофайловый проход, что и смерть.
+    if grep -q "E_NOVAC_ICE" "$T/self.out" "$T/self.err" 2>/dev/null; then
+        src=99
+    fi
     if [ "$src" -le 2 ]; then
         self_rej=$(cat "$T/self.out" "$T/self.err" 2>/dev/null \
             | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')

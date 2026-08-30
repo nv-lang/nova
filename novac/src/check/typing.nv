@@ -859,13 +859,16 @@ fn Checker mut @type_expr(e Node) -> () {
         // Operands first (they are what can be unknown), then the answer for
         // THIS node: the whole expression's type decides the emitted shape
         // (f64 is raw C, int is the checked helper).
-        @type_expr(kids[0])
+        // The mark is taken BEFORE the left operand (274.5, found by the
+        // census: `@names.find(s) >= 0` on a field of an unhanded type). A
+        // refusal inside EITHER operand makes this expression's own answers
+        // untrustworthy, and asking the lattice about a refused method call
+        // is the pass-order ice by design. The mark, not the file's count:
+        // a refusal in an EARLIER declaration must not stop this walk
+        // (probe 2026-08-20) -- the question is about THIS expression.
         ro before = @out.len()
+        @type_expr(kids[0])
         @type_expr(kids[2])
-        // The mark, not the file's count: a refusal in an EARLIER declaration
-        // used to stop this walk too, and `@type_bind` then skipped its
-        // `@scope.bind` -- every later name came out "unknown" (probe
-        // 2026-08-20). The question is about THIS expression.
         if @out.len() > before { return }
         if @report_if_operator_needs_protocol(kids) { return }
         // The OPERANDS' types are recorded too: equality on `str` is a method

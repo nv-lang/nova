@@ -91,9 +91,11 @@
 # guarantee matches the fixed point of behaviour rather than widening past it.
 # 88 lines of novac's own sources carry the attribute; it was the first refusal
 # of six files. Ratchet carrier: `examples/basics/realtime_attr.nv`.
-# THE HEADLINE OF THIS WAVE IS NOT THE CORPUS: self-distance moved off the
-# floor for the first time, 53/53 -> 41/53 -- novac reads twelve of its own
-# files end to end.
+# THE HEADLINE BELOW WAS A MEASUREMENT LIE, corrected 2026-08-30 (plan 274.5
+# s2s): the 41/53 came from a batch that DIED on an ice mid-list, leaving the
+# twelve files behind the death point unjudged and counted "clean". Honest
+# self-distance stayed "all refused"; the runner now falls back to per-file
+# when the batch output carries an ICE.
 # 2026-08-30 (274.5 wave B8 part B): 19/12 -> 20/13. An array literal stands
 # in CALL-ARGUMENT and CONSTRUCTOR-FIELD position (the census: 9 + 12 carriers
 # in novac's own sources; bare tails and assignments had ZERO and stay out by
