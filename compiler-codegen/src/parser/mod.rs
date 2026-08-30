@@ -8179,6 +8179,47 @@ impl Parser {
         (true, indent, content_end)
     }
 
+    /// Парсит выражения интерполяций `${…}`, выданные `split_tagged_template`,
+    /// в узлы AST. **ОДИН дом на обоих потребителей сплиттера** — тегированный
+    /// шаблон (десугарится в вызов, D48) и голый backtick (собирается в
+    /// `InterpolatedStr`, D467 §5, план 277 Ф.3). Две копии этого цикла были бы
+    /// ровно «вторым вычислением уже решённого суждения» — класс, за которым мы
+    /// охотимся в novac: расходятся такие копии молча, на первой же правке
+    /// одной из сторон.
+    ///
+    /// `raw_base` — абсолютное смещение первого байта сырого тела (сразу за
+    /// открывающим backtick). `rel_off` сплиттера отсчитывается от него, и без
+    /// сдвига диагностика внутри `${…}` указала бы в начало файла.
+    fn parse_template_args(
+        arg_srcs: &[(String, usize)],
+        raw_base: usize,
+        file_id: crate::diag::FileId,
+    ) -> Result<Vec<Expr>, Diagnostic> {
+        let mut arg_exprs: Vec<Expr> = Vec::with_capacity(arg_srcs.len());
+        for (src_text, rel_off) in arg_srcs {
+            let abs_off = raw_base + rel_off;
+            let mut toks = crate::lexer::lex_with_file_id(src_text, file_id)?;
+            // Сдвиг span'ов токенов на абсолютную позицию интерполяции —
+            // диагностики указывают в файл.
+            for t in &mut toks {
+                t.span.start += abs_off;
+                t.span.end += abs_off;
+            }
+            let mut sub = Parser::with_src(toks, src_text.clone());
+            let e = sub.parse_expr()?;
+            if !matches!(sub.peek().kind, TokenKind::Eof | TokenKind::Newline) {
+                return Err(Diagnostic::new(
+                    "[E_TAGGED_TEMPLATE_ARG] интерполяция `${…}` должна \
+                     содержать РОВНО одно выражение"
+                        .to_string(),
+                    e.span,
+                ));
+            }
+            arg_exprs.push(e);
+        }
+        Ok(arg_exprs)
+    }
+
     fn split_tagged_template(
         raw: &str,
         tok_span: crate::diag::Span,
@@ -9265,29 +9306,8 @@ impl Parser {
                     let file_id = tok_span.file_id;
                     let (parts, arg_srcs) =
                         Self::split_tagged_template(&tpl, tok_span)?;
-                    let mut arg_exprs: Vec<Expr> = Vec::with_capacity(arg_srcs.len());
-                    for (src_text, rel_off) in &arg_srcs {
-                        let abs_off = raw_base + rel_off;
-                        let mut toks =
-                            crate::lexer::lex_with_file_id(src_text, file_id)?;
-                        // Сдвиг span'ов токенов на абсолютную позицию
-                        // интерполяции — диагностики указывают в файл.
-                        for t in &mut toks {
-                            t.span.start += abs_off;
-                            t.span.end += abs_off;
-                        }
-                        let mut sub = Parser::with_src(toks, src_text.clone());
-                        let e = sub.parse_expr()?;
-                        if !matches!(sub.peek().kind, TokenKind::Eof | TokenKind::Newline) {
-                            return Err(Diagnostic::new(
-                                "[E_TAGGED_TEMPLATE_ARG] интерполяция `${…}` в tagged \
-                                 template должна содержать РОВНО одно выражение"
-                                    .to_string(),
-                                e.span,
-                            ));
-                        }
-                        arg_exprs.push(e);
-                    }
+                    let arg_exprs =
+                        Self::parse_template_args(&arg_srcs, raw_base, file_id)?;
                     let span = expr.span.merge(tok_span);
                     let parts_arr = Expr::new(
                         ExprKind::ArrayLit(
@@ -9473,19 +9493,56 @@ impl Parser {
             }
             TokenKind::Backtick(s) => {
                 self.bump();
-                // bare backtick без tag-функции = строка. Гигиена тела (D467
-                // §7, план 277 Ф.5) применяется и здесь: правило про голову,
-                // отступ, хвост и CRLF — про ФОРМУ ЛИТЕРАЛА, а не про наличие
-                // тега, и разойтись эти два пути не имеют права (ровно этой
-                // разошедшейся формой болен сегодняшний backtick — см. D467).
-                let (block, _, _) = Self::backtick_block_shape(&s);
-                let body = if block {
-                    let (parts, _) = Self::split_tagged_template(&s, start)?;
-                    parts.concat()
-                } else {
-                    s
-                };
-                Ok(Expr::new(ExprKind::StrLit(body), start))
+                // Голый backtick — тег ПО УМОЛЧАНИЮ (D467 §5, план 277 Ф.3):
+                // `` `a=${i}` `` интерполирует так же, как `"a=${i}"`. До Ф.3
+                // голая форма отдавала СЫРУЮ строку, и `${i}` печаталось
+                // буквально (замер реестра №795) — разрыв тем более коварный,
+                // что тегированная форма интерполировала рядом, в том же файле.
+                //
+                // ТОТ ЖЕ сплиттер и ТОТ ЖЕ парсер аргументов, что у
+                // тегированной формы: гигиена тела (§7: голова, отступ, хвост,
+                // CRLF) и набор escape (§6: РОВНО три) — правила про ФОРМУ
+                // ЛИТЕРАЛА, а не про наличие тега, и разойтись эти два пути не
+                // имеют права (именно разошедшейся формой болел backtick до
+                // D467). Заодно уходит частный случай: раньше однострочная
+                // голая форма не проходила через сплиттер вовсе, и `` \` ``
+                // в ней оставалась двумя символами вместо одного.
+                let raw_base = start.start + 1;
+                let (parts, arg_srcs) = Self::split_tagged_template(&s, start)?;
+                if arg_srcs.is_empty() {
+                    // Инвариант D48: parts.len() == args.len() + 1, значит без
+                    // интерполяций часть ровно одна.
+                    return Ok(Expr::new(ExprKind::StrLit(parts.concat()), start));
+                }
+                let arg_exprs =
+                    Self::parse_template_args(&arg_srcs, raw_base, start.file_id)?;
+                // Чередование parts[0] arg[0] parts[1] … по тому же инварианту.
+                let mut ast_parts: Vec<crate::ast::InterpStrPart> =
+                    Vec::with_capacity(parts.len() + arg_exprs.len());
+                let mut args_iter = arg_exprs.into_iter();
+                for (idx, p) in parts.into_iter().enumerate() {
+                    if idx > 0 {
+                        if let Some(e) = args_iter.next() {
+                            ast_parts.push(crate::ast::InterpStrPart::Expr {
+                                expr: Box::new(e),
+                                // Голая `${e}` = Display, как и в `"..."`.
+                                // Спецификаторов (`${e:>3}`) backtick не знает
+                                // ни в голой, ни в тегированной форме: сплиттер
+                                // отдаёт содержимое `${…}` целиком одним
+                                // выражением. Разрыва между формами тут нет —
+                                // а значит, нет и повода расширять одну.
+                                spec: crate::ast::FormatSpec::None,
+                            });
+                        }
+                    }
+                    if !p.is_empty() {
+                        ast_parts.push(crate::ast::InterpStrPart::Lit(p));
+                    }
+                }
+                Ok(Expr::new(
+                    ExprKind::InterpolatedStr { parts: ast_parts },
+                    start,
+                ))
             }
             TokenKind::At => {
                 self.bump();
