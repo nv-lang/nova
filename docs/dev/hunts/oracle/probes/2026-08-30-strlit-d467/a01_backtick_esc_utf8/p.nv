@@ -1,0 +1,9 @@
+// D467 §6: in a backtick body only \` \\ \$ are escapes; any other character
+// after a backslash "passes through as TWO characters".
+// Here the character after the backslash is a 2-byte UTF-8 letter.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = `path\я`
+    print(s)
+}

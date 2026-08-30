@@ -1,0 +1,12 @@
+// D467 sec.7: block form, body made of blank (whitespace-only) lines.
+// p.1 head is eaten, p.2 common indent stripped, p.3 the closing-backtick
+// line contributes nothing. Degenerate input: is the value "\n" or does
+// incidental trailing whitespace leak into the constant?
+module probe.p
+
+fn main() Io -> () => {
+    ro s = `
+    
+    `
+    println("len=${s.byte_len()}")
+}

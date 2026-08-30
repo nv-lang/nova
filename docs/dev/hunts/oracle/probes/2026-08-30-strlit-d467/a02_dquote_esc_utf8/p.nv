@@ -1,0 +1,10 @@
+// D467 §2: the escape set inside "..." is CLOSED; any other character after a
+// backslash must be the error `unknown escape`.
+// Here that character is a 2-byte UTF-8 letter, so a correct compiler must
+// print a diagnostic, not crash.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = "path\я"
+    print(s)
+}

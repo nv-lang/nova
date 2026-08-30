@@ -1,0 +1,11 @@
+// D44/D467 sec.5: the body of `${...}` is Nova source, and a char literal
+// holding a double quote is legal Nova (proved by the control c03b).
+// The brace scanner is string-aware but not char-literal-aware, so the
+// quote inside the char literal is taken as the start of a string.
+module probe.p
+
+fn main() Io -> () => {
+    print("r=${'"'}|")
+    print("
+")
+}

@@ -1,0 +1,12 @@
+// D467 sec.5: a bare backtick glues through Display "exactly what `"${a}${b}"`
+// does", so the SAME interpolation body must parse in both literal forms.
+// Body: id( a-string-containing-a-closing-brace ).
+// The quoted twin of this probe is b01b and it compiles and prints `a}b`.
+module probe.p
+
+fn id(s str) -> str => s
+
+fn main() Io -> () => {
+    print(`bt=${id("a}b")}`)
+    print("\n")
+}

@@ -1,0 +1,10 @@
+[package]
+name = "probe"
+version = "0.1.0"
+# license required by check-license-hygiene (No.556). These probes are
+# fixtures of a hunt, not packages; the field changes nothing they measure.
+license = "MIT OR Apache-2.0"
+nova-version = "0.5"
+
+[lib]
+src = "."

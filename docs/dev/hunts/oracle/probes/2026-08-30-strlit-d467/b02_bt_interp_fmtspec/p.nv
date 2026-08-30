@@ -1,0 +1,14 @@
+// D467 5: a bare backtick does "exactly what `"${a}${b}"` does".
+// `"${n:04}"` (a format spec, D229/D258) is accepted in a quoted literal;
+// the same body inside a bare backtick must therefore be accepted too.
+module probe.p
+
+fn main() Io -> () => {
+    ro n = 7
+    ro q = "dq=${n:04}"
+    print(q)
+    print("\n")
+    ro t = `bt=${n:04}`
+    print(t)
+    print("\n")
+}

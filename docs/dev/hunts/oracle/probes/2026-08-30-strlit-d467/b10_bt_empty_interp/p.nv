@@ -1,0 +1,8 @@
+// Degenerate interpolation `${}` inside a bare backtick (D467 sec.5).
+// The quoted twin says, in English: `empty ${} interpolation in string
+// literal`. AGENTS.md, section Language: "diagnostic texts in English".
+module probe.p
+
+fn main() Io -> () => {
+    print(`a=${}`)
+}

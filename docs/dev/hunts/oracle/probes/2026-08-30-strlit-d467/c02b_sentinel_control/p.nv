@@ -1,0 +1,8 @@
+// Control for c02: the same U+0001 followed by a letter instead of a
+// dollar sign. Expected byte_len 2.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = "\u{1}a"
+    println("len=${s.byte_len()}")
+}

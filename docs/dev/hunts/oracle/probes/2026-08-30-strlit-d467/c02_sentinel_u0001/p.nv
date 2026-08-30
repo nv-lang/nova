@@ -1,0 +1,10 @@
+// D467 sec.2: `\u{H...}` is a Unicode code point and `\$` is the only
+// way to suppress interpolation. Here the literal is U+0001 followed by a
+// plain dollar sign that starts no interpolation, so the value is two
+// bytes: 0x01 and 0x24.
+module probe.p
+
+fn main() Io -> () => {
+    ro s = "\u{1}$"
+    println("len=${s.byte_len()}")
+}
