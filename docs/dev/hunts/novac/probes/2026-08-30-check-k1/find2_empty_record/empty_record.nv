@@ -1,0 +1,10 @@
+module find2.empty_record
+// Empty-brace construction `Pt { }` of a record that HAS a required field.
+// Oracle: rc1 E_STMT_SEP_MISSING -- it reads `Pt` as an expression and `{ }`
+// as a following block, so this is not a record-literal form for the oracle.
+// novac: rc0 -- parses `Pt { }` as an empty record literal, omitting `n`.
+type Pt { n int }
+fn main() {
+    ro p = Pt { }
+    println(p.n)
+}

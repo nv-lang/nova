@@ -1,0 +1,5 @@
+module num_maxu64
+
+fn main() {
+    println(18446744073709551615)
+}

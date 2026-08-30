@@ -9,8 +9,15 @@
 # ВЫВОДИТСЯ ИЗ ДЕРЕВА, НЕ ПИШЕТСЯ РУКАМИ (прецедент
 # check-no-handwritten-plan-index.sh): ось модулей — таблица рёбер §3
 # docs/dev/novac-architecture.md; ось классов — К1..К7; факт охоты — строка
-# «КЛЕТКА | <модуль> | К<n>» в отчёте docs/dev/hunts/*.md (формат задаётся
-# здесь и брифом Ф.4 ВМЕСТЕ — бриф ссылается сюда, второго дома нет).
+# «КЛЕТКА | <модуль> | К<n>» в отчёте docs/dev/hunts/novac/*.md (формат
+# задаётся здесь и брифом Ф.4 ВМЕСТЕ — бриф ссылается сюда, второго дома нет).
+#
+# ТОЛЬКО ТРЕК novac (Ф.6, решение владельца 2026-08-30): у оракула нет
+# архитектурного документа с таблицей рёбер — оси взять неоткуда, его охоты
+# судит только check-hunter-mark.sh. Строк «КЛЕТКА |» в отчёте может быть
+# НЕСКОЛЬКО (многоклеточная охота — findall, дыра критика №2 панели);
+# свёрнутые охоты продолжают держать клетки строками СВЁРНУТО в LEDGER.md
+# (иначе первая же свёртка подняла бы never_hunted над базой).
 #
 # ЧТО КРАСНИТ:
 #   1. отчёт охоты без разбираемой строки «КЛЕТКА |» — по уроку №801 генератор
@@ -28,10 +35,16 @@ import re
 import subprocess
 import sys
 
+# Вывод стабилен в UTF-8 независимо от кодовой страницы консоли (cp1251 под
+# Windows молча портит кириллицу в перенаправленном выводе — самотест грепает).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "..")
 ROOT = os.path.abspath(ROOT)
 ARCH = os.path.join(ROOT, "docs", "dev", "novac-architecture.md")
-HUNTS = os.environ.get("NOVA_HUNTS_DIR", os.path.join(ROOT, "docs", "dev", "hunts"))
+HUNTS = os.environ.get("NOVA_HUNTS_DIR", os.path.join(ROOT, "docs", "dev", "hunts", "novac"))
 BASE_FILE = os.environ.get("NOVA_HUNTER_GRID_BASELINE",
                            os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                         "hunter-grid.baseline"))
@@ -61,13 +74,18 @@ if os.path.isdir(HUNTS):
             continue
         p = os.path.join(HUNTS, fn)
         t = io.open(p, encoding="utf-8", errors="replace").read()
-        m = re.search(u"^КЛЕТКА \\| *([a-z_]+) *\\| *(К[1-7])\\b", t, re.M)
-        if not m:
-            fail(u"отчёт %s без разбираемой строки «КЛЕТКА | <модуль> | К<n>» — отказ на непонятой форме (№801)" % fn)
-        mod, cls = m.group(1), m.group(2)
-        if mod not in modules:
-            fail(u"отчёт %s называет модуль «%s», которого нет в таблице рёбер §3 (%s)" % (fn, mod, u", ".join(modules)))
-        hunted.add((mod, cls))
+        if fn == "LEDGER.md":
+            # свёрнутые охоты: клетка — поля 3–4 строки СВЁРНУТО (формат — дом
+            # check-hunter-fold.sh); пустой леджер законен.
+            cells = re.findall(u"^СВЁРНУТО \\|[^|]*\\| *([a-z_]+) *\\| *(К[1-7])\\b", t, re.M)
+        else:
+            cells = re.findall(u"^КЛЕТКА \\| *([a-z_]+) *\\| *(К[1-7])\\b", t, re.M)
+            if not cells:
+                fail(u"отчёт %s без разбираемой строки «КЛЕТКА | <модуль> | К<n>» — отказ на непонятой форме (№801)" % fn)
+        for mod, cls in cells:
+            if mod not in modules:
+                fail(u"отчёт %s называет модуль «%s», которого нет в таблице рёбер §3 (%s)" % (fn, mod, u", ".join(modules)))
+            hunted.add((mod, cls))
 
 never = grid_size - len(hunted)
 
