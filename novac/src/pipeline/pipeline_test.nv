@@ -629,6 +629,67 @@ fn main() {
     assert(d4.len() == 0)
 }
 
+test "a token the grammar requires is refused when absent (#815)" {
+    // Registry #815, class K6, found by the hunt of parse x K2: thirteen
+    // probes where novac exited 0 in silence and the oracle refused. One door
+    // was doing two jobs -- `@push_if` means "optional here, and absence is a
+    // valid outcome", which is true of a trailing comma and false of a name.
+    //
+    // The test holds the CLASS, so it asks about DIFFERENT kinds of required
+    // token, not one carrier: a name, an `=`, the `(` of a signature, the `{`
+    // of a match. The registry is explicit that repairing thirteen listed
+    // sites would be a carrier fix and not acceptance.
+    ro std = std_decls()
+
+    // a type with no name
+    ro (d1, _) = compile_to_c("type { n int }
+fn main() { println(1) }", std)
+    assert(d1.len() >= 1)
+
+    // a binding with no name
+    ro (d2, _) = compile_to_c("fn main() {
+ mut = 1
+ println(1)
+}", std)
+    assert(d2.len() >= 1)
+
+    // a binding with no `=`
+    ro (d3, _) = compile_to_c("fn main() {
+ mut b int
+ println(1)
+}", std)
+    assert(d3.len() >= 1)
+
+    // a signature with no `(`
+    ro (d4, _) = compile_to_c("fn main {
+ println(1)
+}", std)
+    assert(d4.len() >= 1)
+
+    // The SECOND shape of the same class is NOT asserted here, and the reason
+    // is a measurement rather than an omission. An import path is read by a
+    // loop, and a loop with no minimum accepts nothing at all; the fix makes
+    // an empty path plant a gap. But in THIS harness the same source is
+    // refused for an unrelated reason, so an assertion on it would be green
+    // with the fix removed -- the reverse proof showed exactly that, failing
+    // nothing when the loop minimum was taken out.
+    //
+    // What holds that shape instead is the hunt probe, measured through the
+    // CLI: `import` with no path used to exit 0 with not one diagnostic, and
+    // now refuses, taking the parse x K2 battery from thirteen divergences to
+    // zero across sixteen probes.
+
+    // The other direction of the lid: every form above, written whole, is
+    // clean. Without this the rule could be wider than the grammar and no
+    // test would notice.
+    ro (d6, _) = compile_to_c("type Pt { n int }
+fn main() {
+ mut b = 1
+ println(b)
+}", std)
+    assert(d6.len() == 0)
+}
+
 test "an application in TYPE position resolves -- Vec[int], and []T is its D239 sugar" {
     // Step B2's acceptance, pinned at the level it changes: the SIGNATURE. Both
     // spellings are one term (D239: `[]T` IS `Vec[T]`), read by one door at

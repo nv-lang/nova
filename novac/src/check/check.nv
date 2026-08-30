@@ -68,6 +68,12 @@ type Checker {
     /// field root -- fields resolve only through a receiver type, and only
     /// the checker can ask.
     fres FieldIndex
+    /// The FIRST gap seen in this file — a refusal whose run has zero width,
+    /// that is, a token the grammar required and nobody wrote. Held rather
+    /// than said at once: a gap points at nothing the author typed, so it is
+    /// the LAST thing worth saying about a file, and only when nothing with
+    /// width was said. `gap_at < 0` means none seen.
+    gap_at int
     out []Diagnostic /// diagnostics collected by this run
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
     scope Scope /// locals of the function body being typed; reset per function
@@ -125,6 +131,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         src, ctx,
         res: FnIndex.build(ctx.fns),
         fres: FieldIndex.build(ctx.fields),
+        gap_at: -1,
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
@@ -133,6 +140,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         substs: []TyId.new(),
     }
     c.walk(file)
+    c.tell_gap_if_silent()
     if c.out.len() == 0 {
         // THE ENTRY IS A RESOLUTION (274.4 step 2): a name chain is walked to
         // find it, and after the checker nobody resolves -- mono reads the
@@ -176,6 +184,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         src, ctx,
         res: FnIndex.build(ctx.fns),
         fres: FieldIndex.build(ctx.fields),
+        gap_at: -1,
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
@@ -391,6 +400,14 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     } else {
                         // A plain import: nothing here to judge.
                     }
+                    // The FORM is not judged, but a GAP inside it still has to
+                    // be seen: `import` with no path at all parsed clean and
+                    // compiled with exit code 0 (registry #815, probe
+                    // `import_no_path`). This arm ends the walk, so the
+                    // question is asked here or nowhere -- and asking costs
+                    // nothing, because a gap is only REMEMBERED here and said
+                    // once per file, if the file had nothing else to say.
+                    @report_err_branch(children)
                     return
                 }
                 ExportDecl => {

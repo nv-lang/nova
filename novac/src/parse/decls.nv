@@ -70,7 +70,9 @@ fn Cursor mut @export_decl() -> Node {
 /// member of class A in the inventory (§9.4а): a refusal naming a false cause.
 fn Cursor mut @extern_decl() -> Node {
     mut lead = []Node.of(@take()) // KwExtern
-    @push_if(lead, TokenKind.StrLit)
+    // The ABI string is REQUIRED (`extern "nova" fn`); `unsafe` is not,
+    // and that is why the two lines use different doors (#815).
+    @push_expected(lead, TokenKind.StrLit)
     @push_if(lead, TokenKind.KwUnsafe)
     if @peek() == TokenKind.KwFn {
         return @fn_decl(lead)
@@ -102,9 +104,24 @@ fn Cursor mut @import_decl() -> Node {
     // `..` IS ONE TOKEN (`DotDot`, the range operator's), and that is why the
     // first fix here was not enough: the loop learned the slash and still stopped
     // dead at the two dots in front of it.
+    ro before_path = kids.len()
     while @peek() == TokenKind.Ident || @peek() == TokenKind.Dot ||
         @peek() == TokenKind.DotDot || @peek() == TokenKind.Slash {
         kids.push(@take())
+    }
+    if kids.len() == before_path {
+        // AN EMPTY PATH is not an import, and a loop with no minimum said it
+        // was: bare `import` compiled with exit code 0 and no diagnostic
+        // (registry #815, probe `import_no_path`). This is the SECOND shape of
+        // that class -- the first is a required token taken by the optional
+        // door -- and a grep for `@push_if` never finds it, which is why it
+        // outlived the door fix by one measurement.
+        //
+        // The gap is planted, not said: whether it is worth saying is the
+        // checker's one decision for every gap in the file.
+        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+    } else {
+        // A path was read; how well-formed it is, `check` judges.
     }
     if @peek() == TokenKind.LBrace {
         mut depth = 0
@@ -150,7 +167,7 @@ fn Cursor mut @attr_decl() -> Node {
 /// most of them happen to have.
 fn Cursor mut @const_decl() -> Node {
     mut kids = []Node.of(@take()) // KwConst
-    @push_if(kids, TokenKind.Ident) // the name
+    @push_expected(kids, TokenKind.Ident) // the name
     if @peek() != TokenKind.Assign {
         // A declared type stands between the name and `=`, read by the ONE
         // type-reference door (274.5 wave B1 put fields on it too).
@@ -158,7 +175,7 @@ fn Cursor mut @const_decl() -> Node {
     } else {
         // No type written: the initializer carries it.
     }
-    @push_if(kids, TokenKind.Assign)
+    @push_expected(kids, TokenKind.Assign)
     kids.push(@expr())
     @node(NodeKind.ConstDecl, kids)
 }
@@ -166,7 +183,7 @@ fn Cursor mut @const_decl() -> Node {
 /// A `test "name" { ... }` block: read whole, judged by the subset walk.
 fn Cursor mut @test_decl() -> Node {
     mut kids = []Node.of(@take()) // KwTest
-    @push_if(kids, TokenKind.StrLit)
+    @push_expected(kids, TokenKind.StrLit)
     if @peek() == TokenKind.LBrace {
         kids.push(@block())
     } else {

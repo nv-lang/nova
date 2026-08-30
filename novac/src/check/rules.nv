@@ -876,10 +876,46 @@ fn Checker mut @report_err_branch(children []Node) -> () {
                 // The whole run is the subject, so the whole run is underlined.
                 ro lo = @src.offset_of(t.text)
                 ro hi = @run_end_of(children, lo + t.text.byte_len())
+                if hi == lo {
+                    // A GAP: the run has no width, so it points at nothing the
+                    // author wrote. Remembered, not said -- `tell_gap_if_silent`
+                    // says it at the end if the file had nothing else to say.
+                    if @gap_at < 0 { @gap_at = lo } else { }
+                    return
+                } else {
+                    // A run with WIDTH is a cause of its own and speaks now.
+                }
                 @refuse_span(lo, hi, SYNTAX_MSG)
                 return
             }
             Branch { children: inner, .. } => @report_err_branch(inner)
         }
     }
+}
+
+/// Say the held gap, but only if the file had nothing else to say (#809/#815).
+///
+/// The whole reason gaps are held: the parser meets a missing token BEFORE its
+/// recovery marks the run that caused it, so on `fn main junk here () { }` the
+/// refusal about the absent `(` was produced first and the one about the junk
+/// second. No ordering inside the parser fixes that, because the ordering IS
+/// the problem. Here order does not matter: everything has been walked, and
+/// the question is only whether anything with width was said.
+fn Checker mut @tell_gap_if_silent() -> () {
+    if @gap_at < 0 {
+        // No gap seen: nothing was missing, or something with width covered it.
+        return
+    } else {
+        // A gap is held; whether it speaks depends on the rest of the file.
+    }
+    if @out.len() > 0 {
+        // Something the author actually wrote was already refused. The gap
+        // describes the same mistake from the other side, and saying both
+        // reports one typo twice -- which is what the oracle does not do.
+        return
+    } else {
+        // Silence otherwise: the gap is the only thing wrong with this file,
+        // and saying nothing is how `fn main() {` used to compile clean.
+    }
+    @refuse_span(@gap_at, @gap_at, SYNTAX_MSG)
 }

@@ -379,7 +379,7 @@ par_add "$ROOT/scripts/guards/check-novac-emitted-names.py" "печатаемо�
 par_add "$ROOT/scripts/guards/check-novac-table-is-match.py" "таблица написана цепочкой if вместо match (П21 п.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагностика ссылается на незнание грамматики (§9.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
-par_add "$ROOT/scripts/guards/check-novac-closer-mandatory.py" "закрывающая скобка взята необязательной дверью (#809)"
+par_add "$ROOT/scripts/guards/check-novac-required-token-door.py" "требуемый грамматикой токен взят необязательной дверью (#809/#815)"
 par_add "$ROOT/scripts/guards/check-novac-tyid-door.py" "идентификатор типа сравнивается с нулём вместо двери (П18)"
 par_add "$ROOT/scripts/guards/check-novac-file-decls-door.py" "объявления файла берутся мимо двери file_decls (П18)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
