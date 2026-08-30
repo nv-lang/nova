@@ -218,6 +218,8 @@ pending the owner's call in Open questions.
 
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
+| оракул (легаси-компилятор) | the oracle (legacy compiler) | "the oracle accepts what the spec rejects" | роль, не имя бинаря (`nova.exe`): компилятор на Rust, выпускающий v0.1; после тега замораживается и служит НЕПОДВИЖНОЙ ТОЧКОЙ поведения для Carina (у него СПРАШИВАЮТ — отсюда имя); официализовано владельцем 2026-08-30 |
+| Carina (Карина) | Carina | "Nova Carina 1.0 -- the first release where `nova` is built by Nova itself" | ПРОДУКТОВОЕ ИМЯ, не переводится: самоходный компилятор Nova (рабочее имя `novac`, план 274), релиз-цель **Nova Carina 1.0**; метафора и решение — конвенция именования §1.2, внутренние доки (владелец 2026-08-30); пути `novac/` не переименовываются |
 | контракт (+ SMT-решатель) `[keep-en: аббревиатура]` | contract (+ SMT solver) | "Nova's contract system lets you state what a function **requires** and **ensures**, then verifies those claims at compile time via an SMT solver." | docs/guide/contracts.md intro; норма-форма «решатель» вместо транслитерации «солвер»; SMT — аббревиатура без русской расшифровки в обиходе |
 | enforce-with-elision `[keep-en: термин]` | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; **утверждено владельцем 2026-08-03** — keep-en как имя собственное механизма (D24/Plan 140, аналогично CI/REST); при первом упоминании — русское пояснение: «контракты проверяются всегда, компилятор вырезает лишь доказанные проверки» |
 | доказанный контракт | proven contract | "a **proven** contract is elided (zero runtime cost, even in debug)" | docs/guide/contracts.md intro; полностью по-русски |

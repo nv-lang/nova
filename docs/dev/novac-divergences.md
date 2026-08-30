@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Реестр расхождений novac ↔ оракул
+# Реестр расхождений novac (Carina) ↔ оракул
 
 Контракт (план [274](../plans/274-novac-self-hosted-compiler.md) §10.3а; машинная
 половина — `novac/divergences.allow`, судья — `check-novac-differential.sh` и
