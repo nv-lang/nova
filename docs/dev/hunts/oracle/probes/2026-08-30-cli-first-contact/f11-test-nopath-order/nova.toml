@@ -1,6 +1,9 @@
 [package]
 name = "f11-test-nopath-order"
 version = "0.1.0"
+# license added for check-license-hygiene (No.556): the probe measures
+# the prelude/arg-order defect, not packaging -- this line changes neither.
+license = "MIT OR Apache-2.0"
 [lib]
 src = "."
 [dependencies]
