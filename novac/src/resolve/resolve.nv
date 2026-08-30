@@ -437,19 +437,32 @@ export fn missing_sig_of(ctx Ctx, index FnIndex, t TyId, prow int) -> Option[str
 
 /// One required signature as a person reads it: `size() -> int`.
 fn render_sig(ctx Ctx, sig ProtoSig) -> str {
-    mut out = sig.name
-    out = "${out}("
+    // A BUILDER, not repeated interpolation. `out = "${out}..."` in a loop
+    // allocates a fresh string per parameter and copies everything gathered so
+    // far each time -- quadratic in a place that runs once per refusal, but
+    // written where the next reader learns the shape from. The emitter already
+    // holds `consume body StringBuilder` and writes the whole C in one pass
+    // (`emit_c/shell.nv:76`); this was the one text-building site that did not.
+    consume sb = StringBuilder.new()
+    sb.append(sig.name)
+    sb.append("(")
     for i in 0..sig.param_cnt {
-        out = "${out}${if i > 0 { ", " } else { "" }}${ty_source_name(ctx, ctx.protos.sig_params[sig.param_off + i])}"
+        if i > 0 {
+            sb.append(", ")
+        } else {
+            // The first parameter takes no separator.
+        }
+        sb.append(ty_source_name(ctx, ctx.protos.sig_params[sig.param_off + i]))
     }
-    out = "${out})"
+    sb.append(")")
     if is_ty(sig.ret_id) {
-        out = "${out} -> ${ty_source_name(ctx, sig.ret_id)}"
+        sb.append(" -> ")
+        sb.append(ty_source_name(ctx, sig.ret_id))
     } else {
         // The protocol declared no return type; the rendering says so by
         // stopping, exactly as the source does.
     }
-    out
+    sb.into_str()
 }
 
 /// Is there a method row on `t` matching this required signature?
