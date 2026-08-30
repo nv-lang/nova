@@ -86,7 +86,9 @@ def main():
         print("  копирует всё собранное — квадратично по длине результата.", file=sys.stderr)
         print("  Дверь уже есть и рядом: `consume sb = StringBuilder.new()`,", file=sys.stderr)
         print("  `sb.append(...)`, `sb.into_str()` — так эмиттер пишет весь C", file=sys.stderr)
-        print("  одним проходом (emit_c/shell.nv:76).", file=sys.stderr)
+        print("  одним проходом (emit_c/shell.nv:76). В позиции с явным ожидаемым", file=sys.stderr)
+        print("  типом хвост пишется без `.into_str()`: `#coerce` даёт то же самое", file=sys.stderr)
+        print("  (D429 R9), и lint зовёт явный вызов лишним.", file=sys.stderr)
         return 1
 
     print(f"{NAME} ok: файлов .nv вне тестов: {len(files)}, склеек строки с самой собой: 0")

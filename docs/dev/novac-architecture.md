@@ -1797,7 +1797,7 @@ assert(d.rev == Free or d.guard != "")
 | какой ТИП у узла | `check` | `CheckOut.record_type`, `CheckOut.type_of` | `sem/channel.nv` | `check-novac-channel-one-writer` (правила A, D, B) |
 | какой ВЫЗЫВАЕМЫЙ у вызова | `check` | `CheckOut.record_callee`, `CheckOut.callee_of` | `sem/channel.nv` | правило E того же стража (274.4 шаг 4) |
 | подбор поля | `resolve` (разрез СДЕЛАН, 274.4 шаг 3) | `FieldIndex.has_field`, `FieldIndex.field_type` | `resolve/` | значение `FieldIndex` живёт только в `Checker` (`fres`); поля обоих индексов `priv` (D47) |
-| подбор перегрузки | `resolve` (разрез СДЕЛАН, 274.4 шаг 2; `priv` на индексе — шаг 3) | `FnIndex.lookup`, `FnIndex.most_specific`, `fits` | `resolve/` | значение `FnIndex` живёт только в `Checker`; модульная граница вторым замком: у `emit_c`/`mono` нет ребра |
+| подбор перегрузки | `resolve` (разрез СДЕЛАН, 274.4 шаг 2; `priv` на индексе — шаг 3) | `FnIndex.lookup`, `fits` | `resolve/` | значение `FnIndex` живёт только в `Checker`; модульная граница вторым замком: у `emit_c`/`mono` нет ребра |
 | КОНСТРУКЦИЯ типа | `types` | `Interner.intern` | `types/` | `check-novac-tyid-door` (он же судит обёртки `@prim`/`@record`/`@app`/… — они зовут эту дверь) |
 | C-ИМЯ сущности | `sem/mangle` | `c_callable`, `c_type`, `c_instance_ctor`, `c_instance_method`, `c_shell_method` | `sem/mangle.nv` | `check-novac-mangling-one-way`, `check-novac-emitted-names` |
 | ИМЯ ЯЗЫКА строкой | `builtins` | ⚖ не функция: константы модуля целиком | `builtins/` | `check-novac-no-name-hardcode` (П5) — он и есть машина этого корня |
