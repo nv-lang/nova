@@ -17,6 +17,7 @@ module novac.resolve
 import ../tree.{Node, NodeKind, branch}
 import ../types.{TyId}
 import ../sem.{collect_types, Ctx, ProtoSig, ParamDef, ParamMode}
+import ../sem.{ArgSpec, ArgClass, CallForm}
 
 /// An empty file node: the predicate needs a Ctx with primitives seeded and
 /// nothing else. Same reason as in mangle_test -- `sem` must not import the
@@ -93,4 +94,65 @@ test "a FREE function of the same name does not satisfy a method requirement" {
     ctx.fns.add("size", ctx.prims.int_id, false,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
     assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
+}
+
+
+/// A parameter of this type in this mode -- the overload tests vary only modes,
+/// so the type is the same int everywhere and the mode is the whole story.
+fn mode_param(t TyId, m ParamMode) -> ParamDef =>
+    { name: "p", type_id: t, mode: m, default_expr: []Node.new() }
+
+/// An argument of this type in this class, passed positionally.
+fn class_arg(t TyId, c ArgClass) -> ArgSpec => { type_id: t, cls: c, name: "" }
+
+test "two candidates specific in DIFFERENT positions are an overload set (not a winner by sum)" {
+    mut ctx = collect_types(empty_file_p())
+    ro i = ctx.prims.int_id
+    // `f(consume a, ro b, ro c)` and `f(ro a, ro b, mut c)`. Neither is more
+    // specific everywhere: the first wins position 0, the second position 2.
+    ctx.fns.add("f", i, false,
+                []ParamDef.of(mode_param(i, ParamMode.ModeConsume),
+                              mode_param(i, ParamMode.ModeRo),
+                              mode_param(i, ParamMode.ModeRo)),
+                []str.new(), []str.new())
+    ctx.fns.add("f", i, false,
+                []ParamDef.of(mode_param(i, ParamMode.ModeRo),
+                              mode_param(i, ParamMode.ModeRo),
+                              mode_param(i, ParamMode.ModeMut)),
+                []str.new(), []str.new())
+    // An owned temporary, a `ro` place, a mutable place: BOTH rows admit this
+    // tuple position by position, which is what makes the set a real one.
+    ro args = []ArgSpec.of(class_arg(i, ArgClass.ArgOwnedTemp),
+                           class_arg(i, ArgClass.ArgRo),
+                           class_arg(i, ArgClass.ArgMut))
+    ro got = FnIndex.build(ctx.fns).lookup(ctx.fns, ctx.tys, "f", args, CallForm.FreeCall)
+    // THE POINT OF THIS TEST. A sum of mode weights scores these 2 and 1 and
+    // hands back a winner; the spec says a set varying two parameters' modes
+    // oppositely is rejected -- "there is no silent choice" (D84, the mode-axis
+    // amendment). So this assertion is red on any implementation that compares
+    // by a total instead of position by position.
+    if FnLookup.FnOverloaded(_) = got {
+        assert(true)
+    } else {
+        assert(false)
+    }
+}
+
+test "a set varying ONE parameter's mode still has a unique winner" {
+    mut ctx = collect_types(empty_file_p())
+    ro i = ctx.prims.int_id
+    // `f(ro a)` beside `f(mut a)` -- the ordinary case the amendment exists for.
+    ctx.fns.add("f", i, false, []ParamDef.of(mode_param(i, ParamMode.ModeRo)),
+                []str.new(), []str.new())
+    ctx.fns.add("f", i, false, []ParamDef.of(mode_param(i, ParamMode.ModeMut)),
+                []str.new(), []str.new())
+    ro args = []ArgSpec.of(class_arg(i, ArgClass.ArgMut))
+    ro got = FnIndex.build(ctx.fns).lookup(ctx.fns, ctx.tys, "f", args, CallForm.FreeCall)
+    // Without this half the rule could pass by calling EVERYTHING ambiguous,
+    // which would be a refusal machine rather than a resolver.
+    if FnLookup.FnFound(_) = got {
+        assert(true)
+    } else {
+        assert(false)
+    }
 }

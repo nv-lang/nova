@@ -331,21 +331,38 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
     bound == args.len()
 }
 
-/// How specific this row is: the sum of its parameters' mode specificities.
+/// Does `a` beat `b` by P14 filter 4 -- no less specific in EVERY position, and
+/// strictly more specific in at least one?
 ///
-/// P14's filter 4 picks the most specific FITTING candidate, and for a set that
-/// varies ONE parameter's mode the winner is unique by construction. A TIE is
-/// not broken here -- `lookup` reports it as an overload set, because a set
-/// varying two parameters oppositely has no winner and the spec says to refuse
-/// rather than choose.
+/// POSITION BY POSITION, and not by a sum of the positions, because a sum is a
+/// partial order squeezed into one number and the difference it loses is the
+/// one that matters. The spec says a set varying two parameters' modes
+/// OPPOSITELY is rejected as ambiguous -- "there is no silent choice"
+/// (D84, the mode-axis amendment, Plan 184 / D326-R13/R14). A sum reaches that
+/// verdict only when the two totals happen to collide: `f(consume a, ro b,
+/// ro c)` scores 2 and `f(ro a, ro b, mut c)` scores 1, so the sum names a
+/// winner although neither is more specific everywhere.
 #realtime nogc
-fn specificity_of(fns FnTable, row FnRow) -> int {
-    ro fd = fns.rows[raw_row(row)]
-    mut n = 0
-    for i in 0..fd.param_cnt {
-        n += fns.params[fd.param_off + i].mode.specificity()
+fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
+    ro fa = fns.rows[raw_row(a)]
+    ro fb = fns.rows[raw_row(b)]
+    mut no_worse = fa.param_cnt == fb.param_cnt
+    mut better_somewhere = false
+    for i in 0..fa.param_cnt {
+        ro sa = fns.params[fa.param_off + i].mode.specificity()
+        ro sb = fns.params[fb.param_off + i].mode.specificity()
+        if sa < sb {
+            no_worse = false
+        } else {
+            // `a` holds this position, either by tying it or by winning it.
+        }
+        if sa > sb {
+            better_somewhere = true
+        } else {
+            // A tie here decides nothing; some other position must.
+        }
     }
-    n
+    no_worse && better_somewhere
 }
 
 /// The candidate row for this call — or why there is none to name.
@@ -362,45 +379,56 @@ fn specificity_of(fns FnTable, row FnRow) -> int {
 #realtime nogc
 export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, form CallForm) -> FnLookup {
     mut first = no_row()
-    // THE WINNER, kept in the same pass. It used to be recomputed by a second
-    // walk (`most_specific`), and that walk needed an invariant to guard it:
-    // "a row of this specificity will be found again". An invariant held by an
-    // `ice` where one local would do is a finding, not a detail -- so the local
-    // is here and the invariant is gone.
+    // A CANDIDATE for the winner, raised whenever a fitting row beats it. One
+    // walk cannot finish the job: a row met later may beat the candidate while
+    // being incomparable to one met earlier, so this pass only proposes.
     mut winner = no_row()
-    mut best = -1
-    mut ties = 0
     mut r = @heads.find(name)
     while r >= 0 {
         ro row = FnRow(r)
         r = raw_row(@next[r])
         if !fits(fns, tys, row, args, form) { continue }
-        ro s = specificity_of(fns, row)
         if raw_row(first) < 0 {
             first = row
         } else {
             // A later member of the same chain: the FIRST fitting row is what
             // a future candidate-set door would walk on from, so it is kept once.
         }
-        if s > best {
-            best = s
+        if raw_row(winner) < 0 {
             winner = row
-            ties = 1
-        } else if s == best {
-            ties += 1
+        } else if dominates(fns, row, winner) {
+            winner = row
         } else {
-            // Less specific than one already seen: it loses by the rule, and
-            // that is a DECISION, not a skip.
+            // Either the standing candidate beats this row, or the two are
+            // incomparable -- the verifying pass below tells which, and that is
+            // a DECISION taken there rather than a skip taken here.
         }
     }
     if raw_row(first) < 0 { return FnLookup.FnUnknown }
-    if ties > 1 {
-        // Two candidates equally specific -- the set varies more than one
-        // parameter's mode, and P14 refuses rather than choosing. The caller
-        // enumerates the set from `first`.
+    // THE VERIFYING PASS, and it verifies rather than recomputes: the proposed
+    // winner must beat EVERY other fitting row. If one of them is merely
+    // incomparable, the set has no most specific member and the spec refuses
+    // instead of choosing ("there is no silent choice", D84 mode-axis
+    // amendment). Nothing here is assumed, so nothing here needs an invariant.
+    mut unique = true
+    mut v = @heads.find(name)
+    while v >= 0 {
+        ro row = FnRow(v)
+        v = raw_row(@next[v])
+        if !fits(fns, tys, row, args, form) { continue }
+        if raw_row(row) == raw_row(winner) { continue }
+        if !dominates(fns, winner, row) {
+            unique = false
+        } else {
+            // The winner beats this one outright; the rest of the chain decides.
+        }
+    }
+    if !unique {
+        // No candidate is more specific than all the others -- an overload SET.
+        // The caller enumerates it from `first`.
         return FnLookup.FnOverloaded(first)
     } else {
-        // One winner at the top of the specificity order.
+        // One winner, and it beats every other fitting row position by position.
     }
     FnLookup.FnFound(winner)
 }
