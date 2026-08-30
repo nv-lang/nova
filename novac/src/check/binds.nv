@@ -203,8 +203,17 @@ fn Checker mut @type_index(e Node) -> TyId {
     }
     @type_expr(kids[2])
     ro idx_t = type_of(kids[2], @ctx, @scope, @chan)
+    // The comparison goes through `prims`, the door to the seeded primitive ids
+    // (the CommonTypes model) -- comparing against a number or against the
+    // spelling of a name would be the hard-coded shape this compiler refuses.
+    //
+    // And the refusal says SUBSET, not language, because the language is wider:
+    // measured 2026-08-30, the oracle accepts `xs[i]` with `i` of type `u8`.
+    // The earlier wording ("an index must be `int`") stated a rule that does
+    // not exist -- the same defect this window spent the day removing from
+    // other refusals, written by hand into a new one.
     if is_ty(idx_t) && idx_t != @ctx.prims.int_id {
-        @report_first_leaf_of(kids, "outside the subset: an index must be `int`")
+        @report_first_leaf_of(kids, "outside the subset: only an `int` index is compiled yet -- the language allows other integer types here")
         return no_ty()
     } else {
         // Either an int, or already refused where it was typed.
