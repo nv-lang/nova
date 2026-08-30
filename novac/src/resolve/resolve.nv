@@ -40,6 +40,7 @@ import ../builtins.{ENTRY_FN}
 import ../types.{TyId, is_ty, Interner}
 import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
+import ../sem.{ProtoRow, raw_prow}
 import ../sem.{positional_run, bind_slot_of, slot_is_required, mode_admits, type_admits}
 import ../sem.{ty_source_name}
 
@@ -422,8 +423,8 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
 /// matches. A signature whose types novac could not resolve (`no_ty()`) is NOT
 /// compared on that position: refusing there would blame the candidate for the
 /// protocol's own unreadable declaration.
-export fn missing_sig_of(ctx Ctx, index FnIndex, t TyId, prow int) -> Option[str] {
-    ro pd = ctx.protos.rows[prow]
+export fn missing_sig_of(ctx Ctx, index FnIndex, t TyId, prow ProtoRow) -> Option[str] {
+    ro pd = ctx.protos.rows[raw_prow(prow)]
     for i in pd.sig_off..(pd.sig_off + pd.sig_cnt) {
         ro sig = ctx.protos.sigs[i]
         if !index.has_method_for(t, ctx, sig) {
