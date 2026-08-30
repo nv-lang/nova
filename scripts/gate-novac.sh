@@ -380,6 +380,7 @@ par_add "$ROOT/scripts/guards/check-novac-table-is-match.py" "таблица н�
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагностика ссылается на незнание грамматики (§9.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
 par_add "$ROOT/scripts/guards/check-novac-required-token-door.py" "требуемый грамматикой токен взят необязательной дверью (#809/#815)"
+par_add "$ROOT/scripts/guards/check-novac-subset-debt-dated.py" "отказ «пока не компилируется» без этапа: долг без срока становится нормой"
 par_add "$ROOT/scripts/guards/check-novac-tyid-door.py" "идентификатор типа сравнивается с нулём вместо двери (П18)"
 par_add "$ROOT/scripts/guards/check-novac-file-decls-door.py" "объявления файла берутся мимо двери file_decls (П18)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
