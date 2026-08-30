@@ -70,7 +70,27 @@ ORACLE_REV=$(git -C "$(dirname "$ORACLE")" rev-parse --short HEAD 2>/dev/null)
 QUEUE_REF=main
 git -C "$ROOT" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1 && QUEUE_REF=origin/main
 git -C "$ROOT" rev-parse --verify -q "$QUEUE_REF" >/dev/null 2>&1 || QUEUE_REF=HEAD
-QUEUE_REAL=$(git -C "$ROOT" log --since="$SPEC_POINT 23:59:59" --no-merges --format=%h "$QUEUE_REF" -- spec/decisions 2>/dev/null | wc -l | tr -d " ")
+
+# СЧИТАЕМ ДО ТОГО МЕСТА MAIN, КОТОРОЕ ВЕТКА УЖЕ СОДЕРЖИТ, а не до вершины
+# `origin/main` (правка 2026-08-30 по замеру окна 274, реестр №843).
+#
+# ЗАЧЕМ. Правило требует, чтобы `novac` ЗНАЛ, что язык сдвинулся. Прежняя
+# форма считала до ВЕРШИНЫ main, то есть требовала знать о коммитах, КОТОРЫХ В
+# ВЕТКЕ ЕЩЁ НЕТ. Догнать такое число нельзя по построению: оно протухает
+# через минуты после чужого пуша. ЗАМЕР ОКНА 274 (2026-08-30): четыре
+# обновления строки за вечер (31→32→33→34→35), каждое — прогон яруса novac
+# (девять минут) плюс разбор отказа; около сорока минут на бухгалтерию, и ни один
+# из четырёх D-коммитов не менял для `novac` НИЧЕГО.
+#
+# СМЫСЛ ПРАВИЛА СОХРАНЁН ЦЕЛИКОМ: знание фиксируется в момент, когда сдвиг
+# РЕАЛЬНО ПРИЕЗЖАЕТ в ветку — то есть при синхронизации, осознанно. Теряется
+# только требование быть в курсе чужих пушей, которых у тебя ещё нет.
+#
+# НА САМОМ main ЧИСЛО НЕ МЕНЯЕТСЯ: там merge-base(HEAD, origin/main) есть сам HEAD,
+# и интегратор по-прежнему видит полный счёт. Послабление касается ТОЛЬКО веток.
+QUEUE_BASE=$(git -C "$ROOT" merge-base HEAD "$QUEUE_REF" 2>/dev/null || echo "")
+[ -n "$QUEUE_BASE" ] || QUEUE_BASE="$QUEUE_REF"
+QUEUE_REAL=$(git -C "$ROOT" log --since="$SPEC_POINT 23:59:59" --no-merges --format=%h "$QUEUE_BASE" -- spec/decisions 2>/dev/null | wc -l | tr -d " ")
 QUEUE_TOML=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*spec-queue:[[:space:]]*\([0-9][0-9]*\)$/\1/p')
 echo "novac-diff-corpus: oracle-pin=$PIN oracle-HEAD=$ORACLE_REV spec-point=$SPEC_POINT spec-queue=$QUEUE_REAL (в nova.toml: $QUEUE_TOML) сборка novac=single-file корпус=$CORPUS"
 if [ -z "$QUEUE_TOML" ]; then
