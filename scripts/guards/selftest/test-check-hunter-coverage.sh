@@ -92,5 +92,28 @@ elif grep -q "Traceback" "$T/o7"; then
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-hunter-coverage ok: пять подделок покраснели, многоклеточность, леджер и замороженная история зелёные, живая половина зелёная"
+# ── подделка 6: ось разошлась с modules_at_seed (№816) ──────────────────
+# Живое дерево, честное число неохваченных — и всё равно красный: база
+# двигалась под ДРУГУЮ ось (у 274 таких модулей 15, у main 14), и молчать
+# об этом нельзя, иначе расхождение читается как ошибка числа.
+printf 'never_hunted=95\nmodules_at_seed=99\n' > "$T/wrongaxis.baseline"
+if NOVA_HUNTER_GRID_BASELINE="$T/wrongaxis.baseline" python "$GUARD" "$ROOT" >"$T/o8" 2>&1; then
+    echo "FAIL: база с чужим modules_at_seed прошла — ветко-зависимость оси снова молчит (№816)" >&2
+    rc=1
+elif ! grep -q "modules_at_seed" "$T/o8"; then
+    echo "FAIL: красный есть, но сообщение не называет ключ — окно опять будет гадать:" >&2
+    tail -2 "$T/o8" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+# ── и обратная сторона: база БЕЗ ключа обязана остаться зелёной ─────────
+# Старые базы ключа не несут, и страж не смеет краснеть на них задним числом.
+printf 'never_hunted=95\n' > "$T/nokey.baseline"
+if ! NOVA_HUNTER_GRID_BASELINE="$T/nokey.baseline" python "$GUARD" "$ROOT" >"$T/o9" 2>&1; then
+    echo "FAIL: база без modules_at_seed покраснела — новый ключ стал обязательным задним числом:" >&2
+    tail -2 "$T/o9" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-hunter-coverage ok: шесть подделок покраснели, многоклеточность, леджер, замороженная история и база без нового ключа зелёные, живая половина зелёная"
 exit "$rc"

@@ -127,8 +127,33 @@ except IOError:
     base = None
 if base is None:
     fail(u"нет базы %s (ключ never_hunted=N) — храповик судить нечем" % BASE_FILE)
+
+# Размер оси, с которым база засеяна. №816: ось выводится из документа, который
+# в РАЗНЫХ ВЕТКАХ разный (на main 14 модулей, на p274-novac 15 — там есть
+# `resolve`), а база — один файл на обе. Без этого ключа расхождение читается
+# как ошибка ЧИСЛА, и окно 274 потратило на такое расследование время
+# 2026-08-30. Ключ необязателен (старые базы его не несут), но если он есть —
+# сообщение о росте называет причину, а не заставляет её угадывать.
+m_seed = re.search(r"^modules_at_seed=(\d+)", base_t, re.M) if base is not None else None
+seed_mods = int(m_seed.group(1)) if m_seed else None
+
 if never > base:
-    fail(u"неохваченных клеток стало БОЛЬШЕ: %d > базы %d (модулей %d x классов %d) — так бывает, когда ось модулей выросла; двигай базу С ХРОНИКОЙ" % (never, base, len(modules), len(CLASSES)))
+    why = u""
+    if seed_mods is not None and len(modules) != seed_mods:
+        why = (u" ОСЬ ВЫРОСЛА С %d ДО %d МОДУЛЕЙ — это НОВЫЙ МОДУЛЬ в таблице рёбер §3, "
+               u"а не ошибка числа в базе: каждый модуль добавляет %d клеток. "
+               u"Проверь, ту ли ветку ты судишь (документ ветко-зависим, база одна на все)."
+               % (seed_mods, len(modules), len(CLASSES)))
+    elif seed_mods is None:
+        why = (u" В базе нет ключа modules_at_seed=N, поэтому сказать, выросла ли ОСЬ, "
+               u"страж не может — допиши ключ той же правкой (№816).")
+    fail(u"неохваченных клеток стало БОЛЬШЕ: %d > базы %d (модулей %d x классов %d).%s Двигай базу С ХРОНИКОЙ."
+         % (never, base, len(modules), len(CLASSES), why))
+
+if seed_mods is not None and len(modules) != seed_mods:
+    fail(u"ось модулей (%d) разошлась с записанной в базе (modules_at_seed=%d), а неохваченных при этом не выросло. "
+         u"Молчать нельзя: значит база двигалась под другую ось. Обнови modules_at_seed С ХРОНИКОЙ (№816)."
+         % (len(modules), seed_mods))
 
 print(u"check-hunter-coverage ok: модулей %d, клеток %d, охочено %d, никогда не охочено %d (база %d) — карта выведена из дерева"
       % (len(modules), grid_size, len(hunted), never, base))
