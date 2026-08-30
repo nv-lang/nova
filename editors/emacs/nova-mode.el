@@ -25,7 +25,9 @@
     ;; Strings
     (modify-syntax-entry ?\" "\"" table)
     (modify-syntax-entry ?\\ "\\" table)
-    ;; Backtick для tagged templates
+    ;; Backtick (D467): string-quote char, same class as ?\" above, so Emacs's
+    ;; own syntactic fontification already treats `...` as a string — bare
+    ;; (`a=${i}`) or tagged (sql`select 1`), and across multiple lines.
     (modify-syntax-entry ?` "\"" table)
     ;; @ — часть идентификатора (для @field)
     (modify-syntax-entry ?@ "_" table)
@@ -114,7 +116,15 @@
 (defvar nova-font-lock-keywords
   `(
     ;; Strings — handled by syntax table, but interpolation ${...}
+    ;; (this also covers ${...} inside backtick strings — the rule is not
+    ;; anchored to a particular quote character)
     ("\\${[^}]*}" . font-lock-variable-name-face)
+
+    ;; Backtick string literal (D467): tag`...` — the tag immediately before
+    ;; the backtick (no space) is highlighted as a function name; the string
+    ;; body itself (bare or tagged) is already fontified via the syntax table
+    ;; above, where backtick is registered in the same class as `"'.
+    ("\\<\\([a-z_][a-zA-Z0-9_]*\\)`" 1 font-lock-function-name-face)
 
     ;; Numeric literals
     ("\\<0x[0-9a-fA-F]\\(_?[0-9a-fA-F]\\)*\\>" . font-lock-constant-face)

@@ -105,12 +105,32 @@
                     ]
                 },
                 {
-                    "name": "string.template.nova",
-                    "begin": "([a-z_][a-zA-Z0-9_]*)`",
+                    "name": "string.quoted.other.backtick.nova",
+                    "begin": "([a-z_][a-zA-Z0-9_]*)?`",
                     "end": "`",
                     "beginCaptures": {
                         "1": { "name": "entity.name.function.tag.nova" }
-                    }
+                    },
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.nova",
+                            "match": "\\\\[`\\\\$]"
+                        },
+                        {
+                            "name": "meta.template.expression.nova",
+                            "begin": "\\$\\{",
+                            "end": "\\}",
+                            "beginCaptures": {
+                                "0": { "name": "punctuation.definition.template-expression.begin.nova" }
+                            },
+                            "endCaptures": {
+                                "0": { "name": "punctuation.definition.template-expression.end.nova" }
+                            },
+                            "patterns": [
+                                { "include": "$self" }
+                            ]
+                        }
+                    ]
                 },
                 {
                     "name": "string.quoted.single.nova",
