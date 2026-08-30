@@ -184,6 +184,13 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         src, ctx,
         res: FnIndex.build(ctx.fns),
         fres: FieldIndex.build(ctx.fields),
+        // SILENT-OK: an instance never TELLS its gap, and that is not an
+        // omission. A gap is a syntax hole, and syntax was judged when the
+        // FILE was checked -- by the time an instance is typed the same hole
+        // has already been told there, or already suppressed there. Telling
+        // it again would report one hole once per instantiation. The field is
+        // still initialised so both entries share one shape; only
+        // `tell_gap_if_silent` belongs to the file alone.
         gap_at: -1,
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
