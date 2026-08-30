@@ -626,12 +626,6 @@ step loop "страница правил называет всех страже�
 guard "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
     || fail "страж без объяснения на странице правил"
 
-# №565: локальный гейт судит НЕ ТО ДЕРЕВО, что судит внешний мир — локально
-# активен `nova.override.toml`, которого в коммите нет. Шаг собирает флагман во
-# временном дереве из HEAD. Дорогой (минуты), поэтому под сроком.
-step full "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
-guard --deadline 600 "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
-    || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
 # №578: флаг, который никто не взводит и нигде не описывает, снаружи
 # неотличим от несделанной работы (прецедент — №575, много-TU).
@@ -678,6 +672,16 @@ guard "$ROOT/scripts/guards/check-plan-duplication.py" "$ROOT" \
 step loop "шаги гейта требуют от стража его собственную строку (П1 №4, №645, №647)"
 guard "$ROOT/scripts/guards/check-gate-steps-assert.sh" "$ROOT" \
     || fail "шаг гейта засчитывает ноль без доказательства"
+
+# №813: шаг, которому нужен компилятор, не смеет стоять выше шага, который
+# его собирает: на CI он будет судить бинарь ИЗ КЕША (ключ кеша — хеш
+# `nova-cli/Cargo.lock`, от правок `compiler-codegen/` не меняется). Порядок
+# починен той же волной; этот шаг закрывает ХВОСТ, названный в №813 честно:
+# механизма против ПОВТОРЕНИЯ не было. В первый же прогон нашёл пятого
+# носителя (`check-clean-checkout-build`), которого ручной перебор пропустил.
+step loop "шаги, которым нужен компилятор, стоят ПОСЛЕ сборки (№813)"
+guard "$ROOT/scripts/guards/check-gate-build-order.sh" "$ROOT" \
+    || fail "шаг гейта судит бинарь, который гейт ещё не собрал (№813)"
 
 # Г4: ярусы держатся не текстом конвенции, а тем, что дешёвый ярус ОСТАЁТСЯ
 # дешёвым. Механизм бюджета можно вырезать одной строкой и не заметить —
@@ -819,9 +823,29 @@ if body_runs; then
     SELFTEST_FAILDIR="${TMPDIR:-/tmp}/gate_selftest_fails_$$"
     rm -rf "$SELFTEST_FAILDIR"
     mkdir -p "$SELFTEST_FAILDIR"
-    find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print0 2>/dev/null \
+    # САМОТЕСТЫ, ЗОВУЩИЕ CARGO, ИДУТ ПЕРВЫМИ И ПООДИНОЧКЕ (реестр №818, замер
+    # 2026-08-30). Их сегодня четыре, и cargo берёт блокировку на каталог
+    # сборки — под `-P 8` они встают в очередь ДРУГ ЗА ДРУГОМ, а срок при этом
+    # тикает. Замер: `test-check-crate-tests.sh` в одиночку 72с, в общем пуле
+    # убит пределом 360с — впятеро, и это не нагрузка машины, а именно
+    # очередь за блокировкой. Калибровка (выше) такое не лечит: она множит
+    # срок всем, тогда как ждут четверо. Родня №804 — гейт, дерущийся сам с
+    # собой за артефакты сборки.
+    # Список ВЫВОДИТСЯ грепом, а не пишется руками: рукописный разошёлся бы с
+    # деревом на первом новом самотесте, и молча.
+    HEAVY_LIST="$SELFTEST_FAILDIR.heavy"
+    grep -l 'cargo ' "$ROOT"/scripts/guards/selftest/test-*.sh 2>/dev/null | sort > "$HEAVY_LIST" || :
+    echo "selftest :: тяжёлых (зовут cargo) $(grep -c . "$HEAVY_LIST" 2>/dev/null || echo 0) — поодиночке, остальные по $SELFTEST_JOBS"
+    while IFS= read -r _hv; do
+        [ -n "$_hv" ] || continue
+        bash "$ROOT/scripts/tools/run-guard-selftest.sh" "$_hv" "$SELFTEST_FAILDIR" "$ROOT"
+    done < "$HEAVY_LIST"
+    find "$ROOT/scripts/guards/selftest" -name 'test-*.sh' -print 2>/dev/null | sort \
+        | grep -vxF -f "$HEAVY_LIST" \
+        | tr '\n' '\0' \
         | xargs -0 -r -P "$SELFTEST_JOBS" -I{} \
             bash "$ROOT/scripts/tools/run-guard-selftest.sh" {} "$SELFTEST_FAILDIR" "$ROOT"
+    rm -f "$HEAVY_LIST"
     for _f in "$SELFTEST_FAILDIR"/*; do
         [ -e "$_f" ] || continue
         fail "самотест стража: $(basename "$_f")"
@@ -860,6 +884,18 @@ if body_runs; then
     # но и обрывать на ПЕРВОЙ находке незачем тоже — здесь сообщаются ВСЕ.
     gate_barrier
 fi
+
+# №565: локальный гейт судит НЕ ТО ДЕРЕВО, что судит внешний мир — локально
+# активен `nova.override.toml`, которого в коммите нет. Шаг собирает флагман во
+# временном дереве из HEAD. Дорогой (минуты), поэтому под сроком.
+#
+# ПЯТЫЙ НОСИТЕЛЬ №813, НАЙДЕННЫЙ МАШИНОЙ 2026-08-30. Шаг стоял ВЫШЕ сборки и
+# требует готовый бинарь (`[ -x "$NOVA" ] || exit 1`), то есть на CI судил бы
+# кеш. Ручной перебор носителей №813 нашёл четыре и этот пропустил — его нашёл
+# check-gate-build-order.sh, заведённый тем же слиянием, в первый же прогон.
+step full "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
+guard --deadline 600 "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
+    || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
 # ПОРЯДОК: ЭТОТ ШАГ СТОИТ ПОСЛЕ СБОРКИ, И ЭТО НЕ КОСМЕТИКА (правка 2026-08-30).
 # До неё он стоял ВЫШЕ `cargo build --release` и на CI судил бинарь ИЗ КЕША:

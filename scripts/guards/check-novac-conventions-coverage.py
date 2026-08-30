@@ -26,6 +26,7 @@
 
 $1 — корень; $2 — override пути к конвенциям (шов самотеста).
 """
+import os
 import pathlib
 import re
 import sys
@@ -88,7 +89,15 @@ def main():
         return 1
 
     unmeasured = [f"  {r} (строка {ln})" for r, ln, _c, m in rules if not m]
-    base_file = root / "scripts" / "guards" / "novac-rule-measure.baseline"
+    # Шов для самотеста (реестр №817): база — храповик по НАСТОЯЩЕМУ файлу
+    # конвенций, а самотест подсовывает крошечные синтетические файлы через
+    # шов $2. Без второго шва его фикстуры судились базой живого дерева и
+    # краснели на обеих ветках («правил без замера стало МЕНЬШЕ: 2 при базе
+    # 8») — фикстура задавала файл, но не задавала то, с чем её сравнивают.
+    # Тот же класс, что №816 у стража сетки охоты.
+    env_base = os.environ.get("NOVA_RULE_MEASURE_BASELINE")
+    base_file = (pathlib.Path(env_base) if env_base
+                 else root / "scripts" / "guards" / "novac-rule-measure.baseline")
     base = None
     if base_file.is_file():
         for bl in base_file.read_text(encoding="utf-8", errors="replace").split("\n"):
