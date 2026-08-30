@@ -75,16 +75,17 @@
 # 277 phase 2 carries that migration, and it is deliberately NOT done before
 # phase 5 (body hygiene) -- migrating onto a form whose indent rules are not
 # yet implemented would rewrite the payloads twice.
-# 2026-08-30 (окно 274): 31 -> 32. Тридцать второй — `77d4a5a71` (277 Ф.3):
-# голый backtick стал тегом по умолчанию и интерполирует. Для novac это не
-# новая работа, а та же Ф.2 выше: форма, на которую переписываются 23
-# payload'а, теперь реализована целиком, то есть миграции больше нечего
-# ждать по СВОЕЙ причине -- она ждёт только очереди волн.
-# 2026-08-30 (окно 274): 32 -> 33. Тридцать третий приехал в тот же вечер:
-# интегратор закрыл замером четыре вопроса, которые окно задало по спеке
-# (амендмент к D38 про `Vec[T].new()`, приоритет и ассоциативность `??`
-# в таблице, амендмент к D55). Для novac это подтверждение, а не работа:
-# формы те же, изменились нормативные тексты о них.
+# 2026-08-30 (window 274): 31 -> 32. The thirty-second is `77d4a5a71` (plan 277
+# phase 3): a bare backtick became the default tag and interpolates. For novac
+# this is not new work but the same phase 2 named above -- the form those 23 test
+# payloads migrate ONTO is now implemented whole, so the migration no longer
+# waits for a reason of its own; it waits only for its turn among the waves.
+# 2026-08-30 (window 274): 32 -> 33. The thirty-third landed the same evening:
+# the integrator closed by measurement four questions this window raised about
+# the spec -- an amendment to D38 over `Vec[T].new()`, the precedence and
+# associativity of `??` written into the table, and an amendment to D55. For
+# novac this is confirmation rather than work: the forms are unchanged, what
+# moved is the normative text about them.
 #   spec-queue: 33
 #   oracle-pin: 2803de2d9
 #   stage: E2
