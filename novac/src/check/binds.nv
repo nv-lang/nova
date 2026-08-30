@@ -157,6 +157,28 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // A whole index expression: judged below.
     }
+    // A TYPE on the left makes this an APPLICATION, not an index -- the
+    // decision recorded in plan 274.5 s2sh before any of this was written. The
+    // token after `]` cannot tell `xs[0].len()` from `HashMap[str, int].new()`,
+    // because both carry `.NAME(`; only what the left name RESOLVES TO can, and
+    // resolution is the checker's root. So the question is asked here, of the
+    // registry, and not guessed at by the parser.
+    if kids[0].kind_of() == NodeKind.Name {
+        ro head = expr_leaf_name(kids[0])
+        if Some(_) = @ctx.ty_of_name(head) {
+            // A type applied to arguments. novac reads the form now; compiling
+            // it (a static method on the applied type) is the next step of this
+            // wave, so the refusal NAMES the form instead of calling the head
+            // an unbound value -- which is what it used to say, and it was a
+            // lie about which thing was missing.
+            @report_first_leaf_of(kids, "outside the subset: a type applied to arguments is read but not compiled yet")
+            return no_ty()
+        } else {
+            // Not a type: an ordinary receiver, typed below.
+        }
+    } else {
+        // A computed receiver: not a type name by construction.
+    }
     @type_expr(kids[0])
     ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
     if !is_ty(recv_t) {
