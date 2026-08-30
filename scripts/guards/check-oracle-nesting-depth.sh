@@ -31,7 +31,11 @@
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 NOVA="${NOVA_ORACLE_BIN:-$ROOT/nova-cli/target/release/nova.exe}"
-[ -f "$NOVA" ] || NOVA="${NOVA_ORACLE_BIN:-$ROOT/nova-cli/target/release/nova}"
+# Второе имя — БЕЗ повторного `${NOVA_ORACLE_BIN:-…}`: override уже применён
+# строкой выше, а форма `release/nova"` есть та самая дверь, по которой
+# check-guard-honesty.py узнаёт, что страж знает оба имени. Со скобкой `}` он
+# её не видел и честно назвал страж слепым к Linux (замер 2026-08-30).
+[ -f "$NOVA" ] || NOVA="$ROOT/nova-cli/target/release/nova"
 
 if [ ! -f "$NOVA" ]; then
     # Ярус loop бинарь не собирает — судить нечего, и молчать об этом нельзя.

@@ -65,6 +65,16 @@
 # optional; the home of the rule is D184) is one more commit touching
 # spec/decisions after spec-point. For novac's parser this is CONFIRMATION,
 # not new work: bare `const X = 7` was already the shape its sources use.
+# 2026-08-30: 29 -> 31 -- two commits of D467 (string literals): the norm
+# itself (a closed escape list of three in backtick, `\` line continuation in
+# "...", the bare backtick, body hygiene) and the amendment that made the tail
+# of a block literal explicit -- symmetric to the head, Java text blocks rule.
+# For novac this is REAL WORK, not confirmation: its lexer does not know
+# backticks at all (research 2026-08-29, section 7), and 23 of its own test
+# payloads use raw newlines inside "...", which D467 section 4 retracts. Plan
+# 277 phase 2 carries that migration, and it is deliberately NOT done before
+# phase 5 (body hygiene) -- migrating onto a form whose indent rules are not
+# yet implemented would rewrite the payloads twice.
 #   spec-queue: 31
 #   oracle-pin: 2803de2d9
 #   stage: E2
