@@ -488,6 +488,61 @@ fn main() { println(1) }",
     assert(d2.len() == 0)
 }
 
+test "nesting deeper than the ceiling is refused ONCE, and the stack survives (#807, #808)" {
+    // Registry #807 and #808, found by the hunter 2026-08-30. The parser had no
+    // depth counter: 513 nested parens were accepted in SILENCE (the oracle
+    // says E_NESTING_TOO_DEEP) and 2500 killed the process with a stack
+    // overflow, rc=127 -- against this file's own header promise that recovery
+    // never panics or hangs.
+    //
+    // The test holds the CLASS in three parts: ordinary nesting still passes,
+    // over-deep nesting is refused, and it is refused EXACTLY ONCE -- the
+    // cascade is what made the first fix worse than the defect (511 diagnostics
+    // for one mistake), so the count is the assertion that matters.
+    ro std = std_decls()
+    ro shallow = "fn main() {\n println(((((1)))))\n}"
+    ro (d1, _) = compile_to_c(shallow, std)
+    assert(d1.len() == 0)
+
+    mut deep = "fn main() {\n println("
+    for _ in 0..600 {
+        deep = "${deep}("
+    }
+    deep = "${deep}1"
+    for _ in 0..600 {
+        deep = "${deep})"
+    }
+    deep = "${deep})\n}"
+    ro (d2, _) = compile_to_c(deep, std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("nesting is deeper"))
+}
+
+test "an integer literal too large for `int` is refused, not silently wrapped (#810)" {
+    // Registry #810, found by the hunter 2026-08-30. The magnitude of a decimal
+    // literal was checked NOWHERE: the lexer made an IntLit of any run of
+    // digits, the lattice typed it `int` without looking, and the emitter
+    // printed the text verbatim with an `LL` suffix -- so `2^64` overflowed a
+    // signed long long in the emitted C. A SILENT MISCOMPILE, not a missing
+    // refusal; the oracle says "number too large to fit in target type".
+    //
+    // The test holds the CLASS, not the carrier: the boundary value passes,
+    // one past it refuses, and leading zeros do not inflate the count.
+    ro std = std_decls()
+    ro (d1, _) = compile_to_c("fn main() {\n println(18446744073709551616)\n}", std)
+    assert(d1.len() == 1)
+    assert(d1[0].message.contains("does not fit in `int`"))
+
+    ro (d2, _) = compile_to_c("fn main() {\n println(9999999999999999999999999999999999999)\n}", std)
+    assert(d2.len() == 1)
+
+    // The largest `int` is legal, and so is the same number written with
+    // leading zeros: the rule compares DIGITS, and a zero is not a digit that
+    // makes a number bigger.
+    ro (d3, _) = compile_to_c("fn main() {\n println(9223372036854775807)\n println(0000009)\n}", std)
+    assert(d3.len() == 0)
+}
+
 test "an application in TYPE position resolves -- Vec[int], and []T is its D239 sugar" {
     // Step B2's acceptance, pinned at the level it changes: the SIGNATURE. Both
     // spellings are one term (D239: `[]T` IS `Vec[T]`), read by one door at

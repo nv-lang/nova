@@ -76,6 +76,11 @@ type Checker {
     /// (P18/P14): a table allocated per binding turns an O(1) question into an
     /// allocation on the hot path of every `ro`/`mut` in the file.
     self_probe NameTable
+    /// Top-level names already seen in THIS file (#811). sem cannot report --
+    /// it holds no diagnostics -- and it silently keeps the FIRST declaration
+    /// of a repeated name, so the second one has to be refused here or not at
+    /// all. One table per run, the same shape `self_probe` is.
+    seen_decls NameTable
     /// The instance's substitution: `substs[i]` is the concrete type standing
     /// in type-parameter slot `i`. EMPTY for an ordinary run over a file, and
     /// that emptiness is what tells `type_fn` to skip a generic body -- there
@@ -123,6 +128,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        seen_decls: NameTable.new(NamespaceId.NsDefs),
         tail_value_body: no_node(),
         substs: []TyId.new(),
     }
@@ -173,6 +179,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        seen_decls: NameTable.new(NamespaceId.NsDefs),
         tail_value_body: no_node(),
         substs,
     }
@@ -310,6 +317,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // where it is used, with the position the user can see.
                 }
                 TypeDecl | SumDecl => {
+                    // ONE NAME, ONE DECLARATION (#811): a repeat is refused
+                    // here because sem keeps the FIRST body and drops the
+                    // second in silence -- the program then reads as though
+                    // the second were never written, and a constructor
+                    // resolves against a body its author did not mean.
+                    @report_if_name_repeats(children)
                     // A PROTOCOL DECLARATION IS JUDGED, NOT REFUSED (wave 3b).
                     // Wave 3a refused it by name -- honest while nothing could
                     // check a contract; now the registry holds the required
@@ -466,6 +479,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                         // its children are walked below like any other node.
                     }
                 }
+                DepthErr => {
+                    // NAMED, not generic (#807/#808): the form is legal Nova
+                    // that simply nests deeper than the compiler reads. The
+                    // limit and the wording are the oracle's, because they are
+                    // normative there (E_NESTING_TOO_DEEP) -- a subset that
+                    // invented its own number would refuse what the language
+                    // accepts. ONE diagnostic for the whole over-deep run: the
+                    // parser drained it into this single node.
+                    @report_first_leaf_of(children, NESTING_TOO_DEEP_MSG)
+                    return
+                }
                 Index => {
                     // READ, and refused BY NAME (274.5 wave B8): the index
                     // expression has a node now, so the refusal finally names
@@ -542,6 +566,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     return
                 }
                 Lit => {
+                    // MAGNITUDE FIRST (#810): a literal too large for `int`
+                    // is a silent miscompile downstream -- the emitter prints
+                    // its text with an `LL` suffix and C wraps it -- so the
+                    // refusal comes before anything else this literal could
+                    // be judged for.
+                    @report_if_int_too_large(children)
                     @report_if_bad_escape(children)
                     // `"n=${n}"` reaches the tree as ONE literal leaf -- the
                     // lexer keeps the string whole -- so the interpolation is

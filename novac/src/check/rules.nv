@@ -32,6 +32,9 @@ import ../types.{TyId, no_ty, is_ty}
 /// here: this pass also runs over recovered junk, and `fn main junk here ()`
 /// would otherwise produce two diagnostics for one mistake (the Err branch's
 /// and this one) — a cascade, which the no-cascade rule forbids.
+/// A declaration slot that names no type: the parameter or field is refused
+/// with the caller's wording, and the type FORMS the subset cannot read yet
+/// are told apart from a missing type entirely.
 fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     // The TYPE is located by the shared door, not by index: a parameter may
     // carry a leading MODE leaf (`fn take(consume v int)`), and `kids[1]`
@@ -221,6 +224,21 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 /// tuple, a function type, a qualified type. The parser reads them all (plan
 /// 9.4: the grammar is the language's, the subset is the checker's), so the
 /// refusal names the shape instead of pretending the type is missing.
+/// The largest `int` literal, as TEXT. `int` is intptr_t (Nova's rule, like
+/// Go's intgo) and 64 bits on every target novac emits for; the bound lives
+/// here as digits because the check compares digits -- parsing the literal
+/// into the type whose range is in question would inherit the very defect
+/// this rule exists to catch (#810).
+const INT_MAX_TEXT = "9223372036854775807"
+
+const INT_TOO_LARGE_MSG = "outside the subset: this integer literal does not fit in `int` -- the emitted C would wrap it silently (#810)"
+
+/// The nesting refusal (#807/#808). The number is the oracle's 512, which is
+/// normative there; the whole corpus never writes past 40 levels.
+const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 levels -- the parser stops before the stack does (#807)"
+
+const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice in one file -- the second body is dropped in silence (#811)"
+
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
 
@@ -484,133 +502,6 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
         }
     }
 }
-
-/// Does this statement END the function on every path?
-///
-/// A `return` does. So does an `if` whose branches ALL return -- and that
-/// second half only became possible on 2026-08-18, when the parser learned
-/// `else`: before it, an if-statement had no else branch to judge. The rule
-/// missed it and refused `fn classify(n int) -> int { if .. { return 3 }
-/// else { return 1 } }`, which the oracle accepts and which is the ordinary
-/// way to write such a function.
-///
-/// An `if` WITHOUT an else never terminates: the false path falls through,
-/// and that is exactly the shape the oracle refuses too.
-fn stmt_terminates(st Node) -> bool {
-    ro k = st.kind_of()
-    if k == NodeKind.RetStmt { return true }
-    if k != NodeKind.IfStmt { return false }
-    ro kids = branch_children(st)
-    if kids.len() <= 4 { return false }
-    ro then_b = kids[2]
-    ro else_b = kids[4]
-    block_terminates(then_b) && block_terminates(else_b)
-}
-
-/// Does this block end the function on every path? An `else if` chain
-/// arrives here as a nested IfStmt rather than a Block, and it answers
-/// through the same door.
-fn block_terminates(b Node) -> bool {
-    ro k = b.kind_of()
-    if k == NodeKind.IfStmt { return stmt_terminates(b) }
-    if k != NodeKind.Block { return false }
-    for s in branch_children(b) {
-        if stmt_terminates(s) { return true }
-    }
-    false
-}
-/// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
-/// do not.
-fn declares_a_value(rk []Node) -> bool {
-    if rk.len() <= 1 { return false }
-    if rk.len() != 3 { return true }
-    ro l = rk[1]
-    ro r = rk[2]
-    if l.kind_of() != NodeKind.LeafNode { return true }
-    if r.kind_of() != NodeKind.LeafNode { return true }
-    ro is_unit = leaf_kind(l) == TokenKind.LParen && leaf_kind(r) == TokenKind.RParen
-    !is_unit
-}
-
-/// One text for the two doors of the rule (an empty body and a statement
-/// tail): the reader must not have to wonder whether they are two limits.
-const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a value"
-
-/// A fn that declares a value must END with one -- unless the end is
-/// UNREACHABLE. The oracle started judging this on 2026-08-17 as
-/// `E_MISSING_RETURN`, and novac accepted what it rejects (class K7).
-///
-/// The rule was mirrored crudely at first and the adversarial pass caught it
-/// the same day: `fn f() -> int { return 1  <NL>  ro x = 2 }` was refused by
-/// novac and accepted by the oracle. Both are right about their halves --
-/// the tail IS a binding, and it is also DEAD, because an unconditional
-/// `return` stands before it. A refusal that fires on correct code is a
-/// defect even when it errs "towards strictness": it sends the reader to fix
-/// what is not broken.
-///
-/// Boundary re-measured across fourteen shapes (2026-08-17). Refused: a
-/// binding or assignment tail, and an empty body, WHEN no unconditional
-/// terminator stands at the top level of the body. Accepted: a tail
-/// expression, a `return`, an `if` whose branches return, a tail `while`/
-/// `for`, and anything at all after an unconditional `return` -- the oracle
-/// accepts each of these. A CONDITIONAL return does not save the tail
-/// (`if c { return 1 }` then a binding is E_MISSING_RETURN for the oracle
-/// too), which is why the scan looks at top-level statements only and does
-/// not walk into branches.
-fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
-    mut declares_value = false
-    for c in kids {
-        if c.kind_of() != NodeKind.RetType { continue }
-        // `-> ()` is the UNIT return, and unit is not a value. It used to
-        // parse as the arrow ALONE, and the length test below was enough;
-        // since type_ref reads `()` as a balanced run (the tuple form), the
-        // pair reaches the tree and the old test called it a value. The result
-        // was a refusal that told `fn nothing() -> () { }` its body ends
-        // without a value -- a body that is not supposed to produce one.
-        declares_value = declares_value || declares_a_value(branch_children(c))
-    }
-    if !declares_value { return }
-    for c in kids {
-        if c.kind_of() != NodeKind.Block { continue }
-        ro bk = branch_children(c)
-        mut last_stmt = -1
-        mut i = 0
-        mut terminates = false
-        for b in bk {
-            terminates = terminates || stmt_terminates(b)
-            last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
-            i += 1
-        }
-        // The end is unreachable: whatever stands last, it is dead code and
-        // the oracle says nothing about it. Neither do we.
-        if terminates { return }
-        if last_stmt < 0 {
-            @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
-            return
-        }
-        // [LEGACY-#676] var-index-method: `bk[i].kind_of()` with a VARIABLE
-        // index miscompiles -- the emitter takes the Vec itself for the
-        // receiver (E_RECV_METHOD_MISMATCH). The binding walks around it and
-        // goes when #676 closes.
-        ro tail_node = bk[last_stmt]
-        ro k = tail_node.kind_of()
-        // ALLOW-list, and it mirrors the emitter's condition exactly
-        // (emit_c.nv:454 `is_expr_kind(kind) && kind != Call`): the tail
-        // produces a value iff the emitter writes `return` for it. The first
-        // version asked the opposite question -- "is the tail a binding or an
-        // assignment?" -- and four shapes walked past it: a tail `if` without
-        // `else`, a tail `while`, a tail `for`, and a tail unit call like
-        // `println(...)`. The oracle refuses all four; novac emitted a
-        // function that falls off its end. Asking a deny-list about an open
-        // set is how a rule looks complete while covering two cases of six.
-        // `Call` LEFT the exclusion with 274.5 wave B4: a tail call is the
-        // returned value -- eight of novac's own files end a body exactly so.
-        if k == NodeKind.RetStmt || is_expr_kind(k) { return }
-        @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
-        return
-    }
-}
-
 
 /// Generic parameters are outside the subset -- and the refusal says so.
 ///

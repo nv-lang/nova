@@ -15,7 +15,13 @@
 
 module novac.parse
 
-import ../lex.{Token, TokenKind, brace_delta}
+/// The nesting ceiling, taken from the oracle because it is NORMATIVE there
+/// (E_NESTING_TOO_DEEP, parser/mod.rs): 512 levels, far above anything the
+/// corpus writes (never past 40) and far below the measured stack death.
+const MAX_NESTING_DEPTH = 512
+
+
+import ../lex.{Token, TokenKind, brace_delta, paren_delta}
 import ../tree.{Node, NodeKind, BinOp, is_binop, bin_op_of, is_unop}
 
 
@@ -61,7 +67,67 @@ fn Cursor mut @expr() -> Node => @expr_bp(1)
 
 /// The climbing loop: consume operators whose binding power is at least
 /// `min_bp`, and parse their right side at `bp + 1` (left associativity).
+/// THE depth gate (#807/#808). Every nesting of an expression goes through
+/// `@expr_bp` -- a paren, a call argument, an index, a match scrutinee -- so
+/// one counter here is the whole rule, and no form can slip past by growing
+/// its own recursion.
+///
+/// The limit and the wording are the ORACLE'S, and deliberately: 512 is
+/// already normative (`parser/mod.rs`, E_NESTING_TOO_DEEP), the whole corpus
+/// of .nv files never exceeds 40 levels, and the measured death is far above
+/// -- so the refusal is reached long before the stack is. A subset that
+/// invented its own number would refuse programs the language accepts.
+fn Cursor mut @depth_exceeded() -> bool {
+    if @depth <= MAX_NESTING_DEPTH { return false }
+    // ONE diagnostic for one mistake: the deeper levels say nothing.
+    if @depth_told { return true }
+    @depth_told = true
+    true
+}
+
+/// Pratt loop over binary operators at binding power `min_bp`, wrapped in the
+/// depth gate above: every nesting of an expression enters here, so the
+/// counter is taken once and the inner loop stays as it was.
 fn Cursor mut @expr_bp(min_bp int) -> Node {
+    @depth += 1
+    if @depth_exceeded() {
+        // ONE Err over the WHOLE over-deep run, not one per level. Leaving the
+        // tokens for the enclosing walk turned a single mistake into 511
+        // "unrecognized token" refusals (measured on the hunter's probe) --
+        // the cascade class 274 s6 forbids. The run is drained by balance,
+        // the way the turbofish and tuple branches already read theirs, so
+        // the tree stays lossless and the parse ends in linear time.
+        mut ek = []Node.new()
+        mut d = 0
+        while !@at_eof() {
+            ro k = @peek()
+            d += paren_delta(k)
+            ek.push(@take())
+            if d <= 0 { break }
+        }
+        if ek.len() == 0 {
+            // At Eof the run drained nothing: the zero-width leaf keeps the
+            // node lossless and gives the refusal a position.
+            ek.push(@missing())
+        } else {
+            // Tokens were taken; the node carries them.
+        }
+        @depth -= 1
+        // A node kind of its own, so the refusal can NAME the cause: a generic
+        // Err says "this is not a form of the language" about a form that IS
+        // one and is merely nested too deep -- the lying-diagnostic class
+        // waves B1 and B8 removed elsewhere.
+        return @node(NodeKind.DepthErr, ek)
+    }
+    ro deep_result = @expr_bp_inner(min_bp)
+    @depth -= 1
+    deep_result
+}
+
+/// The Pratt loop itself: an atom, then binary operators while their binding
+/// power clears `min_bp`. Split from `@expr_bp` so the depth counter is taken
+/// exactly once per nesting (#807) and this body keeps its single job.
+fn Cursor mut @expr_bp_inner(min_bp int) -> Node {
     mut left = @primary()
     // A CAST binds looser than the postfix chain and tighter than every binary
     // operator: `s.len() as u8 + 1` is `((s.len() as u8) + 1)`. Its right side

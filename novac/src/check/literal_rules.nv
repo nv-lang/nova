@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_lint::builtin` for the SHAPE -- a rule that judges one
+// written token, separate from the walk that finds it. NOT taken: a lint
+// registry with levels; these two are refusals, not advice.
+// Role: layer 7 (check) -- the rules a DECLARATION or a LITERAL breaks on its
+// own, before anything about types is asked: the magnitude of an integer
+// literal (#810) and a top-level name declared twice (#811). Both came from
+// the hunt of 2026-08-30 and both are silent-acceptance defects: the first
+// let the emitted C wrap, the second let a second body vanish.
+// Used by: check.nv -- the Lit arm and the declaration arms of the walk.
+// Guarded by: check-novac-file-size.py (this file exists because rules.nv
+// crossed 1000 lines on 2026-08-30 -- the cut sem.nv, typing.nv and emit_c.nv
+// took before it), and the two class tests in pipeline_test.nv.
+// novac/src/check/literal_rules.nv -- what one written token is refused for.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../sem.{branch_children, leaf_text, leaf_kind}
+
+/// The MAGNITUDE of an integer literal -- the question nobody asked until
+/// registry #810 (hunter, 2026-08-30). The lexer makes an IntLit of any run of
+/// digits, the lattice types it `int` without looking, and the emitter prints
+/// the text verbatim with an `LL` suffix: `18446744073709551616` therefore
+/// overflowed a signed long long in the emitted C. That is a SILENT
+/// MISCOMPILE, not a missing refusal -- the oracle says "number too large to
+/// fit in target type" and stops.
+///
+/// The bound is `int`'s own: Nova's `int` is intptr_t (like Go's intgo), 64
+/// bits on every target novac emits for, so the largest literal is
+/// 9223372036854775807. Compared as TEXT -- by length first, then
+/// lexicographically -- because parsing it into the very type whose range is
+/// in question is how the check would inherit the defect it exists to catch.
+fn Checker mut @report_if_int_too_large(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.IntLit { continue }
+        ro t = leaf_text(c)
+        if !int_text_fits(t) {
+            @report_first_leaf_of(kids, INT_TOO_LARGE_MSG)
+            return
+        } else {
+            // Within range: nothing to say about this literal.
+        }
+    }
+}
+
+/// Does this decimal digit run fit in `int`? Compared as text against the
+/// bound, so nothing is parsed into the type whose range is being judged.
+/// Leading zeros are stripped first: `0000009` is nine, not a nine-digit
+/// number.
+fn int_text_fits(t str) -> bool {
+    mut i = 0
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
+    // The upper bound is omitted: `t[i..]` says the same and the linter is
+    // right that spelling it twice adds nothing.
+    ro digits = t[i..]
+    if digits.byte_len() < INT_MAX_TEXT.byte_len() { return true }
+    if digits.byte_len() > INT_MAX_TEXT.byte_len() { return false }
+    !(digits > INT_MAX_TEXT)
+}
+
+/// A top-level name declared twice in one file (#811). The name leaf is the
+/// first identifier of the declaration; the table answers "seen already", and
+/// the second declaration is the one refused -- the first keeps the name, as
+/// sem's registry does.
+fn Checker mut @report_if_name_repeats(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.Ident { continue }
+        ro name = leaf_text(c)
+        if @seen_decls.find(name) >= 0 {
+            @report_first_leaf_of(kids, DUP_DECL_MSG)
+        } else {
+            @seen_decls.put(name, 1)
+        }
+        return
+    }
+}
+

@@ -49,6 +49,15 @@ type Cursor {
     /// block, not as `x { ... }`. Set for the head expression only; block
     /// bodies parse with it clear.
     no_ctor bool
+    /// How deep the expression recursion currently is (#807/#808). Without it
+    /// 513 nested parens were accepted in silence and 2500 killed the process
+    /// with a stack overflow -- and the header of this file promises that
+    /// recovery never panics or hangs. The counter is the promise's machine.
+    depth int
+    /// Has the depth refusal already been reported for this parse? One
+    /// diagnostic, not one per level: a 2500-deep expression would otherwise
+    /// report two thousand times for one mistake (the cascade class, 274 s6).
+    depth_told bool
 }
 
 /// Build a branch node and give it its identity — the ONE place ids are
@@ -215,7 +224,7 @@ fn Cursor @minus_before_literal() -> bool =>
 export fn parse(toks []Token) -> Node
     requires toks.len() > 0, "parse: the token stream is Eof-terminated by lex and can never be empty"
 {
-    mut p = Cursor { toks, i: 0, no_ctor: false, next_id: 0 }
+    mut p = Cursor { toks, i: 0, no_ctor: false, next_id: 0, depth: 0, depth_told: false }
     mut items = []Node.new()
     if p.peek() == TokenKind.KwModule {
         items.push(p.module_decl())
