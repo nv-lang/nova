@@ -43,7 +43,7 @@
 set -u
 export LC_ALL=C
 
-NAME="check-novac-ratchet-moves"
+NAME="check-ratchet-moves"
 ROOT="${1:-.}"
 GITDIR="${2:-$ROOT}"
 
