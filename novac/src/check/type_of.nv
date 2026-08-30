@@ -294,7 +294,17 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // unknown type travelled on, which is the same shape the
                 // sibling case below already refuses out loud.
                 ro at = arm_body_at(ak) ?? ice("check: a match arm with no body reached type_of")
-                return type_of(ak[at], ctx, scope, chan)
+                // A BLOCK arm leaves through `return` and yields the match no
+                // value (274.5 wave B9): `no_ty()` is that answer, and the
+                // callers that record a type already test `is_ty` first. The
+                // lattice must not walk into a block -- its statement kinds
+                // have no type rule, and asking would be the #652 ice about
+                // a form nobody wrote as a value.
+                // [LEGACY-#676] var-index-method: the row is bound before the
+                // method call, the same hop the collectors already make.
+                ro body = ak[at]
+                if body.kind_of() == NodeKind.Block { return no_ty() }
+                return type_of(body, ctx, scope, chan)
             }
         }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;

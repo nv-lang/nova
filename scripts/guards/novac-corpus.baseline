@@ -102,5 +102,12 @@
 # measurement). The emitter hoists the multi-statement build into a temporary
 # before the consuming statement; the reverse probe (hoist disabled) dies with
 # the named ice. Ratchet carrier: `examples/basics/array_lit_positions.nv`.
-contract-match 20
-behavior-match 13
+# 2026-08-30 (274.5 wave B9 part A): 20/13 -> 21/14. A brace after `=>` (and
+# after a destructuring `if`) is a BLOCK, not an anonymous constructor -- the
+# parser tells them apart by content (a field `name:` or a spread opens a
+# constructor, anything else opens statements). 29 of the 50 "record
+# constructor only" marks in novac's own sources stood on such bodies: a
+# refusal about a form nobody wrote. Ratchet carrier:
+# `examples/basics/match_block_arm.nv`.
+contract-match 21
+behavior-match 14

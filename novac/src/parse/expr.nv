@@ -91,6 +91,22 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
 ///
 /// The SAME node kind a declaration uses for its type parameters, so both ends
 /// of the mapping read the same shape — one question, one answer.
+/// Does the `{` at the cursor open an anonymous CONSTRUCTOR, or a block?
+///
+/// A constructor starts with a field -- `name:` -- or with a spread `...`;
+/// anything else after the brace is statements. Read without consuming, like
+/// `after_bracket_run` (274.5 wave B8): the cursor invariant is that `take()`
+/// is the only advancer. Measured 2026-08-30: 29 of the 50 "record constructor
+/// only" marks in novac's own sources stood on ARM and IF bodies, which
+/// `@expr()` read as anonymous constructors -- a refusal about a form nobody
+/// wrote, the same lying-diagnostic class waves B1 and B8 removed.
+fn Cursor @brace_opens_ctor() -> bool {
+    if @peek() != TokenKind.LBrace { return false }
+    if @peek(skip: 1) == TokenKind.Ellipsis { return true }
+    if @peek(skip: 1) != TokenKind.Ident { return false }
+    @peek(skip: 2) == TokenKind.Colon
+}
+
 /// The token that stands AFTER the bracket run starting at the CURRENT `[`,
 /// or Eof. A read-only walk over the token vector -- nothing is consumed, so
 /// the cursor invariant (`take()` is the only advancer) holds. Nested `[`
@@ -269,7 +285,15 @@ fn Cursor mut @match_expr() -> Node {
             // true" would erase the difference exhaustiveness needs.
         }
         @push_if(ak, TokenKind.FatArrow)
-        ak.push(@expr())
+        // A BRACE HERE IS A BLOCK unless it opens a constructor (wave B9):
+        // `0 => { return 1 }` is statements, `_ => { a: 1 }` builds a record,
+        // and telling them apart is the parser's job -- the checker and the
+        // emitter have read a Block arm body since wave B5.
+        if @peek() == TokenKind.LBrace && !@brace_opens_ctor() {
+            ak.push(@block())
+        } else {
+            ak.push(@expr())
+        }
         // One-line arms are separated by a COMMA (D452); multi-line arms by
         // the newline alone, which is trivia to this lexer. Both shapes
         // therefore arrive here identically and the comma is taken when it

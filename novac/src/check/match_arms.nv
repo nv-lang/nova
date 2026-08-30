@@ -323,10 +323,35 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         @type_expr(gk[1])
     }
     ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
+    // A BLOCK BODY IN VALUE POSITION (274.5 wave B9): `0 => { return 1 }` is
+    // statements that leave through `return`, so the arm yields NO value to
+    // the fold -- typed as a block, answered as None. The statement variant
+    // has read a block body since wave B5; this is the same route for the
+    // value variant, and the None is what keeps the fold honest instead of
+    // inventing a type for an arm that never produces one.
+    if body.kind_of() == NodeKind.Block {
+        @type_block(body)
+        @scope.release(mark)
+        // SILENT-OK: the block WAS judged just above -- every statement in it
+        // recorded its own answers -- and the arm itself yields no value to
+        // the fold, which is exactly what None says here. Nothing is skipped:
+        // the only thing not recorded is a type this arm never produces.
+        return None
+    }
+    // TERMINATOR above, no `else` (the intersection rule of 274.5 s2g, fourth
+    // application): an expression body falls through to the lattice, as it
+    // always has.
     @type_expr(body)
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
-    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope, @chan)) } else { None }
+    // Written as a terminator rather than an if-else: the shape guard reads an
+    // `else` here as the wildcard of the KIND test above (it is a count test,
+    // a different subject) -- and the early exit says the same thing plainly.
+    if @out.len() > 0 {
+        @scope.release(mark)
+        return None
+    }
+    ro body_t = Some(type_of(body, @ctx, @scope, @chan))
     @scope.release(mark)
     body_t
 }
