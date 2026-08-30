@@ -524,7 +524,19 @@ fn Cursor mut @atom() -> Node {
             // E2-b2 refuses the bare form anyway), so `(` and only `(` says
             // "type arguments".
             mut ik = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take()) // recv, '['
+            // A LIST, not one expression, and that is the whole of wave B10's
+            // dispatch decision. `xs[0].len()` and `HashMap[str, int].new()`
+            // carry the SAME token after `]` -- `.NAME(` -- so the token cannot
+            // tell an index from a type application; only what the left name
+            // RESOLVES TO can, and resolution is the checker's root, not the
+            // parser's (`naming a type is the registry's answer`, above).
+            // So the run is read losslessly and judged by name later. Before
+            // this, the comma alone cost four refusals from one line.
             ik.push(@expr())
+            while @peek() == TokenKind.Comma {
+                ik.push(@take())
+                ik.push(@expr())
+            }
             @push_expected(ik, TokenKind.RBracket)
             // The postfix loop of the CALLER picks the chain up from here
             // (`xs[0].len()` nests this node as a receiver), the same way it

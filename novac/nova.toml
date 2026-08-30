@@ -75,7 +75,12 @@
 # 277 phase 2 carries that migration, and it is deliberately NOT done before
 # phase 5 (body hygiene) -- migrating onto a form whose indent rules are not
 # yet implemented would rewrite the payloads twice.
-#   spec-queue: 31
+# 2026-08-30 (окно 274): 31 -> 32. Тридцать второй — `77d4a5a71` (277 Ф.3):
+# голый backtick стал тегом по умолчанию и интерполирует. Для novac это не
+# новая работа, а та же Ф.2 выше: форма, на которую переписываются 23
+# payload'а, теперь реализована целиком, то есть миграции больше нечего
+# ждать по СВОЕЙ причине -- она ждёт только очереди волн.
+#   spec-queue: 32
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
