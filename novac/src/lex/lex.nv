@@ -125,6 +125,95 @@ export type TokenKind enum
     | ErrorTok
     | Eof
 
+/// How this kind of token is SPELLED, for a diagnostic that names what was
+/// expected.
+///
+/// A full `match` and not a lookup over the handful of kinds a refusal happens
+/// to use today (P21 p.4 asks a table to be a match): exhaustiveness is checked
+/// by the compiler, so a token kind added later cannot arrive without a
+/// spelling, and the diagnostic cannot quietly fall back to saying nothing.
+///
+/// Punctuation and keywords come back quoted, because the reader is meant to
+/// type them; a class of token comes back as prose ("a name"), because there is
+/// nothing to quote.
+#realtime nogc
+export fn spelling_of(k TokenKind) -> str => match k {
+    KwModule => "`module`"
+    KwFn => "`fn`"
+    KwIf => "`if`"
+    KwReturn => "`return`"
+    KwFor => "`for`"
+    KwIn => "`in`"
+    KwMut => "`mut`"
+    KwRo => "`ro`"
+    KwConsume => "`consume`"
+    KwWhile => "`while`"
+    KwType => "`type`"
+    KwMatch => "`match`"
+    KwAs => "`as`"
+    KwImport => "`import`"
+    KwUse => "`use`"
+    KwExport => "`export`"
+    KwTest => "`test`"
+    KwConst => "`const`"
+    KwElse => "`else`"
+    KwExtern => "`extern`"
+    KwUnsafe => "`unsafe`"
+    Hash => "`#`"
+    Ident => "a name"
+    IntLit => "an integer literal"
+    FloatLit => "a float literal"
+    StrLit => "a string literal"
+    LParen => "`(`"
+    RParen => "`)`"
+    LBrace => "`{`"
+    RBrace => "`}`"
+    EmptyBrackets => "`[]`"
+    LBracket => "`[`"
+    RBracket => "`]`"
+    Dot => "`.`"
+    Comma => "`,`"
+    Plus => "`+`"
+    Minus => "`-`"
+    Star => "`*`"
+    Slash => "`/`"
+    Lt => "`<`"
+    Le => "`<=`"
+    Gt => "`>`"
+    Ge => "`>=`"
+    Percent => "`%`"
+    EqEq => "`==`"
+    BangEq => "`!=`"
+    AmpAmp => "`&&`"
+    PipePipe => "`||`"
+    Amp => "`&`"
+    Caret => "`^`"
+    Shl => "`<<`"
+    Shr => "`>>`"
+    Tilde => "`~`"
+    Bang => "`!`"
+    Pipe => "`|`"
+    FatArrow => "`=>`"
+    Assign => "`=`"
+    PlusAssign => "`+=`"
+    MinusAssign => "`-=`"
+    StarAssign => "`*=`"
+    SlashAssign => "`/=`"
+    PercentAssign => "`%=`"
+    AmpAssign => "`&=`"
+    PipeAssign => "`|=`"
+    CaretAssign => "`^=`"
+    ShlAssign => "`<<=`"
+    ShrAssign => "`>>=`"
+    DotDot => "`..`"
+    Ellipsis => "`...`"
+    Colon => "`:`"
+    At => "`@`"
+    Arrow => "`->`"
+    ErrorTok => "a token"
+    Eof => "end of file"
+}
+
 /// One green token: no positions stored (widths, not positions — offsets
 /// derive by prefix summing; the lossless invariant makes that exact).
 export type Token {

@@ -17,7 +17,7 @@
 module novac.check
 
 import ../source.{SourceText}
-import ../lex.{Token, TokenKind}
+import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
@@ -883,7 +883,13 @@ fn Checker mut @report_err_branch(children []Node) -> () {
                     // A GAP: the run has no width, so it points at nothing the
                     // author wrote. Remembered, not said -- `tell_gap_if_silent`
                     // says it at the end if the file had nothing else to say.
-                    if @gap_at < 0 { @gap_at = lo } else { }
+                    if @gap_at < 0 {
+                        @gap_at = lo
+                        @gap_kind = t.kind
+                    } else {
+                        // A later gap: the FIRST one is the one told, so the
+                        // kind kept is the first one's too.
+                    }
                     return
                 } else {
                     // A run with WIDTH is a cause of its own and speaks now.
@@ -920,5 +926,12 @@ fn Checker mut @tell_gap_if_silent() -> () {
         // Silence otherwise: the gap is the only thing wrong with this file,
         // and saying nothing is how `fn main() {` used to compile clean.
     }
-    @refuse_span(@gap_at, @gap_at, SYNTAX_MSG)
+    if @gap_kind == TokenKind.ErrorTok {
+        // The gap came from recovery, which knows a form broke but not what
+        // would have mended it.
+        @refuse_span(@gap_at, @gap_at, SYNTAX_MSG)
+    } else {
+        // The door knew what it wanted, so the refusal says it (#850).
+        @refuse_span(@gap_at, @gap_at, "syntax error: expected ${spelling_of(@gap_kind)}")
+    }
 }

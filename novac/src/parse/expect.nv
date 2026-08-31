@@ -77,6 +77,14 @@ fn Cursor mut @push_expected(mut kids []Node, k TokenKind) -> () {
         // Err keeps the tree lossless and hands `check` a position; WHETHER
         // it is worth saying is the checker's call, and it makes it once for
         // both doors (`tell_gap_if_silent`).
-        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        //
+        // THE LEAF CARRIES THE KIND THAT WAS WANTED (registry #850, donor
+        // Roslyn `EatTokenAsKind`, named in this file's header from the start).
+        // Until now `k` died here, so the checker could only say "this is not a
+        // form of the language" -- true, and useless to someone who left out a
+        // `)`. The leaf is safe to give a real kind because it lives INSIDE an
+        // Err branch, and every consumer of the tree filters DIRECT children by
+        // kind; nothing but the refusal reader ever looks in there.
+        kids.push(@node(NodeKind.Err, []Node.of(@missing_of(k))))
     }
 }

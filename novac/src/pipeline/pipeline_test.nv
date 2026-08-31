@@ -690,6 +690,42 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "the gap NAMES the token it wanted, not merely that a form broke (#850)" {
+    // Registry #850. Closing #809/#815 made a missing required token refuse --
+    // but the refusal said only "this is not a form of the language", which is
+    // true of every syntax error and helps no one who left out a `)`. The door
+    // knew the kind it wanted and threw it away; now the zero-width leaf it
+    // plants carries that kind (Roslyn `EatTokenAsKind`), and the checker reads
+    // it back.
+    //
+    // TWO KINDS and not one carrier, for the same reason the #815 test above
+    // takes four: a single carrier would hold one line of the parser rather
+    // than the class.
+    ro std = std_decls()
+
+    // a type with no name -> the wanted kind is a NAME
+    ro (d1, _) = compile_to_c("type { n int }
+fn main() { println(1) }", std)
+    assert(d1.len() >= 1)
+    assert(d1[0].message.contains("expected a name"))
+
+    // a const with no `=` -> the wanted kind is PUNCTUATION, and it comes back
+    // quoted, because the reader is meant to type it
+    ro (d2, _) = compile_to_c("const A int 1
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("expected `=`"))
+
+    // THE OTHER DIRECTION. A gap planted by recovery knows a form broke but not
+    // what would mend it, and must NOT invent an expectation. Written whole,
+    // the same shapes stay clean -- without this half the rule could name a
+    // token at every refusal and no test would notice.
+    ro (d3, _) = compile_to_c("type Pt { n int }
+const A int = 1
+fn main() { println(A) }", std)
+    assert(d3.len() == 0)
+}
+
 test "an application in TYPE position resolves -- Vec[int], and []T is its D239 sugar" {
     // Step B2's acceptance, pinned at the level it changes: the SIGNATURE. Both
     // spellings are one term (D239: `[]T` IS `Vec[T]`), read by one door at

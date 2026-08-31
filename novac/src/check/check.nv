@@ -74,6 +74,11 @@ type Checker {
     /// the LAST thing worth saying about a file, and only when nothing with
     /// width was said. `gap_at < 0` means none seen.
     gap_at int
+    /// WHAT was wanted at `gap_at`, when the door that planted the gap knew.
+    /// `TokenKind.ErrorTok` means it did not: gaps planted by recovery carry no
+    /// expectation, and the refusal then says only that the text is not a form
+    /// of the language -- the message this field exists to improve on (#850).
+    gap_kind TokenKind
     out []Diagnostic /// diagnostics collected by this run
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
     scope Scope /// locals of the function body being typed; reset per function
@@ -132,6 +137,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         res: FnIndex.build(ctx.fns),
         fres: FieldIndex.build(ctx.fields),
         gap_at: -1,
+        gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
@@ -192,6 +198,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         // still initialised so both entries share one shape; only
         // `tell_gap_if_silent` belongs to the file alone.
         gap_at: -1,
+        gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),

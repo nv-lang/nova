@@ -162,6 +162,27 @@ fn Cursor @missing() -> Node {
     leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[..0] })
 }
 
+/// The same missing token, but WEARING the kind that was wanted.
+///
+/// `@missing()` answers `ErrorTok`, which is right where recovery plants a gap:
+/// it knows a form broke, not what would have mended it. A door that took a
+/// REQUIRED token knows exactly, and threw it away until #850 -- so the refusal
+/// could only say "this is not a form of the language". Roslyn's
+/// `EatTokenAsKind` is the donor: the missing token carries the kind it should
+/// have been, and the reader of the tree names it.
+///
+/// Safe because the leaf lives inside an Err BRANCH, and every consumer filters
+/// DIRECT children by kind -- nothing but the refusal reader looks in there. A
+/// zero-width `Ident` loose among a declaration's own children would be another
+/// matter entirely.
+fn Cursor @missing_of(k TokenKind) -> Node {
+    ro m = @missing()
+    match m {
+        Leaf(t) => leaf(Token { kind: k, leading: t.leading, text: t.text })
+        Branch { .. } => m
+    }
+}
+
 // The three stop sets of recovery, named ONCE each.
 //
 // Reviewer's point 2026-08-17, and the measurement behind it: a junk bucket
