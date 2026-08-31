@@ -286,10 +286,23 @@ export fn Ulid @to_str() -> str {
 
 /// Parse 26-char Crockford Base32 ULID. Case-insensitive.
 /// `I`/`L` → 1, `O` → 0 (Crockford ambiguity remap).
+///
+/// Returns `Err(ParseUlidError)` rather than throwing: D325 R1 — a public std
+/// operation failing on USER INPUT returns `Result`. Note the contrast with
+/// `Ulid.new` above, which PANICS on the same `TimestampOverflow`: there the
+/// overflow means the system clock has left the representable range (R0,
+/// programming/environment invariant), while HERE it arrives from a parsed
+/// string, and a caller can do something about that.
+///
+/// The private helpers keep throwing — R1 governs PUBLIC signatures — and the
+/// handler turns their `Fail` into the `Err` branch, the wrap idiom D325 names
+/// and `Regex.compile` already uses.
+///
+/// Registry 221.1 №852.
 #stable(since = "0.1")
-export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-static-conversion]
+export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings-static-conversion]
     if s.byte_len() != 26 {
-        throw InvalidLength { actual: s.byte_len(), expected: 26 }
+        return Err(InvalidLength { actual: s.byte_len(), expected: 26 })
     }
 
     // 10 timestamp chars + 16 random chars = 26.
@@ -299,14 +312,14 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
     // Парсим timestamp (48 бит)
     mut ts u64 = 0
     for i in 0..10 {
-        ro v = decode_char_or_throw(s, i)
+        ro v = decode_char_at(s, i)?
         ts = (ts << 5) | (v as u64)
     }
 
     // Старшие 2 бита timestamp должны быть 0 (после 10 chars × 5 = 50 бит).
     // ts уже 50-битное значение; берём 48 младших.
     if ts >= 0x1000000000000 {
-        throw TimestampOverflow
+        return Err(TimestampOverflow)
     }
 
     // Парсим random (80 бит) в две u64 части
@@ -318,7 +331,7 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
     mut full_lo u64 = 0
     mut full_hi u64 = 0
     for j in 0..16 {
-        ro v = decode_char_or_throw(s, 10 + j)
+        ro v = decode_char_at(s, 10 + j)?
         // Сдвигаем 80-битное значение влево на 5, добавляем v в младшие 5.
         // 80 бит = (full_hi << 16) | full_lo, но удобнее иметь две u64 и
         // пересылать переполнение.
@@ -339,18 +352,24 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
     ro ts_part = (ts << 16) | rand_low_16
     ro rand_part = rand_64
 
-    { ts_part, rand_part }
+    Ok({ ts_part, rand_part })
 }
 
 // Crockford base32 alphabet is pure ASCII — direct byte access O(1) instead
 // of O(n) char-by-char scan.
-fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
+// Имя было `decode_char_or_throw` — переименовано вместе с поведением:
+// он больше не бросает, а возвращает. Имя, пережившее своё поведение,
+// врёт читателю так же, как устаревшая дока.
+fn decode_char_at(s str, pos int) -> Result[u8, ParseUlidError] {
     match s.bytes().get(pos) {
         Some(b) => {
             ro c = (b as int).to_char() ?? ' '
-            decode_char(c) ?? throw InvalidChar { position: pos, char: c }
+            match decode_char(c) {
+                Some(v) => Ok(v)
+                None    => Err(InvalidChar { position: pos, char: c })
+            }
         }
-        None => throw InvalidLength { actual: s.byte_len(), expected: 26 }
+        None => Err(InvalidLength { actual: s.byte_len(), expected: 26 })
     }
 }
 
