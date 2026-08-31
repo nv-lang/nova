@@ -751,7 +751,7 @@ fn main() {
     assert(d2.len() >= 1)
 }
 
-test "an index on a BOUND name is accepted -- the pass that types it holds the scope" {
+test "an index on a BOUND name is refused BY NAME, not by a lie about the name" {
     // Found by probing, not by a test: `ro v = xs` was clean, `xs.len()` was
     // clean, and `ro v = xs[0]` refused with "unknown name" ABOUT `xs`. The
     // message was a lie -- the name was bound. The index arm lived in the
@@ -763,10 +763,12 @@ test "an index on a BOUND name is accepted -- the pass that types it holds the s
  v
 }
 fn main() { println(1) }", std)
-    // Assert on the LIE, not on total cleanliness: the fix removed a false
-    // "unknown name" about a bound receiver. Other subset limits may still
-    // speak here, and pinning this test to zero diagnostics would tie it to
-    // every future wave instead of to the defect it holds.
+    // WHAT CHANGED IS THE TRUTHFULNESS, not the outcome. The form is still
+    // outside the subset -- the interop shell carries no `index` for this
+    // instance, so nothing can be emitted -- but it now says THAT, instead of
+    // claiming the receiver is unbound. A refusal that names the wrong thing
+    // sends the reader to look for a typo in a name that is perfectly fine.
+    assert(d.len() >= 1)
     for g in d {
         assert(!g.message.contains("unknown name"))
     }

@@ -266,7 +266,23 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // Either an int, or already refused where it was typed.
     }
-    @ctx.tys.arg(recv_t, 0)
+    // READ, BUT NOT COMPILED YET -- and said by name rather than accepted.
+    //
+    // The element type above is correct and the receiver is a real vector; what
+    // is missing is on the EMITTER's side: the interop shell carries no `index`
+    // for this instance. Measured 2026-08-31 -- `grep Vec____nova_int_method_index
+    // novac/src/emit_c/shell.tpl.c` finds nothing, while `_method_get` (which
+    // answers `Option[T]`) and `_method_len` are there. `@index(i int) -> T`
+    // does exist in std (`std/src/collections/vec/access.nv:30`); the shell only
+    // carries what the probe program uses.
+    //
+    // Accepting the form anyway is the shape the differential guard calls the
+    // worst kind of green: `check` clean, `emit` an ICE ("binding initializer is
+    // neither a match, a ctor nor an expression"). So the subset refuses, and the
+    // refusal names WHAT is missing and WHERE -- the fix is a wider probe, not a
+    // change to the program being compiled.
+    @report_first_leaf_of(kids, "outside the subset: indexing is read but not compiled yet -- the interop shell carries no `index` for this instance (widen novac/probe/shell_probe.nv)")
+    no_ty()
 }
 
 /// The type of an array literal, or `no_ty()` after a NAMED refusal.
