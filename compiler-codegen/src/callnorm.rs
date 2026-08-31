@@ -763,6 +763,40 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
         src_temp.insert(ai, tname);
     }
 
+    // ── Реестр №799, ВТОРАЯ ПОЛОВИНА (первая — обходчик интерполяции,
+    //    `emit_c.rs`, 2026-08-29). Имя биндинга = имя параметра — приём, ради
+    //    которого фаза 2 и устроена так: default-выражения видят предыдущие
+    //    параметры без substitution walk. НО если в ТОМ ЖЕ блоке фаза 1 читает
+    //    переменную вызывающего С ТЕМ ЖЕ ИМЕНЕМ, чтение оказывается ВЫШЕ
+    //    объявления одноимённой локали, и внутри `spawn` это стоит захвата:
+    //    решение «захват или локаль» принимается ПЛОСКО (`refs - bound`), имя
+    //    попадает в `bound` — и поля в контексте фибры не появляется вовсе.
+    //    Замер 2026-08-31, `docs/plans/repro/p799/`: пара файлов, различающихся
+    //    ОДНИМ именем переменной, — с коллизией CC-FAIL `use of undeclared
+    //    identifier 'policy'`, без неё сборка и `ok 3`.
+    //
+    //    ПОЧЕМУ ПЕРЕИМЕНОВАНИЕ, А НЕ ПРАВКА ЗАХВАТОВ: собрать захват мало —
+    //    переписыватель обращений тоже плоский, и тогда употребление ПОСЛЕ
+    //    `let policy = …` тоже стало бы `_c->policy`, то есть громкий CC-FAIL
+    //    сменился бы тихо неверным значением. Переименование снимает коллизию,
+    //    на которой спотыкаются ОБА механизма, и не трогает ни один из них.
+    //
+    //    КОГДА: только если фаза 1 вообще что-то положила. Нет явных
+    //    аргументов — нет и чтений до объявления, и вызов «только с
+    //    умолчаниями» остаётся байт-в-байт прежним.
+    let rename: HashMap<String, String> = if src_temp.is_empty() {
+        HashMap::new()
+    } else {
+        effective_params
+            .iter()
+            .take(bindings.len())
+            .map(|prm| (prm.name.clone(), format!("__nova_bind_{}", prm.name)))
+            .collect()
+    };
+    let bind_name = |prm: &Param| -> String {
+        rename.get(&prm.name).cloned().unwrap_or_else(|| prm.name.clone())
+    };
+
     // Фаза 2: param-binding в PARAM-order. Имя биндинга = имя параметра
     // → default-выражения видят предшествующие параметры естественно.
     let mut call_args: Vec<CallArg> = Vec::new();
@@ -772,12 +806,13 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
             ArgBinding::Positional(ai) | ArgBinding::Named(ai) => {
                 let tname = src_temp.get(ai).cloned()
                     .expect("explicit arg temp must exist");
+                let bn = bind_name(param);
                 stmts.push(let_stmt(
-                    &param.name,
+                    &bn,
                     ident_expr(&tname, sp),
                     sp,
                 ));
-                call_args.push(CallArg::Item(ident_expr(&param.name, sp)));
+                call_args.push(CallArg::Item(ident_expr(&bn, sp)));
             }
             ArgBinding::Default => {
                 let def = param.default.clone()
@@ -786,8 +821,18 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 // the desugared `let` so a context-typed default literal/expr coerces to the
                 // param type instead of defaulting to signed `nova_int` — `fn f(x uint = 0x80 >> 1)`
                 // keeps an UNSIGNED operand (logical shift), not a signed collapse (int-collapse, D412).
-                stmts.push(let_stmt_typed(&param.name, def, Some(param.ty.clone()), sp));
-                call_args.push(CallArg::Item(ident_expr(&param.name, sp)));
+                // Default-выражение вправе ссылаться на ПРЕДЫДУЩИЕ параметры по
+                // имени (`fn slice(xs []int, to int = xs.len())`). Раз локали
+                // переименованы — переименовываем и эти ссылки, ВНУТРИ одного
+                // синтетического блока: это не substitution walk по программе,
+                // которого D102 избегает, а правка скопированного выражения.
+                let mut def = def;
+                if !rename.is_empty() {
+                    rename_idents(&mut def, &rename);
+                }
+                let bn = bind_name(param);
+                stmts.push(let_stmt_typed(&bn, def, Some(param.ty.clone()), sp));
+                call_args.push(CallArg::Item(ident_expr(&bn, sp)));
             }
             ArgBinding::Variadic(indices) => {
                 // Variadic-хвост: передаём исходные args[indices] напрямую
@@ -886,6 +931,261 @@ fn let_stmt_typed(name: &str, value: Expr, ty: Option<crate::ast::TypeRef>, span
 }
 
 /// `<name>` identifier expression.
+/// Переименовать идентификаторы по карте `map` (старое имя → новое) во всём
+/// дереве выражения `e`. Зеркалит `walk_children` (см. выше): та же
+/// структура ветвей `ExprKind`, тот же порядок под-выражений — вместо
+/// `normalize_expr` на каждом под-выражении вызывается `rename_idents`.
+/// Единственное отличие от `walk_children` по СМЫСЛУ (не по форме обхода):
+/// здесь есть содержательное действие на самом узле `Ident` — переименование,
+/// если `map` содержит текущее имя.
+fn rename_idents(e: &mut Expr, map: &std::collections::HashMap<String, String>) {
+    // Сам узел — Ident: переименовываем, если имя есть в карте.
+    if let ExprKind::Ident(name) = &mut e.kind {
+        if let Some(new_name) = map.get(name.as_str()) {
+            *name = new_name.clone();
+        }
+    }
+    match &mut e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            rename_idents(func, map);
+            for a in args.iter_mut() {
+                match a {
+                    CallArg::Item(x) | CallArg::Spread(x) => rename_idents(x, map),
+                    CallArg::Named { value, .. } => rename_idents(value, map),
+                }
+            }
+            // Trailing инлайнится прямо здесь (не отдельной функцией) —
+            // задание просит РОВНО две функции; зеркалит `normalize_trailing`
+            // (callnorm.rs:456) один в один по видам Trailing.
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => rename_idents_block(b, map),
+                    Trailing::LegacyBlockWithParams(tb) => rename_idents_block(&mut tb.body, map),
+                    Trailing::Fn(sb) => match &mut sb.body {
+                        FnBody::Expr(x) => rename_idents(x, map),
+                        FnBody::Block(b) => rename_idents_block(b, map),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::TurboFish { base, .. } => rename_idents(base, map),
+        ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => rename_idents(x, map),
+        ExprKind::Coalesce(a, b) => { rename_idents(a, map); rename_idents(b, map); }
+        ExprKind::As(x, _) | ExprKind::Is(x, _) => rename_idents(x, map),
+        ExprKind::Binary { left, right, .. } => {
+            rename_idents(left, map); rename_idents(right, map);
+        }
+        ExprKind::Unary { operand, .. } => rename_idents(operand, map),
+        ExprKind::Member { obj, .. } => rename_idents(obj, map),
+        ExprKind::Index { obj, index } => {
+            rename_idents(obj, map); rename_idents(index, map);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            rename_idents(cond, map);
+            rename_idents_block(then, map);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rename_idents_block(b, map),
+                    ElseBranch::If(x) => rename_idents(x, map),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            rename_idents(scrutinee, map);
+            rename_idents_block(then, map);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rename_idents_block(b, map),
+                    ElseBranch::If(x) => rename_idents(x, map),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            rename_idents(scrutinee, map);
+            for arm in arms.iter_mut() {
+                if let Some(g) = &mut arm.guard { rename_idents(g, map); }
+                match &mut arm.body {
+                    MatchArmBody::Expr(x) => rename_idents(x, map),
+                    MatchArmBody::Block(b) => rename_idents_block(b, map),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            rename_idents(iter, map); rename_idents_block(body, map);
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            rename_idents(iter, map); rename_idents_block(body, map);
+        }
+        ExprKind::While { cond, body, .. } => {
+            rename_idents(cond, map); rename_idents_block(body, map);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            rename_idents(scrutinee, map); rename_idents_block(body, map);
+        }
+        ExprKind::Loop { body, .. } => rename_idents_block(body, map),
+        ExprKind::Block(b) => rename_idents_block(b, map),
+        ExprKind::Spawn(x) => rename_idents(x, map),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => rename_idents_block(b, map),
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
+            rename_idents_block(body, map);
+            if let Some(c) = cancel { rename_idents(c, map); }
+            if let Some(dl) = deadline { rename_idents(&mut dl.expr, map); }
+            if let Some(oh) = on_timeout { rename_idents(oh, map); }
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            rename_idents_block(body, map)
+        }
+        ExprKind::Throw(x) => rename_idents(x, map),
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(x) = opt { rename_idents(x, map); }
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(x) = opt { rename_idents(x, map); }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { rename_idents(s, map); }
+            if let Some(e) = end { rename_idents(e, map); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems.iter_mut() {
+                match el {
+                    ArrayElem::Item(x) | ArrayElem::Spread(x) => rename_idents(x, map),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for me in elems.iter_mut() {
+                match me {
+                    crate::ast::MapElem::Pair(k, v) => {
+                        rename_idents(k, map);
+                        rename_idents(v, map);
+                    }
+                    crate::ast::MapElem::Spread(e) => rename_idents(e, map),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for x in elems.iter_mut() { rename_idents(x, map); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields.iter_mut() {
+                if let Some(v) = &mut f.value { rename_idents(v, map); }
+            }
+        }
+        // Строковая интерполяция: обязательная ветвь (по этой же ветви в
+        // проекте уже дважды был дефект из-за пропуска обхода).
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts.iter_mut() {
+                if let InterpStrPart::Expr { expr: x, spec: _ } = p { rename_idents(x, map); }
+            }
+        }
+        ExprKind::TaggedTemplate { args, .. } => {
+            for x in args.iter_mut() { rename_idents(x, map); }
+        }
+        ExprKind::Lambda { body, .. } => rename_idents(body, map),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(x) => rename_idents(x, map),
+            ClosureBody::Block(b) => rename_idents_block(b, map),
+        },
+        ExprKind::ClosureFull(sb) => match &mut sb.body {
+            FnBody::Expr(x) => rename_idents(x, map),
+            FnBody::Block(b) => rename_idents_block(b, map),
+            FnBody::External => {}
+        },
+        ExprKind::With { bindings, body } => {
+            for b in bindings.iter_mut() { rename_idents(&mut b.handler, map); }
+            rename_idents_block(body, map);
+        }
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
+            for m in methods.iter_mut() {
+                match &mut m.body {
+                    HandlerMethodBody::Expr(x) => rename_idents(x, map),
+                    HandlerMethodBody::Block(b) => rename_idents_block(b, map),
+                }
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms.iter_mut() {
+                match &mut arm.op {
+                    SelectOp::Recv { chan, .. } => rename_idents(chan, map),
+                    SelectOp::Send { chan, value } => {
+                        rename_idents(chan, map); rename_idents(value, map);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &mut arm.guard { rename_idents(g, map); }
+                rename_idents_block(&mut arm.body, map);
+            }
+        }
+        // Листовые — нет под-выражений. `Ident` уже обработан ВЫШЕ (само
+        // переименование смотрит на узел до этого match); здесь для него —
+        // как и для остальных перечисленных — действительно нечего обходить.
+        ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
+        | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
+        // D.1.3: квантор — только в контрактах, не в runtime-коде.
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            rename_idents(range, map);
+            rename_idents(body, map);
+        }
+    }
+}
+
+/// Обход блока (`stmts` + опциональный `trailing`) и его операторов —
+/// объединяет связку `normalize_block`/`normalize_stmt` (callnorm.rs:212/221)
+/// в одну функцию (задание просит РОВНО две функции всего): те же виды
+/// `Stmt`, те же поля, `rename_idents` вместо `normalize_expr` на каждом
+/// под-выражении, рекурсивный `rename_idents_block` на каждом вложенном
+/// блоке.
+fn rename_idents_block(b: &mut Block, map: &std::collections::HashMap<String, String>) {
+    for s in &mut b.stmts {
+        match s {
+            Stmt::Expr(e) => rename_idents(e, map),
+            Stmt::Let(d) => rename_idents(&mut d.value, map),
+            Stmt::Const(d) => rename_idents(&mut d.value, map),
+            Stmt::Assign { target, value, .. } => {
+                rename_idents(target, map);
+                rename_idents(value, map);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { rename_idents(v, map); }
+            }
+            Stmt::Throw { value, .. } => rename_idents(value, map),
+            Stmt::Defer { body, .. } => rename_idents(body, map),
+            // Plan 110 D188: consume X = init() { body } — walk init expr +
+            // body block. `body` — уже `Block`, рекурсия той же функцией
+            // (byte-эквивалентно ручному инлайн-циклу образца по stmts +
+            // trailing).
+            Stmt::ConsumeScope { init, body, .. } => {
+                rename_idents(init, map);
+                rename_idents_block(body, map);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => rename_idents(expr, map),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            // Ф.4.1: apply — ghost, аргументы переименовываем.
+            Stmt::Apply { args, .. } => {
+                for a in args { rename_idents(a, map); }
+            }
+            // Ф.4.2: calc — ghost, выражения шагов переименовываем.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { rename_idents(&mut step.expr, map); }
+            }
+            // Plan 33.9: reveal — ghost, нет выражений для переименования.
+            Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment — обходим все lhs + rhs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { rename_idents(e, map); }
+                for e in rhs { rename_idents(e, map); }
+            }
+        }
+    }
+    if let Some(t) = &mut b.trailing {
+        rename_idents(t, map);
+    }
+}
+
 fn ident_expr(name: &str, span: Span) -> Expr {
     Expr { kind: ExprKind::Ident(name.to_string()), span, id: crate::ast::ExprId::UNSET, debug_only: false }
 }
