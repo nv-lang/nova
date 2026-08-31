@@ -354,6 +354,17 @@ fn Checker mut @type_expr(e Node) -> () {
         // lowers to a CALL; every other pair lowers to a C
         // operator, and the ABSENCE of a callee says so.
         @record_operator_callee(e, kids)
+    } else if k == NodeKind.Index {
+        // TYPED WHERE THE SCOPE IS (fix 2026-08-31). The element type comes
+        // from `@type_index`, which also carries every subset refusal about an
+        // index -- one door, asked once, in the pass that can answer it.
+        ro it = @type_index(e)
+        if is_ty(it) {
+            @record(e, it)
+        } else {
+            // Refused inside `@type_index`, by name; nothing to record, and
+            // readers act on `no_ty()`.
+        }
     } else if k == NodeKind.RecordCtor {
         // ARGUMENT POSITION (wave B13). A NAMED constructor carries its own
         // type, which `type_of` answers; recording it here is what the emitter

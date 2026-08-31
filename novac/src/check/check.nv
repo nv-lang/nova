@@ -574,16 +574,20 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     return
                 }
                 Index => {
-                    // TYPED since wave B10, not refused wholesale. B8 gave the
-                    // form its own node so the refusal could name it; this wave
-                    // asks the receiver's application for its element and
-                    // records the answer. What the subset still cannot do stays
-                    // refused BY NAME inside `type_index` -- a receiver that is
-                    // not an application, an index that is not `int` -- so no
-                    // form is accepted in silence, which is the whole of #815.
-                    ro t = @type_index(n)
-                    @record(n, t)
-                    return
+                    // NOT TYPED HERE (fix 2026-08-31). This walk judges the
+                    // FORM of a file against the subset; it holds no scope --
+                    // the word `@scope` does not appear in this file once --
+                    // and `@type_index` reads one. So typing an index here
+                    // asked an empty scope and answered "unknown name" about a
+                    // name that WAS bound: `ro v = xs` was clean while
+                    // `ro v = xs[0]` refused, and `xs.len()` was clean too.
+                    //
+                    // The arm now lives in the typing pass (`exprs.nv`), where
+                    // `@type_fn` has already bound the parameters. The door
+                    // itself is not split: the subset refusals it carries
+                    // (a receiver that is not an application, an index that is
+                    // not `int`, a type applied to arguments) are part of the
+                    // same one question and travel with it.
                 }
                 ArrayLit => {
                     // JUDGED, not refused wholesale (sub-plan L, 2026-08-26).

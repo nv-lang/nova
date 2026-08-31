@@ -98,7 +98,27 @@ fn Checker mut @type_bind(st Node) -> () {
         // lattice path below is for the other initializer kinds.
         return
     } else {
-        // Every other initializer: the lattice answers.
+        // Every other initializer: the lattice answers -- except the one below.
+    }
+    // AN INDEX DECIDES ITS OWN TYPE HERE for the same reason the literal above
+    // does: the answer comes from a DOOR (`@type_index` asks the receiver's
+    // application for its element) and carries every subset refusal about an
+    // index with it. The lattice cannot be asked instead -- it reads what was
+    // recorded, and nothing has recorded this yet.
+    //
+    // This half was missed when the arm moved out of the subset walk on
+    // 2026-08-31, and the module test caught it: `ro v = nosuch(i)[0]` stopped
+    // being refused AT ALL, because this path never calls `@type_expr`.
+    if ik == NodeKind.Index {
+        ro idx_t = @type_index(init)
+        // SILENT-OK: refused inside `@type_index`, by name; an index with no
+        // type has nothing to record and binds no name.
+        if !is_ty(idx_t) { return }
+        @record(init, idx_t)
+        @scope.bind(vname, idx_t, bind_mode_at(kids))
+        return
+    } else {
+        // Not an index: the lattice answers below.
     }
     ro vtype = type_of(init, @ctx, @scope, @chan)
     @record(init, vtype)

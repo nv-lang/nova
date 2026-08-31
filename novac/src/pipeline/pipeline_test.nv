@@ -751,6 +751,39 @@ fn main() {
     assert(d2.len() >= 1)
 }
 
+test "an index on a BOUND name is accepted -- the pass that types it holds the scope" {
+    // Found by probing, not by a test: `ro v = xs` was clean, `xs.len()` was
+    // clean, and `ro v = xs[0]` refused with "unknown name" ABOUT `xs`. The
+    // message was a lie -- the name was bound. The index arm lived in the
+    // subset walk, which holds no scope (the word `@scope` does not occur in
+    // check.nv once), so it asked an empty one.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn take(xs []int) -> int {
+ ro v = xs[0]
+ v
+}
+fn main() { println(1) }", std)
+    // Assert on the LIE, not on total cleanliness: the fix removed a false
+    // "unknown name" about a bound receiver. Other subset limits may still
+    // speak here, and pinning this test to zero diagnostics would tie it to
+    // every future wave instead of to the defect it holds.
+    for g in d {
+        assert(!g.message.contains("unknown name"))
+    }
+
+    // THE OTHER DIRECTION, and it is the half that broke first when the arm
+    // moved: an index whose receiver does NOT resolve must still be refused.
+    // Moving the arm out of the walk made this form pass in silence until the
+    // module test caught it, because the binding path calls `type_of` directly
+    // and never `@type_expr`.
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {
+ ro v = nosuch(i)[0]
+ v
+}
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+}
+
 test "an index UNDER something does not crash the compiler (#652 class)" {
     // Found by measuring self-distance, not by a test: five of novac's own 57
     // files ended in an internal compiler error rather than a refusal. This one
