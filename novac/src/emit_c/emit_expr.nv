@@ -419,10 +419,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
         ro op = bin_op_of(leaf_kind(kids[1]))
-        // The RESULT of a comparison is bool, so the float test must look at
-        // the OPERAND, not at the expression: `a < b` on two f64 is still an
-        // f64 comparison. Arithmetic's result type equals its operands', so
-        // the two agree there.
+        // Reading the EXPRESSION's recorded type IS reading the operands':
+        // only ARITHMETIC branches on the float test (comparisons come out as
+        // C operators whatever the flag says -- c_binary_form), and
+        // arithmetic's result type equals its operands'. The hunt (emit_c x
+        // K1, P1) read the previous wording here as a promise to look at the
+        // operand and found the code reading the node: the code was right,
+        // the words were not.
         ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
         ro form = c_binary_form(op, is_float)
         // `str` equality is the protocol method, not a C operator (D46:

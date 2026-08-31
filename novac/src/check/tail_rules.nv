@@ -128,9 +128,13 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // goes when #676 closes.
         ro tail_node = bk[last_stmt]
         ro k = tail_node.kind_of()
-        // ALLOW-list, and it mirrors the emitter's condition exactly
-        // (emit_c.nv:454 `is_expr_kind(kind) && kind != Call`): the tail
-        // produces a value iff the emitter writes `return` for it. The first
+        // ALLOW-list, kept in step with the emitter's tail chain -- the
+        // `tail && j == last_branch` arms in emit_c.nv (match/if land in a
+        // temporary and return it, `is_expr_kind` returns the expression):
+        // the tail produces a value iff the emitter writes `return` for it.
+        // Named by the CHAIN and not by a line number: the hunt (emit_c x K1,
+        // P2) found the previous reference pointing at a line that had long
+        // moved on and quoting a formula the file no longer contains. The first
         // version asked the opposite question -- "is the tail a binding or an
         // assignment?" -- and four shapes walked past it: a tail `if` without
         // `else`, a tail `while`, a tail `for`, and a tail unit call like
