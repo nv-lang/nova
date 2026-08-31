@@ -534,6 +534,12 @@ fn Checker mut @type_call_stmt(call Node) -> () {
     // statement call that was not `println` -- and that refusal is gone.
     if call_callee_text(kids) != PRINT_FN {
         @type_expr(call)
+        // SILENT-OK: the decision was taken one line above, not skipped here.
+        // `@type_expr` walks this call and records its answer through the
+        // channel like any other expression -- resolving the callee, binding
+        // the arguments, refusing by name what it cannot. There is nothing
+        // left for this arm to decide, and deciding again would be a second
+        // door to one root.
         return
     } else {
         // `println` types its arguments one at a time below: the printer set is
