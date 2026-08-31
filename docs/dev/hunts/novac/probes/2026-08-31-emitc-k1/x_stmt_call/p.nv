@@ -1,0 +1,10 @@
+module p
+
+fn shout(n int) -> () {
+    println("s", n)
+}
+
+fn main() {
+    shout(3)
+    println("done")
+}

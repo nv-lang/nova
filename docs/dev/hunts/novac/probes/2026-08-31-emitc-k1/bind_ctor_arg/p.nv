@@ -1,0 +1,12 @@
+module p
+
+type Pt { n int }
+
+fn grab(p Pt) -> int {
+    p.n
+}
+
+fn main() {
+    ro x = grab(Pt { n: 7 })
+    println(x)
+}

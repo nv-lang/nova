@@ -1,0 +1,14 @@
+module p
+
+type Pt value { n int }
+
+fn bump(mut p Pt) -> int {
+    p.n = p.n + 1
+    p.n
+}
+
+fn main() {
+    mut a = Pt { n: 1 }
+    println(bump(a))
+    println(a.n)
+}

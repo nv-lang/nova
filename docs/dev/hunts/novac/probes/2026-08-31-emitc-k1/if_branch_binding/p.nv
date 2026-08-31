@@ -1,0 +1,16 @@
+module p
+
+fn pick(c bool) -> int {
+    if c {
+        ro a = 5
+        a + 1
+    } else {
+        ro b = 7
+        b + 1
+    }
+}
+
+fn main() {
+    println(pick(true))
+    println(pick(false))
+}

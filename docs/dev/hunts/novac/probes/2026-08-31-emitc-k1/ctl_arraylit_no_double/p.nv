@@ -1,0 +1,22 @@
+module p
+
+type Inner {
+    m int
+}
+
+fn tick(n int) -> int {
+    println("t", n)
+    n
+}
+
+fn take(q Inner) -> int {
+    q.m
+}
+
+fn count(v []int) -> int {
+    v.len()
+}
+
+fn main() {
+    println(count([take(Inner { m: tick(2) })]))
+}

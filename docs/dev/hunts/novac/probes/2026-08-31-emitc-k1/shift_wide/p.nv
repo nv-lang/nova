@@ -1,0 +1,7 @@
+module p
+
+fn main() {
+    mut a = 1
+    mut s = 64
+    println(a << s)
+}

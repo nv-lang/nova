@@ -1,0 +1,19 @@
+module p
+
+type Pt value { n int }
+
+type Box {
+    k int
+}
+
+fn Box @put(mut p Pt) -> int {
+    p.n = p.n + 1
+    p.n
+}
+
+fn main() {
+    mut a = Pt { n: 1 }
+    ro b = Box { k: 0 }
+    println(b.put(a))
+    println(a.n)
+}

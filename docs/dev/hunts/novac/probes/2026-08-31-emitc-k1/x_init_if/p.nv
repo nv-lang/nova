@@ -1,0 +1,6 @@
+module p
+
+fn main() {
+    ro a = if true { 10 } else { 20 }
+    println(a)
+}

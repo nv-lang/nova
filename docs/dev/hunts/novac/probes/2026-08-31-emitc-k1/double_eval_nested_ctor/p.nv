@@ -1,0 +1,27 @@
+module p
+
+type Inner {
+    m int
+}
+
+type Pt {
+    a int
+    b int
+}
+
+fn tick(n int) -> int {
+    println("t", n)
+    n
+}
+
+fn take(q Inner) -> int {
+    q.m
+}
+
+fn tally(p Pt) -> int {
+    p.a + p.b
+}
+
+fn main() {
+    println(tally(Pt { a: 1, b: take(Inner { m: tick(2) }) }))
+}

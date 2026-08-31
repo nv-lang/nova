@@ -1,0 +1,7 @@
+module p
+
+fn main() {
+    ro a = 1.5
+    ro b = 2.25
+    println(a + b)
+}

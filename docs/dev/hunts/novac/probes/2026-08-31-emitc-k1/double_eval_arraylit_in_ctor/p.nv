@@ -1,0 +1,23 @@
+module p
+
+type Pt {
+    a int
+    b int
+}
+
+fn tick(n int) -> int {
+    println("t", n)
+    n
+}
+
+fn count(v []int) -> int {
+    v.len()
+}
+
+fn tally(p Pt) -> int {
+    p.a + p.b
+}
+
+fn main() {
+    println(tally(Pt { a: 1, b: count([tick(2)]) }))
+}

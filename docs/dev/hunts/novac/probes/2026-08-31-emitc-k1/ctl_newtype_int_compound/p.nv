@@ -1,0 +1,9 @@
+module p
+
+type Row int
+
+fn main() {
+    mut a = Row(5)
+    a += Row(3)
+    println(a)
+}

@@ -1,0 +1,12 @@
+module p
+
+fn bound() -> int {
+    println("b")
+    2
+}
+
+fn main() {
+    for i in 0..bound() {
+        println(i)
+    }
+}

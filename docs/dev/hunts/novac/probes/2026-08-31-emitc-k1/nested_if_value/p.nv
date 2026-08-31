@@ -1,0 +1,15 @@
+module p
+
+fn pick(c bool, d bool) -> int {
+    ro inner = if d { 10 } else { 20 }
+    if c {
+        inner + 1
+    } else {
+        inner + 2
+    }
+}
+
+fn main() {
+    println(pick(true, true))
+    println(pick(false, false))
+}

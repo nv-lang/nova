@@ -1,0 +1,15 @@
+module p
+
+type Pt value { n int }
+
+fn mk(v int) -> Pt {
+    Pt { n: v }
+}
+
+fn main() {
+    mut a = mk(1)
+    mut b = a
+    a.n = 9
+    println(b.n)
+    println(a.n)
+}

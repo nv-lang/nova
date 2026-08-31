@@ -1,0 +1,9 @@
+module p
+
+type Meters f64
+
+fn main() {
+    ro a = Meters(1.5)
+    ro b = Meters(2.25)
+    println(a + b)
+}

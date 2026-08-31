@@ -1,0 +1,9 @@
+module p
+
+fn pick(c bool) -> int {
+    if c { 1 } else { 2 }
+}
+
+fn main() {
+    println(pick(true), pick(false))
+}

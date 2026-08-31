@@ -1,0 +1,15 @@
+module p
+
+fn tick(n int) -> int {
+    println("t", n)
+    n
+}
+
+fn run() -> () {
+    tick(1)
+}
+
+fn main() {
+    run()
+    println("end")
+}
