@@ -691,7 +691,7 @@ fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
 fn Checker @bounds_are_known(kids []Node) -> bool {
     for b in generic_bounds(kids) {
         if b == "" { continue }
-        if @ctx.protos.row_of(b) < 0 { return false }
+        if !@ctx.protos.def_of(b).is_some() { return false }
     }
     true
 }

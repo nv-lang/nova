@@ -31,7 +31,6 @@ import ../builtins.{TypeKind}
 import ../sem.{ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
-import ../sem.{is_prow}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnLookup, missing_sig_of}
 
@@ -523,9 +522,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
         if slot >= ids.len() { break }
         ro bound = @ctx.fns.tbounds[bfd.tparam_off + slot]
         if bound == "" { continue }
-        ro prow = @ctx.protos.row_of(bound)
-        if !is_prow(prow) { continue }
-        if Some(missing) = missing_sig_of(@ctx, @res, ids[slot], prow) {
+        if Some(missing) = missing_sig_of(@ctx, @res, ids[slot], bound) {
             @report_first_leaf_of(kids,
                 "outside the subset: ${ty_source_name(@ctx, ids[slot])} does not satisfy `${bound}` -- missing ${missing}")
             return

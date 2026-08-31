@@ -38,12 +38,12 @@ test "a type WITH the required method satisfies the contract" {
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
                                     param_off: 0, param_cnt: 0 })
-    ro prow = ctx.protos.add("Sized", sized_off, 1)
+    ctx.protos.add("Sized", sized_off, 1)
     // A method row: the receiver is parameter ZERO (plan 273), so `int @size()`
     // is a row named `size` whose only parameter is int.
     ctx.fns.add("size", ctx.prims.int_id, true,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
-    assert(!missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
+    assert(!missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, "Sized").is_some())
 }
 
 test "a type WITHOUT it is refused, and the MISSING signature is named" {
@@ -54,11 +54,11 @@ test "a type WITHOUT it is refused, and the MISSING signature is named" {
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
                                     param_off: 0, param_cnt: 0 })
-    ro prow = ctx.protos.add("Sized", sized_off, 1)
+    ctx.protos.add("Sized", sized_off, 1)
     // `str` has no `size` row registered, so the contract is unmet -- and the
     // answer carries the signature, not merely "unsatisfied": the bar is the
     // oracle's own message, "`Plain` is missing: size() -> int".
-    ro missing = missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.str_id, prow) ?? "none"
+    ro missing = missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.str_id, "Sized") ?? "none"
     assert(missing == "size() -> int")
 }
 
@@ -70,13 +70,13 @@ test "the RETURN TYPE is part of the requirement, not decoration" {
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
                                     param_off: 0, param_cnt: 0 })
-    ro prow = ctx.protos.add("Sized", sized_off, 1)
+    ctx.protos.add("Sized", sized_off, 1)
     // Same name, same arity, WRONG return type: a row that answers `str` where
     // the contract wants `int` does not satisfy it. Without this the predicate
     // would be a name check wearing a signature's clothes.
     ctx.fns.add("size", ctx.prims.str_id, true,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
-    assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
+    assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, "Sized").is_some())
 }
 
 test "a FREE function of the same name does not satisfy a method requirement" {
@@ -87,13 +87,13 @@ test "a FREE function of the same name does not satisfy a method requirement" {
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
                                     param_off: 0, param_cnt: 0 })
-    ro prow = ctx.protos.add("Sized", sized_off, 1)
+    ctx.protos.add("Sized", sized_off, 1)
     // `has_recv: false` -- a free `size(x int)` is not a method, and the two
     // spellings are kept apart by the language, so the predicate keeps them
     // apart too (the same rule `@fits` lives by).
     ctx.fns.add("size", ctx.prims.int_id, false,
                 []ParamDef.of(ro_param(ctx.prims.int_id)), []str.new(), []str.new())
-    assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, prow).is_some())
+    assert(missing_sig_of(ctx, FnIndex.build(ctx.fns), ctx.prims.int_id, "Sized").is_some())
 }
 
 

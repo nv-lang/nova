@@ -40,27 +40,6 @@ export type ProtoSig value {
     param_cnt int /// how many parameters, receiver EXCLUDED (the receiver is the candidate type)
 }
 
-/// A row of `ProtoTable.rows`, so a protocol row cannot be passed where some
-/// other index is meant.
-///
-/// The two siblings of this index -- `FnRow` and `FieldRow` -- have been
-/// newtypes since they were written, and the reason is recorded with them: an
-/// error AT THE DOOR instead of a defect at the link step. This one stayed a
-/// bare `int` (owner's reading, 2026-08-31), which meant a `TyId` or a slot
-/// number fitted the same parameter silently.
-///
-/// `-1` still means "no row" in the STORAGE, and the doors answer in the
-/// language of the caller.
-export type ProtoRow int
-
-/// The row's index, for the ONE thing a row is for: addressing a vector.
-#realtime nogc
-export fn raw_prow(p ProtoRow) -> int => p as int
-
-/// Is this a row at all? The door callers ask instead of comparing to zero.
-#realtime nogc
-export fn is_prow(p ProtoRow) -> bool => raw_prow(p) >= 0
-
 /// One protocol declaration: a NAME and the range of signatures it requires.
 export type ProtoDef value {
     name str /// the protocol's spelling as declared
@@ -90,17 +69,33 @@ export fn ProtoTable.new() -> ProtoTable =>
       sigs: []ProtoSig.new(), sig_params: []TyId.new() }
 
 /// Register one protocol and return its row index.
-export fn ProtoTable mut @add(name str, sig_off int, sig_cnt int) -> ProtoRow {
+export fn ProtoTable mut @add(name str, sig_off int, sig_cnt int) -> int {
     ro row = @rows.len()
     @names.put(name, row)
     @rows.push(ProtoDef { name, sig_off, sig_cnt })
-    ProtoRow(row)
+    row
 }
 
-/// The row of the protocol with this name, or `no_prow()`: the ONE door
-/// callers ask. They test it with `is_prow`, never with a comparison.
+/// The protocol this name owns, or None when the registry knows no such
+/// contract: the ONE door callers ask.
+///
+/// THE ROW AND NOT ITS INDEX, by the lesson of wave B4 (`sem/defs.nv:138`).
+/// The owner read `missing_sig_of(.., prow int)` and asked why a bare `int`
+/// stands where `FnRow` and `FieldRow` are newtypes -- a fair question about a
+/// real hole: `row_of` answered `-1` for "absent" and both readers tested it
+/// with `< 0`, the shape already forbidden for `TyId`. But the medicine is not
+/// a wrapper. This index never outlived the indexing it fed: every reader
+/// asked `row_of` and indexed `rows[..]` on the next line, and nothing ever
+/// carried it anywhere. An index like that is a STEP, not an identity, and
+/// typing a step is ceremony around a number that lives a line and a half
+/// (`check-novac-wrapper-is-stored`, section 9.1g.1). So the index is DELETED
+/// rather than named: the door answers with the row, and the `-1` goes with it.
 #realtime nogc
-export fn ProtoTable @row_of(name str) -> ProtoRow => ProtoRow(@names.find(name))
+export fn ProtoTable @def_of(name str) -> Option[ProtoDef] {
+    ro r = @names.find(name)
+    if r < 0 { return None }
+    Some(@rows[r])
+}
 
 /// Fill the signatures of ONE protocol declaration: pass 2 of the collector.
 ///
@@ -113,13 +108,12 @@ export fn ProtoTable @row_of(name str) -> ProtoRow => ProtoRow(@names.find(name)
 /// a contract has no row in `types` and that lookup would skip it.
 export fn fill_proto_sigs(mut protos ProtoTable, decl Node, tname str,
                           types []TypeDef, defs DefTable, tys Interner) -> () {
-    ro prow = protos.row_of(tname)
-    if !is_prow(prow) {
-        ice("sem: pass 2 sees a protocol pass 1 did not register")
+    mut si = 0
+    if Some(pd) = protos.def_of(tname) {
+        si = pd.sig_off
     } else {
-        // Registered in pass 1, as every protocol is.
+        ice("sem: pass 2 sees a protocol pass 1 did not register")
     }
-    mut si = protos.rows[raw_prow(prow)].sig_off
     for m in branch_children(decl) {
         if m.kind_of() != NodeKind.ProtoMethod { continue }
         ro mk = branch_children(m)
