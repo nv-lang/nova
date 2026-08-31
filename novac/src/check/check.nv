@@ -418,10 +418,26 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // be seen: `import` with no path at all parsed clean and
                     // compiled with exit code 0 (registry #815, probe
                     // `import_no_path`). This arm ends the walk, so the
-                    // question is asked here or nowhere -- and asking costs
-                    // nothing, because a gap is only REMEMBERED here and said
-                    // once per file, if the file had nothing else to say.
-                    @report_err_branch(children)
+                    // question is asked here or nowhere.
+                    //
+                    // ONLY THE Err CHILDREN, and the difference is a defect I
+                    // shipped closing #815. `@report_err_branch` takes the
+                    // children of an Err BRANCH -- "one Err branch, one
+                    // diagnostic at its FIRST leaf" -- and this arm handed it
+                    // the children of a HEALTHY import. The first leaf of an
+                    // import is the keyword, which has width, so the
+                    // width-bearing path fired every time: every `import` in
+                    // every file was refused as "not a form of the language".
+                    // Measured on novac's own source: the first refusal of 28
+                    // of its 57 files was their import line.
+                    for c in children {
+                        if c.kind_of() == NodeKind.Err {
+                            @report_err_branch(branch_children(c))
+                        } else {
+                            // The import's own tokens. This arm does not judge
+                            // the form, and saying so is the whole point above.
+                        }
+                    }
                     return
                 }
                 ExportDecl => {

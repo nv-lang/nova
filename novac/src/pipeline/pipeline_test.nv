@@ -690,6 +690,36 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "a HEALTHY import is not refused -- the gap check judges only the gap" {
+    // A defect I shipped closing #815, found by re-measuring self-distance
+    // rather than by any test: the arm handed `@report_err_branch` the children
+    // of a healthy import, and that door takes the children of an Err BRANCH.
+    // The first leaf of an import is the keyword, which has width, so the
+    // width-bearing path fired every time and EVERY import was refused as "not
+    // a form of the language". First refusal of 28 of novac's own 57 files.
+    //
+    // It lived because every test about imports asked about a BROKEN one. This
+    // asks the other question, which is the one the compiler answers all day.
+    ro std = std_decls()
+
+    ro (d1, _) = compile_to_c("import lex.{Token}
+fn main() { println(1) }", std)
+    assert(d1.len() == 0)
+
+    // A relative path with the slash and the two dots, which is how novac's own
+    // files spell it -- and the spelling that made the parser swallow whole
+    // files before 2026-08-23.
+    ro (d2, _) = compile_to_c("import ../lex.{Token, TokenKind}
+fn main() { println(1) }", std)
+    assert(d2.len() == 0)
+
+    // THE OTHER DIRECTION, so the fix cannot be "stop looking inside imports":
+    // an import with no path at all is still refused (#815).
+    ro (d3, _) = compile_to_c("import
+fn main() { println(1) }", std)
+    assert(d3.len() >= 1)
+}
+
 test "the gap NAMES the token it wanted, not merely that a form broke (#850)" {
     // Registry #850. Closing #809/#815 made a missing required token refuse --
     // but the refusal said only "this is not a form of the language", which is
