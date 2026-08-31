@@ -926,12 +926,12 @@ fn Checker mut @tell_gap_if_silent() -> () {
         // Silence otherwise: the gap is the only thing wrong with this file,
         // and saying nothing is how `fn main() {` used to compile clean.
     }
-    if @gap_kind == TokenKind.ErrorTok {
-        // The gap came from recovery, which knows a form broke but not what
-        // would have mended it.
-        @refuse_span(@gap_at, @gap_at, SYNTAX_MSG)
-    } else {
+    if Some(sp) = spelling_of(@gap_kind) {
         // The door knew what it wanted, so the refusal says it (#850).
-        @refuse_span(@gap_at, @gap_at, "syntax error: expected ${spelling_of(@gap_kind)}")
+        @refuse_span(@gap_at, @gap_at, "syntax error: expected ${sp}")
+    } else {
+        // No spelling: the gap came from recovery, which knows a form broke but
+        // not what would have mended it.
+        @refuse_span(@gap_at, @gap_at, SYNTAX_MSG)
     }
 }

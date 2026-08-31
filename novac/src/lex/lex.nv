@@ -137,81 +137,81 @@ export type TokenKind enum
 /// type them; a class of token comes back as prose ("a name"), because there is
 /// nothing to quote.
 #realtime nogc
-export fn spelling_of(k TokenKind) -> str => match k {
-    KwModule => "`module`"
-    KwFn => "`fn`"
-    KwIf => "`if`"
-    KwReturn => "`return`"
-    KwFor => "`for`"
-    KwIn => "`in`"
-    KwMut => "`mut`"
-    KwRo => "`ro`"
-    KwConsume => "`consume`"
-    KwWhile => "`while`"
-    KwType => "`type`"
-    KwMatch => "`match`"
-    KwAs => "`as`"
-    KwImport => "`import`"
-    KwUse => "`use`"
-    KwExport => "`export`"
-    KwTest => "`test`"
-    KwConst => "`const`"
-    KwElse => "`else`"
-    KwExtern => "`extern`"
-    KwUnsafe => "`unsafe`"
-    Hash => "`#`"
-    Ident => "a name"
-    IntLit => "an integer literal"
-    FloatLit => "a float literal"
-    StrLit => "a string literal"
-    LParen => "`(`"
-    RParen => "`)`"
-    LBrace => "`{`"
-    RBrace => "`}`"
-    EmptyBrackets => "`[]`"
-    LBracket => "`[`"
-    RBracket => "`]`"
-    Dot => "`.`"
-    Comma => "`,`"
-    Plus => "`+`"
-    Minus => "`-`"
-    Star => "`*`"
-    Slash => "`/`"
-    Lt => "`<`"
-    Le => "`<=`"
-    Gt => "`>`"
-    Ge => "`>=`"
-    Percent => "`%`"
-    EqEq => "`==`"
-    BangEq => "`!=`"
-    AmpAmp => "`&&`"
-    PipePipe => "`||`"
-    Amp => "`&`"
-    Caret => "`^`"
-    Shl => "`<<`"
-    Shr => "`>>`"
-    Tilde => "`~`"
-    Bang => "`!`"
-    Pipe => "`|`"
-    FatArrow => "`=>`"
-    Assign => "`=`"
-    PlusAssign => "`+=`"
-    MinusAssign => "`-=`"
-    StarAssign => "`*=`"
-    SlashAssign => "`/=`"
-    PercentAssign => "`%=`"
-    AmpAssign => "`&=`"
-    PipeAssign => "`|=`"
-    CaretAssign => "`^=`"
-    ShlAssign => "`<<=`"
-    ShrAssign => "`>>=`"
-    DotDot => "`..`"
-    Ellipsis => "`...`"
-    Colon => "`:`"
-    At => "`@`"
-    Arrow => "`->`"
-    ErrorTok => "a token"
-    Eof => "end of file"
+export fn spelling_of(k TokenKind) -> Option[str] => match k {
+    KwModule => Some("`module`")
+    KwFn => Some("`fn`")
+    KwIf => Some("`if`")
+    KwReturn => Some("`return`")
+    KwFor => Some("`for`")
+    KwIn => Some("`in`")
+    KwMut => Some("`mut`")
+    KwRo => Some("`ro`")
+    KwConsume => Some("`consume`")
+    KwWhile => Some("`while`")
+    KwType => Some("`type`")
+    KwMatch => Some("`match`")
+    KwAs => Some("`as`")
+    KwImport => Some("`import`")
+    KwUse => Some("`use`")
+    KwExport => Some("`export`")
+    KwTest => Some("`test`")
+    KwConst => Some("`const`")
+    KwElse => Some("`else`")
+    KwExtern => Some("`extern`")
+    KwUnsafe => Some("`unsafe`")
+    Hash => Some("`#`")
+    Ident => Some("a name")
+    IntLit => Some("an integer literal")
+    FloatLit => Some("a float literal")
+    StrLit => Some("a string literal")
+    LParen => Some("`(`")
+    RParen => Some("`)`")
+    LBrace => Some("`{`")
+    RBrace => Some("`}`")
+    EmptyBrackets => Some("`[]`")
+    LBracket => Some("`[`")
+    RBracket => Some("`]`")
+    Dot => Some("`.`")
+    Comma => Some("`,`")
+    Plus => Some("`+`")
+    Minus => Some("`-`")
+    Star => Some("`*`")
+    Slash => Some("`/`")
+    Lt => Some("`<`")
+    Le => Some("`<=`")
+    Gt => Some("`>`")
+    Ge => Some("`>=`")
+    Percent => Some("`%`")
+    EqEq => Some("`==`")
+    BangEq => Some("`!=`")
+    AmpAmp => Some("`&&`")
+    PipePipe => Some("`||`")
+    Amp => Some("`&`")
+    Caret => Some("`^`")
+    Shl => Some("`<<`")
+    Shr => Some("`>>`")
+    Tilde => Some("`~`")
+    Bang => Some("`!`")
+    Pipe => Some("`|`")
+    FatArrow => Some("`=>`")
+    Assign => Some("`=`")
+    PlusAssign => Some("`+=`")
+    MinusAssign => Some("`-=`")
+    StarAssign => Some("`*=`")
+    SlashAssign => Some("`/=`")
+    PercentAssign => Some("`%=`")
+    AmpAssign => Some("`&=`")
+    PipeAssign => Some("`|=`")
+    CaretAssign => Some("`^=`")
+    ShlAssign => Some("`<<=`")
+    ShrAssign => Some("`>>=`")
+    DotDot => Some("`..`")
+    Ellipsis => Some("`...`")
+    Colon => Some("`:`")
+    At => Some("`@`")
+    Arrow => Some("`->`")
+    ErrorTok => None
+    Eof => Some("end of file")
 }
 
 /// One green token: no positions stored (widths, not positions — offsets
