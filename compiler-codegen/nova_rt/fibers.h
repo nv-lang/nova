@@ -1226,6 +1226,12 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     return slot;
 }
 
+static int _nova_d791_cached = -1;
+static inline int _nova_d791(void) {
+    if (_nova_d791_cached < 0) _nova_d791_cached = (getenv("NOVA_DIAG_791") != NULL) ? 1 : 0;
+    return _nova_d791_cached;
+}
+
 static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     /* Plan 83.11 Ф.3.B: lock so alloc_slot's scan cannot observe this slot
@@ -1237,6 +1243,11 @@ static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
                 &scope->slot_lock, &_sl_exp, 1,
                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         _sl_exp = 0;
+    }
+    if (_nova_d791()) {
+        fprintf(stderr, "[791] %-24s scope=%p slot=%d co=%p\n",
+                "slot:free", (void*)scope, slot, (void*)scope->fibers[slot]);
+        fflush(stderr);
     }
     scope->fibers[slot]    = NULL;
     scope->fiber_ctx[slot] = NULL;  /* release SpawnCtx GC root */
@@ -2447,6 +2458,36 @@ typedef struct NovaResumeOutcome {
  * choose to inline their own restore instead). */
 typedef void (*NovaFiberTlsHook)(void* ctx);
 
+/* [221.1 #791] Caller tag. The measurement contradicts the code as read: the
+ * stuck coroutine was resumed exactly once, the resume returned
+ * `owned=1 dead=0 parked=0`, and every one of the four live callers answers
+ * that outcome by storing IDLE -- yet the dump finds it RUNNING with every
+ * yielded-FIFO empty. Reading cannot settle which of those two statements is
+ * wrong, because the four sites do NOT agree on what "parked" means: three
+ * consult `ro.parked`, while `nova_supervised_step` consults
+ * `sched->parked[i] && park_state==WAIT` and, when that holds, deliberately
+ * leaves the state alone on the assumption that gopark already wrote PARKED.
+ * So each site announces itself, and the log names the caller instead of
+ * leaving it to inference. Silent unless NOVA_DIAG_791 is set. */
+static inline void nova_d791_tag(const char* site, mco_coro* co) {
+    if (!_nova_d791()) return;
+    fprintf(stderr, "[791] %-24s co=%p fstate=%d\n",
+            site, (void*)co, (int)nova_fiber_state_load(co));
+    fflush(stderr);
+}
+/* [221.1 #791] Same tag with one integer -- used for the yielded-FIFO,
+ * where the worker id is the whole question: the dump shows exactly one
+ * worker whose FIFO ever grew (cap 8) and is now empty, i.e. one push and
+ * one pop, while the pop site has no path to anything but a tagged resume
+ * -- and no third resume was logged. One of those three readings is wrong,
+ * and only the FIFO itself can say which. */
+static inline void nova_d791_tag_n(const char* site, mco_coro* co, int n) {
+    if (!_nova_d791()) return;
+    fprintf(stderr, "[791] %-24s co=%p fstate=%d w=%d\n",
+            site, (void*)co, (int)nova_fiber_state_load(co), n);
+    fflush(stderr);
+}
+
 static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
                                                     NovaFiberTlsHook restore_inner,
                                                     NovaFiberTlsHook save_inner) {
@@ -2528,6 +2569,22 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         out.parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
     }
 
+    /* [221.1 #791] Diagnostic bracket around the ONE foreign call left between
+     * `mco_resume` returning and the caller writing the fiber state. Every live
+     * caller of this function does clear RUNNING (all four enumerated), yet a
+     * fiber is still found SUSPENDED-with-RUNNING — so the question is whether
+     * control ever gets back to them. If BOTH lines below appear for the stuck
+     * coroutine, the loss is downstream of this return; if only the first does,
+     * the deferred park-unlock is where control left. Off unless NOVA_DIAG_791
+     * is set; it prints per resume, so it is a probe, not a default. */
+    int _d791 = _nova_d791();
+    if (_d791) {
+        fprintf(stderr, "[791] resume-tail-enter co=%p owned=%d dead=%d parked=%d fstate=%d\n",
+                (void*)co, (int)out.owned, (int)out.dead, (int)out.parked,
+                (int)nova_fiber_state_load(co));
+        fflush(stderr);
+    }
+
     /* Deferred park-unlock: same ordering every pre-unification call site
      * used — after classification, before returning to the caller. */
     if (_nova_park_unlock_fn) {
@@ -2536,6 +2593,12 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         _nova_park_unlock_fn  = NULL;
         _nova_park_unlock_arg = NULL;
         fn(arg);
+    }
+
+    if (_d791) {
+        fprintf(stderr, "[791] resume-tail-return co=%p fstate=%d\n",
+                (void*)co, (int)nova_fiber_state_load(co));
+        fflush(stderr);
     }
 
     return out;
@@ -3021,6 +3084,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         NovaStepTlsCtx step_ctx = { q, i };
         NovaResumeOutcome ro = nova_resume_fiber(co, &step_ctx,
             _nova_resume_restore_step_tls, _nova_resume_save_step_tls);
+        nova_d791_tag("step:post-resume", co);
         if (!ro.owned) {
             /* Should not happen under bootstrap's single-thread guarantee;
              * defensive fallback — don't touch co, still count it alive so
@@ -3046,6 +3110,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         } else {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         }
+        nova_d791_tag("step:handled", co);
         if (ro.dead) {
             _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);

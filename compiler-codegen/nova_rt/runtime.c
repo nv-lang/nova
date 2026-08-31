@@ -227,6 +227,7 @@ static void _worker_yielded_push(NovaWorker* w, mco_coro* co) {
     }
     w->yielded[w->yielded_head + w->yielded_count] = co;
     w->yielded_count++;
+    nova_d791_tag_n("fifo:push", co, w->id);
 }
 
 static mco_coro* _worker_yielded_pop(NovaWorker* w) {
@@ -235,6 +236,7 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
     w->yielded_head++;
     w->yielded_count--;
     if (w->yielded_count == 0) w->yielded_head = 0;
+    nova_d791_tag_n("fifo:pop", co, w->id);
     return co;
 }
 
@@ -356,8 +358,13 @@ void nova_runtime_dump_state(const char* reason) {
             (int)_nova_global_runq.size);
         NovaFiberQueue* s = &w->scope;
         int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
-        fprintf(stderr, "[w.%d.scope] count=%d cancel_req=%d pending_remote=%d\n",
-            wi, count,
+        /* [221.1 #791] the scope POINTER, not just the counters: the
+         * epilogue's slot release (nova_scope_free_slot) is addressed BY
+         * scope, and the whole measurement turns on whether the scope it
+         * freed is the scope that still holds the coroutine. Without the
+         * address the two cannot be compared at all. */
+        fprintf(stderr, "[w.%d.scope] q=%p count=%d cancel_req=%d pending_remote=%d\n",
+            wi, (void*)s, count,
             (int)nova_abool_load(&s->cancel_requested),
             (int)nova_aint_load(&s->pending_remote));
         NovaSchedState* st = s->sched_state;
@@ -1482,6 +1489,7 @@ static void _worker_main(void* arg) {
          * state-store, no further mco_status read. */
         NovaResumeOutcome ro = nova_resume_fiber(co, base,
             _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+        nova_d791_tag("mainloop:post-resume", co);
 
         /* Fiber returned to the loop — clear the overrun timestamp so an
          * idle worker is never marked for preemption. */
@@ -1529,11 +1537,13 @@ static void _worker_main(void* arg) {
              * the LIFO deque would make the worker immediately re-pop the
              * same fiber, starving every peer below it (Plan 44.7). */
             if (ro.parked) {
+                nova_d791_tag("mainloop:left-parked", co);
                 /* Parked: nova_sched_park уже store'ил PARKED state. dispatch_ready
                  * (через wake CAS PARKED→IDLE) handle'ит requeue + state-transition. */
             } else {
                 /* Voluntary yield: RUNNING → IDLE; push в yielded-FIFO. */
                 nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+                nova_d791_tag("mainloop:stored-idle", co);
                 _worker_yielded_push(w, co);
             }
         }
@@ -1571,6 +1581,7 @@ static void _worker_main(void* arg) {
         NovaSpawnCtxBase* drain_base = (NovaSpawnCtxBase*)mco_get_user_data(co);
         NovaResumeOutcome ro = nova_resume_fiber(co, drain_base,
             _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+        nova_d791_tag("drain:post-resume", co);
         if (!ro.owned) {
             /* CAS lost, or co wasn't even SUSPENDED (duplicate pop) — not
              * ours to dispose. Don't touch co further. */
@@ -2373,6 +2384,7 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
      * caller must not touch co further either way. */
     NovaResumeOutcome ro = nova_resume_fiber(co, base,
         _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+    nova_d791_tag("runone:post-resume", co);
 
     __atomic_store_n(&w->current_fiber_start, 0, __ATOMIC_RELAXED);
 
@@ -2398,6 +2410,7 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
             /* Voluntary yield: push to yielded-FIFO (not deque — avoids
              * LIFO starvation, matches _worker_main behavior). */
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+            nova_d791_tag("runone:stored-idle", co);
             _worker_yielded_push(w, co);
         }
     }
