@@ -4247,8 +4247,8 @@ static Nova_Vec____nova_byte* nova_fn_7runtime14string_builder11sb_init_buf(nova
     Nova_Vec____nova_byte* _nv_tmp_316;
     {
         nova_int __nova_arg_src0 = cap;
-        nova_int cap = __nova_arg_src0;
-        _nv_tmp_316 = Nova_Vec____nova_byte_static_new(cap);
+        nova_int __nova_bind_cap = __nova_arg_src0;
+        _nv_tmp_316 = Nova_Vec____nova_byte_static_new(__nova_bind_cap);
     }
     return _nv_tmp_316;
 }
@@ -4366,11 +4366,11 @@ static Nova_StringBuilder* Nova_StringBuilder_method_append__nova_int(Nova_Strin
             nova_int __nova_arg_src0 = x;
             nova_byte* __nova_arg_src1 = Nova_StringBuilder_method_spare(nova_self);
             nova_int __nova_arg_src2 = Nova_const_runtime_string_builder_INT_FMT_CAP;
-            nova_int v = __nova_arg_src0;
-            nova_byte* buf = __nova_arg_src1;
-            nova_int cap = __nova_arg_src2;
-            NovaValue_FmtSpec spec = Nova_FmtSpec_static_new();
-            _nv_tmp_337 = (nova_int)(nova_fn_7runtime7fmt_buf7int_fmt(v, buf, cap, spec));
+            nova_int __nova_bind_v = __nova_arg_src0;
+            nova_byte* __nova_bind_buf = __nova_arg_src1;
+            nova_int __nova_bind_cap = __nova_arg_src2;
+            NovaValue_FmtSpec __nova_bind_spec = Nova_FmtSpec_static_new();
+            _nv_tmp_337 = (nova_int)(nova_fn_7runtime7fmt_buf7int_fmt(__nova_bind_v, __nova_bind_buf, __nova_bind_cap, __nova_bind_spec));
         }
         _nv_tmp_336 = Nova_StringBuilder_method_advance(nova_self, _nv_tmp_337);
     }
@@ -4389,12 +4389,12 @@ static Nova_StringBuilder* Nova_StringBuilder_method_append__nova_f64(Nova_Strin
             nova_f64 __nova_arg_src0 = x;
             nova_byte* __nova_arg_src1 = Nova_StringBuilder_method_spare(nova_self);
             nova_int __nova_arg_src2 = Nova_const_runtime_string_builder_F64_FMT_CAP;
-            nova_f64 v = __nova_arg_src0;
-            nova_byte* buf = __nova_arg_src1;
-            nova_int cap = __nova_arg_src2;
-            NovaValue_FloatKind kind = nova_make_FloatKind_Shortest();
-            nova_int prec = nova_int_checked_neg(((nova_int)1LL));
-            _nv_tmp_340 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(v, buf, cap, kind, prec));
+            nova_f64 __nova_bind_v = __nova_arg_src0;
+            nova_byte* __nova_bind_buf = __nova_arg_src1;
+            nova_int __nova_bind_cap = __nova_arg_src2;
+            NovaValue_FloatKind __nova_bind_kind = nova_make_FloatKind_Shortest();
+            nova_int __nova_bind_prec = nova_int_checked_neg(((nova_int)1LL));
+            _nv_tmp_340 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(__nova_bind_v, __nova_bind_buf, __nova_bind_cap, __nova_bind_kind, __nova_bind_prec));
         }
         _nv_tmp_339 = Nova_StringBuilder_method_advance(nova_self, _nv_tmp_340);
     }
@@ -4629,11 +4629,11 @@ static nova_unit nova_fn_7runtime14string_builder16int_display_spec(Nova_StringB
                 nova_byte* __nova_arg_src1 = Nova_StringBuilder_method_spare(sb);
                 nova_int __nova_arg_src2 = cap;
                 NovaValue_FmtSpec __nova_arg_src3 = spec;
-                nova_int v = __nova_arg_src0;
-                nova_byte* buf = __nova_arg_src1;
-                nova_int cap = __nova_arg_src2;
-                NovaValue_FmtSpec spec = __nova_arg_src3;
-                _nv_tmp_378 = (nova_int)(nova_fn_7runtime7fmt_buf7int_fmt(v, buf, cap, spec));
+                nova_int __nova_bind_v = __nova_arg_src0;
+                nova_byte* __nova_bind_buf = __nova_arg_src1;
+                nova_int __nova_bind_cap = __nova_arg_src2;
+                NovaValue_FmtSpec __nova_bind_spec = __nova_arg_src3;
+                _nv_tmp_378 = (nova_int)(nova_fn_7runtime7fmt_buf7int_fmt(__nova_bind_v, __nova_bind_buf, __nova_bind_cap, __nova_bind_spec));
             }
             _nv_tmp_377 = Nova_StringBuilder_method_advance(sb, _nv_tmp_378);
         }
@@ -4657,11 +4657,11 @@ static nova_unit nova_fn_7runtime14string_builder16int_display_spec(Nova_StringB
                 nova_byte* __nova_arg_src1 = Nova_StringBuilder_method_spare(sb);
                 nova_int __nova_arg_src2 = natural_cap;
                 NovaValue_FmtSpec __nova_arg_src3 = spec;
-                nova_int v = __nova_arg_src0;
-                nova_byte* buf = __nova_arg_src1;
-                nova_int cap = __nova_arg_src2;
-                NovaValue_FmtSpec spec = __nova_arg_src3;
-                _nv_tmp_381 = (nova_int)(nova_fn_7runtime7fmt_buf7int_fmt(v, buf, cap, spec));
+                nova_int __nova_bind_v = __nova_arg_src0;
+                nova_byte* __nova_bind_buf = __nova_arg_src1;
+                nova_int __nova_bind_cap = __nova_arg_src2;
+                NovaValue_FmtSpec __nova_bind_spec = __nova_arg_src3;
+                _nv_tmp_381 = (nova_int)(nova_fn_7runtime7fmt_buf7int_fmt(__nova_bind_v, __nova_bind_buf, __nova_bind_cap, __nova_bind_spec));
             }
             _nv_tmp_380 = Nova_StringBuilder_method_advance(sb, _nv_tmp_381);
         }
@@ -4713,12 +4713,12 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
                 nova_int __nova_arg_src2 = Nova_const_runtime_string_builder_DISPLAY_F64_FIXED_CAP;
                 NovaValue_FloatKind __nova_arg_src3 = nova_make_FloatKind_Fixed();
                 nova_int __nova_arg_src4 = clamped_prec;
-                nova_f64 v = __nova_arg_src0;
-                nova_byte* buf = __nova_arg_src1;
-                nova_int cap = __nova_arg_src2;
-                NovaValue_FloatKind kind = __nova_arg_src3;
-                nova_int prec = __nova_arg_src4;
-                _nv_tmp_387 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(v, buf, cap, kind, prec));
+                nova_f64 __nova_bind_v = __nova_arg_src0;
+                nova_byte* __nova_bind_buf = __nova_arg_src1;
+                nova_int __nova_bind_cap = __nova_arg_src2;
+                NovaValue_FloatKind __nova_bind_kind = __nova_arg_src3;
+                nova_int __nova_bind_prec = __nova_arg_src4;
+                _nv_tmp_387 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(__nova_bind_v, __nova_bind_buf, __nova_bind_cap, __nova_bind_kind, __nova_bind_prec));
             }
             _nv_tmp_386 = Nova_StringBuilder_method_advance(sb, _nv_tmp_387);
         }
@@ -4739,12 +4739,12 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
                 nova_f64 __nova_arg_src0 = v;
                 nova_byte* __nova_arg_src1 = Nova_StringBuilder_method_spare(sb);
                 nova_int __nova_arg_src2 = Nova_const_runtime_string_builder_DISPLAY_F64_SHORTEST_CAP;
-                nova_f64 v = __nova_arg_src0;
-                nova_byte* buf = __nova_arg_src1;
-                nova_int cap = __nova_arg_src2;
-                NovaValue_FloatKind kind = nova_make_FloatKind_Shortest();
-                nova_int prec = nova_int_checked_neg(((nova_int)1LL));
-                _nv_tmp_390 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(v, buf, cap, kind, prec));
+                nova_f64 __nova_bind_v = __nova_arg_src0;
+                nova_byte* __nova_bind_buf = __nova_arg_src1;
+                nova_int __nova_bind_cap = __nova_arg_src2;
+                NovaValue_FloatKind __nova_bind_kind = nova_make_FloatKind_Shortest();
+                nova_int __nova_bind_prec = nova_int_checked_neg(((nova_int)1LL));
+                _nv_tmp_390 = (nova_int)(nova_fn_7runtime7fmt_buf7f64_fmt(__nova_bind_v, __nova_bind_buf, __nova_bind_cap, __nova_bind_kind, __nova_bind_prec));
             }
             _nv_tmp_389 = Nova_StringBuilder_method_advance(sb, _nv_tmp_390);
         }
@@ -4893,8 +4893,8 @@ static nova_unit nova_fn_7runtime14string_builder22str_debug_display_spec(Nova_S
     Nova_Vec____nova_byte* _nv_tmp_408;
     {
         nova_int __nova_arg_src0 = cap;
-        nova_int cap = __nova_arg_src0;
-        _nv_tmp_408 = Nova_Vec____nova_byte_static_new(cap);
+        nova_int __nova_bind_cap = __nova_arg_src0;
+        _nv_tmp_408 = Nova_Vec____nova_byte_static_new(__nova_bind_cap);
     }
     Nova_Vec____nova_byte* scratch = _nv_tmp_408;
     nova_int n = nova_fn_7runtime7fmt_buf13str_debug_fmt(v, ((scratch)->data), cap);
@@ -4927,8 +4927,8 @@ static nova_str Nova_str_method_to_ascii_upper(nova_str nova_self) {
     Nova_Vec____nova_byte* _nv_tmp_413;
     {
         nova_int __nova_arg_src0 = n;
-        nova_int cap = __nova_arg_src0;
-        _nv_tmp_413 = Nova_Vec____nova_byte_static_new(cap);
+        nova_int __nova_bind_cap = __nova_arg_src0;
+        _nv_tmp_413 = Nova_Vec____nova_byte_static_new(__nova_bind_cap);
     }
     Nova_Vec____nova_byte* out = _nv_tmp_413;
     (void)(Vec____nova_byte_method_append____Nova_Vec____nova_byte_p(out, bytes));
@@ -4960,8 +4960,8 @@ static nova_str Nova_str_method_concat(nova_str nova_self, nova_str other) {
     Nova_Vec____nova_byte* _nv_tmp_418;
     {
         nova_int __nova_arg_src0 = nova_int_checked_add(Vec____nova_byte_method_len(a), Vec____nova_byte_method_len(b));
-        nova_int cap = __nova_arg_src0;
-        _nv_tmp_418 = Nova_Vec____nova_byte_static_new(cap);
+        nova_int __nova_bind_cap = __nova_arg_src0;
+        _nv_tmp_418 = Nova_Vec____nova_byte_static_new(__nova_bind_cap);
     }
     Nova_Vec____nova_byte* out = Vec____nova_byte_method_append____Nova_Vec____nova_byte_p(Vec____nova_byte_method_append____Nova_Vec____nova_byte_p(_nv_tmp_418, a), b);
     nova_str _nv_tmp_419;
