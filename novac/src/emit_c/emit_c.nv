@@ -179,6 +179,9 @@ fn Emitter mut @emit_type_decls() -> () {
             // unreferenced typedef would be text nobody reads.
             TkNewtype => {}
             TkInfer => ice("emit_c: declaration of an inference variable — a variable escaped its body")
+            // A tuple is a structural TERM: nothing ever declares one, so a
+            // registry row with this kind is a harvest bug, not a decl to emit.
+            TkTuple => ice("emit_c: a TUPLE among declarations — a structural term declares nothing")
         }
     }
 }

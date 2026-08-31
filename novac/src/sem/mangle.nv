@@ -69,7 +69,7 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
         if !is_ty(cur) { return cur }
         ro is_new = match ctx.tys.kind_of(cur) {
             TkNewtype => true
-            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => false
         }
         if !is_new { return cur }
         cur = representation_of(ctx, cur)
@@ -94,7 +94,7 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
         TkSum => {}
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype => { return false }
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple => { return false }
     }
     ro td = decl_of_ty(ctx, t)
     if is_runtime_abi_sum(td.name) { return false }
@@ -130,6 +130,7 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkNewtype => decl_of_ty(ctx, t).name
         TkApp => instance_source_name(ctx, t)
         TkParam => "a type parameter"
+        TkTuple => "a tuple"
         TkInfer => "an inference variable"
     }
 }
@@ -187,7 +188,7 @@ export fn is_value_record(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
         TkRecord => decl_of_ty(ctx, t).by_value
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer => false
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => false
     }
 }
 
@@ -229,6 +230,10 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             TkApp => { return "${instance_struct_name(ctx, t)}*" }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
+            // The tuple TERM exists since B15 step 3; its C spelling is the
+            // D123 mono struct and arrives with step 4 (emission). Reaching
+            // here earlier means a tuple got past check's named refusal.
+            TkTuple => { ice("mangle: the C type of a TUPLE — arrives with B15 step 4") }
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
@@ -261,6 +266,7 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         TkApp => { return instance_struct_name(ctx, t) }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
+        TkTuple => { ice("mangle: the struct name of a TUPLE — arrives with B15 step 4") }
     }
 }
 
@@ -318,7 +324,7 @@ fn instance_body(ctx Ctx, t TyId) -> str {
         TkRecord => {}
         TkSum => ice("mangle: an instance of a generic SUM has the oracle's family spelling (NovaOpt_/NovaRes_) — arrives with the Option wave")
         // A head is a declaration; these are not declarations a `[T]` can hang on.
-        TkPrim | TkApp | TkParam | TkInfer | TkNewtype =>
+        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple =>
             ice("mangle: an application whose head is not a record or sum declaration")
     }
     consume s = StringBuilder.new(cap: 64)
@@ -351,6 +357,7 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         TkApp => "${instance_struct_name(ctx, a)}_p"
         TkSum => ice("mangle: a SUM as an instance argument — its in-name spelling is not measured on the shell")
         TkNewtype => ice("mangle: a NEWTYPE as an instance argument — its in-name spelling is not measured on the shell")
+        TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
         TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
         TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
     }
@@ -479,7 +486,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         // Every other kind is already a type: a substitution has nothing to
         // rewrite in it. Named one by one rather than through a wildcard --
         // a new kind must come here and say what it does (P21).
-        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype => {}
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple => {}
     }
     // `same_ty`, not `t`: [LEGACY-#760-newtype-ro-launder].
     same_ty(t)
@@ -544,6 +551,10 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // The newtype's OWN name, never the representation's: `f(Row)` and
         // `f(int)` are two callables, and the C name is what keeps them apart.
         TkNewtype => decl_of_ty(ctx, t).name
+        // A tuple PARAMETER is outside the wave's bounds on purpose (B15,
+        // bounds: novac itself carries none) -- the C name would be the
+        // first thing to need a spelling, so the boundary is named here.
+        TkTuple => ice("mangle: a TUPLE in a callable's C name — tuple parameters are deferred (B15 bounds)")
         // An INSTANCE inside one of OUR names: `Vec_of_nova_int`. This is not
         // the shell's spelling (`Vec____nova_int`) on purpose -- a callable's C
         // name is ours (274 section 7.0), and the pieces are chosen so no

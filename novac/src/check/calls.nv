@@ -310,7 +310,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     }
     ro is_newtype = match decl_of_ty(@ctx, type_id).kind {
         TkNewtype => true
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => false
     }
     if !is_newtype {
         @report_first_leaf_of(kids,

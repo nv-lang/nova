@@ -38,6 +38,7 @@ export type TypeKind enum
     | TkParam /// a type parameter of the enclosing declaration, by index (E2-b1)
     | TkInfer /// an inference variable, alive only inside one body (E2-b1)
     | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
+    | TkTuple /// a structural TUPLE (D123): head = ARITY, components in the interner's args -- no declaration, its identity IS its components (B15 step 3)
 
 /// How many kinds there are. The interner's bucket arithmetic multiplies by
 /// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
@@ -45,7 +46,7 @@ export type TypeKind enum
 /// first thing to drift when a kind is added). Every dispatch on TypeKind is
 /// an exhaustive match, so a seventh kind is a compile error at each site —
 /// and this constant is the ONE place a match cannot reach, hence the note.
-export const TYPE_KIND_COUNT = 7
+export const TYPE_KIND_COUNT = 8
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"

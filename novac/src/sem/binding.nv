@@ -426,6 +426,18 @@ export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
             }
             return true
         }
+        // A TUPLE admits structurally, exactly as an application does -- but
+        // its head is the ARITY, not a declaration, so the head test is the
+        // component count (asking decl_head_of would ice on purpose).
+        TkTuple => {
+            if tys.kind_of(got) != TypeKind.TkTuple { return false }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return false }
+            for i in 0..n {
+                if !type_admits(tys, tys.arg(want, i), tys.arg(got, i)) { return false }
+            }
+            return true
+        }
         TkPrim | TkRecord | TkSum | TkInfer | TkNewtype => { return want == got }
     }
 }
@@ -448,6 +460,18 @@ export fn slot_binding_in(tys Interner, want TyId, got TyId, slot int) -> TyId {
         TkApp => {
             if tys.kind_of(got) != TypeKind.TkApp { return no_ty() }
             if tys.decl_head_of(want) != tys.decl_head_of(got) { return no_ty() }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return no_ty() }
+            for i in 0..n {
+                ro b = slot_binding_in(tys, tys.arg(want, i), tys.arg(got, i), slot)
+                if is_ty(b) { return b }
+            }
+            return no_ty()
+        }
+        // Deduction walks INTO a tuple as into an application: same shape,
+        // arity for a head (see type_admits above).
+        TkTuple => {
+            if tys.kind_of(got) != TypeKind.TkTuple { return no_ty() }
             ro n = tys.arg_count(want)
             if n != tys.arg_count(got) { return no_ty() }
             for i in 0..n {

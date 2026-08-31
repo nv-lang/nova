@@ -118,3 +118,27 @@ test "chains: many applications of one head stay distinct and findable" {
     assert(it.app(vec_decl, []TyId.of(it.prim(3))) == ids[3])
     assert(it.rows.len() == before)
 }
+
+test "a tuple interns structurally: same components, one row (B15 step 3)" {
+    mut it = Interner.new()
+    ro a = it.prim(0)
+    ro b = it.prim(1)
+    ro p1 = it.tuple([]TyId.of(a, b))
+    // The SAME components find the row instead of growing a twin -- that is
+    // the structural identity D123 asks for, and the interner's dedup is the
+    // mechanism that holds it.
+    ro before = it.rows.len()
+    ro p2 = it.tuple([]TyId.of(a, b))
+    assert(p1 == p2)
+    assert(it.rows.len() == before)
+    // Order is identity: (int, str) is not (str, int).
+    assert(it.tuple([]TyId.of(b, a)) != p1)
+    // Arity splits buckets: a 1-tuple over the same head slot is another term.
+    assert(it.tuple([]TyId.of(a)) != p1)
+    // Concreteness walks the components, substitution passes through them.
+    assert(it.is_concrete(p1))
+    ro pp = it.tuple([]TyId.of(it.param(0), b))
+    assert(!it.is_concrete(pp))
+    ro st = it.subst(pp, []TyId.of(a))
+    assert(st == p1)
+}
