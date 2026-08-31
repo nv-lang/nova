@@ -275,7 +275,6 @@ fn Checker mut @type_block(b Node) -> () {
     @scope.release(mark)
 }
 
-/// The index of the last BRANCH child: trailing leaves are not statements.
 /// Type a tail `if` as a VALUE: both branches, and the type they agree on.
 ///
 /// The agreement is the whole rule. `if c { 1 } else { "s" }` has no type, and a
@@ -350,6 +349,7 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
     out_t
 }
 
+/// The index of the last BRANCH child: trailing leaves are not statements.
 fn last_branch_of(kids []Node) -> int {
     mut last = -1
     mut i = 0

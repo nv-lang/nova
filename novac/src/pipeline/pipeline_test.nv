@@ -690,6 +690,31 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "an `if` initializer binds through the same doors as the tail form (B14)" {
+    // The owner\'s remark measured wider than the wave: the oracle also takes
+    // `if` as an INITIALIZER (`ro x = if 1 == 1 { 10 } else { 20 }` prints 10
+    // there). The parser reads value-position `if` as its OWN kind (IfExpr,
+    // same child layout), which the first version of this arm learned from a
+    // probe: the binding arm matched IfStmt and never fired.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro x = if 1 == 1 { 10 } else { 20 }
+ println(x)
+}", std)
+    assert(d.len() == 0)
+    // The TEMPORARY again, not the keyword: only the value form declares one.
+    assert(c.contains("_novac_if_t"))
+
+    // THE OTHER DIRECTION: without an `else` there is no value to bind, and
+    // the refusal must come by name -- the parser leaves the else slot absent
+    // exactly so check can see the absence.
+    ro (d2, _) = compile_to_c("fn main() {
+ ro x = if 1 == 1 { 10 }
+ println(x)
+}", std)
+    assert(d2.len() >= 1)
+}
+
 test "a tail `if` is the returned VALUE, and the branches must agree (wave B14)" {
     // Named by measurement: five files stopped at "body ends without a value",
     // and reading the source under each refusal gave three different forms.

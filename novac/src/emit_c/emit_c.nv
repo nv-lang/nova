@@ -895,6 +895,17 @@ fn Emitter mut @emit_bind(st Node) -> () {
         @body.append(" ${vname} = _novac_match_t${u};\n")
         return
     }
+    if init.kind_of() == NodeKind.IfExpr {
+        // The initializer `if` lays down exactly like the tail one (wave B14):
+        // the value temporary, then the binding reads it -- the same pair the
+        // match above has always emitted.
+        ro u = @fresh_uniq()
+        @emit_if_value(init, u, vtype)
+        @body.append("    ")
+        @body.append(c_type(@ctx, vtype))
+        @body.append(" ${vname} = _novac_if_t${u};\n")
+        return
+    }
     // A literal is built into a temporary first; the `return` IS the other
     // branch (P31 form 2), and the shapes below are for every other initializer.
     if init.kind_of() == NodeKind.ArrayLit {

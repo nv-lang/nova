@@ -109,6 +109,23 @@ fn Checker mut @type_bind(st Node) -> () {
     // This half was missed when the arm moved out of the subset walk on
     // 2026-08-31, and the module test caught it: `ro v = nosuch(i)[0]` stopped
     // being refused AT ALL, because this path never calls `@type_expr`.
+    // AN `if` DECIDES ITS OWN TYPE HERE (wave B14, initializer position):
+    // the doors were written for the tail form and the type comes from them --
+    // both branches typed, forced to AGREE, the agreed type recorded. The
+    // lattice cannot answer instead: it reads what was recorded, and nothing
+    // has recorded this yet. Same reason, same shape as the two arms below.
+    if ik == NodeKind.IfExpr {
+        @type_if_value(init)
+        ro if_t = @chan.type_if_known(init.id_of())
+        // SILENT-OK: a refused `if` (no else, disagreeing branches, a branch
+        // without a value) was reported inside `@type_if_value`, by name; it
+        // has nothing to record and binds no name.
+        if !is_ty(if_t) { return }
+        @scope.bind(vname, if_t, bind_mode_at(kids))
+        return
+    } else {
+        // Not an `if`: the arms below decide.
+    }
     if ik == NodeKind.Index {
         ro idx_t = @type_index(init)
         // SILENT-OK: refused inside `@type_index`, by name; an index with no

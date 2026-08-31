@@ -393,8 +393,18 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_return_form(children)
                 }
                 IfExpr => {
-                    @report_first_leaf_of(children, IF_EXPR_MSG)
-                    return
+                    // INITIALIZER POSITION IS LEGAL since wave B14: the binding
+                    // path types it through the same doors as the tail form
+                    // (both branches, forced to agree) and the emitter lays it
+                    // into a value temporary. Everywhere else the refusal
+                    // stands, exactly as the record constructor's does.
+                    if !init_pos {
+                        @report_first_leaf_of(children, IF_EXPR_MSG)
+                        return
+                    } else {
+                        // In initializer position the walk continues into the
+                        // children like any other node's.
+                    }
                 }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding
