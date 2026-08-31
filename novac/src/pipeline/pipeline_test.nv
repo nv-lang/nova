@@ -711,6 +711,22 @@ fn main() { println(1) }", std)
     for g in d {
         assert(!g.message.contains("internal compiler error"))
     }
+
+    // THE SECOND SHAPE of the same class, and it had a different root: here the
+    // receiver is a call to a name that does NOT exist. The walk refuses it by
+    // name, and the index door then asked `type_of` about it anyway -- and
+    // `type_of` on a call whose name is not in the registry raises an ice. So
+    // the refusal was correct and the crash came after it, which is why no
+    // probe on a well-formed program could find this.
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {
+ ro v = nosuch(i)[0]
+ v
+}
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(!g.message.contains("internal compiler error"))
+    }
 }
 
 test "a HEALTHY import is not refused -- the gap check judges only the gap" {

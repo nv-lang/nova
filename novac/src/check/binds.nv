@@ -179,7 +179,22 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // A computed receiver: not a type name by construction.
     }
+    // THE MARK, not the file's count: the question is about THIS receiver.
+    // Without it the door asked `type_of` for a receiver the line above had
+    // just refused -- and `type_of` on a call whose name is not in the registry
+    // raises an ice, not a diagnostic. Probe: `nosuch(i)[0]`, one of the five
+    // ICEs novac had on its own source. The same guard is written a file away
+    // in `@type_call_stmt`, and this door was the one place that skipped it.
+    ro before = @out.len()
     @type_expr(kids[0])
+    if @out.len() > before {
+        // SILENT-OK: the receiver was refused just now, by name. One cause,
+        // one diagnostic; asking its type after refusing it is asking about a
+        // thing that was already said not to exist.
+        return no_ty()
+    } else {
+        // Nothing said about the receiver: its type is a fair question.
+    }
     ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
     if !is_ty(recv_t) {
         // SILENT-OK: the receiver was refused already, and one cause gets one
