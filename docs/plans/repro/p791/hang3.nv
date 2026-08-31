@@ -1,0 +1,72 @@
+// Registry 221.1 #791 — carrier attempt v3, testing hypothesis (a) from README.
+//
+// v1 and v2 both EXIT. The README names three candidate missing details; this
+// file tests the first and most likely one:
+//
+//   (a) WHICH fiber does the uv write. In the showcase that hangs, the write
+//       is done by the per-connection HANDLER into the ACCEPTED (server-side)
+//       socket. In v2 it was a client fiber writing into its own client
+//       socket. Row #791 says "socket of the connection", which admits both.
+//
+// So here the cancelling fiber IS the handler: a spawn child under a nested
+// supervised, owning the ACCEPTED socket (`spawn consume s`), writing into it
+// and then cancelling.
+//
+// EXPECTED IF (a) IS THE MISSING DETAIL: the process never exits (timeout 20
+// returns 124). If it exits, (a) is ruled out and the next candidate is (b) or
+// (c) from the README.
+
+import std.net.{TcpListener, TcpStream, NetError, SocketAddr, real_net}
+import std.time.duration
+
+fn main() Io Net Time -> () {
+    with Net = real_net() {
+        ro (port_tx, port_rx) = Channel[u16].new(1)
+        ro tok = CancelToken.new()
+
+        supervised(cancel: tok) {
+            // A — owns the listener, accepts, and hands each connection to a
+            // handler child.
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => { ro _ = port_tx.try_send(0 as u16); return }
+                }
+                ro _ = port_tx.try_send(lst.local_port())
+                mut running = true
+                while running {
+                    match lst.accept() {
+                        Ok(consume s) => {
+                            supervised {                 // nested supervised
+                                spawn consume s {        // the HANDLER child
+                                    // nova:allow W_RESULT_DISCARDED -- the probe judges process exit
+                                    ro _ = s.write("bye")   // (3) write into the ACCEPTED socket
+                                    tok.cancel()            // (2) cancel from this same fiber
+                                    s.close()
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            match e {
+                                NetError.Cancelled => { running = false }
+                                _ => { 20.to_millis().sleep() }
+                            }
+                        }
+                    }
+                }
+                lst.close()
+            }
+
+            // A plain client: connect once so the handler above exists at all.
+            spawn {
+                ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume c) => { 200.to_millis().sleep(); c.close() }
+                    Err(_) => println("client connect failed")
+                }
+            }
+        }
+
+        println("after-supervised")
+    }
+}
