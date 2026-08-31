@@ -611,6 +611,12 @@ fn Checker mut @type_stmt(st Node) -> () {
         // MatchExpr arm, and routing there left arms untyped and coverage
         // unjudged (the recon of 2026-08-29 measured exactly that).
         @type_match_stmt(st)
+    } else if k == NodeKind.TupleExpr {
+        // Named ALONE and not put into is_expr_kind (wave B13 lesson): a
+        // tuple in statement position is legal -- the oracle accepts and
+        // discards it -- and the emitter reads the recorded type to build
+        // the dropped temporary (B15 step 4a).
+        @type_expr(st)
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else {

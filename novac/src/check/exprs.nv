@@ -38,7 +38,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name, c_shell_method, digit_index}
+import ../sem.{ty_source_name, c_shell_method, digit_index, is_tuple}
 import ../types.{TyId, no_ty, is_ty}
 
 /// One expression: record what the emitter asks about, walk what it emits.
@@ -156,7 +156,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // the declaration registry, and a tuple has no declaration to ask
         // (B15 step 4a). The index is judged against the ARITY, which is
         // exactly what the term's head stores.
-        if is_ty(owner) && @ctx.tys.kind_of(owner) == TypeKind.TkTuple {
+        if is_tuple(@ctx, owner) {
             match kids[2] {
                 Leaf(t) => {
                     ro idx = digit_index(t.text)

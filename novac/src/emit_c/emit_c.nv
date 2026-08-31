@@ -769,6 +769,16 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append("    (void)(")
         @emit_expr(st)
         @body.append(");\n")
+    } else if k == NodeKind.TupleExpr {
+        // A tuple in STATEMENT position: the oracle accepts it and discards
+        // the value, the component effects run in written order -- so the
+        // build IS the emission and the temporary is simply not read (B15
+        // step 4a; found by the tail probe, where check passed the form and
+        // this door iced).
+        ro dropped = @emit_tuple_lit(st, @out.type_of(st.id_of()))
+        @body.append("    (void)")
+        @body.append(dropped)
+        @body.append(";\n")
     } else {
         ice("emit: statement kind outside the subset")
     }
@@ -845,77 +855,6 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
             @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
         }
     }
-}
-
-/// Emit a guarded typedef for every tuple type this file's channel decided
-/// (D123 mono struct, on demand -- the norm retired the blanket pre-decl).
-/// The guard (`#ifndef NOVA_TUPLE_TYPEDEF_<name>`) is the shell's own idiom,
-/// so a pair the shell already carries is simply not redefined. Order is by
-/// ascending term id, which is TOPOLOGICAL: a component interns before the
-/// tuple that holds it, so a nested pair's typedef lands first. Tuples inside
-/// generic instances arrive with E2-b2, the same boundary every instance
-/// type keeps (named, not forgotten).
-fn Emitter mut @emit_tuple_typedefs() -> () {
-    mut ids = []int.new()
-    for t in @out.types {
-        if !is_ty(t) { continue }
-        ro k = @ctx.tys.kind_of(t)
-        if k != TypeKind.TkTuple { continue }
-        ro rid = raw_ty(t)
-        mut dup = false
-        for seen in ids {
-            if seen == rid {
-                dup = true
-            }
-        }
-        if dup { continue }
-        // INSERTION into ascending order: the vector is as small as the
-        // file's distinct tuple types, and the order is the contract above.
-        mut at = ids.len()
-        for j in 0..ids.len() {
-            if ids[j] > rid && at == ids.len() {
-                at = j
-            }
-        }
-        ids.insert(at, rid)
-    }
-    for rid in ids {
-        ro t = TyId(rid)
-        ro name = c_struct(@ctx, t)
-        @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
-        @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
-        @body.append("typedef struct ${name} { ")
-        for i in 0..@ctx.tys.arg_count(t) {
-            @body.append(c_type(@ctx, @ctx.tys.arg(t, i)))
-            @body.append(" f${i}; ")
-        }
-        @body.append("} ${name};\n")
-        @body.append("#endif\n")
-    }
-}
-
-/// A tuple literal: build the mono struct into a numbered temporary, one
-/// field per component IN WRITTEN ORDER -- each component is hoisted right
-/// before its own assignment line, so a component's side effect runs where
-/// the source puts it (the H1/H2 discipline of the record constructor).
-fn Emitter mut @emit_tuple_lit(init Node, vtype TyId) -> str {
-    ro name = c_struct(@ctx, vtype)
-    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
-    @body.append("    ${name} ${tmp};\n")
-    mut i = 0
-    for c in branch_children(init) {
-        match c {
-            Leaf(_) => {} // parens and commas -- trivia, not components
-            Branch { .. } => {
-                @hoist_array_lits(c)
-                @body.append("    ${tmp}.f${i} = ")
-                @emit_expr(c)
-                @body.append(";\n")
-                i += 1
-            }
-        }
-    }
-    tmp
 }
 
 /// A record constructor at a binding: builds the value into a numbered

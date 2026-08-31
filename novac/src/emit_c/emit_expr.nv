@@ -24,6 +24,7 @@ import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_
 import ../sem.{is_value_record}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, is_ty}
+import ../sem.{is_tuple}
 
 
 /// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
@@ -321,8 +322,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // A TUPLE projection prints `.fN` (D123 named-field codegen): the
         // owner is a by-value mono struct, so the dot is not a choice here
         // the way it is for records below.
-        ro ot = @out.type_if_known(kids[0].id_of())
-        if is_ty(ot) && @ctx.tys.kind_of(ot) == TypeKind.TkTuple {
+        if is_tuple(@ctx, @out.type_if_known(kids[0].id_of())) {
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(".f")
