@@ -3160,6 +3160,48 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     uint64_t _pxwd_start = uv_hrtime();
     bool     _pxwd_fired = false;
     int      _pxwd_secs  = 10;
+    /* [221.1 #791] ORPHAN-DRAIN STOP. Owner's decision 2026-09-01: do not
+     * touch `detach` semantics, give the orphan drain its own stopping path.
+     *
+     * WHAT IS ACTUALLY STUCK, measured rather than assumed. The child that
+     * holds this drain is a detached fiber spinning in a retry loop: the
+     * worker enters `mco_resume` and never returns (a probe logs the call
+     * going in and no line coming out), the dump reads `mco_status=2` which
+     * is MCO_RUNNING, and CPU time grows ~2.4s per 2.4s -- one core flat out.
+     * Such a fiber NEVER parks, so it registers no stop_cb and the cancel
+     * fan-out has nothing to hand it; the first version of this fix aimed
+     * exactly that fan-out and changed nothing, which is how the loop was
+     * found. The one path left is the `cancel_requested` check at its
+     * safepoints, which consults the fiber's OWN `_nova_parent_scope` -- and
+     * for a detached fiber that scope IS this orphan scope, on which nobody
+     * ever set the flag. `nova_scope_deliver_cancel` sets it (and wakes the
+     * parked ones too, so both shapes are covered by one call).
+     *
+     * NOT a change to `detach` semantics: the flag is set by the RUNTIME at
+     * process exit, never by a user token, and only on the orphan scope --
+     * `q` must BE that scope, so main's own drain is untouched.
+     *
+     * THE TRADE, STATED: a detached fiber that legitimately needs more than
+     * the grace period of uninterrupted work at process exit will be asked to
+     * cancel. A permanent spin and slow work look identical from here -- one
+     * running fiber -- so it is a knob, not a guess: NOVA_ORPHAN_DRAIN_GRACE_SECS,
+     * default 10s, 0 restores the previous wait-forever. Separate from
+     * NOVA_WATCHDOG_DUMP_SECS on purpose: turning the dump off must not turn
+     * the fix off. The window runs from the last CHANGE of `remote`, so a
+     * scope whose children keep completing keeps resetting it. */
+    extern struct NovaFiberQueue* nova_runtime_orphan_scope(void);
+    const bool _ods_is_orphan = (q == (NovaFiberQueue*)nova_runtime_orphan_scope());
+    bool     _ods_fired  = false;
+    int      _ods_secs   = 10;
+    {
+        const char* _ods_env = getenv("NOVA_ORPHAN_DRAIN_GRACE_SECS");
+        if (_ods_env && _ods_env[0]) {
+            int _v = atoi(_ods_env);
+            if (_v >= 0) _ods_secs = _v;
+        }
+    }
+    uint64_t _ods_mark = uv_hrtime();
+    int      _ods_last = -1;
     {
         const char* _pxwd_env = getenv("NOVA_WATCHDOG_DUMP_SECS");
         if (_pxwd_env && _pxwd_env[0]) {
@@ -3184,6 +3226,17 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                 fprintf(stderr, "[m456] drain_main_scope STILL WAITING remote loop q=%p remote=%d iters=%lld\n",
                         (void*)q, remote, _nv456_iters);
                 fflush(stderr);
+            }
+            /* [221.1 #791] orphan-drain stop -- see the banner above. */
+            if (_ods_is_orphan && !_ods_fired && _ods_secs > 0) {
+                if (remote != _ods_last) {
+                    _ods_last = remote;
+                    _ods_mark = uv_hrtime();
+                } else if ((uv_hrtime() - _ods_mark) / 1000000000ULL
+                           >= (uint64_t)_ods_secs) {
+                    _ods_fired = true;
+                    nova_scope_deliver_cancel(q, NULL);
+                }
             }
             /* [221.1 #791] see the banner at the top of this function. */
             if (!_pxwd_fired && _pxwd_secs > 0) {
