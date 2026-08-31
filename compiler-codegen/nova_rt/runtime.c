@@ -330,11 +330,30 @@ void nova_runtime_dump_state(const char* reason) {
     }
     for (int wi = 0; wi < _n_workers; wi++) {
         NovaWorker* w = &_workers[wi];
+        /* [221.1 #791] `yielded` IS PRINTED HERE BECAUSE THE DUMP WAS BLIND TO IT,
+         * and that blindness is exactly what hid the defect. A fiber preempted by
+         * sysmon (Plan 44.7) lands in this per-worker FIFO, not in runnext, not in
+         * the ring, not in wake_pending -- so the dump showed it only as
+         * "SUSPENDED but not parked" with no hint of WHERE it was waiting, and the
+         * reader had no way to tell a lost wake from a lost re-schedule.
+         *
+         * The runtime already knows this queue can black-hole a fiber: the nested-
+         * supervised pump drains it deliberately (Plan 83.4.5.12,
+         * [M-187-supervised-nested-fiber-slot-race]) and its comment names this very
+         * signature -- "the fiber SUSPENDED-not-parked with a non-empty
+         * yielded-FIFO". A dump that cannot show the second half of that sentence
+         * cannot confirm or refute it, which is why #791 stayed a guess for weeks.
+         *
+         * Diagnostic only: two more integers on a line that is already only printed
+         * when something has gone wrong. */
         fprintf(stderr,
-            "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d\n",
+            "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d yielded=%d/%d ring=%u global=%d\n",
             wi, (void*)w->runnext, w->wake_pending_count,
             (int)__atomic_load_n(&w->preempt_flag, __ATOMIC_RELAXED),
-            (int)nova_abool_load(&w->stop));
+            (int)nova_abool_load(&w->stop),
+            w->yielded_count, w->yielded_cap,
+            (unsigned)nova_runq_len(&w->runq),
+            (int)_nova_global_runq.size);
         NovaFiberQueue* s = &w->scope;
         int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
         fprintf(stderr, "[w.%d.scope] count=%d cancel_req=%d pending_remote=%d\n",
@@ -383,8 +402,17 @@ void nova_runtime_dump_state(const char* reason) {
                 bool stuck_alive = co && mco_st == MCO_SUSPENDED && !pk;
                 if (stuck_alive) alive_non_parked++;
                 fprintf(stderr,
-                    "[w.%d.fiber.s%d] co=%p mco_status=%d parent_scope=%p parked=%d pstate=%d hdl=%p stop_cb=%p%s\n",
+                    /* [221.1 #791] `fstate` = _nova_fiber_state (IDLE/RUNNING/PARKED/DEAD).
+                     * Its CAS is what decides WHO re-queues a woken fiber
+                     * (wake = CAS PARKED->IDLE, and only the winner calls
+                     * dispatch_ready), so without it the dump cannot tell a
+                     * fiber nobody woke from one that was woken and then never
+                     * queued -- and IDLE is documented as "suspended, NOT in any
+                     * deque/wake-queue", which is exactly the state a lost
+                     * re-schedule leaves behind. */
+                    "[w.%d.fiber.s%d] co=%p mco_status=%d fstate=%d parent_scope=%p parked=%d pstate=%d hdl=%p stop_cb=%p%s\n",
                     wi, i, (void*)co, mco_st,
+                    co ? (int)nova_fiber_state_load(co) : -1,
                     base ? (void*)base->_nova_parent_scope : NULL,
                     (int)pk, ps,
                     nova_sched_pending_handle_at(st, i) ? *nova_sched_pending_handle_at(st, i) : NULL,
