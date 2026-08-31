@@ -534,12 +534,18 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
                 }
                 RecordCtor => {
-                    if !init_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer")
+                    // AN ARGUMENT IS A LEGAL POSITION TOO (wave B13). The
+                    // emitter builds a constructor into a numbered temporary
+                    // and reads the temporary where the value is wanted, which
+                    // is exactly what an array literal has done since B8 -- so
+                    // `arg_pos` is answered here the same way `ArrayLit`
+                    // answers it a few arms below.
+                    if !init_pos && !arg_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer or a call argument")
                         return
                     } else {
-                        // In initializer position the constructor is legal;
-                        // its children are walked below like any other node.
+                        // Initializer or argument: legal, and the children are
+                        // walked below like any other node's.
                     }
                 }
                 DepthErr => {

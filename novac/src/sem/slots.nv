@@ -604,6 +604,13 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // argument and constructor-field position; the walks that skip
     // non-expressions must not skip it, or its type is never recorded.
     k == NodeKind.ArrayLit ||
+    // A RECORD CONSTRUCTOR joins it for the same reason in wave B13, and the
+    // measurement that found this is worth keeping: `grab(P { n: 7 })` was
+    // refused with "this call omits `p`" -- not because the constructor was
+    // rejected, but because the argument COUNT never saw it. Counting goes
+    // through `is_arg_node`, `is_arg_node` asks here, and a form missing from
+    // this list is not refused anywhere. It is simply not there.
+    k == NodeKind.RecordCtor ||
     k == NodeKind.Cast
 }
 

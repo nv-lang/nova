@@ -266,6 +266,17 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // Hoisted: the temporary carries the built vector.
         }
         @body.append(tmp)
+    } else if k == NodeKind.RecordCtor {
+        // The same contract as the array literal above, and for the same
+        // reason (wave B13): a constructor is built by several C statements,
+        // so what stands in the expression is the temporary the hoist filled.
+        ro rtmp = @lit_tmp[raw_node(e.id_of())]
+        if rtmp == "" {
+            ice("emit: a record constructor in expression position was never hoisted (wave B13)")
+        } else {
+            // Hoisted: the temporary carries the built record.
+        }
+        @body.append(rtmp)
     } else if k == NodeKind.Name {
         // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
         // C symbol of its own, and WHICH constant this is came from the

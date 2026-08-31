@@ -690,6 +690,33 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "a record constructor stands in ARGUMENT position, hoisted (wave B13)" {
+    // Named by measurement: 8 of novac's 58 files stopped at "record
+    // constructor only as a binding initializer", and `builtins.nv` opens with
+    // the shape -- constructors inside a literal's `of(...)`.
+    //
+    // Behaviour checked against the oracle on the identical program before this
+    // was written: it prints 7.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Pt { n int }
+fn grab(p Pt) -> int => p.n
+fn main() { println(grab(Pt { n: 7 })) }", std)
+    assert(d.len() == 0)
+    // THE CALL SITE with the HOISTED TEMPORARY in it -- not the function name,
+    // which is in the C from the definition anyway. That distinction cost wave
+    // B12 a reverse probe: an assertion on the name alone stayed green with the
+    // fix removed.
+    assert(c.contains("novac_fn_grab__Pt__to_nova_int(_novac_tmp"))
+
+    // THE OTHER DIRECTION: a constructor whose fields do not match the
+    // declaration is still refused, and by name -- widening the POSITION must
+    // not widen what may stand there.
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn grab(p Pt) -> int => p.n
+fn main() { println(grab(Pt { nope: 7 })) }", std)
+    assert(d2.len() >= 1)
+}
+
 test "a call in statement position is compiled, not only println (wave B12)" {
     // Named by measurement: after the import regression and the ICEs, the
     // largest group of first refusals across novac's own 57 files was "a call

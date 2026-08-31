@@ -724,10 +724,21 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @hoist_array_lits(c)
             }
             // TERMINATOR, not an else (the intersection rule of 274.5 s2g):
-            // a node that is not a literal has nothing of its own to hoist.
-            if kind != NodeKind.ArrayLit { return }
-            ro tmp = @emit_array_lit(e, @out.type_of(e.id_of()))
-            @lit_tmp[raw_node(e.id_of())] = tmp
+            // a node that is neither of the two multi-statement constructions
+            // has nothing of its own to hoist.
+            //
+            // A RECORD CONSTRUCTOR JOINS THE LITERAL HERE (wave B13) for the
+            // same reason the literal came first: both are built by SEVERAL C
+            // statements, so neither can be printed inside an expression, and
+            // the statement that owns the expression builds them before it
+            // prints. `@emit_record_ctor` already answers with the temporary's
+            // name -- this call site is all the wave needed on this side.
+            if kind == NodeKind.ArrayLit {
+                @lit_tmp[raw_node(e.id_of())] = @emit_array_lit(e, @out.type_of(e.id_of()))
+                return
+            }
+            if kind != NodeKind.RecordCtor { return }
+            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
         }
     }
 }

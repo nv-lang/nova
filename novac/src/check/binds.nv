@@ -105,26 +105,7 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.MatchExpr {
         @type_match(init)
     } else if ik == NodeKind.RecordCtor {
-        // The construction against its declaration (#812), asked HERE because
-        // this is where its type is already known -- the walk in check.nv sees
-        // the node but not the type, and deriving it twice would be two
-        // answers waiting to disagree.
-        @report_if_ctor_fields_wrong(init, vtype)
-        for c in branch_children(init) {
-            ro ck = c.kind_of()
-            if ck == NodeKind.CtorSpread {
-                ro sk = branch_children(c)
-                if sk.len() < 2 { continue }
-                @type_expr(sk[1])
-            } else if ck == NodeKind.CtorField {
-                ro fk = branch_children(c)
-                if fk.len() < 3 { continue }
-                @type_expr(fk[2])
-            } else {
-                // The type name and the braces of the ctor are children too,
-                // and they hold no expression to type.
-            }
-        }
+        @judge_record_ctor(init, vtype)
     } else {
         // A plain expression initializer was walked above and its type is
         // recorded; it has no sub-form left to visit.
@@ -135,6 +116,38 @@ fn Checker mut @type_bind(st Node) -> () {
     @scope.bind(vname, vtype, bind_mode_at(kids))
 }
 
+
+/// Judge one record construction: its fields against the declaration, and the
+/// expressions inside them.
+///
+/// ONE DOOR, called from both positions the subset allows -- a binding's
+/// initializer and, since wave B13, a call argument. The two used to be one
+/// place only, and when the argument position arrived the obvious move was to
+/// copy these four steps into the expression walk. That would be a second door
+/// to one root: the construction would be judged twice, by two texts that drift
+/// apart on the first amendment to either.
+///
+/// The type is a PARAMETER and not derived here, because both callers already
+/// know it and deriving it again would be the same mistake one level down
+/// (#812: the walk in check.nv sees the node but not the type).
+fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
+    @report_if_ctor_fields_wrong(ctor, vtype)
+    for c in branch_children(ctor) {
+        ro ck = c.kind_of()
+        if ck == NodeKind.CtorSpread {
+            ro sk = branch_children(c)
+            if sk.len() < 2 { continue }
+            @type_expr(sk[1])
+        } else if ck == NodeKind.CtorField {
+            ro fk = branch_children(c)
+            if fk.len() < 3 { continue }
+            @type_expr(fk[2])
+        } else {
+            // The type name and the braces of the ctor are children too, and
+            // they hold no expression to type.
+        }
+    }
+}
 
 /// The type of `xs[i]` — the ELEMENT of the receiver's application (274.5 B10).
 ///
