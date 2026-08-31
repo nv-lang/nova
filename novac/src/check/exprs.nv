@@ -355,20 +355,34 @@ fn Checker mut @type_expr(e Node) -> () {
         // operator, and the ABSENCE of a callee says so.
         @record_operator_callee(e, kids)
     } else if k == NodeKind.RecordCtor {
-        // ARGUMENT POSITION (wave B13). The type is the constructor's own name,
-        // which `type_of` already answers; recording it here is what the
-        // emitter reads back, and its absence was an ICE the probe caught
-        // before this wave was committed -- "no type recorded for this node".
+        // ARGUMENT POSITION (wave B13). A NAMED constructor carries its own
+        // type, which `type_of` answers; recording it here is what the emitter
+        // reads back, and its absence was an ICE the probe caught before this
+        // wave was committed -- "no type recorded for this node".
         //
         // The judgement goes through the SAME door the binding path uses, not a
         // copy of it: one construction, one set of rules.
-        ro ct = type_of(e, @ctx, @scope, @chan)
-        if is_ty(ct) {
-            @record(e, ct)
-            @judge_record_ctor(e, ct)
+        //
+        // AN ANONYMOUS `{ n: 1 }` IS NOT ASKED HERE, and the gate is why: its
+        // type is not its own, it is the type of the POSITION it lands in --
+        // a declared return, a field. Asking `type_of` about it iced on
+        // `coerce_pair/neg_1.nv` ("anonymous constructor without a spread"),
+        // which is that door saying, correctly, that the question has no
+        // answer at this end.
+        // SILENT-OK: the position that knows the expected type records it; this
+        // arm has nothing to decide about a constructor that carries no name.
+        ro rk = branch_children(e)
+        if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
+            ro ct = type_of(e, @ctx, @scope, @chan)
+            if is_ty(ct) {
+                @record(e, ct)
+                @judge_record_ctor(e, ct)
+            } else {
+                // No type: the constructor names something the registry does
+                // not know, and that was refused where the name was read.
+            }
         } else {
-            // No type: the constructor names something the registry does not
-            // know, and that was refused where the name was read.
+            // Anonymous: see above.
         }
     } else if k == NodeKind.ArrayLit {
         // The literal DECIDES ITS OWN TYPE -- the bind path's rule, reused in
