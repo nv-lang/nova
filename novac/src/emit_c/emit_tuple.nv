@@ -8,9 +8,13 @@
 // Role: everything the emitter says about a TUPLE value lives here -- the
 // typedefs a unit needs, and the temporary a literal builds into. The
 // projection stays in emit_expr.nv with the other FieldAccess forms.
-// Guarded by: the diff corpus (tuple_pair_projection, tuple_ctor_effect_order,
-// tuple_mixed_pair_typedef -- the mixed pair is the one the shell does not
-// carry, so it reddens without the typedef walk) and the subset_test holder.
+// Used by: emit_c.nv -- emit() prints the typedefs right after the type
+// declarations, and the hoist walk plus the binding arm build every literal
+// through @emit_tuple_lit before the expression printer reads the temporary.
+// Guarded by: check-novac-differential.sh (corpus carriers
+// tuple_pair_projection, tuple_ctor_effect_order, tuple_mixed_pair_typedef --
+// the mixed pair is the one the shell does not carry, so it reddens without
+// the typedef walk) and the subset_test.nv holder test (B15 step 4a).
 
 module emit_c
 

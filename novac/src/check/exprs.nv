@@ -168,8 +168,12 @@ fn Checker mut @type_expr(e Node) -> () {
                         @record(e, @ctx.tys.arg(owner, idx))
                     }
                 }
+                // SILENT-OK: a branch in the field slot is a recovery shape
+                // the parser already refused -- nothing to judge twice here.
                 Branch { .. } => {}
             }
+            // SILENT-OK: every leaf arm above DECIDED (record or refusal),
+            // and the projection judged is the whole tuple question.
             return
         }
         match kids[2] {
