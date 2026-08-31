@@ -3069,6 +3069,39 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
 static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
     long long _nv456_iters = 0;
+    /* [221.1 #791] PRE-EXIT WATCHDOG. This fence had NO watchdog and no state
+     * dump at all, while `nova_supervised_run_impl`'s twin loop has both --
+     * and that asymmetry is why #791 read for weeks as "the process simply
+     * does not exit", with not one diagnostic line. Measured 2026-08-31: a
+     * polaris server whose /shutdown handler cancels its own governing token
+     * spins here forever on remote=1, and NOVA_DIAG_656=1 produced ZERO
+     * output, because the 656 dump is wired into the supervised loop, not
+     * into this one.
+     *
+     * WHY THIS ONE FIRES UNCONDITIONALLY, unlike the supervised twin. There
+     * the dump is gated on `nova_runtime_has_stuck_fibers()`, and rightly so:
+     * a supervised scope waiting on pending_remote is the ordinary shape of a
+     * healthy long-lived server parked in uv_accept. HERE it is not -- main
+     * has already finished and this is the last fence before exit, so waiting
+     * without end is always wrong. The gate would also be actively harmful:
+     * `has_stuck_fibers` is documented (a few hundred lines below, at the 656
+     * site) as BLIND to a child that never started -- no coroutine, no slot --
+     * which is exactly the leading candidate for #791.
+     *
+     * DIAGNOSTIC ONLY: it dumps once and keeps waiting. No behaviour changes,
+     * nothing is aborted; a hang stays a hang, but stops being a silent one.
+     * Threshold: the same NOVA_WATCHDOG_DUMP_SECS knob (0 = off), default 10s
+     * -- healthy programs do not spend ten seconds at this fence. */
+    uint64_t _pxwd_start = uv_hrtime();
+    bool     _pxwd_fired = false;
+    int      _pxwd_secs  = 10;
+    {
+        const char* _pxwd_env = getenv("NOVA_WATCHDOG_DUMP_SECS");
+        if (_pxwd_env && _pxwd_env[0]) {
+            int _v = atoi(_pxwd_env);
+            if (_v >= 0) _pxwd_secs = _v;
+        }
+    }
     if (_nv456_diag) {
         fprintf(stderr, "[m456] drain_main_scope ENTER q=%p remote=%d pending_sweeps=%d\n",
                 (void*)q, (int)nova_aint_load(&q->pending_remote),
@@ -3086,6 +3119,18 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                 fprintf(stderr, "[m456] drain_main_scope STILL WAITING remote loop q=%p remote=%d iters=%lld\n",
                         (void*)q, remote, _nv456_iters);
                 fflush(stderr);
+            }
+            /* [221.1 #791] see the banner at the top of this function. */
+            if (!_pxwd_fired && _pxwd_secs > 0) {
+                uint64_t _pxwd_now = uv_hrtime();
+                if ((_pxwd_now - _pxwd_start) / 1000000000ULL >= (uint64_t)_pxwd_secs) {
+                    _pxwd_fired = true;
+                    extern void nova_runtime_dump_state(const char* reason);
+                    char _pxwd_buf[80];
+                    snprintf(_pxwd_buf, sizeof(_pxwd_buf),
+                             "pre-exit-drain-%ds-remote-%d", _pxwd_secs, remote);
+                    nova_runtime_dump_state(_pxwd_buf);
+                }
             }
             uv_run(nova_current_loop(), UV_RUN_ONCE);
             continue;
