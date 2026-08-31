@@ -281,57 +281,72 @@ export fn Uuid.from(s str) -> Result[Self, ParseUuidError] { // [M-lint-findings
         return Err(InvalidLength { actual: s.byte_len(), expected: 36 })
     }
 
+    // Байты берём ОДИН раз и передаём во все помощники — см. баннер
+    // над `check_dash`. После проверки длины выше все индексы 0..35 законны.
+    ro b = s.bytes()
+
     // Дефисы на позициях 8, 13, 18, 23.
-    check_dash(s, 8)?
-    check_dash(s, 13)?
-    check_dash(s, 18)?
-    check_dash(s, 23)?
+    check_dash(b, 8)?
+    check_dash(b, 13)?
+    check_dash(b, 18)?
+    check_dash(b, 23)?
 
     // hi = 4 байта (биты 32..63) + 2 байта (16..31) + 2 байта (0..15)
-    ro hi_high = parse_hex_range(s, 0, 8)?             // 8 hex = u32
-    ro hi_mid  = parse_hex_range(s, 9, 13)?            // 4 hex = u16
-    ro hi_low  = parse_hex_range(s, 14, 18)?           // 4 hex (содержит version)
+    ro hi_high = parse_hex_range(b, 0, 8)?             // 8 hex = u32
+    ro hi_mid  = parse_hex_range(b, 9, 13)?            // 4 hex = u16
+    ro hi_low  = parse_hex_range(b, 14, 18)?           // 4 hex (содержит version)
     ro hi = (hi_high << 32) | (hi_mid << 16) | hi_low
 
     // lo = 2 байта (биты 48..63 — variant) + 4 байта + 2 байта
-    ro lo_high = parse_hex_range(s, 19, 23)?           // 4 hex (содержит variant)
-    ro lo_mid  = parse_hex_range(s, 24, 32)?           // 8 hex
-    ro lo_low  = parse_hex_range(s, 32, 36)?           // 4 hex
+    ro lo_high = parse_hex_range(b, 19, 23)?           // 4 hex (содержит variant)
+    ro lo_mid  = parse_hex_range(b, 24, 32)?           // 8 hex
+    ro lo_low  = parse_hex_range(b, 32, 36)?           // 4 hex
     ro lo = (lo_high << 48) | (lo_mid << 16) | lo_low
 
     Ok({ hi, lo })
 }
 
-// Canonical UUID text is pure ASCII — direct byte access O(1) instead
-// of O(n) char-by-char scan.
-fn check_dash(s str, pos int) -> Result[(), ParseUuidError] {
-    ro dash = '-' as u8
-    match s.bytes().get(pos) {
-        Some(b) if b == dash => Ok(())
-        _                    => Err(MissingDash { position: pos })
+// Canonical UUID text is pure ASCII, and `Uuid.from` has ALREADY checked the
+// length is exactly 36 — so every index 0..35 exists BY CONSTRUCTION. These
+// helpers therefore take the byte slice itself, not the string, and index it
+// directly.
+//
+// ПОЧЕМУ НЕ `.get(i)`, ХОТЯ ТАК БЫЛО (правка владельца 2026-08-31).
+// `.get(i)` возвращает `Option`, чей рукав `None` ЗДЕСЬ НЕДОСТИЖИМ, а
+// мёртвая ветка не бесплатна дважды: она стоит ветвления на каждом
+// шаге горячей петли и — хуже — ЛЖЁТ: выход за границу, будь он возможен,
+// был бы объявлен `MissingDash`/`InvalidHex` — ошибкой РАЗБОРА вместо
+// ошибки программы. Прямое `b[i]` говорит правду: невозможный индекс —
+// нарушение контракта, то есть паника по D13/D325 R0, а не `Result`.
+//
+// И ВТОРОЕ, что сняла та же правка: срез теперь берётся ОДИН раз у
+// вызывающего. Прежде `s.bytes()` вычислялся ОДИННАДЦАТЬ раз на один
+// разбор — четыре дефиса плюс семь диапазонов. Прежний комментарий
+// здесь обещал «direct byte access O(1)» — код под ним этого не делал.
+fn check_dash(b []u8, pos int) -> Result[(), ParseUuidError] {
+    if b[pos] == ('-' as u8) {
+        Ok(())
+    } else {
+        Err(MissingDash { position: pos })
     }
 }
 
 // Парсит hex-цифры в диапазоне [from, to) → u64. Ошибка — ЗНАЧЕНИЕМ, не броском.
-fn parse_hex_range(s str, from int, to int) -> Result[u64, ParseUuidError] {
+fn parse_hex_range(b []u8, from int, to int) -> Result[u64, ParseUuidError] {
     mut acc u64 = 0
-    mut i = from
-    ro sb = s.bytes()
-    while i < to {
-        match sb.get(i) {
-            Some(b) => {
-                ro c = (b as int).to_char() ?? ' '
-                ro d = hex_value(c, i)?
-                acc = acc * 16 + (d as u64)
-            }
-            None => return Err(InvalidHex { position: i })
-        }
-        i += 1
+    for i in from..to {
+        ro d = hex_value(b[i], i)?
+        acc = acc * 16 + (d as u64)
     }
     Ok(acc)
 }
 
-fn hex_value(c char, position int) -> Result[u8, ParseUuidError] {
+// Байт, а не `char`. Прежняя редакция гоняла каждый байт через
+// `(b as int).to_char() ?? ' '` — подстановку пробела, который тут же
+// отвергался вот этой же функцией. Третий мёртвый ход на той же петле:
+// ASCII-байт и его code point совпадают по числу, то есть конверсия ничего
+// не меняла для всех входов, которые эта функция принимает.
+fn hex_value(c u8, position int) -> Result[u8, ParseUuidError] {
     ro n = c as int
     if n >= 48 && n <= 57 {           // '0'..'9'
         Ok((n - 48) as u8)

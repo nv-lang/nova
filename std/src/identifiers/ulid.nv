@@ -105,7 +105,11 @@ fn encode_char(value u8) -> char {
     code.to_char() ?? '?'
 }
 
-fn decode_char(c char) -> Option[u8] {
+// Байт, а не `char`: всё, что делает тело, — арифметика над ASCII-кодом, а у ASCII
+// байт и code point совпадают по числу. Конверсия в `char` осталась только на
+// пути ОШИБКИ (у `InvalidChar` поле `char`), то есть один раз на отказ, а не
+// двадцать шесть раз на каждый успешный разбор. Парная правка к `uuid.nv`.
+fn decode_char(c u8) -> Option[u8] {
     ro n = c as int
     // 0..9 → 0..9
     if n >= 48 && n <= 57 { return Some((n - 48) as u8) }
@@ -305,6 +309,9 @@ export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings
         return Err(InvalidLength { actual: s.byte_len(), expected: 26 })
     }
 
+    // Байты — ОДИН раз на разбор; дальше индексы 0..25 законны по построению.
+    ro b = s.bytes()
+
     // 10 timestamp chars + 16 random chars = 26.
     // Каждый char = 5 бит, итого 130 бит. Старшие 2 бита timestamp
     // должны быть 0 (timestamp 48 бит max, представляется в 50 битах).
@@ -312,7 +319,7 @@ export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings
     // Парсим timestamp (48 бит)
     mut ts u64 = 0
     for i in 0..10 {
-        ro v = decode_char_at(s, i)?
+        ro v = decode_char_at(b, i)?
         ts = (ts << 5) | (v as u64)
     }
 
@@ -331,7 +338,7 @@ export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings
     mut full_lo u64 = 0
     mut full_hi u64 = 0
     for j in 0..16 {
-        ro v = decode_char_at(s, 10 + j)?
+        ro v = decode_char_at(b, 10 + j)?
         // Сдвигаем 80-битное значение влево на 5, добавляем v в младшие 5.
         // 80 бит = (full_hi << 16) | full_lo, но удобнее иметь две u64 и
         // пересылать переполнение.
@@ -360,16 +367,18 @@ export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings
 // Имя было `decode_char_or_throw` — переименовано вместе с поведением:
 // он больше не бросает, а возвращает. Имя, пережившее своё поведение,
 // врёт читателю так же, как устаревшая дока.
-fn decode_char_at(s str, pos int) -> Result[u8, ParseUlidError] {
-    match s.bytes().get(pos) {
-        Some(b) => {
-            ro c = (b as int).to_char() ?? ' '
-            match decode_char(c) {
-                Some(v) => Ok(v)
-                None    => Err(InvalidChar { position: pos, char: c })
-            }
-        }
-        None => Err(InvalidLength { actual: s.byte_len(), expected: 26 })
+// Берёт СРЕЗ байтов и индексирует напрямую: `Ulid.from` уже проверил, что
+// длина ровно 26, то есть индексы 0..25 существуют ПО ПОСТРОЕНИЮ.
+// Прежде здесь стоял `s.bytes().get(pos)`, и его рукав `None` возвращал
+// `InvalidLength` — то есть мёртвая ветка ещё и ЛГАЛА о причине: длина уже
+// проверена выше, а выход за границу был бы нарушением контракта
+// (паника по D13/D325 R0), а не ошибкой разбора. Срез теперь вычисляется
+// вызывающим ОДИН раз, а не двадцать шесть. Парная правка к `uuid.nv`.
+fn decode_char_at(b []u8, pos int) -> Result[u8, ParseUlidError] {
+    ro raw = b[pos]
+    match decode_char(raw) {
+        Some(v) => Ok(v)
+        None    => Err(InvalidChar { position: pos, char: (raw as int).to_char() ?? ' ' })
     }
 }
 
