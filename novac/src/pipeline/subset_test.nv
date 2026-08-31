@@ -314,3 +314,51 @@ const A int = 1
 fn main() { println(A) }", std)
     assert(d3.len() == 0)
 }
+
+test "a `mut` parameter of a value record is refused by name (hunt H4)" {
+    // The fixed point lowers `mut x V` to `V*` (plan 184, P10 ABI); novac
+    // passes a value record BY VALUE, so the callee wrote to a copy and the
+    // caller never saw it: the oracle prints 2, novac printed 1 in silence
+    // (hunt emit_c x K1, H4). A form accepted and then mis-compiled is the
+    // class a named refusal exists to prevent -- the receiver case one floor
+    // up said it first.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type Pt value { n int }
+fn bump(mut p Pt) -> () {
+ p.n = p.n + 1
+}
+fn main() {
+ mut a = Pt { n: 1 }
+ bump(a)
+ println(a.n)
+}", std)
+    assert(d.len() >= 1)
+    for g in d {
+        // Named as ITSELF: the message must say it is the parameter's mode,
+        // not the receiver rule it shares a floor with.
+        assert(g.message.contains("`mut` parameter"))
+    }
+
+    // The heap record keeps the pointer path: the same program without
+    // `value` is the control the hunt shipped (ctl_gcrec_mut_param).
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn bump(mut p Pt) -> () {
+ p.n = p.n + 1
+}
+fn main() {
+ mut a = Pt { n: 1 }
+ bump(a)
+ println(a.n)
+}", std)
+    assert(d2.len() == 0)
+
+    // `ro` reads the copy legally -- refusing it would shrink the subset
+    // around no defect.
+    ro (d3, _) = compile_to_c("type Pt value { n int }
+fn peek(p Pt) -> int => p.n
+fn main() {
+ mut a = Pt { n: 1 }
+ println(peek(a))
+}", std)
+    assert(d3.len() == 0)
+}

@@ -340,6 +340,14 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 /// `nova_alloc`, and the same for `@field` on a value receiver.
 const VALUE_METHOD_MSG = "outside the subset: a method on a `value` record needs the receiver taken by POINTER (the fixed point writes `NovaValue_X*`), and novac passes a value receiver by value -- so a `mut` method would write to a copy"
 
+/// The SAME rule as VALUE_METHOD_MSG one line up, met at a parameter instead of
+/// a receiver: the fixed point lowers a `mut x V` parameter to `V*` (plan 184,
+/// P10 ABI), and novac passes a value record BY VALUE -- the callee writes to a
+/// copy the caller never sees. Measured by the hunt (emit_c x K1, H4): the
+/// oracle prints 2, novac printed 1 in silence. `ro` reads the copy legally and
+/// `consume` owns what it got (a write is unobservable), so only `mut` refuses.
+const VALUE_MUT_PARAM_MSG = "outside the subset: a `mut` parameter of a `value` record needs the V* lowering (the fixed point writes `NovaValue_X*`), and novac passes a value record by value -- the callee would write to a copy"
+
 /// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
 /// the grammar is the language's), and D69 -- it must be last -- is a position
 /// rule the checker owns. Until 2026-08-18 the `...` broke the parameter list

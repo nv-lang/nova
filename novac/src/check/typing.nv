@@ -38,7 +38,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name, c_shell_method}
+import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -484,6 +484,19 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
         return false
     } else {
         // A type the registry knows: the name can be bound to it.
+    }
+    // A `mut` PARAMETER of a value record, refused by the name the receiver
+    // case already carries: the fixed point lowers `mut x V` to `V*` (plan 184,
+    // P10 ABI) so the callee writes the CALLER'S record, and novac passes a
+    // value record by value -- the write lands in a copy and the program says
+    // nothing (hunt emit_c x K1, H4: the oracle prints 2, novac printed 1).
+    ro mut_value = match param_mode_at(pk) {
+        ModeMut => is_value_record(@ctx, pt)
+        ModeRo | ModeConsume => false
+    }
+    if mut_value {
+        @report_first_leaf_of(pk, VALUE_MUT_PARAM_MSG)
+        return false
     }
     // The parameter's own MODE goes into the scope: inside the body `a` of
     // `fn f(mut a Acc)` IS a mut place, and passing it on must select the mut
