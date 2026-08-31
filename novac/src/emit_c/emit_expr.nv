@@ -505,11 +505,19 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
         // printer and the newline comes once, at the end. That is the path
         // below, and it is why this door exists at all.
     }
-    // Array literals anywhere in the arguments are hoisted before the first
-    // print line (wave B8); the printers below read their temporaries.
-    @hoist_array_lits(call)
+    // EACH ARGUMENT IS HOISTED RIGHT BEFORE ITS OWN PRINT LINE (hunt
+    // emit_c x K1, finding H1). Hoisting the whole call up front ran a
+    // constructor argument's effects AHEAD of its neighbours' prints: the
+    // oracle prints `head` then ticks, novac ticked first. println is the one
+    // place where output interleaves with argument effects, so the order of
+    // the two IS the observable.
     for c in kids {
         ro ck = c.kind_of()
+        if is_expr_kind(ck) {
+            @hoist_array_lits(c)
+        } else {
+            // Punctuation and the callee leaf hoist nothing.
+        }
         if ck == NodeKind.Lit && leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {
             ro t = branch_children(c)[0]
             ro idx = @lits.len()

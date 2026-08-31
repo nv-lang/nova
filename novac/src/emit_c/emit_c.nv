@@ -783,6 +783,11 @@ fn Emitter mut @emit_array_lit(init Node, vtype TyId) -> str {
     ro elems = literal_elems(branch_children(init))
     @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${c_instance_ctor(@ctx, vtype)}(${elems.len()});\n")
     for e in elems {
+        // The element may itself be a construction; the walk above no longer
+        // descends into this literal (H2), so its OWN emitter hoists what its
+        // elements need -- the same line the record constructor has carried
+        // since B8 (`@hoist_array_lits(fk[2])`).
+        @hoist_array_lits(e)
         @body.append("    (void)${c_instance_method(@ctx, vtype, LITERAL_PUSH)}(${tmp}, ")
         @emit_expr(e)
         @body.append(");\n")
@@ -800,25 +805,25 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
     match e {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
-            for c in children {
-                @hoist_array_lits(c)
-            }
-            // TERMINATOR, not an else (the intersection rule of 274.5 s2g):
-            // a node that is neither of the two multi-statement constructions
-            // has nothing of its own to hoist.
-            //
-            // A RECORD CONSTRUCTOR JOINS THE LITERAL HERE (wave B13) for the
-            // same reason the literal came first: both are built by SEVERAL C
-            // statements, so neither can be printed inside an expression, and
-            // the statement that owns the expression builds them before it
-            // prints. `@emit_record_ctor` already answers with the temporary's
-            // name -- this call site is all the wave needed on this side.
+            // THE WALK STOPS AT A CONSTRUCTION and does not descend into it
+            // (hunt emit_c x K1, finding H2). It used to walk the WHOLE
+            // subtree first -- including a constructor's fields -- and
+            // `@emit_record_ctor` then hoisted the same field again: the
+            // nested construction was emitted TWICE, its side effect ran
+            // twice, and the first temporary was dead. A construction's
+            // insides are its own emitter's to hoist, in the order its fields
+            // are written.
             if kind == NodeKind.ArrayLit {
                 @lit_tmp[raw_node(e.id_of())] = @emit_array_lit(e, @out.type_of(e.id_of()))
                 return
             }
-            if kind != NodeKind.RecordCtor { return }
-            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
+            if kind == NodeKind.RecordCtor {
+                @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
+                return
+            }
+            for c in children {
+                @hoist_array_lits(c)
+            }
         }
     }
 }

@@ -109,5 +109,14 @@
 # constructor only" marks in novac's own sources stood on such bodies: a
 # refusal about a form nobody wrote. Ratchet carrier:
 # `examples/basics/match_block_arm.nv`.
-contract-match 21
-behavior-match 14
+# 2026-08-31 — 21/14 -> 23/16 (окно 274). Два носителя охоты emit_c x K1 вошли
+# в корпус ПОСЛЕ фикса своих классов и держат их поведением байт-в-байт:
+# `examples/basics/ctor_nested_effect_once.nv` — вложенная в поле конструкция
+# эмитится ОДИН раз (Н2: спуск хойста больше не заходит внутрь конструкции,
+# чьи внутренности хойстит её собственный эмиттер); и
+# `examples/basics/println_arg_effect_order.nv` — эффекты аргумента println
+# идут В ПОРЯДКЕ ПЕЧАТИ (Н1: каждый аргумент хойстится перед СВОЕЙ строкой
+# печати, а не весь вызов до первого печатника). Обратная проба снята: с
+# возвращённым двойным спуском смоук первого носителя краснеет.
+contract-match 23
+behavior-match 16
