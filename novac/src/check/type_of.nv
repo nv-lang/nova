@@ -215,6 +215,19 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // unwalked access, and readers act on no_ty().
         return chan.type_if_known(e.id_of())
     }
+    if k == NodeKind.Index {
+        // Same rule as the field access above: the walk decided, this door
+        // reads. The Index arm of the walk asks the receiver's application for
+        // its element and RECORDS the answer -- so re-deriving it here would be
+        // the second door of one root, and the two could disagree.
+        //
+        // Its absence was an ICE on novac's own source (five files iced; this
+        // is one of them). Nothing asked for an index's type until an index
+        // stood UNDER something -- `rs[i].xs[0]`, where the outer index makes
+        // the walk type a field whose receiver is itself an index. Silence is a
+        // refused or unwalked index, and readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.ArrayLit {
         // Decided by `type_array_lit` and RECORDED before anyone asks; the
         // lattice reads it back. Tolerant, not strict: a literal the checker

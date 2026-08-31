@@ -690,6 +690,29 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "an index UNDER something does not crash the compiler (#652 class)" {
+    // Found by measuring self-distance, not by a test: five of novac's own 57
+    // files ended in an internal compiler error rather than a refusal. This one
+    // is "expression kind without a type rule" -- the walk RECORDS an index's
+    // element type, and the reading door had no rule for `Index` at all, so
+    // nothing asked for it until an index stood UNDER something.
+    //
+    // An ICE is not a form outside the subset: it is a crash, and a subset that
+    // refuses by name is the whole promise of this compiler. So what this test
+    // holds is not "the form compiles" but "the answer is a REFUSAL, never a
+    // crash" -- the form itself is still outside E1 and says so by name.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type R { xs []int }
+fn f(rs []R, i int) -> int {
+ ro v = rs[i].xs[0]
+ v
+}
+fn main() { println(1) }", std)
+    for g in d {
+        assert(!g.message.contains("internal compiler error"))
+    }
+}
+
 test "a HEALTHY import is not refused -- the gap check judges only the gap" {
     // A defect I shipped closing #815, found by re-measuring self-distance
     // rather than by any test: the arm handed `@report_err_branch` the children
