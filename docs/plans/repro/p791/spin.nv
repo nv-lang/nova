@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: CC-BY-4.0
+//
+// Registry 221.1 #791 -- MINIMAL, DETERMINISTIC reproduction of the root.
+//
+// The row spent weeks described through its carrier: a polaris server whose
+// /shutdown handler cancels its own governing token. Everything in that
+// sentence turned out to be scenery. Measured 2026-09-01, the root is this:
+//
+//     a loop with no emitted safepoint makes a fiber at once
+//     un-preemptible and un-cancellable.
+//
+// Both stopping paths need the fiber to arrive somewhere by itself. A stop_cb
+// needs it to PARK -- this loop never parks. `cancel_requested` needs it to
+// reach `nova_fiber_yield` -- and the only door to that is
+// `nova_preempt_check`, which the codegen emits in function PROLOGUES, not on
+// loop back-edges. A loop with no calls inside it therefore contains no
+// safepoint at all. `detach` completes the picture: the orphan scope has no
+// owner to notice, and the atexit orphan drain waits on its pending_remote
+// forever.
+//
+// Judged by process termination, never by stdout. Build and run:
+//
+//   nova-cli/target/release/nova.exe build docs/plans/repro/p791/spin.nv -o /tmp/spin.exe
+//   timeout 20 /tmp/spin.exe; echo "exit=$?"
+//
+// exit=124 means the hang reproduced (killed by the timeout). exit=0 means it
+// is fixed. Measured on 2026-09-01: exit=124, every time, with the watchdog
+// dump showing `pre-exit-drain-10s-remote-1` and one fiber at
+// `mco_status=2` (that is MCO_RUNNING -- see minicoro.h:263, the numbering
+// that cost this row three false trails), `fstate=1`, `hdl=0`, `stop_cb=0`,
+// and a STATIC `parent_scope` equal to the global orphan scope.
+//
+// This file is the class-level fixture acceptance point (3) of the row asks
+// for: it has no network, no cancellation and no timing in it, so it cannot
+// flake, and it will go green only when the root is actually fixed.
+
+module main
+
+import std.io.{println}
+
+fn main() Io Detach -> () {
+    detach {
+        mut i int = 0
+        while true {
+            i = i + 1
+        }
+    }
+    println("main done")
+}
