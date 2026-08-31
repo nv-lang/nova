@@ -762,52 +762,6 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
     @report_first_leaf_of(kids, "outside the E1 subset: two arguments that both call something, and the emitter does not fix their order yet (F65)")
 }
 
-/// A CALL in statement position is `println` and nothing else in the subset.
-/// Owner's question 2026-08-16 ("does every Call really become a println?"):
-/// it did, and the emitter's ice was the FIRST answer for `helper()` as a
-/// statement — the #652 class again, where the boundary belongs in check and
-/// the ice is only the second floor. Expression-position calls are a
-/// different question and go through the emitter's Call branch.
-fn Checker mut @report_if_bad_call_stmt(stmts []Node, tail_is_value bool) -> () {
-    // The LAST statement of a value-returning fn body is not in statement
-    // position at all -- it is the returned value (274.5 wave B4). The caller
-    // says which block that is: the Block arm compares the block's id with
-    // the body the walk marked, every other block passes false, and the
-    // exemption cannot leak past the one position it names.
-    ro last = last_branch_at(stmts)
-    mut i = 0
-    for st in stmts {
-        match st {
-            Leaf(_) => {}
-            Branch { kind, children, .. } => {
-                ro exempt = kind != NodeKind.Call ||
-                    (tail_is_value && i == last) ||
-                    call_callee_text(children) == PRINT_FN
-                if !exempt {
-                    @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
-                } else {
-                    // Not a call, the returned tail, or println: all legal.
-                }
-            }
-        }
-        i += 1
-    }
-}
-
-/// The index of the LAST branch child, or -1: trailing leaves (the closing
-/// brace) are not statements, and "the last statement" must skip them.
-fn last_branch_at(stmts []Node) -> int {
-    mut last = -1
-    mut i = 0
-    for st in stmts {
-        match st {
-            Leaf(_) => {}
-            Branch { .. } => { last = i }
-        }
-        i += 1
-    }
-    last
-}
 
 /// The BODY block of this fn when it declares a return value, else `no_node()`:
 /// the one block whose tail call is a returned value. Asked by BOTH phases --

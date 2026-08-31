@@ -527,10 +527,18 @@ fn Checker mut @type_stmt(st Node) -> () {
 /// println is the subset's one builtin and lives in no registry.
 fn Checker mut @type_call_stmt(call Node) -> () {
     ro kids = branch_children(call)
-    // SILENT-OK: a statement call that is not println was already refused by
-    // report_if_bad_call_stmt in the subset walk, so this walk has nothing
-    // left to decide about it.
-    if call_callee_text(kids) != PRINT_FN { return }
+    // A CALL WHOSE RESULT IS DISCARDED is typed like any other expression
+    // (wave B12): its callee has to resolve and its arguments have to bind,
+    // and those are the doors an expression call already goes through. Until
+    // this wave the arm left at once, because the subset walk had refused every
+    // statement call that was not `println` -- and that refusal is gone.
+    if call_callee_text(kids) != PRINT_FN {
+        @type_expr(call)
+        return
+    } else {
+        // `println` types its arguments one at a time below: the printer set is
+        // narrower than the type system, and that boundary lives here.
+    }
     for c in kids {
         ro ck = c.kind_of()
         if ck == NodeKind.Lit {

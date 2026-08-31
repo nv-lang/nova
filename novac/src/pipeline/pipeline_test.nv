@@ -690,6 +690,40 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "a call in statement position is compiled, not only println (wave B12)" {
+    // Named by measurement: after the import regression and the ICEs, the
+    // largest group of first refusals across novac's own 57 files was "a call
+    // in statement position is println only" -- 12 of them.
+    //
+    // What the LANGUAGE does was measured with the oracle before any of this
+    // was written: discarding a call's result is legal there and silent. So a
+    // warning here would be our invention, and the emitter writes the call
+    // followed by a semicolon -- no temporary, because nobody asked the call
+    // for an answer.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn side(n int) -> int => n + 1
+fn main() {
+ side(1)
+ println(2)
+}", std)
+    assert(d.len() == 0)
+    // THE CALL SITE, not the name. The name alone is in the C anyway -- from
+    // the function's DEFINITION -- so asserting it proves nothing, and the
+    // reverse probe said so: with the emitter change taken out the test stayed
+    // green. A test that would pass without the fix is not a test. So the
+    // assertion names what only a CALL can produce: the mangled name with an
+    // argument in it.
+    assert(c.contains("novac_fn_side__nova_int__to_nova_int(((nova_int)1LL))"))
+
+    // THE OTHER DIRECTION: what a statement call still cannot do is refused by
+    // NAME, not accepted in silence -- an unresolved callee stays an error.
+    ro (d2, _) = compile_to_c("fn main() {
+ nosuch(1)
+ println(2)
+}", std)
+    assert(d2.len() >= 1)
+}
+
 test "an index UNDER something does not crash the compiler (#652 class)" {
     // Found by measuring self-distance, not by a test: five of novac's own 57
     // files ended in an internal compiler error rather than a refusal. This one

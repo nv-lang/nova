@@ -476,7 +476,23 @@ fn Emitter mut @emit_expr(e Node) -> () {
 fn Emitter mut @emit_call_stmt(call Node) -> () {
     ro kids = branch_children(call)
     if call_callee_text(kids) != PRINT_FN {
-        ice("emit: the subset knows only println calls in statement position")
+        // A CALL WHOSE RESULT IS DISCARDED (wave B12). Emitting a call as a
+        // VALUE is something this file already does; a statement is that plus a
+        // semicolon and nothing more -- no temporary is declared, because
+        // nobody asked this call for an answer.
+        //
+        // Measured with the oracle BEFORE it was written: discarding a result
+        // is legal there and silent, so warning about it here would be our
+        // invention rather than the language's rule.
+        @hoist_array_lits(call)
+        @body.append("    ")
+        @emit_expr(call)
+        @body.append(";\n")
+        return
+    } else {
+        // `println` is not an ordinary call: every argument goes to its own
+        // printer and the newline comes once, at the end. That is the path
+        // below, and it is why this door exists at all.
     }
     // Array literals anywhere in the arguments are hoisted before the first
     // print line (wave B8); the printers below read their temporaries.

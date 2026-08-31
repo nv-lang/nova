@@ -291,7 +291,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_err_branch(children)
                     return
                 }
-                Block => @report_if_bad_call_stmt(children, n.id_of() == @tail_value_body)
+                // A block used to be judged for ONE thing here -- a call in
+                // statement position that was not `println`. Wave B12 made
+                // that a form of the language, so the arm has nothing of its
+                // own to say and the children are walked like anyone else's.
+                Block => {}
                 MethodCall => {
                     @report_if_unknown_method(children)
                     @report_if_ordered_args(children)
