@@ -446,8 +446,25 @@ fn Cursor mut @atom() -> Node {
         @no_ctor = false
         mut kids = []Node.of(@take())
         kids.push(@expr())
+        // A COMMA turns the parens into a TUPLE (wave B15, D123). Before this
+        // the comma was not RParen, a zero-width gap grew in its place and the
+        // rest of the form was swallowed -- the refusal spoke about "a body
+        // without a value" and never named the tuple. Read under its own kind,
+        // exactly as the value `if` is (IfExpr): the two forms share the `(`
+        // opener with the paren, and only the comma tells them apart.
+        mut is_tuple = false
+        while @peek() == TokenKind.Comma {
+            is_tuple = true
+            kids.push(@take())
+            kids.push(@expr())
+        }
         if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
         @no_ctor = saved
+        if is_tuple {
+            return @node(NodeKind.TupleExpr, kids)
+        } else {
+            // No comma: ordinary grouping parens.
+        }
         return @node(NodeKind.Paren, kids)
     }
     if @peek() == TokenKind.KwMatch { return @match_expr() }

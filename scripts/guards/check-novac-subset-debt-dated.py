@@ -56,6 +56,13 @@ def main():
     files = []
     for dirpath, _dirs, names in os.walk(src):
         for nm in names:
+            # _test.nv исключены: тест ЦИТИРУЕТ сообщения отказов в
+            # утверждениях, и цитата — не долг. Всплыло 2026-08-31 при разрезе
+            # pipeline_test.nv: тестовая строка стала «13-м бессрочным долгом».
+            # Тот же класс, что у процитированного в прозе маркера [M-...], и
+            # то же лекарство, что у check-novac-string-build-door.
+            if nm.endswith("_test.nv"):
+                continue
             if nm.endswith(".nv"):
                 files.append(pathlib.Path(dirpath) / nm)
     files.sort(key=lambda p: str(p).replace("\\", "/"))

@@ -259,6 +259,11 @@ const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (s
 /// outside an initializer.
 const IF_EXPR_MSG = "outside the subset: an `if` in value position is not compiled yet"
 
+/// `(a, b)` -- a tuple value. Read under its own kind since wave B15 (the
+/// comma is what tells it from grouping parens); compiling it is steps 3-4
+/// of that wave -- the pair term in the interner, then the D123 mono struct.
+const TUPLE_EXPR_MSG = "outside the subset: a tuple value is read but not compiled yet (E2-b, B15 steps 3-4)"
+
 /// `@field` -- the receiver's own field. It can only appear inside a method
 /// body, and novac does not declare methods yet, so this refusal and the
 /// method-declaration one are two doors of the same limit.

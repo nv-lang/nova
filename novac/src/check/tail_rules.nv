@@ -144,6 +144,10 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // and a kind put into it moves silently into every general arm (the
         // lesson wave B13 paid for three times over).
         if k == NodeKind.RetStmt || is_expr_kind(k) || k == NodeKind.IfStmt { return }
+        // A tuple tail is not "a body without a value" -- it is a FORM with its
+        // own name, and its own arm in the walk refuses it with the stage
+        // (B15 step 2). Saying both would describe one mistake twice.
+        if k == NodeKind.TupleExpr { return }
         @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }

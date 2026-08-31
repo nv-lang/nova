@@ -90,6 +90,7 @@ export type NodeKind enum
     // statement form keeps its own kind: one of them the emitter writes,
     // the other needs a temporary it does not build yet.
     | IfExpr
+    | TupleExpr
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
     | Recv

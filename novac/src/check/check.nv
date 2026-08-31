@@ -392,6 +392,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_qualifier_misplaced(children, "result")
                     @report_if_return_form(children)
                 }
+                TupleExpr => {
+                    // READ, and refused BY NAME with its stage (B15 step 2).
+                    // Before this kind existed the comma grew a zero-width gap
+                    // and the refusal never named the form.
+                    @report_first_leaf_of(children, TUPLE_EXPR_MSG)
+                    return
+                }
                 IfExpr => {
                     // INITIALIZER POSITION IS LEGAL since wave B14: the binding
                     // path types it through the same doors as the tail form

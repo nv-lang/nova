@@ -22,6 +22,34 @@ import ../diag.{ice}
 import ../check.{check_instance}
 import ../types.{TyId, no_ty}
 
+test "a tuple value is READ and refused by name, not swallowed by a gap (B15 step 2)" {
+    // Before the TupleExpr kind existed, the comma inside `(a, 2)` was not the
+    // `)` the paren reader wanted: a zero-width gap grew in its place, the rest
+    // of the form was swallowed, and the refusal said "a body ends without a
+    // value" -- never naming the tuple. The carriers are novac's own core:
+    // `check` itself ends with `(c.out, c.chan)`.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn main() {
+ ro a = 1
+ ro t = (a, 2)
+ println(1)
+}", std)
+    assert(d.len() >= 1)
+    for g in d {
+        // Named: the refusal must say what the FORM is and that it is read.
+        assert(g.message.contains("tuple"))
+    }
+
+    // Grouping parens must NOT be caught by the comma rule: `(a)` stays an
+    // ordinary paren and the program stays clean.
+    ro (d2, _) = compile_to_c("fn main() {
+ ro a = 1
+ ro b = (a)
+ println(b)
+}", std)
+    assert(d2.len() == 0)
+}
+
 test "an `if` initializer binds through the same doors as the tail form (B14)" {
     // The owner\'s remark measured wider than the wave: the oracle also takes
     // `if` as an INITIALIZER (`ro x = if 1 == 1 { 10 } else { 20 }` prints 10
