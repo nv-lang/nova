@@ -817,13 +817,13 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @lit_tmp[raw_node(e.id_of())] = @emit_array_lit(e, @out.type_of(e.id_of()))
                 return
             }
-            if kind == NodeKind.RecordCtor {
-                @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
+            if kind != NodeKind.RecordCtor {
+                for c in children {
+                    @hoist_array_lits(c)
+                }
                 return
             }
-            for c in children {
-                @hoist_array_lits(c)
-            }
+            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
         }
     }
 }
