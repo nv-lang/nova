@@ -215,6 +215,12 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // unwalked access, and readers act on no_ty().
         return chan.type_if_known(e.id_of())
     }
+    if k == NodeKind.TupleExpr {
+        // Same rule again (B15 step 4a): the walk interned the pair term and
+        // recorded it; silence is a refused literal, and readers act on
+        // no_ty().
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.Index {
         // Same rule as the field access above: the walk decided, this door
         // reads. The Index arm of the walk asks the receiver's application for

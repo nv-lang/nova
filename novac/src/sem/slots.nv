@@ -775,3 +775,17 @@ export fn proto_method_name(m Node) -> Option[str] {
     None
 }
 
+
+/// The INDEX a projection leaf spells, or -1: `t.0` carries its component
+/// index as the integer literal's text, and the checker needs the number to
+/// judge it against the tuple's arity. Plain unsigned decimal -- anything
+/// else answers -1 rather than guessing (B15 step 4a).
+export fn digit_index(text str) -> int {
+    if text.byte_len() == 0 { return -1 }
+    mut v = 0
+    for b in text.bytes() {
+        if b < ('0' as u8) || b > ('9' as u8) { return -1 }
+        v = v * 10 + ((b - ('0' as u8)) as int)
+    }
+    v
+}

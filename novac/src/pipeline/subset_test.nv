@@ -22,32 +22,32 @@ import ../diag.{ice}
 import ../check.{check_instance}
 import ../types.{TyId, no_ty}
 
-test "a tuple value is READ and refused by name, not swallowed by a gap (B15 step 2)" {
-    // Before the TupleExpr kind existed, the comma inside `(a, 2)` was not the
-    // `)` the paren reader wanted: a zero-width gap grew in its place, the rest
-    // of the form was swallowed, and the refusal said "a body ends without a
-    // value" -- never naming the tuple. The carriers are novac's own core:
-    // `check` itself ends with `(c.out, c.chan)`.
+test "a tuple value is read under its own kind, grouping parens untouched (B15 steps 2+4a)" {
+    // Step 2 taught the parser to read `(a, 2)` as TupleExpr instead of
+    // growing a zero-width gap; step 4a lifted the named refusal, so the
+    // contract this test holds MOVED with it (2026-09-01): the literal now
+    // COMPILES, and the kind still tells tuples from grouping parens.
     ro std = std_decls()
-    ro (d, _) = compile_to_c("fn main() {
+    ro (d, c) = compile_to_c("fn main() {
  ro a = 1
  ro t = (a, 2)
- println(1)
+ println(t.0)
 }", std)
-    assert(d.len() >= 1)
-    for g in d {
-        // Named: the refusal must say what the FORM is and that it is read.
-        assert(g.message.contains("tuple"))
-    }
+    assert(d.len() == 0)
+    assert(c.contains("_NovaTuple_2_"))
 
     // Grouping parens must NOT be caught by the comma rule: `(a)` stays an
-    // ordinary paren and the program stays clean.
-    ro (d2, _) = compile_to_c("fn main() {
+    // ordinary paren and the program stays clean of tuple machinery.
+    ro (d2, c2) = compile_to_c("fn main() {
  ro a = 1
  ro b = (a)
  println(b)
 }", std)
     assert(d2.len() == 0)
+    // The SHELL carries _NovaTuple typedefs (and its own .f0 writes) in
+    // every unit, so the clean-of-tuples assertion is on OUR construction
+    // temporary -- the _novac_ namespace is this emitter's alone.
+    assert(!c2.contains("_novac_tmp_t"))
 }
 
 test "an `if` initializer binds through the same doors as the tail form (B14)" {
@@ -361,4 +361,41 @@ fn main() {
  println(peek(a))
 }", std)
     assert(d3.len() == 0)
+}
+
+test "a tuple value compiles into the mono struct, projections are judged (B15 step 4a)" {
+    // The pair lands in a D123 mono struct built field by field, and `t.0`
+    // prints `.f0`. The C is asserted on the CALL SITE shapes (the mono name
+    // and the projection), not on a definition existing -- the B12 lesson.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro t = (1, 2)
+ println(t.0)
+ println(t.1)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_NovaTuple_2_8_nova_int_8_nova_int"))
+    assert(c.contains(".f0 = "))
+    assert(c.contains(".f0)"))
+
+    // The projection is judged against the ARITY, by name.
+    ro (d2, _) = compile_to_c("fn main() {
+ ro t = (1, 2)
+ println(t.5)
+}", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(g.message.contains("out of range"))
+    }
+
+    // A NAMED field on a tuple is its own refusal -- a tuple has no
+    // declaration for the record door to ask.
+    ro (d3, _) = compile_to_c("fn main() {
+ ro t = (1, 2)
+ println(t.x)
+}", std)
+    assert(d3.len() >= 1)
+    for g in d3 {
+        assert(g.message.contains("numbered components"))
+    }
 }

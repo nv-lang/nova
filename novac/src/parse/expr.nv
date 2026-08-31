@@ -261,6 +261,15 @@ fn Cursor mut @primary() -> Node {
             continue
         }
         mut kids = []Node.of(e, @take()) // recv, '.'
+        // A NUMBER after the dot is a tuple projection (`t.0` -- D123 spells
+        // it so, and the checker judges the owner). The parser reads the
+        // language; whether the subset compiles the form is check's question,
+        // exactly as with Index (wave B8).
+        if @peek() == TokenKind.IntLit {
+            kids.push(@take())
+            e = @node(NodeKind.FieldAccess, kids)
+            continue
+        }
         @push_expected(kids, TokenKind.Ident)
         if @peek() == TokenKind.LParen {
             kids.push(@take())

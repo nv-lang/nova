@@ -38,7 +38,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name, c_shell_method}
+import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../types.{TyId, no_ty, is_ty}
 
 /// One expression: record what the emitter asks about, walk what it emits.
@@ -151,6 +151,26 @@ fn Checker mut @type_expr(e Node) -> () {
         } else {
             // The operand's type is unknown -- the refusal above named it, and a
             // hole is not something to record.
+        }
+        // A TUPLE owner is judged before the record door: `has_field` asks
+        // the declaration registry, and a tuple has no declaration to ask
+        // (B15 step 4a). The index is judged against the ARITY, which is
+        // exactly what the term's head stores.
+        if is_ty(owner) && @ctx.tys.kind_of(owner) == TypeKind.TkTuple {
+            match kids[2] {
+                Leaf(t) => {
+                    ro idx = digit_index(t.text)
+                    if idx < 0 {
+                        @refuse(t, "a tuple has numbered components: write `t.0`, not a field name")
+                    } else if idx >= @ctx.tys.arg_count(owner) {
+                        @refuse(t, "tuple projection out of range: the tuple has fewer components")
+                    } else {
+                        @record(e, @ctx.tys.arg(owner, idx))
+                    }
+                }
+                Branch { .. } => {}
+            }
+            return
         }
         match kids[2] {
             Leaf(t) => {
@@ -290,6 +310,35 @@ fn Checker mut @type_expr(e Node) -> () {
         }
     } else if k == NodeKind.Cast {
         @type_cast(e)
+    } else if k == NodeKind.TupleExpr {
+        // A tuple literal: type every component, intern the pair term (the
+        // step 3 constructor), record the node. Components are the BRANCH
+        // children -- every expression is a branch (Lit and Name included,
+        // the parser wraps their leaf), while the parens, commas and recovery
+        // gaps are leaves.
+        ro kids = branch_children(e)
+        ro before = @out.len()
+        mut comps = []TyId.new()
+        for c in kids {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => {
+                    @type_expr(c)
+                    if @out.len() > before { return }
+                    comps.push(type_of(c, @ctx, @scope, @chan))
+                }
+            }
+        }
+        for t in comps {
+            if !is_ty(t) {
+                // A component whose type this walk cannot answer: the hole is
+                // already named (or is a bare name the channel does not
+                // record) -- interning a pair around no_ty would poison the
+                // term. SILENT-OK: the projection judge answers on read.
+                return
+            }
+        }
+        @record(e, @ctx.tys.tuple(comps))
     } else if k == NodeKind.Paren {
         // The parser builds `( expr )` with three children ALWAYS (the
         // closing paren is a zero-width MissingToken when absent), so a

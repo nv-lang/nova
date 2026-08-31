@@ -230,10 +230,10 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             TkApp => { return "${instance_struct_name(ctx, t)}*" }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
-            // The tuple TERM exists since B15 step 3; its C spelling is the
-            // D123 mono struct and arrives with step 4 (emission). Reaching
-            // here earlier means a tuple got past check's named refusal.
-            TkTuple => { ice("mangle: the C type of a TUPLE — arrives with B15 step 4") }
+            // A tuple is a BY-VALUE mono struct (D123): its C type IS its
+            // struct name, no pointer -- the same word `value` means on a
+            // record, and the shell's own pair typedefs are structs by value.
+            TkTuple => { return mono_tuple_name(ctx, t) }
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
@@ -266,7 +266,9 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         TkApp => { return instance_struct_name(ctx, t) }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
-        TkTuple => { ice("mangle: the struct name of a TUPLE — arrives with B15 step 4") }
+        // The typedef is self-named (`typedef struct X {...} X;`), so the
+        // struct name and the C type are the one string.
+        TkTuple => { return mono_tuple_name(ctx, t) }
     }
 }
 
@@ -316,6 +318,28 @@ export fn c_instance_method(ctx Ctx, t TyId, name str) -> str =>
 /// novac emits the prelude itself and every method has a body of ours.
 export fn c_shell_method(ctx Ctx, t TyId, name str) -> str =>
     "Nova_${ty_source_name(ctx, t)}_method_${name}"
+
+/// The mono NAME of a tuple type (D123, length-prefixed):
+/// `_NovaTuple_<arity>_<len1>_<spelling1>_..._<lenN>_<spellingN>`, where a
+/// spelling is the component's C type with the pointer star written `_p`
+/// (`Nova_Vec____nova_int*` -> `Nova_Vec____nova_int_p`) and the len is the
+/// SPELLING's byte length -- unambiguous for any nesting, which is the whole
+/// point of the prefix (Itanium/Rust-v0 analog, the oracle's shell spells
+/// pairs exactly so). INTEROP, not imitation: one C name for one type on both
+/// sides of the link, and it goes the day novac emits the whole prelude.
+export fn mono_tuple_name(ctx Ctx, t TyId) -> str {
+    consume s = StringBuilder.new(cap: 48)
+    s.append("_NovaTuple_")
+    s.append("${ctx.tys.arg_count(t)}")
+    for i in 0..ctx.tys.arg_count(t) {
+        ro spell = c_type(ctx, ctx.tys.arg(t, i)).replace("*", "_p")
+        s.append("_")
+        s.append("${spell.byte_len()}")
+        s.append("_")
+        s.append(spell)
+    }
+    s
+}
 
 /// The body every instance name is built from: `<Head>____<arg>__<arg>`.
 fn instance_body(ctx Ctx, t TyId) -> str {

@@ -393,11 +393,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_return_form(children)
                 }
                 TupleExpr => {
-                    // READ, and refused BY NAME with its stage (B15 step 2).
-                    // Before this kind existed the comma grew a zero-width gap
-                    // and the refusal never named the form.
-                    @report_first_leaf_of(children, TUPLE_EXPR_MSG)
-                    return
+                    // COMPILED since B15 step 4a: the walk descends into the
+                    // components like any other node's children; typing interns
+                    // the pair term (step 3) and the emitter lays it into a
+                    // mono struct (step 4a-3). The named refusal of step 2 is
+                    // lifted here and nowhere else -- the tail door
+                    // (tail_rules) already lets a tuple through by name.
                 }
                 IfExpr => {
                     // INITIALIZER POSITION IS LEGAL since wave B14: the binding

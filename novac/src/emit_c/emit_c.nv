@@ -73,7 +73,7 @@ import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, r
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
 import ../sem.{c_instance_ctor, c_instance_method}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
-import ../types.{TyId, is_ty}
+import ../types.{TyId, is_ty, raw_ty}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
 /// so the day substitutions arrive there is one place to stop passing it.
@@ -131,6 +131,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     }
     consume e = Emitter { ctx, out, reach, next_tmp: 0, lits: []str.new(), lit_tmp: lt, body: StringBuilder.new() }
     e.emit_type_decls()
+    e.emit_tuple_typedefs()
     e.emit_instance_protos(insts)
     e.emit_file(file)
     for inst in insts {
@@ -831,6 +832,10 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @lit_tmp[raw_node(e.id_of())] = @emit_array_lit(e, @out.type_of(e.id_of()))
                 return
             }
+            if kind == NodeKind.TupleExpr {
+                @lit_tmp[raw_node(e.id_of())] = @emit_tuple_lit(e, @out.type_of(e.id_of()))
+                return
+            }
             if kind != NodeKind.RecordCtor {
                 for c in children {
                     @hoist_array_lits(c)
@@ -840,6 +845,77 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
             @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
         }
     }
+}
+
+/// Emit a guarded typedef for every tuple type this file's channel decided
+/// (D123 mono struct, on demand -- the norm retired the blanket pre-decl).
+/// The guard (`#ifndef NOVA_TUPLE_TYPEDEF_<name>`) is the shell's own idiom,
+/// so a pair the shell already carries is simply not redefined. Order is by
+/// ascending term id, which is TOPOLOGICAL: a component interns before the
+/// tuple that holds it, so a nested pair's typedef lands first. Tuples inside
+/// generic instances arrive with E2-b2, the same boundary every instance
+/// type keeps (named, not forgotten).
+fn Emitter mut @emit_tuple_typedefs() -> () {
+    mut ids = []int.new()
+    for t in @out.types {
+        if !is_ty(t) { continue }
+        ro k = @ctx.tys.kind_of(t)
+        if k != TypeKind.TkTuple { continue }
+        ro rid = raw_ty(t)
+        mut dup = false
+        for seen in ids {
+            if seen == rid {
+                dup = true
+            }
+        }
+        if dup { continue }
+        // INSERTION into ascending order: the vector is as small as the
+        // file's distinct tuple types, and the order is the contract above.
+        mut at = ids.len()
+        for j in 0..ids.len() {
+            if ids[j] > rid && at == ids.len() {
+                at = j
+            }
+        }
+        ids.insert(at, rid)
+    }
+    for rid in ids {
+        ro t = TyId(rid)
+        ro name = c_struct(@ctx, t)
+        @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
+        @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
+        @body.append("typedef struct ${name} { ")
+        for i in 0..@ctx.tys.arg_count(t) {
+            @body.append(c_type(@ctx, @ctx.tys.arg(t, i)))
+            @body.append(" f${i}; ")
+        }
+        @body.append("} ${name};\n")
+        @body.append("#endif\n")
+    }
+}
+
+/// A tuple literal: build the mono struct into a numbered temporary, one
+/// field per component IN WRITTEN ORDER -- each component is hoisted right
+/// before its own assignment line, so a component's side effect runs where
+/// the source puts it (the H1/H2 discipline of the record constructor).
+fn Emitter mut @emit_tuple_lit(init Node, vtype TyId) -> str {
+    ro name = c_struct(@ctx, vtype)
+    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
+    @body.append("    ${name} ${tmp};\n")
+    mut i = 0
+    for c in branch_children(init) {
+        match c {
+            Leaf(_) => {} // parens and commas -- trivia, not components
+            Branch { .. } => {
+                @hoist_array_lits(c)
+                @body.append("    ${tmp}.f${i} = ")
+                @emit_expr(c)
+                @body.append(";\n")
+                i += 1
+            }
+        }
+    }
+    tmp
 }
 
 /// A record constructor at a binding: builds the value into a numbered
@@ -930,6 +1006,13 @@ fn Emitter mut @emit_bind(st Node) -> () {
     if init.kind_of() == NodeKind.ArrayLit {
         ro tmp = @emit_array_lit(init, vtype)
         @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
+        return
+    }
+    if init.kind_of() == NodeKind.TupleExpr {
+        // The same contract as the record constructor below: built into a
+        // temporary, the binding reads the temporary's name (B15 step 4a).
+        ro ttmp = @emit_tuple_lit(init, vtype)
+        @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${ttmp};\n")
         return
     }
     if init.kind_of() == NodeKind.RecordCtor {

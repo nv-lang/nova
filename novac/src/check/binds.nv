@@ -100,6 +100,22 @@ fn Checker mut @type_bind(st Node) -> () {
     } else {
         // Every other initializer: the lattice answers -- except the one below.
     }
+    // A TUPLE LITERAL routes explicitly for the same reason the array literal
+    // does: TupleExpr is NOT in is_expr_kind (wave B13 lesson -- that list
+    // feeds every general arm), so the verify-then-read path above never sees
+    // it. Typing interns the pair term (B15 step 3) and records it; the bind
+    // reads exactly what was recorded.
+    if ik == NodeKind.TupleExpr {
+        ro before2 = @out.len()
+        @type_expr(init)
+        if @out.len() > before2 { return }
+        ro pt = @chan.type_if_known(init.id_of())
+        // SILENT-OK: a pair with an unanswerable component was already refused
+        // (or the hole is named) inside type_expr; nothing to bind.
+        if !is_ty(pt) { return }
+        @scope.bind(vname, pt, bind_mode_at(kids))
+        return
+    }
     // AN INDEX DECIDES ITS OWN TYPE HERE for the same reason the literal above
     // does: the answer comes from a DOOR (`@type_index` asks the receiver's
     // application for its element) and carries every subset refusal about an
