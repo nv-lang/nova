@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: the same file these tests were cut from -- rustc's ui-test habit of
+// grouping ACCEPTANCE tests by the plan wave that earned them; NOT taken:
+// golden-file assertions (a test here asserts the property, not the byte).
+// Role: acceptance tests of sub-plan 274.5 ("novac reads its own source") --
+// the waves that widen the subset: a call in statement position (B12), a
+// record constructor as an argument (B13), a tail/initializer `if` as a value
+// (B14/B14b), the index lie, the healthy import, the named gap (#850).
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file -- and it EXISTS because
+// pipeline_test.nv crossed the 1000-line limit (decision 12): the cut is by
+// MEANING, the wave-acceptance block, not by counting lines.
+// novac/src/pipeline/subset_test.nv -- what the 274.5 waves promised, held.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind, raw_node}
+import ../parse.{parse}
+import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
+import ../source.{SourceText}
+import ../diag.{ice}
+import ../check.{check_instance}
+import ../types.{TyId, no_ty}
+
+test "an `if` initializer binds through the same doors as the tail form (B14)" {
+    // The owner\'s remark measured wider than the wave: the oracle also takes
+    // `if` as an INITIALIZER (`ro x = if 1 == 1 { 10 } else { 20 }` prints 10
+    // there). The parser reads value-position `if` as its OWN kind (IfExpr,
+    // same child layout), which the first version of this arm learned from a
+    // probe: the binding arm matched IfStmt and never fired.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro x = if 1 == 1 { 10 } else { 20 }
+ println(x)
+}", std)
+    assert(d.len() == 0)
+    // The TEMPORARY again, not the keyword: only the value form declares one.
+    assert(c.contains("_novac_if_t"))
+
+    // THE OTHER DIRECTION: without an `else` there is no value to bind, and
+    // the refusal must come by name -- the parser leaves the else slot absent
+    // exactly so check can see the absence.
+    ro (d2, _) = compile_to_c("fn main() {
+ ro x = if 1 == 1 { 10 }
+ println(x)
+}", std)
+    assert(d2.len() >= 1)
+}
+
+test "a tail `if` is the returned VALUE, and the branches must agree (wave B14)" {
+    // Named by measurement: five files stopped at "body ends without a value",
+    // and reading the source under each refusal gave three different forms.
+    // This is the one that does not depend on indexing.
+    //
+    // Behaviour measured against the ORACLE before any of this was written:
+    // `fn pick(n int) -> int { if n == 0 { 1 } else { 2 } }` with `pick(0)`
+    // prints 1 there.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn pick(n int) -> int {
+ if n == 0 {
+  1
+ } else {
+  2
+ }
+}
+fn main() { println(pick(0)) }", std)
+    assert(d.len() == 0)
+    // THE TEMPORARY, not the word `if`: what this wave added is the value
+    // form, and only a value form declares a result variable and assigns it
+    // from both branches. Asserting on `if (` would stay green on the old
+    // statement-only emitter.
+    assert(c.contains("_novac_if_t"))
+
+    // THE OTHER DIRECTION, and it is the rule that makes the form safe:
+    // branches that disagree have no type between them. A compiler that took
+    // the first branch would declare a temporary of one type and write the
+    // other into it -- valid C, wrong answer, no diagnostic.
+    ro (d2, _) = compile_to_c("fn pick(n int) -> int {
+ if n == 0 {
+  1
+ } else {
+  \"two\"
+ }
+}
+fn main() { println(pick(0)) }", std)
+    assert(d2.len() >= 1)
+}
+
+test "a record constructor stands in ARGUMENT position, hoisted (wave B13)" {
+    // Named by measurement: 8 of novac's 58 files stopped at "record
+    // constructor only as a binding initializer", and `builtins.nv` opens with
+    // the shape -- constructors inside a literal's `of(...)`.
+    //
+    // Behaviour checked against the oracle on the identical program before this
+    // was written: it prints 7.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Pt { n int }
+fn grab(p Pt) -> int => p.n
+fn main() { println(grab(Pt { n: 7 })) }", std)
+    assert(d.len() == 0)
+    // THE CALL SITE with the HOISTED TEMPORARY in it -- not the function name,
+    // which is in the C from the definition anyway. That distinction cost wave
+    // B12 a reverse probe: an assertion on the name alone stayed green with the
+    // fix removed.
+    assert(c.contains("novac_fn_grab__Pt__to_nova_int(_novac_tmp"))
+
+    // THE OTHER DIRECTION: a constructor whose fields do not match the
+    // declaration is still refused, and by name -- widening the POSITION must
+    // not widen what may stand there.
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn grab(p Pt) -> int => p.n
+fn main() { println(grab(Pt { nope: 7 })) }", std)
+    assert(d2.len() >= 1)
+}
+
+test "a call in statement position is compiled, not only println (wave B12)" {
+    // Named by measurement: after the import regression and the ICEs, the
+    // largest group of first refusals across novac's own 57 files was "a call
+    // in statement position is println only" -- 12 of them.
+    //
+    // What the LANGUAGE does was measured with the oracle before any of this
+    // was written: discarding a call's result is legal there and silent. So a
+    // warning here would be our invention, and the emitter writes the call
+    // followed by a semicolon -- no temporary, because nobody asked the call
+    // for an answer.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn side(n int) -> int => n + 1
+fn main() {
+ side(1)
+ println(2)
+}", std)
+    assert(d.len() == 0)
+    // THE CALL SITE, not the name. The name alone is in the C anyway -- from
+    // the function's DEFINITION -- so asserting it proves nothing, and the
+    // reverse probe said so: with the emitter change taken out the test stayed
+    // green. A test that would pass without the fix is not a test. So the
+    // assertion names what only a CALL can produce: the mangled name with an
+    // argument in it.
+    assert(c.contains("novac_fn_side__nova_int__to_nova_int(((nova_int)1LL))"))
+
+    // THE OTHER DIRECTION: what a statement call still cannot do is refused by
+    // NAME, not accepted in silence -- an unresolved callee stays an error.
+    ro (d2, _) = compile_to_c("fn main() {
+ nosuch(1)
+ println(2)
+}", std)
+    assert(d2.len() >= 1)
+}
+
+test "an index on a BOUND name is refused BY NAME, not by a lie about the name" {
+    // Found by probing, not by a test: `ro v = xs` was clean, `xs.len()` was
+    // clean, and `ro v = xs[0]` refused with "unknown name" ABOUT `xs`. The
+    // message was a lie -- the name was bound. The index arm lived in the
+    // subset walk, which holds no scope (the word `@scope` does not occur in
+    // check.nv once), so it asked an empty one.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn take(xs []int) -> int {
+ ro v = xs[0]
+ v
+}
+fn main() { println(1) }", std)
+    // WHAT CHANGED IS THE TRUTHFULNESS, not the outcome. The form is still
+    // outside the subset -- the interop shell carries no `index` for this
+    // instance, so nothing can be emitted -- but it now says THAT, instead of
+    // claiming the receiver is unbound. A refusal that names the wrong thing
+    // sends the reader to look for a typo in a name that is perfectly fine.
+    assert(d.len() >= 1)
+    for g in d {
+        assert(!g.message.contains("unknown name"))
+    }
+
+    // THE OTHER DIRECTION, and it is the half that broke first when the arm
+    // moved: an index whose receiver does NOT resolve must still be refused.
+    // Moving the arm out of the walk made this form pass in silence until the
+    // module test caught it, because the binding path calls `type_of` directly
+    // and never `@type_expr`.
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {
+ ro v = nosuch(i)[0]
+ v
+}
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+}
+
+test "an index UNDER something does not crash the compiler (#652 class)" {
+    // Found by measuring self-distance, not by a test: five of novac's own 57
+    // files ended in an internal compiler error rather than a refusal. This one
+    // is "expression kind without a type rule" -- the walk RECORDS an index's
+    // element type, and the reading door had no rule for `Index` at all, so
+    // nothing asked for it until an index stood UNDER something.
+    //
+    // An ICE is not a form outside the subset: it is a crash, and a subset that
+    // refuses by name is the whole promise of this compiler. So what this test
+    // holds is not "the form compiles" but "the answer is a REFUSAL, never a
+    // crash" -- the form itself is still outside E1 and says so by name.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type R { xs []int }
+fn f(rs []R, i int) -> int {
+ ro v = rs[i].xs[0]
+ v
+}
+fn main() { println(1) }", std)
+    for g in d {
+        assert(!g.message.contains("internal compiler error"))
+    }
+
+    // THE SECOND SHAPE of the same class, and it had a different root: here the
+    // receiver is a call to a name that does NOT exist. The walk refuses it by
+    // name, and the index door then asked `type_of` about it anyway -- and
+    // `type_of` on a call whose name is not in the registry raises an ice. So
+    // the refusal was correct and the crash came after it, which is why no
+    // probe on a well-formed program could find this.
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {
+ ro v = nosuch(i)[0]
+ v
+}
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(!g.message.contains("internal compiler error"))
+    }
+}
+
+test "a HEALTHY import is not refused -- the gap check judges only the gap" {
+    // A defect I shipped closing #815, found by re-measuring self-distance
+    // rather than by any test: the arm handed `@report_err_branch` the children
+    // of a healthy import, and that door takes the children of an Err BRANCH.
+    // The first leaf of an import is the keyword, which has width, so the
+    // width-bearing path fired every time and EVERY import was refused as "not
+    // a form of the language". First refusal of 28 of novac's own 57 files.
+    //
+    // It lived because every test about imports asked about a BROKEN one. This
+    // asks the other question, which is the one the compiler answers all day.
+    ro std = std_decls()
+
+    ro (d1, _) = compile_to_c("import lex.{Token}
+fn main() { println(1) }", std)
+    assert(d1.len() == 0)
+
+    // A relative path with the slash and the two dots, which is how novac's own
+    // files spell it -- and the spelling that made the parser swallow whole
+    // files before 2026-08-23.
+    ro (d2, _) = compile_to_c("import ../lex.{Token, TokenKind}
+fn main() { println(1) }", std)
+    assert(d2.len() == 0)
+
+    // THE OTHER DIRECTION, so the fix cannot be "stop looking inside imports":
+    // an import with no path at all is still refused (#815).
+    ro (d3, _) = compile_to_c("import
+fn main() { println(1) }", std)
+    assert(d3.len() >= 1)
+}
+
+test "the gap NAMES the token it wanted, not merely that a form broke (#850)" {
+    // Registry #850. Closing #809/#815 made a missing required token refuse --
+    // but the refusal said only "this is not a form of the language", which is
+    // true of every syntax error and helps no one who left out a `)`. The door
+    // knew the kind it wanted and threw it away; now the zero-width leaf it
+    // plants carries that kind (Roslyn `EatTokenAsKind`), and the checker reads
+    // it back.
+    //
+    // TWO KINDS and not one carrier, for the same reason the #815 test above
+    // takes four: a single carrier would hold one line of the parser rather
+    // than the class.
+    ro std = std_decls()
+
+    // a type with no name -> the wanted kind is a NAME
+    ro (d1, _) = compile_to_c("type { n int }
+fn main() { println(1) }", std)
+    assert(d1.len() >= 1)
+    assert(d1[0].message.contains("expected a name"))
+
+    // a const with no `=` -> the wanted kind is PUNCTUATION, and it comes back
+    // quoted, because the reader is meant to type it
+    ro (d2, _) = compile_to_c("const A int 1
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("expected `=`"))
+
+    // THE OTHER DIRECTION. A gap planted by recovery knows a form broke but not
+    // what would mend it, and must NOT invent an expectation. Written whole,
+    // the same shapes stay clean -- without this half the rule could name a
+    // token at every refusal and no test would notice.
+    ro (d3, _) = compile_to_c("type Pt { n int }
+const A int = 1
+fn main() { println(A) }", std)
+    assert(d3.len() == 0)
+}
