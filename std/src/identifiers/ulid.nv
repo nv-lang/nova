@@ -147,12 +147,27 @@ fn decode_char(c char) -> Option[u8] {
 /// Uses Time + Random effects (ambient). In tests it is made deterministic
 /// via `with Time = th.fixed_ms(...), Random = th.seeded(...)`.
 ///
-/// Throws `TimestampOverflow` if ms ≥ 2^48 (~10889 AD).
+/// PANICS if the ambient clock is past ~10889 AD (ms ≥ 2^48). That is a
+/// D325 R0 case, not a D325 R1 one, and the distinction is the whole reason
+/// this signature carries no `Fail` and returns no `Result`: R1 covers
+/// EXPECTED failures (user input, I/O, parsing), while «integer overflow» is
+/// named in R0 among the conditions that must panic per D13. The rule adds,
+/// in as many words, that without R0 «R1 would read as "Result instead of
+/// panic" — and it is not that».
+///
+/// Concretely: this constructor parses nothing and takes no input. Its only
+/// failure needs the system clock to run past the year 10889, and making all
+/// callers unwrap a `Result` for that would tax every use for an impossible
+/// branch. `Ulid.from` keeps `TimestampOverflow` as a real error, because
+/// there the overflow arrives from a PARSED STRING — that is user input, and
+/// user input is exactly what R1 governs.
+///
+/// Registry 221.1 №852.
 #stable(since = "0.1")
-export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findings-fail-public-signature]
+export fn Ulid.new() Time Random -> Self {
     ro ms = Timestamp.now().unix_millis() as u64
     if ms >= 0x1000000000000 {                       // 2^48
-        throw TimestampOverflow
+        panic("Ulid.new: clock past year 10889 — timestamp ≥ 2^48 ms")
     }
 
     // ts_part: 48 бит timestamp в верхних, 16 бит random в младших

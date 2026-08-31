@@ -310,9 +310,24 @@ fn is_fail_exempt(d: &Decl) -> bool {
     if d.rel == "prelude/core.nv" && d.name == "unwrap" {
         return true;
     }
-    // R5 protocol-member (user-E forwarding). Обычно не сканируется (нет `fn`),
-    // но оставлено явным на случай будущего рефактора декларации.
-    if d.name == "on_exit" {
+    // Cleanup-ПРОТОКОЛ — exempt-список D325 §2, пункт 2 (Amend-пакет,
+    // Ред. 2, sign-off владельца 2026-07-03): protocol-member
+    // `@cleanup(...) Fail[E]` легален by-design.
+    //
+    // ЗДЕСЬ СТОЯЛО `on_exit` — ИМЯ, КОТОРОГО В std НЕТ НИГДЕ
+    // (греп 2026-08-31: ноль вхождений). Член протокола давно
+    // зовётся `cleanup` (`prelude/protocols.nv:384` —
+    // `consume @cleanup(outcome ScopeOutcome) Fail[E] -> ()`), а исключение
+    // осталось на прежнем имени — то есть было МЁРТВЫМ, а две честные
+    // реализации протокола (`fs/fs.nv`, `io/buffered.nv`) числились
+    // нарушениями. Не заметили потому, что этот тест не гоняет ни
+    // гейт, ни CI (оба шли с `--lib`) — реестр №852, охват — №723.
+    //
+    // Судим НЕ по одному имени: `cleanup` мог бы называться и обычный
+    // метод. Признак именно ПРОТОКОЛЬНОЙ реализации — параметр
+    // `ScopeOutcome`, который задаёт сам протокол: реализация не вольна
+    // отклониться от его сигнатуры, а значит и от `Fail[E]` в ней.
+    if d.name == "cleanup" && d.header.contains("ScopeOutcome") {
         return true;
     }
     false
