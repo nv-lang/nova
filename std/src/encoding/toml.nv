@@ -91,11 +91,26 @@ fn TomlParser.new(s str) -> Self {
 ///
 /// Supports: key=value, [section] / [a.b.c] tables, basic strings, ints,
 /// floats, booleans, arrays.
+///
+/// Ошибка возвращается ЗНАЧЕНИЕМ — D325 R1 (разбор пользовательского
+/// ввода). Реестр 221.1 №852.
+///
+/// ПОЧЕМУ ЗДЕСЬ ХЕНДЛЕР, А В `Uuid.from`/`Ulid.from` — `Err` НАПРЯМУЮ.
+/// Разница НЕ стилевая, и её называет сама D325: «Эффект `Fail[E]`
+/// остаётся механизмом языка — для пользовательского кода и ВНУТРЕННИХ
+/// ХЕЛПЕРОВ; std им свои ошибки наружу не отдаёт». У uuid/ulid внутренностей
+/// было три-четыре плоские функции — там хендлер не купил бы ничего, кроме
+/// второй модели ошибок в одном модуле. Здесь же внутри — рекурсивный
+/// спуск из одиннадцати взаимно вызывающих методов на `mut`-объекте, где
+/// `Fail` — естественный внутренний канал, а в самой публичной функции нет
+/// НИ ОДНОГО `throw` — убирать здесь нечего, граница и есть вся правка.
 #stable(since = "0.1")
-export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue { // [M-lint-findings-static-conversion] [M-lint-findings-fail-public-signature]
-    mut p = TomlParser.new(s)
-    p.parse_document()
-    TomlTable(p.root)
+export fn Toml.parse(s str) -> Result[TomlValue, ParseTomlError] { // [M-lint-findings-static-conversion]
+    with Fail[ParseTomlError] = |e| interrupt Err(e) {
+        mut p = TomlParser.new(s)
+        p.parse_document()
+        Ok(TomlTable(p.root))
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -11,8 +11,12 @@ export type ParseCsvError enum
 
 /// Parse a CSV document into `[][]str` (records of fields). Supports quoted fields
 /// (`"..."`) with the escape `""` → `"`.
+///
+/// Returns `Err(ParseCsvError)` rather than throwing — D325 R1: a public std
+/// operation that can fail on USER INPUT hands the error back as a VALUE.
+/// Registry 221.1 №852.
 #stable(since = "0.1")
-export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str { // [M-lint-findings-static-conversion]
+export fn Csv.parse(input str) -> Result[[][]str, ParseCsvError] { // [M-lint-findings-static-conversion]
     mut records [][]str = []
     mut current_record []str = []
     consume current_field = StringBuilder.new()
@@ -74,7 +78,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str { // [M-lint-findi
 
     if in_quote {
         ro _ = current_field.into_str()
-        throw UnterminatedQuote { line }
+        return Err(UnterminatedQuote { line })
     }
 
     // Финальная запись (если последняя строка без \n)
@@ -84,7 +88,7 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str { // [M-lint-findi
         records.push(current_record)
     }
 
-    records
+    Ok(records)
 }
 
 // Сериализация [][]str → str.
