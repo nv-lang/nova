@@ -66,7 +66,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of, raw_node}
 import ../diag.{ice}
 import ../mono.{Reach}
-import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx}
+import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx, carrier_of}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
@@ -714,7 +714,17 @@ fn Emitter mut @emit_stmt(st Node) -> () {
                 // The operand TYPE decides the form, and it is READ from the
                 // channel -- assuming int here is what made `f += 0.25` emit
                 // an integer helper on doubles.
-                ro is_float = @out.type_of(kids[2].id_of()) == @ctx.prims.f64_id
+                //
+                // THE CARRIER OF THE TARGET, on two measurements (hunt
+                // emit_c x K1, H5). Declared type: `a += Meters(2.25)` read
+                // Meters, not f64, and the int helper came back -- 3 instead
+                // of 3.75, silently. Right operand: its type is not always in
+                // the channel (a constructor argument recorded no entry), and
+                // an absent type is not f64 either -- same wrong form by a
+                // different road. The TARGET is a binding; the walk recorded
+                // its type when it bound the name, and its carrier is what the
+                // arithmetic runs in. A newtype computes as what it holds.
+                ro is_float = carrier_of(@ctx, @out.type_of(kids[2].id_of())) == @ctx.prims.f64_id
                 ro form = c_binary_form(op, is_float)
                 // The target appears on the RIGHT of a compound assignment
                 // too (`a += b` is `a = a + b`), and it is written the same
