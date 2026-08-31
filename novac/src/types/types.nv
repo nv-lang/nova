@@ -215,9 +215,6 @@ export fn Interner mut @app(decl_id DeclId, args []TyId) -> TyId => @intern(Type
 export fn Interner mut @newtype(decl_id DeclId, under TyId) -> TyId =>
     @intern(TypeKind.TkNewtype, raw_decl(decl_id), []TyId.of(under))
 
-/// A type PARAMETER by its index in the owner's generics (donor: rustc
-/// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
-/// have an id at all.
 /// A structural tuple of its components (D123, B15 step 3): the head is the
 /// ARITY -- buckets split by it -- and the components are the args. Two tuples
 /// with equal components intern to ONE row, which is the structural identity
@@ -226,6 +223,9 @@ export fn Interner mut @newtype(decl_id DeclId, under TyId) -> TyId =>
 export fn Interner mut @tuple(components []TyId) -> TyId =>
     @intern(TypeKind.TkTuple, components.len(), components)
 
+/// A type PARAMETER by its index in the owner's generics (donor: rustc
+/// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
+/// have an id at all.
 export fn Interner mut @param(index int) -> TyId => @intern(TypeKind.TkParam, index, []TyId.new())
 
 /// A fresh inference variable. Distinct vids never merge here — union-find
