@@ -281,7 +281,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // neither a match, a ctor nor an expression"). So the subset refuses, and the
     // refusal names WHAT is missing and WHERE -- the fix is a wider probe, not a
     // change to the program being compiled.
-    @report_first_leaf_of(kids, "outside the subset: indexing is read but not compiled yet -- the interop shell carries no `index` for this instance (widen novac/probe/shell_probe.nv)")
+    @report_first_leaf_of(kids, "outside the subset: indexing is read but not compiled yet (E2-b) -- the interop shell carries no `index` for this instance, so widen novac/probe/shell_probe.nv")
     no_ty()
 }
 
