@@ -14,7 +14,7 @@
 //   - quoted values "..." (опционально)
 //
 // API:
-//   Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]]
+//   s str.to_ini() Fail[ParseIniError] -> HashMap[str, HashMap[str, str]]
 //
 // Структура: outer map от section name → inner map от key → value.
 // Top-level keys (вне sections) — в section с именем "".
@@ -34,8 +34,15 @@ export type ParseIniError enum
 ///
 /// Ошибка возвращается ЗНАЧЕНИЕМ, а не бросается — D325 R1 (разбор
 /// пользовательского ввода). Реестр 221.1 №852.
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, а не `T.parse(s)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09; правило
+/// `W_STATIC_CONVERSION` называет и `T.from`, и `T.parse` одним дыханием).
+/// Парная правка к `str @to_uuid()` / `@to_ulid()` / `@to_url()`.
+/// Маркер `[M-lint-findings-static-conversion]` подавлял свою же находку —
+/// линт видел нарушение и молчал по уговору; теперь и долг, и уговор сняты.
 #stable(since = "0.1")
-export fn Ini.parse(s str) -> Result[HashMap[str, HashMap[str, str]], ParseIniError] { // [M-lint-findings-static-conversion]
+export fn str @to_ini() -> Result[HashMap[str, HashMap[str, str]], ParseIniError] {
+    ro s = @
     mut result = HashMap[str, HashMap[str, str]].new()
     result.insert("", HashMap[str, str].new())
     mut current_section = ""

@@ -16,7 +16,7 @@
 //   - Underscore separators в числах (1_000)
 //
 // API:
-//   Toml.parse(s str) Fail[ParseTomlError] -> TomlValue
+//   s str.to_toml() Fail[ParseTomlError] -> TomlValue
 //
 // [2026-07-10, промоушен из std/_experimental]: два runtime-дефекта,
 // заблокировавшие промоушен ([M-toml-repeated-fail-call-run-fail]),
@@ -104,8 +104,15 @@ fn TomlParser.new(s str) -> Self {
 /// спуск из одиннадцати взаимно вызывающих методов на `mut`-объекте, где
 /// `Fail` — естественный внутренний канал, а в самой публичной функции нет
 /// НИ ОДНОГО `throw` — убирать здесь нечего, граница и есть вся правка.
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, а не `T.parse(s)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09; правило
+/// `W_STATIC_CONVERSION` называет и `T.from`, и `T.parse` одним дыханием).
+/// Парная правка к `str @to_uuid()` / `@to_ulid()` / `@to_url()`.
+/// Маркер `[M-lint-findings-static-conversion]` подавлял свою же находку —
+/// линт видел нарушение и молчал по уговору; теперь и долг, и уговор сняты.
 #stable(since = "0.1")
-export fn Toml.parse(s str) -> Result[TomlValue, ParseTomlError] { // [M-lint-findings-static-conversion]
+export fn str @to_toml() -> Result[TomlValue, ParseTomlError] {
+    ro s = @
     with Fail[ParseTomlError] = |e| interrupt Err(e) {
         mut p = TomlParser.new(s)
         p.parse_document()

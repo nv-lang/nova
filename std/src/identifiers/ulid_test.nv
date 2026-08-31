@@ -66,7 +66,7 @@ test "round-trip: from(u.to_str()) == u" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xCAFE) {
         ro u = Ulid.new()
         ro s = u.to_str()
-        ro parsed = Ulid.from(s)!!
+        ro parsed = s.to_ulid()!!
         assert(parsed == u)
     }
 }
@@ -76,7 +76,7 @@ test "from: case-insensitive" {
         ro u = Ulid.new()
         ro s_upper = u.to_str()
         // ULID by spec — upper-case, но decode принимает обе.
-        ro parsed = Ulid.from(s_upper.to_ascii_lower())!!
+        ro parsed = s_upper.to_ascii_lower().to_ulid()!!
         assert(parsed == u)
     }
 }
@@ -90,7 +90,7 @@ test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
         // Если в s нет '0' или '1' — пропускаем тест (но обычно есть).
         if s.contains("0") || s.contains("1") {
             ro modified = s.replace("0", "O").replace("1", "I")
-            ro parsed = Ulid.from(modified)!!
+            ro parsed = modified.to_ulid()!!
             assert(parsed == u)
         }
     }
@@ -100,7 +100,7 @@ test "from: ошибка — неправильная длина" {
     // Ошибка — ЗНАЧЕНИЕ (D325 R1), поэтому ушла не только `with Fail`-
     // обвязка, но и `with Time/Random`: они были нужны ИСКЛЮЧИТЕЛЬНО затем,
     // чтобы хендлер мог вернуть заглушку `Ulid.new()`.
-    match Ulid.from("too-short") {
+    match "too-short".to_ulid() {
         Err(e) => assert(e is InvalidLength)
         Ok(_)  => assert(false)
     }
@@ -111,7 +111,7 @@ test "from: ошибка — невалидный символ (U)" {
     // Ошибка — ЗНАЧЕНИЕ (D325 R1), поэтому ушла не только `with Fail`-
     // обвязка, но и `with Time/Random`: они были нужны ИСКЛЮЧИТЕЛЬНО затем,
     // чтобы хендлер мог вернуть заглушку `Ulid.new()`.
-    match Ulid.from("UAAAAAAAAAAAAAAAAAAAAAAAAA") {                    // 26 chars, но 'U' невалид
+    match "UAAAAAAAAAAAAAAAAAAAAAAAAA".to_ulid() {                    // 26 chars, но 'U' невалид
         Err(e) => assert(e is InvalidChar)
         Ok(_)  => assert(false)
     }

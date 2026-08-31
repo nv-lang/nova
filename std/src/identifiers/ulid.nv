@@ -22,13 +22,13 @@
 // Decisions:
 //   - D52 record-тип, D55 record-coercion
 //   - D67 ?-оператор работает только на Result/Option
-//   - `Ulid.from(s)` / `u.to_str()` — конструктор-конверсия/представление (D410)
+//   - `s.to_ulid()` / `u.to_str()` — конструктор-конверсия/представление (D410)
 //   - D74 instance-методы числовых операций
 //   - Эффекты Random, Time для генерации
 //
 // API:
 //   Ulid.new() Time Random -> Self
-//   Ulid.from(s str) Fail[ParseUlidError] -> Self
+//   s str.to_ulid() Fail[ParseUlidError] -> Self
 //   u.to_str() -> str
 //   u.timestamp_ms() -> u64
 
@@ -224,7 +224,7 @@ export fn Ulid @compare(other Ulid) -> int {
 /// # Examples
 /// ```nova
 /// let u = Ulid.new()
-/// assert(Ulid.from(u.to_str()) == u)
+/// assert(u.to_str().to_ulid() == u)
 /// ```
 #stable(since = "0.1")
 export fn Ulid @to_str() -> str {
@@ -303,14 +303,24 @@ export fn Ulid @to_str() -> str {
 /// and `Regex.compile` already uses.
 ///
 /// Registry 221.1 №852.
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, А НЕ `T.from(x)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09). Семья уже есть и она
+/// большая: `to_version`, `to_path`, `to_socket_addr`, `to_int`, `to_bool`,
+/// `to_char`, `to_f64`, `to_complex`, `to_cstr`. Прежнее имя числилось долгом
+/// маркером `[M-lint-findings-static-conversion]`, и тот маркер ПОДАВЛЯЛ
+/// свою же находку `W_STATIC_CONVERSION` — то есть линт видел нарушение
+/// и молчал по уговору. Переименование снимает и долг, и уговор.
+///
+/// Сделано ДО тега сознательно: подпись несёт `#stable(since = "0.1")`,
+/// и после выпуска такое переименование стало бы ломающим для чужого кода.
 #stable(since = "0.1")
-export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings-static-conversion]
-    if s.byte_len() != 26 {
-        return Err(InvalidLength { actual: s.byte_len(), expected: 26 })
+export fn str @to_ulid() -> Result[Ulid, ParseUlidError] {
+    if @byte_len() != 26 {
+        return Err(InvalidLength { actual: @byte_len(), expected: 26 })
     }
 
     // Байты — ОДИН раз на разбор; дальше индексы 0..25 законны по построению.
-    ro b = s.bytes()
+    ro b = @bytes()
 
     // 10 timestamp chars + 16 random chars = 26.
     // Каждый char = 5 бит, итого 130 бит. Старшие 2 бита timestamp
@@ -369,7 +379,7 @@ export fn Ulid.from(s str) -> Result[Self, ParseUlidError] { // [M-lint-findings
 // врёт читателю так же, как устаревшая дока.
 // Берёт СРЕЗ байтов и индексирует напрямую: `Ulid.from` уже проверил, что
 // длина ровно 26, то есть индексы 0..25 существуют ПО ПОСТРОЕНИЮ.
-// Прежде здесь стоял `s.bytes().get(pos)`, и его рукав `None` возвращал
+// Прежде здесь стоял `@bytes().get(pos)`, и его рукав `None` возвращал
 // `InvalidLength` — то есть мёртвая ветка ещё и ЛГАЛА о причине: длина уже
 // проверена выше, а выход за границу был бы нарушением контракта
 // (паника по D13/D325 R0), а не ошибкой разбора. Срез теперь вычисляется

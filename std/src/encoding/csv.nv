@@ -15,8 +15,15 @@ export type ParseCsvError enum
 /// Returns `Err(ParseCsvError)` rather than throwing — D325 R1: a public std
 /// operation that can fail on USER INPUT hands the error back as a VALUE.
 /// Registry 221.1 №852.
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, а не `T.parse(s)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09; правило
+/// `W_STATIC_CONVERSION` называет и `T.from`, и `T.parse` одним дыханием).
+/// Парная правка к `str @to_uuid()` / `@to_ulid()` / `@to_url()`.
+/// Маркер `[M-lint-findings-static-conversion]` подавлял свою же находку —
+/// линт видел нарушение и молчал по уговору; теперь и долг, и уговор сняты.
 #stable(since = "0.1")
-export fn Csv.parse(input str) -> Result[[][]str, ParseCsvError] { // [M-lint-findings-static-conversion]
+export fn str @to_csv() -> Result[[][]str, ParseCsvError] {
+    ro input = @
     mut records [][]str = []
     mut current_record []str = []
     consume current_field = StringBuilder.new()

@@ -19,7 +19,7 @@
 //   - D55 record-coercion для конструкции внутреннего представления.
 //   - D67 ?-оператор работает только на Result/Option.
 //   - D72 bounds (не используется напрямую — нет generic API).
-//   - `Uuid.from(s)` / `u.to_str()`: парсинг и форматирование (D410).
+//   - `s.to_uuid()` / `u.to_str()`: парсинг и форматирование (D410).
 //   - D74 instance-методы числовых операций.
 //
 // Pending features в bootstrap (для production tooling):
@@ -273,17 +273,27 @@ fn hex_digit(n u8) -> char {
 ///
 /// # Examples
 /// ```nova
-/// ro id = Uuid.from("550e8400-e29b-41d4-a716-446655440000")!!
+/// ro id = "550e8400-e29b-41d4-a716-446655440000".to_uuid()!!
 /// ```
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, А НЕ `T.from(x)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09). Семья уже есть и она
+/// большая: `to_version`, `to_path`, `to_socket_addr`, `to_int`, `to_bool`,
+/// `to_char`, `to_f64`, `to_complex`, `to_cstr`. Прежнее имя числилось долгом
+/// маркером `[M-lint-findings-static-conversion]`, и тот маркер ПОДАВЛЯЛ
+/// свою же находку `W_STATIC_CONVERSION` — то есть линт видел нарушение
+/// и молчал по уговору. Переименование снимает и долг, и уговор.
+///
+/// Сделано ДО тега сознательно: подпись несёт `#stable(since = "0.1")`,
+/// и после выпуска такое переименование стало бы ломающим для чужого кода.
 #stable(since = "0.1")
-export fn Uuid.from(s str) -> Result[Self, ParseUuidError] { // [M-lint-findings-static-conversion]
-    if s.byte_len() != 36 {
-        return Err(InvalidLength { actual: s.byte_len(), expected: 36 })
+export fn str @to_uuid() -> Result[Uuid, ParseUuidError] {
+    if @byte_len() != 36 {
+        return Err(InvalidLength { actual: @byte_len(), expected: 36 })
     }
 
     // Байты берём ОДИН раз и передаём во все помощники — см. баннер
     // над `check_dash`. После проверки длины выше все индексы 0..35 законны.
-    ro b = s.bytes()
+    ro b = @bytes()
 
     // Дефисы на позициях 8, 13, 18, 23.
     check_dash(b, 8)?
@@ -320,7 +330,7 @@ export fn Uuid.from(s str) -> Result[Self, ParseUuidError] { // [M-lint-findings
 // нарушение контракта, то есть паника по D13/D325 R0, а не `Result`.
 //
 // И ВТОРОЕ, что сняла та же правка: срез теперь берётся ОДИН раз у
-// вызывающего. Прежде `s.bytes()` вычислялся ОДИННАДЦАТЬ раз на один
+// вызывающего. Прежде `@bytes()` вычислялся ОДИННАДЦАТЬ раз на один
 // разбор — четыре дефиса плюс семь диапазонов. Прежний комментарий
 // здесь обещал «direct byte access O(1)» — код под ним этого не делал.
 fn check_dash(b []u8, pos int) -> Result[(), ParseUuidError] {

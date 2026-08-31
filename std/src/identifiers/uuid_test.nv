@@ -65,13 +65,13 @@ test "round-trip: from(u.to_str()) == u" {
     ]
     for u in cases {
         ro s = u.to_str()
-        ro parsed = Uuid.from(s)!!
+        ro parsed = s.to_uuid()!!
         assert(parsed == u)
     }
 }
 
 test "from: канонический пример из RFC 4122" {
-    ro u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")!!
+    ro u = "550e8400-e29b-41d4-a716-446655440000".to_uuid()!!
     assert(u.to_str() == "550e8400-e29b-41d4-a716-446655440000")
     match u.version() {
         UuidVersion.V4 => ()
@@ -80,8 +80,8 @@ test "from: канонический пример из RFC 4122" {
 }
 
 test "from: case-insensitive hex" {
-    ro lower = Uuid.from("550e8400-e29b-41d4-a716-446655440000")!!
-    ro upper = Uuid.from("550E8400-E29B-41D4-A716-446655440000")!!
+    ro lower = "550e8400-e29b-41d4-a716-446655440000".to_uuid()!!
+    ro upper = "550E8400-E29B-41D4-A716-446655440000".to_uuid()!!
     assert(lower == upper)
 }
 
@@ -89,7 +89,7 @@ test "from: ошибка — неправильная длина" {
     // Ошибка теперь ЗНАЧЕНИЕ, а не управляющий поток (D325 R1), поэтому
     // тесту больше не нужны ни `with Fail`-обвязка, ни `dummy`-значение,
     // ни внешний флаг: разбор идёт прямо по ветвям.
-    match Uuid.from("too-short") {
+    match "too-short".to_uuid() {
         Err(e) => assert(e is InvalidLength)
         Ok(_)  => assert(false)
     }
@@ -99,7 +99,7 @@ test "from: ошибка — отсутствует дефис" {
     // Ошибка теперь ЗНАЧЕНИЕ, а не управляющий поток (D325 R1), поэтому
     // тесту больше не нужны ни `with Fail`-обвязка, ни `dummy`-значение,
     // ни внешний флаг: разбор идёт прямо по ветвям.
-    match Uuid.from("550e8400xe29b-41d4-a716-446655440000") {
+    match "550e8400xe29b-41d4-a716-446655440000".to_uuid() {
         Err(e) => assert(e is MissingDash)
         Ok(_)  => assert(false)
     }
@@ -109,7 +109,7 @@ test "from: ошибка — не-hex символ" {
     // Ошибка теперь ЗНАЧЕНИЕ, а не управляющий поток (D325 R1), поэтому
     // тесту больше не нужны ни `with Fail`-обвязка, ни `dummy`-значение,
     // ни внешний флаг: разбор идёт прямо по ветвям.
-    match Uuid.from("550e8400-e29b-41d4-a716-44665544000Z") {
+    match "550e8400-e29b-41d4-a716-44665544000Z".to_uuid() {
         Err(e) => assert(e is InvalidHex)
         Ok(_)  => assert(false)
     }
