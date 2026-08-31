@@ -690,6 +690,45 @@ fn main() {
     assert(d6.len() == 0)
 }
 
+test "a tail `if` is the returned VALUE, and the branches must agree (wave B14)" {
+    // Named by measurement: five files stopped at "body ends without a value",
+    // and reading the source under each refusal gave three different forms.
+    // This is the one that does not depend on indexing.
+    //
+    // Behaviour measured against the ORACLE before any of this was written:
+    // `fn pick(n int) -> int { if n == 0 { 1 } else { 2 } }` with `pick(0)`
+    // prints 1 there.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn pick(n int) -> int {
+ if n == 0 {
+  1
+ } else {
+  2
+ }
+}
+fn main() { println(pick(0)) }", std)
+    assert(d.len() == 0)
+    // THE TEMPORARY, not the word `if`: what this wave added is the value
+    // form, and only a value form declares a result variable and assigns it
+    // from both branches. Asserting on `if (` would stay green on the old
+    // statement-only emitter.
+    assert(c.contains("_novac_if_t"))
+
+    // THE OTHER DIRECTION, and it is the rule that makes the form safe:
+    // branches that disagree have no type between them. A compiler that took
+    // the first branch would declare a temporary of one type and write the
+    // other into it -- valid C, wrong answer, no diagnostic.
+    ro (d2, _) = compile_to_c("fn pick(n int) -> int {
+ if n == 0 {
+  1
+ } else {
+  \"two\"
+ }
+}
+fn main() { println(pick(0)) }", std)
+    assert(d2.len() >= 1)
+}
+
 test "a record constructor stands in ARGUMENT position, hoisted (wave B13)" {
     // Named by measurement: 8 of novac's 58 files stopped at "record
     // constructor only as a binding initializer", and `builtins.nv` opens with

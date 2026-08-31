@@ -550,11 +550,83 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     ro u = @fresh_uniq()
                     @emit_match(c, u, @out.type_of(c.id_of()))
                     @body.append("    return _novac_match_t${u};\n")
+                } else if tail && j == last_branch && c.kind_of() == NodeKind.IfStmt {
+                    // THE TAIL `if` IS THE RETURNED VALUE (wave B14), and it is
+                    // asked BEFORE the general expression arm on purpose: an
+                    // `if` is not an expression kind here, and making it one
+                    // would move it into every other general arm too (the
+                    // lesson wave B13 paid for).
+                    ro u = @fresh_uniq()
+                    @emit_if_value(c, u, @out.type_of(c.id_of()))
+                    @body.append("    return _novac_if_t${u};\n")
                 } else if tail && j == last_branch && is_expr_kind(c.kind_of()) {
                     @body.append("    return ")
                     @emit_expr(c)
                     @body.append(";\n")
                 } else {
+                    @emit_stmt(c)
+                }
+            }
+        }
+        j += 1
+    }
+}
+
+/// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
+/// branches writing into it, the caller returning it.
+///
+/// The shape is `@emit_match`'s and the comment there explains the `(T){0}`:
+/// a temporary that is only conditionally written answers whatever the stack
+/// held otherwise -- valid C, a different number per run, no diagnostic
+/// anywhere. Here BOTH branches always write, but the initialiser stays: it
+/// costs one C token and removes a whole class of question.
+fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
+    ro kids = branch_children(n)
+    @body.append("    ")
+    @body.append(c_type(@ctx, res_t))
+    @body.append(" _novac_if_t${uniq} = (")
+    @body.append(c_type(@ctx, res_t))
+    @body.append("){0};\n    if (")
+    @emit_expr(kids[1])
+    @body.append(") {\n")
+    @emit_block_value(kids[2], uniq)
+    @body.append("    } else {\n")
+    @emit_block_value(kids[4], uniq)
+    @body.append("    }\n")
+}
+
+/// Emit a block whose LAST statement is its value: everything before it runs
+/// as a statement, and the last one is assigned to the `if` temporary.
+///
+/// THE DOOR THIS WAVE HAD TO ADD, and the reason is a real difference rather
+/// than an oversight in the match code: a match ARM is an expression, so
+/// `@emit_arm_value` writes `t = <expr>;` in one line. An `if` BRANCH is a
+/// block, and its value is whatever its last statement produces -- so the
+/// block has to be walked, and only its tail turned into an assignment.
+fn Emitter mut @emit_block_value(b Node, uniq int) -> () {
+    ro kids = branch_children(b)
+    mut last_branch = -1
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last_branch = j }
+        }
+        j += 1
+    }
+    j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's braces are trivia, not statements
+            Branch { .. } => {
+                if j == last_branch && is_expr_kind(c.kind_of()) {
+                    @body.append("        _novac_if_t${uniq} = ")
+                    @emit_expr(c)
+                    @body.append(";\n")
+                } else {
+                    // Everything before the tail runs for effect, and a tail
+                    // that is not an expression is refused in `check` -- it
+                    // never reaches here.
                     @emit_stmt(c)
                 }
             }

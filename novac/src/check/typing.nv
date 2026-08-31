@@ -258,6 +258,15 @@ fn Checker mut @type_block(b Node) -> () {
                     i += 1
                     continue
                 }
+                if i == tail_at && c.kind_of() == NodeKind.IfStmt {
+                    // THE TAIL `if` IS A VALUE (wave B14): both branches are
+                    // typed, they must AGREE, and the agreed type is recorded
+                    // for the emitter -- which declares the result temporary
+                    // with it, exactly as the tail match has done since B5.
+                    @type_if_value(c)
+                    i += 1
+                    continue
+                }
                 @type_stmt(c)
             }
         }
@@ -267,6 +276,80 @@ fn Checker mut @type_block(b Node) -> () {
 }
 
 /// The index of the last BRANCH child: trailing leaves are not statements.
+/// Type a tail `if` as a VALUE: both branches, and the type they agree on.
+///
+/// The agreement is the whole rule. `if c { 1 } else { "s" }` has no type, and a
+/// compiler that picked the first branch would declare a temporary of one type
+/// and write the other into it -- valid C, a wrong answer, no diagnostic. So the
+/// two are compared and a mismatch is refused BY NAME.
+fn Checker mut @type_if_value(n Node) -> () {
+    ro kids = branch_children(n)
+    if kids.len() < 5 {
+        @report_first_leaf_of(kids, "outside the subset: a tail `if` needs an `else` to be a value (E2-b)")
+        return
+    } else {
+        // Both branches present: typed below.
+    }
+    @type_expr(kids[1])
+    ro then_t = @type_branch_value(kids[2])
+    ro else_t = @type_branch_value(kids[4])
+    if !is_ty(then_t) || !is_ty(else_t) {
+        // SILENT-OK: the branch without a value was refused inside
+        // `@type_branch_value`, by name; one cause gets one diagnostic.
+        return
+    } else {
+        // Both branches produced a type: they must be the same one.
+    }
+    if then_t != else_t {
+        @report_first_leaf_of(kids, "outside the subset: the branches of a tail `if` must agree on a type (E2-b)")
+        return
+    } else {
+        // Agreed: the `if` carries that type.
+    }
+    @record(n, then_t)
+}
+
+/// The type a BRANCH of a tail `if` produces: its last statement's, or
+/// `no_ty()` after a named refusal.
+///
+/// A branch whose tail is not an expression -- a `return`, a binding -- is
+/// refused, and that is the boundary this wave DECLARED rather than discovered:
+/// mixing the two ways out of a function needs a measurement against the
+/// oracle, and that measurement is its own step.
+fn Checker mut @type_branch_value(b Node) -> TyId {
+    if b.kind_of() != NodeKind.Block {
+        // An `else if` chain, or a gap the parser planted. Named, not silent:
+        // the chain is legal Nova and arrives with its own carrier.
+        @report_first_leaf_of([]Node.of(b), "outside the subset: an `else if` chain is not compiled as a value yet (E2-b)")
+        return no_ty()
+    } else {
+        // A block: its tail decides.
+    }
+    ro kids = branch_children(b)
+    ro last = last_branch_of(kids)
+    mut i = 0
+    mut out_t = no_ty()
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => {
+                if i == last {
+                    if is_expr_kind(c.kind_of()) {
+                        @type_expr(c)
+                        out_t = type_of(c, @ctx, @scope, @chan)
+                    } else {
+                        @report_first_leaf_of([]Node.of(c), "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
+                    }
+                } else {
+                    @type_stmt(c)
+                }
+            }
+        }
+        i += 1
+    }
+    out_t
+}
+
 fn last_branch_of(kids []Node) -> int {
     mut last = -1
     mut i = 0
