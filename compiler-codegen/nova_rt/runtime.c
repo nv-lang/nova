@@ -315,6 +315,14 @@ static nova_atomic_int _g656_first_run;
 void nova_diag656_count_spawn(void)     { nova_aint_inc(&_g656_spawn_disp); }
 void nova_diag656_count_first_run(void) { nova_aint_inc(&_g656_first_run); }
 
+/* [221.1 #862] Tentative declarations for the dump: the orphan scope is
+ * defined far below (it lives next to the orphan spawn/drain code), and C
+ * lets the same static object be declared tentatively more than once -- one
+ * object results. Cheaper and more honest than hoisting the definition,
+ * which would move it away from the code that owns it. */
+static NovaFiberQueue _nova_orphan_scope;
+static bool           _nova_orphan_scope_inited;
+
 void nova_runtime_dump_state(const char* reason) {
     fprintf(stderr, "=== NOVA_RUNTIME_DUMP === reason=%s\n",
             reason ? reason : "unspecified");
@@ -490,6 +498,45 @@ void nova_runtime_dump_state(const char* reason) {
                 n++;
             }
         }
+    }
+    /* [221.1 #862] THE ORPHAN SCOPE, which this dump never printed. Every
+     * worker scope above is listed, but the scope `nova_runtime_drain_orphans`
+     * actually waits on is not one of them -- it is a file-static queue. So a
+     * hang reported as `pre-exit-drain-...-remote-1` showed a counter with no
+     * owner anywhere in the dump, and the investigation spent days reading
+     * worker slots instead. Same class as the three blind spots closed for
+     * #791 (yielded FIFO, fiber state, scope pointer): the dump did not lie,
+     * it was silent exactly where the answer was.
+     *
+     * `count` never shrinks (slots are freed by nulling, see
+     * nova_scope_free_slot), so a live entry is one whose `fibers[i]` is
+     * non-NULL -- those are printed individually. */
+    if (_nova_orphan_scope_inited) {
+        NovaFiberQueue* osc = &_nova_orphan_scope;
+        int ocount = (int)__atomic_load_n(&osc->count, __ATOMIC_ACQUIRE);
+        fprintf(stderr,
+                "[orphan] q=%p count=%d cancel_req=%d pending_remote=%d pending_sweeps=%d\n",
+                (void*)osc, ocount,
+                (int)nova_abool_load(&osc->cancel_requested),
+                (int)nova_aint_load(&osc->pending_remote),
+                (int)nova_aint_load(&osc->pending_sweeps));
+        int olive = 0;
+        for (int oi = 0; oi < ocount; oi++) {
+            mco_coro* oco = osc->fibers[oi];
+            if (!oco) continue;
+            olive++;
+            NovaSpawnCtxBase* obase = (NovaSpawnCtxBase*)mco_get_user_data(oco);
+            fprintf(stderr,
+                    "[orphan.fiber.s%d] co=%p mco_status=%d fstate=%d parent_scope=%p slot=%d\n",
+                    oi, (void*)oco, (int)mco_status(oco),
+                    (int)nova_fiber_state_load(oco),
+                    obase ? (void*)obase->_nova_parent_scope : NULL,
+                    obase ? obase->_nova_worker_slot : -999);
+        }
+        fprintf(stderr, "[orphan] live slots (fibers[i] != NULL): %d of %d\n",
+                olive, ocount);
+    } else {
+        fprintf(stderr, "[orphan] scope never initialised (no detach in this program)\n");
     }
     fprintf(stderr, "=== END DUMP ===\n");
     fflush(stderr);
