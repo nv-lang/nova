@@ -156,3 +156,33 @@ test "a set varying ONE parameter's mode still has a unique winner" {
         assert(false)
     }
 }
+
+test "an incomparable PAIR is not ambiguity when a third row beats them both" {
+    mut ctx = collect_types(empty_file_p())
+    ro i = ctx.prims.int_id
+    // `f(consume a, ro b)` and `f(ro a, mut b)` are incomparable with each
+    // other; `f(consume a, mut b)` beats both, so the call HAS a most specific
+    // answer and refusing it would be wrong.
+    ctx.fns.add("g", i, false,
+                []ParamDef.of(mode_param(i, ParamMode.ModeConsume),
+                              mode_param(i, ParamMode.ModeRo)),
+                []str.new(), []str.new())
+    ctx.fns.add("g", i, false,
+                []ParamDef.of(mode_param(i, ParamMode.ModeRo),
+                              mode_param(i, ParamMode.ModeMut)),
+                []str.new(), []str.new())
+    ctx.fns.add("g", i, false,
+                []ParamDef.of(mode_param(i, ParamMode.ModeConsume),
+                              mode_param(i, ParamMode.ModeMut)),
+                []str.new(), []str.new())
+    ro args = []ArgSpec.of(class_arg(i, ArgClass.ArgOwnedTemp),
+                           class_arg(i, ArgClass.ArgMut))
+    ro got = FnIndex.build(ctx.fns).lookup(ctx.fns, ctx.tys, "g", args, CallForm.FreeCall)
+    // This is why the walk that settles incomparability VERIFIES a candidate
+    // instead of refusing on the first pair it cannot order.
+    if FnLookup.FnFound(_) = got {
+        assert(true)
+    } else {
+        assert(false)
+    }
+}

@@ -382,6 +382,14 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
     // walk cannot finish the job: a row met later may beat the candidate while
     // being incomparable to one met earlier, so this pass only proposes.
     mut winner = no_row()
+    // WAS THE STANDING CANDIDATE EVER MET BY A ROW IT COULD NOT COMPARE WITH?
+    // While the answer is no, the candidate provably beats everything seen: it
+    // either beat each row outright or was replaced by one that beat IT, and
+    // domination is transitive. So this flag is what makes the verifying walk
+    // below rare instead of routine -- the owner's question, 2026-08-31: the
+    // second walk re-runs `fits` over the whole chain, and paying that on every
+    // call to settle a set that almost never occurs is the wrong trade.
+    mut met_incomparable = false
     mut r = @heads.find(name)
     while r >= 0 {
         ro row = FnRow(r)
@@ -397,10 +405,14 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
             winner = row
         } else if dominates(fns, row, winner) {
             winner = row
+        } else if dominates(fns, winner, row) {
+            // The standing candidate beats this row outright; nothing to settle.
         } else {
-            // Either the standing candidate beats this row, or the two are
-            // incomparable -- the verifying pass below tells which, and that is
-            // a DECISION taken there rather than a skip taken here.
+            // Incomparable. NOT a verdict: a row met later may beat them both
+            // (`f(consume a, ro b)` and `f(ro a, mut b)` are incomparable, and
+            // `f(consume a, mut b)` beats each). Deciding here would refuse a
+            // call that has a most specific answer, so the walk below decides.
+            met_incomparable = true
         }
     }
     if raw_row(first) < 0 { return FnLookup.FnUnknown }
@@ -410,7 +422,13 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
     // instead of choosing ("there is no silent choice", D84 mode-axis
     // amendment). Nothing here is assumed, so nothing here needs an invariant.
     mut unique = true
-    mut v = @heads.find(name)
+    mut v = -1
+    if met_incomparable {
+        v = @heads.find(name)
+    } else {
+        // Nothing was ever incomparable with the candidate, so it beats every
+        // fitting row by transitivity and there is nothing to verify.
+    }
     while v >= 0 {
         ro row = FnRow(v)
         v = raw_row(@next[v])
