@@ -393,11 +393,29 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(")")
     } else if k == NodeKind.Unary {
         ro kids = branch_children(e)
-        @body.append("(")
-        @body.append(c_unary_form(un_op_of(leaf_kind(kids[0]))))
-        @body.append("(")
-        @emit_expr(kids[1])
-        @body.append("))")
+        // INT NEGATION GOES THROUGH THE CHECKED HELPER (hunt emit_c x K1, H3):
+        // `-INT_MIN` does not fit, the oracle panics ("negation overflow"),
+        // and the raw C form printed INT_MIN back in silence -- in the same
+        // file where addition two doors up goes through `nova_int_checked_add`.
+        // The node's type is the checker's answer, recorded when the unary was
+        // typed; the CARRIER decides, exactly as in the compound form (H5) --
+        // a newtype negates as what it holds.
+        ro uk = un_op_of(leaf_kind(kids[0]))
+        ro neg_int = match uk {
+            Negate => carrier_of(@ctx, @out.type_of(e.id_of())) == @ctx.prims.int_id
+            Not | BitNot => false
+        }
+        if neg_int {
+            @body.append("nova_int_checked_neg(")
+            @emit_expr(kids[1])
+            @body.append(")")
+        } else {
+            @body.append("(")
+            @body.append(c_unary_form(uk))
+            @body.append("(")
+            @emit_expr(kids[1])
+            @body.append("))")
+        }
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
         ro op = bin_op_of(leaf_kind(kids[1]))

@@ -1,0 +1,7 @@
+module basics.neg_overflow_panics
+
+fn main() {
+    mut x = -9223372036854775807
+    x -= 1
+    println(-x)
+}
