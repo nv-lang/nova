@@ -1,0 +1,17 @@
+// THE CONTROL, and without it the probe proves nothing. The same call with ONLY
+// the consume candidate present: if this refused, the pair above would not be an
+// ambiguity at all -- one candidate would simply not fit, and the oracle picking
+// the other would be correct.
+//
+// MEASURED 2026-08-31: prints 42. So the consume candidate DOES fit the
+// argument tuple, both candidates are applicable, and the choice in
+// `ambiguous.nv` is a choice rather than the only option.
+module m
+
+fn f(consume a int, b int, c int) -> int => a
+
+fn main() Io -> () {
+    mut y = 10
+    mut z = 20
+    print("${f(41 + 1, y, z)}")
+}

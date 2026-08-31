@@ -1,0 +1,19 @@
+// THE SECOND CONTROL: the same two overloads with their DECLARATION ORDER
+// swapped. If the oracle were picking "the first" or "the last" declaration,
+// this file would print 42 instead of 2.
+//
+// MEASURED 2026-08-31: prints 2, exactly as `ambiguous.nv` does. So the choice
+// is made by some rule of its own rather than by declaration order -- which is
+// worth knowing before anyone goes looking for the cause in the registry's
+// insertion order.
+module m
+
+fn f(a int, mut b int, mut c int) -> int => 2
+
+fn f(consume a int, b int, c int) -> int => a
+
+fn main() Io -> () {
+    mut y = 10
+    mut z = 20
+    print("${f(41 + 1, y, z)}")
+}
