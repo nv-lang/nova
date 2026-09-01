@@ -1,15 +1,18 @@
 // The contract prologue: each `requires` clause guards the body.
 //
-// Donor: none for the plumbing -- one loop, one C `if` per clause; the
-// violation call itself is the shell's own helper, taken as INTEROP: the
-// exact call the oracle emits (nova_contract_violation lives in shell.tpl.c,
-// NOVA_CONTRACT_PRE beside it). Goes the day novac emits the whole prelude.
+// Donor: none -- one loop, one C `if` per clause; nothing here needed a
+// pattern beyond the module's own co-equal emitters.
 // Role: the one door that opens a callable's body with its contract checks;
 // emit_callable calls it right after `{`.
 // Used by: emit_c.nv's emit_callable, and nothing else.
 // Guarded by: check-novac-differential.sh (corpus carrier requires_gate),
 // the subset_test.nv holder (asserts the full C line), and
 // check-novac-emitted-names.py (this file is in its scanned list).
+//
+// INTEROP, named as such: the violation call is the shell's own helper --
+// nova_contract_violation lives in shell.tpl.c, NOVA_CONTRACT_PRE beside
+// it, and the prologue spells the exact call the shell's own contracts use.
+// Goes the day novac emits the whole prelude.
 //
 // The wave's named boundary: file/line stay EMPTY ("" and 0) -- the emitter
 // holds neither a file name nor line numbers, so a violating program panics
