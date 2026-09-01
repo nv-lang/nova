@@ -1,0 +1,15 @@
+module p
+
+type Kind enum Dot | Dash
+
+fn label(k Kind) -> int {
+    match k {
+        Dot => 1
+        Dash => 2
+    }
+}
+
+fn main() {
+    println(label(Kind.Dot))
+    println(label(Dash))
+}

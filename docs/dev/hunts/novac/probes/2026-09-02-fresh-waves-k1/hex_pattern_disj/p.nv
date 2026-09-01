@@ -1,0 +1,14 @@
+module p
+
+fn tag(n int) -> int {
+    match n {
+        0x0A | 0x0D => 1
+        _ => 0
+    }
+}
+
+fn main() {
+    println(tag(10))
+    println(tag(13))
+    println(tag(9))
+}

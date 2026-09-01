@@ -1,0 +1,5 @@
+module p
+
+fn main() {
+    println("a", unsafe { 1 }, "b")
+}

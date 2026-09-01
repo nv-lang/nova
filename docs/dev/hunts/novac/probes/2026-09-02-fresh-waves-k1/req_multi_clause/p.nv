@@ -1,0 +1,12 @@
+module p
+
+fn g(a int, b int) -> int
+    requires a > 0, "a positive"
+    requires b > 0, "b positive"
+{
+    a + b
+}
+
+fn main() {
+    println(g(2, 3))
+}

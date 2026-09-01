@@ -1,0 +1,11 @@
+module p
+
+fn f(x int) -> int
+    requires x > 0, "say \"hi\""
+{
+    x
+}
+
+fn main() {
+    println(f(-1))
+}

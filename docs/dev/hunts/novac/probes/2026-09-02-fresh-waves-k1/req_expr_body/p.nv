@@ -1,0 +1,9 @@
+module p
+
+fn half(n int) -> int
+    requires n > 0, "positive"
+=> n / 2
+
+fn main() {
+    println(half(8))
+}

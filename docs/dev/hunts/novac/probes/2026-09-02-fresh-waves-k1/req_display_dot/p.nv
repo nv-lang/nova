@@ -1,0 +1,13 @@
+module p
+
+type Pt record { n int }
+
+fn f(p Pt) -> int
+    requires p.n > 0, "positive field"
+{
+    p.n
+}
+
+fn main() {
+    println(f(Pt { n: -3 }))
+}

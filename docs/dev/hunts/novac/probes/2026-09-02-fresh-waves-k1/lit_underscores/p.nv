@@ -1,0 +1,6 @@
+module p
+
+fn main() {
+    println(1_000)
+    println(0xFF_FF)
+}

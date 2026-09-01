@@ -1,0 +1,9 @@
+module p
+
+const MASK u8 = 0xFF
+
+fn main() {
+    ro b = 0xFE as u8
+    println(b == MASK)
+    println(MASK as int)
+}

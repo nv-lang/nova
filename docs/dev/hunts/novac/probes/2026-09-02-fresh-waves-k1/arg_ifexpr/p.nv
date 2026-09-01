@@ -1,0 +1,6 @@
+module p
+
+fn main() {
+    ro n = 5
+    println("a", if n > 0 { 1 } else { 2 }, "b")
+}

@@ -1,0 +1,6 @@
+module p
+
+fn main() {
+    println(0xFF + 0x01)
+    println(0x10 * 0x10)
+}

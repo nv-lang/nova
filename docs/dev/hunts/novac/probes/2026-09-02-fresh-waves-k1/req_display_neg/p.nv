@@ -1,0 +1,11 @@
+module p
+
+fn f(n int) -> int
+    requires n > -1, "nonneg"
+{
+    n
+}
+
+fn main() {
+    println(f(-5))
+}

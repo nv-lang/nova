@@ -1,0 +1,7 @@
+module p
+
+fn main() {
+    println(-0123)
+    ro x = 0100
+    println(x + 1)
+}
