@@ -745,3 +745,26 @@ fn main() {
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("carries a payload"))
 }
+
+test "a leading zero is decimal, not C octal -- the spelling door strips it (hunt N1)" {
+    // `println(0123)` printed 83 and a `010 =>` arm matched the other
+    // branch: the literal's TEXT went to C verbatim, and C reads its own
+    // rules. Asserted on the C spelling for both readers -- the value
+    // emitter and the pattern emitter.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn tag(n int) -> int {
+ match n {
+  010 => 1
+  _ => 0
+ }
+}
+fn main() {
+ println(0123)
+ println(tag(10))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("((nova_int)123LL)"))
+    assert(c.contains("== 10LL"))
+    assert(!c.contains("0123"))
+    assert(!c.contains("010LL"))
+}

@@ -18,6 +18,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, arm_body_at, c_type}
+import ../sem.{int_literal_c_text}
 import ../sem.{disj_head_slots, pattern_has_disj}
 import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../builtins.{bool_c_literal}
@@ -123,7 +124,7 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, as_stmt bool = false) -
     mut vrow = no_vrow()
     if leaf_kind(p0) == TokenKind.IntLit {
         @body.append("(_novac_scr_t${uniq} == ")
-        @body.append(leaf_text(p0))
+        @body.append(int_literal_c_text(leaf_text(p0)))
         @body.append("LL)")
     } else if leaf_kind(p0) == TokenKind.Ident {
         // A bare `None` (no parens) is a variant too — resolve by name

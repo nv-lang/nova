@@ -637,3 +637,17 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
     }
 }
+
+/// The C SPELLING of an integer literal's text. C reads a leading zero as
+/// OCTAL (hunt 2026-09-02, N1: `println(0123)` printed 83, a `010 =>` arm
+/// matched the other branch, `08` broke clang), so the decimal spelling
+/// drops the leading zeros -- the same strip the magnitude judge already
+/// performs (literal_rules.nv): ONE answer to "what number is written
+/// here", at the one door both emitters read. A hex literal keeps its
+/// text: C reads `0x` exactly as Nova does.
+export fn int_literal_c_text(t str) -> str {
+    if t.byte_len() > 2 && t[..2] == "0x" { return t }
+    mut i = 0
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
+    t[i..]
+}

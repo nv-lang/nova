@@ -1,0 +1,17 @@
+// A leading zero is DECIMAL in Nova; C would read it octal (hunt N1).
+module basics.leading_zero_literal
+
+/// The arm's literal is ten, however it is spelled.
+fn tag(n int) -> int {
+    match n {
+        010 => 1
+        _ => 0
+    }
+}
+
+fn main() {
+    println(0123)
+    println(0100 + 1)
+    println(tag(10))
+    println(tag(8))
+}
