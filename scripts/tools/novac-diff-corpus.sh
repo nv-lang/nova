@@ -257,7 +257,7 @@ for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
 done
 self_rej=0
 if [ "$self_total" -gt 0 ]; then
-    eval "timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+    eval "timeout 60 NOVAC_SELF_PATH=novac/src \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
     # ПАЧКА С ICE НЕДОСТОВЕРНА (замер 2026-08-30): ice обрывает процесс кодом 2,
     # который ПРОХОДИТ порог «код вне 0/1/2», и файлы ПОСЛЕ точки смерти выходят

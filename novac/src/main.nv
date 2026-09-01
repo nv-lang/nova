@@ -285,7 +285,19 @@ fn run(a []str) -> int {
         // corpus batch went from 1308ms to 17548ms, thirteen times, while a
         // single file only doubled. Sixty-one files times a hundred and
         // eighty-four declarations is a quadratic nobody wrote down.
-        ro decls = parse_decls(read_decls(std_dir))
+        // THE PROJECT'S OWN INTERFACE, beside std (wave: sibling modules;
+        // plan 274.5 3-pred33/34). The same shape as NOVA_STD_PATH -- an env
+        // root read recursively -- and the same boundary reasoning: any
+        // narrower line is arbitrary. Unset = the old behaviour, so corpus
+        // smokes are untouched. The read file itself lands in the decls too:
+        // the registry's last-put-wins shadowing hands its names back to the
+        // file (measured before this wave, plan entry names the probe).
+        mut decl_texts = read_decls(std_dir)
+        match env("NOVAC_SELF_PATH") {
+            Some(self_dir) => decl_texts.append(read_decls(self_dir))
+            None => {}
+        }
+        ro decls = parse_decls(decl_texts)
         // The interop surface, lifted from the embedded shell ONCE -- the second
         // input of every compile beside the declarations (sub-plan L).
         ro interop = interop_surface()
