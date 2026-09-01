@@ -1,0 +1,40 @@
+// EXPECT_STDOUT bytes=21 tail=21 pass=2
+// Registry 221.1 #853: a backslash before a MULTI-BYTE character inside a
+// backtick body used to CRASH the compiler.
+//
+// D467 §6 closes the backtick escape set to exactly three (`` \` ``, `\\`,
+// `\$`); ANY other character after a backslash passes through as TWO
+// characters. Nothing in that rule says the character is one byte, and two
+// places assumed it was:
+//
+//   * `lexer/mod.rs` advanced `self.pos + 2` — backslash plus ONE byte — and
+//     then sliced `&self.src[self.pos..esc_end]`, cutting a 2-byte letter in
+//     half: "byte index is not a char boundary", an ICE on legitimate source.
+//   * `parser/mod.rs` (the tagged-template splitter) did the same with
+//     `i += 2`, and additionally pushed `other as char` — ONE byte read as
+//     Latin-1 — so `\я` would have entered the literal's VALUE as `\Ñ`.
+//
+// It was not only `nova build`: the language server died the same way, so an
+// editor restarted it on every keystroke in a file containing such a literal.
+// That is how this was found — the owner's LSP output pane, not a test.
+//
+// WHAT THIS FIXTURE PINS, and why each number is here rather than one of them:
+//   bytes=21  the value is `путь\яблоко` — 4 Cyrillic letters (8 bytes) + the
+//             literal backslash (1) + 6 Cyrillic letters (12). If the escape
+//             were swallowed the count would be 20; if the character were
+//             mangled to Latin-1 it would be 20 as well but with different
+//             content, so the length alone is not enough — hence `tail`.
+//   tail=21   the same literal built with the multi-byte character LAST, where
+//             the byte-wise advance would run past the end instead of landing
+//             mid-character. Same length, different failure mode.
+//   pass=2    a backslash before a 2-byte letter yields exactly TWO characters
+//             (the backslash and the letter), which is D467 §6's own wording.
+module standalone.m853_backtick_escape_multibyte
+
+fn main() Io -> () {
+    ro s = `путь\яблоко`
+    ro tail = `яблоко\путь`
+    // `\я` is not an escape: it passes through as backslash + letter.
+    ro two = `\я`
+    print("bytes=${s.byte_len()} tail=${tail.byte_len()} pass=${two.chars().count()}")
+}

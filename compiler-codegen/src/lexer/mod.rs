@@ -918,9 +918,23 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         other => {
+                            // `other as char` — это ОДИН БАЙТ, прочитанный как
+                            // Latin-1: для многобайтной буквы он называет
+                            // символ, которого в исходнике нет вовсе (`\я`
+                            // сообщался как `\Ñ`). Тот же корень, что у падения
+                            // в `lex_backtick`, но здесь он только врал в
+                            // сообщении, а не ронял компилятор — реестр №853.
+                            // `self.pos` стоит НА экранируемом байте и это
+                            // граница символа (перед ним ASCII-слэш), поэтому
+                            // срез безопасен.
+                            let ch = self.src[self.pos..]
+                                .chars()
+                                .next()
+                                .unwrap_or(other as char);
+                            let ch_end = self.pos + ch.len_utf8();
                             return Err(Diagnostic::new(
-                                format!("unknown escape: \\{}", other as char),
-                                self.span(self.pos - 1, self.pos + 1),
+                                format!("unknown escape: \\{}", ch),
+                                self.span(self.pos - 1, ch_end),
                             ));
                         }
                     }
@@ -1154,8 +1168,26 @@ impl<'a> Lexer<'a> {
                 ));
             }
             // D48 (2026-07-02): escape сохраняется сырым (backslash + символ).
+            //
+            // ЭКРАНИРУЕМЫЙ СИМВОЛ БЫВАЕТ МНОГОБАЙТНЫМ, и здесь стояло
+            // `self.pos + 2`, то есть «слэш плюс РОВНО ОДИН БАЙТ». По D467 §6
+            // набор escape в backtick закрыт тремя (`` \` ``, `\\`, `\$`), а
+            // ЛЮБОЙ другой символ после слэша проходит насквозь как два
+            // символа — в том числе кириллическая буква в два байта. Срез
+            // `&self.src[self.pos..esc_end]` тогда резал символ ПОСРЕДИНЕ, и
+            // Rust падал: «byte index is not a char boundary». Это ICE на
+            // законном исходнике: падал не только `nova build`, но и языковой
+            // сервер — редактор перезапускал его на каждой правке такого файла.
+            // Реестр 221.1 №853.
+            //
+            // Строкой ниже, в обычной ветке, тот же лексер уже делает верно —
+            // через `utf8_char_len`; здесь ровно то же правило.
             if b == b'\\' {
-                let esc_end = (self.pos + 2).min(self.bytes.len());
+                let esc_len = self
+                    .bytes
+                    .get(self.pos + 1)
+                    .map_or(0, |&nb| utf8_char_len(nb));
+                let esc_end = (self.pos + 1 + esc_len).min(self.bytes.len());
                 s.push_str(&self.src[self.pos..esc_end]);
                 self.pos = esc_end;
                 continue;

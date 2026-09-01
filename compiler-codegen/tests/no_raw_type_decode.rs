@@ -82,11 +82,50 @@ const DECODE_NEEDLES: &[&str] = &[
 /// fn <name>` after left-trim. Closures (`|x| ...`) are NOT `fn` in Rust, so
 /// they never reset the tracker — a raw decode written inside a closure
 /// body is correctly attributed to the enclosing NAMED function.
+/// Name of the function a header line declares, or `None` if the line is not
+/// a header.
+///
+/// [221.1 #861] Visibility forms are stripped GENERICALLY, not from a list of
+/// three. The previous version knew only `pub(crate) `, `pub ` and `async `,
+/// and a header it does not recognise is worse than one it rejects: the
+/// scanner keeps `current_fn` from the LAST header it did recognise, so every
+/// finding inside the unrecognised function is reported under a neighbour
+/// whose body ended long before. Measured 2026-09-01: the finding at
+/// `emit_c/variant_ctor_channel.rs:54` was attributed to
+/// `set_resolved_variant_ctors` (lines 17-22) while it actually sits in
+/// `pub(super) fn channel_variant_ctx` (line 34). One of the twenty-four
+/// entries in the current report, and it is the one that would have sent the
+/// repair to the wrong function.
 fn fn_header_name(line: &str) -> Option<String> {
     let t = line.trim_start();
-    let t = t.strip_prefix("pub(crate) ").unwrap_or(t);
-    let t = t.strip_prefix("pub ").unwrap_or(t);
+    // `pub`, `pub(crate)`, `pub(super)`, `pub(in some::path)` -- take the
+    // parenthesised part as a unit rather than enumerating the spellings.
+    let t = if let Some(rest) = t.strip_prefix("pub") {
+        let rest = if rest.starts_with('(') {
+            match rest.find(") ") {
+                Some(i) => &rest[i + 2..],
+                None => return None,   // `pub(` with no close: not a header
+            }
+        } else {
+            rest.strip_prefix(' ').unwrap_or(rest)
+        };
+        rest
+    } else {
+        t
+    };
+    let t = t.strip_prefix("default ").unwrap_or(t);
+    let t = t.strip_prefix("const ").unwrap_or(t);
     let t = t.strip_prefix("async ").unwrap_or(t);
+    let t = t.strip_prefix("unsafe ").unwrap_or(t);
+    // `extern "C" fn`, `extern "system" fn`, ...
+    let t = if let Some(rest) = t.strip_prefix("extern ") {
+        match rest.strip_prefix('"').and_then(|r| r.find('"').map(|i| &r[i + 1..])) {
+            Some(after) => after.strip_prefix(' ').unwrap_or(after),
+            None => rest,
+        }
+    } else {
+        t
+    };
     let t = t.strip_prefix("fn ")?;
     let name: String = t
         .chars()

@@ -1,0 +1,51 @@
+// EXPECT_STDOUT big|small|small|[defer]14|[defer]-1|
+//
+// D86 AMEND (2026-09-01): `X ?? return R` is LEGAL where the enclosing fn
+// returns neither `Option` nor `Result` -- there `?` has no wrapper to
+// propagate, so the form is not a second door to it and the 2026-07-23
+// retraction's only measured ground does not apply.
+//
+// Three properties are pinned here, and each one failed differently before
+// the amendment:
+//
+//   1. BOTH CARRIERS. `Option` (NPO-aware is-some test) and `Result` (explicit
+//      tag) are separate arms in codegen; a fix to one says nothing about the
+//      other.
+//   2. THE VALUE FLOWS. On `Some(v)`/`Ok(v)` evaluation CONTINUES with `v` --
+//      the form is an expression, not a statement, so `big` and `14` prove the
+//      happy path is not silently returning too.
+//   3. `defer` RUNS ON THE EARLY EXIT. This is the property the implementation
+//      was shaped around: codegen builds a `Stmt::Return` and hands it to the
+//      ordinary emission instead of writing a bare C `return`, so the LIFO
+//      defer/errdefer walk and `ensures` contracts still happen. A hand-written
+//      C return would pass items 1-2 and silently skip this one -- which is why
+//      `[defer]` is printed from BOTH branches, not just the failing one.
+//
+// The refused half is `spec_tests/conformance/neg/coalesce_return_has_canon_neg.nv`.
+// Spec: spec/decisions/04-effects.md, D86 AMEND (2026-09-01).
+module standalone.coalesce_return_narrow_pos
+
+fn lookup(x int) -> Option[int] => if x > 0 { Some(x) } else { None }
+
+fn parse(s str) -> Result[int, str] => if s == "7" { Ok(7) } else { Err("bad") }
+
+// Option carrier, fn returns `bool` -- no wrapper, `?` inapplicable.
+fn is_big(x int) -> bool {
+    ro v = lookup(x) ?? return false
+    v > 10
+}
+
+// Result carrier, fn returns `int`, and a `defer` must fire on BOTH paths.
+fn score(s str) Io -> int {
+    defer print("[defer]")
+    ro v = parse(s) ?? return -1
+    v * 2
+}
+
+fn main() Io -> () {
+    print(if is_big(20) { "big|" } else { "small|" })
+    print(if is_big(-1) { "big|" } else { "small|" })
+    print(if is_big(5) { "big|" } else { "small|" })
+    print("${score("7")}|")
+    print("${score("x")}|")
+}

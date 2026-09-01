@@ -3,10 +3,24 @@
 
 module encoding.toml_test
 
-import std.encoding.toml.{Toml, ParseTomlError}
+import std.encoding.toml.{Toml, ParseTomlError, TomlValue}
+
+// СОБСТВЕННЫЙ Fail-ЭФФЕКТНЫЙ ХЕЛПЕР ДЛЯ ТЕСТОВ МЕХАНИЗМА НИЖЕ.
+// Три теста в конце файла закрепляют НЕ TOML, а машинерию эффекта `Fail`
+// (повторные Fail-вызовы в ОДНОМ with-скоупе, маркер
+// `[M-toml-repeated-fail-call-run-fail]`). На `Toml.parse` они сидели только
+// потому, что та СЛУЧАЙНО была Fail-эффектной, — и когда она ушла в
+// `Result` (D325 R1, реестр №852), тесты потеряли СВОЙ ПРЕДМЕТ.
+// Это и есть урок: тест про ЯЗЫКОВОЙ МЕХАНИЗМ не должен зависеть от того,
+// какую модель ошибок выбрала чужая библиотечная функция. Поэтому
+// предмет теперь свой: разбор настоящий, но отказ перебрасывается как `Fail`.
+// `!!` — и есть канон «развернуть или бросить ту же ошибку» (мост D85).
+// Ручной `match { Ok(v) => v, Err(e) => throw e }` — тот же смысл в шесть строк,
+// и линт справедливо назвал его дрейфом от канона [W_MANUAL_COALESCE].
+fn parse_or_fail(src str) Fail[ParseTomlError] -> TomlValue => src.to_toml()!!
 
 test "parse: ключ-значение топ-уровня" {
-    ro v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")
+    ro v = "name = \"nova\"\nversion = \"0.1.0\"\n".to_toml()!!
     match v {
         TomlTable(t) => {
             assert(t.get("name") == Some(TomlStr("nova")))
@@ -17,7 +31,7 @@ test "parse: ключ-значение топ-уровня" {
 }
 
 test "parse: integer и float" {
-    ro v = Toml.parse("port = 8080\npi = 3.14\n")
+    ro v = "port = 8080\npi = 3.14\n".to_toml()!!
     match v {
         TomlTable(t) => {
             assert(t.get("port") == Some(TomlInt(8080)))
@@ -28,7 +42,7 @@ test "parse: integer и float" {
 }
 
 test "parse: bool" {
-    ro v = Toml.parse("debug = true\nprod = false\n")
+    ro v = "debug = true\nprod = false\n".to_toml()!!
     match v {
         TomlTable(t) => {
             assert(t.get("debug") == Some(TomlBool(true)))
@@ -39,7 +53,7 @@ test "parse: bool" {
 }
 
 test "parse: array" {
-    ro v = Toml.parse("ports = [80, 443, 8080]\n")
+    ro v = "ports = [80, 443, 8080]\n".to_toml()!!
     match v {
         TomlTable(t) => match t.get("ports") {
             Some(TomlArray(xs)) => {
@@ -53,7 +67,7 @@ test "parse: array" {
 }
 
 test "parse: comments игнорируются" {
-    ro v = Toml.parse("# top comment\nname = \"x\"  # inline\n")
+    ro v = "# top comment\nname = \"x\"  # inline\n".to_toml()!!
     match v {
         TomlTable(t) => assert(t.get("name") == Some(TomlStr("x")))
         _ => assert(false)
@@ -61,14 +75,11 @@ test "parse: comments игнорируются" {
 }
 
 test "parse: ошибка — незакрытая string" {
-    ro r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
-        ro _ = Toml.parse("k = \"unclosed")
-        None
+    // Ошибка — ЗНАЧЕНИЕ (D325 R1): ни хендлера, ни `interrupt`.
+    match "k = \"unclosed".to_toml() {
+        Err(UnexpectedEof { .. }) => ()
+        _                         => assert(false)
     }
-    assert(match r {
-        Some(UnexpectedEof { .. }) => true
-        _                           => false
-    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -86,8 +97,8 @@ test "parse: ошибка — незакрытая string" {
 
 test "repeated Fail-effect calls in one with-scope: 2 successes back to back" {
     ro r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
-        ro a = Toml.parse("k1 = 1\n")
-        ro b = Toml.parse("k2 = 2\n")
+        ro a = parse_or_fail("k1 = 1\n")
+        ro b = parse_or_fail("k2 = 2\n")
         match a {
             TomlTable(ta) => match b {
                 TomlTable(tb) => assert(ta.get("k1") == Some(TomlInt(1))
@@ -103,8 +114,8 @@ test "repeated Fail-effect calls in one with-scope: 2 successes back to back" {
 
 test "repeated Fail-effect calls in one with-scope: success then failure" {
     ro r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
-        ro _ok = Toml.parse("k1 = 1\n")
-        ro _bad = Toml.parse("k2 = \"unclosed")
+        ro _ok = parse_or_fail("k1 = 1\n")
+        ro _bad = parse_or_fail("k2 = \"unclosed")
         None
     }
     assert(match r {
@@ -120,7 +131,7 @@ test "repeated Fail-effect calls: match-on-Result between calls, then a third ca
     // marker's investigation ask.
     ro final = with Fail[ParseTomlError] = |e| interrupt Err(e) {
         ro r1 Result[TomlValue, ParseTomlError] = with Fail[ParseTomlError] = |e2| interrupt Err(e2) {
-            Ok(Toml.parse("a = 1\n"))
+            Ok(parse_or_fail("a = 1\n"))
         }
         match r1 {
             Ok(TomlTable(t1)) => assert(t1.get("a") == Some(TomlInt(1)))
@@ -129,7 +140,7 @@ test "repeated Fail-effect calls: match-on-Result between calls, then a third ca
         // Second, independent Fail-effectful call in the SAME outer scope —
         // must not be affected by the inner with-scope/handler that already
         // ran and was torn down above.
-        ro v2 = Toml.parse("b = 2\n")
+        ro v2 = parse_or_fail("b = 2\n")
         Ok(v2)
     }
     match final {

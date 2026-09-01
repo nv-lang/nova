@@ -1,0 +1,43 @@
+// Registry 221.1 #799 — THE CONTROL, and it is what turns a reproduction into
+// an isolation.
+//
+// Byte-for-byte the same shape as `collide.nv` — same default parameter, same
+// `supervised { spawn { ... } }`, same channel — with ONE difference: the
+// caller's variable is named `pol` while the callee's parameter is named `p`,
+// so no name collides.
+//
+// MEASURED 2026-08-31: this BUILDS and prints `ok 3`. The colliding twin fails
+// to compile. Same compiler, same minute, one variable renamed.
+//
+// That is the whole value of this file: without it, #799 reads as "calls with
+// default arguments break inside spawn", which is false and would send the
+// next window looking at default-argument handling in general. The trigger is
+// the NAME COLLISION between a capture and callnorm's own parameter-local, and
+// nothing else.
+//
+// RUN:
+//   nova-cli/target/release/nova.exe build docs/plans/repro/p799/control_no_collision.nv -o /tmp/p799_ctl.exe
+//   /tmp/p799_ctl.exe    # -> ok 3
+
+type Pol value {
+    a int
+    b int
+    c int
+}
+
+fn callee(p Pol, stop Option[int] = None) -> int => p.a + p.b + p.c
+
+fn main() Io -> () {
+    ro pol = Pol { a: 1, b: 1, c: 1 }
+    ro (tx, rx) = Channel[int].new(1)
+    supervised {
+        spawn {
+            ro n = callee(pol)
+            ro _ = tx.try_send(n)
+        }
+    }
+    match rx.recv() {
+        Some(v) => print("ok ${v}")
+        None    => print("no value")
+    }
+}

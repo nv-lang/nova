@@ -1,0 +1,4 @@
+Running 1 tests...
+
+nova: fiber stack overflow in slot 96 (access violation in fiber arena)
+... (26231 repetitions of the same two lines, 78694 lines total, until killed externally)

@@ -7,7 +7,7 @@ import std.encoding.ini.{Ini, ParseIniError}
 
 test "parse: простой INI" {
     ro s = "[server]\nhost = localhost\nport = 8080\n"
-    ro r = Ini.parse(s)
+    ro r = s.to_ini()!!
     match r.get("server") {
         Some(m) => {
             assert(m.get("host") == Some("localhost"))
@@ -19,7 +19,7 @@ test "parse: простой INI" {
 
 test "parse: top-level (без section)" {
     ro s = "name = nova\nversion = 0.5\n"
-    ro r = Ini.parse(s)
+    ro r = s.to_ini()!!
     match r.get("") {
         Some(m) => {
             assert(m.get("name") == Some("nova"))
@@ -31,7 +31,7 @@ test "parse: top-level (без section)" {
 
 test "parse: комментарии" {
     ro s = "# this is a comment\n; this too\n[s]\nk = v\n"
-    ro r = Ini.parse(s)
+    ro r = s.to_ini()!!
     match r.get("s") {
         Some(m) => assert(m.get("k") == Some("v"))
         None    => assert(false)
@@ -40,7 +40,7 @@ test "parse: комментарии" {
 
 test "parse: quoted values" {
     ro s = "[s]\nk = \"hello world\"\n"
-    ro r = Ini.parse(s)
+    ro r = s.to_ini()!!
     match r.get("s") {
         Some(m) => assert(m.get("k") == Some("hello world"))
         None    => assert(false)
@@ -48,25 +48,19 @@ test "parse: quoted values" {
 }
 
 test "parse: ошибка — невалидная line" {
-    mut caught = false
-    ro dummy = with Fail[ParseIniError] = |e| {
-        caught = e is InvalidLine
-        HashMap[str, HashMap[str, str]].new()
-    } {
-        Ini.parse("[s]\nbroken-line-no-equals\n")
+    // Ошибка — ЗНАЧЕНИЕ (D325 R1): ушла и обвязка `with Fail`, и пустая
+    // заглушка-HashMap, которую хендлер был обязан вернуть.
+    match "[s]\nbroken-line-no-equals\n".to_ini() {
+        Err(e) => assert(e is InvalidLine)
+        Ok(_)  => assert(false)
     }
-    ro _ = dummy
-    assert(caught)
 }
 
 test "parse: ошибка — незакрытая section" {
-    mut caught = false
-    ro dummy = with Fail[ParseIniError] = |e| {
-        caught = e is UnclosedSection
-        HashMap[str, HashMap[str, str]].new()
-    } {
-        Ini.parse("[unclosed\nk = v\n")
+    // Ошибка — ЗНАЧЕНИЕ (D325 R1): ушла и обвязка `with Fail`, и пустая
+    // заглушка-HashMap, которую хендлер был обязан вернуть.
+    match "[unclosed\nk = v\n".to_ini() {
+        Err(e) => assert(e is UnclosedSection)
+        Ok(_)  => assert(false)
     }
-    ro _ = dummy
-    assert(caught)
 }

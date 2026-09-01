@@ -135,6 +135,61 @@ guards. Until the defect is closed, do not build protocol loops that issue
 repeated reads on a stream whose peer may half-close mid-reply; prefer
 single bounded reads per scope, as above.
 
+## What the compiler catches, and what it does not
+
+Nova rejects the plainest shape of a data race across a fiber boundary. It
+does **not** reject every shape, and the boundary between the two is not where
+most people guess — so it is written out here rather than left to be
+discovered.
+
+Caught. A `mut` binding captured by a `spawn` body directly:
+
+```nova
+fn f() -> () {
+    mut acc = 0
+    spawn { acc = acc + 1 }        // E_CONCURRENT_MUT_CAPTURE
+}
+```
+
+Also caught when the closure is handed to a function as an argument and that
+function spawns it — one hop or two.
+
+**Not** caught. The same closure stored in a local first, then called inside a
+`spawn` right beside it:
+
+```nova
+fn f() -> () {
+    mut acc = 0
+    ro g = || { acc = acc + 1 }
+    spawn { g() }                  // accepted; the race is real
+}
+```
+
+That is the asymmetry worth remembering: **more** indirection is caught,
+**zero** indirection through a local is not. The check reads the free
+variables of the `spawn` body, where `g` is an ordinary `ro` binding, and does
+not look inside it. The same blind spot covers a closure reached through a
+collection, an `Option`, currying, or two or more `let`-hops, and a call
+through a struct field of function type.
+
+What follows from that, and it is the only rule you need:
+
+- **treat the compiler's silence as "not proven", never as "proven safe"** —
+  for concurrency specifically; the effect system's own guarantees are not
+  affected by this;
+- share mutable state through a lock (`consume g = x.lock()`), a channel, or a
+  `#share`-safe type, and the question does not arise;
+- if a closure touching mutable state must cross into a fiber, hand it over
+  **as an argument** rather than parking it in a local first — that path is
+  checked.
+
+There is a stricter mode (`NOVA_FIBER_INDIRECT=1`) that rejects the uncaught
+shapes above, but it is off by default and not a setting to switch on in a
+project: it enforces "not proven implies unsafe", and outside your own compile
+unit nothing is provable — under it a four-line program calling `println`
+inside `spawn` is rejected. The real fix is a typed safety mark on
+function-typed parameters, which is designed but not yet built.
+
 ## See also
 
 - [channels](channels.md) — `select`, timeout-as-an-arm pattern, `ChanReader.close_after`

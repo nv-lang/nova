@@ -1,0 +1,55 @@
+// Registry 221.1 #791 (K1, BLOCKS THE TAG) — the minimal carrier, rebuilt.
+//
+// The carrier window p790 named (`p791_helper_cancel.nv`) is NOT in the tree —
+// it never landed. This file is a reconstruction from the three NECESSARY
+// conditions that row #791 records, each marked below:
+//
+//   (1) a scope parked on a LIVE uv-accept  (a timer instead of accept: exits);
+//   (2) cancel from a SPAWN CHILD under a NESTED supervised  (inline cancel from
+//       the same fiber: exits; supervised WITHOUT spawn: exits);
+//   (3) at least one uv WRITE into the connection socket from that fiber —
+//       before or after the cancel, position does not matter (a file write
+//       instead of a socket write: exits).
+//
+// EXPECTED TODAY: the accept loop ends, the port closes, and the PROCESS STAYS
+// ALIVE. So "after-supervised" may print and the process still never exits.
+// The probe is therefore judged by whether the PROCESS TERMINATES, not by
+// stdout alone — run it with a timeout and look at the exit.
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_net}
+
+fn main() Io Net Detach -> () {
+    with Net = real_net() {
+        consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(consume l) => l
+            Err(_)        => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        ro tok = CancelToken.new()
+
+        // A client so that accept() actually RETURNS — condition (1) needs a
+        // live uv-accept, not a timer.
+        detach {
+            match TcpStream.connect(SocketAddr.loopback(port)) {
+                Ok(consume c) => c.close()
+                Err(_)        => println("client connect failed")
+            }
+        }
+
+        supervised(cancel: tok) {
+            match lst.accept() {
+                Ok(consume s) => {
+                    ro _ = s.write("bye")          // (3) uv write on the connection
+                    supervised {                   // nested supervised
+                        spawn { tok.cancel() }     // (2) cancel from a spawn child
+                    }
+                    s.close()
+                }
+                Err(_) => println("accept failed")
+            }
+        }
+
+        println("after-supervised")
+        lst.close()
+    }
+}

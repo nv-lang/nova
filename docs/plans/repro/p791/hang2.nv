@@ -1,0 +1,75 @@
+// Registry 221.1 #791 (K1, BLOCKS THE TAG) — carrier attempt v2.
+//
+// v1 (`hang.nv`) EXITS, and that is why it stays here as the control: it
+// satisfies conditions (2) and (3) but NOT (1) — by the time it cancels, the
+// accept has already returned, so no scope is PARKED on a live uv-accept at
+// the moment of the cancel. Row #791 says parked, and the word is load-bearing.
+//
+// v2 puts all three where the row puts them:
+//   (1) fiber A loops on accept and is PARKED on the next one when the cancel
+//       lands;
+//   (2) the cancel comes from fiber B — a spawn child under a NESTED supervised;
+//   (3) fiber B itself does a uv WRITE into a connection socket before it
+//       cancels — the row says "from THIS fiber", so the write and the cancel
+//       share a fiber.
+//
+// Shape borrowed from the live fixture `m_boxcap_detach_cancel_token_pos.nv`,
+// not invented: the listener is bound INSIDE the fiber that owns it (a
+// `consume` binding cannot be captured by a fiber — `E_LINEAR_CAPTURE_IN_FIBER`,
+// which is what v2's first draft hit), and the port travels out on a Channel.
+//
+// EXPECTED, IF THE ROW IS RIGHT: the accept loop ends, the port closes, and
+// the PROCESS NEVER EXITS. Judge by termination, not by stdout.
+
+import std.net.{TcpListener, TcpStream, NetError, SocketAddr, real_net}
+import std.time.duration
+
+fn main() Io Net Time -> () {
+    with Net = real_net() {
+        ro (port_tx, port_rx) = Channel[u16].new(1)
+        ro tok = CancelToken.new()
+
+        supervised(cancel: tok) {
+            // A — owns the listener and parks on accept.
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => { ro _ = port_tx.try_send(0 as u16); return }
+                }
+                ro _ = port_tx.try_send(lst.local_port())
+                mut running = true
+                while running {
+                    match lst.accept() {
+                        Ok(consume s) => { s.close() }
+                        Err(e) => {
+                            match e {
+                                NetError.Cancelled => { running = false }
+                                _ => { 20.to_millis().sleep() }
+                            }
+                        }
+                    }
+                }
+                lst.close()
+            }
+
+            // B — a spawn child under a NESTED supervised.
+            supervised {
+                spawn {
+                    ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                    match TcpStream.connect(SocketAddr.loopback(port)) {
+                        Ok(consume c) => {
+                            // nova:allow W_RESULT_DISCARDED -- the probe judges process exit, not the write
+                            ro _ = c.write("bye")        // (3) uv write, THIS fiber
+                            80.to_millis().sleep()       // let A re-park on accept
+                            tok.cancel()                 // (2) cancel from a spawn child
+                            c.close()
+                        }
+                        Err(_) => println("client connect failed")
+                    }
+                }
+            }
+        }
+
+        println("after-supervised")
+    }
+}

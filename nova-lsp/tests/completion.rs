@@ -14,6 +14,27 @@ use tower_lsp::lsp_types::CompletionItemKind;
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// No865: methods of PRIMITIVES (`int`, `str`) live in std, and std is reached
+/// only when the document has a real on-disk path inside a workspace -- which
+/// the LSP server always has (`method_items_typed`). The path-free wrappers
+/// anchor at `std/prelude.nv` instead, where only the prelude's SELECTIVE
+/// re-exports are inlined, so a primitive's full method set is invisible to
+/// them BY CONSTRUCTION. Measured on one source: typed = 70 items (byte_len
+/// present), path-free = 0.
+///
+/// Methods declared in the file itself are found by both, which is why the
+/// neighbouring `f5_*` tests never noticed.
+fn typed_items_for(name: &str, src: &str) -> Vec<tower_lsp::lsp_types::CompletionItem> {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("target")
+        .join("lsp_completion_fixtures");
+    std::fs::create_dir_all(&dir).expect("fixture dir");
+    let file = dir.join(format!("{name}.nv"));
+    std::fs::write(&file, src).expect("write fixture");
+    nova_lsp::completion::method_items_typed(&file, src, src.len())
+}
+
 fn has_label(items: &[tower_lsp::lsp_types::CompletionItem], label: &str) -> bool {
     items.iter().any(|i| i.label == label)
 }
@@ -57,7 +78,10 @@ fn ipos3_method_dot_int() {
     // legacy `module test.i` was unparseable; type-driven completion parses the
     // buffer, hence a real identifier (`demo`).
     let src = "module demo.i\nfn f() -> () {\n    ro count int = 5\n    count.";
-    let items = completion_for(src, src.len());
+    // No865: typed entry point -- `int`'s methods come from std, which needs a
+    // real path (see `typed_items_for`). The path-free `completion_for` returns
+    // nothing here and always would.
+    let items = typed_items_for("ipos3_method_dot_int", src);
     assert!(!items.is_empty(), "method completions expected after dot");
     assert!(
         items.iter().all(|i| i.kind == Some(CompletionItemKind::METHOD)),
@@ -160,7 +184,9 @@ fn ranking_full_ordering() {
 fn method_str_detail_present() {
     // `test` is a keyword → use a valid module identifier so the buffer parses.
     let src = "module demo.m\nfn f() -> () {\n    ro msg str = \"\"\n    msg.";
-    let items = method_items(src, src.len());
+    // No865: see `typed_items_for` -- `str`'s methods are reachable only through
+    // the typed entry point the server uses.
+    let items = typed_items_for("method_str_detail_present", src);
     let byte_len_item = items.iter().find(|i| i.label == "byte_len");
     assert!(byte_len_item.is_some(), "byte_len method on str (len was removed)");
     assert!(byte_len_item.unwrap().detail.is_some(), "detail should be present");

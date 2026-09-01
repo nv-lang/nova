@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR E_COALESCE_RETURN_FALLBACK
+//
+// D86 AMEND 2026-09-01 narrowed the 2026-07-23 retraction of `X ?? return R`
+// but did NOT lift it. This fixture pins the half that stays refused: the
+// enclosing fn returns `Option[int]`, so `?` has a wrapper to propagate and a
+// shorter canon exists (`lookup(x)?`). Allowing the form here would restore
+// exactly the "second door to `?`" the retraction was measured against --
+// 12 of 15 corpus sites had the shorter canon.
+//
+// The positive half lives in
+// `spec_tests/conformance/standalone/coalesce_return_narrow_pos.nv`; the two
+// must be read together, since each one alone proves only that the checker
+// says SOMETHING, not that it draws the line in the right place.
+//
+// Spec: spec/decisions/04-effects.md, D86 AMEND (2026-07-23) + AMEND (2026-09-01).
+module neg.coalesce_return_has_canon_neg
+
+fn lookup(x int) -> Option[int] => if x > 0 { Some(x) } else { None }
+
+fn bump(x int) -> Option[int] {
+    // nova:expect E_COALESCE_RETURN_FALLBACK -- the fn returns Option, so `?` applies and the canon is `lookup(x)?`; the form is refused precisely where a shorter road exists (D86 AMEND 2026-09-01)
+    ro v = lookup(x) ?? return None
+    Some(v + 1)
+}
+
+fn main() {
+    println("${bump(1)!!}")
+}

@@ -22,13 +22,13 @@
 // Decisions:
 //   - D52 record-тип, D55 record-coercion
 //   - D67 ?-оператор работает только на Result/Option
-//   - `Ulid.from(s)` / `u.to_str()` — конструктор-конверсия/представление (D410)
+//   - `s.to_ulid()` / `u.to_str()` — конструктор-конверсия/представление (D410)
 //   - D74 instance-методы числовых операций
 //   - Эффекты Random, Time для генерации
 //
 // API:
 //   Ulid.new() Time Random -> Self
-//   Ulid.from(s str) Fail[ParseUlidError] -> Self
+//   s str.to_ulid() Fail[ParseUlidError] -> Self
 //   u.to_str() -> str
 //   u.timestamp_ms() -> u64
 
@@ -105,7 +105,11 @@ fn encode_char(value u8) -> char {
     code.to_char() ?? '?'
 }
 
-fn decode_char(c char) -> Option[u8] {
+// Байт, а не `char`: всё, что делает тело, — арифметика над ASCII-кодом, а у ASCII
+// байт и code point совпадают по числу. Конверсия в `char` осталась только на
+// пути ОШИБКИ (у `InvalidChar` поле `char`), то есть один раз на отказ, а не
+// двадцать шесть раз на каждый успешный разбор. Парная правка к `uuid.nv`.
+fn decode_char(c u8) -> Option[u8] {
     ro n = c as int
     // 0..9 → 0..9
     if n >= 48 && n <= 57 { return Some((n - 48) as u8) }
@@ -147,12 +151,27 @@ fn decode_char(c char) -> Option[u8] {
 /// Uses Time + Random effects (ambient). In tests it is made deterministic
 /// via `with Time = th.fixed_ms(...), Random = th.seeded(...)`.
 ///
-/// Throws `TimestampOverflow` if ms ≥ 2^48 (~10889 AD).
+/// PANICS if the ambient clock is past ~10889 AD (ms ≥ 2^48). That is a
+/// D325 R0 case, not a D325 R1 one, and the distinction is the whole reason
+/// this signature carries no `Fail` and returns no `Result`: R1 covers
+/// EXPECTED failures (user input, I/O, parsing), while «integer overflow» is
+/// named in R0 among the conditions that must panic per D13. The rule adds,
+/// in as many words, that without R0 «R1 would read as "Result instead of
+/// panic" — and it is not that».
+///
+/// Concretely: this constructor parses nothing and takes no input. Its only
+/// failure needs the system clock to run past the year 10889, and making all
+/// callers unwrap a `Result` for that would tax every use for an impossible
+/// branch. `Ulid.from` keeps `TimestampOverflow` as a real error, because
+/// there the overflow arrives from a PARSED STRING — that is user input, and
+/// user input is exactly what R1 governs.
+///
+/// Registry 221.1 №852.
 #stable(since = "0.1")
-export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findings-fail-public-signature]
+export fn Ulid.new() Time Random -> Self {
     ro ms = Timestamp.now().unix_millis() as u64
     if ms >= 0x1000000000000 {                       // 2^48
-        throw TimestampOverflow
+        panic("Ulid.new: clock past year 10889 — timestamp ≥ 2^48 ms")
     }
 
     // ts_part: 48 бит timestamp в верхних, 16 бит random в младших
@@ -205,7 +224,7 @@ export fn Ulid @compare(other Ulid) -> int {
 /// # Examples
 /// ```nova
 /// let u = Ulid.new()
-/// assert(Ulid.from(u.to_str()) == u)
+/// assert(u.to_str().to_ulid() == u)
 /// ```
 #stable(since = "0.1")
 export fn Ulid @to_str() -> str {
@@ -271,11 +290,37 @@ export fn Ulid @to_str() -> str {
 
 /// Parse 26-char Crockford Base32 ULID. Case-insensitive.
 /// `I`/`L` → 1, `O` → 0 (Crockford ambiguity remap).
+///
+/// Returns `Err(ParseUlidError)` rather than throwing: D325 R1 — a public std
+/// operation failing on USER INPUT returns `Result`. Note the contrast with
+/// `Ulid.new` above, which PANICS on the same `TimestampOverflow`: there the
+/// overflow means the system clock has left the representable range (R0,
+/// programming/environment invariant), while HERE it arrives from a parsed
+/// string, and a caller can do something about that.
+///
+/// The private helpers keep throwing — R1 governs PUBLIC signatures — and the
+/// handler turns their `Fail` into the `Err` branch, the wrap idiom D325 names
+/// and `Regex.compile` already uses.
+///
+/// Registry 221.1 №852.
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, А НЕ `T.from(x)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09). Семья уже есть и она
+/// большая: `to_version`, `to_path`, `to_socket_addr`, `to_int`, `to_bool`,
+/// `to_char`, `to_f64`, `to_complex`, `to_cstr`. Прежнее имя числилось долгом
+/// маркером `[M-lint-findings-static-conversion]`, и тот маркер ПОДАВЛЯЛ
+/// свою же находку `W_STATIC_CONVERSION` — то есть линт видел нарушение
+/// и молчал по уговору. Переименование снимает и долг, и уговор.
+///
+/// Сделано ДО тега сознательно: подпись несёт `#stable(since = "0.1")`,
+/// и после выпуска такое переименование стало бы ломающим для чужого кода.
 #stable(since = "0.1")
-export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-static-conversion]
-    if s.byte_len() != 26 {
-        throw InvalidLength { actual: s.byte_len(), expected: 26 }
+export fn str @to_ulid() -> Result[Ulid, ParseUlidError] {
+    if @byte_len() != 26 {
+        return Err(InvalidLength { actual: @byte_len(), expected: 26 })
     }
+
+    // Байты — ОДИН раз на разбор; дальше индексы 0..25 законны по построению.
+    ro b = @bytes()
 
     // 10 timestamp chars + 16 random chars = 26.
     // Каждый char = 5 бит, итого 130 бит. Старшие 2 бита timestamp
@@ -284,14 +329,14 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
     // Парсим timestamp (48 бит)
     mut ts u64 = 0
     for i in 0..10 {
-        ro v = decode_char_or_throw(s, i)
+        ro v = decode_char_at(b, i)?
         ts = (ts << 5) | (v as u64)
     }
 
     // Старшие 2 бита timestamp должны быть 0 (после 10 chars × 5 = 50 бит).
     // ts уже 50-битное значение; берём 48 младших.
     if ts >= 0x1000000000000 {
-        throw TimestampOverflow
+        return Err(TimestampOverflow)
     }
 
     // Парсим random (80 бит) в две u64 части
@@ -303,7 +348,7 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
     mut full_lo u64 = 0
     mut full_hi u64 = 0
     for j in 0..16 {
-        ro v = decode_char_or_throw(s, 10 + j)
+        ro v = decode_char_at(b, 10 + j)?
         // Сдвигаем 80-битное значение влево на 5, добавляем v в младшие 5.
         // 80 бит = (full_hi << 16) | full_lo, но удобнее иметь две u64 и
         // пересылать переполнение.
@@ -324,18 +369,26 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
     ro ts_part = (ts << 16) | rand_low_16
     ro rand_part = rand_64
 
-    { ts_part, rand_part }
+    Ok({ ts_part, rand_part })
 }
 
 // Crockford base32 alphabet is pure ASCII — direct byte access O(1) instead
 // of O(n) char-by-char scan.
-fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
-    match s.bytes().get(pos) {
-        Some(b) => {
-            ro c = (b as int).to_char() ?? ' '
-            decode_char(c) ?? throw InvalidChar { position: pos, char: c }
-        }
-        None => throw InvalidLength { actual: s.byte_len(), expected: 26 }
+// Имя было `decode_char_or_throw` — переименовано вместе с поведением:
+// он больше не бросает, а возвращает. Имя, пережившее своё поведение,
+// врёт читателю так же, как устаревшая дока.
+// Берёт СРЕЗ байтов и индексирует напрямую: `Ulid.from` уже проверил, что
+// длина ровно 26, то есть индексы 0..25 существуют ПО ПОСТРОЕНИЮ.
+// Прежде здесь стоял `@bytes().get(pos)`, и его рукав `None` возвращал
+// `InvalidLength` — то есть мёртвая ветка ещё и ЛГАЛА о причине: длина уже
+// проверена выше, а выход за границу был бы нарушением контракта
+// (паника по D13/D325 R0), а не ошибкой разбора. Срез теперь вычисляется
+// вызывающим ОДИН раз, а не двадцать шесть. Парная правка к `uuid.nv`.
+fn decode_char_at(b []u8, pos int) -> Result[u8, ParseUlidError] {
+    ro raw = b[pos]
+    match decode_char(raw) {
+        Some(v) => Ok(v)
+        None    => Err(InvalidChar { position: pos, char: (raw as int).to_char() ?? ' ' })
     }
 }
 

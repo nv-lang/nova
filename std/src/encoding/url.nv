@@ -19,11 +19,11 @@
 //   - D52 record-тип: Url иммутабелен.
 //   - D55 record-coercion для конструирования.
 //   - D67 ?-оператор работает только на Result/Option.
-//   - `Url.from(s)` / `u.to_str()`: парсинг и сериализация (round-trip, D410).
+//   - `s.to_url()` / `u.to_str()`: парсинг и сериализация (round-trip, D410).
 //   - D74 instance-методы char-операций.
 //
 // API:
-//   Url.from(s str) -> Result[Url, ParseUrlError]
+//   s str.to_url() -> Result[Url, ParseUrlError]
 //   u.to_str() -> str
 //   Url.encode_query(s str) -> str  (percent-encoding)
 //   Url.decode_query(s str) -> Result[str, ParseUrlError]
@@ -39,7 +39,7 @@ module encoding.url
 ///
 /// # Examples
 /// ```nova
-/// let u = Url.from("https://user:pass@example.com:8443/api?k=v#top")
+/// let u = "https://user:pass@example.com:8443/api?k=v#top".to_url()
 /// assert(u.scheme == "https")
 /// assert(u.host == Some("example.com"))
 /// ```
@@ -70,8 +70,18 @@ export type ParseUrlError enum
 
 /// Parse a URL per the RFC 3986 generic syntax.
 /// `Err(ParseUrlError)` on malformed input.
+/// ИМЯ — ПО КАНОНУ `x.to_*()`, А НЕ `T.from(x)` (nv-coding-style §1а,
+/// «запрещённая пятая дверь», ретрактирована 2026-07-09). Парная правка к
+/// `str @to_uuid()` и `str @to_ulid()`; три эти функции были всем остатком
+/// маркера `[M-lint-findings-static-conversion]`, и маркер ПОДАВЛЯЛ свою же
+/// находку `W_STATIC_CONVERSION` — линт видел нарушение и молчал по уговору.
+///
+/// Тело оставлено как было: ресивер связывается `ro s = @` одной строкой,
+/// и все тридцать семь строк разбора не тронуты — переименование не должно
+/// тащить за собой правку логики.
 #stable(since = "0.1")
-export fn Url.from(s str) -> Result[Url, ParseUrlError] { // [M-lint-findings-static-conversion]
+export fn str @to_url() -> Result[Url, ParseUrlError] {
+    ro s = @
     if s.byte_len() == 0 { return Err(EmptyInput) }
 
     // 1. Извлечь scheme (до первого ":") и валидировать.

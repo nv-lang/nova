@@ -40,10 +40,10 @@ export type Store effect {
 }
 
 fn use_store() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
-        Set(v) { s = v }
-        get() => s
+    mut s = 0
+    with #trusted Store = effect Store {
+        Set(v) -> () => { s = v }
+        get() -> int => s
     } {
         Store.Set(5)
         Store.get()
@@ -84,10 +84,10 @@ export type Store effect {
 }
 
 fn caller_a() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
-        Set(v) { s = v }
-        get() => s
+    mut s = 0
+    with #trusted Store = effect Store {
+        Set(v) -> () => { s = v }
+        get() -> int => s
     } {
         Store.Set(1)
         Store.get()
@@ -95,10 +95,10 @@ fn caller_a() -> int {
 }
 
 fn caller_b() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
-        Set(v) { s = v }
-        get() => s
+    mut s = 0
+    with #trusted Store = effect Store {
+        Set(v) -> () => { s = v }
+        get() -> int => s
     } {
         Store.Set(2)
         Store.get()
@@ -126,10 +126,10 @@ export type Store effect {
 }
 
 fn use_store() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
-        Set(v) { s = v }
-        get() => s
+    mut s = 0
+    with #trusted Store = effect Store {
+        Set(v) -> () => { s = v }
+        get() -> int => s
     } {
         Store.get()
     }
@@ -153,10 +153,10 @@ export type Store effect {
 }
 
 fn use_store() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
-        Set(v) { s = v }
-        get() => s
+    mut s = 0
+    with #trusted Store = effect Store {
+        Set(v) -> () => { s = v }
+        get() -> int => s
     } {
         Store.get()
     }
@@ -180,10 +180,10 @@ export type Store effect {
 }
 
 fn use_store() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
-        Set(v) { s = v }
-        get() => s
+    mut s = 0
+    with #trusted Store = effect Store {
+        Set(v) -> () => { s = v }
+        get() -> int => s
     } {
         Store.get()
     }

@@ -59,7 +59,7 @@ fn real_exec_is_deterministic() {
     let src = r#"
 module m
 
-export fn safe(x int) -> int
+export fn guarded(x int) -> int
     requires x >= 0
     ensures result == x
     => x

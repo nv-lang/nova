@@ -37951,6 +37951,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // прежнем тернарном пути байт-в-байт — сужено строго до формы,
                     // которая единственная строит statement-уровневый C для своего
                     // значения.
+                    // D86 AMEND (2026-09-01): `X ?? return R` где enclosing fn
+                    // возвращает НЕ Option/Result (чекер пропускает ТОЛЬКО такую
+                    // форму, см. `coalesce_return_fallback_is_legal`). Ранний выход
+                    // НЕ пишется здесь руками: строится `Stmt::Return` и отдаётся
+                    // `emit_stmt`, чтобы форма унаследовала ВСЁ, что есть у обычного
+                    // `return`: ensures-контракты (`_nova_result = X; goto <label>`),
+                    // LIFO-обход defer/errdefer ПО ВСЕМ объемлющим скоупам и
+                    // target-типизацию литералов. Голый C-`return` тихо пропустил бы
+                    // все три — ради этого ветка и делегирует.
+                    if let ExprKind::CoalesceReturnFallback(ret_value) = &right.kind {
+                        let result_tmp = self.fresh_tmp_named("coalesce_ret");
+                        self.line(&format!("{} {};", payload_c, result_tmp));
+                        self.line(&format!("if ({}) {{", some_check));
+                        self.indent += 1;
+                        self.line(&format!("{} = {}.value;", result_tmp, opt_tmp));
+                        self.indent -= 1;
+                        self.line("} else {");
+                        self.indent += 1;
+                        let ret_stmt = Stmt::Return {
+                            value: ret_value.as_ref().map(|b| (**b).clone()),
+                            span: expr.span,
+                        };
+                        self.emit_stmt(&ret_stmt)?;
+                        self.indent -= 1;
+                        self.line("}");
+                        return Ok(result_tmp);
+                    }
                     if matches!(&right.kind, ExprKind::Match { .. }) {
                         let result_tmp = self.fresh_tmp_named("coalesce");
                         self.line(&format!("{} {};", payload_c, result_tmp));
@@ -37980,6 +38007,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 172.1 [literal-coercion]: fallback coerces to the Ok-payload type
                     // (`?? (0,0)` against `Result[(uint,uint),_]` builds a matching tuple,
                     // not the collapsed `(int,int)` → no CC-FAIL operand-type clash).
+                    // D86 AMEND (2026-09-01): Result-близнец Option-ветки выше —
+                    // тот же делегирующий `emit_stmt(Stmt::Return)`, различие только в
+                    // проверке носителя (явный tag; у Result НЕТ NPO) и в том, что
+                    // ошибка ОТБРАСЫВАЕТСЯ — как и у обычного `??` по D86: если ошибка
+                    // нужна внутри `R`, пиши `match`, а не эту форму.
+                    if let ExprKind::CoalesceReturnFallback(ret_value) = &right.kind {
+                        let ok_c = match self.novares_ok_err(&left_ty) {
+                            Some((ok_c, _)) => ok_c,
+                            None => "nova_int".to_string(),
+                        };
+                        let result_tmp = self.fresh_tmp_named("coalesce_ret");
+                        self.line(&format!("{} {};", ok_c, result_tmp));
+                        self.line(&format!(
+                            "if ({}->tag == NOVA_TAG_Result_Ok) {{",
+                            res_tmp
+                        ));
+                        self.indent += 1;
+                        self.line(&format!("{} = {}->payload.Ok._0;", result_tmp, res_tmp));
+                        self.indent -= 1;
+                        self.line("} else {");
+                        self.indent += 1;
+                        let ret_stmt = Stmt::Return {
+                            value: ret_value.as_ref().map(|b| (**b).clone()),
+                            span: expr.span,
+                        };
+                        self.emit_stmt(&ret_stmt)?;
+                        self.indent -= 1;
+                        self.line("}");
+                        return Ok(result_tmp);
+                    }
                     let r = match self.novares_ok_err(&left_ty) {
                         Some((ok_c, _)) => self.emit_expr_with_target_type(right, &ok_c)?,
                         None => self.emit_expr(right)?,
@@ -38113,10 +38170,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // After interrupt the code is unreachable, but emit a dummy value
                 Ok("NOVA_UNIT".into())
             }
-            // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23): `X ?? return R`
-            // is ALWAYS rejected by the checker (`check_coalesce_return_fallback`,
-            // types/mod.rs) before codegen runs — this arm is structurally
-            // unreachable in a successfully-checked program.
+            // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-09-01): a LEGAL
+            // `X ?? return R` never reaches this arm — it is consumed whole by the
+            // `ExprKind::Coalesce` arm above, which owns both carriers and emits the
+            // early exit through `emit_stmt(Stmt::Return)`. The node can only appear
+            // as the immediate right operand of `??` (parser invariant, ast/mod.rs),
+            // so reaching it standalone means either a shape the checker still
+            // refuses (the enclosing fn DOES have a wrapper, `?` applies) slipped
+            // past, or the parser invariant broke.
             ExprKind::CoalesceReturnFallback(_) => Err(
                 "internal: ExprKind::CoalesceReturnFallback reached codegen — \
                  checker must reject `?? return` before this point \

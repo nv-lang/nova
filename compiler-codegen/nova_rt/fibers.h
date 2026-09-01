@@ -1226,6 +1226,12 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     return slot;
 }
 
+static int _nova_d791_cached = -1;
+static inline int _nova_d791(void) {
+    if (_nova_d791_cached < 0) _nova_d791_cached = (getenv("NOVA_DIAG_791") != NULL) ? 1 : 0;
+    return _nova_d791_cached;
+}
+
 static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     /* Plan 83.11 Ф.3.B: lock so alloc_slot's scan cannot observe this slot
@@ -1237,6 +1243,11 @@ static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
                 &scope->slot_lock, &_sl_exp, 1,
                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         _sl_exp = 0;
+    }
+    if (_nova_d791()) {
+        fprintf(stderr, "[791] %-24s scope=%p slot=%d co=%p\n",
+                "slot:free", (void*)scope, slot, (void*)scope->fibers[slot]);
+        fflush(stderr);
     }
     scope->fibers[slot]    = NULL;
     scope->fiber_ctx[slot] = NULL;  /* release SpawnCtx GC root */
@@ -2447,6 +2458,36 @@ typedef struct NovaResumeOutcome {
  * choose to inline their own restore instead). */
 typedef void (*NovaFiberTlsHook)(void* ctx);
 
+/* [221.1 #791] Caller tag. The measurement contradicts the code as read: the
+ * stuck coroutine was resumed exactly once, the resume returned
+ * `owned=1 dead=0 parked=0`, and every one of the four live callers answers
+ * that outcome by storing IDLE -- yet the dump finds it RUNNING with every
+ * yielded-FIFO empty. Reading cannot settle which of those two statements is
+ * wrong, because the four sites do NOT agree on what "parked" means: three
+ * consult `ro.parked`, while `nova_supervised_step` consults
+ * `sched->parked[i] && park_state==WAIT` and, when that holds, deliberately
+ * leaves the state alone on the assumption that gopark already wrote PARKED.
+ * So each site announces itself, and the log names the caller instead of
+ * leaving it to inference. Silent unless NOVA_DIAG_791 is set. */
+static inline void nova_d791_tag(const char* site, mco_coro* co) {
+    if (!_nova_d791()) return;
+    fprintf(stderr, "[791] %-24s co=%p fstate=%d\n",
+            site, (void*)co, (int)nova_fiber_state_load(co));
+    fflush(stderr);
+}
+/* [221.1 #791] Same tag with one integer -- used for the yielded-FIFO,
+ * where the worker id is the whole question: the dump shows exactly one
+ * worker whose FIFO ever grew (cap 8) and is now empty, i.e. one push and
+ * one pop, while the pop site has no path to anything but a tagged resume
+ * -- and no third resume was logged. One of those three readings is wrong,
+ * and only the FIFO itself can say which. */
+static inline void nova_d791_tag_n(const char* site, mco_coro* co, int n) {
+    if (!_nova_d791()) return;
+    fprintf(stderr, "[791] %-24s co=%p fstate=%d w=%d\n",
+            site, (void*)co, (int)nova_fiber_state_load(co), n);
+    fflush(stderr);
+}
+
 static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
                                                     NovaFiberTlsHook restore_inner,
                                                     NovaFiberTlsHook save_inner) {
@@ -2528,6 +2569,22 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         out.parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
     }
 
+    /* [221.1 #791] Diagnostic bracket around the ONE foreign call left between
+     * `mco_resume` returning and the caller writing the fiber state. Every live
+     * caller of this function does clear RUNNING (all four enumerated), yet a
+     * fiber is still found SUSPENDED-with-RUNNING — so the question is whether
+     * control ever gets back to them. If BOTH lines below appear for the stuck
+     * coroutine, the loss is downstream of this return; if only the first does,
+     * the deferred park-unlock is where control left. Off unless NOVA_DIAG_791
+     * is set; it prints per resume, so it is a probe, not a default. */
+    int _d791 = _nova_d791();
+    if (_d791) {
+        fprintf(stderr, "[791] resume-tail-enter co=%p owned=%d dead=%d parked=%d fstate=%d\n",
+                (void*)co, (int)out.owned, (int)out.dead, (int)out.parked,
+                (int)nova_fiber_state_load(co));
+        fflush(stderr);
+    }
+
     /* Deferred park-unlock: same ordering every pre-unification call site
      * used — after classification, before returning to the caller. */
     if (_nova_park_unlock_fn) {
@@ -2536,6 +2593,12 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         _nova_park_unlock_fn  = NULL;
         _nova_park_unlock_arg = NULL;
         fn(arg);
+    }
+
+    if (_d791) {
+        fprintf(stderr, "[791] resume-tail-return co=%p fstate=%d\n",
+                (void*)co, (int)nova_fiber_state_load(co));
+        fflush(stderr);
     }
 
     return out;
@@ -3021,6 +3084,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         NovaStepTlsCtx step_ctx = { q, i };
         NovaResumeOutcome ro = nova_resume_fiber(co, &step_ctx,
             _nova_resume_restore_step_tls, _nova_resume_save_step_tls);
+        nova_d791_tag("step:post-resume", co);
         if (!ro.owned) {
             /* Should not happen under bootstrap's single-thread guarantee;
              * defensive fallback — don't touch co, still count it alive so
@@ -3046,6 +3110,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         } else {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         }
+        nova_d791_tag("step:handled", co);
         if (ro.dead) {
             _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
@@ -3069,6 +3134,81 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
 static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
     long long _nv456_iters = 0;
+    /* [221.1 #791] PRE-EXIT WATCHDOG. This fence had NO watchdog and no state
+     * dump at all, while `nova_supervised_run_impl`'s twin loop has both --
+     * and that asymmetry is why #791 read for weeks as "the process simply
+     * does not exit", with not one diagnostic line. Measured 2026-08-31: a
+     * polaris server whose /shutdown handler cancels its own governing token
+     * spins here forever on remote=1, and NOVA_DIAG_656=1 produced ZERO
+     * output, because the 656 dump is wired into the supervised loop, not
+     * into this one.
+     *
+     * WHY THIS ONE FIRES UNCONDITIONALLY, unlike the supervised twin. There
+     * the dump is gated on `nova_runtime_has_stuck_fibers()`, and rightly so:
+     * a supervised scope waiting on pending_remote is the ordinary shape of a
+     * healthy long-lived server parked in uv_accept. HERE it is not -- main
+     * has already finished and this is the last fence before exit, so waiting
+     * without end is always wrong. The gate would also be actively harmful:
+     * `has_stuck_fibers` is documented (a few hundred lines below, at the 656
+     * site) as BLIND to a child that never started -- no coroutine, no slot --
+     * which is exactly the leading candidate for #791.
+     *
+     * DIAGNOSTIC ONLY: it dumps once and keeps waiting. No behaviour changes,
+     * nothing is aborted; a hang stays a hang, but stops being a silent one.
+     * Threshold: the same NOVA_WATCHDOG_DUMP_SECS knob (0 = off), default 10s
+     * -- healthy programs do not spend ten seconds at this fence. */
+    uint64_t _pxwd_start = uv_hrtime();
+    bool     _pxwd_fired = false;
+    int      _pxwd_secs  = 10;
+    /* [221.1 #791] ORPHAN-DRAIN STOP. Owner's decision 2026-09-01: do not
+     * touch `detach` semantics, give the orphan drain its own stopping path.
+     *
+     * WHAT IS ACTUALLY STUCK, measured rather than assumed. The child that
+     * holds this drain is a detached fiber spinning in a retry loop: the
+     * worker enters `mco_resume` and never returns (a probe logs the call
+     * going in and no line coming out), the dump reads `mco_status=2` which
+     * is MCO_RUNNING, and CPU time grows ~2.4s per 2.4s -- one core flat out.
+     * Such a fiber NEVER parks, so it registers no stop_cb and the cancel
+     * fan-out has nothing to hand it; the first version of this fix aimed
+     * exactly that fan-out and changed nothing, which is how the loop was
+     * found. The one path left is the `cancel_requested` check at its
+     * safepoints, which consults the fiber's OWN `_nova_parent_scope` -- and
+     * for a detached fiber that scope IS this orphan scope, on which nobody
+     * ever set the flag. `nova_scope_deliver_cancel` sets it (and wakes the
+     * parked ones too, so both shapes are covered by one call).
+     *
+     * NOT a change to `detach` semantics: the flag is set by the RUNTIME at
+     * process exit, never by a user token, and only on the orphan scope --
+     * `q` must BE that scope, so main's own drain is untouched.
+     *
+     * THE TRADE, STATED: a detached fiber that legitimately needs more than
+     * the grace period of uninterrupted work at process exit will be asked to
+     * cancel. A permanent spin and slow work look identical from here -- one
+     * running fiber -- so it is a knob, not a guess: NOVA_ORPHAN_DRAIN_GRACE_SECS,
+     * default 10s, 0 restores the previous wait-forever. Separate from
+     * NOVA_WATCHDOG_DUMP_SECS on purpose: turning the dump off must not turn
+     * the fix off. The window runs from the last CHANGE of `remote`, so a
+     * scope whose children keep completing keeps resetting it. */
+    extern struct NovaFiberQueue* nova_runtime_orphan_scope(void);
+    const bool _ods_is_orphan = (q == (NovaFiberQueue*)nova_runtime_orphan_scope());
+    bool     _ods_fired  = false;
+    int      _ods_secs   = 10;
+    {
+        const char* _ods_env = getenv("NOVA_ORPHAN_DRAIN_GRACE_SECS");
+        if (_ods_env && _ods_env[0]) {
+            int _v = atoi(_ods_env);
+            if (_v >= 0) _ods_secs = _v;
+        }
+    }
+    uint64_t _ods_mark = uv_hrtime();
+    int      _ods_last = -1;
+    {
+        const char* _pxwd_env = getenv("NOVA_WATCHDOG_DUMP_SECS");
+        if (_pxwd_env && _pxwd_env[0]) {
+            int _v = atoi(_pxwd_env);
+            if (_v >= 0) _pxwd_secs = _v;
+        }
+    }
     if (_nv456_diag) {
         fprintf(stderr, "[m456] drain_main_scope ENTER q=%p remote=%d pending_sweeps=%d\n",
                 (void*)q, (int)nova_aint_load(&q->pending_remote),
@@ -3086,6 +3226,29 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                 fprintf(stderr, "[m456] drain_main_scope STILL WAITING remote loop q=%p remote=%d iters=%lld\n",
                         (void*)q, remote, _nv456_iters);
                 fflush(stderr);
+            }
+            /* [221.1 #791] orphan-drain stop -- see the banner above. */
+            if (_ods_is_orphan && !_ods_fired && _ods_secs > 0) {
+                if (remote != _ods_last) {
+                    _ods_last = remote;
+                    _ods_mark = uv_hrtime();
+                } else if ((uv_hrtime() - _ods_mark) / 1000000000ULL
+                           >= (uint64_t)_ods_secs) {
+                    _ods_fired = true;
+                    nova_scope_deliver_cancel(q, NULL);
+                }
+            }
+            /* [221.1 #791] see the banner at the top of this function. */
+            if (!_pxwd_fired && _pxwd_secs > 0) {
+                uint64_t _pxwd_now = uv_hrtime();
+                if ((_pxwd_now - _pxwd_start) / 1000000000ULL >= (uint64_t)_pxwd_secs) {
+                    _pxwd_fired = true;
+                    extern void nova_runtime_dump_state(const char* reason);
+                    char _pxwd_buf[80];
+                    snprintf(_pxwd_buf, sizeof(_pxwd_buf),
+                             "pre-exit-drain-%ds-remote-%d", _pxwd_secs, remote);
+                    nova_runtime_dump_state(_pxwd_buf);
+                }
             }
             uv_run(nova_current_loop(), UV_RUN_ONCE);
             continue;

@@ -4,10 +4,16 @@
 //! information (never a textual heuristic):
 //!
 //! - **Type hints** — for an un-annotated binding `ro x = expr` / `mut x = expr`
-//!   the inferred type is shown as `: T` right after the variable name. The type
+//!   the inferred type is shown as ` T` — a SPACE, not a colon — right after the
+//!   variable name, because that is how the annotation is spelled in Nova
+//!   (`ro x int = 5`, `consume s TcpStream`): the hint has to read as the code the
+//!   user would have written. Owner's decision of 2026-07-23, implemented in
+//!   `5f484c7b2`. This paragraph said `: T` until 2026-09-01 and was simply missed
+//!   by that commit — as was the e2e fixture `f9_pos_inlay_hints_type_and_params`,
+//!   which is how the drift surfaced (registry №854). The type
 //!   comes from the Ф.2 `expr_types` map (the checker's inference for the
-//!   initializer expression), so `ro x = 5` renders `x: int` and
-//!   `ro r = 0..10` renders `r: Range`. An **already-annotated** binding
+//!   initializer expression), so `ro x = 5` renders `x int` and
+//!   `ro r = 0..10` renders `r Range`. An **already-annotated** binding
 //!   (`ro x int = 5`) gets no hint — the type is already on screen. Which
 //!   initializer shapes carry a type is exactly what the Ф.2 map records: the
 //!   IDE resolve path does not run `number_exprs`, so the ExprId-keyed semantic

@@ -67,9 +67,6 @@ ORACLE_REV=$(git -C "$(dirname "$ORACLE")" rev-parse --short HEAD 2>/dev/null)
 # `--no-merges`.
 # Порядок опроса: `origin/main` — если реф есть (обычный клон); иначе HEAD — в
 # PR-чекауте origin/main может не быть, но сам чекаут УЖЕ содержит main.
-QUEUE_REF=main
-git -C "$ROOT" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1 && QUEUE_REF=origin/main
-git -C "$ROOT" rev-parse --verify -q "$QUEUE_REF" >/dev/null 2>&1 || QUEUE_REF=HEAD
 
 # СЧИТАЕМ ДО ТОГО МЕСТА MAIN, КОТОРОЕ ВЕТКА УЖЕ СОДЕРЖИТ, а не до вершины
 # `origin/main` (правка 2026-08-30 по замеру окна 274, реестр №843).
@@ -86,10 +83,20 @@ git -C "$ROOT" rev-parse --verify -q "$QUEUE_REF" >/dev/null 2>&1 || QUEUE_REF=H
 # РЕАЛЬНО ПРИЕЗЖАЕТ в ветку — то есть при синхронизации, осознанно. Теряется
 # только требование быть в курсе чужих пушей, которых у тебя ещё нет.
 #
-# НА САМОМ main ЧИСЛО НЕ МЕНЯЕТСЯ: там merge-base(HEAD, origin/main) есть сам HEAD,
-# и интегратор по-прежнему видит полный счёт. Послабление касается ТОЛЬКО веток.
-QUEUE_BASE=$(git -C "$ROOT" merge-base HEAD "$QUEUE_REF" 2>/dev/null || echo "")
-[ -n "$QUEUE_BASE" ] || QUEUE_BASE="$QUEUE_REF"
+# ПОПРАВКА 2026-08-31 (реестр №846, форма предложена окном 274). Счёт шёл до
+# merge-base(HEAD, origin/main), и это освободило ВЕТКИ, но оставило ДЫРУ НА main:
+# там origin/main ОТСТАЁТ на ещё не запущенный коммит, то есть ДО пуша
+# счётчик требовал одно число, а CI на ТОМ ЖЕ коммите — другое (замер
+# 2026-08-30: 35 против 36). Одно дерево — два ответа.
+#
+# СЧИТАЕМ ДО HEAD, И ЭТО НЕ УПРОЩЕНИЕ, А УСТРАНЕНИЕ ПРИЧИНЫ. Формула
+# больше НЕ ССЫЛАЕТСЯ НА УДАЛЁННУЮ ВЕТКУ ВОВСЕ, значит зависеть от того,
+# запущено ли уже, она не может ПО ПОСТРОЕНИЮ — это сильнее любого замера.
+# СМЫСЛ ПРАВИЛА ЦЕЛ: `git log HEAD -- spec/decisions` считает ровно те D-коммиты,
+# КОТОРЫЕ ДЕРЕВО СОДЕРЖИТ. Для ветки это то же послабление, что и раньше
+# (чужих невлитых коммитов в её истории нет), ПЛЮС её СОБСТВЕННЫЕ спек-коммиты,
+# о которых она точно знает, — то есть строго точнее merge-base.
+QUEUE_BASE=HEAD
 QUEUE_REAL=$(git -C "$ROOT" log --since="$SPEC_POINT 23:59:59" --no-merges --format=%h "$QUEUE_BASE" -- spec/decisions 2>/dev/null | wc -l | tr -d " ")
 QUEUE_TOML=$(tr -d '\r' < "$ROOT/novac/nova.toml" | sed -n 's/^#[[:space:]]*spec-queue:[[:space:]]*\([0-9][0-9]*\)$/\1/p')
 echo "novac-diff-corpus: oracle-pin=$PIN oracle-HEAD=$ORACLE_REV spec-point=$SPEC_POINT spec-queue=$QUEUE_REAL (в nova.toml: $QUEUE_TOML) сборка novac=single-file корпус=$CORPUS"

@@ -114,8 +114,14 @@ syntax region novaStringInterp matchgroup=novaStringInterpDelim start=/\${/ end=
 " Char literal: 'a' / '\n' / '\u{1F600}'
 syntax match novaChar /'\(\\.\|[^']\)'/
 
-" Tagged template literals: json`...`, sql`...`, regex`...`, bytes`...`
-syntax region novaTagTemplate matchgroup=novaTagName start=/\<\(json\|sql\|regex\|bytes\)\zs`/ end=/`/
+" Backtick string literals (D467): bare `a=${i}` interpolates like novaString
+" below; an identifier immediately before the backtick (no space), e.g.
+" sql`select 1`, is a tag and is highlighted as a function name. The body may
+" span multiple lines. Escapes here are a CLOSED set -- only \` \\ \$ -- \n and
+" \t are NOT escapes inside backtick (unlike novaString, where they are).
+syntax match novaTagName /\<[a-z_][a-zA-Z0-9_]*\ze`/
+syntax region novaBacktickString start=/`/ skip=/\\./ end=/`/ contains=novaBacktickEscape,novaStringInterp
+syntax match novaBacktickEscape /\\[`\\$]/ contained
 
 " ============================================================================
 " Comments
@@ -164,7 +170,8 @@ highlight default link novaStringInterp   Special
 highlight default link novaStringInterpDelim Special
 highlight default link novaChar           Character
 highlight default link novaTagName        Function
-highlight default link novaTagTemplate    String
+highlight default link novaBacktickString String
+highlight default link novaBacktickEscape SpecialChar
 
 highlight default link novaDocComment     SpecialComment
 highlight default link novaLineComment    Comment

@@ -1,0 +1,56 @@
+// EXPECT_STDOUT sum=3
+// Registry 221.1 #799 (the NAME-COLLISION half; the interpolation half is
+// `m799_default_arg_call_in_spawn.nv`, 2026-08-29).
+//
+// A call carrying a DEFAULTED parameter, made from inside a `spawn` body, where
+// the CALLER'S variable bears THE SAME NAME as one of the CALLEE'S parameters.
+//
+// Mechanism, read in the generated C rather than guessed. `callnorm` (D102 F.2)
+// rewrites the call into a Block whose locals are NAMED AFTER THE CALLEE'S
+// PARAMETERS -- deliberately, so default expressions resolve without a
+// substitution walk. Phase 1 of that Block emits `__nova_arg_src0 = policy`,
+// reading the CALLER's `policy`; phase 2 then declares a local `policy`. Inside
+// a spawn the "capture or local" decision is made FLATLY (`refs - bound`), so
+// the name lands in `bound`, no field for it appears in the fiber context
+// struct at all, and the phase-1 read resolves to a local that is not declared
+// until the next line:
+//
+//     error: use of undeclared identifier 'policy'
+//         NovaValue_Pol __nova_arg_src0 = policy;
+//
+// WHY THE FIX RENAMES INSTEAD OF FIXING THE CAPTURE SET. Collecting the capture
+// is not enough: the reference rewrite is flat TOO, so `policy` would become
+// `_c->policy` EVERYWHERE in the body -- including the use that sits AFTER the
+// local's declaration and must read the LOCAL. That trades a loud CC-FAIL for a
+// silently wrong value. Renaming removes the collision both mechanisms trip
+// over, and touches neither.
+//
+// THE COLLISION IS THE WHOLE TRIGGER, and it is measured, not assumed: the same
+// shape with the names spread apart (`pol` / `p`) builds and runs on the
+// pre-fix binary. Both carriers are kept side by side in
+// `docs/plans/repro/p799/` -- they differ by ONE variable name.
+//
+// The statement-level form is deliberate: this is the half the interpolation
+// fixture does NOT cover, and vice versa.
+module standalone.m799_name_collision_in_spawn
+
+type Pol value { a int, b int, c int }
+
+fn callee(policy Pol, stop Option[int] = None) -> int {
+    match stop { Some(v) => policy.a + v, None => policy.a + policy.b + policy.c }
+}
+
+fn main() Io -> () {
+    ro policy = Pol { a: 1, b: 1, c: 1 }
+    ro (tx, rx) = Channel[int].new(1)
+    supervised {
+        spawn {
+            ro n = callee(policy)
+            ro _ = tx.try_send(n)
+        }
+    }
+    match rx.recv() {
+        Some(v) => print("sum=${v}")
+        None    => print("no value")
+    }
+}

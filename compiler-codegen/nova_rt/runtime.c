@@ -227,6 +227,7 @@ static void _worker_yielded_push(NovaWorker* w, mco_coro* co) {
     }
     w->yielded[w->yielded_head + w->yielded_count] = co;
     w->yielded_count++;
+    nova_d791_tag_n("fifo:push", co, w->id);
 }
 
 static mco_coro* _worker_yielded_pop(NovaWorker* w) {
@@ -235,6 +236,7 @@ static mco_coro* _worker_yielded_pop(NovaWorker* w) {
     w->yielded_head++;
     w->yielded_count--;
     if (w->yielded_count == 0) w->yielded_head = 0;
+    nova_d791_tag_n("fifo:pop", co, w->id);
     return co;
 }
 
@@ -313,6 +315,14 @@ static nova_atomic_int _g656_first_run;
 void nova_diag656_count_spawn(void)     { nova_aint_inc(&_g656_spawn_disp); }
 void nova_diag656_count_first_run(void) { nova_aint_inc(&_g656_first_run); }
 
+/* [221.1 #862] Tentative declarations for the dump: the orphan scope is
+ * defined far below (it lives next to the orphan spawn/drain code), and C
+ * lets the same static object be declared tentatively more than once -- one
+ * object results. Cheaper and more honest than hoisting the definition,
+ * which would move it away from the code that owns it. */
+static NovaFiberQueue _nova_orphan_scope;
+static bool           _nova_orphan_scope_inited;
+
 void nova_runtime_dump_state(const char* reason) {
     fprintf(stderr, "=== NOVA_RUNTIME_DUMP === reason=%s\n",
             reason ? reason : "unspecified");
@@ -330,15 +340,39 @@ void nova_runtime_dump_state(const char* reason) {
     }
     for (int wi = 0; wi < _n_workers; wi++) {
         NovaWorker* w = &_workers[wi];
+        /* [221.1 #791] `yielded` IS PRINTED HERE BECAUSE THE DUMP WAS BLIND TO IT,
+         * and that blindness is exactly what hid the defect. A fiber preempted by
+         * sysmon (Plan 44.7) lands in this per-worker FIFO, not in runnext, not in
+         * the ring, not in wake_pending -- so the dump showed it only as
+         * "SUSPENDED but not parked" with no hint of WHERE it was waiting, and the
+         * reader had no way to tell a lost wake from a lost re-schedule.
+         *
+         * The runtime already knows this queue can black-hole a fiber: the nested-
+         * supervised pump drains it deliberately (Plan 83.4.5.12,
+         * [M-187-supervised-nested-fiber-slot-race]) and its comment names this very
+         * signature -- "the fiber SUSPENDED-not-parked with a non-empty
+         * yielded-FIFO". A dump that cannot show the second half of that sentence
+         * cannot confirm or refute it, which is why #791 stayed a guess for weeks.
+         *
+         * Diagnostic only: two more integers on a line that is already only printed
+         * when something has gone wrong. */
         fprintf(stderr,
-            "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d\n",
+            "[worker %d] runnext=%p wake_pending=%d preempt_flag=%d stop=%d yielded=%d/%d ring=%u global=%d\n",
             wi, (void*)w->runnext, w->wake_pending_count,
             (int)__atomic_load_n(&w->preempt_flag, __ATOMIC_RELAXED),
-            (int)nova_abool_load(&w->stop));
+            (int)nova_abool_load(&w->stop),
+            w->yielded_count, w->yielded_cap,
+            (unsigned)nova_runq_len(&w->runq),
+            (int)_nova_global_runq.size);
         NovaFiberQueue* s = &w->scope;
         int count = (int)__atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
-        fprintf(stderr, "[w.%d.scope] count=%d cancel_req=%d pending_remote=%d\n",
-            wi, count,
+        /* [221.1 #791] the scope POINTER, not just the counters: the
+         * epilogue's slot release (nova_scope_free_slot) is addressed BY
+         * scope, and the whole measurement turns on whether the scope it
+         * freed is the scope that still holds the coroutine. Without the
+         * address the two cannot be compared at all. */
+        fprintf(stderr, "[w.%d.scope] q=%p count=%d cancel_req=%d pending_remote=%d\n",
+            wi, (void*)s, count,
             (int)nova_abool_load(&s->cancel_requested),
             (int)nova_aint_load(&s->pending_remote));
         NovaSchedState* st = s->sched_state;
@@ -383,8 +417,17 @@ void nova_runtime_dump_state(const char* reason) {
                 bool stuck_alive = co && mco_st == MCO_SUSPENDED && !pk;
                 if (stuck_alive) alive_non_parked++;
                 fprintf(stderr,
-                    "[w.%d.fiber.s%d] co=%p mco_status=%d parent_scope=%p parked=%d pstate=%d hdl=%p stop_cb=%p%s\n",
+                    /* [221.1 #791] `fstate` = _nova_fiber_state (IDLE/RUNNING/PARKED/DEAD).
+                     * Its CAS is what decides WHO re-queues a woken fiber
+                     * (wake = CAS PARKED->IDLE, and only the winner calls
+                     * dispatch_ready), so without it the dump cannot tell a
+                     * fiber nobody woke from one that was woken and then never
+                     * queued -- and IDLE is documented as "suspended, NOT in any
+                     * deque/wake-queue", which is exactly the state a lost
+                     * re-schedule leaves behind. */
+                    "[w.%d.fiber.s%d] co=%p mco_status=%d fstate=%d parent_scope=%p parked=%d pstate=%d hdl=%p stop_cb=%p%s\n",
                     wi, i, (void*)co, mco_st,
+                    co ? (int)nova_fiber_state_load(co) : -1,
                     base ? (void*)base->_nova_parent_scope : NULL,
                     (int)pk, ps,
                     nova_sched_pending_handle_at(st, i) ? *nova_sched_pending_handle_at(st, i) : NULL,
@@ -455,6 +498,45 @@ void nova_runtime_dump_state(const char* reason) {
                 n++;
             }
         }
+    }
+    /* [221.1 #862] THE ORPHAN SCOPE, which this dump never printed. Every
+     * worker scope above is listed, but the scope `nova_runtime_drain_orphans`
+     * actually waits on is not one of them -- it is a file-static queue. So a
+     * hang reported as `pre-exit-drain-...-remote-1` showed a counter with no
+     * owner anywhere in the dump, and the investigation spent days reading
+     * worker slots instead. Same class as the three blind spots closed for
+     * #791 (yielded FIFO, fiber state, scope pointer): the dump did not lie,
+     * it was silent exactly where the answer was.
+     *
+     * `count` never shrinks (slots are freed by nulling, see
+     * nova_scope_free_slot), so a live entry is one whose `fibers[i]` is
+     * non-NULL -- those are printed individually. */
+    if (_nova_orphan_scope_inited) {
+        NovaFiberQueue* osc = &_nova_orphan_scope;
+        int ocount = (int)__atomic_load_n(&osc->count, __ATOMIC_ACQUIRE);
+        fprintf(stderr,
+                "[orphan] q=%p count=%d cancel_req=%d pending_remote=%d pending_sweeps=%d\n",
+                (void*)osc, ocount,
+                (int)nova_abool_load(&osc->cancel_requested),
+                (int)nova_aint_load(&osc->pending_remote),
+                (int)nova_aint_load(&osc->pending_sweeps));
+        int olive = 0;
+        for (int oi = 0; oi < ocount; oi++) {
+            mco_coro* oco = osc->fibers[oi];
+            if (!oco) continue;
+            olive++;
+            NovaSpawnCtxBase* obase = (NovaSpawnCtxBase*)mco_get_user_data(oco);
+            fprintf(stderr,
+                    "[orphan.fiber.s%d] co=%p mco_status=%d fstate=%d parent_scope=%p slot=%d\n",
+                    oi, (void*)oco, (int)mco_status(oco),
+                    (int)nova_fiber_state_load(oco),
+                    obase ? (void*)obase->_nova_parent_scope : NULL,
+                    obase ? obase->_nova_worker_slot : -999);
+        }
+        fprintf(stderr, "[orphan] live slots (fibers[i] != NULL): %d of %d\n",
+                olive, ocount);
+    } else {
+        fprintf(stderr, "[orphan] scope never initialised (no detach in this program)\n");
     }
     fprintf(stderr, "=== END DUMP ===\n");
     fflush(stderr);
@@ -1454,6 +1536,7 @@ static void _worker_main(void* arg) {
          * state-store, no further mco_status read. */
         NovaResumeOutcome ro = nova_resume_fiber(co, base,
             _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+        nova_d791_tag("mainloop:post-resume", co);
 
         /* Fiber returned to the loop — clear the overrun timestamp so an
          * idle worker is never marked for preemption. */
@@ -1501,11 +1584,13 @@ static void _worker_main(void* arg) {
              * the LIFO deque would make the worker immediately re-pop the
              * same fiber, starving every peer below it (Plan 44.7). */
             if (ro.parked) {
+                nova_d791_tag("mainloop:left-parked", co);
                 /* Parked: nova_sched_park уже store'ил PARKED state. dispatch_ready
                  * (через wake CAS PARKED→IDLE) handle'ит requeue + state-transition. */
             } else {
                 /* Voluntary yield: RUNNING → IDLE; push в yielded-FIFO. */
                 nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+                nova_d791_tag("mainloop:stored-idle", co);
                 _worker_yielded_push(w, co);
             }
         }
@@ -1543,6 +1628,7 @@ static void _worker_main(void* arg) {
         NovaSpawnCtxBase* drain_base = (NovaSpawnCtxBase*)mco_get_user_data(co);
         NovaResumeOutcome ro = nova_resume_fiber(co, drain_base,
             _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+        nova_d791_tag("drain:post-resume", co);
         if (!ro.owned) {
             /* CAS lost, or co wasn't even SUSPENDED (duplicate pop) — not
              * ours to dispose. Don't touch co further. */
@@ -2345,6 +2431,7 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
      * caller must not touch co further either way. */
     NovaResumeOutcome ro = nova_resume_fiber(co, base,
         _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+    nova_d791_tag("runone:post-resume", co);
 
     __atomic_store_n(&w->current_fiber_start, 0, __ATOMIC_RELAXED);
 
@@ -2370,6 +2457,7 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
             /* Voluntary yield: push to yielded-FIFO (not deque — avoids
              * LIFO starvation, matches _worker_main behavior). */
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
+            nova_d791_tag("runone:stored-idle", co);
             _worker_yielded_push(w, co);
         }
     }
