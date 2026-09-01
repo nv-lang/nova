@@ -21,7 +21,8 @@ import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, decl_of_ty}
+import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
+import ../sem.{decl_of_ty}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
 import ../sem.{ret_is_unit, param_default_slot}
 import ../types.{TyId, no_ty, is_ty}
