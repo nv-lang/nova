@@ -369,6 +369,14 @@ fn local_toml_replace_is_honored_in_real_resolution() {
     let root = unique("local_toml_e2e");
     let proj = root.join("proj");
 
+    // D420 (E_DEP_PATH_OUTSIDE_REPO) became a hard error on 2026-08-08 and moved
+    // into the single resolution point the same day, AFTER this fixture was last
+    // touched (2026-07-27) -- so the fixture asks for a bare `path` dep from a tree
+    // that is not a repository, and the refusal is correct. A real git is not
+    // needed: the check looks for a `.git` entry. Same remedy as f9505aa45, which
+    // fixed three unit tests of this class -- two of them about `[replace]` scope,
+    // exactly this subject -- by adding the marker rather than weakening the rule.
+    fs::create_dir_all(proj.join(".git")).unwrap();
     let app_dir = proj.join("app");
     write_file(
         &app_dir.join("nova.toml"),
@@ -496,6 +504,14 @@ fn nested_git_dependency_replace_ignored_build_succeeds_with_warning() {
 fn root_replace_missing_path_is_honest_error() {
     let root = unique("replace_missing_e2e");
     let proj = root.join("proj");
+    // D420 (E_DEP_PATH_OUTSIDE_REPO) became a hard error on 2026-08-08 and moved
+    // into the single resolution point the same day, AFTER this fixture was last
+    // touched (2026-07-27) -- so the fixture asks for a bare `path` dep from a tree
+    // that is not a repository, and the refusal is correct. A real git is not
+    // needed: the check looks for a `.git` entry. Same remedy as f9505aa45, which
+    // fixed three unit tests of this class -- two of them about `[replace]` scope,
+    // exactly this subject -- by adding the marker rather than weakening the rule.
+    fs::create_dir_all(proj.join(".git")).unwrap();
     let app_dir = proj.join("app");
     write_file(
         &app_dir.join("nova.toml"),

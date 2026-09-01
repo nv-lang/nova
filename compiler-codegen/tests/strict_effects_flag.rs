@@ -123,7 +123,7 @@ fn tick() Counter -> int =>
 
 fn caller_handled() -> int {
     with Counter = effect Counter {
-        next() => 42
+        next() -> int => 42
     } {
         tick()
     }

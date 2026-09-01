@@ -124,7 +124,7 @@ fn query_has_contracts_filter() {
 module m
 
 /// With contracts.
-export fn safe(x int) -> int
+export fn guarded(x int) -> int
     requires x >= 0
     ensures result >= 0
     => x
@@ -136,7 +136,7 @@ export fn nocontract(x int) -> int => x
     let q = parse_query("has-contracts=true").unwrap();
     let results = execute(&tree, &q);
     let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
-    assert!(names.contains(&"safe"));
+    assert!(names.contains(&"guarded"));
     assert!(!names.contains(&"nocontract"));
 }
 

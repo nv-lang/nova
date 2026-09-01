@@ -74,7 +74,17 @@ fn transitive_version_dep_via_path_is_held_across_sync() {
     let deepdep_url = deepdep.to_string_lossy().replace('\\', "/");
 
     // --- midpkg: PATH-пакет с деревом, объявляет deepdep git+version --
-    let midpkg = unique("midpkg");
+    // D420 (E_DEP_PATH_OUTSIDE_REPO) became a hard error on 2026-08-08, four days
+    // after this fixture was last touched, and it compares REPO ROOTS:
+    // `git_repo_root(manifest_dir) == git_repo_root(dep_dir)` (manifest.rs:846).
+    // `midpkg` and `entry` used to be two independent temp directories, so that
+    // equality could never hold and the refusal was correct. They now share one
+    // root carrying a `.git` entry -- a real git is not needed, the check looks
+    // for the entry (same remedy as f9505aa45). `deepdep` stays a REAL repository
+    // below: it is consumed by git+version, which is a different path entirely.
+    let workspace = unique("ws");
+    fs::create_dir_all(workspace.join(".git")).unwrap();
+    let midpkg = workspace.join("midpkg");
     fs::create_dir_all(&midpkg).unwrap();
     fs::write(
         midpkg.join("nova.toml"),
@@ -88,7 +98,7 @@ fn transitive_version_dep_via_path_is_held_across_sync() {
     fs::write(midpkg.join("mid.nv"), "module midpkg.mid\n\nexport fn m() -> int => 1\n").unwrap();
 
     // --- entry: PATH-дep на midpkg (НЕ git+version сам по себе) -------
-    let entry = unique("entry");
+    let entry = workspace.join("entry");
     fs::create_dir_all(&entry).unwrap();
     fs::write(
         entry.join("nova.toml"),

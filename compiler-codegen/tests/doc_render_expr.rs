@@ -63,11 +63,11 @@ module x
 
 export fn pos(x int) -> bool => x > 0
 
-export fn safe(y int) -> int
+export fn guarded(y int) -> int
     requires pos(y)
     => y
 "#;
-    let exprs = extract_contract_exprs(src, "safe");
+    let exprs = extract_contract_exprs(src, "guarded");
     assert!(exprs.iter().any(|e| e == "pos(y)"),
         "expected `pos(y)`, got: {:?}", exprs);
 }

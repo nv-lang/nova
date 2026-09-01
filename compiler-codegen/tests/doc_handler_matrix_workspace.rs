@@ -59,8 +59,8 @@ module client
 import store.{Store}
 
 export fn use_store() -> int {
-    let mut s = 0
-    with #trusted Store = handler Store {
+    mut s = 0
+    with #trusted Store = effect Store {
         Set(v) { s = v }
         get() => s
     } {
@@ -100,8 +100,8 @@ module callers.a
 import effects.{Counter}
 
 export fn a_use() -> int {
-    let mut c = 0
-    with #trusted Counter = handler Counter {
+    mut c = 0
+    with #trusted Counter = effect Counter {
         incr() { c = c + 1 }
         get() => c
     } {
@@ -117,8 +117,8 @@ module callers.b
 import effects.{Counter}
 
 export fn b_use() -> int {
-    let mut c = 0
-    with #trusted Counter = handler Counter {
+    mut c = 0
+    with #trusted Counter = effect Counter {
         incr() { c = c + 1 }
         get() => c
     } {
@@ -160,7 +160,7 @@ module reader
 import fs.{Fs}
 
 export fn read_config() -> str {
-    with #trusted Fs = handler Fs {
+    with #trusted Fs = effect Fs {
         read(p) => "default"
     } {
         Fs.read("/etc/config")
