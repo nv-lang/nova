@@ -217,6 +217,22 @@ static void _nova_fw_gc_push_region(char* lo, char* hi) {
 /* GC_set_push_other_roots-колбэк. Mark-фаза, мир остановлен — все
  * GC-зарегистрированные потоки suspended → bitmap/high_water стабильны;
  * обход append-only списка без лока безопасен. */
+/* №868: выключатель проверки отображённости слота. `NOVA_GC_SLOT_PROBE=0`
+ * — читать `mco_status` без проверки, то есть ДОФИКСНОЕ поведение.
+ * Нужен только для пробы обеих сторон на ОДНОМ бинаре; в проде не
+ * ставится. Читается ОДИН раз: это mark-фаза, getenv на каждый слот
+ * стоил бы дороже самой проверки. */
+static int _nova_fw_slot_probe_flag = -1;
+static int _nova_fw_slot_probe_on(void) {
+    int v = _nova_fw_slot_probe_flag;
+    if (v < 0) {
+        const char* e = getenv("NOVA_GC_SLOT_PROBE");
+        v = (e && e[0] == '0' && e[1] == '\0') ? 0 : 1;
+        _nova_fw_slot_probe_flag = v;
+    }
+    return v;
+}
+
 static void _nova_fw_gc_push_other_roots(void) {
     size_t pushed = 0, arenas = 0;
     /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
@@ -242,6 +258,38 @@ static void _nova_fw_gc_push_other_roots(void) {
             if (!((a->used_bits[slot >> 6] >> (slot & 63)) & 1)) continue;
             char* slot_base = base + slot * a->slot_size;
             mco_coro* co = (mco_coro*)(slot_base + NOVA_FIBER_GUARD_SIZE);
+            /* №868: чтение `mco_status(co)` ниже шло ПО ВЫСТАВЛЕННОМУ
+             * биту занятости — а бит НЕ ОБЕЩАЕТ, что страница слота
+             * ЗАКОММИЧЕНА. Бит ставится в `_alloc_slot` ДО того, как в слоте
+             * появится инициализированная `mco_coro`, и GC, попавший в это окно,
+             * читал неотображённую память. Стек замера (2026-09-01,
+             * NOVA_DIAG_SEGV=1): mco_status ← _nova_fw_gc_push_other_roots ←
+             * GC_mark_some_inner ← GC_stopped_mark ← nova_alloc ← Nova_Time_sleep.
+             * Фолт при этом НЕ убивал процесс, а повторялся бесконечно
+             * (26231 повтор в одном логе) — то есть стоил не краша, а вечного
+             * зависания. Любопытно, что СЛЕДУЮЩАЯ же строка этот риск уже
+             * учитывала — `_nova_fw_gc_push_region` фильтрует незакоммиченное
+             * через VirtualQuery; защищён был ПУШ, но не ЧТЕНИЕ над ним.
+             * Пропуск такого слота безопасен для GC: если заголовок корутины
+             * не закоммичен, то корутины там ещё (или уже) нет, а значит нет
+             * и корней, которые надо было бы оттуда пушить.
+             * ВЫКЛЮЧАТЕЛЬ `NOVA_GC_SLOT_PROBE=0` возвращает ДОФИКСНОЕ поведение
+             * буквально (читать без проверки), чтобы обе стороны пробы
+             * показывались на ОДНОМ бинаре. */
+            if (_nova_fw_slot_probe_on()) {
+                MEMORY_BASIC_INFORMATION co_mbi;
+                if (!VirtualQuery(co, &co_mbi, sizeof(co_mbi))) continue;
+                if (co_mbi.State != MEM_COMMIT) continue;
+                if (co_mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) continue;
+                /* заголовок обязан целиком лежать в этом же закоммиченном
+                 * регионе: проверить первую страницу и прочитать поле за её
+                 * границей — та же ошибка одним шагом позже. */
+                {
+                    size_t avail = (size_t)((char*)co_mbi.BaseAddress
+                                            + co_mbi.RegionSize - (char*)co);
+                    if (avail < sizeof(mco_coro)) continue;
+                }
+            }
             if (mco_status(co) == MCO_DEAD) continue;
             /* закоммиченные диапазоны usable-региона слота (minicoro-
              * header + уросший стек); guard/reserved VirtualQuery
