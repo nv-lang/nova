@@ -737,6 +737,20 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
         // is ABSENT, not empty, because check refuses the absence by name
         // (report_if_return_type_undeclared) and has to be able to see it.
     }
+    // CONTRACT clauses (the requires wave): `requires <expr>, "<text>"` --
+    // a contextual word, exactly as `consume` is, read before the panic
+    // bucket below would swallow it. Several clauses stack.
+    while @peek() == TokenKind.Ident && @peek_text() == "requires" {
+        mut rq = []Node.of(@take())
+        rq.push(@expr())
+        @push_expected(rq, TokenKind.Comma)
+        if @peek() == TokenKind.StrLit {
+            rq.push(@take())
+        } else {
+            rq.push(@missing())
+        }
+        kids.push(@node(NodeKind.Requires, rq))
+    }
     if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {
         // Panic-mode bucket (no-cascade guard's catch, 2026-08-14): garbage
         // between the signature and the body collects into ONE Err branch —

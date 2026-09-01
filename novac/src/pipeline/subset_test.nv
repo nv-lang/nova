@@ -651,3 +651,19 @@ fn main() {
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("takes `_` binders only"))
 }
+
+test "a requires clause guards the body through the shell's contract helper (requires wave)" {
+    // The prologue is INTEROP with the shell: the exact call the oracle
+    // emits (nova_contract_violation lives in shell.tpl.c). Asserted on the
+    // full C line -- function name, display, empty file/line (the wave's
+    // named boundary: no source-slice channel yet), and the message.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn half(n int) -> int requires n > 0, \"half wants a positive\" {
+ n / 2
+}
+fn main() {
+ println(half(8))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 0, \"half wants a positive\");"))
+}

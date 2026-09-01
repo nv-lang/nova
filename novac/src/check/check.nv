@@ -301,6 +301,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // initializer's Option shape and the variant; the walk
                     // descends like any other statement's.
                 }
+                Requires => {
+                    // A contract clause (the requires wave): typing types its
+                    // condition in the parameters' scope; the walk descends.
+                }
                 // A block used to be judged for ONE thing here -- a call in
                 // statement position that was not `println`. Wave B12 made
                 // that a form of the language, so the arm has nothing of its

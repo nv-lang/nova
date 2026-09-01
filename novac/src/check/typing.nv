@@ -195,7 +195,17 @@ fn Checker mut @type_fn(f Node) -> () {
     }
     for c in kids {
         ro ck = c.kind_of()
-        if ck == NodeKind.Block {
+        if ck == NodeKind.Requires {
+            // A contract's condition reads the PARAMETERS (they are bound
+            // above); its value is a bool by the language, and the general
+            // expression walk gives the emitter the recorded types it needs.
+            ro rk = branch_children(c)
+            if rk.len() > 1 {
+                @type_expr(rk[1])
+            } else {
+                // A recovery shape: the parser's gap already named it.
+            }
+        } else if ck == NodeKind.Block {
             @type_block(c)
         } else if ck == NodeKind.FnExprBody {
             ro ek = branch_children(c)

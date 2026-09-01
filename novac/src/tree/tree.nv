@@ -93,6 +93,7 @@ export type NodeKind enum
     | TupleExpr
     | TupleBind /// destructuring binding `ro (a, b) = expr` (B15 step 5): keyword, LParen, name leaves with comma trivia, RParen, Assign, initializer
     | IfLet /// `if Some(v) = expr { ... }` (if-let wave): KwIf, variant ident, LParen, binder ident, RParen, Assign, initializer, then-block
+    | Requires /// a `requires <expr>, "<text>"` clause between signature and body (contracts): word leaf, condition expr, comma, message StrLit
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
     | Recv
