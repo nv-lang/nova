@@ -35,7 +35,7 @@ import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
-import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
+import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, is_tuple, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
@@ -490,6 +490,14 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // P10 ABI) so the callee writes the CALLER'S record, and novac passes a
     // value record by value -- the write lands in a copy and the program says
     // nothing (hunt emit_c x K1, H4: the oracle prints 2, novac printed 1).
+    // A tuple PARAMETER is outside the wave (B15 bounds: novac itself
+    // carries none, and the call-site ABI is unmeasured) -- refused by name
+    // now that the type FORM reads (4b made `(int, int)` a real type in
+    // signatures, so unreachability no longer holds this boundary).
+    if is_tuple(@ctx, pt) {
+        @report_first_leaf_of(pk, TUPLE_PARAM_MSG)
+        return false
+    }
     ro mut_value = match param_mode_at(pk) {
         ModeMut => is_value_record(@ctx, pt)
         ModeRo | ModeConsume => false

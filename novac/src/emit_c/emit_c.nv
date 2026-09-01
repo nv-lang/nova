@@ -564,6 +564,16 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     ro u = @fresh_uniq()
                     @emit_if_value(c, u, @out.type_of(c.id_of()))
                     @body.append("    return _novac_if_t${u};\n")
+                } else if tail && j == last_branch && c.kind_of() == NodeKind.TupleExpr {
+                    // THE TAIL TUPLE IS THE RETURNED VALUE (B15 step 4b),
+                    // asked before the general arm for B14's reason: the kind
+                    // is not in is_expr_kind (B13's lesson), and without this
+                    // arm the 4a statement arm would BUILD AND DROP the pair
+                    // while the function falls off its end.
+                    ro ttmp = @emit_tuple_lit(c, @out.type_of(c.id_of()))
+                    @body.append("    return ")
+                    @body.append(ttmp)
+                    @body.append(";\n")
                 } else if tail && j == last_branch && is_expr_kind(c.kind_of()) {
                     @body.append("    return ")
                     @emit_expr(c)

@@ -458,3 +458,33 @@ fn main() {
     assert(c3.contains("struct Nova_Own"))
     assert(!c3.contains("struct Nova_p_Own"))
 }
+
+test "a tuple RETURN type compiles: the signature spells the mono struct (B15 step 4b)" {
+    // `fn two() -> (int, int)` with a bare tail pair: the reference door
+    // reads the paren run into the step-3 term, the C name carries the D123
+    // mono spelling (a return type is an overloading axis, D84), and the
+    // tail chain returns the built temporary. Asserted on the SIGNATURE and
+    // the return -- the call site is covered by the corpus carrier.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn two() -> (int, int) {
+ (1, 2)
+}
+fn main() {
+ ro t = two()
+ println(t.0)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_NovaTuple_2_8_nova_int_8_nova_int novac_fn_two"))
+    assert(c.contains("    return _novac_tmp_t"))
+
+    // A tuple PARAMETER stays outside the wave (B15 bounds): today the
+    // parameter FORM rule refuses it upstream, and the bind judge holds the
+    // same boundary for the day the form rule narrows.
+    ro (d2, _) = compile_to_c("fn f(p (int, int)) -> int {
+ p.0
+}
+fn main() {
+ println(f((1, 2)))
+}", std)
+    assert(d2.len() >= 1)
+}

@@ -588,10 +588,12 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // The newtype's OWN name, never the representation's: `f(Row)` and
         // `f(int)` are two callables, and the C name is what keeps them apart.
         TkNewtype => decl_of_ty(ctx, t).name
-        // A tuple PARAMETER is outside the wave's bounds on purpose (B15,
-        // bounds: novac itself carries none) -- the C name would be the
-        // first thing to need a spelling, so the boundary is named here.
-        TkTuple => ice("mangle: a TUPLE in a callable's C name — tuple parameters are deferred (B15 bounds)")
+        // A tuple in a callable's C name spells as its D123 mono struct --
+        // unique per component list and stable, so overloading by a tuple
+        // RETURN type works the D84 way (step 4b). A tuple PARAMETER stays
+        // outside the wave's bounds, held by the checker's named refusal in
+        // bind_typed_param, not by this spelling's absence.
+        TkTuple => mono_tuple_name(ctx, t)
         // An INSTANCE inside one of OUR names: `Vec_of_nova_int`. This is not
         // the shell's spelling (`Vec____nova_int`) on purpose -- a callable's C
         // name is ours (274 section 7.0), and the pieces are chosen so no

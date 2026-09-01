@@ -165,12 +165,15 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
     // the point of use instead of the shape being turned away wholesale.
     match kids[1] {
         Leaf(t) => {
+            // `-> (a, b)` stopped being a refusal with B15 step 4b: the one
+            // reference door reads the tuple form (typeref), exactly as `[]T`
+            // and `Vec[T]` stopped with B2 -- so LParen passes through here,
+            // and an unreadable spelling is named at the point of use.
             ro is_form = t.kind == TokenKind.LBracket ||
                 t.kind == TokenKind.Star ||
                 t.kind == TokenKind.KwRo ||
                 t.kind == TokenKind.KwMut ||
-                t.kind == TokenKind.KwFn ||
-                t.kind == TokenKind.LParen
+                t.kind == TokenKind.KwFn
             if !is_form { return }
             @report_first_leaf_of(kids, TYPE_FORM_MSG)
         }
@@ -242,6 +245,10 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
+/// itself carries none -- the boundary is a judge, not unreachability.
+const TUPLE_PARAM_MSG = "outside the subset: a tuple as a PARAMETER is not compiled yet (B15 bounds) -- return one, or pass the components"
+
 const PRIM_REDECL_MSG = "a primitive is a closed type (D35): its name cannot be redeclared -- add methods to it instead"
 
 /// D125/D371 let a user declaration SHADOW a prelude/handed-over name (user

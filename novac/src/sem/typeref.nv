@@ -60,6 +60,54 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
         ro elem = ref_leaf_ty(pk[at + 1], recv_t, tps, param_rows, types, defs)
         return app_term_of(SLICE_HEAD, []TyId.of(elem), types, defs, tys)
     }
+    // A TUPLE type: `(int, str)` arrives as the parser's balanced paren run
+    // (type_ref.nv keeps it flat on purpose), so the components are the
+    // positions right after `(` and after every depth-1 comma -- each read
+    // recursively by THIS door, which already knows every component form.
+    // Arity comes out of the walk; the term is step 3's constructor, so a
+    // tuple type in a signature IS the same TyId the literal interns.
+    if leaf_kind(head) == TokenKind.LParen {
+        mut comps = []TyId.new()
+        mut depth = 0
+        mut i = at
+        while i < pk.len() {
+            ro c = pk[i]
+            match c {
+                Leaf(t) => {
+                    if t.kind == TokenKind.LParen {
+                        depth += 1
+                        if depth == 1 {
+                            comps.push(ty_of_type_ref(pk, i + 1, recv_t, tps, param_rows, types, defs, tys))
+                        } else {
+                            // A nested tuple opens here; its own recursive
+                            // read (above) already consumed it as a component.
+                        }
+                    } else if t.kind == TokenKind.RParen {
+                        depth -= 1
+                        if depth == 0 {
+                            // The run is closed: every component was read at
+                            // its own start position.
+                            for a in comps {
+                                if !is_ty(a) { return no_ty() }
+                            }
+                            if comps.len() < 2 { return no_ty() }
+                            return tys.tuple(comps)
+                        } else {
+                            // Closing a nested run: nothing to do here.
+                        }
+                    } else if t.kind == TokenKind.Comma && depth == 1 {
+                        comps.push(ty_of_type_ref(pk, i + 1, recv_t, tps, param_rows, types, defs, tys))
+                    } else {
+                        // Component tokens: consumed by the recursive reads.
+                    }
+                }
+                Branch { .. } => {}
+            }
+            i += 1
+        }
+        // The run never closed -- a recovery shape; no type is the answer.
+        return no_ty()
+    }
     // `@` is the receiver's type spelled as a sign (`-> @`); it reaches the
     // leaf door with `Self`, and every other non-identifier is no type.
     if leaf_kind(head) != TokenKind.Ident && leaf_kind(head) != TokenKind.At { return no_ty() }
