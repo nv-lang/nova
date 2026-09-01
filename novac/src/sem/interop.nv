@@ -65,4 +65,5 @@ export fn InteropTable mut @add_body(sym str) -> () {
 
 /// Does the shell define a struct BODY under this name? The declaration
 /// judge's question: a body is the one thing a unit cannot repeat.
+#realtime nogc
 export fn InteropTable @has_body(sym str) -> bool => @struct_bodies.find(sym) >= 0
