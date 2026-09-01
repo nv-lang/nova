@@ -20,6 +20,7 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
 import ../sem.{raw_frow, no_frow}
 import ../types.{TyId, is_ty}
+import ../builtins.{is_builtin_type_name}
 
 /// The MAGNITUDE of an integer literal -- the question nobody asked until
 /// registry #810 (hunter, 2026-08-30). The lexer makes an IntLit of any run of
@@ -77,8 +78,35 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
         } else {
             @seen_decls.put(name, 1)
         }
+        // The OTHER two owners of a name, judged at the same door (owner's
+        // question 2026-09-01; both probes passed check in silence before):
+        // a primitive's name is the language's forever (D35), and a
+        // handed-over name is shadowable by the NORM (D125) but not by this
+        // subset's C naming yet (D381) -- see the two messages' own docs.
+        if is_builtin_type_name(name) {
+            @report_first_leaf_of(kids, PRIM_REDECL_MSG)
+        } else if @ctx.module_c == "" && foreign_type_named(@ctx, name) {
+            // With a module declared, the shadow is LEGAL and the C name
+            // carries the module (D125 + D381, mangle's own_shadow_prefix);
+            // with none there is nothing to qualify by, and the emission
+            // would redefine a shell struct -- so only this half refuses.
+            @report_first_leaf_of(kids, SHADOW_FOREIGN_MSG)
+        }
         return
     }
+}
+
+/// Does a HANDED-OVER declaration carry this name? Asked by the declaration
+/// judge above. The registry's name map cannot answer -- last put wins there,
+/// and by judgement time the file's own row has overwritten the foreign one
+/// (that order IS the shadowing rule, defs.nv) -- so the question walks the
+/// foreign prefix of the type table instead: a handful of declarations per
+/// file ask it, never a hot-path resolver.
+fn foreign_type_named(ctx Ctx, name str) -> bool {
+    for t in 0..ctx.defs.foreign_cnt {
+        if ctx.types[t].name == name { return true }
+    }
+    false
 }
 
 /// A record construction judged against the DECLARATION it names (#812).

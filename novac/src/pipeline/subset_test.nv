@@ -399,3 +399,59 @@ test "a tuple value compiles into the mono struct, projections are judged (B15 s
         assert(g.message.contains("numbered components"))
     }
 }
+
+test "a shadowing type carries the module in its C name; a primitive's name is closed" {
+    // Both halves are the NORM's, found by the owner's question (2026-09-01;
+    // both probes passed check in silence before): D35 closes a primitive's
+    // name forever, and D125 lets a user declaration WIN over a handed-over
+    // one -- with the C name module-qualified (D381), or the emission would
+    // print a second `struct Nova_<name>` beside the shell's and clang
+    // refuses the unit (measured on ct.c).
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type str { n int }
+fn main() {
+ println(1)
+}", std)
+    assert(d.len() >= 1)
+    for g in d {
+        assert(g.message.contains("closed type (D35)"))
+    }
+
+    // A handed-over name under a declared module: LEGAL, and the C name
+    // moves out of the shell's namespace -- asserted on the mangled spelling.
+    // The foreign declaration is handed IN by the test (the tiny std_decls
+    // above carries no types), and the module comes in the TEXT: compile_to_c
+    // wraps nothing.
+    ro shadow_decls = []str.of("export type Widget { q int }
+")
+    ro (d2, c2) = compile_to_c("module p
+type Widget { n int }
+fn main() {
+ ro v = Widget { n: 7 }
+ println(v.n)
+}", shadow_decls)
+    assert(d2.len() == 0)
+    assert(c2.contains("struct Nova_p_Widget"))
+
+    // The SAME shadow with no module declaration: nothing to qualify the C
+    // name by, refused by name (the D381 prefix would be empty).
+    ro (d2b, _) = compile_to_c("type Widget { n int }
+fn main() {
+ println(1)
+}", shadow_decls)
+    assert(d2b.len() >= 1)
+    for g in d2b {
+        assert(g.message.contains("declares no module"))
+    }
+
+    // A name of one's own stays clean and unprefixed -- the mangle answers
+    // the two owners, not every declaration.
+    ro (d3, c3) = compile_to_c("type Own { n int }
+fn main() {
+ ro v = Own { n: 7 }
+ println(v.n)
+}", std)
+    assert(d3.len() == 0)
+    assert(c3.contains("struct Nova_Own"))
+    assert(!c3.contains("struct Nova_p_Own"))
+}

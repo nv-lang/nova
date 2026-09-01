@@ -239,6 +239,19 @@ const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 lev
 
 const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice in one file -- the second body is dropped in silence (#811)"
 
+/// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
+/// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
+/// it never lifts.
+const PRIM_REDECL_MSG = "a primitive is a closed type (D35): its name cannot be redeclared -- add methods to it instead"
+
+/// D125/D371 let a user declaration SHADOW a prelude/handed-over name (user
+/// wins, a warning at most) -- but novac's C name for its own types does not
+/// carry the module yet (D381), so a shadowing type would print a second
+/// `struct Nova_<name>` beside the shell's and clang refuses the unit
+/// (measured 2026-09-01: ct.c carried both). Refused BY NAME until the
+/// module-qualified C names arrive; the norm itself stays wider on purpose.
+const SHADOW_FOREIGN_MSG = "this name shadows a handed-over declaration (D125 allows that), but the file declares no module -- there is nothing to qualify the C name by (D381), so the emission would redefine the shell's struct; declare a module or pick another name"
+
 /// The three ways a record construction can disagree with its declaration
 /// (#812). The spec states the first two as numbered rules
 /// (`02-types.md:1677`): every declared field must be present, and a name the
