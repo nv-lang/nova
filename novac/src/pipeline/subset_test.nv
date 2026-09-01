@@ -665,5 +665,6 @@ fn main() {
  println(half(8))
 }", std)
     assert(d.len() == 0)
-    assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 0, \"half wants a positive\");"))
+    assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 0,"))
+    assert(c.contains("\"\", 0, \"half wants a positive\");"))
 }

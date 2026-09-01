@@ -744,11 +744,7 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
         mut rq = []Node.of(@take())
         rq.push(@expr())
         @push_expected(rq, TokenKind.Comma)
-        if @peek() == TokenKind.StrLit {
-            rq.push(@take())
-        } else {
-            rq.push(@missing())
-        }
+        @push_expected(rq, TokenKind.StrLit)
         kids.push(@node(NodeKind.Requires, rq))
     }
     if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {

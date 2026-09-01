@@ -68,7 +68,13 @@ ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  # language's words: the C name is ours (274 section 7.0) and a
                  # mode's spelling lives only in builtins (P5). `ro` carries no
                  # mark at all -- it is the default, so no earlier name moved.
-                 "m_", "c_"}
+                 "m_", "c_",
+                 # NULL -- спеллинг ОРАКУЛА для контракта без сообщения (снят с
+                 # shell.tpl.c: его же message-less requires передают NULL).
+                 # Появился с волной requires (274.5, 3-пред38); печатает его
+                 # emit_requires.nv, и подмножество до NULL не доходит (msg
+                 # обязателен), но спеллинг оракульский заранее.
+                 "NULL"}
 
 
 def main():
@@ -77,7 +83,8 @@ def main():
     if len(a) > 2:
         files = [pathlib.Path(x) for x in a[2].split()]
     else:
-        files = [root / "novac/src/sem/mangle.nv", root / "novac/src/emit_c/emit_c.nv"]
+        files = [root / "novac/src/sem/mangle.nv", root / "novac/src/emit_c/emit_c.nv",
+                 root / "novac/src/emit_c/emit_requires.nv"]
 
     names = set()
     for f in files:
