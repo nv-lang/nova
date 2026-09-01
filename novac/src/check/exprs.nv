@@ -59,6 +59,65 @@ fn Checker mut @const_type_of(name str) -> TyId {
     type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
+/// `Sum.Variant` as a VALUE (the variant-value wave): a head that names a
+/// TYPE followed by the dot and one of ITS variants is the variant's value,
+/// not a field read -- and the head must not go through the name walk (a
+/// type name is no bound value). Answers true when THIS node was decided:
+/// recorded with the same CalleeVariant row a `C(7)` call writes, or
+/// refused (a payload-carrying variant, a non-variant after the type's
+/// dot). Answers false when the shape is an ordinary field access.
+fn Checker mut @judge_type_head_variant(e Node, kids []Node) -> bool {
+    if kids[0].kind_of() != NodeKind.Name {
+        // A computed head (a call, a chain): an ordinary field access.
+        return false
+    }
+    mut head_t = no_ty()
+    match @ctx.defs.def_of(expr_leaf_name(kids[0])) {
+        None => {}
+        Some(hd) => match hd.target {
+            DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
+            DefVariant(_) | DefFn(_) | DefConst(_) => {}
+        }
+    }
+    if !is_ty(head_t) {
+        // The head is no type name: the operand walk owns the access.
+        return false
+    }
+    match kids[2] {
+        Leaf(vt) => {
+            match @ctx.defs.def_of(vt.text) {
+                None => {}
+                Some(vd0) => match vd0.target {
+                    DefVariant(vrow) => {
+                        ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+                        if vd.sum_id == head_t {
+                            if vd.payload_cnt == 0 {
+                                @record(e, vd.sum_id)
+                                @chan.record_callee(e.id_of(),
+                                    CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
+                            } else {
+                                @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+                            }
+                            return true
+                        }
+                        // A variant of ANOTHER sum under this type's name:
+                        // not this type's value; refused as a non-variant
+                        // of the head right below.
+                    }
+                    DefType(_) | DefFn(_) | DefConst(_) => {}
+                }
+            }
+            @refuse(vt, "outside the subset: a type name takes a variant after the dot, and this is not one of its variants")
+            true
+        }
+        Branch { .. } => {
+            // A recovery shape in the variant slot: the parser already
+            // carried the refusal; nothing to judge twice.
+            true
+        }
+    }
+}
+
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
@@ -157,63 +216,9 @@ fn Checker mut @type_expr(e Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: a field access needs a name after the dot")
             return
         }
-        // `Sum.Variant` as a VALUE (the variant-value wave): the head names
-        // a TYPE, the dot its payload-less variant -- not a field read, and
-        // the head must NOT go through the name walk (a type name is no
-        // bound value). Judged here, before the operand walk would refuse.
-        if kids[0].kind_of() == NodeKind.Name {
-            mut head_t = no_ty()
-            match @ctx.defs.def_of(expr_leaf_name(kids[0])) {
-                None => {}
-                Some(hd) => match hd.target {
-                    DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
-                    DefVariant(_) | DefFn(_) | DefConst(_) => {}
-                }
-            }
-            if is_ty(head_t) {
-                match kids[2] {
-                    Leaf(vt) => {
-                        mut judged = false
-                        match @ctx.defs.def_of(vt.text) {
-                            None => {}
-                            Some(vd0) => match vd0.target {
-                                DefVariant(vrow) => {
-                                    ro vd = @ctx.variant_rows[raw_vrow(vrow)]
-                                    if vd.sum_id == head_t {
-                                        judged = true
-                                        if vd.payload_cnt == 0 {
-                                            @record(e, vd.sum_id)
-                                            @chan.record_callee(e.id_of(),
-                                                CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
-                                        } else {
-                                            @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
-                                        }
-                                    } else {
-                                        // A variant of ANOTHER sum under this
-                                        // type's name: not this type's value;
-                                        // the field walk below refuses it.
-                                    }
-                                }
-                                DefType(_) | DefFn(_) | DefConst(_) => {}
-                            }
-                        }
-                        if judged { return }
-                        @refuse(vt, "outside the subset: a type name takes a variant after the dot, and this is not one of its variants")
-                        return
-                    }
-                    Branch { .. } => {
-                        // A recovery shape in the variant slot: the parser
-                        // already carried the refusal; nothing to judge twice.
-                        return
-                    }
-                }
-            } else {
-                // The head is no type name: an ordinary field access; the
-                // operand walk below owns it.
-            }
-        } else {
-            // A computed head (call, field chain): a field access as before.
-        }
+        // SILENT-OK: the head judge DECIDED for this node -- recorded the
+        // variant's value or refused -- and the field walk must not run twice.
+        if @judge_type_head_variant(e, kids) { return }
         ro before = @out.len()
         @type_expr(kids[0])
         // The mark, not the file's count: a refusal in an EARLIER declaration
