@@ -645,8 +645,9 @@ fn Checker mut @type_tuple_bind(st Node) -> () {
     ro before = @out.len()
     match init {
         Leaf(_) => {
-            // A recovery shape: the parser could not read an initializer, and
-            // the gap it planted already says what was expected.
+            // SILENT-OK: a recovery shape -- the parser could not read an
+            // initializer, and the gap it planted already says what was
+            // expected; a second report here would be the cascade.
             return
         }
         Branch { .. } => @type_expr(init)
@@ -670,6 +671,8 @@ fn Checker mut @type_tuple_bind(st Node) -> () {
                 Branch { .. } => {}
             }
         }
+        // SILENT-OK: the refusal above is the decision; the binds keep the
+        // uses from cascading over the one mistake already named.
         return
     }
     // RECORDED, not merely computed (the FieldAccess lesson of 4a): the
