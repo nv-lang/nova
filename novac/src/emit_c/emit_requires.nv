@@ -44,12 +44,13 @@ fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
 }
 
 /// The message argument as C text: the clause's string literal, quotes and
-/// all, or the oracle's own spelling of absence. The subset requires the
-/// message (the parser reads it through the REQUIRED door, so a clause
-/// without one arrives only with its diagnostic and never reaches emission);
-/// NULL is what the shell's own message-less contracts pass, kept here so
-/// the day the subset relaxes, the spelling is already the oracle's.
+/// all, or the oracle's own spelling of absence. A message-less clause is
+/// two children (word, condition) -- NULL is what the shell's own
+/// message-less contracts pass. With a comma the string went through the
+/// required door, so a non-string slot arrives only with its diagnostic
+/// and never reaches emission.
 fn contract_msg_c(rk []Node) -> str {
+    if rk.len() < 4 { return "NULL" }
     ro m = rk[rk.len() - 1]
     match m {
         Leaf(t) => {

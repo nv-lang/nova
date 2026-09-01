@@ -6,6 +6,13 @@ fn half(n int) -> int
     n / 2
 }
 
+fn third(n int) -> int
+    requires n > 0
+{
+    n / 3
+}
+
 fn main() {
     println(half(8))
+    println(third(9))
 }

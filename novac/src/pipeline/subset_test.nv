@@ -667,6 +667,18 @@ fn main() {
     assert(d.len() == 0)
     assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 0,"))
     assert(c.contains("\"\", 0, \"half wants a positive\");"))
+
+    // The message is optional in the language (the shell's own contracts
+    // carry none): a clause that ends on its condition spells NULL -- the
+    // oracle's own spelling of absence.
+    ro (d2, c2) = compile_to_c("fn third(n int) -> int requires n > 0 {
+ n / 3
+}
+fn main() {
+ println(third(9))
+}", std)
+    assert(d2.len() == 0)
+    assert(c2.contains("\"\", 0, NULL);"))
 }
 
 test "hex literals lex as one IntLit and keep their spelling (hex wave)" {

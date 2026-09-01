@@ -740,11 +740,19 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
     // CONTRACT clauses (the requires wave): `requires <expr>, "<text>"` --
     // a contextual word, exactly as `consume` is, read before the panic
     // bucket below would swallow it. Several clauses stack.
-    while @peek() == TokenKind.Ident && @peek_text() == "requires" {
+    while @peek_ident("requires") {
         mut rq = []Node.of(@take())
         rq.push(@expr())
-        @push_expected(rq, TokenKind.Comma)
-        @push_expected(rq, TokenKind.StrLit)
+        if @peek() == TokenKind.Comma {
+            // The message is OPTIONAL in the language (the shell's own
+            // contracts carry none) -- but a comma promises one, so after it
+            // the string goes through the required door.
+            rq.push(@take())
+            @push_expected(rq, TokenKind.StrLit)
+        } else {
+            // A message-less clause: the contract ends on its condition,
+            // and the emitter spells the absence as the oracle does (NULL).
+        }
         kids.push(@node(NodeKind.Requires, rq))
     }
     if @peek() != TokenKind.LBrace && @peek() != TokenKind.FatArrow {
