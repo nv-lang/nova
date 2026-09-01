@@ -69,8 +69,7 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     if leaf_kind(head) == TokenKind.LParen {
         mut comps = []TyId.new()
         mut depth = 0
-        mut i = at
-        while i < pk.len() {
+        for i in at..pk.len() {
             ro c = pk[i]
             match c {
                 Leaf(t) => match t.kind {
@@ -112,7 +111,6 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
                 }
                 Branch { .. } => {}
             }
-            i += 1
         }
         // The run never closed -- a recovery shape; no type is the answer.
         return no_ty()
