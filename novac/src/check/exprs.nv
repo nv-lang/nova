@@ -180,6 +180,9 @@ fn Checker mut @type_expr(e Node) -> () {
                     }
                     if !is_variant {
                         @refuse(t, "unknown name: nothing with this name is bound at this point")
+                    } else {
+                        // The variant branch above already decided this
+                        // name: recorded its value or refused its payload.
                     }
                 }
             }
