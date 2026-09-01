@@ -652,19 +652,18 @@ export fn int_literal_c_text(t str) -> str {
     t[i..]
 }
 
+/// The two bytes the dollar rule reads.
+const BACKSLASH_BYTE u8 = 0x5C  // backslash
+const DOLLAR_BYTE u8 = 0x24     // $
+
 /// A Nova string literal's text as C text: the ONE dollar rule. Nova's
 /// subset escape set (\" \\ \n \t \r) matches C's one for one -- check
 /// refuses everything else by name -- with a single exception, `\$`, whose
 /// backslash must not reach clang. TWO readers spell literals into C: the
 /// shell's literal pool and the contract prologue's message slot -- the
 /// hunt (2026-09-02, its P1 contradiction) caught the pool claiming to be
-/// "the only place" while the prologue shipped the backslash through; one
+/// `the only place` while the prologue shipped the backslash through; one
 /// door ends that argument by construction.
-
-/// The two bytes the dollar rule reads.
-const BACKSLASH_BYTE u8 = 0x5C  // backslash
-const DOLLAR_BYTE u8 = 0x24     // $
-
 export fn unescape_dollar(s str) -> str {
     ro b = s.bytes()
     consume out = StringBuilder.new()
