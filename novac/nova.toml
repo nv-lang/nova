@@ -103,7 +103,17 @@
 # HEAD. That every spec commit on main reddens this line until it is bumped by
 # hand is the same class #843 named, standing in a new place -- filed as #846,
 # not papered over.
-#   spec-queue: 36
+#   * d4045b51d (D86 AMEND 2026-09-01) -- REAL WORK, and novac is its reason:
+#     `X ?? return R` becomes legal where the enclosing fn returns neither
+#     Option nor Result. The amendment was decided ON novac's own sources --
+#     22 workarounds there, in three shapes (11 hand-written `match ... =>
+#     return`, 9 sentinel detours `?? no_ty()` + comparison, 2 with a
+#     sentinel tuple), every one of them in a fn returning `bool`, `TyId`,
+#     `FnRow` or `()`. So this is not a rule novac must catch up with; it is
+#     a form novac asked for and can now write. Its parser needs the
+#     `?? return` production; until then the existing workarounds stay valid
+#     code -- nothing in novac breaks by NOT adopting it.
+#   spec-queue: 37
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
