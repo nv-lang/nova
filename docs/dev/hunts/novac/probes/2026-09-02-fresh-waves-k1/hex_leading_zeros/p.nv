@@ -1,0 +1,6 @@
+module p
+
+fn main() {
+    println(0x00000000000000000001)
+    println(0x0)
+}

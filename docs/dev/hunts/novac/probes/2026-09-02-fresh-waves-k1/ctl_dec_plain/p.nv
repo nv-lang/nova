@@ -1,0 +1,18 @@
+module p
+
+const K = 123
+
+fn tag(n int) -> int {
+    match n {
+        10 => 1
+        _ => 0
+    }
+}
+
+fn main() {
+    println(123)
+    println(K)
+    println(-123)
+    println(tag(10))
+    println(tag(8))
+}

@@ -1,0 +1,22 @@
+module p
+
+type Kind enum Dot | Dash
+
+fn pick(n int) -> Kind {
+    if n > 0 {
+        return Dot
+    }
+    Dash
+}
+
+fn label(k Kind) -> int {
+    match k {
+        Dot => 1
+        Dash => 2
+    }
+}
+
+fn main() {
+    println(label(pick(5)))
+    println(label(pick(-5)))
+}

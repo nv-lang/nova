@@ -1,0 +1,7 @@
+module p
+
+const K = 0123
+
+fn main() {
+    println(K)
+}

@@ -1,0 +1,11 @@
+module p
+
+fn g(a int, b int) -> int
+    requires a > 0 && b > 0, "both positive"
+{
+    a + b
+}
+
+fn main() {
+    println(g(2, -3))
+}

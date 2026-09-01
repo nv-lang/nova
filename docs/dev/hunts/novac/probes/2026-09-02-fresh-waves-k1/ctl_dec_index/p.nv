@@ -1,0 +1,6 @@
+module p
+
+fn main() {
+    ro v = []int.of(10, 20, 30)
+    println(v[1])
+}

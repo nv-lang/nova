@@ -1,0 +1,11 @@
+module p
+
+fn third(n int) -> int
+    requires n > 0
+{
+    n / 3
+}
+
+fn main() {
+    println(third(-9))
+}

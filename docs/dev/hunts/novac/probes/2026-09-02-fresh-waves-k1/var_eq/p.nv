@@ -1,0 +1,12 @@
+module p
+
+type Kind enum Dot | Dash
+
+fn main() {
+    ro k = Kind.Dot
+    if k == Dot {
+        println(1)
+    } else {
+        println(2)
+    }
+}

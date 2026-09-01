@@ -1,0 +1,5 @@
+module p
+
+fn main() {
+    println(0b1010)
+}
