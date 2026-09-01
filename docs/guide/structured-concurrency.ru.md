@@ -163,7 +163,7 @@ fn f() -> () {
 fn f() -> () {
     mut acc = 0
     ro g = || { acc = acc + 1 }
-    spawn { g() }                  // принимается; гонка настоящая
+    spawn { g() }                  // accepted; the race is real
 }
 ```
 
