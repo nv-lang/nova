@@ -712,3 +712,36 @@ fn main() {
 }", std)
     assert(d4.len() >= 1)
 }
+
+test "a payload-less variant is a value and compiles to its maker (variant-value wave)" {
+    // Both spellings write the same CalleeVariant decision a `C(7)` call
+    // does, and the emitter calls the maker the sum's declaration already
+    // emits -- asserted on the C shape for the bare and the dotted head.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Kind enum Dot | Dash
+fn f(k Kind) -> int {
+ match k {
+  Dot => 1
+  Dash => 2
+ }
+}
+fn main() {
+ println(f(Kind.Dot))
+ println(f(Dash))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("novac_make_Kind_Dot()"))
+    assert(c.contains("novac_make_Kind_Dash()"))
+
+    // A variant that CARRIES a payload is a constructor, not a value.
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B
+fn main() {
+ ro s = A
+ match s {
+  A(_) => println(1)
+  B => println(2)
+ }
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("carries a payload"))
+}

@@ -95,7 +95,33 @@ fn Checker mut @type_expr(e Node) -> () {
                         None => ice("check: a constant typed by name that the registry does not carry")
                     }
                 } else {
-                    @refuse(t, "unknown name: nothing with this name is bound at this point")
+                    // A payload-less VARIANT as a VALUE (bare `Dot`, the
+                    // variant-value wave): the definition registry answers,
+                    // the type is the owning sum, and the decision is the
+                    // same CalleeVariant a `C(7)` call writes -- with nothing
+                    // to bind. A local binding shadows a variant: the scope
+                    // was asked first, above.
+                    mut is_variant = false
+                    match @ctx.defs.def_of(t.text) {
+                        None => {}
+                        Some(d) => match d.target {
+                            DefVariant(vrow) => {
+                                is_variant = true
+                                ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+                                if vd.payload_cnt == 0 {
+                                    @record(e, vd.sum_id)
+                                    @chan.record_callee(e.id_of(),
+                                        CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
+                                } else {
+                                    @refuse(t, VARIANT_VALUE_NEEDS_ARGS_MSG)
+                                }
+                            }
+                            DefType(_) | DefFn(_) | DefConst(_) => {}
+                        }
+                    }
+                    if !is_variant {
+                        @refuse(t, "unknown name: nothing with this name is bound at this point")
+                    }
                 }
             }
             Branch { .. } => {}
@@ -130,6 +156,63 @@ fn Checker mut @type_expr(e Node) -> () {
         if kids.len() < 3 {
             @report_first_leaf_of(kids, "outside the subset: a field access needs a name after the dot")
             return
+        }
+        // `Sum.Variant` as a VALUE (the variant-value wave): the head names
+        // a TYPE, the dot its payload-less variant -- not a field read, and
+        // the head must NOT go through the name walk (a type name is no
+        // bound value). Judged here, before the operand walk would refuse.
+        if kids[0].kind_of() == NodeKind.Name {
+            mut head_t = no_ty()
+            match @ctx.defs.def_of(expr_leaf_name(kids[0])) {
+                None => {}
+                Some(hd) => match hd.target {
+                    DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
+                    DefVariant(_) | DefFn(_) | DefConst(_) => {}
+                }
+            }
+            if is_ty(head_t) {
+                match kids[2] {
+                    Leaf(vt) => {
+                        mut judged = false
+                        match @ctx.defs.def_of(vt.text) {
+                            None => {}
+                            Some(vd0) => match vd0.target {
+                                DefVariant(vrow) => {
+                                    ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+                                    if vd.sum_id == head_t {
+                                        judged = true
+                                        if vd.payload_cnt == 0 {
+                                            @record(e, vd.sum_id)
+                                            @chan.record_callee(e.id_of(),
+                                                CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
+                                        } else {
+                                            @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+                                        }
+                                    } else {
+                                        // A variant of ANOTHER sum under this
+                                        // type's name: not this type's value;
+                                        // the field walk below refuses it.
+                                    }
+                                }
+                                DefType(_) | DefFn(_) | DefConst(_) => {}
+                            }
+                        }
+                        if judged { return }
+                        @refuse(vt, "outside the subset: a type name takes a variant after the dot, and this is not one of its variants")
+                        return
+                    }
+                    Branch { .. } => {
+                        // A recovery shape in the variant slot: the parser
+                        // already carried the refusal; nothing to judge twice.
+                        return
+                    }
+                }
+            } else {
+                // The head is no type name: an ordinary field access; the
+                // operand walk below owns it.
+            }
+        } else {
+            // A computed head (call, field chain): a field access as before.
         }
         ro before = @out.len()
         @type_expr(kids[0])

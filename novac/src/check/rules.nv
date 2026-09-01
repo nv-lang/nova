@@ -246,6 +246,11 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The variant-value judge's answer (the variant-value wave): a variant
+/// that CARRIES a payload is a constructor, not a value -- name it with its
+/// arguments. A payload-less one is a value and compiles to its maker.
+const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a payload -- construct it with arguments, `Name(...)`"
+
 /// The disjunction judge's answer (the pattern-alternatives wave): a `|`
 /// pattern names variants only -- a binder would have to agree across every
 /// alternative in both name and payload type, and no carrier needs that.

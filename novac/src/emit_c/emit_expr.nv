@@ -303,10 +303,20 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 }
             }
             None => {
-                // Not a constant: an ordinary name, and `nova_bool` IS C
-                // `bool`, so the literals are the C keywords -- the same
-                // shape the oracle emits.
-                @body.append(expr_leaf_name(e))
+                if @out.has_callee(e.id_of()) {
+                    // A payload-less variant as a value (the variant-value
+                    // wave): the checker resolved the bare name to its
+                    // variant row; the maker is the oracle's own spelling.
+                    match @out.callee_of(e.id_of()).target {
+                        CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}()")
+                        CalleeFn(_) | CalleeCtor(_) => ice("emit: a bare name resolved to a non-variant callee")
+                    }
+                } else {
+                    // Not a constant: an ordinary name, and `nova_bool` IS C
+                    // `bool`, so the literals are the C keywords -- the same
+                    // shape the oracle emits.
+                    @body.append(expr_leaf_name(e))
+                }
             }
         }
     } else if k == NodeKind.SelfField {
@@ -318,6 +328,19 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(leaf_text(kids[1]))
         @body.append(")")
     } else if k == NodeKind.FieldAccess {
+        // `Sum.Variant` as a VALUE (the variant-value wave): the checker
+        // wrote the variant row on THIS node; nothing here is a field read.
+        if @out.has_callee(e.id_of()) {
+            match @out.callee_of(e.id_of()).target {
+                CalleeVariant(v) => {
+                    @body.append("${c_maker(@ctx, v)}()")
+                    return
+                }
+                CalleeFn(_) | CalleeCtor(_) => ice("emit: a field access resolved to a non-variant callee")
+            }
+        } else {
+            // An ordinary field access: the shapes below own it.
+        }
         ro kids = branch_children(e)
         // A TUPLE projection prints `.fN` (D123 named-field codegen): the
         // owner is a by-value mono struct, so the dot is not a choice here
