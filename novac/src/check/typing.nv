@@ -662,11 +662,10 @@ fn Checker mut @type_tuple_bind(st Node) -> () {
         for c in kids {
             match c {
                 Leaf(t) => {
-                    if t.kind == TokenKind.Ident {
-                        @scope.bind(t.text, no_ty(), bind_mode_at(kids))
-                    } else {
-                        // Trivia of the pattern: nothing to bind.
-                    }
+                    // Trivia of the pattern (keyword, parens, commas, gaps)
+                    // binds nothing; only the names do.
+                    if t.kind != TokenKind.Ident { continue }
+                    @scope.bind(t.text, no_ty(), bind_mode_at(kids))
                 }
                 Branch { .. } => {}
             }
