@@ -330,6 +330,8 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
 }
 
+/// The oracle's spelling of a generic-record instance struct
+/// (`Nova_Vec____nova_int`): interop, lifted off the shell 2026-08-26.
 fn instance_struct_name(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}"
 
 /// The constructor the shell emits for an instance: `Nova_<body>_static_new`
