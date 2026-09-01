@@ -619,6 +619,9 @@ fn Checker mut @type_stmt(st Node) -> () {
             @scope.bind(leaf_text(kids[1]), elem, ParamMode.ModeRo)
             @type_block(kids[4])
             @scope.release(cmark)
+            // SILENT-OK: the collection head is fully decided -- head typed
+            // and recorded, variable bound, body typed; the range arm below
+            // is the other form.
             return
         }
         ro range = branch_children(head)
