@@ -964,11 +964,21 @@ fn f9_pos_inlay_hints_type_and_params() {
         }
     };
 
-    // Type hint `: int` for `ro x = 5` (kind 1 = Type).
+    // Type hint `int` for `ro x = 5` (kind 1 = Type).
+    //
+    // No854/No865: the label is ` int` with a SPACE, not `: int`. That is the
+    // owner's decision of 2026-07-23, implemented in 5f484c7b2 -- in Nova a type
+    // is written without a colon (`ro x int = 5`, `consume s TcpStream`), so the
+    // hint has to read as the code the user would have written. That commit
+    // updated the in-module unit test (`inlay_hints.rs`:
+    // `assert_eq!(label_str(...), " int")`) and missed THIS e2e one, which then
+    // sat red for weeks in a target nothing ran (the 53 uncovered targets of
+    // No854). `trim()` would hide the very difference at issue, so the label is
+    // compared verbatim.
     let has_type = hints.iter().any(|h| {
-        h["kind"].as_i64() == Some(1) && label_of(h).trim() == ": int"
+        h["kind"].as_i64() == Some(1) && label_of(h) == " int"
     });
-    assert!(has_type, "expected a `: int` type hint, got: {hints:?}");
+    assert!(has_type, "expected an ` int` type hint (space, not colon -- Nova syntax), got: {hints:?}");
 
     // Parameter hints `a:` and `b:` (kind 2 = Parameter).
     let params: Vec<String> = hints
