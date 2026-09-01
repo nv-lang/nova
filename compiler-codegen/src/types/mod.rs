@@ -9756,11 +9756,39 @@ impl<'a> TypeCheckCtx<'a> {
         ret_value: &Option<Box<Expr>>,
         whole_span: Span,
         gs: &GenericScope,
-        scope: &HashMap<String, TypeRef>,
+        scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
         let op_ty = self.infer_expr_type(a, scope);
         let ret_ty = self.current_fn_return_ty.borrow().clone();
+        // D86 AMEND (2026-09-01, решение владельца): форма ЗАКОННА там, где
+        // короткого канона НЕТ. Ретракция 2026-07-23 стояла на ОДНОМ
+        // измеренном основании — форма была ВТОРОЙ ДВЕРЬЮ к `?` (12 из 15
+        // сайтов корпуса имели канон короче). Где enclosing fn возвращает
+        // НЕ Option/Result, первой двери не существует: `?` нечего
+        // пробрасывать наружу, и основание к этим местам не относится.
+        // Замер в `novac` 2026-09-01: 11 ручных `match … => return` плюс 9
+        // обходов через фиктивное значение (`?? no_ty()` и следом сравнение
+        // с тем же sentinel'ом) — все без исключения в функциях, возвращающих
+        // `bool`, `TyId`, `FnRow`, `()`. Сам владелец правил sentinel-обход вручную
+        // 2026-08-21 (`novac/src/sem/slots.nv:460`) словами «detour that turns
+        // "absent" into a number to be remembered» — то есть запрет не убрал
+        // шаблон, а вытеснил его в худшую форму.
+        if coalesce_return_fallback_is_legal(op_ty.as_ref(), ret_ty.as_ref(), gs) {
+            // Значение проверяется КАК У ОБЫЧНОГО `return` (те же вызовы, что у
+            // `Stmt::Return` выше): без этого `-> bool` приняла бы `?? return "x"`,
+            // потому что до сегодня правая часть не обходилась вообще — форма
+            // отвергалась раньше, чем до неё доходила проверка.
+            if let Some(v) = ret_value {
+                self.f1_expr(v, gs, scope, errors);
+                self.f4_check_value(v, scope, errors);
+                if let Some(rt) = self.current_fn_return_ty.borrow().clone() {
+                    self.check_addrof_mut_from_ro_source(v, &rt, errors);
+                    self.record_bare_variant_ctor(v, &rt, scope);
+                }
+            }
+            return;
+        }
         let advice = coalesce_return_fallback_advice(op_ty.as_ref(), ret_ty.as_ref(), gs);
         // Суффикс `?? return ...` целиком — от конца операнда `X` до конца
         // всего выражения. Замена этого диапазона НЕ требует знания текста
@@ -9770,10 +9798,11 @@ impl<'a> TypeCheckCtx<'a> {
         let ret_span = ret_value.as_ref().map(|v| v.span).unwrap_or(whole_span);
         let (note, suggestion) = coalesce_advice_render(&advice, suffix_span);
         let mut diag = Diagnostic::new(
-            "[E_COALESCE_RETURN_FALLBACK] `return` не может быть fallback'ом \
-             оператора `??` (D86, ретракция формы 2026-07-23). `??` подставляет \
-             значение и продолжает вычисление; ранний возврат — это поток \
-             управления, для него отдельные операторы."
+            "[E_COALESCE_RETURN_FALLBACK] `return` не может быть fallback'ом `??` \
+             ЗДЕСЬ: у этой функции есть обёртка для проброса, значит есть и \
+             канон короче (D86 AMEND 2026-07-23). Форма снята НЕ ЦЕЛИКОМ: там, \
+             где возврат функции НЕ `Option`/`Result` и `?` неприменим, \
+             `X ?? return R` ЗАКОНЕН (AMEND 2026-09-01)."
                 .to_string(),
             ret_span,
         );
@@ -26984,6 +27013,42 @@ pub(crate) enum CoalesceReturnAdvice {
     /// Тип операнда/return не выведен, либо несёт generic-параметр (`gs`) —
     /// консервативное молчание (нет базы для конкретной подсказки).
     Unknown,
+}
+
+/// D86 AMEND (2026-09-01): законна ли форма `X ?? return R` здесь.
+///
+/// Законна РОВНО там, где у `?` нет пути: операнд — `Option`/`Result`
+/// (иначе `??` сам по себе ошибка типов, и её судит другая проверка), а
+/// возврат enclosing fn — НЕ `Option`/`Result`, то есть обёртки для проброса
+/// не существует (та самая последняя строка таблицы амендмента 2026-07-23,
+/// где до сегодня стояло «явный `match` — законен, не дефект»).
+///
+/// ПРИ GENERIC — НЕЗАКОННА, и это осознанно консервативно: под `T` может
+/// приехать и `Option`, и `Result`, а тогда форма снова становится второй
+/// дверью к `?` — ровно тем, что ретракция снимала. Разрешать её там
+/// можно будет только отдельным решением и со своим замером.
+pub(crate) fn coalesce_return_fallback_is_legal(
+    op_ty: Option<&TypeRef>,
+    ret_ty: Option<&TypeRef>,
+    gs: &GenericScope,
+) -> bool {
+    let (op_ty, ret_ty) = match (op_ty, ret_ty) {
+        (Some(a), Some(b)) => (a, b),
+        // Тип не выведен — прежнее поведение (отказ с подсказкой Unknown).
+        _ => return false,
+    };
+    if typeref_mentions_any(op_ty, gs) || typeref_mentions_any(ret_ty, gs) {
+        return false;
+    }
+    let op_is_carrier = matches!(
+        typeref_carrier_and_generics(op_ty),
+        Some(("Option", _)) | Some(("Result", _))
+    );
+    let ret_is_carrier = matches!(
+        typeref_carrier_and_generics(ret_ty),
+        Some(("Option", _)) | Some(("Result", _))
+    );
+    op_is_carrier && !ret_is_carrier
 }
 
 pub(crate) fn coalesce_return_fallback_advice(

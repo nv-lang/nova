@@ -516,14 +516,30 @@ ro port = config.get("port") ?? throw MyError          // custom throw
 ro port = config.get("port") ?? panic("no port")       // panic (D13)
 ```
 
-The **`?? return ...`** form (early exit from the enclosing function) is
-**retracted** ([D86](decisions/04-effects.md#d86) amend, 2026-07-23,
-`E_COALESCE_RETURN_FALLBACK`): it was a second door to `?`, not an
-independent niche. The canon instead — `X?` (the same wrapper outward),
-`.ok()?` (Result → the function returns Option),
-`.map_err(...)?` (the error type changes),
-`.ok_or(err)?` (Option → the function returns Result), or an explicit
-`match`, if there is no wrapper to propagate at all.
+The **`?? return ...`** form (early exit from the enclosing function) depends
+on whether the function has a wrapper to propagate
+([D86](decisions/04-effects.md#d86) amend 2026-07-23 + amend 2026-09-01):
+
+* the function returns `Option`/`Result` — the form is **refused**
+  (`E_COALESCE_RETURN_FALLBACK`): it would be a second door to `?`. The canon
+  is `X?` (the same wrapper outward), `.ok()?` (Result → the function returns
+  Option), `.map_err(...)?` (the error type changes), `.ok_or(err)?`
+  (Option → the function returns Result);
+* the function returns anything else (`bool`, a number, `()`, a tuple, a type
+  of your own) — the form is **legal**: there is nothing to propagate, `?`
+  does not apply, and its alternative is a two-arm `match` (also legal).
+
+```nova
+fn is_big(x int) -> bool {
+    ro v = lookup(x) ?? return false   // legal: `-> bool`, no wrapper
+    v > 10
+}
+```
+
+The early exit is a real `return`: `defer`, `errdefer` and `ensures`
+contracts all run. An `Err(e)` is discarded, as with ordinary `??`; if you
+need `e` inside, write a `match`. Under a generic parameter the form is
+refused — `T` may arrive as `Option`.
 
 ## Alternative: explicit Result
 

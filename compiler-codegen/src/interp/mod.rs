@@ -991,6 +991,10 @@ impl Interpreter {
                 let v = self.eval_expr_value(value, env)?;
                 Ok(Flow::Throw(v))
             }
+            // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-09-01): the narrow LEGAL
+            // form is not interpreted — the interpreter is not a supported pipeline
+            // (only C-codegen is), so it keeps refusing the node rather than growing
+            // a second, untested implementation of the early exit.
             // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23): `X ?? return R`
             // всегда отвергается чекером до этой точки — структурно недостижимо.
             ExprKind::CoalesceReturnFallback(_) => Err(Diagnostic::new(
