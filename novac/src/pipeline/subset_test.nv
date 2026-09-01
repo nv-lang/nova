@@ -768,3 +768,23 @@ fn main() {
     assert(!c.contains("0123"))
     assert(!c.contains("010LL"))
 }
+
+test "the contract display is escaped into its C literal; the message takes the dollar door (#872)" {
+    // `requires s != "no"` used to emit `"s != "no""` -- the literal's own
+    // quotes closed the C string and clang refused the unit; the message
+    // slot shipped `\$` through where the literal pool strips it.
+    // `!=` on str resolves through the declared `equal`; the shared
+    // std_decls() carries three unrelated methods, so this test hands its
+    // own one-liner in.
+    ro std = []str.of("fn str @equal(other str) -> bool => true")
+    ro (d, c) = compile_to_c("fn f(s str) -> int requires s != \"no\", \"cost \$5\" {
+ 1
+}
+fn main() {
+ println(f(\"yes\"))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("s != \\\"no\\\""))
+    assert(c.contains("cost $5"))
+    assert(!c.contains("cost \\$5"))
+}

@@ -24,6 +24,7 @@
 module novac.emit_c
 
 import ../lex.{is_ident_start, is_ident_byte, is_space}
+import ../sem.{unescape_dollar}
 import ../sem.{InteropTable}
 import ../diag.{ice}
 
@@ -123,49 +124,14 @@ fn render(lits []str, body str) -> str {
     assert(emitted_lits && emitted_body, "emit: template slots missing")
     out
 }
-
-/// Emit one static nova_str per registered string literal.
-/// Drop the backslash of `\$`, and touch nothing else.
-///
-/// Written byte by byte rather than with a replace-all: the backslash before a
-/// dollar is only an escape when it is not ITSELF escaped, and `\\${` means a
-/// literal backslash followed by an interpolation. A blind replace would eat
-/// the wrong one.
-fn unescape_dollar(s str) -> str {
-    ro b = s.bytes()
-    consume out = StringBuilder.new()
-    mut one = []u8.new()
-    one.push(0 as u8)
-    // A `while` and NOT `for`, on purpose: this cursor advances by ONE or by
-    // TWO (an escaped `$` consumes two bytes), so the step carries information
-    // and a range would lose it. The rule is "a cursor that always steps by one
-    // is a range" -- this one does not.
-    mut i = 0
-    while i < b.len() {
-        ro c = b[i]
-        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
-        if c == BACKSLASH_BYTE && next_is_dollar {
-            one[0] = DOLLAR_BYTE
-            out.append(one)
-            i += 2
-        } else {
-            one[0] = c
-            out.append(one)
-            i += 1
-        }
-    }
-    out
-}
-
 /// The two bytes this door compares against; the character is in the comment
 /// for the same reason the lexer's tables carry it.
-const BACKSLASH_BYTE u8 = 0x5C  // backslash
-const DOLLAR_BYTE u8 = 0x24     // $
 
 /// Write the literal pool: one C array per string the file holds.
 ///
-/// The only place a Nova literal becomes C text -- which is why the escaped
-/// dollar is unescaped here and nowhere else.
+/// One of TWO places a Nova literal becomes C text (the other is the
+/// contract prologue's message slot) -- both go through the one
+/// unescape_dollar door in sem/mangle (hunt 2026-09-02, P1).
 fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
     mut i = 0
     for raw in lits {

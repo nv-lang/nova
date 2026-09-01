@@ -1,0 +1,13 @@
+// A contract whose display carries a string literal (hunt N4, #872).
+module basics.requires_string_guard
+
+/// The clause's own quotes ride inside the C literal, escaped.
+fn tag(s str) -> int
+    requires s != "no", "say \"hi\" for \$5"
+{
+    1
+}
+
+fn main() {
+    println(tag("yes"))
+}

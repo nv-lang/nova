@@ -651,3 +651,42 @@ export fn int_literal_c_text(t str) -> str {
     while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
     t[i..]
 }
+
+/// A Nova string literal's text as C text: the ONE dollar rule. Nova's
+/// subset escape set (\" \\ \n \t \r) matches C's one for one -- check
+/// refuses everything else by name -- with a single exception, `\$`, whose
+/// backslash must not reach clang. TWO readers spell literals into C: the
+/// shell's literal pool and the contract prologue's message slot -- the
+/// hunt (2026-09-02, its P1 contradiction) caught the pool claiming to be
+/// "the only place" while the prologue shipped the backslash through; one
+/// door ends that argument by construction.
+
+/// The two bytes the dollar rule reads.
+const BACKSLASH_BYTE u8 = 0x5C  // backslash
+const DOLLAR_BYTE u8 = 0x24     // $
+
+export fn unescape_dollar(s str) -> str {
+    ro b = s.bytes()
+    consume out = StringBuilder.new()
+    mut one = []u8.new()
+    one.push(0 as u8)
+    // A `while` and NOT `for`, on purpose: this cursor advances by ONE or by
+    // TWO (an escaped `$` consumes two bytes), so the step carries information
+    // and a range would lose it. The rule is "a cursor that always steps by one
+    // is a range" -- this one does not.
+    mut i = 0
+    while i < b.len() {
+        ro c = b[i]
+        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
+        if c == BACKSLASH_BYTE && next_is_dollar {
+            one[0] = DOLLAR_BYTE
+            out.append(one)
+            i += 2
+        } else {
+            one[0] = c
+            out.append(one)
+            i += 1
+        }
+    }
+    out
+}

@@ -22,7 +22,7 @@
 
 module emit_c
 
-import ../sem.{branch_children, display_of}
+import ../sem.{branch_children, display_of, unescape_dollar}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 
@@ -36,7 +36,7 @@ fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
         @body.append("    if (!(")
         @emit_expr(rk[1])
         @body.append(")) nova_contract_violation(NOVA_CONTRACT_PRE, \"${name}\", \"")
-        @body.append(display_of(rk[1]))
+        @body.append(c_literal_escaped(display_of(rk[1])))
         @body.append("\", \"\", 0, ")
         @body.append(contract_msg_c(rk))
         @body.append(");\n")
@@ -54,7 +54,12 @@ fn contract_msg_c(rk []Node) -> str {
     ro m = rk[rk.len() - 1]
     match m {
         Leaf(t) => {
-            if t.kind == TokenKind.StrLit { return t.text }
+            // The SAME dollar rule as the literal pool (shell.nv,
+            // emit_strlit_defs): Nova's escape set matches C's one for one
+            // EXCEPT `\$`, whose backslash must not reach clang -- the
+            // hunt's req_msg_dollar showed both doors in one emission,
+            // pool unescaped, prologue not (#872).
+            if t.kind == TokenKind.StrLit { return unescape_dollar(t.text) }
             // Not a string: the required door already carried the refusal.
         }
         Branch { .. } => {
@@ -63,3 +68,12 @@ fn contract_msg_c(rk []Node) -> str {
     }
     "NULL"
 }
+
+/// The display, spelled INSIDE a C string literal: backslashes double
+/// FIRST, then quotes get theirs (the other order would double the very
+/// backslash the quote just gained). The display joins token TEXTS, and a
+/// string literal among them carries its own quotes -- unescaped, those
+/// closed the C literal around the display (hunt 2026-09-02, N4/#872:
+/// `requires s != "no"` emitted `"s != "no""` and clang refused the unit).
+fn c_literal_escaped(s str) -> str =>
+    s.replace("\\", "\\\\").replace("\"", "\\\"")
