@@ -574,3 +574,47 @@ fn main() {
     assert(d3.len() >= 1)
     assert(d3[0].message.contains("does not return a vector"))
 }
+
+test "if-let binds the payload behind the tag guard; both judges answer by name" {
+    // `if Some(v) = xs.get(1)`: the Option lands in a NovaOpt_<elem> temporary
+    // (the family spelling the mangle door took with this wave), the tag
+    // guards the block, and the binder is a local from `.value` -- the
+    // shell's Option ABI, interop. Asserted on the C shapes.
+    mut std = std_decls()
+    std.push("module std.v
+export type Vec[T] { n int }
+export fn Vec[T] @get(i int) -> Option[T] => None
+export type Option[T] enum Some(T) | None")
+    ro (d, c) = compile_to_c("module p
+fn main() {
+ ro xs = [5, 9]
+ if Some(v) = xs.get(1) {
+  println(v)
+ }
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("NovaOpt_nova_int"))
+    assert(c.contains("NOVA_TAG_Option_Some"))
+    assert(c.contains(".value;"))
+
+    // A non-Option initializer refuses by name.
+    ro (d2, _) = compile_to_c("module p
+fn main() {
+ if Some(v) = 5 {
+  println(v)
+ }
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("must be an Option instance"))
+
+    // A variant other than Some refuses by name.
+    ro (d3, _) = compile_to_c("module p
+fn main() {
+ ro xs = [4]
+ if Whatever(v) = xs.get(0) {
+  println(v)
+ }
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("takes only `Some(name)`"))
+}

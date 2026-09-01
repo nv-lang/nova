@@ -1,0 +1,41 @@
+// The if-let emission: an Option lands in a temporary, the tag guards.
+//
+// Donor: none for the shape -- the guard-and-read pair is the C the fixed
+// point itself runs on every Option; the tag constant and the family struct
+// come from builtins (P5) and the one mangle door.
+// Role: the IfLet arm of emit_stmt routes here; nothing else does.
+// Used by: emit_c.nv's statement dispatcher.
+// Guarded by: check-novac-differential.sh (corpus carrier if_let_some) and
+// the subset_test.nv holder; check-novac-emitted-names.py holds namespaces.
+//
+// INTEROP, named as such: the temporary's `.tag`/`.value` are the shell's
+// Option ABI (`NovaOpt_X{.tag,.value}`, by value -- read off shell.tpl.c),
+// and the guard constant is the shell's `NOVA_TAG_Option_Some`. Goes the day
+// novac emits the whole prelude.
+
+module emit_c
+
+import ../sem.{Ctx, CheckOut, branch_children, leaf_text, c_type}
+import ../tree.{Node, NodeKind}
+import ../types.{TyId}
+import ../builtins.{OPTION_SOME_TAG_C}
+
+/// One `if Some(v) = expr { ... }`: the initializer runs ONCE into a
+/// temporary, the tag guards the block, and the binder is a plain local from
+/// `.value` -- the checker bound it to the payload type, this door spells
+/// what was decided.
+fn Emitter mut @emit_if_let(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[6]
+    ro ot = @out.type_of(init.id_of())
+    ro payload = @ctx.tys.arg(ot, 0)
+    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
+    @hoist_array_lits(init)
+    @body.append("    ${c_type(@ctx, ot)} ${tmp} = ")
+    @emit_expr(init)
+    @body.append(";\n")
+    @body.append("    if (${tmp}.tag == ${OPTION_SOME_TAG_C}) {\n")
+    @body.append("    ${c_type(@ctx, payload)} ${leaf_text(kids[3])} = ${tmp}.value;\n")
+    @emit_block_stmts_fn(kids[7], false)
+    @body.append("    }\n")
+}

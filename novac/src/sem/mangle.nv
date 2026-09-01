@@ -240,7 +240,11 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // An INSTANCE of a generic record is a GC pointer like the record
             // itself; its struct is spelled the oracle's way (interop -- see
             // `instance_struct_name`).
-            TkApp => { return "${instance_struct_name(ctx, t)}*" }
+            TkApp => {
+                ro fam = family_instance_name(ctx, t)
+                if fam != "" { return fam }
+                return "${instance_struct_name(ctx, t)}*"
+            }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
             // A tuple is a BY-VALUE mono struct (D123): its C type IS its
@@ -276,7 +280,11 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.
         TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }
-        TkApp => { return instance_struct_name(ctx, t) }
+        TkApp => {
+            ro fam = family_instance_name(ctx, t)
+            if fam != "" { return fam }
+            return instance_struct_name(ctx, t)
+        }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
         // The typedef is self-named (`typedef struct X {...} X;`), so the
@@ -304,6 +312,24 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
 /// of guessing a name a linker would then find. No program reaches it today: an
 /// instance of a handed-over sum cannot be constructed (its variants are not
 /// harvested), so nothing carrying one is ever emitted.
+/// The FAMILY spelling of a generic-sum instance, or "" for everything else:
+/// `Option[int]` is the shell's `NovaOpt_nova_int`, BY VALUE (its methods hand
+/// it back so), with no `Nova_` prefix and no star -- INTEROP, read off the
+/// shell, gone the day novac emits the whole prelude. Result (`NovaRes_`)
+/// joins when a carrier arrives; until then the instance_body ice below still
+/// names any other generic sum.
+fn family_instance_name(ctx Ctx, t TyId) -> str {
+    ro head = decl_of_ty(ctx, t)
+    ro is_sum = match head.kind {
+        TkSum => true
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_sum { return "" }
+    if head.name != OPTION_SUM { return "" }
+    if ctx.tys.arg_count(t) != 1 { return "" }
+    "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
+}
+
 fn instance_struct_name(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}"
 
 /// The constructor the shell emits for an instance: `Nova_<body>_static_new`

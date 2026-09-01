@@ -296,6 +296,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // judges the initializer and the arity; the walk descends
                     // into the children like any other statement's.
                 }
+                IfLet => {
+                    // `if Some(v) = expr` (if-let wave): typing judges the
+                    // initializer's Option shape and the variant; the walk
+                    // descends like any other statement's.
+                }
                 // A block used to be judged for ONE thing here -- a call in
                 // statement position that was not `println`. Wave B12 made
                 // that a form of the language, so the arm has nothing of its

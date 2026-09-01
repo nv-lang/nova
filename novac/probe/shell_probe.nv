@@ -35,6 +35,15 @@ fn main() {
     println("upper = ", s.to_ascii_upper())
     println("starts = ", s.starts_with("p"))
     println("contains = ", s.contains("ring"))
+    // The if-let wave: its carriers bind through Option-returning calls, and
+    // str.find is the E2 face of that shape -- without this line the shell
+    // carries no Nova_str_method_find and novac refuses the carrier by name.
+    ro found = s.find("ring")
+    ro ftext = match found {
+        Some(i) => "at"
+        None => "no"
+    }
+    println("find = ", ftext)
 
     // E2 records surface: the only NEW runtime helper is f64 printing —
     // record structs/alloc are emitted by novac itself into the BODY slot

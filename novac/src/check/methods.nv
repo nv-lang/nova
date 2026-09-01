@@ -21,7 +21,7 @@ module novac.check
 
 import ../tree.{Node}
 import ../lex.{Token}
-import ../types.{TyId}
+import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
 import ../resolve.{FnLookup}
 import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
@@ -182,10 +182,18 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
     }
     ro ret = @ctx.tys.subst(fd.ret_id, ids)
     if @ctx.tys.kind_of(ret) == TypeKind.TkApp && decl_of_ty(@ctx, ret).kind == TypeKind.TkSum {
-        @refuse(t, "outside the subset: this method returns `${ty_source_name(@ctx, ret)}` -- an instance of a sum, whose family spelling novac does not take yet")
-        // Refused, but judged: the substituted return is known (274.4 §2).
-        @record(e, ret)
-        return
+        // OPTION took its family spelling with the if-let wave (NovaOpt_<elem>,
+        // the mangle door) -- so an Option-returning instance method is now an
+        // ordinary interop call. Every OTHER sum family keeps the refusal
+        // until its carrier arrives.
+        if !is_ty(option_payload(@ctx, ret)) {
+            @refuse(t, "outside the subset: this method returns `${ty_source_name(@ctx, ret)}` -- an instance of a sum, whose family spelling novac does not take yet")
+            // Refused, but judged: the substituted return is known (274.4 s2).
+            @record(e, ret)
+            return
+        } else {
+            // Option: falls through to the ordinary interop recording below.
+        }
     }
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
         bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))

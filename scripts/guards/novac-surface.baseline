@@ -107,7 +107,11 @@
 # builtins 26 -> 28 (2026-09-01, волна B16): `VEC_LEN_METHOD`/`VEC_GET_METHOD`
 # — имена методов вектора для обхода в for-эмиссии (P5: имена std живут в
 # builtins, эмиттер сам их не спеллит; C-имя даёт единственная mangle-дверь).
-builtins 28
+# builtins 28 -> 32 (2026-09-01, волна if-let): OPTION_SUM/OPTION_FAMILY_C/
+# OPTION_SOME_TAG_C/OPTION_SOME_VARIANT — имя языковой суммы, семейный
+# C-префикс оболочки, tag-константа Some и имя варианта (P5: имена в
+# builtins; спеллит mangle-дверь, судит чекер, эмиттер читает).
+builtins 32
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

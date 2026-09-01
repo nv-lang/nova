@@ -800,6 +800,8 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append(";\n")
     } else if k == NodeKind.TupleBind {
         @emit_tuple_bind(st)
+    } else if k == NodeKind.IfLet {
+        @emit_if_let(st)
     } else {
         ice("emit: statement kind outside the subset")
     }

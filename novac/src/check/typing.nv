@@ -655,6 +655,8 @@ fn Checker mut @type_stmt(st Node) -> () {
         @type_expr(st)
     } else if k == NodeKind.TupleBind {
         @type_tuple_bind(st)
+    } else if k == NodeKind.IfLet {
+        @type_if_let(st)
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else {
@@ -662,6 +664,50 @@ fn Checker mut @type_stmt(st Node) -> () {
         // emitter's door, so this walk has no answer to record for it.
     }
 }
+/// `if Some(v) = expr { ... }` (if-let wave): the initializer must be an
+/// Option INSTANCE, the variant must be `Some` (the subset's boundary -- its
+/// carriers use nothing else), and the binder takes the payload type inside
+/// the then-block. The initializer's type is RECORDED for the emitter's
+/// strict door -- the same lesson every wave since B15 step 5 pays once.
+fn Checker mut @type_if_let(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 8 {
+        assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")
+        return
+    }
+    if leaf_text(kids[1]) != OPTION_SOME_VARIANT {
+        match kids[1] {
+            Leaf(t) => @refuse(t, IFLET_VARIANT_MSG)
+            // SILENT-OK: the parser puts a LEAF in the variant slot by
+            // construction; a branch here is its recovery, already named.
+            Branch { .. } => {}
+        }
+        return
+    }
+    ro init = kids[6]
+    ro before = @out.len()
+    match init {
+        Leaf(_) => {
+            // SILENT-OK: a recovery gap -- the parser already said what was
+            // expected in the initializer's place.
+            return
+        }
+        Branch { .. } => @type_expr(init)
+    }
+    if @out.len() > before { return }
+    ro ot = type_of(init, @ctx, @scope, @chan)
+    ro payload = option_payload(@ctx, ot)
+    if !is_ty(payload) {
+        @report_first_leaf_of(kids, IFLET_INIT_MSG)
+        return
+    }
+    @record(init, ot)
+    ro mark = @scope.mark()
+    @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
+    @type_block(kids[7])
+    @scope.release(mark)
+}
+
 /// A destructuring binding `ro (a, b) = expr` (B15 step 5): the initializer
 /// is typed first, its recorded type must be a TUPLE of exactly the pattern's
 /// arity (both judged by name -- the arity text names D123's own class), and

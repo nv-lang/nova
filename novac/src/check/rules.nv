@@ -21,7 +21,7 @@ import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
+import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, decl_of_ty}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
 import ../sem.{ret_is_unit, param_default_slot}
 import ../types.{TyId, no_ty, is_ty}
@@ -245,6 +245,29 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The if-let judges' two answers (if-let wave). The subset takes exactly
+/// the shape its carriers write: `Some` and an Option-instance initializer.
+const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"
+
+/// See IFLET_VARIANT_MSG above; the initializer half.
+const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
+
+/// The PAYLOAD an Option instance carries, or no type: the head must be the
+/// language's Option sum of arity one. The same doors the for-head judge
+/// walks, asked with the family name.
+fn option_payload(ctx Ctx, t TyId) -> TyId {
+    if !is_ty(t) { return no_ty() }
+    ro k = ctx.tys.kind_of(t)
+    ro is_app = match k {
+        TkApp => true
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_app { return no_ty() }
+    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
+    if ctx.tys.arg_count(t) != 1 { return no_ty() }
+    ctx.tys.arg(t, 0)
+}
+
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
 const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"

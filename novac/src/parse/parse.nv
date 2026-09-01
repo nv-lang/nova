@@ -840,6 +840,18 @@ fn Cursor mut @head_expr() -> Node {
 
 /// Parse one statement: if/while/return/mut/ro/for, or an expression (assignment).
 fn Cursor mut @stmt() -> Node {
+    if @peek() == TokenKind.KwIf && @peek(skip: 1) == TokenKind.Ident &&
+       @peek(skip: 2) == TokenKind.LParen && @peek(skip: 3) == TokenKind.Ident &&
+       @peek(skip: 4) == TokenKind.RParen && @peek(skip: 5) == TokenKind.Assign {
+        // IF-LET (wave: if-let + Option family): `if Some(v) = expr { ... }`.
+        // Five tokens of lookahead tell it from an ordinary `if` -- an
+        // expression head cannot carry `=` there. Its own kind, the B14
+        // discipline; which variants the subset takes is typing's question.
+        mut kids = []Node.of(@take(), @take(), @take(), @take(), @take(), @take())
+        kids.push(@expr())
+        kids.push(@block())
+        return @node(NodeKind.IfLet, kids)
+    }
     if @peek() == TokenKind.KwIf {
         mut kids = []Node.of(@take())
         kids.push(@head_expr())

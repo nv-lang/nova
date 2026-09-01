@@ -55,6 +55,14 @@ export const ENTRY_FN = "main"
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
 
+/// The Option FAMILY (if-let wave): the language's sum name and the shell's
+/// C family prefix (`NovaOpt_<elemC>`, by value) plus the Some tag constant.
+/// P5: names live here; the mangle door spells, the emitter reads.
+export const OPTION_SUM = "Option"
+export const OPTION_FAMILY_C = "NovaOpt_"
+export const OPTION_SOME_TAG_C = "NOVA_TAG_Option_Some"
+export const OPTION_SOME_VARIANT = "Some"
+
 /// The vector methods the for-over-a-call emission walks with (B16 wave,
 /// P5: std names live here, the emitter must not spell them itself).
 export const VEC_LEN_METHOD = "len"
