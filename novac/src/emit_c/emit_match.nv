@@ -18,6 +18,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, arm_body_at, c_type}
+import ../sem.{disj_head_slots, pattern_has_disj}
 import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../builtins.{bool_c_literal}
 import ../types.{TyId}
@@ -139,6 +140,23 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, as_stmt bool = false) -
         }
         if is_vrow(vrow) {
             @emit_tag_test(uniq, vrow, scr_t)
+            // The ALTERNATIVES of a disjunction OR onto the first head's
+            // test; the checker verified every head names a variant of this
+            // sum and that no alternative binds a name.
+            for hi in disj_head_slots(pat) {
+                match @ctx.defs.def_of(leaf_text(pat[hi])) {
+                    None => {}
+                    Some(hdef) => {
+                        match hdef.target {
+                            DefVariant(hrow) => {
+                                @body.append(" || ")
+                                @emit_tag_test(uniq, hrow, scr_t)
+                            }
+                            DefType(_) | DefFn(_) | DefConst(_) => {}
+                        }
+                    }
+                }
+            }
         } else {
             @body.append(bool_c_literal(true))
         }
@@ -150,7 +168,8 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, as_stmt bool = false) -
     // variants (no-default-branch keeps variant dispatch for `match`, and a
     // TokenKind match here would need the wildcard the same rule forbids).
     ro is_plain_binder = leaf_kind(p0) == TokenKind.Ident && leaf_text(p0) != "_"
-    if is_vrow(vrow) {
+    // A disjunction unpacks nothing: the checker held every binder to `_`.
+    if is_vrow(vrow) && !pattern_has_disj(pat) {
         // Unpack payload fields onto the arm's binders, in order: binder
         // names sit after '(' in the pattern; field types are the variant's
         // rows of the flat context.

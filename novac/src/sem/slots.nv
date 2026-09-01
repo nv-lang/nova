@@ -789,3 +789,44 @@ export fn digit_index(text str) -> int {
     }
     v
 }
+
+/// The SLOTS of the extra disjunction heads inside a flat match pattern:
+/// every identifier standing right after a `|` leaf (the pattern-alternatives
+/// wave). Slot 0 is NOT here -- the first head keeps its original readers;
+/// this door feeds the exhaustiveness count and the emitter's OR-chain with
+/// the alternatives only. Two readers, one walk (P18).
+export fn disj_head_slots(pat []Node) -> []int {
+    mut slots = []int.new()
+    for i in 1..pat.len() {
+        // [LEGACY-#676] var-index-method: a method on `pat[i]` with a
+        // VARIABLE index takes the container as its receiver; the binding
+        // hop is the standing workaround.
+        ro prev = pat[i - 1]
+        ro cur = pat[i]
+        match prev {
+            Leaf(t) => {
+                if t.kind == TokenKind.Pipe && cur.is_ident() {
+                    slots.push(i)
+                } else {
+                    // Not a pipe, or the head is a recovery gap: no slot.
+                }
+            }
+            Branch { .. } => {}
+        }
+    }
+    slots
+}
+
+/// Does this flat pattern carry a disjunction at all? One pipe answers; the
+/// binder judge and the payload unpack both gate on it.
+export fn pattern_has_disj(pat []Node) -> bool {
+    for c in pat {
+        match c {
+            Leaf(t) => {
+                if t.kind == TokenKind.Pipe { return true }
+            }
+            Branch { .. } => {}
+        }
+    }
+    false
+}

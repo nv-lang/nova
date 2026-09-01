@@ -246,6 +246,11 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The disjunction judge's answer (the pattern-alternatives wave): a `|`
+/// pattern names variants only -- a binder would have to agree across every
+/// alternative in both name and payload type, and no carrier needs that.
+const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders only -- name the value in a separate arm"
+
 /// The if-let judges' two answers (if-let wave). The subset takes exactly
 /// the shape its carriers write: `Some` and an Option-instance initializer.
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"

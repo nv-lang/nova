@@ -1,0 +1,16 @@
+module basics.match_disj_alternative_path
+
+type Tri enum A(int) | B(int) | C(int)
+
+fn f(s Tri) -> int {
+    match s {
+        A(_) => 0
+        B(_) | C(_) => 1
+    }
+}
+
+fn main() {
+    println(f(B(5)))
+    println(f(C(7)))
+    println(f(A(1)))
+}

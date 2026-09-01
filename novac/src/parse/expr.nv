@@ -344,6 +344,25 @@ fn Cursor mut @match_expr() -> Node {
                 // payload-less variant. The two are told apart by the names
                 // table, not by the parser -- both are one leaf here.
             }
+            // A DISJUNCTION (`A | B(_)` -- the pattern-alternatives wave):
+            // every alternative is one more head after a pipe, flat in the
+            // same Pattern node; the checker judges the binders and the
+            // emitter ORs the tag tests. IntLit alternatives arrive with a
+            // carrier.
+            while @peek() == TokenKind.Pipe {
+                pk.push(@take())
+                @push_expected(pk, TokenKind.Ident)
+                if @peek() == TokenKind.LParen {
+                    pk.push(@take())
+                    while @peek() == TokenKind.Ident {
+                        pk.push(@take())
+                        @push_if(pk, TokenKind.Comma)
+                    }
+                    @push_expected(pk, TokenKind.RParen)
+                } else {
+                    // A bare alternative: one leaf, exactly as the first head.
+                }
+            }
             ak.push(@node(NodeKind.Pattern, pk))
         } else {
             // Recovery: one Err, one token, keep the arm loop advancing.
