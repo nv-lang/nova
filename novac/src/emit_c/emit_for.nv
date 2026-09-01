@@ -8,8 +8,9 @@
 // range head keeps its arm in emit_c.nv. The head is materialized ONCE into a
 // temporary -- its effects are the caller's, one evaluation is the contract.
 // Used by: emit_c.nv's ForStmt arm, nothing else.
-// Guarded by: the diff corpus carrier (for_call_head, wave B16) and the
-// subset_test holder; check-novac-emitted-names holds the namespaces.
+// Guarded by: check-novac-differential.sh (corpus carriers for_call_head,
+// for_call_effect_once, for_name_head) and the subset_test.nv holder test
+// (B16); check-novac-emitted-names.py holds the namespaces.
 //
 // INTEROP, named as such: `_method_get` hands back the shell's Option BY
 // VALUE (`NovaOpt_X{.tag,.value}`, read off shell.tpl.c) and the loop body
