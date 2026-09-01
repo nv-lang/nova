@@ -347,6 +347,8 @@ guard "$ROOT/scripts/guards/check-plan-wave-boundaries.py" "$ROOT" \
 
 step loop "форма записей реестра (класс, приоритет, оговорка)"
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
+step loop "ABI-спеллинги прелюдии заморожены (Карина линкуется по ним)"
+guard "$ROOT/scripts/guards/check-oracle-abi-spellings.sh" "$ROOT" || fail "ABI-якорь прелюдии дрейфнул: интероп Карины сидит на этом спеллинге (см. шапку стража)"
 step loop "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
 guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
 step loop "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
