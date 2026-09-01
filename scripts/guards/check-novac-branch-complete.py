@@ -148,6 +148,13 @@ def main():
     files = []
     for dirpath, _dirs, names in os.walk(src):
         for nm in names:
+            # Тесты исключены (2026-09-01): держатели цитируют Nova-код
+            # СТРОКОВЫМИ ЛИТЕРАЛАМИ (compile_to_c("if Some(v) = ...")), и
+            # греп читал цитату как ветвление файла — тот же класс, что
+            # subset-debt-dated закрыл исключением тестов. Реальные ветвления
+            # тестов держит компилятор (match-полнота) и их собственный прогон.
+            if nm.endswith("_test.nv"):
+                continue
             if nm.endswith(".nv"):
                 files.append(pathlib.Path(dirpath) / nm)
     # `find | sort` под LC_ALL=C: порядок находок обязан быть воспроизводим,
