@@ -23,7 +23,7 @@
 
 module novac.emit_c
 
-import ../lex.{is_ident_start, is_ident_byte}
+import ../lex.{is_ident_start, is_ident_byte, is_space}
 import ../sem.{InteropTable}
 import ../diag.{ice}
 
@@ -48,8 +48,22 @@ export fn shell_surface() -> InteropTable {
     ro bytes = shell_template()
     mut i = 0
     ro n = bytes.len()
+    // The previous identifier, for the ONE two-token shape this scan also
+    // reads: `struct <name> {` is a struct BODY -- the thing a C unit cannot
+    // define twice -- while a forward `typedef struct X X;` repeats legally.
+    // The declaration judge asks for bodies, so bodies are what gets lifted.
+    mut prev = ""
     while i < n {
         if !is_ident_start(bytes[i]) {
+            if bytes[i] == ('{' as u8) && prev != "" {
+                // `<ident> {` right after `struct <ident>`: prev was pushed
+                // by the branch below only when the word before it was
+                // `struct`, so this brace closes the body shape.
+                t.add_body(prev)
+            }
+            if !is_space(bytes[i]) {
+                prev = ""
+            }
             i += 1
             continue
         }
@@ -61,7 +75,9 @@ export fn shell_surface() -> InteropTable {
         // slice is valid UTF-8 and the `?? ""` never fires; it is spelled rather
         // than asserted because a door that ices on its own input is the class
         // this plan keeps removing.
-        t.add(bytes[start..i].to_str() ?? "")
+        ro word = bytes[start..i].to_str() ?? ""
+        t.add(word)
+        prev = if prev == "struct" || word == "struct" { word } else { "" }
     }
     t
 }

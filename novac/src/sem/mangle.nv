@@ -159,7 +159,7 @@ fn instance_source_name(ctx Ctx, t TyId) -> str {
 /// value or a pointer. The oracle names the tag enum off the TYPE's name even
 /// when the value struct is `NovaValue_<X>` -- measured in the fresh shell,
 /// `novac/src/emit_c/shell.tpl.c:56-58`.
-export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${own_shadow_prefix(ctx, t)}${decl_of_ty(ctx, t).name}_Tag"
+export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${decl_of_ty(ctx, t).name}_Tag"
 
 /// The module part of one of OUR names: the path plus a separator, or `""`.
 ///
@@ -177,26 +177,6 @@ export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${own_shadow_prefix(ctx, t
 fn module_prefix(ctx Ctx) -> str {
     if ctx.module_c == "" { return "" }
     "${ctx.module_c}_"
-}
-
-/// The module prefix a SHADOWING type's C name must carry (D381): the file's
-/// own declaration under a name a handed-over one also uses would otherwise
-/// print a second `struct Nova_<name>` beside the shell's -- clang refuses
-/// that unit (measured 2026-09-01). The norm's own answer is the automatic
-/// module-qualified C name, the same identity rule functions carry (9.1d).
-/// Empty for a foreign type (the shell owns its spelling), for an unshadowed
-/// own type (no collision to move away from), and for a file with no module
-/// declaration (nothing to qualify by -- the checker refuses that case by
-/// name instead). The scan walks the foreign prefix of the type table: a
-/// handful of own declarations ask it, never a hot-path resolver.
-fn own_shadow_prefix(ctx Ctx, t TyId) -> str {
-    ro d = raw_decl(ctx.tys.decl_head_of(t))
-    if d < ctx.defs.foreign_cnt { return "" }
-    ro name = ctx.types[d].name
-    for i in 0..ctx.defs.foreign_cnt {
-        if ctx.types[i].name == name { return module_prefix(ctx) }
-    }
-    ""
 }
 
 /// Is this type a record DECLARED `value`?
@@ -243,15 +223,13 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // `struct NovaValue_<name>` by value, with only a RECEIVER taken as
             // a pointer (shell.tpl.c, `NovaValue_CharsIter*`).
             TkRecord => {
-                ro sp = own_shadow_prefix(ctx, t)
-                if is_value_record(ctx, t) { return "NovaValue_${sp}${decl_of_ty(ctx, t).name}" }
-                return "Nova_${sp}${decl_of_ty(ctx, t).name}*"
+                if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+                return "Nova_${decl_of_ty(ctx, t).name}*"
             }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
-                ro sp = own_shadow_prefix(ctx, t)
-                if is_value_sum(ctx, t) { return "NovaValue_${sp}${decl_of_ty(ctx, t).name}" }
-                return "Nova_${sp}${decl_of_ty(ctx, t).name}*"
+                if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+                return "Nova_${decl_of_ty(ctx, t).name}*"
             }
             // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
             // its C spelling is the representation's -- zero cost, and what the
@@ -288,14 +266,12 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
     match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
         TkRecord => {
-            ro sp = own_shadow_prefix(ctx, t)
-            if is_value_record(ctx, t) { return "NovaValue_${sp}${decl_of_ty(ctx, t).name}" }
-            return "Nova_${sp}${decl_of_ty(ctx, t).name}"
+            if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+            return "Nova_${decl_of_ty(ctx, t).name}"
         }
         TkSum => {
-            ro sp = own_shadow_prefix(ctx, t)
-            if is_value_sum(ctx, t) { return "NovaValue_${sp}${decl_of_ty(ctx, t).name}" }
-            return "Nova_${sp}${decl_of_ty(ctx, t).name}"
+            if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
+            return "Nova_${decl_of_ty(ctx, t).name}"
         }
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.

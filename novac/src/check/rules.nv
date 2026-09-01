@@ -250,7 +250,7 @@ const PRIM_REDECL_MSG = "a primitive is a closed type (D35): its name cannot be 
 /// `struct Nova_<name>` beside the shell's and clang refuses the unit
 /// (measured 2026-09-01: ct.c carried both). Refused BY NAME until the
 /// module-qualified C names arrive; the norm itself stays wider on purpose.
-const SHADOW_FOREIGN_MSG = "this name shadows a handed-over declaration (D125 allows that), but the file declares no module -- there is nothing to qualify the C name by (D381), so the emission would redefine the shell's struct; declare a module or pick another name"
+const SHADOW_FOREIGN_MSG = "outside the subset: the interop shell already declares a struct under this name's C spelling -- a second definition in the unit is refused by clang; pick another name (goes the day novac emits the whole prelude)"
 
 /// The three ways a record construction can disagree with its declaration
 /// (#812). The spec states the first two as numbered rules

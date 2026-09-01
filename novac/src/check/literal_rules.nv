@@ -85,28 +85,27 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
         // subset's C naming yet (D381) -- see the two messages' own docs.
         if is_builtin_type_name(name) {
             @report_first_leaf_of(kids, PRIM_REDECL_MSG)
-        } else if @ctx.module_c == "" && foreign_type_named(@ctx, name) {
-            // With a module declared, the shadow is LEGAL and the C name
-            // carries the module (D125 + D381, mangle's own_shadow_prefix);
-            // with none there is nothing to qualify by, and the emission
-            // would redefine a shell struct -- so only this half refuses.
+        } else if shell_struct_named(@ctx, name) {
+            // Shadowing a handed-over name is LEGAL (D125, user wins) and the
+            // oracle spells the shadowing type with the BARE name -- so novac
+            // does too (interop: one C name per type, held by the
+            // mangle-fixed-point guard). The one REAL collision is a name
+            // whose struct the SHELL TEMPLATE already declares: two
+            // definitions of one struct in one unit, clang refuses. That
+            // exact fact lives in the interop table (shell_surface lifts
+            // every identifier of the template), so the judge reads it.
             @report_first_leaf_of(kids, SHADOW_FOREIGN_MSG)
         }
         return
     }
 }
 
-/// Does a HANDED-OVER declaration carry this name? Asked by the declaration
-/// judge above. The registry's name map cannot answer -- last put wins there,
-/// and by judgement time the file's own row has overwritten the foreign one
-/// (that order IS the shadowing rule, defs.nv) -- so the question walks the
-/// foreign prefix of the type table instead: a handful of declarations per
-/// file ask it, never a hot-path resolver.
-fn foreign_type_named(ctx Ctx, name str) -> bool {
-    for t in 0..ctx.defs.foreign_cnt {
-        if ctx.types[t].name == name { return true }
-    }
-    false
+/// Does the SHELL TEMPLATE already declare a struct under this type's C name?
+/// Asked by the declaration judge above; the answer is a membership question
+/// to the interop table, which shell_surface lifted from the template's own
+/// identifiers -- both spellings, because a record may come out by value.
+fn shell_struct_named(ctx Ctx, name str) -> bool {
+    ctx.interop.has_body("Nova_${name}") || ctx.interop.has_body("NovaValue_${name}")
 }
 
 /// A record construction judged against the DECLARATION it names (#812).

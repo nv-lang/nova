@@ -244,7 +244,7 @@ const B_BACKSLASH u8 = 0x5C
 const B_UTF8_TAIL_LO u8 = 0x80
 
 /// Whitespace byte: space, tab, CR, LF.
-fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
+export fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
 
 /// ASCII digit byte.
 fn is_digit(b u8) -> bool => b >= ('0' as u8) && b <= ('9' as u8)

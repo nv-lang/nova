@@ -417,11 +417,10 @@ fn main() {
         assert(g.message.contains("closed type (D35)"))
     }
 
-    // A handed-over name under a declared module: LEGAL, and the C name
-    // moves out of the shell's namespace -- asserted on the mangled spelling.
-    // The foreign declaration is handed IN by the test (the tiny std_decls
-    // above carries no types), and the module comes in the TEXT: compile_to_c
-    // wraps nothing.
+    // Shadowing a handed-over name is LEGAL and spelled BARE, exactly as the
+    // oracle spells it (the mangle-fixed-point guard holds that): a foreign
+    // Widget is handed in by the test, the file's own Widget wins (D125) and
+    // its struct keeps the plain name.
     ro shadow_decls = []str.of("export type Widget { q int }
 ")
     ro (d2, c2) = compile_to_c("module p
@@ -431,17 +430,21 @@ fn main() {
  println(v.n)
 }", shadow_decls)
     assert(d2.len() == 0)
-    assert(c2.contains("struct Nova_p_Widget"))
+    assert(c2.contains("struct Nova_Widget"))
 
-    // The SAME shadow with no module declaration: nothing to qualify the C
-    // name by, refused by name (the D381 prefix would be empty).
-    ro (d2b, _) = compile_to_c("type Widget { n int }
+    // The one REAL collision: a name whose struct the SHELL TEMPLATE already
+    // declares (Vec) -- two definitions of one struct in one unit, refused by
+    // name. The fact comes from the interop table, which lifts the template's
+    // own identifiers -- so the full surface is used here, not the tiny
+    // std_decls.
+    ro (d2b, _) = compile_to_c_with("module p
+type Vec { n int }
 fn main() {
  println(1)
-}", shadow_decls)
+}", []Node.new(), interop_surface())
     assert(d2b.len() >= 1)
     for g in d2b {
-        assert(g.message.contains("declares no module"))
+        assert(g.message.contains("interop shell already declares"))
     }
 
     // A name of one's own stays clean and unprefixed -- the mangle answers
