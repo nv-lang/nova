@@ -805,11 +805,11 @@ export fn disj_head_slots(pat []Node) -> []int {
         ro cur = pat[i]
         match prev {
             Leaf(t) => {
-                if t.kind == TokenKind.Pipe && cur.is_ident() {
-                    slots.push(i)
-                } else {
-                    // Not a pipe, or the head is a recovery gap: no slot.
-                }
+                // Only an identifier right after a pipe is an alternative
+                // head; anything else is the pattern body or a recovery gap.
+                if t.kind != TokenKind.Pipe { continue }
+                if !cur.is_ident() { continue }
+                slots.push(i)
             }
             Branch { .. } => {}
         }
