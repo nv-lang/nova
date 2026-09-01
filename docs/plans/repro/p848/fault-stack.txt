@@ -1,0 +1,38 @@
+[segv-diag] handler installed (NOVA_DIAG_SEGV=1)
+Running 1 tests...
+
+nova: fiber stack overflow in slot 23 (access violation in fiber arena)
+Hint: increase NOVA_FIBER_STACK (env / nova.toml [runtime].fiber_stack) or reduce recursion depth.
+
+=== [SEGV-DIAG] EXCEPTION_ACCESS_VIOLATION ===
+PID=69720 TID=64628
+ExceptionCode:    0xC0000005
+ExceptionAddress: 00007FF614BD90D2 (RIP at fault)
+AccessMode:       READ (info[0]=0)
+FaultAddress:     0x0000022F3EB94008 (target of the bad op)
+ExeBase:          00007FF614BC0000
+RIP-RVA:          0x190D2 (= RIP - ExeBase, if RIP in exe)
+RIP=00007FF614BD90D2 RSP=0000022F3EB8DF98 RBP=0000000000000000
+RAX=0000022F3EB94000 RBX=0000000000000000 RCX=0000022F3EB94000 RDX=0000022F36E01970
+RSI=0000022F3735A380 RDI=0000000000000000 R8 =0000022F370F0000 R9 =0000000000000028
+R10=0000000000000280 R11=0000000000000000 R12=0000022F3732CBA0 R13=0000000000000001
+R14=0000022F3EB8E100 R15=0000000000000006
+
+=== Stack trace (frame[1] = caller of crash site = KEYSTONE) ===
+  #00 00007FF614BD90D2  oversub_stress!mco_status+0x12  (D:\Sources\nv-lang\nova\compiler-codegen\nova_rt\minicoro.h:1842)
+  #01 00007FF614BED57F  oversub_stress!_nova_fw_gc_push_other_roots+0x13F  (D:\Sources\nv-lang\nova\compiler-codegen\nova_rt\fiber_arena_win.c:245)
+  #02 00007FF614C20CAC  oversub_stress!GC_mark_some_inner+0x28C  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\mark.c:385)
+  #03 00007FF614C1F42B  oversub_stress!GC_mark_some+0xB  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\mark.c:408)
+  #04 00007FF614C14D55  oversub_stress!GC_stopped_mark+0xE5  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\alloc.c:875)
+  #05 00007FF614C146AA  oversub_stress!GC_collect_a_little_inner+0x1FA  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\alloc.c:763)
+  #06 00007FF614C2CE37  oversub_stress!GC_generic_malloc_many+0xB7  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\mallocx.c:349)
+  #07 00007FF614C2977E  oversub_stress!GC_malloc_kind+0xDE  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\thread_local_alloc.c:187)
+  #08 00007FF614BD9F13  oversub_stress!nova_alloc+0x13  (D:\Sources\nv-lang\nova\compiler-codegen\nova_rt\alloc_boehm.c:255)
+  #09 00007FF614BC96A3  oversub_stress!nova_fn_4time8duration9real_time+0x13  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:3215)
+  #10 00007FF614BC9534  oversub_stress!Nova_Time_sleep+0x54  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:1291)
+  #11 00007FF614BC876B  oversub_stress!Nova_Duration_method_sleep+0x1B  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:2315)
+  #12 00007FF614BC6672  oversub_stress!_nova_spawn_0+0x2A2  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:12241)
+  #13 00007FF614BD96B6  oversub_stress!_mco_main+0x16  (D:\Sources\nv-lang\nova\compiler-codegen\nova_rt\minicoro.h:623)
+  #14 DEADDEADDEADDEAD  ?!?+0x0
+  #15 0000022F3E794000  ?!?+0x0
+=== [SEGV-DIAG END] ===
