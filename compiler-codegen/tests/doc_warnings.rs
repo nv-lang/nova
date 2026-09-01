@@ -21,12 +21,19 @@ fn build_tree(src: &str) -> doc::DocTree {
 
 #[test]
 fn malformed_stability_attr_warns() {
+    // ОБРАЗЕЦ ИСПРАВЛЕН 2026-09-01 (№854): было `#[deprecated]` — а это НЕ
+    // malformed-форма, а ВАЛИДНАЯ: `stability.rs` явно трактует голый
+    // `#deprecated` без аргумента как законный («пустая note»), поэтому
+    // предупреждения и не было. Канон malformed-формы зафиксирован юнит-
+    // тестами того же модуля (`malformed_bracket_deprecated_emits_warning`):
+    // это `#[deprecated()]` с ПУСТЫМИ скобками. Тест не ослаблен — он теперь
+    // проверяет именно то, что обещает его имя.
     let src = r#"
 module x
 
 /// First-line summary.
 ///
-/// #[deprecated]
+/// #[deprecated()]
 export fn foo() -> int => 1
 "#;
     let tree = build_tree(src);
