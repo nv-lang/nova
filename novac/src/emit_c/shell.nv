@@ -60,9 +60,14 @@ export fn shell_surface() -> InteropTable {
                 // by the branch below only when the word before it was
                 // `struct`, so this brace closes the body shape.
                 t.add_body(prev)
+            } else {
+                // Any other separator: not a body brace, nothing to lift.
             }
             if !is_space(bytes[i]) {
                 prev = ""
+            } else {
+                // Whitespace between `struct`, the name and `{` is legal C:
+                // the pending name survives it.
             }
             i += 1
             continue

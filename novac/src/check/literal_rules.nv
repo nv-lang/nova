@@ -90,11 +90,14 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
             // oracle spells the shadowing type with the BARE name -- so novac
             // does too (interop: one C name per type, held by the
             // mangle-fixed-point guard). The one REAL collision is a name
-            // whose struct the SHELL TEMPLATE already declares: two
+            // whose struct BODY the SHELL TEMPLATE already defines: two
             // definitions of one struct in one unit, clang refuses. That
-            // exact fact lives in the interop table (shell_surface lifts
-            // every identifier of the template), so the judge reads it.
+            // exact fact lives in the interop table (shell_surface lifts the
+            // template's `struct <name> {` shapes), so the judge reads it.
             @report_first_leaf_of(kids, SHADOW_FOREIGN_MSG)
+        } else {
+            // A name of one's own, or a legal bare-name shadow: nothing to
+            // refuse and nothing to record for it here.
         }
         return
     }
