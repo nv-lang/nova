@@ -51,8 +51,18 @@ fn Checker mut @report_if_int_too_large(kids []Node) -> () {
 /// Does this decimal digit run fit in `int`? Compared as text against the
 /// bound, so nothing is parsed into the type whose range is being judged.
 /// Leading zeros are stripped first: `0000009` is nine, not a nine-digit
-/// number.
+/// number. A hex literal (the hex wave) has its own bound: at most 16 hex
+/// digits after the leading zeros, and on the 16th the first stays under 8
+/// (int is i64; `0x7FFF...` fits, `0x8000...` does not).
 fn int_text_fits(t str) -> bool {
+    if t.byte_len() > 2 && t[..2] == "0x" {
+        mut h = 2
+        while h + 1 < t.byte_len() && t[h..h + 1] == "0" { h += 1 }
+        ro hex = t[h..]
+        if hex.byte_len() < 16 { return true }
+        if hex.byte_len() > 16 { return false }
+        return !(hex[..1] > "7")
+    }
     mut i = 0
     while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
     // The upper bound is omitted: `t[i..]` says the same and the linter is

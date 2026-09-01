@@ -668,3 +668,35 @@ fn main() {
     assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 0,"))
     assert(c.contains("\"\", 0, \"half wants a positive\");"))
 }
+
+test "hex literals lex as one IntLit and keep their spelling (hex wave)" {
+    // `0x0A` used to lex as IntLit(0) plus identifier `x0A` -- the F21
+    // refusal caught the pair; now the run is ONE token and its text goes
+    // to C verbatim (C reads the same spelling, so nothing converts).
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("const MASK int = 0xFF
+fn main() {
+ println(MASK)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("0xFF"))
+
+    // The magnitude judge (#810) reads hex by its own bound (int is i64):
+    // sixteen digits led by 8 overflow, led by 7 fit.
+    ro (d2, _) = compile_to_c("fn main() {
+ println(0x8000000000000000)
+}", std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("does not fit in `int`"))
+    ro (d3, _) = compile_to_c("fn main() {
+ println(0x7FFFFFFFFFFFFFFF)
+}", std)
+    assert(d3.len() == 0)
+
+    // A broken tail is one refusal, not a silent pair: the whole run is a
+    // single ErrorTok (`0xZZ` never splits into `0` and `xZZ`).
+    ro (d4, _) = compile_to_c("fn main() {
+ println(0xZZ)
+}", std)
+    assert(d4.len() >= 1)
+}
