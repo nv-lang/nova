@@ -108,7 +108,7 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
         if ek.len() == 0 {
             // At Eof the run drained nothing: the zero-width leaf keeps the
             // node lossless and gives the refusal a position.
-            ek.push(@missing())
+            ek.push(@missing_of(TokenKind.ErrorTok))
         } else {
             // Tokens were taken; the node carries them.
         }
@@ -486,7 +486,7 @@ fn Cursor mut @atom() -> Node {
             kids.push(@take())
             kids.push(@expr())
         }
-        if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+        if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
         @no_ctor = saved
         if is_tuple {
             return @node(NodeKind.TupleExpr, kids)
@@ -502,10 +502,10 @@ fn Cursor mut @atom() -> Node {
     if @peek() == TokenKind.KwIf {
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
-        if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing()) }
+        if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
         if @peek() == TokenKind.KwElse {
             kids.push(@take())
-            if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing()) }
+            if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
         } else {
             // No else: an `if` used as a value without one is a mistake check
             // names, and the absent node is what lets it see the absence.
@@ -635,7 +635,7 @@ fn Cursor mut @atom() -> Node {
     // enclosing loop must notice this (see the non-advancement guard in
     // block/args).
     if is_terminator(@peek()) {
-        return @node(NodeKind.Err, []Node.of(@missing()))
+        return @error_node(TokenKind.ErrorTok)
     }
     @node(NodeKind.Err, []Node.of(@take()))
 }

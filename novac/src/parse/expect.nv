@@ -85,6 +85,6 @@ fn Cursor mut @push_expected(mut kids []Node, k TokenKind) -> () {
         // `)`. The leaf is safe to give a real kind because it lives INSIDE an
         // Err branch, and every consumer of the tree filters DIRECT children by
         // kind; nothing but the refusal reader ever looks in there.
-        kids.push(@node(NodeKind.Err, []Node.of(@missing_of(k))))
+        kids.push(@error_node(k))
     }
 }

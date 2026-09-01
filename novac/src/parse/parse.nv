@@ -153,35 +153,30 @@ fn Cursor mut @take() -> Node {
 /// terminator gave an Err with no leaves, that is SILENT acceptance of
 /// broken input (caught by the fuzzer right after terminator input was
 /// added, 274.3/F15).
-fn Cursor @missing() -> Node {
+///
+/// `k` is the kind that was WANTED (#850) -- but a real kind is safe ONLY
+/// on a leaf inside an Err branch, where nothing but the refusal reader
+/// looks. A gap standing loose among a form's own children (a `)` slot, a
+/// block slot) takes `TokenKind.ErrorTok`: a zero-width `RParen` there
+/// would be read by every consumer that filters direct children by kind.
+fn Cursor @missing_of(k TokenKind) -> Node {
     if @i >= @toks.len() {
         ro last = @toks[@toks.len() - 1]
-        return leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: last.text })
+        return leaf(Token { kind: k, leading: "", text: last.text })
     }
     ro t = @toks[@i]
-    leaf(Token { kind: TokenKind.ErrorTok, leading: "", text: t.text[..0] })
+    leaf(Token { kind: k, leading: "", text: t.text[..0] })
 }
 
-/// The same missing token, but WEARING the kind that was wanted.
-///
-/// `@missing()` answers `ErrorTok`, which is right where recovery plants a gap:
-/// it knows a form broke, not what would have mended it. A door that took a
-/// REQUIRED token knows exactly, and threw it away until #850 -- so the refusal
-/// could only say "this is not a form of the language". Roslyn's
-/// `EatTokenAsKind` is the donor: the missing token carries the kind it should
-/// have been, and the reader of the tree names it.
-///
-/// Safe because the leaf lives inside an Err BRANCH, and every consumer filters
-/// DIRECT children by kind -- nothing but the refusal reader looks in there. A
-/// zero-width `Ident` loose among a declaration's own children would be another
-/// matter entirely.
-fn Cursor @missing_of(k TokenKind) -> Node {
-    ro m = @missing()
-    match m {
-        Leaf(t) => leaf(Token { kind: k, leading: t.leading, text: t.text })
-        Branch { .. } => m
-    }
-}
+/// One Err node wrapping one missing token: the ONE spelling of "the grammar
+/// wanted something here and it is not there" (owner's dedup, 2026-09-01 --
+/// ten hand-written copies of `@node(NodeKind.Err, ...)` said it before).
+/// `k` is the kind that would have mended the form (#850, Roslyn
+/// `EatTokenAsKind`); recovery that only knows the form broke -- a junk
+/// bucket, a refused head -- passes `TokenKind.ErrorTok`, exactly what the
+/// old kindless door answered.
+fn Cursor mut @error_node(k TokenKind) -> Node =>
+    @node(NodeKind.Err, []Node.of(@missing_of(k)))
 
 // The three stop sets of recovery, named ONCE each.
 //
@@ -576,7 +571,7 @@ fn Cursor mut @module_decl() -> Node {
         // `module` with no path is broken input, and the tree has to say so:
         // a ModuleDecl holding only the keyword passed check in SILENCE. The
         // zero-width leaf gives the refusal a position (274.3/F15).
-        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        kids.push(@error_node(TokenKind.ErrorTok))
     }
     @node(NodeKind.ModuleDecl, kids)
 }
@@ -879,7 +874,7 @@ fn Cursor mut @stmt() -> Node {
             // `if cond` with no body: the statement is incomplete and the
             // tree must SAY so. Without a marker check finds nothing wrong
             // and the emitter reaches for a third child that is not there.
-            kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+            kids.push(@error_node(TokenKind.ErrorTok))
         }
         // `else` and the `else if` chain. Both shapes hang off the SAME
         // node: [KwIf, cond, block, KwElse, <Block | IfStmt>], so a reader
@@ -893,7 +888,7 @@ fn Cursor mut @stmt() -> Node {
             } else {
                 // `else` with neither a block nor a chained `if`: incomplete,
                 // and the tree must SAY so or check finds nothing wrong.
-                kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+                kids.push(@error_node(TokenKind.ErrorTok))
             }
         } else {
             // No else branch: the if is complete on its own.
@@ -935,7 +930,7 @@ fn Cursor mut @stmt() -> Node {
                 kids.push(@take())
                 @push_expected(kids, TokenKind.Ident)
             }
-            if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+            if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
             @push_expected(kids, TokenKind.Assign)
             kids.push(@expr())
             return @node(NodeKind.TupleBind, kids)
@@ -960,7 +955,7 @@ fn Cursor mut @stmt() -> Node {
         } else {
             // `while cond` with no body: same as the if above -- the marker
             // is what turns silent acceptance into one honest refusal.
-            kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+            kids.push(@error_node(TokenKind.ErrorTok))
         }
         return @node(NodeKind.WhileStmt, kids)
     }
@@ -974,7 +969,7 @@ fn Cursor mut @stmt() -> Node {
         } else {
             // `for x in r` with no body: the marker is the only thing that
             // stops a bodyless loop from reaching the emitter unrefused.
-            kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+            kids.push(@error_node(TokenKind.ErrorTok))
         }
         return @node(NodeKind.ForStmt, kids)
     }

@@ -49,7 +49,7 @@ fn Cursor mut @export_decl() -> Node {
         // `export` in front of something that is not a declaration. The leaf is
         // already in the tree (nothing is lost); naming the mistake is check's
         // job, and it has the span.
-        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        kids.push(@error_node(TokenKind.ErrorTok))
     }
     @node(NodeKind.ExportDecl, kids)
 }
@@ -80,7 +80,7 @@ fn Cursor mut @extern_decl() -> Node {
         // `extern` before something that is not `fn`. The leaves are in the
         // tree (nothing is lost) and check has the span: the oracle allows
         // `type` here too, and that form arrives with the type work.
-        lead.push(@node(NodeKind.Err, []Node.of(@missing())))
+        lead.push(@error_node(TokenKind.ErrorTok))
         return @node(NodeKind.Err, lead)
     }
 }
@@ -119,7 +119,7 @@ fn Cursor mut @import_decl() -> Node {
         //
         // The gap is planted, not said: whether it is worth saying is the
         // checker's one decision for every gap in the file.
-        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        kids.push(@error_node(TokenKind.ErrorTok))
     } else {
         // A path was read; how well-formed it is, `check` judges.
     }
@@ -189,7 +189,7 @@ fn Cursor mut @test_decl() -> Node {
     } else {
         // A test without a body: the marker is what turns silent acceptance
         // into one honest refusal, exactly as for a bodiless `if`.
-        kids.push(@node(NodeKind.Err, []Node.of(@missing())))
+        kids.push(@error_node(TokenKind.ErrorTok))
     }
     @node(NodeKind.TestDecl, kids)
 }
