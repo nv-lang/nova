@@ -76,6 +76,27 @@ git -C "$TMP" add src/t.toml 2>/dev/null
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q "токен"; then ok "staged: ловит токен известной формы"; else bad "staged-токен не пойман (rc=$rc): $out"; fi
 
+# 6б. STAGED-РЕЖИМ УВАЖАЕТ СПИСОК ИСКЛЮЧЕНИЙ (2026-09-01).
+# До этой проверки список строился только в ветке `--tree`, и файл из списка
+# проходил проверку ДЕРЕВА, но краснел в момент КОММИТА — нашлось окном 274
+# на `std/src/encoding/url.nv` (учебные креды в адресе — предмет самого модуля).
+# Самотест того дня этого НЕ ловил: staged-случай был только один, и без списка.
+setup
+printf 'url = "https://user:pass@example.com/api"
+' > "$TMP/src/u.nv"
+printf 'src/u.nv   # uchebnyi adres: kredy v URL -- predmet moduly
+' > "$TMP/scripts/guards/secrets-allowlist.baseline"
+git -C "$TMP" add src/u.nv 2>/dev/null
+out=$(NOVA_SECRETS_ALLOWLIST="$TMP/scripts/guards/secrets-allowlist.baseline" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "staged: файл из списка исключений не краснит коммит"; else bad "staged: исключённый файл всё равно красный (rc=$rc): $out"; fi
+
+# 6в. И НЕ ОСЛЕП: тот же файл без списка обязан краснеть — иначе фикс
+# выше превратил бы staged-режим в тихое «ok» на всё подряд.
+printf '# pustoy spisok
+' > "$TMP/scripts/guards/secrets-allowlist.baseline"
+out=$(NOVA_SECRETS_ALLOWLIST="$TMP/scripts/guards/secrets-allowlist.baseline" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ]; then ok "staged: без списка тот же файл краснеет"; else bad "staged: без списка секрет прошёл (rc=$rc): $out"; fi
+
 # 7. На настоящем дереве зелёный — иначе страж въезжает в гейт красным.
 REAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 out=$(NOVA_SECRETS_ALLOWLIST="$REAL/scripts/guards/secrets-allowlist.baseline" bash "$G" --tree "$REAL" 2>&1); rc=$?
@@ -116,6 +137,6 @@ else
 fi
 rm -rf "$CFGT"
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-staged-secrets: 11/11 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-staged-secrets: 13/13 ok"; exit 0; fi
 echo "селфтест check-staged-secrets: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
