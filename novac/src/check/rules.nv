@@ -245,6 +245,26 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The for-CALL head judge's answer (wave B16): the head must hand back a
+/// vector -- an instance of arity one -- or the loop has no element type.
+const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"
+
+/// The ELEMENT a for-head vector carries, or no type: an instance of arity
+/// one answers its argument, anything else answers nothing -- the caller
+/// turns that into the named refusal above. The same doors the index typing
+/// walks (TkApp + arg_count + arg), asked from the for judge.
+fn for_head_elem(ctx Ctx, t TyId) -> TyId {
+    if !is_ty(t) { return no_ty() }
+    ro k = ctx.tys.kind_of(t)
+    ro is_app = match k {
+        TkApp => true
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_app { return no_ty() }
+    if ctx.tys.arg_count(t) != 1 { return no_ty() }
+    ctx.tys.arg(t, 0)
+}
+
 /// The destructuring judge's two answers (B15 step 5). The arity text names
 /// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
 const DESTR_NOT_TUPLE_MSG = "a destructuring binding needs a TUPLE initializer -- this expression's type is not a tuple"
@@ -538,6 +558,13 @@ const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi
 fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     if kids.len() < 4 { return }
     ro head = kids[3]
+    // A CALL head is a legal form since the for-CALL wave (B16): the callee
+    // hands back a vector and typing judges exactly that -- the form rule
+    // only stops the shapes nothing downstream can judge.
+    if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
+       head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
+        return
+    }
     if head.kind_of() != NodeKind.Bin {
         // A head that is not a binary operator is EITHER a collection --
         // legal Nova, and it arrives with generics -- or a scalar, which the

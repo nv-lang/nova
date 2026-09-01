@@ -1,0 +1,12 @@
+module basics.for_call_head
+
+fn mk() -> []int {
+    ro v = []int.of(3, 5, 8)
+    v
+}
+
+fn main() {
+    for x in mk() {
+        println(x)
+    }
+}

@@ -1,0 +1,11 @@
+module basics.for_name_head
+
+fn main() {
+    ro xs = []int.of(4, 6)
+    for x in xs {
+        println(x)
+    }
+    for y in xs {
+        println(y + 1)
+    }
+}

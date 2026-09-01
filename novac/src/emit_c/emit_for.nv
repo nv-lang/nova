@@ -1,0 +1,47 @@
+// The for-over-a-call emission: a vector head walks by len/get.
+//
+// Donor: none for the shape -- the loop is the C the fixed point itself runs
+// (`_method_len` guard, `_method_get` per step); the METHOD NAMES come from
+// builtins (P5) and their C spelling from the one mangle door, so nothing is
+// spelled here that another door does not own.
+// Role: the ForStmt arm of emit_stmt routes a Call/MethodCall head here; the
+// range head keeps its arm in emit_c.nv. The head is materialized ONCE into a
+// temporary -- its effects are the caller's, one evaluation is the contract.
+// Used by: emit_c.nv's ForStmt arm, nothing else.
+// Guarded by: the diff corpus carrier (for_call_head, wave B16) and the
+// subset_test holder; check-novac-emitted-names holds the namespaces.
+//
+// INTEROP, named as such: `_method_get` hands back the shell's Option BY
+// VALUE (`NovaOpt_X{.tag,.value}`, read off shell.tpl.c) and the loop body
+// reads `.value` directly -- the guard above proves the index is in range, so
+// the tag is always Some and no language-level Option is involved. Goes the
+// day novac emits the whole prelude.
+
+module emit_c
+
+import ../sem.{Ctx, CheckOut, branch_children, leaf_text, c_instance_method, c_type}
+import ../tree.{Node, NodeKind}
+import ../types.{TyId}
+import ../builtins.{VEC_LEN_METHOD, VEC_GET_METHOD}
+
+/// One `for` whose head is a call handing back a vector (wave B16): the head
+/// runs ONCE into a temporary, the loop walks `0..len`, and the element local
+/// is `get(v, i).value` -- the checker bound the loop variable to the element
+/// type, this door only spells what was decided.
+fn Emitter mut @emit_for_call(kids []Node) -> () {
+    ro head = kids[3]
+    ro ht = @out.type_of(head.id_of())
+    ro elem_t = @ctx.tys.arg(ht, 0)
+    ro vtmp = "_novac_tmp_t${@fresh_uniq()}"
+    ro itmp = "_novac_i_t${@fresh_uniq()}"
+    @hoist_array_lits(head)
+    @body.append("    ${c_type(@ctx, ht)} ${vtmp} = ")
+    @emit_expr(head)
+    @body.append(";\n")
+    ro len_c = c_instance_method(@ctx, ht, VEC_LEN_METHOD)
+    ro get_c = c_instance_method(@ctx, ht, VEC_GET_METHOD)
+    @body.append("    for (nova_int ${itmp} = 0; ${itmp} < ${len_c}(${vtmp}); ${itmp}++) {\n")
+    @body.append("    ${c_type(@ctx, elem_t)} ${leaf_text(kids[1])} = ${get_c}(${vtmp}, ${itmp}).value;\n")
+    @emit_block_stmts_fn(kids[4], false)
+    @body.append("    }\n")
+}

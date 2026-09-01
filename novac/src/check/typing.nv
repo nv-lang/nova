@@ -597,7 +597,31 @@ fn Checker mut @type_stmt(st Node) -> () {
             assert(@out.len() > 0, "check: a malformed for head reached typing with no refusal")
             return
         }
-        ro range = branch_children(kids[3])
+        ro head = kids[3]
+        if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
+           head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
+            // A COLLECTION head (wave B16): a call, a name or a field hands
+            // back a VECTOR, the
+            // loop variable is its element. The call's type is RECORDED --
+            // the Call arm of the walk does not cache it (the B15 step 5
+            // lesson), and the emitter reads the strict door.
+            ro before = @out.len()
+            @type_expr(head)
+            if @out.len() > before { return }
+            ro ht = type_of(head, @ctx, @scope, @chan)
+            ro elem = for_head_elem(@ctx, ht)
+            if !is_ty(elem) {
+                @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
+                return
+            }
+            @record(head, ht)
+            ro cmark = @scope.mark()
+            @scope.bind(leaf_text(kids[1]), elem, ParamMode.ModeRo)
+            @type_block(kids[4])
+            @scope.release(cmark)
+            return
+        }
+        ro range = branch_children(head)
         if range.len() > 2 {
             @type_expr(range[0])
             @type_expr(range[2])

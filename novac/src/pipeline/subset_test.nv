@@ -526,3 +526,51 @@ fn main() {
     // row would test the cascade, not the judge.
     assert(d3[0].message.contains("needs a TUPLE initializer"))
 }
+
+test "a collection head walks the vector by len/get; a scalar head refuses (B16)" {
+    // `for x in mk()`: the head runs ONCE into a temporary, the loop guards
+    // on _method_len and reads _method_get(...).value -- the .value is the
+    // shell's Option ABI (interop), never a language Option. Asserted on the
+    // C shapes; behavior is the corpus carriers' to hold. The generic Vec
+    // head is handed IN -- the tiny std_decls carries no types, and the
+    // slice sugar cannot intern []int without it (the same hand-in the
+    // literal tests above use).
+    mut std = std_decls()
+    std.push("module std.v
+export type Vec[T] { n int }")
+    ro (d, c) = compile_to_c("fn mk() -> []int {
+ ro v = []int.of(3, 5)
+ v
+}
+fn main() {
+ for x in mk() {
+  println(x)
+ }
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_method_len("))
+    assert(c.contains("_method_get("))
+    assert(c.contains(").value;"))
+
+    // A NAME head takes the same door.
+    ro (d2, c2) = compile_to_c("fn main() {
+ ro xs = []int.of(4)
+ for x in xs {
+  println(x)
+ }
+}", std)
+    assert(d2.len() == 0)
+    assert(c2.contains("_method_get("))
+
+    // A call that hands back a SCALAR has no element: refused by name.
+    ro (d3, _) = compile_to_c("fn one() -> int {
+ 5
+}
+fn main() {
+ for x in one() {
+  println(x)
+ }
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("does not return a vector"))
+}

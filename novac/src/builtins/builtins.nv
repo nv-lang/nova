@@ -55,6 +55,11 @@ export const ENTRY_FN = "main"
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
 
+/// The vector methods the for-over-a-call emission walks with (B16 wave,
+/// P5: std names live here, the emitter must not spell them itself).
+export const VEC_LEN_METHOD = "len"
+export const VEC_GET_METHOD = "get"
+
 /// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
 /// the others (P5): the emitter must not spell std names itself, and the
 /// registry is asked for the row under this name.

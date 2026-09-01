@@ -104,7 +104,10 @@
 # страж resolve-discipline верно отказал линейному сравнению имён; вопрос
 # судьи теперь держит `Ctx.builtin_names` (NameTable, O(1)), заполняемый тем
 # же циклом сидирования — одно место читает builtin_types(), дрейфа нет.
-builtins 26
+# builtins 26 -> 28 (2026-09-01, волна B16): `VEC_LEN_METHOD`/`VEC_GET_METHOD`
+# — имена методов вектора для обхода в for-эмиссии (P5: имена std живут в
+# builtins, эмиттер сам их не спеллит; C-имя даёт единственная mangle-дверь).
+builtins 28
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

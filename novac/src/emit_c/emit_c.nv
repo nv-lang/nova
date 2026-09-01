@@ -767,6 +767,15 @@ fn Emitter mut @emit_stmt(st Node) -> () {
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         ro v = leaf_text(kids[1])
+        if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
+           kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
+            // A COLLECTION head (wave B16) walks a vector; its own co-equal
+            // door spells the len/get loop. A name or field head costs one
+            // pointer copy into the temporary -- the same one-evaluation
+            // contract a call head needs for its effects.
+            @emit_for_call(kids)
+            return
+        }
         ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
         @body.append("    for (nova_int ${v} = ")
         @emit_expr(range[0])
