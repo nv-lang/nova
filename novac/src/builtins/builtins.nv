@@ -267,19 +267,6 @@ export fn prim_c_name(ordinal int) -> str
     universe[ordinal].c_name
 }
 
-/// Is this SOURCE name a built-in type of the language (D35)? The judge of a
-/// declaration asks it: primitives are CLOSED types -- `type str {...}` is a
-/// refusal by the norm itself, not a subset limit -- and the whole universe
-/// answers, not the four the subset compiles, because the reservation is the
-/// language's. A scan, not a table: declarations per file are a handful, and
-/// this is a judge at collection, never a resolver on a hot path.
-export fn is_builtin_type_name(name str) -> bool {
-    for b in universe {
-        if b.name == name { return true }
-    }
-    false
-}
-
 /// The SOURCE spelling of a primitive by its universe ordinal — the name a
 /// diagnostic shows a person (`int`), not the runtime ABI name the mangler needs
 /// (`nova_int`, which is `prim_c_name` right above).

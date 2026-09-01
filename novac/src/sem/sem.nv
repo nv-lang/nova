@@ -217,6 +217,7 @@ export type CallForm enum
 /// reference"); every name -> id step goes through a table door.
 export type Ctx {
     module_c str /// THIS file's module path in the shape a C name carries it (`novac.sem` -> `novac_sem`); `""` when the file declares none. Part of a declaration's IDENTITY (plan 274 section 9.1d point 1), which is why it is not derived at each use
+    builtin_names NameTable /// SOURCE names of the language's built-in types (the universe), for the declaration judge: D35 closes them forever, and the defs map cannot answer -- the file's own row overwrites the seeded one (last put wins). Filled by the seed loop, the one place that reads builtin_types()
     coerces []CoercePair /// Implicit conversions declared with `#coerce` (D429), read from declarations.
     types []TypeDef /// The type registry; a prefix of pre-seeded primitives, then the file's types in declaration order.
     tys Interner /// THE type interner (layer 4): every Ty of this file is a row here; identity is the id (E2-b1).
@@ -389,12 +390,16 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // order; the seed hands the ACTUAL ids back (CommonTypes model). The
     // universe ordinal is the interner's head for a primitive.
     mut seeded = []DeclId.new()
+    // The judge's copy of the universe's NAMES (see the Ctx field): filled by
+    // the same loop that seeds, so the two cannot drift.
+    mut builtin_names = NameTable.new(NamespaceId.NsDefs)
     // TypeDef row per type-parameter INDEX, built on demand by the fn branch
     // below and shared by every declaration (see the comment there).
     mut param_rows = []TyId.new()
     mut ordinal = 0
     for bt in builtin_types() {
         seeded.push(seed(types, defs, tys, bt.name, ordinal))
+        builtin_names.put(bt.name, ordinal)
         ordinal += 1
     }
     // THE HANDED-OVER TYPES, right after the seed and before anything of this
@@ -866,5 +871,5 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut own = fns
     own.own_cnt = own.rows.len()
     Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
-          module_c: module_path_c(file), coerces, protos, consts, interop: InteropTable.new() }
+          module_c: module_path_c(file), builtin_names, coerces, protos, consts, interop: InteropTable.new() }
 }

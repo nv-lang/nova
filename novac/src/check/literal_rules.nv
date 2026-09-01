@@ -20,7 +20,6 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
 import ../sem.{raw_frow, no_frow}
 import ../types.{TyId, is_ty}
-import ../builtins.{is_builtin_type_name}
 
 /// The MAGNITUDE of an integer literal -- the question nobody asked until
 /// registry #810 (hunter, 2026-08-30). The lexer makes an IntLit of any run of
@@ -83,7 +82,7 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
         // a primitive's name is the language's forever (D35), and a
         // handed-over name is shadowable by the NORM (D125) but not by this
         // subset's C naming yet (D381) -- see the two messages' own docs.
-        if is_builtin_type_name(name) {
+        if @ctx.builtin_names.find(name) >= 0 {
             @report_first_leaf_of(kids, PRIM_REDECL_MSG)
         } else if shell_struct_named(@ctx, name) {
             // Shadowing a handed-over name is LEGAL (D125, user wins) and the
