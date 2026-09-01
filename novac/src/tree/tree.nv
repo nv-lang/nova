@@ -91,6 +91,7 @@ export type NodeKind enum
     // the other needs a temporary it does not build yet.
     | IfExpr
     | TupleExpr
+    | TupleBind /// destructuring binding `ro (a, b) = expr` (B15 step 5): keyword, LParen, name leaves with comma trivia, RParen, Assign, initializer
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
     | Recv

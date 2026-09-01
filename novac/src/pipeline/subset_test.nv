@@ -488,3 +488,41 @@ fn main() {
 }", std)
     assert(d2.len() >= 1)
 }
+
+test "a destructuring binding splits the pair; both judges answer by name (B15 step 5)" {
+    // `ro (a, b) = two()`: the pair lands in ONE temporary and each name is a
+    // plain local from its `.fN` -- asserted on the C shapes. The judges: a
+    // non-tuple initializer and an arity mismatch each refuse with their own
+    // text (the arity one names D123's class).
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn two() -> (int, int) {
+ (7, 9)
+}
+fn main() {
+ ro (a, b) = two()
+ println(a)
+ println(b)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains(".f0;"))
+    assert(c.contains(".f1;"))
+
+    ro (d2, _) = compile_to_c("fn main() {
+ ro (a, b, c) = (1, 2)
+ println(a)
+}", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(g.message.contains("arity mismatch"))
+    }
+
+    ro (d3, _) = compile_to_c("fn main() {
+ ro (a, b) = 5
+ println(a)
+}", std)
+    assert(d3.len() >= 1)
+    // The FIRST diagnostic is the root cause (d0 everywhere in the smoke
+    // logs); a use after the refusal may add a follower, and asserting every
+    // row would test the cascade, not the judge.
+    assert(d3[0].message.contains("needs a TUPLE initializer"))
+}

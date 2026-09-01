@@ -245,6 +245,13 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The destructuring judge's two answers (B15 step 5). The arity text names
+/// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
+const DESTR_NOT_TUPLE_MSG = "a destructuring binding needs a TUPLE initializer -- this expression's type is not a tuple"
+
+/// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
+const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
+
 /// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
 /// itself carries none -- the boundary is a judge, not unreachability.
 const TUPLE_PARAM_MSG = "outside the subset: a tuple as a PARAMETER is not compiled yet (B15 bounds) -- return one, or pass the components"

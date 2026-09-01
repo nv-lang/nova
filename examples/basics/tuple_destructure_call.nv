@@ -1,0 +1,11 @@
+module basics.tuple_destructure_call
+
+fn two() -> (int, int) {
+    (7, 9)
+}
+
+fn main() {
+    ro (a, b) = two()
+    println(a)
+    println(b)
+}

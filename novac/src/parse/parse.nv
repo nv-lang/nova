@@ -894,6 +894,22 @@ fn Cursor mut @stmt() -> Node {
         // One BindStmt for all three: the first leaf keeps the keyword, C
         // locals are identical either way (the oracle emits no const).
         mut kids = []Node.of(@take())
+        // DESTRUCTURING (B15 step 5): `ro (a, b) = expr` binds the pair's
+        // components by position. Its own kind, the B14/B15-2 discipline --
+        // before this branch the `(` fell into the declared-type reader and
+        // the refusal blamed a type nobody wrote.
+        if @peek() == TokenKind.LParen {
+            kids.push(@take())
+            @push_expected(kids, TokenKind.Ident)
+            while @peek() == TokenKind.Comma {
+                kids.push(@take())
+                @push_expected(kids, TokenKind.Ident)
+            }
+            if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+            @push_expected(kids, TokenKind.Assign)
+            kids.push(@expr())
+            return @node(NodeKind.TupleBind, kids)
+        }
         @push_expected(kids, TokenKind.Ident)
         // A DECLARED type: `ro x int = 1`. It stands between the name and the
         // `=`, and reading it here is what keeps `=` from looking absent.
