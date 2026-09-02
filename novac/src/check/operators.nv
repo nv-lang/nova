@@ -51,11 +51,19 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
         FnUnknown => {
             match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, equality_key(lhs_t, no_ty()), CallForm.MethodCall) {
                 FnUnknown => @refuse_equality_unknown(kids)
-                FnFound(_) | FnOverloaded(_) => @report_first_leaf_of(kids,
-                    "outside the subset: `==` on `str` takes a `str` right-hand side, and this operand's type is not one `${EQUAL_METHOD}` declares")
+                FnFound(_) | FnOverloaded(_) => @refuse_equality_rhs(kids)
             }
         }
     }
+}
+
+/// The typed key fit nothing while SOME `equal` of this receiver exists:
+/// the right operand's TYPE is the established cause (the key is typed
+/// since M3), and "no such method" would send the reader hunting a
+/// declaration that is right there. Its own refuser, like its siblings:
+/// the door that asks the table builds no text (P18).
+fn Checker mut @refuse_equality_rhs(kids []Node) -> () {
+    @report_first_leaf_of(kids, "outside the subset: `==` on `str` takes a `str` right-hand side, and this operand's type is not one `${EQUAL_METHOD}` declares")
 }
 
 /// More than one `equal` fits a TYPED key: a real D84 tie, refused by
