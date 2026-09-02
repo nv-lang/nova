@@ -633,6 +633,12 @@ bug stays findable:
 caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
 ```
 
+**The `?` operator follows too.** Each `?` stamps a frame into the propagation
+trace a panic prints ([D437](decisions/08-runtime.md#d437)); inside a marked
+function that frame carries the call site instead of the `?` line, which is what
+makes a thin wrapper's frames distinguishable at all. The trace's composition
+and depth are unchanged.
+
 **A contract names the caller even WITHOUT the attribute.** A violated
 `requires`/`ensures` reports the call site rather than the callee's declaration
 line, because a broken precondition is the caller's fault; the attribute then
