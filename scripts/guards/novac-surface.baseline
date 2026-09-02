@@ -562,7 +562,8 @@ resolve 15
 # слота умер вместе с I1-путём (лексер режет верхний уровень, слоты —
 # настоящие узлы); interp_slices/escaped_byte_len живут (nested-суд и
 # эмиттер фрагментов).
-sem 196
+# sem 196 -> 197 (2026-09-02, char-literal wave): `char_literal_code` (mangle) exported -- the ONE spelling door of a char literal's codepoint, read by the emitter (`'x'` -> 120), the int literal's `int_literal_c_text` precedent. Two readers must never disagree about the number, so the door is shared, hence exported.
+sem 197
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
