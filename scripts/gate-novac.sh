@@ -371,6 +371,7 @@ guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fa
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
 par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.py" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
+par_add "$ROOT/scripts/guards/check-novac-tuple-no-second-door.py" "у кортежа завелась вторая бухгалтерия: он записывается и строится не дверями записи"
 par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.py" "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
 par_add "$ROOT/scripts/guards/check-novac-pch.py" "PCH исчез из горячего пути (274.2 §1а)"
 par_add "$ROOT/scripts/guards/check-novac-line-length.py" "строка длиннее 120 символов вне исключений (П29)"
