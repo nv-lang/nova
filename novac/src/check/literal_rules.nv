@@ -208,3 +208,14 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
         // Counts agree: the construction fills the record exactly.
     }
 }
+
+/// The char-literal judge's three refusals (the char wave), homed here with
+/// the other one-written-token rules rather than in rules.nv, which the wave
+/// pushed past a thousand lines. The first two are the LANGUAGE's: the oracle
+/// refuses them at its lexer, novac's lexer keeps the run verbatim and the
+/// checker is its stage. The third is legal Nova the subset does not take yet,
+/// so it carries the subset wording. The judge itself (`@judge_char_lit`)
+/// reads these from exprs.nv -- one module, co-equal files.
+const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escape)"
+const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
+const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"
