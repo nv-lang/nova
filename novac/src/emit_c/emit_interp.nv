@@ -1,8 +1,7 @@
 // An interpolated string literal as its builder chain (wave I1).
 //
-// Donor: none for the walk -- pieces alternate literal and insert, and the
-// chain follows the pieces; the runtime entry names are read off the
-// oracle's own build cache, not invented.
+// Donor: none -- pieces alternate literal and insert, and the chain simply
+// follows the pieces; nothing here needed a pattern beyond the walk.
 // Role: the hoist's Lit arm builds here; the expression site prints the
 // temporary this door answers.
 // Used by: emit_c.nv's hoist walker, and nothing else.
