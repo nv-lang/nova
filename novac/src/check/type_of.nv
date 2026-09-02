@@ -204,6 +204,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     // is a field access on it and needs no separate rule. Outside a method the
     // binding does not exist, and the answer is absence -- which `check`
     // refuses by name rather than icing here (P12).
+    if k == NodeKind.InterpStr {
+        // The walk records str where it judges the slots; silence is a
+        // refused literal, and readers act on no_ty().
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.SelfExpr {
         // The walk recorded the receiver's type where it verified the
         // binding; silence is `@` outside a method, already refused.

@@ -600,6 +600,7 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // expression" and iced (wave 3g, measured 2026-08-23).
     k == NodeKind.SelfField ||
     k == NodeKind.SelfExpr ||
+    k == NodeKind.InterpStr ||
     k == NodeKind.MatchExpr ||
     // An array literal is an expression since wave B8 let it stand in
     // argument and constructor-field position; the walks that skip
@@ -886,17 +887,6 @@ export fn escaped_byte_len(piece str) -> int {
     len
 }
 
-/// Is this odd slot a BARE NAME -- one identifier, nothing else? The I1
-/// subset of interpolation compiles exactly that.
-export fn interp_slot_is_name(piece str) -> bool {
-    ro b = piece.bytes()
-    if b.len() == 0 { return false }
-    if !is_ident_start(b[0]) { return false }
-    for i in 1..b.len() {
-        if !is_ident_byte(b[i]) { return false }
-    }
-    true
-}
 
 /// The four bytes the slicer reads.
 const INTERP_BSLASH u8 = 0x5C  // backslash

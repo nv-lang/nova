@@ -71,6 +71,9 @@ export type TokenKind enum
     | IntLit
     | FloatLit
     | StrLit
+    | StrFrag /// one literal fragment of an interpolated string: the first carries the opening quote, the last the closing one
+    | InterpOpen /// the `${` that opens one interpolation slot inside a string
+    | InterpClose /// the `}` that closes the slot (only the lexer's interp mode makes one)
     | LParen
     | RParen
     | LBrace
@@ -164,6 +167,9 @@ export fn spelling_of(k TokenKind) -> Option[str] => match k {
     IntLit => Some("an integer literal")
     FloatLit => Some("a float literal")
     StrLit => Some("a string literal")
+    StrFrag => Some("a string fragment")
+    InterpOpen => Some("`\${`")
+    InterpClose => Some("`}` (slot end)")
     LParen => Some("`(`")
     RParen => Some("`)`")
     LBrace => Some("`{`")
@@ -243,6 +249,11 @@ const B_BACKSLASH u8 = 0x5C
 // continuation byte" is exactly "codepoint boundary".
 const B_UTF8_TAIL_LO u8 = 0x80
 
+/// The three bytes the interpolation lexing reads (wave I2).
+const INTERP_DOLLAR_B u8 = 0x24  // $
+const INTERP_LBRACE_B u8 = 0x7B  // {
+const INTERP_RBRACE_B u8 = 0x7D  // }
+
 /// Whitespace byte: space, tab, CR, LF.
 export fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
 
@@ -298,7 +309,7 @@ export fn paren_delta(k TokenKind) -> int {
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit |
+        IntLit | FloatLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -314,7 +325,7 @@ export fn bracket_delta(k TokenKind) -> int {
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit |
+        IntLit | FloatLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -331,7 +342,7 @@ export fn brace_delta(k TokenKind) -> int {
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit |
+        IntLit | FloatLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -439,6 +450,11 @@ export fn lex(src str) -> []Token {
     ro b = src.bytes()
     ro n = src.byte_len()
     mut toks = []Token.new()
+    // The INTERPOLATION MODE (wave I2): between a slot's `${` and its `}`
+    // the main loop lexes ordinary tokens; the flag is what routes the
+    // closing brace back into string gathering. One level only -- a nested
+    // string inside a slot lexes whole (its own `${` does not re-enter).
+    mut interp_mode = false
     mut i = 0
     while i < n {
         // Leading trivia: spaces, newlines, // comments (up to newline).
@@ -454,6 +470,42 @@ export fn lex(src str) -> []Token {
             }
         }
         ro leading = src[trivia_start..i]
+        if interp_mode && i < n && b[i] == INTERP_RBRACE_B {
+            // The slot ends: `}` is the InterpClose, and the STRING resumes
+            // right after it -- gather the next fragment up to the next slot
+            // or the closing quote. The fragments' leading is the empty
+            // anchored slice; the pieces alone rebuild the source.
+            toks.push(Token { kind: TokenKind.InterpClose, leading, text: src[i..i + 1] })
+            i += 1
+            mut sfs = i
+            mut open_again = false
+            while i < n {
+                if b[i] == B_LF { break }
+                if b[i] == ('"' as u8) {
+                    i += 1
+                    interp_mode = false
+                    break
+                }
+                if b[i] == B_BACKSLASH && i + 1 < n {
+                    i += 2
+                } else if b[i] == INTERP_DOLLAR_B && i + 1 < n && b[i + 1] == INTERP_LBRACE_B {
+                    open_again = true
+                    break
+                } else {
+                    i += 1
+                }
+            }
+            toks.push(Token { kind: TokenKind.StrFrag, leading: src[sfs..sfs], text: src[sfs..i] })
+            if open_again {
+                toks.push(Token { kind: TokenKind.InterpOpen, leading: src[i..i], text: src[i..i + 2] })
+                i += 2
+            } else {
+                // The quote (or an honest line end) closed the gathering;
+                // an unterminated tail is the parser's Err to name.
+                interp_mode = false
+            }
+            continue
+        }
         if i >= n {
             // The Eof text is the EMPTY SLICE ANCHORED AT THE END, not the ""
             // literal: every token text must be a real slice of src, or the
@@ -559,6 +611,30 @@ export fn lex(src str) -> []Token {
                     has_interp = has_interp || (b[i] == ('$' as u8) && i + 1 < n && b[i + 1] == ('{' as u8))
                     i += 1
                 }
+            }
+            // A LIVE interpolation splits the literal into fragment tokens
+            // (wave I2) -- unless we are already inside a slot, where a
+            // nested string lexes whole and the checker refuses its slots.
+            if closed && has_interp && !interp_mode {
+                mut sfs = start
+                mut j = start + 1
+                while j < i {
+                    if b[j] == B_BACKSLASH && j + 1 < i {
+                        j += 2
+                    } else if b[j] == INTERP_DOLLAR_B && j + 1 < i && b[j + 1] == INTERP_LBRACE_B {
+                        toks.push(Token { kind: TokenKind.StrFrag,
+                            leading: if sfs == start { leading } else { src[sfs..sfs] },
+                            text: src[sfs..j] })
+                        toks.push(Token { kind: TokenKind.InterpOpen, leading: src[j..j], text: src[j..j + 2] })
+                        interp_mode = true
+                        j += 2
+                        break
+                    } else {
+                        j += 1
+                    }
+                }
+                i = j
+                continue
             }
             kind = TokenKind.StrLit
             // A string that never CLOSED is not a plausible StrLit -- the

@@ -336,6 +336,12 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 }
             }
         }
+    } else if k == NodeKind.InterpStr {
+        ro itmp2 = @lit_tmp[raw_node(e.id_of())]
+        if itmp2 == "" {
+            ice("emit_c: an interpolated string the hoist never built (I2)")
+        }
+        @body.append(itmp2)
     } else if k == NodeKind.SelfExpr {
         // The receiver's C name, exactly as the signature spelled it.
         @body.append(RECV_C_NAME)

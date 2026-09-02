@@ -859,35 +859,24 @@ fn main() {
     assert(dok.len() == 0)
 }
 
-test "an interpolated literal builds its chain; non-name slots refuse (wave I1)" {
-    // The embedded sources spell `\${` so THIS file's own compiler leaves
-    // the interpolation to novac (the #873 lesson, paid twice).
+test "an interpolated string builds its chain; slots are real expressions (waves I1+I2)" {
+    // The chain is the oracle's own (static_new with its cap formula,
+    // per-fragment append, per-slot display insert, consume_into_str); the
+    // slots are REAL nodes since I2, so calls, fields and operators ride
+    // the ordinary expression paths. The asserts aim at OUR chain names --
+    // the shell prelude carries the oracle's, and those are always there.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn main() {
+    ro (d, c) = compile_to_c("fn twice(v int) -> int => v * 2
+fn main() {
  ro name = \"world\"
  ro n = 42
- println(\"hi \${name}, n=\${n}!\")
+ println(\"hi \${name}, tw=\${twice(n)}!\")
 }", std)
     assert(d.len() == 0)
-    // OUR chain names, absent from the shell prelude -- the shell itself
-    // carries static_new/display_spec declarations, so asserting those
-    // alone would stay green with the hoist silenced (measured).
     assert(c.contains("_novac_isb_t"))
     assert(c.contains("str_display_spec(_novac_isb_t"))
     assert(c.contains("int_display_spec(_novac_isb_t"))
     assert(c.contains("nova_print_str(_novac_istr_t"))
-
-    // A call slot refuses by name (I2 takes it).
-    ro (d2, _) = compile_to_c("fn main() {
- ro s = \"abc\"
- println(\"len \${s.len()}\")
-}", std)
-    assert(d2.len() >= 1)
-    mut hit = false
-    for g in d2 {
-        if g.message.contains("bare name") { hit = true }
-    }
-    assert(hit)
 
     // A slot type outside str|int refuses by name.
     ro (d3, _) = compile_to_c("fn main() {
@@ -901,17 +890,17 @@ test "an interpolated literal builds its chain; non-name slots refuse (wave I1)"
     }
     assert(hit3)
 
-    // A quoted literal INSIDE a slot cuts the token at the lexer (the K4
-    // shape): the slicer's empty tail keeps the contract and the form judge
-    // refuses -- this used to ICE with a backwards slice.
+    // A nested interpolation (a live slot inside a slot's string) refuses
+    // by name -- the lexer splits one level, and the I1 judge that used to
+    // ICE on the cut token is the backstop.
     ro (d4, _) = compile_to_c("fn main() {
- ro s = \"abc\"
- println(\"x \${s.replace(\"a\", \"b\")} y\")
+ ro s = \"a\"
+ println(\"bad \${\"x \${s} y\"} tail\")
 }", std)
     assert(d4.len() >= 1)
     mut hit4 = false
     for g in d4 {
-        if g.message.contains("bare name") { hit4 = true }
+        if g.message.contains("nested inside another slot") { hit4 = true }
     }
     assert(hit4)
 }

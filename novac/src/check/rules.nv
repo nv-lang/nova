@@ -76,7 +76,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
-                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
+                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | StrFrag | InterpOpen | InterpClose | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
                         Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
@@ -246,16 +246,17 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The nested-interpolation judge's answer (I2): the lexer splits one
+/// level; a literal with a live slot inside another slot stays whole, and
+/// the chain has no arm for it yet.
+const NESTED_INTERP_MSG = "outside the subset: an interpolation nested inside another slot is not compiled yet (E2-b3)"
+
 /// The bare-self judge's answer: `@` is a value only where a method body
 /// bound its receiver.
 const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
 
-/// The interpolation judges' two I1 answers: a slot name must be a bound
-/// LOCAL (a constant would substitute at the use site where no hoist ran),
-/// and its type must carry a builder insert the emitter spells today.
-const INTERP_NAME_MSG = "outside the subset: an interpolation slot takes a bound local name here (E2-b3) -- constants and globals arrive with I2"
-
-/// See INTERP_NAME_MSG above; the type half.
+/// The slot-type judge's answer: a slot's type must carry a builder insert
+/// the emitter spells today.
 const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of this type is not compiled yet (E2-b3) -- I1 spells str and int inserts"
 
 /// The constant-initializer boundary of I1: substitution happens at the use

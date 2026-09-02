@@ -523,6 +523,20 @@ fn Cursor mut @atom() -> Node {
     if @peek() == TokenKind.At {
         return @node(NodeKind.SelfExpr, []Node.of(@take()))
     }
+    // An INTERPOLATED string (wave I2): the lexer split it into fragments
+    // and slots, and every slot's expression is a real node -- typing and
+    // emission read it like any other. The lexer guarantees a fragment
+    // after every close, so the loop's shape mirrors the token stream.
+    if @peek() == TokenKind.StrFrag {
+        mut kids = []Node.of(@take())
+        while @peek() == TokenKind.InterpOpen {
+            kids.push(@take())
+            kids.push(@expr())
+            @push_expected(kids, TokenKind.InterpClose)
+            @push_expected(kids, TokenKind.StrFrag)
+        }
+        return @node(NodeKind.InterpStr, kids)
+    }
     // `[]int.of(1, 2)` starts with the ONE-token `[]` since 2026-08-17; the
     // non-empty literal still opens with a bare `[`. Both are array literals
     // and both enter here.

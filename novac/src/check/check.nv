@@ -467,6 +467,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // Bare `@` (the self wave): typing judges the receiver's
                     // presence and type; the walk has nothing of its own.
                 }
+                InterpStr => {
+                    // An interpolated string (I2): typing judges each slot's
+                    // expression and the display set; the walk descends into
+                    // the slot expressions like anyone else's children.
+                }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding
                     // (`@`) and `@field` is a field access on it. Outside a

@@ -136,33 +136,40 @@ fn Checker mut @judge_interp_lit(e Node) -> () {
         // A plain string: the literal pool owns it.
         return
     }
-    mut tys = []TyId.new()
-    mut si = 1
-    while si + 0 < pieces.len() {
-        ro nm = pieces[si]
-        if !@scope.is_bound(nm) {
-            @report_first_leaf_of(kids, INTERP_NAME_MSG)
-            return
-        }
-        ro ty = @scope.type_of_name(nm)
-        if ty == @ctx.prims.str_id || ty == @ctx.prims.int_id {
-            tys.push(ty)
-        } else {
-            @report_first_leaf_of(kids, INTERP_TYPE_MSG)
-            return
-        }
-        si += 2
-    }
-    @record(e, @ctx.prims.str_id)
-    @chan.record_subst(e.id_of(), tys)
+    // Since I2 the lexer splits every top-level interpolation into an
+    // InterpStr node -- a WHOLE literal with a live slot can only be a
+    // string nested inside another slot, and that form is refused by name
+    // (the I2 chain builds one level).
+    @report_first_leaf_of(kids, NESTED_INTERP_MSG)
 }
 
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
-    if k == NodeKind.Lit {
-        // An interpolated literal is the EXPRESSION it is (I1); a plain
-        // literal stays the lattice's business.
+    if k == NodeKind.InterpStr {
+        // Every slot's expression is a real node (I2): walked, typed, and
+        // its display type judged -- str and int carry builder inserts
+        // today. The literal's own type is str; the emitter reads the slot
+        // types from the nodes, not from a side record.
+        ro ikids = branch_children(e)
+        for c in ikids {
+            if !is_expr_kind(c.kind_of()) { continue }
+            ro before = @out.len()
+            @type_expr(c)
+            if @out.len() > before { return }
+            ro st = type_of(c, @ctx, @scope, @chan)
+            if st == @ctx.prims.str_id || st == @ctx.prims.int_id {
+                @record(c, st)
+            } else {
+                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                return
+            }
+        }
+        @record(e, @ctx.prims.str_id)
+    } else if k == NodeKind.Lit {
+        // An interpolated literal reaching the tree WHOLE is a nested one
+        // (a string inside a slot): the lexer splits only the outer level,
+        // and the I1 judge's form rule refuses these.
         @judge_interp_lit(e)
     } else if k == NodeKind.Name {
         // FIRST FLOOR. An unbound name is a USER mistake, and check is where a

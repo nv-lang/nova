@@ -786,22 +786,14 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @lit_tmp[raw_node(e.id_of())] = @emit_tuple_lit(e, @out.type_of(e.id_of()))
                 return
             }
+            if kind == NodeKind.InterpStr {
+                @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e)
+                return
+            }
             if kind == NodeKind.Lit {
-                // An INTERPOLATED literal is a multi-statement build (I1):
-                // its chain hoists like any construction. A plain literal
-                // hoists nothing -- the pool owns it -- and a leaf never
-                // nests, so the walk ends here either way.
-                ro lk2 = branch_children(e)
-                ro lt2 = lk2[lk2.len() - 1]
-                if leaf_kind(lt2) != TokenKind.StrLit {
-                    // A numeric literal: nothing to hoist.
-                    return
-                }
-                if interp_slices(leaf_text(lt2)).len() > 1 {
-                    @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e, leaf_text(lt2))
-                } else {
-                    // A plain string: the pool owns it.
-                }
+                // A literal hoists nothing: the pool owns a plain string,
+                // and the interpolated form is its own InterpStr node since
+                // I2 (a nested-in-slot literal is refused by the checker).
                 return
             }
             if kind != NodeKind.RecordCtor {

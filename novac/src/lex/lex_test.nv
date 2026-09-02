@@ -64,18 +64,23 @@ test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {
     assert(lo1 + toks[1].text.byte_len() == 8)
 }
 
-test "interpolated string stays ONE literal; the checker names it (S9.4a)" {
-    // Until 2026-08-18 this token was ErrorTok: the lexer refused the form.
-    // That made the refusal come out as "construct not in the MVP grammar"
-    // over the whole string, naming nothing -- so the rule moved where it
-    // belongs. `"hello ${x}"` is ONE literal of the language; the lexer keeps
-    // it whole, and check refuses it BY NAME (string interpolation is not
-    // compiled yet). A flat scan would still be wrong -- it would close the
-    // outer string at the inner quote -- so the scan itself is unchanged.
+test "interpolated string lexes as fragments and slot tokens (wave I2)" {
+    // S9.4a kept the literal whole while the checker refused the form; I2
+    // makes the form live, so the lexer splits it: a fragment with the
+    // opening quote, the slot markers around REAL expression tokens, and a
+    // closing fragment. Losslessness holds by concatenation, as everywhere.
     ro src = "f(\"hello \${x}\")"
     ro toks = lex(src)
-    assert(toks[2].kind == TokenKind.StrLit)
+    assert(toks[2].kind == TokenKind.StrFrag)
+    assert(toks[3].kind == TokenKind.InterpOpen)
+    assert(toks[4].kind == TokenKind.Ident)
+    assert(toks[5].kind == TokenKind.InterpClose)
+    assert(toks[6].kind == TokenKind.StrFrag)
     assert(reserialize(toks) == src)
+
+    // An ESCAPED dollar does not open a slot: the literal stays whole.
+    ro esc = lex("f(\"hello \\\${x}\")")
+    assert(esc[2].kind == TokenKind.StrLit)
 }
 
 test "an UNTERMINATED string is still a lexer error, not a literal" {
