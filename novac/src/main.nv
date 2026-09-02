@@ -60,14 +60,12 @@ fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else {
 fn base_name(path str) -> str {
     ro b = path.bytes()
     mut cut = 0
-    mut i = 0
-    while i < b.len() {
+    for i in 0..b.len() {
         if b[i] == SLASH_BYTE || b[i] == BACKSLASH_PATH_BYTE {
             cut = i + 1
         } else {
             // Any other byte belongs to the current segment.
         }
-        i += 1
     }
     path[cut..]
 }

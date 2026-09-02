@@ -22,7 +22,7 @@
 
 module emit_c
 
-import ../sem.{branch_children, unescape_dollar, ContractNote}
+import ../sem.{branch_children, unescape_dollar}
 import ../diag.{ice}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}

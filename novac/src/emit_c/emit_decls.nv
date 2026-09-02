@@ -18,7 +18,7 @@
 module emit_c
 
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
-import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record, decl_of_ty}
+import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
 import ../types.{TyId}
 import ../diag.{ice}
