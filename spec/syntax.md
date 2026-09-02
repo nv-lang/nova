@@ -617,9 +617,10 @@ int)` ([D468](decisions/08-runtime.md#d468)). Without it a diagnostic wrapper
 reports ITSELF rather than the culprit: `assert` and contracts get their
 location from the compiler, a hand-written `ice()`/`expect()` door could not.
 The attribute means "the call site flows through me", so it must be written on
-every link of a wrapper chain — a marked function calling a marked function
-passes the ORIGINAL caller along, and the location stops at the first UNMARKED
-frame. In an unmarked function `caller_loc()` honestly returns its own line. It
+every link of a wrapper chain. Propagation is a property of the CALLER, not of
+the callee: an unmarked caller passes its literal call line, a marked one passes
+what it received itself — so the location travels exactly as far as the marks
+go, and stops at the first UNMARKED frame. In an unmarked function `caller_loc()` honestly returns its own line. It
 carries no effect — the value is a call-site constant, which is what lets it be
 used in `-> never` doors.
 
