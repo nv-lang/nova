@@ -113,7 +113,7 @@ fi
 if [ "$ST_NEEDY" -gt 0 ]; then
     ST_CALLS=$(awk '/run-guard-selftest\.sh/ && $0 !~ /^[[:space:]]*#/ {print NR}' "$GATE")
     if [ -z "$ST_CALLS" ]; then
-        echo "check-gate-build-order: FAIL — самотестов с живой половиной $ST_NEEDY, но в $GATE не найден их вызов (`run-guard-selftest.sh`): форма гейта уехала, судить нечем (отказ на непонятой форме, №801)" >&2
+        echo "check-gate-build-order: FAIL — самотестов с живой половиной $ST_NEEDY, но в $GATE не найден их вызов (run-guard-selftest.sh): форма гейта уехала, судить нечем (отказ на непонятой форме, №801)" >&2
         rc=1
     else
         for _ln in $ST_CALLS; do
