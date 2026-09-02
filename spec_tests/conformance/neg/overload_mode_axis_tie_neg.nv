@@ -15,6 +15,11 @@ fn f(a int, mut b int, mut c int) -> int => 2
 fn main() Io -> () {
     mut y = 10
     mut z = 20
-    // nova:expect E_OVERLOAD_AMBIGUOUS_MODE
-    print("${f(41 + 1, y, z)}")
+    // The call sits OUTSIDE the interpolation on purpose: a diagnostic inside
+    // "${...}" loses its position and lands on line 1 (registry 880, found
+    // while fixing this row) -- which would make the line pin untestable.
+    // positions: neither candidate dominates, D84 orders the refusal here
+    // nova:expect E_OVERLOAD_AMBIGUOUS_MODE -- opposite mode variation on two
+    ro r = f(41 + 1, y, z)
+    print("${r}")
 }

@@ -16528,7 +16528,11 @@ impl<'a> TypeCheckCtx<'a> {
                                                     cands.len(),
                                                     cands.join("; "),
                                                 ),
-                                                base.span,
+                                                // No857: anchor on the CALL, not on the
+                                                // callee path base -- `base.span` lands on
+                                                // line 1 for a bare name (measured by the
+                                                // negative fixture's line pin).
+                                                func.span,
                                             ));
                                             None
                                         }
