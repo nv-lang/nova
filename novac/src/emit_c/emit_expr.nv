@@ -349,6 +349,14 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ice("emit_c: an interpolated string the hoist never built (I2)")
         }
         @body.append(itmp2)
+    } else if k == NodeKind.Coalesce {
+        // The hoist built the temporary and the guard that fills it (the
+        // short circuit lives there); the expression IS that name.
+        ro qtmp = @lit_tmp[raw_node(e.id_of())]
+        if qtmp == "" {
+            ice("emit_c: a `??` the hoist never built (coalesce wave)")
+        }
+        @body.append(qtmp)
     } else if k == NodeKind.SelfExpr {
         // The receiver's C name, exactly as the signature spelled it.
         @body.append(RECV_C_NAME)

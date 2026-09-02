@@ -219,3 +219,11 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
 const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escape)"
 const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
 const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"
+
+/// The `??` judge's two refusals (the coalesce wave). The first is the
+/// LANGUAGE's: `X ?? return R` was retracted by the D86 amendment, the oracle
+/// parses it and always refuses in its checker, and novac is at the same
+/// stage with the same verdict. The second is the subset's: `??` unwraps an
+/// Option, so a left side that is not one has no payload to answer with.
+const COALESCE_RETURN_MSG = "`??` does not take `return` on its right -- the form is retracted (D86); bind the value and return on the next line"
+const COALESCE_NONOPT_MSG = "outside the subset: `??` unwraps an `Option`, and this left side is not one"

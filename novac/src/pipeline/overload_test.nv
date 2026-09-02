@@ -78,3 +78,36 @@ fn main() {
     }
     assert(tie)
 }
+
+test "`??` is judged: a non-Option left side and `?? return` refuse by name (coalesce wave)" {
+    // The POSITIVE path (payload/fallback, the tag guard, the short circuit)
+    // is the CARRIER's -- examples/basics/coalesce.nv, held byte-for-byte by
+    // the corpus smoke. It cannot live here: these shared decls are poor (no
+    // Vec, so no `get`), and the subset's only Option source is a std method.
+    // What belongs here is the JUDGE, and it speaks without any Option at all.
+    ro std = std_decls()
+
+    // `?? return` is retracted (D86 amend): read by the parser, refused by
+    // name here -- the oracle refuses it in its checker for the same reason.
+    ro (dr, _) = compile_to_c("fn main() {
+ ro n = 1
+ ro v = n ?? return 0
+ println(v)
+}", std)
+    mut ret_hit = false
+    for g in dr {
+        if g.message.contains("does not take `return`") { ret_hit = true }
+    }
+    assert(ret_hit)
+
+    // A left side that is no Option has no payload to answer with.
+    ro (dn, _) = compile_to_c("fn main() {
+ ro n = 1
+ println(n ?? 0)
+}", std)
+    mut non_opt = false
+    for g in dn {
+        if g.message.contains("unwraps an `Option`") { non_opt = true }
+    }
+    assert(non_opt)
+}

@@ -279,6 +279,31 @@ fn Cursor mut @primary() -> Node {
             e = @node(NodeKind.FieldAccess, kids)
         }
     }
+    // `??` CLOSES the postfix chain and reopens it: it binds looser than a
+    // dot and tighter than every binary operator, which is the oracle's own
+    // shape (its `??` sits in the postfix loop and parses its right side with
+    // `parse_unary`). So the right side is a PRIMARY -- `o ?? f(x)` takes the
+    // whole call, `o ?? a + b` takes only `a`, exactly as the oracle does.
+    while @peek() == TokenKind.Question2 {
+        mut qk = []Node.of(e, @take()) // lhs, '??'
+        if @peek() == TokenKind.KwReturn {
+            // `X ?? return R` is RETRACTED (D86 amendment). The oracle parses
+            // it and always refuses in the checker (parse-then-diagnose), so
+            // the form reaches OUR tree too and check names it -- refusing at
+            // the lexer would make the diagnostic a syntax error about a form
+            // the language does have.
+            qk.push(@take())
+            if @peek() != TokenKind.RBrace && @peek() != TokenKind.Eof {
+                qk.push(@primary())
+            } else {
+                // `?? return` with no value: legal `return` shape, and the
+                // refusal below does not depend on whether one was written.
+            }
+        } else {
+            qk.push(@primary())
+        }
+        e = @node(NodeKind.Coalesce, qk)
+    }
     e
 }
 

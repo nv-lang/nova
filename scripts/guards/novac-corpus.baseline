@@ -262,5 +262,15 @@
 # a char stays refused: the oracle prints a literal as the glyph and a bound
 # value as its code -- the asymmetry is filed for the registry, not copied.
 # Reverse probe: the lexer branch behind `false &&` -- four holder failures.
-contract-match 49
-behavior-match 41
+# 2026-09-02 (11) -- 49/41 -> 50/42: the coalesce wave carrier -- `coalesce`
+# (`xs.get(i) ?? 0`, both branches): `??` is one lexeme (a lone `?` stays an
+# ErrorTok -- Try is not a subset form), a POSTFIX link of the chain whose
+# right side is a primary (the oracle's `parse_unary` shape), a Coalesce node
+# typed by the LEFT side's payload (never the right's -- the oracle's own
+# rule), and an emission that hoists a temporary and fills it under a tag
+# guard, with the fallback emitted INSIDE the else branch: that placement IS
+# the short circuit. `?? return` is retracted (D86 amend) -- parsed, refused
+# by name. Reverse probe: the parser link behind `false &&` -- three holder
+# failures and the carrier smoke red. Self-read: syntax 322 -> 272.
+contract-match 50
+behavior-match 42

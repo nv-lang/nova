@@ -97,6 +97,7 @@ export type NodeKind enum
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
     | SelfExpr /// bare `@` as a value inside a method body (the receiver itself): one At leaf
+    | Coalesce /// `a ?? b`: the payload of an Option, or the fallback
     | InterpStr /// an interpolated string (wave I2): StrFrag, then per slot InterpOpen, expr, InterpClose, StrFrag
     | Recv
     | Generics

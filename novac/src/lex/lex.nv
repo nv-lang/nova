@@ -100,6 +100,7 @@ export type TokenKind enum
     | Percent
     | EqEq
     | BangEq
+    | Question2 /// the `??` operator: the payload of an Option, or the fallback
     | AmpAmp
     | PipePipe
     | Amp
@@ -192,6 +193,7 @@ export fn spelling_of(k TokenKind) -> Option[str] => match k {
     Percent => Some("`%`")
     EqEq => Some("`==`")
     BangEq => Some("`!=`")
+    Question2 => Some("`??`")
     AmpAmp => Some("`&&`")
     PipePipe => Some("`||`")
     Amp => Some("`&`")
@@ -313,7 +315,7 @@ export fn paren_delta(k TokenKind) -> int {
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
-        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | Question2 | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
         DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
@@ -329,7 +331,7 @@ export fn bracket_delta(k TokenKind) -> int {
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
-        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | Question2 | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
         DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
@@ -346,7 +348,7 @@ export fn brace_delta(k TokenKind) -> int {
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
-        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
+        Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | Question2 | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
         DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
@@ -750,6 +752,15 @@ export fn lex(src str) -> []Token {
                 0x21 => match c1 {                          // !
                     0x3D => { i += 2; kind = TokenKind.BangEq }
                     _ => { i += 1; kind = TokenKind.Bang }
+                }
+                0x3F => match c1 {                          // ?
+                    // `??` is ONE lexeme. A LONE `?` is the Try operator, and
+                    // the subset does not compile it -- it falls to the byte
+                    // table below and comes back an ErrorTok, which is the
+                    // honest refusal (the checker names what it can name; a
+                    // byte nobody reads is the lexer's own).
+                    0x3F => { i += 2; kind = TokenKind.Question2 }
+                    _ => { i += 1; kind = punct_kind(c) }
                 }
                 0x26 => match c1 {                          // &
                     0x3D => { i += 2; kind = TokenKind.AmpAssign }

@@ -161,6 +161,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             _ => { ice("check: literal token kind without a type rule (#652 class)") }
         }
     }
+    if k == NodeKind.Coalesce {
+        // DECIDED by the walk (the payload of the left side), read here --
+        // re-deriving it would be the second door the channel exists to close.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.Name {
         ro nm = expr_leaf_name(e)
         if is_bool_literal(nm) { return ctx.prims.bool_id }

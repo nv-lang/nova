@@ -211,6 +211,51 @@ fn Checker mut @type_expr(e Node) -> () {
             }
         }
         @record(e, @ctx.prims.str_id)
+    } else if k == NodeKind.Coalesce {
+        // `a ?? b`: the payload of `a` when it is Some, `b` when it is None.
+        // The TYPE is the LEFT side's payload and never the right's -- the
+        // oracle's own rule (`v.first() ?? 0` on a `Vec[uint]` is `uint`, not
+        // the literal's `int`), so the right side is CHECKED against it and
+        // does not decide it.
+        ro qk = branch_children(e)
+        ro before = @out.len()
+        @type_expr(qk[0])
+        if @out.len() > before { return }
+        // `?? return` is spotted by the LEAF, and the question is asked of a
+        // leaf only: a fallback EXPRESSION is a branch, and asking a branch
+        // for its token kind is an ice (measured on the wave's first probe).
+        if qk.len() > 2 {
+            match qk[2] {
+                Leaf(rt) => {
+                    if rt.kind == TokenKind.KwReturn {
+                        @report_first_leaf_of(qk, COALESCE_RETURN_MSG)
+                        return
+                    } else {
+                        // A leaf fallback (a name, a literal): typed below.
+                    }
+                }
+                Branch { .. } => {
+                    // An expression fallback: typed below like any other.
+                }
+            }
+        } else {
+            // A recovery shape with no fallback at all: the parser spoke.
+        }
+        ro lt = type_of(qk[0], @ctx, @scope, @chan)
+        ro payload = option_payload(@ctx, lt)
+        if !is_ty(payload) {
+            @report_first_leaf_of(qk, COALESCE_NONOPT_MSG)
+            return
+        } else {
+            // An Option: its payload is this expression's type.
+        }
+        if qk.len() > 2 {
+            @type_expr(qk[2])
+            if @out.len() > before { return }
+        } else {
+            // A recovery shape with no fallback: the parser already spoke.
+        }
+        @record(e, payload)
     } else if k == NodeKind.Lit {
         // An interpolated literal reaching the tree WHOLE is a nested one
         // (a string inside a slot): the lexer splits only the outer level,

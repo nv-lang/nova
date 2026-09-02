@@ -188,6 +188,21 @@ test "char literal: one token, escapes whole, reserialize lossless (char wave)" 
     assert(open[3].kind == TokenKind.ErrorTok)
 }
 
+test "`??` is one token; a lone `?` is not a subset lexeme (coalesce wave)" {
+    // `ro v = o ?? 0` -- ro(0) v(1) =(2) o(3) ??(4) 0(5).
+    ro toks = lex("ro v = o ?? 0")
+    assert(toks[4].kind == TokenKind.Question2)
+    assert(toks[4].text == "??")
+    ro src = "ro v = o ?? 0
+ro w = a ?? b"
+    assert(reserialize(lex(src)) == src)
+
+    // A LONE `?` is the Try operator, which the subset does not compile: it
+    // stays an ErrorTok, lossless, like every other byte no rule claims.
+    ro one = lex("ro v = o ? 1")
+    assert(one[4].kind == TokenKind.ErrorTok)
+}
+
 test "F22: a non-ASCII run is ONE error token, not one per letter" {
     // A Cyrillic identifier used to produce six diagnostics for one cause.
     ro toks = lex("ro \u{43f}\u{440}\u{438}\u{432}\u{435}\u{442} = 1")

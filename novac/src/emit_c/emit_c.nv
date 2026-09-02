@@ -74,6 +74,7 @@ import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, r
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
 import ../sem.{c_instance_ctor, c_instance_method}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
+import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
@@ -527,6 +528,39 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     @body.append("    }\n")
 }
 
+/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
+/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
+/// is emitted INSIDE the else branch, so its effects run only when the left
+/// side is None, which is what the oracle does and what a reader expects.
+///
+/// The shape is `@emit_if_value`'s and the `(T){0}` initialiser is there for
+/// the same reason: a temporary only conditionally written would otherwise
+/// answer whatever the stack held. Both branches always write here; the
+/// initialiser costs one C token and removes the question.
+fn Emitter mut @emit_coalesce(e Node) -> str {
+    ro qk = branch_children(e)
+    ro ot = @out.type_of(qk[0].id_of())
+    ro res_t = @out.type_of(e.id_of())
+    ro u = @fresh_uniq()
+    ro opt = "_novac_tmp_t${u}"
+    ro res = "_novac_qq_t${u}"
+    @hoist_array_lits(qk[0])
+    @body.append("    ${c_type(@ctx, ot)} ${opt} = ")
+    @emit_expr(qk[0])
+    @body.append(";\n")
+    @body.append("    ${c_type(@ctx, res_t)} ${res} = (${c_type(@ctx, res_t)}){0};\n")
+    @body.append("    if (${opt}.tag == ${OPTION_SOME_TAG_C}) {\n")
+    @body.append("        ${res} = ${opt}.value;\n")
+    @body.append("    } else {\n")
+    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
+    // to the None branch alone -- that is the short circuit, in one place.
+    @hoist_array_lits(qk[2])
+    @body.append("        ${res} = ")
+    @emit_expr(qk[2])
+    @body.append(";\n    }\n")
+    res
+}
+
 /// Emit a block whose LAST statement is its value: everything before it runs
 /// as a statement, and the last one is assigned to the `if` temporary.
 ///
@@ -788,6 +822,10 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
             }
             if kind == NodeKind.InterpStr {
                 @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e)
+                return
+            }
+            if kind == NodeKind.Coalesce {
+                @lit_tmp[raw_node(e.id_of())] = @emit_coalesce(e)
                 return
             }
             if kind == NodeKind.Lit {

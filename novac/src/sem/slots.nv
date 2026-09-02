@@ -601,6 +601,10 @@ export fn is_expr_kind(k NodeKind) -> bool {
     k == NodeKind.SelfField ||
     k == NodeKind.SelfExpr ||
     k == NodeKind.InterpStr ||
+    // `a ?? b` is an expression, and its VALUE is what the argument or the
+    // binding reads -- the emitter hoists it into a temporary the way it
+    // hoists an interpolation chain (the coalesce wave).
+    k == NodeKind.Coalesce ||
     k == NodeKind.MatchExpr ||
     // An array literal is an expression since wave B8 let it stand in
     // argument and constructor-field position; the walks that skip

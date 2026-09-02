@@ -472,6 +472,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // expression and the display set; the walk descends into
                     // the slot expressions like anyone else's children.
                 }
+                Coalesce => {
+                    // `a ?? b` (the coalesce wave): typing judges the left
+                    // side's Option and refuses `?? return`; the walk descends
+                    // into both sides like anyone else's children.
+                }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding
                     // (`@`) and `@field` is a field access on it. Outside a
