@@ -85,9 +85,20 @@ export type TypeRows enum
 /// index in Ctx.types (see the terminology note above). Registry rows are
 /// VALUE records: a plain record is a GC pointer — one heap allocation per
 /// row; `value` keeps rows inline in the vector buffer.
+/// The SHAPE of a record declaration -- one enumeration, the spec's own
+/// taxonomy (D215; architecture 4b). `Record` lives on the HEAP behind a GC
+/// pointer; the other three live on the stack. One field instead of flags,
+/// because two booleans admit "a tuple on the heap", which the language does
+/// not have -- an enumeration cannot express it, and a new variant forces
+/// every `match` to answer (P21, held by check-novac-match-exhaustive).
+/// For non-record declarations (prims, sums, newtypes) the field is dead:
+/// `is_value_record` gates on TkRecord first, and a sum's value-ness is
+/// DERIVED (`is_value_sum`), not stored.
+export type RecordShape enum Record | ValueRecord | NamedTupleRecord | AnonymousTupleRecord
+
 export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
-    by_value bool /// Declared `value`: the type lives INLINE where a plain record is a GC pointer. Written by the source, so it is stored -- `kind` answers which rows a declaration owns, and layout is not that
+    shape RecordShape /// The record's shape (see RecordShape above). REPLACES the old `by_value bool` (owner's rule, architecture 4b): the word of the source (`value`, the parenthesised tuple form) decides it at collect, exactly once
     ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
@@ -239,7 +250,7 @@ export type Ctx {
 fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, by_value: false, ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
+    types.push(TypeDef { kind: TypeKind.TkPrim, shape: RecordShape.Record, ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -481,7 +492,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             defs.add(tname, DefTarget.DefType(d))
             // A SUM's value-ness is DERIVED, not declared: `is_value_sum` reads
             // it off the payloads (A4), so the row says nothing here.
-            types.push(TypeDef { kind: TypeKind.TkSum, by_value: false,
+            types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
                                  tparam_cnt: generic_names(nk).len(), ty_id: tys.sum(d), name: tname,
                                  rows: TypeRows.NoRows })
             continue
@@ -516,7 +527,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
                 types.push(TypeDef { kind: TypeKind.TkRecord,
-                                     tparam_cnt: generic_names(nk).len(), by_value: decl_is_value(c),
+                                     tparam_cnt: generic_names(nk).len(), shape: shape_of_record_decl(c),
                                      ty_id: tys.record(d), name: tname,
                                      rows: TypeRows.NoRows })
             }
@@ -525,7 +536,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // representation is a type reference and may point forward.
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
-                types.push(TypeDef { kind: TypeKind.TkNewtype, by_value: false,
+                types.push(TypeDef { kind: TypeKind.TkNewtype, shape: RecordShape.Record,
                                      tparam_cnt: 0, ty_id: no_ty(), name: tname,
                                      rows: TypeRows.NoRows })
             }
@@ -613,7 +624,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                     // would lose the declaration's own word one pass after
                     // reading it.
                     types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
-                                                          by_value: types[raw_decl(owner_id)].by_value,
+                                                          shape: types[raw_decl(owner_id)].shape,
                                                           tparam_cnt: types[raw_decl(owner_id)].tparam_cnt,
                                                           ty_id: mine.ty_id,
                                                           name: tname,
@@ -632,7 +643,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                         Some(spec) => {
                             if raw_decl(spec.under_decl) < types.len() {
                                 types[raw_decl(owner_id)] = TypeDef {
-                                    kind: TypeKind.TkNewtype, by_value: false,
+                                    kind: TypeKind.TkNewtype, shape: RecordShape.Record,
                                     tparam_cnt: 0,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
                                     name: tname, rows: TypeRows.NoRows }

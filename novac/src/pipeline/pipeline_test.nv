@@ -450,6 +450,29 @@ fn main() {
     assert(!is_value_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
 }
 
+test "a `value` record answers is_value_record -- the POSITIVE side of the shape" {
+    // Until 2026-09-03 NOTHING held this direction: `NovaValue_` was asserted
+    // nowhere and the only is_value_record test was the negative above, so the
+    // whole "value record = stack" axis stood on good behaviour (found by the
+    // plan-recheck of 274.6). This is the holder wave V1's reverse probe
+    // reddens: stub the ValueRecord arm of `is_value_record` to answer false
+    // and this assert goes red; restore it and it greens.
+    //
+    // Judged through the DOOR, not the C text: P24 forbids reading a C name
+    // back apart, and check-novac-mangling-one-way refuses Nova-prefixed
+    // spellings in test asserts -- the door IS sem's answer about the type.
+    ro src = "module m.v
+type P value { n int }
+fn main() {
+ ro p = P { n: 7 }
+ println(p.n)
+}"
+    ro (diags, _) = compile_to_c(src, []str.new())
+    assert(diags.len() == 0)
+    ro ctx = context(parse(tokens_of(src)), parse_decls([]str.new()), InteropTable.new())
+    assert(is_value_record(ctx, ctx.ty_of_name("P") ?? no_ty()))
+}
+
 test "a type nobody declared is still refused by name" {
     // The boundary of the same mechanism: registering handed-over types must not
     // turn every unknown name into a type. `Zork` is declared nowhere.

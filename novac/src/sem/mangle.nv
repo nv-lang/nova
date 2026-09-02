@@ -188,7 +188,10 @@ fn module_prefix(ctx Ctx) -> str {
 export fn is_value_record(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
-        TkRecord => decl_of_ty(ctx, t).by_value
+        TkRecord => match decl_of_ty(ctx, t).shape {
+            Record => false
+            ValueRecord | NamedTupleRecord | AnonymousTupleRecord => true
+        }
         TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => false
     }
 }

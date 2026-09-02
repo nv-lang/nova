@@ -161,7 +161,7 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
                 // not: constructing one needs a path form the subset does not
                 // compile, so reading them now would be a capability with no
                 // obligation.
-                types.push(TypeDef { kind: TypeKind.TkSum, by_value: false,
+                types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
                                      tparam_cnt: tp_cnt,
                                      ty_id: tys.sum(id), name: tname,
                                      rows: TypeRows.NoRows })
@@ -172,7 +172,7 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
             // honest "a type novac knows of and knows nothing about". Refusing
             // here would drop the declaration and take the methods that mention
             // it down with it.
-            types.push(TypeDef { kind: TypeKind.TkRecord, by_value: decl_is_value(c),
+            types.push(TypeDef { kind: TypeKind.TkRecord, shape: shape_of_record_decl(c),
                                  tparam_cnt: tp_cnt,
                                  ty_id: tys.record(id), name: tname,
                                  rows: TypeRows.NoRows })

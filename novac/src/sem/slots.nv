@@ -402,23 +402,26 @@ export fn recv_type_name(kids []Node) -> Option[str] {
     None
 }
 
-/// Does this type declaration carry the `value` marker?
+/// The SHAPE a record declaration wrote in the source: `value` after the
+/// name makes a ValueRecord, otherwise a plain (heap) Record. ONE door for
+/// the two collectors (sem pass 1 and harvest) -- wave V2 of plan 274.6
+/// adds the parenthesised tuple forms here, which is why the answer is the
+/// RecordShape enumeration and not a boolean: the shapes are four (D215,
+/// architecture 4b), and a boolean could not say which.
 ///
-/// Read positionally, like every other marker of a declaration: the word stands
-/// after the name (and after the generics), which is where D241 fixes it. The
-/// FIRST identifier is the declared name, so the search starts past it -- a type
-/// named `value` would otherwise answer yes about itself.
-export fn decl_is_value(decl Node) -> bool {
-    mut seen_name = false
+/// Absorbs the old `decl_is_value` (its two callers are exactly the two
+/// collectors); the scan is unchanged -- the marker is a leaf between the
+/// name and the body, read off the declaration node.
+export fn shape_of_record_decl(decl Node) -> RecordShape {
     for c in branch_children(decl) {
-        if !c.is_ident() { continue }
-        if !seen_name {
-            seen_name = true
-            continue
+        match c {
+            Leaf(t) => {
+                if t.text == VALUE_MARKER { return RecordShape.ValueRecord }
+            }
+            Branch { .. } => {}
         }
-        if leaf_text(c) == VALUE_MARKER { return true }
     }
-    false
+    RecordShape.Record
 }
 
 /// The representation a type declaration names, or None when it declares a
