@@ -36821,8 +36821,30 @@ impl NameResCtx {
         // пропускаем Capitalized-ident'ы. Опечатки в lowercase
         // именах (snake_case convention для vars/fns) — настоящие
         // undefined и будут ловиться.
+        //
+        // РЕЕСТР №882 (2026-09-02): пропуск СУЖЕН до формы, которую называет
+        // само обоснование выше — `UpperCamelCase`. Прежде проходило ЛЮБОЕ имя
+        // с заглавной, и потому опечатка в имени константы (`MAX_SIZ` вместо
+        // `MAX_SIZE`) проходила `nova check` ЗЕЛЁНОЙ и взрывалась на сборке
+        // внутренней паникой кодогена `[E_CODEGEN_TYPE_UNKNOWN] Ident ... not
+        // in var_types / not a sum-variant`. Замер: `println(NO_SUCH_NAME)` —
+        // check PASS, build INTERNAL-PANIC; `println(no_such_lowercase)` —
+        // честный отказ. То есть строчные опечатки ловились, а заглавные нет.
+        //
+        // Почему сужение безопасно: обоснование пропуска — «cross-file имена
+        // типов приходят незадекларированными» — относится к ТИПАМ, вариантам
+        // и модулям, а они пишутся `UpperCamelCase`. Константы пишутся
+        // `SCREAMING_SNAKE` (замер: 210 из 211 в `std/src`), и они резолверу
+        // ВИДНЫ — через `group_decls` своей module-группы, `peer_imported_names`
+        // и `builtins` (Plan 42.15 Rule C). Поэтому имя вида `A_B` больше не
+        // получает пропуска: если оно не найдено выше, это настоящая опечатка.
         if let Some(c) = name.chars().next() {
-            if c.is_ascii_uppercase() { return true; }
+            if c.is_ascii_uppercase() {
+                let screaming = name.chars().all(|ch| {
+                    ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_'
+                }) && name.contains('_');
+                if !screaming { return true; }
+            }
         }
         false
     }
