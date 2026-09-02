@@ -130,7 +130,8 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     for _ in 0..out.types.len() {
         lt.push("")
     }
-    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lits: []str.new(), lit_tmp: lt, body: StringBuilder.new() }
+    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lits: []str.new(),
+                          lit_tmp: lt, body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_tuple_typedefs()
     e.emit_instance_protos(insts)
