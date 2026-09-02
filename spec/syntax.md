@@ -623,12 +623,22 @@ frame. In an unmarked function `caller_loc()` honestly returns its own line. It
 carries no effect — the value is a call-site constant, which is what lets it be
 used in `-> never` doors.
 
-**What else follows the attribute:** a violated `requires`/`ensures` on a marked
-function names the CALL SITE (a broken precondition is the caller's fault), and
-so does `panic`; an `assert` in the body keeps its own line, because that is the
-function's own invariant and pointing elsewhere would hide its bug. One
-sentence: a check of the obligation TO the caller points at the caller, an
-internal check points at itself.
+**Everything in a marked function follows the attribute** — `panic`, `assert`,
+`debug_assert`, `requires`/`ensures` and `caller_loc()` alike all name the CALL
+SITE. One rule, no table to remember: a marked function behaves the same way in
+every failure it produces. The message keeps both places, so the wrapper's own
+bug stays findable:
+
+```
+caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
+```
+
+**A contract names the caller even WITHOUT the attribute.** A violated
+`requires`/`ensures` reports the call site rather than the callee's declaration
+line, because a broken precondition is the caller's fault; the attribute then
+extends that from the immediate caller to the original one through a chain of
+wrappers. `assert` outside a marked function keeps naming itself — it is the
+function's own invariant.
 
 ```nova
 #track_caller
