@@ -82,9 +82,6 @@ export type TypeRows enum
     | VariantRows(VariantRow, int)
 
 /// One type of the file registry; a type id is this record's interned
-/// index in Ctx.types (see the terminology note above). Registry rows are
-/// VALUE records: a plain record is a GC pointer — one heap allocation per
-/// row; `value` keeps rows inline in the vector buffer.
 /// The SHAPE of a record declaration -- one enumeration, the spec's own
 /// taxonomy (D215; architecture 4b). `Record` lives on the HEAP behind a GC
 /// pointer; the other three live on the stack. One field instead of flags,
@@ -96,6 +93,9 @@ export type TypeRows enum
 /// DERIVED (`is_value_sum`), not stored.
 export type RecordShape enum Record | ValueRecord | NamedTupleRecord | AnonymousTupleRecord
 
+/// One declaration's row: index in Ctx.types (see the terminology note
+/// above). Registry rows are VALUE records: a plain record is a GC pointer --
+/// one heap allocation per row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
     shape RecordShape /// The record's shape (see RecordShape above). REPLACES the old `by_value bool` (owner's rule, architecture 4b): the word of the source (`value`, the parenthesised tuple form) decides it at collect, exactly once
@@ -250,7 +250,8 @@ export type Ctx {
 fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, shape: RecordShape.Record, ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
+    types.push(TypeDef { kind: TypeKind.TkPrim, shape: RecordShape.Record,
+                         ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
