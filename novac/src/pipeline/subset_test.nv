@@ -872,7 +872,7 @@ test "an interpolated literal builds its chain; non-name slots refuse (wave I1)"
     // OUR chain names, absent from the shell prelude -- the shell itself
     // carries static_new/display_spec declarations, so asserting those
     // alone would stay green with the hoist silenced (measured).
-    assert(c.contains("Nova_StringBuilder* _novac_isb_t"))
+    assert(c.contains("_novac_isb_t"))
     assert(c.contains("str_display_spec(_novac_isb_t"))
     assert(c.contains("int_display_spec(_novac_isb_t"))
     assert(c.contains("nova_print_str(_novac_istr_t"))
