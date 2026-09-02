@@ -902,7 +902,11 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
             if @res.has_name(t.text) { return }
-            @refuse(t, "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)")
+            // The parenthetical "(or the name is overloaded)" died with E2-b3
+            // M3: `has_name` answers existence alone, so an overloaded name
+            // never reaches this refusal -- the tail described a case this
+            // judge cannot see, and a diagnostic must not guess (D420).
+            @refuse(t, "outside the subset: no such method in the declarations handed to novac")
         }
         Branch { .. } => {}
     }

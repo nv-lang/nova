@@ -39,18 +39,35 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
     // P18: a door that ASKS the table builds no text -- the
     // messages live in the refusers below, each with its own
     // reason.
-    match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, equality_key(lhs_t), CallForm.MethodCall) {
+    ro key = equality_key(lhs_t, type_of(kids[2], @ctx, @scope, @chan))
+    match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, key, CallForm.MethodCall) {
         FnFound(row) => @accept_equality_row(e, kids, lhs_t, row)
-        FnOverloaded(_) => @refuse_equality_overloaded(kids)
-        FnUnknown => @refuse_equality_unknown(kids)
+        FnOverloaded(_) => @refuse_equality_overloaded(kids, key)
+        // The typed key fit nothing. The M1 ladder's question, one rung of
+        // it: does SOME `equal` of this receiver exist at all? If yes, the
+        // right operand's type is the established cause (the key is typed
+        // since M3, so `"a" == 5` lands here) -- saying "no such method"
+        // would send the reader hunting a declaration that is right there.
+        FnUnknown => {
+            match @res.lookup(@ctx.fns, @ctx.tys, EQUAL_METHOD, equality_key(lhs_t, no_ty()), CallForm.MethodCall) {
+                FnUnknown => @refuse_equality_unknown(kids)
+                FnFound(_) | FnOverloaded(_) => @report_first_leaf_of(kids,
+                    "outside the subset: `==` on `str` takes a `str` right-hand side, and this operand's type is not one `${EQUAL_METHOD}` declares")
+            }
+        }
     }
 }
 
-/// More than one `equal` of that name: choosing between them is
-/// overload resolution, which the subset does not do -- and
-/// taking the first one silently is what this wave removes.
-fn Checker mut @refuse_equality_overloaded(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` on `str` reaches more than one `${EQUAL_METHOD}` method, and novac does not choose between them")
+/// More than one `equal` fits a TYPED key: a real D84 tie, refused by
+/// name -- unless an operand novac could not type matched every row,
+/// which is ignorance, not ambiguity (the M1 guard, one rule for every
+/// call form the subset synthesises).
+fn Checker mut @refuse_equality_overloaded(kids []Node, key []ArgSpec) -> () {
+    if key_fully_typed(key) {
+        @report_first_leaf_of(kids, "`==` on `str` fits more than one `${EQUAL_METHOD}` method and none is more specific -- an ambiguity is refused, never chosen (D84)")
+    } else {
+        @report_first_leaf_of(kids, "outside the subset: an operand's type is not decided yet, so the `${EQUAL_METHOD}` overloads are not narrowed")
+    }
 }
 
 /// The method is not among the declarations novac was handed,
@@ -95,9 +112,10 @@ fn is_equality(op BinOp) -> bool {
 /// position zero, the right-hand side after it. Both positions
 /// are `ro` -- `equal` READS its operands, and `ro` is the class
 /// every mode accepts, so the synthesised call cannot pick a
-/// mutating overload by accident. The right side's type is left
-/// unknown: `equal` takes its own.
-fn equality_key(lhs_t TyId) -> []ArgSpec => [
+/// mutating overload by accident. The right side carries its own
+/// TYPE since E2-b3 M3: with it the lookup narrows an `equal`
+/// overload set itself, and what stays overloaded is a tie.
+fn equality_key(lhs_t TyId, rhs_t TyId) -> []ArgSpec => [
     ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" },
-    ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" },
+    ArgSpec { type_id: rhs_t, cls: ArgClass.ArgRo, name: "" },
 ]

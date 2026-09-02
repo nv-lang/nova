@@ -453,8 +453,21 @@ fn Checker mut @type_expr(e Node) -> () {
                 ro key = typed_free_key(kids, @ctx, @scope, @chan)
                 match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
                     FnFound(row) => @record_free_callee(e, kids, row, key)
-                    FnOverloaded(_) => @report_first_leaf_of(kids,
-                        "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
+                    // What stays overloaded under a TYPED key is a real D84
+                    // tie -- unless a slot novac could not type matched every
+                    // overload, which is ignorance, not ambiguity (the M1
+                    // guard; one rule for both call forms). Coercion never
+                    // breaks a tie: D429 R5 ranks pairs BELOW an exact fit,
+                    // and here two exact fits already stand.
+                    FnOverloaded(_) => {
+                        if key_fully_typed(key) {
+                            @report_first_leaf_of(kids,
+                                "this call fits more than one function and none is more specific -- an ambiguity is refused, never chosen (D84)")
+                        } else {
+                            @report_first_leaf_of(kids,
+                                "outside the subset: an argument's type is not decided yet, so this overloaded function is not narrowed")
+                        }
+                    }
                     // The name may be known and the arity may match: what did
                     // not fit is then a TYPE, and the refusal says which of the
                     // three it is (D420: name the cause you established, not

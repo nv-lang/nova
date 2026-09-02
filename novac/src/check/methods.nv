@@ -130,7 +130,7 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
         // candidate as the intended one, and which was intended is unknown.
         FnOverloaded(_) => @refuse(t,
             "outside the subset: no overload of this method accepts these argument types")
-        FnFound(row) => @refuse_arg_type(kids, row, key)
+        FnFound(row) => @refuse_arg_type(kids, row, key, CallForm.MethodCall)
     }
 }
 

@@ -956,6 +956,26 @@ fn main() {
     assert(c.contains("absorb__Tally__nova_str__to_nova_int(t,"))
 }
 
+test "the D84 tie text arrives at the FREE path too (E2-b3 M3)" {
+    // The free-call FnOverloaded arm said "not narrowed yet (arrives with
+    // the checker, E2-b3)" -- a lie since M1: typed_free_key has been the
+    // key all along, so what stays overloaded is a real tie. Same guard as
+    // the method arm (key_fully_typed), one rule for both call forms.
+    // The oracle refuses the same class (E_OVERLOAD_AMBIGUOUS_MODE).
+    ro std = std_decls()
+    ro (dft, _) = compile_to_c("fn take(consume a int, b int) -> int => a + b
+fn take(a int, mut b int) -> int => a - b
+fn main() {
+ mut m = 2
+ println(\"\${take(7, m)}\")
+}", std)
+    mut ftie = false
+    for g in dft {
+        if g.message.contains("more than one function and none is more specific") { ftie = true }
+    }
+    assert(ftie)
+}
+
 test "a real D84 tie refuses by name, never chooses (E2-b3 M1)" {
     // Modes varying OPPOSITELY across two positions: `take(consume, ro)`
     // beside `take(ro, mut)` both fit `bx.take(7, m)` and neither dominates

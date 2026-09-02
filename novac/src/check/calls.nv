@@ -92,13 +92,16 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
         // intended one, and which was intended is exactly what is unknown.
         FnOverloaded(_) => @report_first_leaf_of(kids,
             "outside the subset: no overload of this name accepts these argument types")
-        FnFound(row) => @refuse_arg_type(kids, row, key)
+        FnFound(row) => @refuse_arg_type(kids, row, key, CallForm.FreeCall)
     }
 }
 
 /// The one candidate of this arity did not fit: name the FIRST position whose
 /// type differs, and say when a `#coerce` pair (D429) makes the call legal.
-fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
+/// The FORM decides the pair's arm of the message: the free coercing stage
+/// runs before any refusal, the method one has not arrived (E2-b3 M3 tail) --
+/// and each text must claim only the stage its path actually ran (D420).
+fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form CallForm) -> () {
     ro fd = @ctx.fns.rows[raw_row(row)]
     // BY SLOT, not by written position (wave 4): with a named argument the two
     // are different, and comparing `key[i]` against `params[off + i]` would name
@@ -126,8 +129,14 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec) -> () {
             // THIS TEXT USED TO SAY "novac does not compile a method body yet",
             // and that stopped being true with wave 3g -- a refusal describing a
             // limit we no longer have sends the reader to the wrong place (D420).
-            Some(_) => @report_first_leaf_of(kids,
-                "outside the subset: this argument coerces through a `#coerce` method whose body novac does not emit -- the pair is declared on a type whose methods arrive as signatures only (D429 R7 names the call, so there must be one to name)")
+            Some(_) => match form {
+                FreeCall => @report_first_leaf_of(kids,
+                    "outside the subset: this argument coerces through a `#coerce` method whose body novac does not emit -- the pair is declared on a type whose methods arrive as signatures only (D429 R7 names the call, so there must be one to name)")
+                // No method coercing stage ran, so the text may not claim one
+                // declined: the pair is declared and the stage is the gap.
+                MethodCall => @report_first_leaf_of(kids,
+                    "outside the subset: this argument reaches the parameter only through a declared `#coerce` pair, and the coercing stage for method calls has not arrived yet (E2-b3)")
+            }
             None => @report_first_leaf_of(kids,
                 "outside the subset: this argument's type is not the one this function declares here")
         }
