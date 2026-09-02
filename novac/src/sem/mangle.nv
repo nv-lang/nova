@@ -662,14 +662,17 @@ export fn char_literal_code(t str) -> str {
     ro body = t[1..t.byte_len() - 1]
     ro b = body.bytes()
     if b[0] == BACKSLASH_BYTE {
-        ro e = body[1..2]
-        if e == "n" { return "10" }
-        if e == "t" { return "9" }
-        if e == "r" { return "13" }
-        if e == "\\" { return "92" }
-        if e == "'" { return "39" }
-        if e == "\"" { return "34" }
-        if e == "0" { return "0" }
+        // BYTES, not one-letter strings: the P24 scanner reads a quoted
+        // identifier-like string in an emitting module as a printed C name,
+        // and it is right to -- a char literal is the honest spelling here.
+        ro e = b[1]
+        if e == ('n' as u8) { return "10" }
+        if e == ('t' as u8) { return "9" }
+        if e == ('r' as u8) { return "13" }
+        if e == BACKSLASH_BYTE { return "92" }
+        if e == ('\'' as u8) { return "39" }
+        if e == ('"' as u8) { return "34" }
+        if e == ('0' as u8) { return "0" }
         ice("mangle: a char escape the judge let through")
     }
     // One UTF-8 codepoint, 1-4 bytes: the head byte announces the length and
