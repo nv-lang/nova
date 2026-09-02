@@ -617,9 +617,18 @@ int)` ([D468](decisions/08-runtime.md#d468)). Without it a diagnostic wrapper
 reports ITSELF rather than the culprit: `assert` and contracts get their
 location from the compiler, a hand-written `ice()`/`expect()` door could not.
 The attribute means "the call site flows through me", so it must be written on
-every link of a wrapper chain; in an unmarked function `caller_loc()` honestly
-returns its own line. It carries no effect — the value is a call-site constant,
-which is what lets it be used in `-> never` doors.
+every link of a wrapper chain — a marked function calling a marked function
+passes the ORIGINAL caller along, and the location stops at the first UNMARKED
+frame. In an unmarked function `caller_loc()` honestly returns its own line. It
+carries no effect — the value is a call-site constant, which is what lets it be
+used in `-> never` doors.
+
+**What else follows the attribute:** a violated `requires`/`ensures` on a marked
+function names the CALL SITE (a broken precondition is the caller's fault), and
+so does `panic`; an `assert` in the body keeps its own line, because that is the
+function's own invariant and pointing elsewhere would hide its bug. One
+sentence: a check of the obligation TO the caller points at the caller, an
+internal check points at itself.
 
 ```nova
 #track_caller
