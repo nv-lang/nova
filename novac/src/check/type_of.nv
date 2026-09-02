@@ -204,6 +204,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     // is a field access on it and needs no separate rule. Outside a method the
     // binding does not exist, and the answer is absence -- which `check`
     // refuses by name rather than icing here (P12).
+    if k == NodeKind.SelfExpr {
+        // The walk recorded the receiver's type where it verified the
+        // binding; silence is `@` outside a method, already refused.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.SelfField {
         // THE CHANNEL IS THE ONLY SOURCE (274.4 step 3): the walk records the
         // field's type where it verifies the field exists. `@field` outside a

@@ -336,6 +336,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 }
             }
         }
+    } else if k == NodeKind.SelfExpr {
+        // The receiver's C name, exactly as the signature spelled it.
+        @body.append(RECV_C_NAME)
     } else if k == NodeKind.SelfField {
         // `@field` is a field of the receiver, and the receiver is parameter
         // zero under our own name. A record is a GC pointer, so the access is

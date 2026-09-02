@@ -239,6 +239,15 @@ fn Checker mut @type_expr(e Node) -> () {
             }
             Branch { .. } => {}
         }
+    } else if k == NodeKind.SelfExpr {
+        // Bare `@` is the receiver itself: bound by the method walk, typed
+        // by the binding. Outside a method body there is no receiver, and
+        // that absence is the user's mistake to hear about.
+        if @scope.is_bound(RECV_BINDING) {
+            @record(e, @scope.type_of_name(RECV_BINDING))
+        } else {
+            @report_first_leaf_of(branch_children(e), BARE_SELF_MSG)
+        }
     } else if k == NodeKind.SelfField {
         // `@field` in an instance body: the receiver is a BINDING (wave 3g),
         // so the owner's type is in scope, and the field's type is a DECISION

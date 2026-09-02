@@ -599,6 +599,7 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // emitter at all: without it the body was "neither a match nor an
     // expression" and iced (wave 3g, measured 2026-08-23).
     k == NodeKind.SelfField ||
+    k == NodeKind.SelfExpr ||
     k == NodeKind.MatchExpr ||
     // An array literal is an expression since wave B8 let it stand in
     // argument and constructor-field position; the walks that skip

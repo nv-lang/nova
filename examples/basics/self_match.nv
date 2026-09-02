@@ -1,0 +1,18 @@
+// Bare `@` as a value: the receiver itself, matched in a sum method.
+module basics.self_match
+
+type Sev enum ErrorSev | WarningSev
+
+/// The schema string of one severity -- diag.nv's own shape (its carrier).
+export fn Sev @sev_text() -> str {
+    match @ {
+        ErrorSev => "error"
+        WarningSev => "warning"
+    }
+}
+
+fn main() {
+    ro s = Sev.WarningSev
+    println(s.sev_text())
+    println(Sev.ErrorSev.sev_text())
+}

@@ -915,3 +915,32 @@ test "an interpolated literal builds its chain; non-name slots refuse (wave I1)"
     }
     assert(hit4)
 }
+
+test "bare self is the receiver's value; outside a method it refuses (self wave)" {
+    // `match @` in a sum method compiles: the scrutinee temporary reads the
+    // receiver's C name. Outside a method body `@` names nothing.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Sev enum A | B
+fn Sev @tag_no() -> int {
+ match @ {
+  A => 1
+  B => 2
+ }
+}
+fn main() {
+ ro s = Sev.A
+ println(s.tag_no())
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("= _novac_self;"))
+
+    ro (d2, _) = compile_to_c("fn main() {
+ println(@)
+}", std)
+    assert(d2.len() >= 1)
+    mut hit = false
+    for g in d2 {
+        if g.message.contains("method receiver") { hit = true }
+    }
+    assert(hit)
+}

@@ -518,6 +518,11 @@ fn Cursor mut @atom() -> Node {
         kids.push(@take())
         return @node(NodeKind.SelfField, kids)
     }
+    // Bare `@` -- the receiver ITSELF as a value (`match @`, `take(@)`):
+    // one leaf, and check judges whether a receiver is bound here.
+    if @peek() == TokenKind.At {
+        return @node(NodeKind.SelfExpr, []Node.of(@take()))
+    }
     // `[]int.of(1, 2)` starts with the ONE-token `[]` since 2026-08-17; the
     // non-empty literal still opens with a bare `[`. Both are array literals
     // and both enter here.

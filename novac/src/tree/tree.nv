@@ -96,6 +96,7 @@ export type NodeKind enum
     | Requires /// a `requires <expr>, "<text>"` clause between signature and body (contracts): word leaf, condition expr, comma, message StrLit
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
+    | SelfExpr /// bare `@` as a value inside a method body (the receiver itself): one At leaf
     | Recv
     | Generics
     | RetType

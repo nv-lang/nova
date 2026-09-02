@@ -246,6 +246,10 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The bare-self judge's answer: `@` is a value only where a method body
+/// bound its receiver.
+const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
+
 /// The interpolation judges' two I1 answers: a slot name must be a bound
 /// LOCAL (a constant would substitute at the use site where no hoist ran),
 /// and its type must carry a builder insert the emitter spells today.
