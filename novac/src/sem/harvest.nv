@@ -30,7 +30,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME}
+import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
 
 /// Read a METHOD declared in THIS file: the same reader std declarations go
