@@ -246,6 +246,12 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The interpolated-message judge's answer (hunt N5, #873): the message is
+/// spelled into C as ONE literal, so `${...}` inside it would print itself
+/// verbatim on violation -- a silent lie about the values. Refused until the
+/// interpolation wave computes it.
+const INTERP_CONTRACT_MSG_MSG = "outside the subset: an interpolated contract message is not compiled yet (E2) -- spell the message without `\${...}`"
+
 /// The argument-form judge's answer (hunt N2, #870): a form the expression
 /// walk does not know used to FALL OUT of both walks silently -- the
 /// argument was neither refused nor printed. A branch is never punctuation.

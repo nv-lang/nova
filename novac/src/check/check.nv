@@ -236,6 +236,39 @@ fn Checker mut @refuse_span(lo int, hi int, msg str) -> ()
     })
 }
 
+/// The source offset of the FIRST leaf under `e`, or -1 for a leafless
+/// recovery shape -- the left edge of a run (the contract note's writer is
+/// the one caller today).
+fn Checker @first_leaf_offset(e Node) -> int {
+    match e {
+        Leaf(t) => @src.offset_of(t.text)
+        Branch { children, .. } => {
+            for c in children {
+                ro lo = @first_leaf_offset(c)
+                if lo >= 0 { return lo }
+            }
+            -1
+        }
+    }
+}
+
+/// The 1-based line of a byte offset: newlines counted once, here -- the
+/// diagnostics keep raw offsets (LSP maps them itself, E3), but a contract
+/// panic prints a line the way the oracle does (#874).
+fn Checker @line_at(lo int) -> int {
+    ro b = @src.text.bytes()
+    mut line = 1
+    for i in 0..lo {
+        if b[i] == LF_BYTE { line += 1 } else {
+            // Any other byte stays on its line.
+        }
+    }
+    line
+}
+
+/// The newline byte the line counter reads.
+const LF_BYTE u8 = 0x0A
+
 /// Extends `best` to the end of the LAST leaf under `children` -- the right
 /// edge of a run, in source offsets.
 ///

@@ -831,32 +831,3 @@ export fn pattern_has_disj(pat []Node) -> bool {
     false
 }
 
-/// A DISPLAY of an expression node: its leaves joined with single spaces --
-/// what a contract panic shows a person beside the C condition (the requires
-/// wave). Not the source slice: the emitter holds no source, and the
-/// carriers never violate their contracts, so the display is a label, not
-/// behavior. C-escaping is the caller's concern only insofar as Nova string
-/// literals keep their own quotes -- the join never introduces one.
-export fn display_of(e Node) -> str {
-    consume s = StringBuilder.new(cap: 32)
-    mut first = true
-    for c in leaves_of(e) {
-        if !first { s.append(" ") } else { first = false }
-        s.append(c)
-    }
-    s
-}
-
-/// The leaf TEXTS of a subtree, in source order: display_of's one feeder.
-fn leaves_of(e Node) -> []str {
-    mut out = []str.new()
-    match e {
-        Leaf(t) => out.push(t.text)
-        Branch { .. } => {
-            for c in branch_children(e) {
-                out.append(leaves_of(c))
-            }
-        }
-    }
-    out
-}

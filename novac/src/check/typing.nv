@@ -25,6 +25,7 @@
 module novac.check
 
 import ../lex.{Token, TokenKind}
+import ../source.{Span}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
@@ -93,6 +94,33 @@ fn Checker @is_generic_decl(f Node) -> bool {
 }
 
 /// One function: fresh scope, parameters bound, then the body.
+/// Does this string literal OPEN an interpolation? A bare `$` followed by
+/// `{`, with no escaping backslash before it -- the escaped form prints a
+/// dollar and lies about nothing (#873). Spelled from bytes: a literal
+/// dollar-brace in this source would be an interpolation here too.
+fn has_interp_head(t str) -> bool {
+    ro b = t.bytes()
+    mut i = 1
+    while i + 1 < b.len() {
+        if b[i] == DOLLAR_HEAD_BYTE && b[i + 1] == BRACE_HEAD_BYTE && b[i - 1] != ESCAPE_HEAD_BYTE {
+            return true
+        } else {
+            // Not an interpolation head at this byte.
+        }
+        i += 1
+    }
+    false
+}
+
+/// The three bytes the interpolation-head scan reads.
+const DOLLAR_HEAD_BYTE u8 = 0x24
+
+/// The opening brace right after the dollar.
+const BRACE_HEAD_BYTE u8 = 0x7B
+
+/// The backslash that turns the pair into a printed dollar.
+const ESCAPE_HEAD_BYTE u8 = 0x5C
+
 fn Checker mut @type_fn(f Node) -> () {
     @tail_value_body = value_body_of(branch_children(f))
     ro kids = branch_children(f)
@@ -202,6 +230,39 @@ fn Checker mut @type_fn(f Node) -> () {
             ro rk = branch_children(c)
             if rk.len() > 1 {
                 @type_expr(rk[1])
+                // The DISPLAY is the condition's exact source slice, and the
+                // LINE is real -- the checker is the one holder of the source
+                // (#871/#874: the emitter's leaf-join printed `n > - 1`, and
+                // the panic said `:0:`). Recorded on the Requires node; the
+                // prologue's emitter reads the decision.
+                ro lo = @first_leaf_offset(rk[1])
+                if lo >= 0 {
+                    ro hi = @run_end_of([]Node.of(rk[1]), lo)
+                    @chan.record_contract(c.id_of(), @src.slice(Span { lo, hi }), @line_at(lo))
+                } else {
+                    // A condition with no leaf is a recovery shape the
+                    // parser already named; no note to write.
+                }
+                // The message is spelled into C as ONE literal (#873): an
+                // interpolation inside it would print itself verbatim on
+                // violation. Refused by name until the interpolation wave.
+                if rk.len() >= 4 {
+                    match rk[rk.len() - 1] {
+                        Leaf(mt) => {
+                            if mt.kind == TokenKind.StrLit && has_interp_head(mt.text) {
+                                @refuse(mt, INTERP_CONTRACT_MSG_MSG)
+                            } else {
+                                // A plain message: one C literal, no lie.
+                            }
+                        }
+                        Branch { .. } => {
+                            // A recovery shape in the message slot: the
+                            // required door already carried the refusal.
+                        }
+                    }
+                } else {
+                    // Message-less clause: nothing to judge here.
+                }
             } else {
                 // A recovery shape: the parser's gap already named it.
             }

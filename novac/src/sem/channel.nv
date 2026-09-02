@@ -187,13 +187,27 @@ export type Resolution enum
     | Callee(CalleeRef)
     | Subst(SubstRef)
     | Const(ConstRow)
+    | Contract(int)
+
+/// What the panic of one `requires` clause shows a person: the checker is
+/// the ONE holder of the source text, so the display is the condition's
+/// exact SOURCE SLICE (hunt N3/#871 -- the emitter's leaf-join printed
+/// `n > - 1` for `n > -1`) and the line is real (hunt N6/#874 -- the
+/// prologue spelled `:0:`). The file NAME is not here: the channel is
+/// per-file by construction, and the name travels to the emitter with the
+/// call that knows it (main's path; the test path passes none).
+export type ContractNote value {
+    display str /// The condition's source slice, exactly as written.
+    line int /// 1-based line of the condition's first byte.
+}
 
 /// THE checker's channel: what the checker decided, read by everyone after it
 /// and re-derived by no one.
 export type CheckOut {
     entry FnRow /// THE entry row of this file; `no_row()` = the file declares none. One writer: check.
     types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
-    res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, or nothing.
+    res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, a contract note, or nothing.
+    contract_notes []ContractNote /// Flat pool of contract displays, addressed by the Contract arm's index.
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
     arg_slots []SlotBind /// Flat pool of argument BINDINGS: per parameter slot, WHICH argument fills it and through WHICH declared conversion (see SlotBind).
 }
@@ -209,7 +223,8 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
     }
-    CheckOut { entry: no_row(), types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new() }
+    CheckOut { entry: no_row(), types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
+               contract_notes: []ContractNote.new() }
 }
 
 /// THE ENTRY DECISION (274.4 step 2): which row is this program's entry
@@ -251,7 +266,7 @@ export fn CheckOut @const_of(id NodeId) -> Option[ConstRow] {
     match @res[raw_node(id)] {
         Const(row) => Some(row)
         // Anything else is not a constant use, and that is one answer.
-        Unresolved | Callee(_) | Subst(_) => None
+        Unresolved | Callee(_) | Subst(_) | Contract(_) => None
     }
 }
 
@@ -280,6 +295,7 @@ export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []Ty
             "sem: a call was resolved twice to different targets")
         Subst(_) => ice("sem: record_callee on a node already recorded as an instantiation")
         Const(_) => ice("sem: record_callee on a node already recorded as a constant")
+        Contract(_) => ice("sem: record_callee on a node carrying a contract note")
     }
     // The call's decision is the WHOLE answer: which row, and with which type
     // arguments. rustc keeps the same two facts about one node (type_dependent
@@ -290,6 +306,34 @@ export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []Ty
     @arg_slots.append(slots)
     @res[raw_node(id)] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len(),
                                                       slot_off, slot_cnt: slots.len() })
+}
+
+/// Record what one `requires` clause shows on violation: the condition's
+/// source slice and its line. One writer (the checker's Requires arm), one
+/// reader (the contract prologue's emitter).
+export fn CheckOut mut @record_contract(id NodeId, display str, line int) -> ()
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a contract outside this file's id space"
+{
+    match @res[raw_node(id)] {
+        Unresolved => {}
+        Contract(_) => ice("sem: record_contract on a node already carrying a note")
+        Callee(_) => ice("sem: record_contract on a node recorded as a call")
+        Subst(_) => ice("sem: record_contract on a node recorded as an instantiation")
+        Const(_) => ice("sem: record_contract on a node recorded as a constant")
+    }
+    ro idx = @contract_notes.len()
+    @contract_notes.push(ContractNote { display, line })
+    @res[raw_node(id)] = Resolution.Contract(idx)
+}
+
+/// The note of one `requires` node, if the checker wrote one.
+export fn CheckOut @contract_of(id NodeId) -> Option[ContractNote]
+    requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a contract outside this file's id space"
+{
+    match @res[raw_node(id)] {
+        Contract(idx) => Some(@contract_notes[idx])
+        Unresolved | Callee(_) | Subst(_) | Const(_) => None
+    }
 }
 
 /// Record the substitution instantiating a generic at a NON-call node (record
@@ -308,6 +352,7 @@ export fn CheckOut mut @record_subst(id NodeId, args []TyId) -> ()
         Callee(_) => ice("sem: record_subst on a node already recorded as a call")
         Subst(_) => ice("sem: record_subst twice on one node")
         Const(_) => ice("sem: record_subst on a node already recorded as a constant")
+        Contract(_) => ice("sem: record_subst on a node carrying a contract note")
     }
     ro arg_off = @subst_args.len()
     @subst_args.append(args)
@@ -355,6 +400,7 @@ export fn CheckOut @callee_of(id NodeId) -> CalleeRef
         Unresolved => ice("sem: callee_of on a node with nothing recorded — a hole in the channel")
         Subst(_) => ice("sem: callee_of on a node recorded as an instantiation")
         Const(_) => ice("sem: callee_of on a node recorded as a constant")
+        Contract(_) => ice("sem: callee_of on a node carrying a contract note")
     }
 }
 
@@ -367,7 +413,7 @@ export fn CheckOut @has_callee(id NodeId) -> bool
 {
     match @res[raw_node(id)] {
         Callee(_) => true
-        Unresolved | Subst(_) | Const(_) => false
+        Unresolved | Subst(_) | Const(_) | Contract(_) => false
     }
 }
 
@@ -380,7 +426,7 @@ export fn CheckOut @has_subst(id NodeId) -> bool
 {
     match @res[raw_node(id)] {
         Subst(_) => true
-        Unresolved | Callee(_) | Const(_) => false
+        Unresolved | Callee(_) | Const(_) | Contract(_) => false
     }
 }
 
@@ -416,6 +462,7 @@ export fn CheckOut @callee_slots_of(id NodeId) -> ro []SlotBind
         Unresolved => ice("sem: callee_slots_of on a node with nothing recorded")
         Subst(_) => ice("sem: callee_slots_of on a node recorded as an instantiation")
         Const(_) => ice("sem: callee_slots_of on a node recorded as a constant")
+        Contract(_) => ice("sem: callee_slots_of on a node carrying a contract note")
     }
     @arg_slots[cr.slot_off..cr.slot_off + cr.slot_cnt]
 }
@@ -435,6 +482,7 @@ export fn CheckOut @callee_subst_of(id NodeId) -> ro []TyId
         Unresolved => ice("sem: callee_subst_of on a node with nothing recorded")
         Subst(_) => ice("sem: callee_subst_of on a node recorded as an instantiation")
         Const(_) => ice("sem: callee_subst_of on a node recorded as a constant")
+        Contract(_) => ice("sem: callee_subst_of on a node carrying a contract note")
     }
     @subst_args[cr.subst_off..cr.subst_off + cr.subst_cnt]
 }
@@ -449,6 +497,7 @@ export fn CheckOut @subst_of(id NodeId) -> ro []TyId
         Unresolved => ice("sem: subst_of on a node with nothing recorded — a hole in the channel")
         Callee(_) => ice("sem: subst_of on a node recorded as a call")
         Const(_) => ice("sem: subst_of on a node recorded as a constant")
+        Contract(_) => ice("sem: subst_of on a node carrying a contract note")
     }
     // A VIEW into the pool, not a copy: the arguments live once (nv-coding-style
     // section 18a; a counted push loop here would allocate per question).

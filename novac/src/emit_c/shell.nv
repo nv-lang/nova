@@ -92,6 +92,7 @@ export fn shell_surface() -> InteropTable {
 /// and writes while it walks one file. The text builder is a resource, so
 /// the emitter is a `consume` value — created once, walked, finished once.
 type Emitter consume {
+    src_name str /// The compiled file's base name, for contract panics (#874); "" on the test path.
     ctx Ctx /// type registry and def table — read only, built by sem
     out CheckOut /// THE checker's channel: every type question is a READ here, never a re-derivation (E2-b1)
     lits []str /// string literals in registration order; the index is the C name suffix

@@ -54,9 +54,31 @@ fn Verdict @code() -> int => match @ {
 /// door error outranks a refusal and a refusal outranks a clean file.
 fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else { a }
 
+/// The path's last segment: what the oracle prints as the FILE of a
+/// contract panic (`p.nv:4:`), and the only part of the path the emitted
+/// binary should carry (#874).
+fn base_name(path str) -> str {
+    ro b = path.bytes()
+    mut cut = 0
+    mut i = 0
+    while i < b.len() {
+        if b[i] == SLASH_BYTE || b[i] == BACKSLASH_PATH_BYTE { cut = i + 1 } else {
+            // Any other byte belongs to the current segment.
+        }
+        i += 1
+    }
+    path[cut..]
+}
+
+/// The two path separators base_name reads.
+const SLASH_BYTE u8 = 0x2F
+
+/// Windows' own separator, the second of the two.
+const BACKSLASH_PATH_BYTE u8 = 0x5C
+
 /// Emit C for one file: print diagnostics, or the C text when there are none.
 fn emit_one(text str, file str, decls []Node, interop InteropTable) -> Verdict {
-    ro (diags, c_text) = compile_to_c_with(text, decls, interop)
+    ro (diags, c_text) = compile_to_c_with(text, decls, interop, src_name: base_name(file))
     if diags.len() > 0 {
         mut i = 0
         for d in diags {

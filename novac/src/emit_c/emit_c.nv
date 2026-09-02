@@ -122,14 +122,15 @@ export type Instantiation {
 /// callables exist is mono's decision and typing an instance body is check's
 /// work, so an emitter that called either of them would be deciding rather
 /// than rendering (274 §6 -- pass order lives in the pipeline alone).
-export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiation) -> str {
+export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiation,
+               src_name str = "") -> str {
     // The hoist map is sized by the file's node space, like every other
     // by-node table: "" answers "not hoisted" without a second lookup.
     mut lt = []str.new()
     for _ in 0..out.types.len() {
         lt.push("")
     }
-    consume e = Emitter { ctx, out, reach, next_tmp: 0, lits: []str.new(), lit_tmp: lt, body: StringBuilder.new() }
+    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lits: []str.new(), lit_tmp: lt, body: StringBuilder.new() }
     e.emit_type_decls()
     e.emit_tuple_typedefs()
     e.emit_instance_protos(insts)

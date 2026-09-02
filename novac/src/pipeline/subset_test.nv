@@ -665,8 +665,8 @@ fn main() {
  println(half(8))
 }", std)
     assert(d.len() == 0)
-    assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 0,"))
-    assert(c.contains("\"\", 0, \"half wants a positive\");"))
+    assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 1,"))
+    assert(c.contains("\"\", 1, \"half wants a positive\");"))
 
     // The message is optional in the language (the shell's own contracts
     // carry none): a clause that ends on its condition spells NULL -- the
@@ -678,7 +678,7 @@ fn main() {
  println(third(9))
 }", std)
     assert(d2.len() == 0)
-    assert(c2.contains("\"\", 0, NULL);"))
+    assert(c2.contains("\"\", 1, NULL);"))
 }
 
 test "hex literals lex as one IntLit and keep their spelling (hex wave)" {
@@ -814,4 +814,21 @@ test "an unknown form in println's argument position refuses instead of falling 
 }", std)
     assert(d2.len() == 1)
     assert(d2[0].message.contains("argument position"))
+}
+
+test "the contract note is the checker's: a source slice and a real line (#871/#874)" {
+    // The emitter's leaf-join printed `n > - 1` for `n > -1`, and the panic
+    // said `:0:` -- the checker is the one holder of the source, so the
+    // display is the exact slice and the line is counted here, once.
+    ro std = std_decls()
+    ro (dcn, c) = compile_to_c("fn f(n int) -> int
+ requires n > -1
+{
+ n
+}
+fn main() {
+ println(f(3))
+}", std)
+    assert(dcn.len() == 0)
+    assert(c.contains("\"n > -1\", \"\", 2,"))
 }

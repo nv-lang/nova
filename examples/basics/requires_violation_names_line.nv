@@ -1,0 +1,14 @@
+// A VIOLATED contract panics with the file, the line, the message and the
+// condition's exact source -- byte-for-byte with the oracle (#871/#874).
+module basics.requires_violation_names_line
+
+/// The guard everything below violates on purpose.
+fn half(n int) -> int
+    requires n > 0, "half wants a positive"
+{
+    n / 2
+}
+
+fn main() {
+    println(half(0))
+}

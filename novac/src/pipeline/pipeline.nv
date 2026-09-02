@@ -166,7 +166,8 @@ export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) =>
     compile_to_c_with(text, parse_decls(decl_texts), interop_surface())
 
 /// The same, given declarations ALREADY parsed.
-export fn compile_to_c_with(text str, decls []Node, interop InteropTable) -> ([]Diagnostic, str) {
+export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
+                            src_name str = "") -> ([]Diagnostic, str) {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
     ro ctx = context(tree, decls, interop)
@@ -183,5 +184,5 @@ export fn compile_to_c_with(text str, decls []Node, interop InteropTable) -> ([]
     }
     // The emitter is handed the checker's channel, not the checker: it reads
     // decisions and cannot ask for a new one (E2-b1).
-    (diags, emit(tree, ctx, chan, reach, insts))
+    (diags, emit(tree, ctx, chan, reach, insts, src_name: src_name))
 }

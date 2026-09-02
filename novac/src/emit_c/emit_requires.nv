@@ -22,7 +22,8 @@
 
 module emit_c
 
-import ../sem.{branch_children, display_of, unescape_dollar}
+import ../sem.{branch_children, unescape_dollar, ContractNote}
+import ../diag.{ice}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 
@@ -36,8 +37,17 @@ fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
         @body.append("    if (!(")
         @emit_expr(rk[1])
         @body.append(")) nova_contract_violation(NOVA_CONTRACT_PRE, \"${name}\", \"")
-        @body.append(c_literal_escaped(display_of(rk[1])))
-        @body.append("\", \"\", 0, ")
+        // The display and the line are the CHECKER's decision (#871/#874):
+        // it holds the source, this door only spells. The file name arrived
+        // with the emit call -- the test path passes none, and an empty name
+        // prints as the empty field it is.
+        match @out.contract_of(rq.id_of()) {
+            Some(note) => {
+                @body.append(c_literal_escaped(note.display))
+                @body.append("\", \"${@src_name}\", ${note.line}, ")
+            }
+            None => ice("emit_c: a requires clause the checker left without its note (#871)")
+        }
         @body.append(contract_msg_c(rk))
         @body.append(");\n")
     }
