@@ -246,6 +246,12 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The refutable-binding judge's answer (hunt var_shadow, #875): a binding
+/// whose NAME is a visible payload-less variant is a one-variant pattern
+/// match in the language (D411), and the oracle refuses it -- novac used to
+/// accept and shadow the variant in silence.
+const REFUTABLE_BIND_MSG = "a binding pattern that names a variant is refutable -- rename the binding, or match on the value (D411)"
+
 /// The interpolated-message judge's answer (hunt N5, #873): the message is
 /// spelled into C as ONE literal, so `${...}` inside it would print itself
 /// verbatim on violation -- a silent lie about the values. Refused until the

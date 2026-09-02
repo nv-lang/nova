@@ -832,3 +832,29 @@ fn main() {
     assert(dcn.len() == 0)
     assert(c.contains("\"n > -1\", \"\", 2,"))
 }
+
+test "a binding that names a visible variant refuses as refutable (#875)" {
+    // `ro Dot = 3` under `type Kind enum Dot | Dash` used to shadow the
+    // variant in silence -- the oracle refuses it as a one-variant pattern
+    // (D411). A payload-carrying variant's bare name stays a binder.
+    ro std = std_decls()
+    ro (dvs, _) = compile_to_c("type Kind enum Dot | Dash
+fn main() {
+ ro Dot = 3
+ println(Dot)
+}", std)
+    // After the binding refuses, `println(Dot)` legally meets the
+    // variant-value path and adds the printer refusal -- judged by TEXT.
+    mut hit = false
+    for g in dvs {
+        if g.message.contains("refutable") { hit = true }
+    }
+    assert(hit)
+
+    ro (dok, _) = compile_to_c("type Tri enum A(int) | B
+fn main() {
+ ro A = 3
+ println(A)
+}", std)
+    assert(dok.len() == 0)
+}

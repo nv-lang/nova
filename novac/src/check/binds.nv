@@ -46,6 +46,25 @@ fn Checker mut @type_bind(st Node) -> () {
         return
     }
     ro vname = leaf_text(kids[1])
+    // A NAME that is a visible payload-less variant is not a binder in the
+    // language: the binding is a refutable one-variant pattern, and the
+    // oracle refuses it (D411; hunt var_shadow, #875). Judged before the
+    // initializer -- the shadowing itself is the mistake.
+    match @ctx.defs.def_of(vname) {
+        None => {}
+        Some(vd0) => match vd0.target {
+            DefVariant(vrow) => {
+                if @ctx.variant_rows[raw_vrow(vrow)].payload_cnt == 0 {
+                    @report_first_leaf_of(kids, REFUTABLE_BIND_MSG)
+                    return
+                } else {
+                    // A payload-carrying variant's name is no pattern
+                    // without its parens; the binding stands.
+                }
+            }
+            DefType(_) | DefFn(_) | DefConst(_) => {}
+        }
+    }
     ro init = kids[kids.len() - 1]
     ro ik = init.kind_of()
     // A plain expression initializer is verified before it is typed. A match
