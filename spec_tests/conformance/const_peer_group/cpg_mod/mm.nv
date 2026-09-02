@@ -1,0 +1,5 @@
+module const_peer_group.cpg_mod
+
+// Same group, different file: the constant above must be visible here WITHOUT
+// any import -- peers of one folder-module share a declaration namespace.
+export fn doubled_limit() -> int => SHOUTED_LIMIT * 2

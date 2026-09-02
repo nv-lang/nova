@@ -29,7 +29,7 @@ import ../source.{Span}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{EQUAL_METHOD}
+import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
 import ../sem.{raw_crow}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}

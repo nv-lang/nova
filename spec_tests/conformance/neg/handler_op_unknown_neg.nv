@@ -1,0 +1,34 @@
+// Registry 819: a handler literal could declare an operation the effect does
+// NOT have, and the checker said nothing. The `find(...)` that matches a
+// handler op against the effect schema simply had no else branch -- the same
+// shape the hunt found in novac (#870): a form missing from a list is not
+// refused anywhere, it just is not there.
+//
+// What followed was never a diagnostic. Either codegen emitted a vtable member
+// that does not exist (`no member named 'around' in 'NovaVtable_Small'`, this
+// file's shape), or -- when the phantom op's return type is an unbound name --
+// an [INTERNAL-PANIC] `Path call return type unknown`, which is how the
+// shipped example examples/real_world/orm_decorators.nv failed: its four
+// handlers kept implementing `in_transaction` after that operation was REMOVED
+// from `Db` (owner decision, registry 570).
+// EXPECT_COMPILE_ERROR E_HANDLER_OP_UNKNOWN
+module neg.handler_op_unknown_neg
+
+type Small effect {
+    ping() -> int
+}
+
+fn base() -> Effect[Small] => effect Small {
+    ping() -> int => 1
+}
+
+fn wrap(real Effect[Small]) -> Effect[Small] => effect Small {
+    ping() -> int => real.ping()
+    // nova:expect E_HANDLER_OP_UNKNOWN -- `around` is not an operation of `Small`
+    around(b) -> T => real.around(b)
+}
+
+fn main() Io -> () {
+    ro w = wrap(base())
+    println(w.ping())
+}

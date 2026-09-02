@@ -1,0 +1,9 @@
+// Registry 882: a SCREAMING_SNAKE constant declared in ANOTHER peer file of the
+// same folder-module must still resolve. This is the control the fix could have
+// broken: narrowing the capitalized-identifier escape hatch means such a name is
+// now REQUIRED to be found through the module group rather than waved through.
+module const_peer_group.cpg_mod
+
+export const SHOUTED_LIMIT = 7
+
+export fn limit_plus(n int) -> int => SHOUTED_LIMIT + n

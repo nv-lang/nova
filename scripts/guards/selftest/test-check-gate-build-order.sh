@@ -92,5 +92,39 @@ if NOVA_GATE_FILE="$T/nosuch.sh" sh "$GUARD" "$ROOT" >"$T.o4" 2>&1; then
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-gate-build-order ok: четыре подделки покраснели, здоровый порядок и чужой бинарь зелёные, живая половина зелёная"
+# ── подделка 5 (ось САМОТЕСТОВ, реестр №884): блок самотестов ВЫШЕ сборки ──
+# Настоящий носитель: так стояло в гейте до 2026-09-02, и ночной ярус падал
+# «нет оракула — живая половина мертва». Судится МЕСТО блока, а не имена, —
+# поэтому подделка содержит ровно вызов `run-guard-selftest.sh` и барьер.
+STG="$T/gate_selftest_above.sh"
+{
+    echo 'step full "selftests"'
+    echo 'bash "$ROOT/scripts/tools/run-guard-selftest.sh" a b c'
+    echo 'step push "cargo build --release"'
+    echo '( cd "$ROOT/nova-cli" && cargo build --release )'
+} > "$STG"
+if NOVA_GATE_FILE="$STG" sh "$GUARD" "$ROOT" >"$T.o5" 2>&1; then
+    echo "FAIL: блок самотестов выше сборки дал зелёный" >&2
+    rc=1
+elif ! grep -q "блок самотестов" "$T.o5"; then
+    echo "FAIL: красный есть, но не про блок самотестов:" >&2; tail -2 "$T.o5" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+# ── подделка 6: тот же блок НИЖЕ сборки — обязан быть зелёным ───────────
+# Без этой половины страж мог бы краснеть всегда и тем «доказывать» что угодно.
+STG2="$T/gate_selftest_below.sh"
+{
+    echo 'step push "cargo build --release"'
+    echo '( cd "$ROOT/nova-cli" && cargo build --release )'
+    echo 'step full "selftests"'
+    echo 'bash "$ROOT/scripts/tools/run-guard-selftest.sh" a b c'
+} > "$STG2"
+if ! NOVA_GATE_FILE="$STG2" sh "$GUARD" "$ROOT" >"$T.o6" 2>&1; then
+    echo "FAIL: блок самотестов НИЖЕ сборки покраснел:" >&2
+    tail -2 "$T.o6" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-gate-build-order ok: шесть подделок судимы — пять красных (включая ось самотестов №884), здоровый порядок, чужой бинарь и блок ниже сборки зелёные"
 exit "$rc"

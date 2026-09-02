@@ -39,8 +39,13 @@ import std.collections.vec_seq.{filter}
 //   через `Sql.with_filter` (см. stdlib_sql.nv).
 // - `exec` — DELETE превращается в UPDATE deleted_at = NOW().
 //   UPDATE/INSERT проходят как есть.
-// - `in_transaction` — пробрасываем неизменно (вложенная композиция
-//   handler'ов работает прозрачно).
+//
+// Транзакций здесь НЕТ, и это не упущение примера: операция
+// `in_transaction` была УДАЛЕНА из эффекта `Db` (решение владельца,
+// реестр 221.1 №570) — обобщённая операция эффекта требует rank-2
+// полиморфизма через один слот vtable, чего слот не даёт. Замена —
+// `consume`-типизированный `Tx` с `@cleanup`, её проектирует план 268;
+// пока её нет, декоратор транзакции написать не на чем.
 export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
     query(q) -> []DbRow {
         // SELECT: добавляем фильтр. Простая реализация — `with_filter`
@@ -70,7 +75,6 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
             real.exec(q)
         }
     }
-    in_transaction(b) -> T => real.in_transaction(b)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -92,17 +96,12 @@ export fn with_audit(real Effect[Db], current_user_id u64) -> Effect[Db] => effe
         ro result = real.exec(q)
 
         // detach — fire-and-forget audit-запись. В тестах
-        // `with Detach = SyncDetach` делает тест-цикл полностью
+        // В тестах ниже detach-задача не перехватывается (обработчик
         // детерминированным — audit-запись произойдёт синхронно.
         detach {
             write_audit_entry(current_user_id, q, result)
         }
         result
-    }
-    in_transaction(b) -> T {
-        // Транзакция — оборачиваем неизменно. Audit за каждый exec
-        // внутри — попадёт в detach-очередь.
-        real.in_transaction(b)
     }
 }
 
@@ -126,18 +125,15 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
 // не знает о replica'х, не выбирает соединение, не помечает методы
 // как @ReadOnly. Decorator всё решает.
 //
-// Тонкость: внутри `in_transaction` все запросы должны идти на primary,
-// иначе read-after-write rounds-trip'ы будут видеть устаревшие данные
-// (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
-// у которого query тоже идёт на primary.
+// Тонкость, которую пример пока НЕ показывает: внутри транзакции все
+// запросы обязаны идти на primary, иначе read-after-write увидит
+// устаревшие данные (replica lag), и делается это под-handler'ом, у
+// которого `query` тоже на primary. Показать её не на чем: операции
+// `in_transaction` у `Db` больше нет (см. заголовок файла, №570), а её
+// замену проектирует план 268 — вернуть этот кусок нужно ВМЕСТЕ с ней.
 export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db] => effect Db {
     query(q) -> []DbRow => replica.query(q)
     exec(q) -> int => primary.exec(q)
-    in_transaction(b) -> T {
-        // Внутри транзакции — всё через primary. Подменяем Db
-        // вложенным handler'ом, который делегирует только primary.
-        primary.in_transaction(|| with Db = primary { b() })
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -164,12 +160,39 @@ export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) 
     with_read_replica(with_audited, with_sd_replica)
 }
 
-// Использование:
+// Точка входа. Прежде она стояла ЗАКОММЕНТИРОВАННОЙ, и это стоило дорого:
+// файл выглядел проверяемым, а не компилировался ни разу — за что и накопил
+// три невозможности сразу (реестр 221.1 №573 «пример проверяется не тем»,
+// №819 «операция обработчика, которой у эффекта нет», плюс несуществующий
+// `SyncDetach`). Раскомментировать прежний текст было НЕЛЬЗЯ: он звал
+// `postgres_handler`, `current_admin_id` и `run_app`, которых в файле нет, и
+// был написан на снятом `let` (D184). Поэтому здесь настоящий `main` —
+// он гоняет ту же композицию декораторов поверх capturing-handler'а из
+// этого же файла, без внешней БД.
+fn main() Io -> () {
+    mut primary_log []CapturedQuery = []
+    mut replica_log []CapturedQuery = []
+
+    with Db = build_db(
+        capturing_handler(primary_log),
+        capturing_handler(replica_log),
+        42,
+    ) {
+        Db.query(sql`SELECT * FROM users`)
+        Db.exec(sql`DELETE FROM users WHERE id = ${I(7)}`)
+    }
+
+    // Чтение ушло на replica и получило soft-delete-фильтр; удаление ушло на
+    // primary и превратилось в UPDATE — ровно то, что обещают декораторы.
+    println("replica: ${replica_log.len()} query(-ies), primary: ${primary_log.len()}")
+}
+
+// Как это выглядит с настоящим драйвером (иллюстрация, не код файла):
 //
 // ```nova
 // fn main() Net Io -> () {
-//     let primary = postgres_handler("primary.db.local")
-//     let replica = postgres_handler("replica.db.local")
+//     ro primary = postgres_handler("primary.db.local")
+//     ro replica = postgres_handler("replica.db.local")
 //
 //     with Db = build_db(primary, replica, current_admin_id()) {
 //         run_app()
@@ -206,7 +229,6 @@ fn capturing_handler(mut log []CapturedQuery) -> Effect[Db] => effect Db {
         log.push({ template: q.template, args: q.args })
         0
     }
-    in_transaction(b) -> T => b()
 }
 
 test "soft-delete: SELECT augmented with deleted_at IS NULL" {
@@ -250,39 +272,46 @@ test "read-replica: SELECT идёт на replica, exec — на primary" {
     assert(replica_log[0].template.starts_with("SELECT"))
 }
 
-test "read-replica: внутри transaction всё на primary" {
+test "read-replica: SELECT идёт на replica, мутация — на primary" {
     mut primary_log []CapturedQuery = []
     mut replica_log []CapturedQuery = []
 
+    // Прежняя редакция этого теста проверяла маршрутизацию ВНУТРИ
+    // транзакции; операции `in_transaction` у `Db` больше нет (№570,
+    // замена — план 268), поэтому проверяется то же свойство роутера
+    // на прямых вызовах: чтение — replica, запись — primary.
     with Db = with_read_replica(
         capturing_handler(primary_log),
         capturing_handler(replica_log),
     ) {
-        Db.in_transaction(|| {
-            Db.query(sql`SELECT 1`)            // должен пойти на primary
-            Db.exec(sql`UPDATE users SET name = ${S("alice")} WHERE id = ${I(1)}`)
-            ()
-        })
+        Db.query(sql`SELECT 1`)
+        Db.exec(sql`UPDATE users SET name = ${S("alice")} WHERE id = ${I(1)}`)
     }
 
-    assert(primary_log.len() == 2)                    // SELECT + UPDATE
-    assert(replica_log.len() == 0)                    // ничего на replica
+    assert(replica_log.len() == 1)                    // SELECT ушёл на replica
+    assert(replica_log[0].template.starts_with("SELECT"))
+    assert(primary_log.len() == 1)                    // UPDATE ушёл на primary
+    assert(primary_log[0].template.starts_with("UPDATE"))
 }
 
 test "audit: каждый exec пишется в detach-задачу" {
     mut log []CapturedQuery = []
 
-    // SyncDetach — канонический test-mocking handler, исполняет
-    // `detach { ... }` синхронно и детерминированно. write_audit_entry
-    // сама ничего не логирует (иллюстративный stub), поэтому наблюдаем
+    // `write_audit_entry` сама ничего не логирует (иллюстративный
+    // stub), поэтому наблюдаем
     // косвенно: with_audit детачит ровно раз на каждый exec (не query) —
     // считаем не-SELECT записи в capturing-логе.
-    with Detach = SyncDetach {
-        with Db = with_audit(capturing_handler(log), 42) {
-            Db.exec(sql`INSERT INTO users (name) VALUES (${S("alice")})`)
-            Db.exec(sql`UPDATE users SET name = ${S("bob")} WHERE id = ${I(1)}`)
-            Db.query(sql`SELECT * FROM users`)         // audit на SELECT не пишется
-        }
+    // Прежде эти строки стояли внутри `with Detach = SyncDetach { ... }`.
+    // Такого handler'а не существует: `Detach` — встроенный эффект, у него
+    // нет объявления `type Detach effect { ... }`, а значит и литерала
+    // handler'а для него написать нельзя. Имя `SyncDetach` было замыслом,
+    // а не кодом; файл никогда не компилировался (его `fn main` закомментирован
+    // — реестр 221.1 №573), поэтому ошибка жила незамеченной. Тест проверяет
+    // то же наблюдаемое свойство без обёртки: audit пишет на exec, не на query.
+    with Db = with_audit(capturing_handler(log), 42) {
+        Db.exec(sql`INSERT INTO users (name) VALUES (${S("alice")})`)
+        Db.exec(sql`UPDATE users SET name = ${S("bob")} WHERE id = ${I(1)}`)
+        Db.query(sql`SELECT * FROM users`)             // audit на SELECT не пишется
     }
 
     ro exec_count = log.filter(|e| !e.template.starts_with("SELECT")).len()
@@ -295,17 +324,17 @@ test "compose: soft-delete + audit + read-replica" {
     mut primary_log []CapturedQuery = []
     mut replica_log []CapturedQuery = []
 
-    with Detach = SyncDetach {
-        ro composed = with_read_replica(
-            with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
-            with_soft_delete(capturing_handler(replica_log)),
-        )
+    // Обёртки `with Detach = SyncDetach` здесь больше нет — см. причину
+    // в тесте про audit выше (такого handler'а не существует).
+    ro composed = with_read_replica(
+        with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
+        with_soft_delete(capturing_handler(replica_log)),
+    )
 
-        with Db = composed {
-            Db.query(sql`SELECT * FROM users`)    // replica + soft-delete
-            Db.exec(sql`DELETE FROM users WHERE id = ${I(1)}`)
-                                                   // primary + soft-delete + audit
-        }
+    with Db = composed {
+        Db.query(sql`SELECT * FROM users`)    // replica + soft-delete
+        Db.exec(sql`DELETE FROM users WHERE id = ${I(1)}`)
+                                               // primary + soft-delete + audit
     }
 
     assert(replica_log.len() == 1)
@@ -317,5 +346,5 @@ test "compose: soft-delete + audit + read-replica" {
 
     // with_audit детачит ровно раз на каждый exec, дошедший до primary —
     // primary_log.len() == 1 уже подтверждает срабатывание audit'а
-    // (SyncDetach исполняет detach синхронно и детерминированно).
+    // (детач-задача на проверяемый результат не влияет).
 }

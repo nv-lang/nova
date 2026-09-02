@@ -29,7 +29,7 @@ module novac.sem
 
 import ../diag.{ice}
 import ../names.{raw_decl}
-import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
+import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name, OPTION_FAMILY_C, OPTION_SUM}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.

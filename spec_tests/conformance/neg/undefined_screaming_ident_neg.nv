@@ -1,0 +1,22 @@
+// Registry 882: a typo in a CAPITALIZED name used to pass `nova check` green and
+// detonate at build as [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] `Ident ... not
+// in var_types / not a sum-variant`. A typo in a lowercase name was refused
+// honestly all along -- so the compiler judged the same mistake by the case of
+// its letters.
+//
+// The cause was an escape hatch in the name-resolution pass that waved through
+// EVERY identifier starting with a capital, and its own comment gave the reason:
+// bootstrap had no cross-file name resolution. That reason expired with Plan
+// 42.15 (per-group declarations, per-peer imports), and the hatch outlived it.
+// It is now narrowed to the shape the rationale names -- UpperCamelCase for
+// types, variants and modules -- while SCREAMING_SNAKE (a constant, 210 of 211
+// in std) must be found for real.
+// EXPECT_COMPILE_ERROR undefined identifier `MAX_SIZ`
+module neg.undefined_screaming_ident_neg
+
+const MAX_SIZE = 64
+
+fn main() Io -> () {
+    // nova:expect undefined identifier -- one letter short of MAX_SIZE
+    println(MAX_SIZ)
+}

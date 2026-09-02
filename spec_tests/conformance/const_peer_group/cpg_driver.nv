@@ -1,0 +1,8 @@
+// EXPECT_STDOUT 14
+module const_peer_group.cpg_driver
+
+import ./cpg_mod.{doubled_limit}
+
+fn main() Io -> () {
+    println(doubled_limit())
+}
