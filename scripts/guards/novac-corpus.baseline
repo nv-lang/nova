@@ -243,5 +243,14 @@
 # токен (K4-класс ушёл конструкцией). Вложенная интерполяция — отказ по
 # имени. Обратная проба: parse-ветка InterpStr заглушена — держатель
 # краснеет.
-contract-match 47
-behavior-match 39
+# 2026-09-02 (9) -- 47/39 -> 48/40: the E2-b3 M1 carrier --
+# `method_overload_pick` (two `absorb` overloads split by the argument's
+# type): the method key is TYPED (the same `typed_call_key` door the generic
+# path used), the walk types arguments BEFORE the judge (the free-call order
+# of 2026-08-21 arriving at method calls), and the pick decides the SYMBOL --
+# each call names its own overload's C spelling. A real D84 tie (modes varying
+# oppositely) refuses by name; the oracle agrees on this axis
+# (E_OVERLOAD_AMBIGUOUS_MODE). Reverse probe: the key door degraded to the
+# arity key -- both M1 holders redden.
+contract-match 48
+behavior-match 40

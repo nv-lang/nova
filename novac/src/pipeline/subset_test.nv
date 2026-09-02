@@ -933,3 +933,49 @@ fn main() {
     }
     assert(hit)
 }
+
+test "a method overload is narrowed by the argument types (E2-b3 M1)" {
+    // Two `absorb` overloads on an own type, split by the argument's TYPE.
+    // Until M1 the method key carried `no_ty()` in every argument slot, so
+    // this pair was refused as "overloaded and novac does not type arguments
+    // yet". The pick decides the SYMBOL: each call must name its OWN
+    // overload's C spelling (our scheme carries the parameter types).
+    ro std = std_decls()
+    ro (dpk, c) = compile_to_c("type Tally {
+ n int
+}
+fn Tally @absorb(x int) -> int => @n + x
+fn Tally @absorb(s str) -> int => @n + 90
+fn main() {
+ ro t = Tally { n: 10 }
+ println(\"\${t.absorb(5)}\")
+ println(\"\${t.absorb(\"abc\")}\")
+}", std)
+    assert(dpk.len() == 0)
+    assert(c.contains("absorb__Tally__nova_int__to_nova_int(t,"))
+    assert(c.contains("absorb__Tally__nova_str__to_nova_int(t,"))
+}
+
+test "a real D84 tie refuses by name, never chooses (E2-b3 M1)" {
+    // Modes varying OPPOSITELY across two positions: `take(consume, ro)`
+    // beside `take(ro, mut)` both fit `bx.take(7, m)` and neither dominates
+    // (P14 filter 4). D84's mode-axis amendment says refuse the tie -- "there
+    // is no silent choice". The oracle agrees on this axis
+    // (E_OVERLOAD_AMBIGUOUS_MODE, probed 2026-09-02).
+    ro std = std_decls()
+    ro (dtie, _) = compile_to_c("type Box {
+ v int
+}
+fn Box @take(consume a int, b int) -> int => a + b
+fn Box @take(a int, mut b int) -> int => a - b
+fn main() {
+ ro bx = Box { v: 1 }
+ mut m = 2
+ println(\"\${bx.take(7, m)}\")
+}", std)
+    mut tie = false
+    for g in dtie {
+        if g.message.contains("none is more specific") { tie = true }
+    }
+    assert(tie)
+}

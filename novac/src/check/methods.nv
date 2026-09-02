@@ -28,17 +28,28 @@ import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget
 import ../sem.{c_instance_method, ty_source_name, decl_of_ty}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
-/// one slot per written argument.
+/// one slot per written argument, each carrying its TYPE (E2-b3 M1).
 ///
 /// Plan 273 §4.4 fixes the receiver at position zero, so a method call and a
 /// free call build the SAME kind of key and ask the SAME door — the only
 /// difference is that one of them has a position zero to fill. There is no
 /// receiver-shaped path left in resolution (owner, 2026-08-19).
 ///
-/// Argument positions are `no_ty()`: `check` walks the tree before local
-/// typing (274.3/C9) and cannot type them yet. ARITY, though, is known here and
-/// discriminates from today — `f()` and `f(a)` stopped being one question.
+/// The 274.3/C9 gap closed here: argument positions used to be `no_ty()`
+/// because the judge ran before the arguments were walked. The walk goes
+/// first now (the free-call order of 2026-08-21, exprs.nv), so the same door
+/// the generic method path already used answers for every method call.
 fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
+    typed_call_key(kids, 3, kids[0], recv_t, @ctx, @scope, @chan)
+}
+
+/// The same key with the argument TYPES removed — the diagnostic's tool, not
+/// resolution's (the free call's `free_call_key` split, calls.nv): it answers
+/// "does any method of this receiver take this many arguments", which is what
+/// separates a wrong arity from a wrong type when the typed key fit nothing.
+/// The receiver stays typed — a method that exists on some OTHER type is
+/// "no such method" here, not "wrong arguments".
+fn Checker @method_arity_key(kids []Node, recv_t TyId) -> []ArgSpec {
     mut out = []ArgSpec.new()
     // The receiver is parameter zero (plan 273) and carries a CLASS: `mut b`
     // then `b.m()` selects the `mut @m` overload, which is the precedent the
@@ -46,6 +57,16 @@ fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
     out.push(ArgSpec { type_id: recv_t, cls: arg_class(kids[0], @scope), name: "" })
     out.append(unknown_args(kids, 3, @scope))
     out
+}
+
+/// Every position of this key carries a decided type. What separates a real
+/// D84 ambiguity from a set novac merely could not narrow: an untyped slot
+/// fits every overload, and a tie built on one is ignorance, not ambiguity.
+fn key_fully_typed(key []ArgSpec) -> bool {
+    for a in key {
+        if !is_ty(a.type_id) { return false }
+    }
+    true
 }
 
 /// Decide WHICH row a method call goes to, and record the decision.
@@ -56,9 +77,9 @@ fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
 /// to one question, with the second one winning in silence: exactly the shape
 /// plan 196 spends its waves removing from the current compiler.
 ///
-/// Overload sets are NOT narrowed here -- that arrives with E2-b3 and needs
-/// argument types. An overloaded name is refused BY NAME instead of being
-/// guessed, because guessing is how the wrong entry point gets emitted.
+/// The key is TYPED since E2-b3 M1, so the lookup narrows an overload set by
+/// the argument types and modes; what it cannot narrow is a real D84 tie,
+/// refused in the verdict below.
 fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
     if kids.len() < 3 {
         return
@@ -77,9 +98,13 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
     }
 }
 
-/// The refusal a method call that fits nothing deserves: the BINDING rule it
-/// broke when that can be established, and "no such method" only when it cannot.
-fn Checker @method_refusal(t Token, key []ArgSpec) -> str {
+/// The refusal a method call that fits nothing deserves, judged in the free
+/// call's order (D420: name the cause you ESTABLISHED): the BINDING rule when
+/// the name carries one declaration; then the same lookup with the argument
+/// types removed — if a row of this receiver and arity exists, the TYPES are
+/// the cause and `refuse_arg_type` names the first differing position.
+fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
+    ro kids = branch_children(e)
     // [LEGACY-#764-nested-if-let-return] The natural shape here is one if-let
     // inside another; the oracle emits the OUTER one's temporary undeclared as
     // soon as the inner branch carries a `return` and anything follows the outer
@@ -89,28 +114,36 @@ fn Checker @method_refusal(t Token, key []ArgSpec) -> str {
     ro only = @res.only_row_of(t.text)
     if !only.is_none() {
         if Some(why) = @binding_refusal(only ?? no_row(), key) {
-            return why
+            @refuse(t, why)
+            return
         } else {
             // It binds -- so the receiver's type or an argument's is the cause.
         }
     } else {
-        // Unknown or overloaded: no single declaration to speak about.
+        // Unknown or overloaded: the arity question below answers.
     }
-    "outside the subset: this type has no such method in the declarations novac was handed"
+    match @res.lookup(@ctx.fns, @ctx.tys, t.text, @method_arity_key(kids, key[0].type_id), CallForm.MethodCall) {
+        FnUnknown => @refuse(t,
+            "outside the subset: this type has no such method in the declarations novac was handed")
+        // Several rows take this receiver and this many arguments, and none of
+        // them fits the types. Naming a position would mean naming ONE
+        // candidate as the intended one, and which was intended is unknown.
+        FnOverloaded(_) => @refuse(t,
+            "outside the subset: no overload of this method accepts these argument types")
+        FnFound(row) => @refuse_arg_type(kids, row, key)
+    }
 }
 
 /// The whole verdict of one method lookup, in one place: record it, or decline
 /// it BY NAME. THREE outcomes and three answers -- no arm falls through.
 ///
-/// `FnOverloaded` was RECORDED here until 2026-08-20, and the justification was
-/// explicit: the spelling of a method discarded parameter types, so whichever
-/// row was picked, the emitted C name was the same. That spelling is gone --
-/// the name is ours and carries the parameter types -- so the pick would decide
-/// the SYMBOL. Measured on `greeting.starts_with("hello")`: with the arguments
-/// untyped (274.3/C9) the walk fitted the `char` overload and emitted its name
-/// for a `str` argument. Narrowing needs argument types (E2-b3); until then the
-/// honest answer is a refusal, because guessing is how the wrong entry point
-/// gets called.
+/// `FnOverloaded` was RECORDED here until 2026-08-20 (the untyped key made
+/// every pick the same C name), then REFUSED BY NAME until E2-b3 M1 (the key
+/// carried no argument types, so narrowing would be a guess). The key is typed
+/// now, so what remains of `FnOverloaded` is the real thing: two rows fit and
+/// neither is more specific — D84 says refuse the tie, never choose ("there is
+/// no silent choice"). The oracle silently picks one here (registry #857); the
+/// spec outranks the oracle, so the divergence is novac being RIGHT.
 ///
 /// `compiles_body` is the other refusal, and it is the same kind of statement:
 /// novac read the signature of a std method but does not emit its body, so
@@ -122,10 +155,22 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
         // NOT FOUND may mean "no such method" or "this method, reached wrongly"
         // (wave 4): `@peek(nope: 1)` and `@peek(1)` both fit no row, and telling
         // the reader the method does not exist would send them hunting a name
-        // that is right there. The binding answers when the name carries one row.
-        FnUnknown => @refuse(t, @method_refusal(t, key))
-        FnOverloaded(_) => @refuse(t,
-            "outside the subset: this method name is overloaded and novac does not type arguments yet")
+        // that is right there. The ladder names the rule it established.
+        FnUnknown => @refuse_method_call(e, t, key)
+        FnOverloaded(_) => {
+            if key_fully_typed(key) {
+                // A LANGUAGE refusal, not a subset limit: the oracle refuses
+                // this too -- by the spec's word if not yet by its own (#857).
+                @refuse(t,
+                    "this call fits more than one method and none is more specific -- an ambiguity is refused, never chosen (D84)")
+            } else {
+                // An argument novac could not type matches EVERY overload, so
+                // the set did not narrow -- novac's ignorance, not the
+                // program's ambiguity, and the message must not claim D84.
+                @refuse(t,
+                    "outside the subset: an argument's type is not decided yet, so this overloaded method is not narrowed")
+            }
+        }
         FnFound(row) => {
             if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
                 @record_instance_method(e, t, row, key)
@@ -162,8 +207,9 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
 /// the lattice this path makes, and `type_of` reads it from the channel.
 fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec) -> () {
     ro kids = branch_children(e)
-    ro typed = typed_call_key(kids, 3, kids[0], key[0].type_id, @ctx, @scope, @chan)
-    ro ids = match @deduce_from_args(row, typed, kids) {
+    // The key IS the typed key since E2-b3 M1 -- this path built its own
+    // second one while the caller's was untyped; one door, built once.
+    ro ids = match @deduce_from_args(row, key, kids) {
         None => return
         Some(v) => v
     }

@@ -1,0 +1,16 @@
+// A method overload narrowed by the argument's type (E2-b3 M1): `absorb(int)`
+// and `absorb(str)` split on the argument alone, and each call names its own
+// body -- the pick decides the symbol, so the two lines must differ.
+module basics.method_overload_pick
+
+type Tally { n int }
+
+fn Tally @absorb(x int) -> int => @n + x
+
+fn Tally @absorb(s str) -> int => @n + 90
+
+fn main() {
+    ro t = Tally { n: 10 }
+    println("${t.absorb(5)}")
+    println("${t.absorb("abc")}")
+}
