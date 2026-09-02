@@ -8,7 +8,9 @@
 видимой глазом, а не отладчиком.
 
 СУФФИКСЫ: `_id` — id сущности из реестра; `_row` — индекс строки в векторе;
-`_off`/`_cnt` — диапазон строк; `_len` — длина.
+`_off`/`_cnt` — диапазон строк; `_len` — длина; `_line` — 1-based строка
+ИСХОДНИКА (появился с ContractNote.src_line, волна канала контрактов
+2026-09-02: номер строки — тоже ссылка, её пространство — текст файла).
 
 ОДНО ЗАКОННОЕ ГОЛОЕ ИМЯ: `payload` — его смысл зависит от `kind`, и это сказано
 в его доке.
@@ -28,7 +30,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 NAME = "check-novac-ref-field-names"
 RE_TYPE = re.compile(r"^(export )?type [A-Za-z_]")
 RE_OPEN = re.compile(r"\{[ \t\v\f]*$")
-RE_SUFFIX = re.compile(r"_(id|row|off|cnt|len)$")
+RE_SUFFIX = re.compile(r"_(id|row|off|cnt|len|line)$")
 
 
 def main():

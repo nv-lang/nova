@@ -198,7 +198,7 @@ export type Resolution enum
 /// call that knows it (main's path; the test path passes none).
 export type ContractNote value {
     display str /// The condition's source slice, exactly as written.
-    line int /// 1-based line of the condition's first byte.
+    src_line int /// 1-based SOURCE line of the condition's first byte (the space is the source text's lines).
 }
 
 /// THE checker's channel: what the checker decided, read by everyone after it
@@ -311,7 +311,7 @@ export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []Ty
 /// Record what one `requires` clause shows on violation: the condition's
 /// source slice and its line. One writer (the checker's Requires arm), one
 /// reader (the contract prologue's emitter).
-export fn CheckOut mut @record_contract(id NodeId, display str, line int) -> ()
+export fn CheckOut mut @record_contract(id NodeId, display str, src_line int) -> ()
     requires is_node(id) && raw_node(id) < @res.len(), "sem: channel asked about a contract outside this file's id space"
 {
     match @res[raw_node(id)] {
@@ -322,7 +322,7 @@ export fn CheckOut mut @record_contract(id NodeId, display str, line int) -> ()
         Const(_) => ice("sem: record_contract on a node recorded as a constant")
     }
     ro idx = @contract_notes.len()
-    @contract_notes.push(ContractNote { display, line })
+    @contract_notes.push(ContractNote { display, src_line })
     @res[raw_node(id)] = Resolution.Contract(idx)
 }
 

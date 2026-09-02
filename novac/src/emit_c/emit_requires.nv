@@ -44,7 +44,7 @@ fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
         match @out.contract_of(rq.id_of()) {
             Some(note) => {
                 @body.append(c_literal_escaped(note.display))
-                @body.append("\", \"${@src_name}\", ${note.line}, ")
+                @body.append("\", \"${@src_name}\", ${note.src_line}, ")
             }
             None => ice("emit_c: a requires clause the checker left without its note (#871)")
         }
