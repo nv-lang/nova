@@ -51,6 +51,10 @@ export type NodeKind enum
     | MethodCall
     | FieldAccess
     | TypeDecl
+    | ConstDecl
+    | Index
+    | Unsafe /// `unsafe { ... }` -- a BLOCK expression (D216 s8): the value is the block's tail
+    | DepthErr
     | Field
     | RecordCtor
     | CtorField
@@ -86,8 +90,13 @@ export type NodeKind enum
     // statement form keeps its own kind: one of them the emitter writes,
     // the other needs a temporary it does not build yet.
     | IfExpr
+    | TupleExpr
+    | TupleBind /// destructuring binding `ro (a, b) = expr` (B15 step 5): keyword, LParen, name leaves with comma trivia, RParen, Assign, initializer
+    | IfLet /// `if Some(v) = expr { ... }` (if-let wave): KwIf, variant ident, LParen, binder ident, RParen, Assign, initializer, then-block
+    | Requires /// a `requires <expr>, "<text>"` clause between signature and body (contracts): word leaf, condition expr, comma, message StrLit
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
+    | SelfExpr /// bare `@` as a value inside a method body (the receiver itself): one At leaf
     | Recv
     | Generics
     | RetType

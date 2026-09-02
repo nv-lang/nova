@@ -1,0 +1,15 @@
+module p
+
+type Pt { n int }
+
+fn pick(c bool) -> Pt {
+    if c {
+        Pt { n: 1 }
+    } else {
+        Pt { n: 2 }
+    }
+}
+
+fn main() {
+    println(pick(true).n)
+}

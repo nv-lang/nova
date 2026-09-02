@@ -135,6 +135,7 @@ fn kind_ordinal(k TypeKind) -> int {
         TkParam => 4
         TkInfer => 5
         TkNewtype => 6
+        TkTuple => 7
     }
 }
 
@@ -214,6 +215,14 @@ export fn Interner mut @app(decl_id DeclId, args []TyId) -> TyId => @intern(Type
 export fn Interner mut @newtype(decl_id DeclId, under TyId) -> TyId =>
     @intern(TypeKind.TkNewtype, raw_decl(decl_id), []TyId.of(under))
 
+/// A structural tuple of its components (D123, B15 step 3): the head is the
+/// ARITY -- buckets split by it -- and the components are the args. Two tuples
+/// with equal components intern to ONE row, which is the structural identity
+/// the decision asks for; no DeclId exists, and pretending one did would lie
+/// to every door that asks the registry by declaration.
+export fn Interner mut @tuple(components []TyId) -> TyId =>
+    @intern(TypeKind.TkTuple, components.len(), components)
+
 /// A type PARAMETER by its index in the owner's generics (donor: rustc
 /// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
 /// have an id at all.
@@ -273,6 +282,7 @@ export fn Interner @prim_ordinal_of(t TyId) -> int
             ice("types: the prim ordinal of a NOMINAL term -- its head is a declaration")
         TkParam => ice("types: the prim ordinal of a type PARAMETER -- its head is a slot index")
         TkInfer => ice("types: the prim ordinal of an inference variable -- its head is a vid")
+        TkTuple => ice("types: the prim ordinal of a TUPLE -- its head is an arity")
     }
 }
 
@@ -289,6 +299,7 @@ export fn Interner @param_slot_of(t TyId) -> int
         TkRecord | TkSum | TkApp | TkNewtype =>
             ice("types: the parameter slot of a NOMINAL term -- its head is a declaration")
         TkInfer => ice("types: the parameter slot of an inference variable -- its head is a vid")
+        TkTuple => ice("types: the parameter slot of a TUPLE -- its head is an arity")
     }
 }
 
@@ -306,9 +317,10 @@ export fn Interner @decl_head_of(t TyId) -> DeclId
         // The NOMINAL kinds are one case, not four: each of them names a
         // declaration, and that is the whole rule.
         TkRecord | TkSum | TkApp | TkNewtype => DeclId(row.head_id)
-        // The other three are three DIFFERENT things, so they stay three arms:
+        // The other four are four DIFFERENT things, so they stay four arms:
         // the refusal names WHAT was found instead of a declaration.
         TkPrim => ice("types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
+        TkTuple => ice("types: a TUPLE names no declaration -- its head is an arity")
         TkParam => ice("types: a type PARAMETER names no declaration -- its head is a slot index")
         TkInfer => ice("types: an inference variable names no declaration -- its head is a vid")
     }
@@ -360,7 +372,9 @@ export fn Interner @is_concrete(t TyId) -> bool {
         // A NEWTYPE is concrete exactly when its representation is: the type is
         // distinct, the layout is the representation's (zero cost).
         TkNewtype => { return @is_concrete(@args[row.arg_off]) }
-        TkApp => {
+        // A TUPLE is concrete exactly as an application is: when every
+        // component is -- one rule, one arm (B15 step 3).
+        TkApp | TkTuple => {
             for i in 0..row.arg_cnt {
                 if !@is_concrete(@args[row.arg_off + i]) { return false }
             }
@@ -397,7 +411,10 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
             }
             return args[row.head_id]
         }
-        TkApp => {
+        // A TUPLE substitutes exactly as an application: through the
+        // components, re-interned under its OWN kind -- `row.kind` is that
+        // kind for both arms, so the rule is written once (B15 step 3).
+        TkApp | TkTuple => {
             mut new_args = []TyId.new()
             mut changed = false
             for i in 0..row.arg_cnt {
@@ -409,7 +426,7 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
                 new_args.push(s)
             }
             if !changed { return same_ty(t) }
-            return @intern(TypeKind.TkApp, row.head_id, new_args)
+            return @intern(row.kind, row.head_id, new_args)
         }
     }
 }

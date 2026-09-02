@@ -1,0 +1,17 @@
+// A record whose field is a SLICE: `[]T` is read in a parameter and in a return
+// type since step B2, and since 274.5 wave B1 in a FIELD too -- one form, one
+// answer. The literal is the D239 sugar over `Vec[T]`, so nothing new is
+// introduced here: what is new is that a field may name that type.
+module basics.record_slice_field
+
+type Bag {
+    xs []int
+    tag str
+}
+
+fn main() {
+    ro v = [7, 8]
+    ro b = Bag { xs: v, tag: "bag" }
+    println(b.tag)
+    println(b.xs.len())
+}

@@ -1,0 +1,89 @@
+// The contract prologue: each `requires` clause guards the body.
+//
+// Donor: none -- one loop, one C `if` per clause; nothing here needed a
+// pattern beyond the module's own co-equal emitters.
+// Role: the one door that opens a callable's body with its contract checks;
+// emit_callable calls it right after `{`.
+// Used by: emit_c.nv's emit_callable, and nothing else.
+// Guarded by: check-novac-differential.sh (corpus carrier requires_gate),
+// the subset_test.nv holder (asserts the full C line), and
+// check-novac-emitted-names.py (this file is in its scanned list).
+//
+// INTEROP, named as such: the violation call is the shell's own helper --
+// nova_contract_violation lives in shell.tpl.c, NOVA_CONTRACT_PRE beside
+// it, and the prologue spells the exact call the shell's own contracts use.
+// Goes the day novac emits the whole prelude.
+//
+// The wave's named boundary: file/line stay EMPTY ("" and 0) -- the emitter
+// holds neither a file name nor line numbers, so a violating program panics
+// `:0:` where the oracle names the source line. The carriers never violate,
+// the diff corpus sees no difference; a source-location channel is
+// inventoried in the plan (274.5, 3-pred38) as its own wave.
+
+module emit_c
+
+import ../sem.{branch_children, unescape_dollar}
+import ../diag.{ice}
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+
+/// The prologue itself: one `if (!(cond)) nova_contract_violation(...)` per
+/// clause, in source order, before any statement of the body.
+fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
+    for rq in kids {
+        if rq.kind_of() != NodeKind.Requires { continue }
+        ro rk = branch_children(rq)
+        if rk.len() < 2 { continue }
+        @body.append("    if (!(")
+        @emit_expr(rk[1])
+        @body.append(")) nova_contract_violation(NOVA_CONTRACT_PRE, \"${name}\", \"")
+        // The display and the line are the CHECKER's decision (#871/#874):
+        // it holds the source, this door only spells. The file name arrived
+        // with the emit call -- the test path passes none, and an empty name
+        // prints as the empty field it is.
+        match @out.contract_of(rq.id_of()) {
+            Some(note) => {
+                @body.append(c_literal_escaped(note.display))
+                @body.append("\", \"${@src_name}\", ${note.src_line}, ")
+            }
+            None => ice("emit_c: a requires clause the checker left without its note (#871)")
+        }
+        @body.append(contract_msg_c(rk))
+        @body.append(");\n")
+    }
+}
+
+/// The message argument as C text: the clause's string literal, quotes and
+/// all, or the oracle's own spelling of absence. A message-less clause is
+/// two children (word, condition) -- NULL is what the shell's own
+/// message-less contracts pass. With a comma the string went through the
+/// required door, so a non-string slot arrives only with its diagnostic
+/// and never reaches emission.
+fn contract_msg_c(rk []Node) -> str {
+    if rk.len() < 4 { return "NULL" }
+    ro m = rk[rk.len() - 1]
+    match m {
+        Leaf(t) => {
+            // The SAME dollar rule as the literal pool (shell.nv,
+            // emit_strlit_defs): Nova's escape set matches C's one for one
+            // EXCEPT `\$`, whose backslash must not reach clang -- the
+            // hunt's req_msg_dollar showed both doors in one emission,
+            // pool unescaped, prologue not (#872).
+            if t.kind == TokenKind.StrLit { return unescape_dollar(t.text) }
+            // Not a string: the required door already carried the refusal.
+        }
+        Branch { .. } => {
+            // A branch in the message slot: same recovery shape, same door.
+        }
+    }
+    "NULL"
+}
+
+/// The display, spelled INSIDE a C string literal: backslashes double
+/// FIRST, then quotes get theirs (the other order would double the very
+/// backslash the quote just gained). The display joins token TEXTS, and a
+/// string literal among them carries its own quotes -- unescaped, those
+/// closed the C literal around the display (hunt 2026-09-02, N4/#872:
+/// a quoted literal in the condition closed the C string and clang refused).
+fn c_literal_escaped(s str) -> str =>
+    s.replace("\\", "\\\\").replace("\"", "\\\"")

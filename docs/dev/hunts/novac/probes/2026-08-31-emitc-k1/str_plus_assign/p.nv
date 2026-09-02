@@ -1,0 +1,7 @@
+module p
+
+fn main() {
+    mut a = "ab"
+    a += "cd"
+    println(a)
+}

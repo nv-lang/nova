@@ -184,7 +184,7 @@ export type BindFault enum
 /// to know whether it was filled positionally — which is what makes the whole
 /// binding answerable per slot, with no buffer.
 #realtime nogc
-fn positional_run(args []ArgSpec) -> int {
+export fn positional_run(args []ArgSpec) -> int {
     mut run = 0
     mut seen_named = false
     for a in args {
@@ -207,7 +207,7 @@ fn positional_run(args []ArgSpec) -> int {
 /// this slot's NAME. The LAST match wins on purpose — a duplicate name then
 /// leaves an argument unbound, and the counting in `bind_fault` sees it.
 #realtime nogc
-fn bind_slot_of(params []ParamDef, off int, cnt int, args []ArgSpec, s int) -> int {
+export fn bind_slot_of(params []ParamDef, off int, cnt int, args []ArgSpec, s int) -> int {
     ro run = positional_run(args)
     if run >= 0 && s < run && s < cnt {
         return s
@@ -237,7 +237,7 @@ fn bind_slot_of(params []ParamDef, off int, cnt int, args []ArgSpec, s int) -> i
 /// default? The "at most one element" reading of `ParamDef.default_expr` lives
 /// HERE and nowhere else (see the field's own note on why it is a vector).
 #realtime nogc
-fn slot_is_required(params []ParamDef, off int, s int) -> bool =>
+export fn slot_is_required(params []ParamDef, off int, s int) -> bool =>
     params[off + s].default_expr.len() == 0
 
 /// The DEFAULT expression declared for a slot, or `None` when it is required.
@@ -426,6 +426,18 @@ export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
             }
             return true
         }
+        // A TUPLE admits structurally, exactly as an application does -- but
+        // its head is the ARITY, not a declaration, so the head test is the
+        // component count (asking decl_head_of would ice on purpose).
+        TkTuple => {
+            if tys.kind_of(got) != TypeKind.TkTuple { return false }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return false }
+            for i in 0..n {
+                if !type_admits(tys, tys.arg(want, i), tys.arg(got, i)) { return false }
+            }
+            return true
+        }
         TkPrim | TkRecord | TkSum | TkInfer | TkNewtype => { return want == got }
     }
 }
@@ -448,6 +460,18 @@ export fn slot_binding_in(tys Interner, want TyId, got TyId, slot int) -> TyId {
         TkApp => {
             if tys.kind_of(got) != TypeKind.TkApp { return no_ty() }
             if tys.decl_head_of(want) != tys.decl_head_of(got) { return no_ty() }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return no_ty() }
+            for i in 0..n {
+                ro b = slot_binding_in(tys, tys.arg(want, i), tys.arg(got, i), slot)
+                if is_ty(b) { return b }
+            }
+            return no_ty()
+        }
+        // Deduction walks INTO a tuple as into an application: same shape,
+        // arity for a head (see type_admits above).
+        TkTuple => {
+            if tys.kind_of(got) != TypeKind.TkTuple { return no_ty() }
             ro n = tys.arg_count(want)
             if n != tys.arg_count(got) { return no_ty() }
             for i in 0..n {

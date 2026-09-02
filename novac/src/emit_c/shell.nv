@@ -23,7 +23,8 @@
 
 module novac.emit_c
 
-import ../lex.{is_ident_start, is_ident_byte}
+import ../lex.{is_ident_start, is_ident_byte, is_space}
+import ../sem.{unescape_dollar}
 import ../sem.{InteropTable}
 import ../diag.{ice}
 
@@ -48,8 +49,27 @@ export fn shell_surface() -> InteropTable {
     ro bytes = shell_template()
     mut i = 0
     ro n = bytes.len()
+    // The previous identifier, for the ONE two-token shape this scan also
+    // reads: `struct <name> {` is a struct BODY -- the thing a C unit cannot
+    // define twice -- while a forward `typedef struct X X;` repeats legally.
+    // The declaration judge asks for bodies, so bodies are what gets lifted.
+    mut prev = ""
     while i < n {
         if !is_ident_start(bytes[i]) {
+            if bytes[i] == ('{' as u8) && prev != "" {
+                // `<ident> {` right after `struct <ident>`: prev was pushed
+                // by the branch below only when the word before it was
+                // `struct`, so this brace closes the body shape.
+                t.add_body(prev)
+            } else {
+                // Any other separator: not a body brace, nothing to lift.
+            }
+            if !is_space(bytes[i]) {
+                prev = ""
+            } else {
+                // Whitespace between `struct`, the name and `{` is legal C:
+                // the pending name survives it.
+            }
             i += 1
             continue
         }
@@ -61,7 +81,9 @@ export fn shell_surface() -> InteropTable {
         // slice is valid UTF-8 and the `?? ""` never fires; it is spelled rather
         // than asserted because a door that ices on its own input is the class
         // this plan keeps removing.
-        t.add(bytes[start..i].to_str() ?? "")
+        ro word = bytes[start..i].to_str() ?? ""
+        t.add(word)
+        prev = if prev == "struct" || word == "struct" { word } else { "" }
     }
     t
 }
@@ -70,6 +92,7 @@ export fn shell_surface() -> InteropTable {
 /// and writes while it walks one file. The text builder is a resource, so
 /// the emitter is a `consume` value — created once, walked, finished once.
 type Emitter consume {
+    src_name str /// The compiled file's base name, for contract panics (#874); "" on the test path.
     ctx Ctx /// type registry and def table — read only, built by sem
     out CheckOut /// THE checker's channel: every type question is a READ here, never a re-derivation (E2-b1)
     lits []str /// string literals in registration order; the index is the C name suffix
@@ -77,6 +100,7 @@ type Emitter consume {
     reach Reach /// WHICH callables are reached from a root (mono, E2-b2): the emitter
         /// asks, it does not decide
     next_tmp int /// counter behind @fresh_uniq — the ONLY source of temporary names (F30)
+    lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none
 }
 
 /// Splice string literals and the emitted body into the shell's two slots.
@@ -101,49 +125,14 @@ fn render(lits []str, body str) -> str {
     assert(emitted_lits && emitted_body, "emit: template slots missing")
     out
 }
-
-/// Emit one static nova_str per registered string literal.
-/// Drop the backslash of `\$`, and touch nothing else.
-///
-/// Written byte by byte rather than with a replace-all: the backslash before a
-/// dollar is only an escape when it is not ITSELF escaped, and `\\${` means a
-/// literal backslash followed by an interpolation. A blind replace would eat
-/// the wrong one.
-fn unescape_dollar(s str) -> str {
-    ro b = s.bytes()
-    consume out = StringBuilder.new()
-    mut one = []u8.new()
-    one.push(0 as u8)
-    // A `while` and NOT `for`, on purpose: this cursor advances by ONE or by
-    // TWO (an escaped `$` consumes two bytes), so the step carries information
-    // and a range would lose it. The rule is "a cursor that always steps by one
-    // is a range" -- this one does not.
-    mut i = 0
-    while i < b.len() {
-        ro c = b[i]
-        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
-        if c == BACKSLASH_BYTE && next_is_dollar {
-            one[0] = DOLLAR_BYTE
-            out.append(one)
-            i += 2
-        } else {
-            one[0] = c
-            out.append(one)
-            i += 1
-        }
-    }
-    out
-}
-
 /// The two bytes this door compares against; the character is in the comment
 /// for the same reason the lexer's tables carry it.
-const BACKSLASH_BYTE u8 = 0x5C  // backslash
-const DOLLAR_BYTE u8 = 0x24     // $
 
 /// Write the literal pool: one C array per string the file holds.
 ///
-/// The only place a Nova literal becomes C text -- which is why the escaped
-/// dollar is unescaped here and nowhere else.
+/// One of TWO places a Nova literal becomes C text (the other is the
+/// contract prologue's message slot) -- both go through the one
+/// unescape_dollar door in sem/mangle (hunt 2026-09-02, P1).
 fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
     mut i = 0
     for raw in lits {

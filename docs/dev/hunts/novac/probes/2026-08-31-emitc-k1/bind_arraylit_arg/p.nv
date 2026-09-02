@@ -1,0 +1,10 @@
+module p
+
+fn first(v []int) -> int {
+    v[0]
+}
+
+fn main() {
+    ro x = first([7])
+    println(x)
+}

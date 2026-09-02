@@ -26,9 +26,13 @@ else
     grep -q "символов" "$T/err" && ok "длинная строка кода поймана" || bad "красный, но не про длину"
 fi
 
-# --- исключение 1: import ------------------------------------------------
-D=$(mk imp "module a" "import ../very/long/path.{aaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd}")
-run "$D" && ok "import не судится (язык не переносит)" || bad "import попал под правило: $(cat "$T/err")"
+# --- import судится как любая строка (2026-08-27): несколько import из одного
+# модуля компилятор принимает, значит длинный режется, а не прощается. Предел
+# самотеста — 40 байт (run), поэтому образцы короткие. -----------------------
+D=$(mk imp "module a" "import ../very/long/path.{aaaaaaaaaa, bbbbbbbbbb}")
+run "$D" && bad "длинный import прощён — исключение вернулось" || ok "длинный import судится"
+D=$(mk imp2 "module a" "import ../p.{aaaaaaaaaa}" "import ../p.{bbbbbbbbbb}")
+run "$D" && ok "import, порезанный на строки в пределе, проходит" || bad "короткие import покраснели: $(cat "$T/err")"
 
 # --- исключение 2: образец арма ------------------------------------------
 D=$(mk arm "module a" "        Aaaaaaaaaa | Bbbbbbbbbb | Cccccccccc | Dddddddddd => true")
@@ -56,7 +60,7 @@ run "$T/absent"; grep -q "судить нечего" "$T/out" && ok "нет ди
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-line-length ok: все случаи, включая четыре исключения и судимую прозу"
+    echo "test-check-novac-line-length ok: все случаи, включая три исключения и судимый import и судимую прозу"
     exit 0
 fi
 exit 1

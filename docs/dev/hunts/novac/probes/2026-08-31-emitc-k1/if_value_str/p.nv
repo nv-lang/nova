@@ -1,0 +1,10 @@
+module p
+
+fn pick(c bool) -> str {
+    if c { "yes" } else { "no" }
+}
+
+fn main() {
+    println(pick(true))
+    println(pick(false))
+}

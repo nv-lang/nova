@@ -1,0 +1,18 @@
+module p
+
+fn pick(c bool, d bool) -> int {
+    if c {
+        ro x = if d { 1 } else { 2 }
+        x + 100
+    } else {
+        ro y = if d { 3 } else { 4 }
+        y + 200
+    }
+}
+
+fn main() {
+    println(pick(true, true))
+    println(pick(true, false))
+    println(pick(false, true))
+    println(pick(false, false))
+}

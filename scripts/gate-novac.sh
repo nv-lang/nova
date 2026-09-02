@@ -379,6 +379,9 @@ par_add "$ROOT/scripts/guards/check-novac-emitted-names.py" "печатаемо�
 par_add "$ROOT/scripts/guards/check-novac-table-is-match.py" "таблица написана цепочкой if вместо match (П21 п.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагностика ссылается на незнание грамматики (§9.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
+par_add "$ROOT/scripts/guards/check-novac-string-build-door.py" "строка собирается склейкой самой с собой вместо StringBuilder (П36)"
+par_add "$ROOT/scripts/guards/check-novac-required-token-door.py" "требуемый грамматикой токен взят необязательной дверью (#809/#815)"
+par_add "$ROOT/scripts/guards/check-novac-subset-debt-dated.py" "отказ «пока не компилируется» без этапа: долг без срока становится нормой"
 par_add "$ROOT/scripts/guards/check-novac-tyid-door.py" "идентификатор типа сравнивается с нулём вместо двери (П18)"
 par_add "$ROOT/scripts/guards/check-novac-file-decls-door.py" "объявления файла берутся мимо двери file_decls (П18)"
 par_add "$ROOT/scripts/guards/check-novac-branch-complete.py" "неполные ветвления выросли (П31)"
@@ -397,7 +400,7 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     step "novac-behaviour (запускают novac и корпус: дифф, паники, пачка, чистая сборка)"
     par_reset
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
-    par_add "$ROOT/scripts/guards/check-novac-differential.sh" "расхождение novac с оракулом вне реестра (дифф-гейт)"
+    par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
     par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
     par_add "$ROOT/scripts/guards/check-novac-cli-surface.sh" "команда novac, которой нет у nova-cli (П26)"
     par_add "$ROOT/scripts/guards/check-novac-batch.sh" "пачечный проход раннера разобран (274.2 §1б.1)"

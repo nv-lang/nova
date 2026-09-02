@@ -15,7 +15,13 @@
 
 module novac.parse
 
-import ../lex.{Token, TokenKind, brace_delta}
+/// The nesting ceiling, taken from the oracle because it is NORMATIVE there
+/// (E_NESTING_TOO_DEEP, parser/mod.rs): 512 levels, far above anything the
+/// corpus writes (never past 40) and far below the measured stack death.
+const MAX_NESTING_DEPTH = 512
+
+
+import ../lex.{Token, TokenKind, brace_delta, paren_delta}
 import ../tree.{Node, NodeKind, BinOp, is_binop, bin_op_of, is_unop}
 
 
@@ -61,7 +67,67 @@ fn Cursor mut @expr() -> Node => @expr_bp(1)
 
 /// The climbing loop: consume operators whose binding power is at least
 /// `min_bp`, and parse their right side at `bp + 1` (left associativity).
+/// THE depth gate (#807/#808). Every nesting of an expression goes through
+/// `@expr_bp` -- a paren, a call argument, an index, a match scrutinee -- so
+/// one counter here is the whole rule, and no form can slip past by growing
+/// its own recursion.
+///
+/// The limit and the wording are the ORACLE'S, and deliberately: 512 is
+/// already normative (`parser/mod.rs`, E_NESTING_TOO_DEEP), the whole corpus
+/// of .nv files never exceeds 40 levels, and the measured death is far above
+/// -- so the refusal is reached long before the stack is. A subset that
+/// invented its own number would refuse programs the language accepts.
+fn Cursor mut @depth_exceeded() -> bool {
+    if @depth <= MAX_NESTING_DEPTH { return false }
+    // ONE diagnostic for one mistake: the deeper levels say nothing.
+    if @depth_told { return true }
+    @depth_told = true
+    true
+}
+
+/// Pratt loop over binary operators at binding power `min_bp`, wrapped in the
+/// depth gate above: every nesting of an expression enters here, so the
+/// counter is taken once and the inner loop stays as it was.
 fn Cursor mut @expr_bp(min_bp int) -> Node {
+    @depth += 1
+    if @depth_exceeded() {
+        // ONE Err over the WHOLE over-deep run, not one per level. Leaving the
+        // tokens for the enclosing walk turned a single mistake into 511
+        // "unrecognized token" refusals (measured on the hunter's probe) --
+        // the cascade class 274 s6 forbids. The run is drained by balance,
+        // the way the turbofish and tuple branches already read theirs, so
+        // the tree stays lossless and the parse ends in linear time.
+        mut ek = []Node.new()
+        mut d = 0
+        while !@at_eof() {
+            ro k = @peek()
+            d += paren_delta(k)
+            ek.push(@take())
+            if d <= 0 { break }
+        }
+        if ek.len() == 0 {
+            // At Eof the run drained nothing: the zero-width leaf keeps the
+            // node lossless and gives the refusal a position.
+            ek.push(@missing_of(TokenKind.ErrorTok))
+        } else {
+            // Tokens were taken; the node carries them.
+        }
+        @depth -= 1
+        // A node kind of its own, so the refusal can NAME the cause: a generic
+        // Err says "this is not a form of the language" about a form that IS
+        // one and is merely nested too deep -- the lying-diagnostic class
+        // waves B1 and B8 removed elsewhere.
+        return @node(NodeKind.DepthErr, ek)
+    }
+    ro deep_result = @expr_bp_inner(min_bp)
+    @depth -= 1
+    deep_result
+}
+
+/// The Pratt loop itself: an atom, then binary operators while their binding
+/// power clears `min_bp`. Split from `@expr_bp` so the depth counter is taken
+/// exactly once per nesting (#807) and this body keeps its single job.
+fn Cursor mut @expr_bp_inner(min_bp int) -> Node {
     mut left = @primary()
     // A CAST binds looser than the postfix chain and tighter than every binary
     // operator: `s.len() as u8 + 1` is `((s.len() as u8) + 1)`. Its right side
@@ -91,6 +157,59 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
 ///
 /// The SAME node kind a declaration uses for its type parameters, so both ends
 /// of the mapping read the same shape — one question, one answer.
+/// Does the `{` at the cursor open an anonymous CONSTRUCTOR, or a block?
+///
+/// A constructor starts with a field -- `name:` -- or with a spread `...`;
+/// anything else after the brace is statements. Read without consuming, like
+/// `after_bracket_run` (274.5 wave B8): the cursor invariant is that `take()`
+/// is the only advancer. Measured 2026-08-30: 29 of the 50 "record constructor
+/// only" marks in novac's own sources stood on ARM and IF bodies, which
+/// `@expr()` read as anonymous constructors -- a refusal about a form nobody
+/// wrote, the same lying-diagnostic class waves B1 and B8 removed.
+fn Cursor @brace_opens_ctor() -> bool {
+    if @peek() != TokenKind.LBrace { return false }
+    if @peek(skip: 1) == TokenKind.Ellipsis { return true }
+    if @peek(skip: 1) != TokenKind.Ident { return false }
+    @peek(skip: 2) == TokenKind.Colon
+}
+
+/// The token that stands AFTER the bracket run starting at the CURRENT `[`,
+/// or Eof. A read-only walk over the token vector -- nothing is consumed, so
+/// the cursor invariant (`take()` is the only advancer) holds. Nested `[`
+/// (as in `Vec[Vec[int]]`) is depth-counted; `[]` is one EmptyBrackets token
+/// and never enters here.
+fn Cursor @after_bracket_run() -> TokenKind {
+    mut j = @i
+    mut depth = 0
+    while j < @toks.len() {
+        ro k = @toks[j].kind
+        if k == TokenKind.Eof { return TokenKind.Eof }
+        if k == TokenKind.LBracket {
+            depth += 1
+            j += 1
+            continue
+        }
+        // TERMINATOR forms throughout (the two shape guards, 274.5 s2g):
+        // each token kind either answers or steps, and no bare `if` is left
+        // half-branched.
+        if k != TokenKind.RBracket {
+            j += 1
+            continue
+        }
+        depth -= 1
+        if depth > 0 {
+            j += 1
+            continue
+        }
+        if j + 1 < @toks.len() { return @toks[j + 1].kind }
+        return TokenKind.Eof
+    }
+    TokenKind.Eof
+}
+
+/// The bracketed TYPE-argument run of an explicit instantiation: `[int]`,
+/// `[K, V]`. Children are type references read by the one reference door;
+/// check judges arity and known-ness at the point of use.
 fn Cursor mut @turbofish() -> Node {
     mut gk = []Node.of(@take())            // '['
     while !@at_eof() && @peek() != TokenKind.RBracket {
@@ -105,7 +224,7 @@ fn Cursor mut @turbofish() -> Node {
             // A type argument was read; the loop moves on.
         }
     }
-    @push_if(gk, TokenKind.RBracket)
+    @push_expected(gk, TokenKind.RBracket)
     @node(NodeKind.Generics, gk)
 }
 
@@ -127,9 +246,31 @@ fn Cursor mut @primary() -> Node {
     // nests MethodCall inside MethodCall; a dot WITHOUT a call is field
     // access (E2-records). Both are subset forms now; check judges the
     // method name against the one subset table.
-    while @peek() == TokenKind.Dot {
+    while @peek() == TokenKind.Dot || @peek() == TokenKind.LBracket {
+        if @peek() == TokenKind.LBracket {
+            // AN INDEX EXPRESSION HAS A NODE NOW (274.5 wave B8). Until this
+            // wave `[` after an expression fell into the array-literal branch
+            // of `@atom`, and 35 of the census's 56 "array literal only as a
+            // binding initializer" marks were index expressions wearing the
+            // wrong refusal. The parser reads the language; whether the subset
+            // COMPILES the form is check's question, answered by name.
+            mut ik = []Node.of(e, @take()) // recv, '['
+            ik.push(@expr())
+            @push_expected(ik, TokenKind.RBracket)
+            e = @node(NodeKind.Index, ik)
+            continue
+        }
         mut kids = []Node.of(e, @take()) // recv, '.'
-        @push_if(kids, TokenKind.Ident)
+        // A NUMBER after the dot is a tuple projection (`t.0` -- D123 spells
+        // it so, and the checker judges the owner). The parser reads the
+        // language; whether the subset compiles the form is check's question,
+        // exactly as with Index (wave B8).
+        if @peek() == TokenKind.IntLit {
+            kids.push(@take())
+            e = @node(NodeKind.FieldAccess, kids)
+            continue
+        }
+        @push_expected(kids, TokenKind.Ident)
         if @peek() == TokenKind.LParen {
             kids.push(@take())
             @call_args(kids)
@@ -149,7 +290,7 @@ fn Cursor mut @primary() -> Node {
 fn Cursor mut @match_expr() -> Node {
     mut kids = []Node.of(@take()) // KwMatch
     kids.push(@head_expr())       // scrutinee: `match s {` — brace is the body
-    @push_if(kids, TokenKind.LBrace)
+    @push_expected(kids, TokenKind.LBrace)
     while !@at_eof() && @peek() != TokenKind.RBrace {
         ro before = @i
         mut ak = []Node.new()
@@ -172,7 +313,7 @@ fn Cursor mut @match_expr() -> Node {
                 }
                 @push_if(pk, TokenKind.Comma)
             }
-            @push_if(pk, TokenKind.RBracket)
+            @push_expected(pk, TokenKind.RBracket)
             ak.push(@node(NodeKind.Pattern, pk))
         } else if @peek() == TokenKind.Ident {
             mut pk = []Node.of(@take())
@@ -197,11 +338,30 @@ fn Cursor mut @match_expr() -> Node {
                     pk.push(@take())
                     @push_if(pk, TokenKind.Comma)
                 }
-                @push_if(pk, TokenKind.RParen)
+                @push_expected(pk, TokenKind.RParen)
             } else {
                 // A bare identifier pattern: a binder (`_` included) or a
                 // payload-less variant. The two are told apart by the names
                 // table, not by the parser -- both are one leaf here.
+            }
+            // A DISJUNCTION (`A | B(_)` -- the pattern-alternatives wave):
+            // every alternative is one more head after a pipe, flat in the
+            // same Pattern node; the checker judges the binders and the
+            // emitter ORs the tag tests. IntLit alternatives arrive with a
+            // carrier.
+            while @peek() == TokenKind.Pipe {
+                pk.push(@take())
+                @push_expected(pk, TokenKind.Ident)
+                if @peek() == TokenKind.LParen {
+                    pk.push(@take())
+                    while @peek() == TokenKind.Ident {
+                        pk.push(@take())
+                        @push_if(pk, TokenKind.Comma)
+                    }
+                    @push_expected(pk, TokenKind.RParen)
+                } else {
+                    // A bare alternative: one leaf, exactly as the first head.
+                }
             }
             ak.push(@node(NodeKind.Pattern, pk))
         } else {
@@ -218,8 +378,16 @@ fn Cursor mut @match_expr() -> Node {
             // told from `Some(x) if x > 0 =>`; a guard standing for "always
             // true" would erase the difference exhaustiveness needs.
         }
-        @push_if(ak, TokenKind.FatArrow)
-        ak.push(@expr())
+        @push_expected(ak, TokenKind.FatArrow)
+        // A BRACE HERE IS A BLOCK unless it opens a constructor (wave B9):
+        // `0 => { return 1 }` is statements, `_ => { a: 1 }` builds a record,
+        // and telling them apart is the parser's job -- the checker and the
+        // emitter have read a Block arm body since wave B5.
+        if @peek() == TokenKind.LBrace && !@brace_opens_ctor() {
+            ak.push(@block())
+        } else {
+            ak.push(@expr())
+        }
         // One-line arms are separated by a COMMA (D452); multi-line arms by
         // the newline alone, which is trivia to this lexer. Both shapes
         // therefore arrive here identically and the comma is taken when it
@@ -229,7 +397,7 @@ fn Cursor mut @match_expr() -> Node {
         kids.push(@node(NodeKind.MatchArm, ak))
         if @i == before { break }
     }
-    @push_if(kids, TokenKind.RBrace)
+    @push_expected(kids, TokenKind.RBrace)
     @node(NodeKind.MatchExpr, kids)
 }
 
@@ -260,11 +428,23 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
         @push_if(kids, TokenKind.Comma)
         if @i == before { break }
     }
-    @push_if(kids, TokenKind.RBrace)
+    @push_expected(kids, TokenKind.RBrace)
 }
 
 /// Parse a literal, match, array/record constructor, call or name; recover otherwise.
 fn Cursor mut @atom() -> Node {
+    if @peek() == TokenKind.KwUnsafe && @peek(skip: 1) == TokenKind.LBrace {
+        // `unsafe { ... }` is an EXPRESSION whose value is the tail of its body
+        // (D216 s8). The body is taken by `@block()` deliberately: left to the
+        // general expression path the brace would be read as a record
+        // constructor, and one line then produced TWO refusals -- exactly how
+        // `source.nv` looked before this branch (a syntax error and a
+        // `record constructor only as a binding initializer`, both pointing at
+        // `ro d = unsafe { s.ptr().dist(@text.ptr()) }`).
+        mut uk = []Node.of(@take()) // 'unsafe'
+        uk.push(@block())
+        return @node(NodeKind.Unsafe, uk)
+    }
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit {
         return @node(NodeKind.Lit, []Node.of(@take()))
     }
@@ -294,8 +474,25 @@ fn Cursor mut @atom() -> Node {
         @no_ctor = false
         mut kids = []Node.of(@take())
         kids.push(@expr())
-        if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing()) }
+        // A COMMA turns the parens into a TUPLE (wave B15, D123). Before this
+        // the comma was not RParen, a zero-width gap grew in its place and the
+        // rest of the form was swallowed -- the refusal spoke about "a body
+        // without a value" and never named the tuple. Read under its own kind,
+        // exactly as the value `if` is (IfExpr): the two forms share the `(`
+        // opener with the paren, and only the comma tells them apart.
+        mut is_tuple = false
+        while @peek() == TokenKind.Comma {
+            is_tuple = true
+            kids.push(@take())
+            kids.push(@expr())
+        }
+        if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
         @no_ctor = saved
+        if is_tuple {
+            return @node(NodeKind.TupleExpr, kids)
+        } else {
+            // No comma: ordinary grouping parens.
+        }
         return @node(NodeKind.Paren, kids)
     }
     if @peek() == TokenKind.KwMatch { return @match_expr() }
@@ -305,10 +502,10 @@ fn Cursor mut @atom() -> Node {
     if @peek() == TokenKind.KwIf {
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
-        if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing()) }
+        if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
         if @peek() == TokenKind.KwElse {
             kids.push(@take())
-            if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing()) }
+            if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
         } else {
             // No else: an `if` used as a value without one is a mistake check
             // names, and the absent node is what lets it see the absence.
@@ -320,6 +517,11 @@ fn Cursor mut @atom() -> Node {
         mut kids = []Node.of(@take())
         kids.push(@take())
         return @node(NodeKind.SelfField, kids)
+    }
+    // Bare `@` -- the receiver ITSELF as a value (`match @`, `take(@)`):
+    // one leaf, and check judges whether a receiver is bound here.
+    if @peek() == TokenKind.At {
+        return @node(NodeKind.SelfExpr, []Node.of(@take()))
     }
     // `[]int.of(1, 2)` starts with the ONE-token `[]` since 2026-08-17; the
     // non-empty literal still opens with a bare `[`. Both are array literals
@@ -334,7 +536,7 @@ fn Cursor mut @atom() -> Node {
         if @peek() == TokenKind.Ident && @peek(skip: 1) == TokenKind.Dot {
             kids.push(@take()) // element type
             kids.push(@take()) // '.'
-            @push_if(kids, TokenKind.Ident) // the constructor's name -- check judges it
+            @push_expected(kids, TokenKind.Ident) // the constructor's name -- check judges it
             if @peek() == TokenKind.LParen {
                 kids.push(@take())
                 @call_args(kids)
@@ -362,7 +564,7 @@ fn Cursor mut @atom() -> Node {
             @push_if(kids, TokenKind.Comma)
             if @i == before { break }
         }
-        @push_if(kids, TokenKind.RBracket)
+        @push_expected(kids, TokenKind.RBracket)
         return @node(NodeKind.ArrayLit, kids)
     }
     if @peek() == TokenKind.LBrace && !@no_ctor {
@@ -376,11 +578,37 @@ fn Cursor mut @atom() -> Node {
     }
     if @peek() == TokenKind.Ident {
         ro name = @take()
+        if @peek() == TokenKind.LBracket && @after_bracket_run() != TokenKind.LParen {
+            // INDEX: `xs[0]` (274.5 wave B8). A bracket after a name stopped
+            // being unambiguous the moment the index expression got a node --
+            // the disambiguator is the token AFTER the bracket run, read
+            // without consuming: a turbofish is mandatory-called (`id[int](7)`,
+            // E2-b2 refuses the bare form anyway), so `(` and only `(` says
+            // "type arguments".
+            mut ik = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take()) // recv, '['
+            // A LIST, not one expression, and that is the whole of wave B10's
+            // dispatch decision. `xs[0].len()` and `HashMap[str, int].new()`
+            // carry the SAME token after `]` -- `.NAME(` -- so the token cannot
+            // tell an index from a type application; only what the left name
+            // RESOLVES TO can, and resolution is the checker's root, not the
+            // parser's (`naming a type is the registry's answer`, above).
+            // So the run is read losslessly and judged by name later. Before
+            // this, the comma alone cost four refusals from one line.
+            ik.push(@expr())
+            while @peek() == TokenKind.Comma {
+                ik.push(@take())
+                ik.push(@expr())
+            }
+            @push_expected(ik, TokenKind.RBracket)
+            // The postfix loop of the CALLER picks the chain up from here
+            // (`xs[0].len()` nests this node as a receiver), the same way it
+            // does for every other atom.
+            return @node(NodeKind.Index, ik)
+        }
         if @peek() == TokenKind.LBracket {
             // TURBOFISH: `id[int](7)` — the type arguments of an EXPLICIT
-            // instantiation. The form is unambiguous here: the subset has no
-            // index expression at all (there is no Index node), so a bracket
-            // after a name can only be this. Mandatory by plan 274 E2-b2 —
+            // instantiation, told apart from an index by the `(` after the
+            // bracket run (see above). Mandatory by plan 274 E2-b2 —
             // there is no inference, and the order of the arguments IS the
             // whole mapping to the declaration's type parameters.
             mut kids = []Node.of(name, @turbofish())
@@ -412,7 +640,7 @@ fn Cursor mut @atom() -> Node {
     // enclosing loop must notice this (see the non-advancement guard in
     // block/args).
     if is_terminator(@peek()) {
-        return @node(NodeKind.Err, []Node.of(@missing()))
+        return @error_node(TokenKind.ErrorTok)
     }
     @node(NodeKind.Err, []Node.of(@take()))
 }

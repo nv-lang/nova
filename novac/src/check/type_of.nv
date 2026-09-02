@@ -19,8 +19,12 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow, is_vrow, is_arg_node, arg_expr_of, arg_name_of}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
+import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
+import ../sem.{is_vrow, is_arg_node, arg_expr_of, arg_name_of}
 import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../sem.{decl_of_ty}
+import ../builtins.{TypeKind}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
 /// position zero, then one type per written argument.
@@ -159,6 +163,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     if k == NodeKind.Name {
         ro nm = expr_leaf_name(e)
         if is_bool_literal(nm) { return ctx.prims.bool_id }
+        // A LOCAL SHADOWS A CONSTANT, so the scope answers first; a name the
+        // scope does not bind may still be a module constant, and its type is
+        // a DECISION the walk recorded (274.5 wave B2) -- read, never redone.
+        if !scope.is_bound(nm) {
+            return chan.type_if_known(e.id_of())
+        } else {
+            // Bound locally: the scope is the answer, as it has always been.
+        }
         return scope.type_of_name(nm)
     }
     if k == NodeKind.MethodCall {
@@ -171,50 +183,63 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // return -- `T`, or `Vec[T]` -- which is not this call's type. Before
         // the decision the channel is empty and the signature answers as before.
         ro nid = e.id_of()
-        if chan.has_callee(nid) {
-            ro known = chan.type_if_known(nid)
-            if is_ty(known) { return known }
-            return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
-        } else {
-            // Not decided yet: read the signature by the typed key below.
+        // THE CHANNEL IS THE ONLY SOURCE (274.4 §2): the checker records the
+        // callee BEFORE any node above asks for this call's type (see the doc
+        // of this fn), so by the time type_of runs the decision exists. Until
+        // 274.4 this arm re-ran its own fns.lookup when the channel was
+        // silent -- a second resolution of the same root, and the exact door
+        // the resolver split closes. A silent channel is now a pass-order
+        // violation and answers as one: an ice, not a retry.
+        // The TYPE is asked first: a refused call carries a recorded type
+        // and no callee (a refusal is a decision too), and only then the
+        // callee's declared return. Silence on both is the violation.
+        ro known = chan.type_if_known(nid)
+        if is_ty(known) { return known }
+        if !chan.has_callee(nid) {
+            ice("check: method call reached type_of with no decision in the channel (274.4 pass-order)")
         }
-        // The return type — from the READ signature (П5): the
-        // compiler does not know std method names, it reads them. Only
-        // what check has already accepted reaches here, so a rejection
-        // here is an ice (a poisoning-discipline violation).
-        // The key is built the SAME way a free call builds it: the receiver
-        // stands in position zero because plan 273 §4.4 puts it there, and the
-        // arguments follow. Here every position CAN be typed, so the door does
-        // the narrowing itself and there is no separate narrowing step to keep
-        // in sync (the language overloads on parameters -- the pair
-        // (receiver, name) was never enough: `str.contains` has both
-        // `(needle str)` and `(c char)`).
-        ro key = typed_call_key(kids, 3, kids[0], type_of(kids[0], ctx, scope, chan), ctx, scope, chan)
-        match ctx.fns.lookup(ctx.tys, mname, key, CallForm.MethodCall) {
-            FnFound(row) => { return ctx.fns.rows[row].ret_id }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] a call the user wrote
-            // that fits several candidates is a USER situation; check reports
-            // it once it owns the candidate set.
-            FnOverloaded(_) => { ice("check: overload set still ambiguous with every argument typed") }
-            // [LEGACY-#700-user-error-as-ice until:E2b3] a method the user misspelled is a USER error.
-            FnUnknown => { ice("check: method not in the read declarations past check") }
-        }
+        return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
     }
     // `@field` inside a method body: the receiver is a BINDING (`@`), so this
     // is a field access on it and needs no separate rule. Outside a method the
     // binding does not exist, and the answer is absence -- which `check`
     // refuses by name rather than icing here (P12).
+    if k == NodeKind.SelfExpr {
+        // The walk recorded the receiver's type where it verified the
+        // binding; silence is `@` outside a method, already refused.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.SelfField {
-        ro kids = branch_children(e)
-        assert(kids.len() >= 2, "check: `@field` without a name")
-        if !scope.is_bound(RECV_BINDING) { return no_ty() }
-        return ctx.fields.field_type(scope.type_of_name(RECV_BINDING), leaf_text(kids[1]))
+        // THE CHANNEL IS THE ONLY SOURCE (274.4 step 3): the walk records the
+        // field's type where it verifies the field exists. `@field` outside a
+        // method body records nothing, and no_ty() is that answer.
+        return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.FieldAccess {
-        ro kids = branch_children(e)
-        assert(kids.len() >= 3, "check: field access without a name")
-        ro recv_t = type_of(kids[0], ctx, scope, chan)
-        return ctx.fields.field_type(recv_t, leaf_text(kids[2]))
+        // Same rule: the walk decided, this door reads. Re-resolving the
+        // field NAME here was the second door of the field root -- the exact
+        // shape the method calls lost in step 2. Silence is a refused or
+        // unwalked access, and readers act on no_ty().
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.TupleExpr {
+        // Same rule again (B15 step 4a): the walk interned the pair term and
+        // recorded it; silence is a refused literal, and readers act on
+        // no_ty().
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.Index {
+        // Same rule as the field access above: the walk decided, this door
+        // reads. The Index arm of the walk asks the receiver's application for
+        // its element and RECORDS the answer -- so re-deriving it here would be
+        // the second door of one root, and the two could disagree.
+        //
+        // Its absence was an ICE on novac's own source (five files iced; this
+        // is one of them). Nothing asked for an index's type until an index
+        // stood UNDER something -- `rs[i].xs[0]`, where the outer index makes
+        // the walk type a field whose receiver is itself an index. Silence is a
+        // refused or unwalked index, and readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.ArrayLit {
         // Decided by `type_array_lit` and RECORDED before anyone asks; the
@@ -295,7 +320,17 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // unknown type travelled on, which is the same shape the
                 // sibling case below already refuses out loud.
                 ro at = arm_body_at(ak) ?? ice("check: a match arm with no body reached type_of")
-                return type_of(ak[at], ctx, scope, chan)
+                // A BLOCK arm leaves through `return` and yields the match no
+                // value (274.5 wave B9): `no_ty()` is that answer, and the
+                // callers that record a type already test `is_ty` first. The
+                // lattice must not walk into a block -- its statement kinds
+                // have no type rule, and asking would be the #652 ice about
+                // a form nobody wrote as a value.
+                // [LEGACY-#676] var-index-method: the row is bound before the
+                // method call, the same hop the collectors already make.
+                ro body = ak[at]
+                if body.kind_of() == NodeKind.Block { return no_ty() }
+                return type_of(body, ctx, scope, chan)
             }
         }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
@@ -358,3 +393,36 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     }
     ice("check: expression kind without a type rule — no silent int default (#652 class)")
 }
+
+// The shape doors of two judges (if-let, B16), moved here co-equal when
+// rules.nv crossed the 1000-line decision (2026-09-02): this file already
+// answers "what does this type look like", and the doors are that question.
+
+/// The ONE type argument of an arity-one instance, or no type: the question
+/// both the for-head judge and the Option judge ask (the second-door guard
+/// caught them spelled twice, 2026-09-02). Anything that is not an App of
+/// arity one answers nothing; the caller turns that into its named refusal.
+fn single_type_arg(ctx Ctx, t TyId) -> TyId {
+    if !is_ty(t) { return no_ty() }
+    ro k = ctx.tys.kind_of(t)
+    ro is_app = match k {
+        TkApp => true
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_app { return no_ty() }
+    if ctx.tys.arg_count(t) != 1 { return no_ty() }
+    ctx.tys.arg(t, 0)
+}
+
+/// The PAYLOAD an Option instance carries, or no type: the single-argument
+/// door, gated on the head being the language's Option sum.
+fn option_payload(ctx Ctx, t TyId) -> TyId {
+    ro arg = single_type_arg(ctx, t)
+    if !is_ty(arg) { return no_ty() }
+    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
+    arg
+}
+
+/// The ELEMENT a for-head vector carries: the single-argument door under its
+/// wave's name (B16) -- the head kind was already judged by the caller.
+fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)

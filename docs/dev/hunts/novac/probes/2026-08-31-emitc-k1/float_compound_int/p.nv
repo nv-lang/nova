@@ -1,0 +1,7 @@
+module p
+
+fn main() {
+    mut f = 1.5
+    f += 1.0
+    println(f)
+}

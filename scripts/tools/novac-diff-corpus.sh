@@ -219,11 +219,32 @@ done < "$T/list"
 
 # Поведенческое число: каждый совпали-принятый файл через смоук (эмиссия
 # novac + релинк драйвером + побайтовый дифф stdout/exit против оракула).
-beh=0; behfail=0
+# СТРОКА allow ДЕЙСТВУЕТ И ЗДЕСЬ (2026-08-27). Её контракт (шапка
+# `novac/divergences.allow`) говорит: «одна строка = одна фикстура, на которой
+# novac и оракул расходятся НАРОЧНО», а реестр расхождений велит заводить строку
+# ровно в тот день, когда расхождение стало ВИДИМЫМ ПОВЕДЕНИЕМ. Код же спрашивал
+# allow только в ветке «novac принял, оракул отверг» — то есть про поведение
+# контракт обещал то, чего не делал, и первое же сознательное поведенческое
+# расхождение (вместимость литерала, амендмент D239) красило прогон.
+# Сознательное расхождение считается ОТДЕЛЬНО и в behavior-match не входит:
+# «сошлись байт-в-байт» и «разошлись, и мы правы» — разные факты.
+# Файл БЕЗ входа (peer-файл многофайлового модуля, examples/tour/greeter)
+# бинарём не живёт: обе стороны его ПРИНИМАЮТ, а линковать нечего. Такой
+# принятый остаётся contract-строкой и в поведенческое число не входит --
+# вскрыто волной И1 (2026-09-02), когда greeter/core.nv перешёл из «наш
+# отказ» в «оба приняли» и смоук честно упал линковкой оракула.
+beh=0; behfail=0; behallow=0; noentry=0
 if [ -f "$T/acc" ]; then
     while IFS= read -r rel; do
+        if ! grep -q "fn main(" "$rel"; then
+            noentry=$((noentry+1))
+            continue
+        fi
         if sh "$ROOT/scripts/tools/novac-e1-smoke.sh" "$rel" >/dev/null 2>&1; then
             beh=$((beh+1))
+        elif [ -f "$ALLOW" ] && grep -Fxq "$rel" "$ALLOW"; then
+            behallow=$((behallow+1))
+            echo "  РАЗОШЛИСЬ СОЗНАТЕЛЬНО (allow): $rel — история в docs/dev/novac-divergences.md" >> "$T/note"
         else
             echo "  ПОВЕДЕНИЕ РАЗОШЛОСЬ: $rel (оба check-принимают, но бинарь novac != оракула)" >> "$T/red"
             behfail=$((behfail+1))
@@ -252,8 +273,16 @@ for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
 done
 self_rej=0
 if [ "$self_total" -gt 0 ]; then
-    eval "timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+    eval "timeout 60 NOVAC_SELF_PATH=novac/src \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
+    # ПАЧКА С ICE НЕДОСТОВЕРНА (замер 2026-08-30): ice обрывает процесс кодом 2,
+    # который ПРОХОДИТ порог «код вне 0/1/2», и файлы ПОСЛЕ точки смерти выходят
+    # «чистыми», не будучи досуженными вовсе. Так родилось ложное 41/53 волны В6:
+    # двенадцать «принятых» стояли в списке позади interop.nv, чей ice убил
+    # пачку. ICE в выводе — тот же откат на пофайловый проход, что и смерть.
+    if grep -q "E_NOVAC_ICE" "$T/self.out" "$T/self.err" 2>/dev/null; then
+        src=99
+    fi
     if [ "$src" -le 2 ]; then
         self_rej=$(cat "$T/self.out" "$T/self.err" 2>/dev/null \
             | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')
@@ -283,6 +312,9 @@ if [ "$danger" -gt 0 ] || [ "$panic" -gt 0 ] || [ "$behfail" -gt 0 ]; then
     exit 1
 fi
 # Машинная строка — её парсит check-novac-differential.sh (храповик §10.4).
-echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total"
+if [ -s "$T/note" ]; then
+    cat "$T/note"
+fi
+echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh no-entry=$noentry behavior-allowed=$behallow out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total"
 echo "novac-diff-corpus ok"
 exit 0

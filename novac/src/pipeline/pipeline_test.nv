@@ -87,7 +87,11 @@ test "E2 strings surface: the shapes are in, a std method with no compiled body 
     // name a symbol that exists nowhere. The subset says that instead, and the
     // corpus baseline was lowered 11/5 -> 10/4 in the same wave.
     ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
-    assert(n_diags(src) == 1)
+    // THREE refusals, one per call (274.4 step 2): until the mark replaced
+    // the file-count guard in the MethodCall arm, every call after the first
+    // refusal was silently resolved by type_of's own lookup -- the second
+    // door -- and this line asserted 1. More refusals required, not fewer.
+    assert(n_diags(src) == 3)
     // The SHAPES are still in the subset: the same `ro` and `while` without a
     // std body are clean, so the refusal above is about the missing body and
     // not about the form.
@@ -484,6 +488,208 @@ fn main() { println(1) }",
     assert(d2.len() == 0)
 }
 
+test "nesting deeper than the ceiling is refused ONCE, and the stack survives (#807, #808)" {
+    // Registry #807 and #808, found by the hunter 2026-08-30. The parser had no
+    // depth counter: 513 nested parens were accepted in SILENCE (the oracle
+    // says E_NESTING_TOO_DEEP) and 2500 killed the process with a stack
+    // overflow, rc=127 -- against this file's own header promise that recovery
+    // never panics or hangs.
+    //
+    // The test holds the CLASS in three parts: ordinary nesting still passes,
+    // over-deep nesting is refused, and it is refused EXACTLY ONCE -- the
+    // cascade is what made the first fix worse than the defect (511 diagnostics
+    // for one mistake), so the count is the assertion that matters.
+    ro std = std_decls()
+    ro shallow = "fn main() {\n println(((((1)))))\n}"
+    ro (d1, _) = compile_to_c(shallow, std)
+    assert(d1.len() == 0)
+
+    mut deep = "fn main() {\n println("
+    for _ in 0..600 {
+        deep = "${deep}("
+    }
+    deep = "${deep}1"
+    for _ in 0..600 {
+        deep = "${deep})"
+    }
+    deep = "${deep})\n}"
+    ro (d2, _) = compile_to_c(deep, std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("nesting is deeper"))
+}
+
+test "an integer literal too large for `int` is refused, not silently wrapped (#810)" {
+    // Registry #810, found by the hunter 2026-08-30. The magnitude of a decimal
+    // literal was checked NOWHERE: the lexer made an IntLit of any run of
+    // digits, the lattice typed it `int` without looking, and the emitter
+    // printed the text verbatim with an `LL` suffix -- so `2^64` overflowed a
+    // signed long long in the emitted C. A SILENT MISCOMPILE, not a missing
+    // refusal; the oracle says "number too large to fit in target type".
+    //
+    // The test holds the CLASS, not the carrier: the boundary value passes,
+    // one past it refuses, and leading zeros do not inflate the count.
+    ro std = std_decls()
+    ro (d1, _) = compile_to_c("fn main() {\n println(18446744073709551616)\n}", std)
+    assert(d1.len() == 1)
+    assert(d1[0].message.contains("does not fit in `int`"))
+
+    ro (d2, _) = compile_to_c("fn main() {\n println(9999999999999999999999999999999999999)\n}", std)
+    assert(d2.len() == 1)
+
+    // The largest `int` is legal, and so is the same number written with
+    // leading zeros: the rule compares DIGITS, and a zero is not a digit that
+    // makes a number bigger.
+    ro (d3, _) = compile_to_c("fn main() {\n println(9223372036854775807)\n println(0000009)\n}", std)
+    assert(d3.len() == 0)
+}
+
+test "an unclosed bracket is refused, not accepted in silence (#809)" {
+    // Registry #809, found by the hunter 2026-08-30 (probe `brace_only_fn`):
+    // `fn main() {` with no `}` compiled with code 0 and NOT ONE diagnostic.
+    // The mechanism was one door doing two jobs. `@push_if` means "the token
+    // is optional at this position, and its absence is a valid outcome" --
+    // true of a trailing comma, false of a bracket whose opener has already
+    // been consumed. Sixteen closing brackets went through it.
+    //
+    // The test holds the CLASS: all three closers, because all three shared
+    // the door -- 5 `}`, 6 `)` and 5 `]` call sites.
+    ro std = std_decls()
+    ro (d1, _) = compile_to_c("fn main() {", std)
+    assert(d1.len() >= 1)
+
+    ro (d2, _) = compile_to_c("fn main() {
+ println(1
+}", std)
+    assert(d2.len() >= 1)
+
+    ro (d3, _) = compile_to_c("fn main() {
+ ro xs = [1, 2
+ println(1)
+}", std)
+    assert(d3.len() >= 1)
+
+    // The other direction of the lid: the same forms CLOSED are clean, so the
+    // rule refuses the ABSENCE and not the shape. The brace and the paren are
+    // shown here; the bracket is not, and the reason is the harness rather
+    // than the rule -- an array literal is built from the SHELL's instance
+    // set, which `std_decls()` does not carry, so a CLOSED `[1, 2]` is
+    // refused here for a reason of its own (measured 2026-08-30). Its clean
+    // side is held by the corpus fixture `array_lit_positions.nv` instead.
+    ro (d4, _) = compile_to_c("fn main() {
+ println(1)
+}", std)
+    assert(d4.len() == 0)
+}
+
+test "a record construction is judged against its declaration (#812)" {
+    // Registry #812, same hunt. `Pt { }` on a record with a required field
+    // checked CLEAN and the emitted C read a member nobody wrote. The fork
+    // "is an empty literal legal" was decided by the SPEC, not by the oracle:
+    // `02-types.md:152` and the numbered rules at `:1677` -- construction
+    // always requires every declared field, and a name the type does not have
+    // is an error.
+    ro std = std_decls()
+
+    // a declared field nobody named
+    ro (d1, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { }
+ println(p.n)
+}", std)
+    assert(d1.len() >= 1)
+    assert(d1[0].message.contains("omits a declared field"))
+
+    // a field the type does not declare
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { n: 1, z: 2 }
+ println(p.n)
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("does not declare"))
+
+    // one field named twice fills the count and leaves the record short
+    ro (d3, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { n: 1, n: 2 }
+ println(p.n)
+}", std)
+    assert(d3.len() >= 1)
+
+    // The other direction: a complete construction is clean. ONE field, not
+    // two, and that is a measurement rather than a preference -- novac does
+    // not read a record whose fields are separated by a comma yet (2026-08-30:
+    // the refusal lands on the comma itself), so a two-field record would
+    // test the parser's gap and not this rule.
+    ro (d4, _) = compile_to_c("type Pt { n int }
+fn main() {
+ ro p = Pt { n: 1 }
+ println(p.n)
+}", std)
+    assert(d4.len() == 0)
+}
+
+test "a token the grammar requires is refused when absent (#815)" {
+    // Registry #815, class K6, found by the hunt of parse x K2: thirteen
+    // probes where novac exited 0 in silence and the oracle refused. One door
+    // was doing two jobs -- `@push_if` means "optional here, and absence is a
+    // valid outcome", which is true of a trailing comma and false of a name.
+    //
+    // The test holds the CLASS, so it asks about DIFFERENT kinds of required
+    // token, not one carrier: a name, an `=`, the `(` of a signature, the `{`
+    // of a match. The registry is explicit that repairing thirteen listed
+    // sites would be a carrier fix and not acceptance.
+    ro std = std_decls()
+
+    // a type with no name
+    ro (d1, _) = compile_to_c("type { n int }
+fn main() { println(1) }", std)
+    assert(d1.len() >= 1)
+
+    // a binding with no name
+    ro (d2, _) = compile_to_c("fn main() {
+ mut = 1
+ println(1)
+}", std)
+    assert(d2.len() >= 1)
+
+    // a binding with no `=`
+    ro (d3, _) = compile_to_c("fn main() {
+ mut b int
+ println(1)
+}", std)
+    assert(d3.len() >= 1)
+
+    // a signature with no `(`
+    ro (d4, _) = compile_to_c("fn main {
+ println(1)
+}", std)
+    assert(d4.len() >= 1)
+
+    // The SECOND shape of the same class is NOT asserted here, and the reason
+    // is a measurement rather than an omission. An import path is read by a
+    // loop, and a loop with no minimum accepts nothing at all; the fix makes
+    // an empty path plant a gap. But in THIS harness the same source is
+    // refused for an unrelated reason, so an assertion on it would be green
+    // with the fix removed -- the reverse proof showed exactly that, failing
+    // nothing when the loop minimum was taken out.
+    //
+    // What holds that shape instead is the hunt probe, measured through the
+    // CLI: `import` with no path used to exit 0 with not one diagnostic, and
+    // now refuses, taking the parse x K2 battery from thirteen divergences to
+    // zero across sixteen probes.
+
+    // The other direction of the lid: every form above, written whole, is
+    // clean. Without this the rule could be wider than the grammar and no
+    // test would notice.
+    ro (d6, _) = compile_to_c("type Pt { n int }
+fn main() {
+ mut b = 1
+ println(b)
+}", std)
+    assert(d6.len() == 0)
+}
+
 test "an application in TYPE position resolves -- Vec[int], and []T is its D239 sugar" {
     // Step B2's acceptance, pinned at the level it changes: the SIGNATURE. Both
     // spellings are one term (D239: `[]T` IS `Vec[T]`), read by one door at
@@ -544,10 +750,14 @@ export type Vec[T] { n int }")
     ro (d4, _) = compile_to_c("fn main() {\n ro v = []int.of()\n println(1)\n}", std)
     assert(d4.len() == 1)
     assert(d4[0].message.contains("empty array literal"))
-    // Outside initializer position: the same threshold the record ctor has.
+    // Argument position is LEGAL since wave B8 -- the literal itself passes,
+    // and the one diagnostic left is about the PRINTER: println covers the
+    // four primitives, and a vector is not one of them. The wave moved the
+    // refusal from the literal's position to the argument's type, which is
+    // the honest place for it.
     ro (d5, _) = compile_to_c("fn main() {\n println([7, 8])\n}", std)
     assert(d5.len() == 1)
-    assert(d5[0].message.contains("only as a binding initializer"))
+    assert(d5[0].message.contains("println covers"))
 }
 
 test "an instance method of the shell: deduced on the receiver, named by the shell, refused where the shell has none" {
@@ -562,10 +772,13 @@ export fn Vec[T] @nope() -> int => 0")
     ro (d1, c1) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.len())\n}", std)
     assert(d1.len() == 0)
     assert(c1.contains("Vec____nova_int_method_len"))
+    // The literal's capacity is exact: `[7, 8]` constructs with 2, not 0.
+    assert(c1.contains("_static_new(2)"))
     // `push` returns Self: the substituted return is the receiver's own term.
     ro (d2, c2) = compile_to_c("fn main() {\n mut v = [7]\n v.push(9)\n println(v.len())\n}", std)
     assert(d2.len() == 0)
     assert(c2.contains("Vec____nova_int_method_push"))
+    assert(c2.contains("_static_new(1)"))
     // No such method at all: the refusal of the wave before, unchanged.
     ro (d3, _) = compile_to_c("fn main() {\n ro v = [7]\n println(v.zzz())\n}", std)
     assert(d3.len() == 1)

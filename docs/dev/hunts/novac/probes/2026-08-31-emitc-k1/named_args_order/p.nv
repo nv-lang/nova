@@ -1,0 +1,14 @@
+module p
+
+fn tick(n int) -> int {
+    println("t", n)
+    n
+}
+
+fn take(a int, b int) -> int {
+    a - b
+}
+
+fn main() {
+    println(take(b: tick(2), a: tick(1)))
+}

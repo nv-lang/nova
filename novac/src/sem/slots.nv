@@ -20,7 +20,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
-import ../lex.{TokenKind}
+import ../lex.{TokenKind, is_ident_start, is_ident_byte}
 import ../diag.{ice}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
@@ -599,7 +599,19 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // emitter at all: without it the body was "neither a match nor an
     // expression" and iced (wave 3g, measured 2026-08-23).
     k == NodeKind.SelfField ||
+    k == NodeKind.SelfExpr ||
     k == NodeKind.MatchExpr ||
+    // An array literal is an expression since wave B8 let it stand in
+    // argument and constructor-field position; the walks that skip
+    // non-expressions must not skip it, or its type is never recorded.
+    k == NodeKind.ArrayLit ||
+    // A RECORD CONSTRUCTOR joins it for the same reason in wave B13, and the
+    // measurement that found this is worth keeping: `grab(P { n: 7 })` was
+    // refused with "this call omits `p`" -- not because the constructor was
+    // rejected, but because the argument COUNT never saw it. Counting goes
+    // through `is_arg_node`, `is_arg_node` asks here, and a form missing from
+    // this list is not refused anywhere. It is simply not there.
+    k == NodeKind.RecordCtor ||
     k == NodeKind.Cast
 }
 
@@ -666,36 +678,81 @@ export fn field_name_at(fk []Node) -> Option[int] {
 
 /// The TYPE slot of a record-field node -- the leaf after its name -- or None.
 export fn field_type_at(fk []Node) -> Option[int] {
-    // POSITIONAL WALK, no indexing. The indexed form (`fk[i].kind_of()`) was
-    // refused by the oracle's codegen with `E_RECV_METHOD_MISMATCH` -- it typed
-    // the INDEXED EXPRESSION as the vector itself and looked for `kind_of` on
-    // `Vec`. NOT a new find: that is [LEGACY-#676], the var-index-method defect
-    // this tree already works around in `harvest_fn` and in the collector. The
-    // walk below says the same thing without the form that trips it, so no
-    // marker is needed here -- there is nothing to remove when #676 is fixed.
-    mut i = 0
-    mut seen_name = false
-    for c in fk {
-        if c.kind_of() != NodeKind.LeafNode {
-            i += 1
-            continue
-        }
-        if seen_name { return Some(i) }
-        if mode_of_leaf(c).is_none() {
-            seen_name = true
-        } else {
-            // A mode word stands BEFORE the name (`mut n int`): it is neither
-            // the name nor the type, so the walk just steps over it.
-        }
-        i += 1
-    }
-    None
+    // THE SAME DOOR PARAMETERS USE (274.5 wave B1): the slot right after the
+    // name, whatever its KIND. The walk here used to skip every non-leaf, so a
+    // field whose type is a read type REFERENCE (`xs []int`, `rows Vec[T]` --
+    // branches since the parser learned them) answered None, the field never
+    // reached the registry, and the refusal said "unknown field" about a field
+    // written right there. One question, one door (P18).
+    if Some(n) = field_name_at(fk) { type_slot_after(fk, n) } else { None }
 }
 
 // `is_mode_word(w str)` stood here until 2026-08-23 and is gone with the last
 // reader that had only TEXT to go on. All three mode words are keywords now, so
 // the question is about a token KIND, and `mode_of_leaf` answers it -- one door
 // instead of a door plus three spellings kept in step with the lexer by hand.
+
+/// The `ConstDecl` node itself, unwrapped from an `export` wrapper when there
+/// is one: `export const N = 7` builds `Export[ConstDecl]`, and every reader
+/// asks the same question of both spellings (274.5 wave B2).
+export fn const_decl_of(c Node) -> Option[Node] {
+    if c.kind_of() == NodeKind.ConstDecl { return Some(c) }
+    if c.kind_of() != NodeKind.ExportDecl { return None }
+    for k in branch_children(c) {
+        if k.kind_of() == NodeKind.ConstDecl { return Some(k) }
+    }
+    None
+}
+
+/// The slot of a constant's NAME: the first identifier leaf after `const`.
+///
+/// The TERMINATOR is the branch (P21), as in `field_name_at`: a node that is
+/// not a leaf simply is not the name, and saying that with a `continue` keeps
+/// the closed set of node kinds out of an `else` that would swallow a new one.
+export fn const_name_at(kids []Node) -> int {
+    mut i = 0
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode {
+            i += 1
+            continue
+        }
+        if leaf_kind(c) == TokenKind.Ident { return i }
+        i += 1
+    }
+    -1
+}
+
+/// The slot of a constant's INITIALIZER: the child right after `=`.
+///
+/// By the ASSIGN leaf rather than by a fixed index, because a declared type may
+/// stand between the name and `=` and its own shape varies (`int`, `[]int`,
+/// `Vec[T]` are one child each, but that is the type door's business, not this
+/// one's).
+export fn const_init_at(kids []Node) -> int {
+    mut i = 0
+    mut seen_assign = false
+    for c in kids {
+        if seen_assign { return i }
+        // The TERMINATOR is the branch (P21), as in the two doors above: a
+        // node that is not a leaf is not the `=` either, and a `continue`
+        // says so without an `else` that a new node kind could fall into.
+        if c.kind_of() != NodeKind.LeafNode {
+            i += 1
+            continue
+        }
+        // TERMINATOR, not an `else`: two guards meet on this line -- one
+        // wants every branch complete, the other forbids an `else` that
+        // stands for "every other variant" of a closed set. A `continue`
+        // satisfies both, and it is the shape the two doors above use.
+        if leaf_kind(c) != TokenKind.Assign {
+            i += 1
+            continue
+        }
+        seen_assign = true
+        i += 1
+    }
+    -1
+}
 
 /// The method NAME of a `ProtoMethod` node: the identifier after the `@`.
 ///
@@ -719,3 +776,144 @@ export fn proto_method_name(m Node) -> Option[str] {
     None
 }
 
+
+/// The INDEX a projection leaf spells, or -1: `t.0` carries its component
+/// index as the integer literal's text, and the checker needs the number to
+/// judge it against the tuple's arity. Plain unsigned decimal -- anything
+/// else answers -1 rather than guessing (B15 step 4a).
+export fn digit_index(text str) -> int {
+    if text.byte_len() == 0 { return -1 }
+    mut v = 0
+    for b in text.bytes() {
+        if b < ('0' as u8) || b > ('9' as u8) { return -1 }
+        v = v * 10 + ((b - ('0' as u8)) as int)
+    }
+    v
+}
+
+/// The SLOTS of the extra disjunction heads inside a flat match pattern:
+/// every identifier standing right after a `|` leaf (the pattern-alternatives
+/// wave). Slot 0 is NOT here -- the first head keeps its original readers;
+/// this door feeds the exhaustiveness count and the emitter's OR-chain with
+/// the alternatives only. Two readers, one walk (P18).
+export fn disj_head_slots(pat []Node) -> []int {
+    mut slots = []int.new()
+    for i in 1..pat.len() {
+        // [LEGACY-#676] var-index-method: a method on `pat[i]` with a
+        // VARIABLE index takes the container as its receiver; the binding
+        // hop is the standing workaround.
+        ro prev = pat[i - 1]
+        ro cur = pat[i]
+        match prev {
+            Leaf(t) => {
+                // Only an identifier right after a pipe is an alternative
+                // head; anything else is the pattern body or a recovery gap.
+                if t.kind != TokenKind.Pipe { continue }
+                if !cur.is_ident() { continue }
+                slots.push(i)
+            }
+            Branch { .. } => {}
+        }
+    }
+    slots
+}
+
+/// Does this flat pattern carry a disjunction at all? One pipe answers; the
+/// binder judge and the payload unpack both gate on it.
+export fn pattern_has_disj(pat []Node) -> bool {
+    for c in pat {
+        match c {
+            Leaf(t) => {
+                if t.kind == TokenKind.Pipe { return true }
+            }
+            Branch { .. } => {}
+        }
+    }
+    false
+}
+
+
+/// The PIECES of a string literal's TOKEN TEXT (outer quotes kept by the
+/// caller's slice bounds): even slots are literal fragments (escapes kept
+/// verbatim), odd slots are the texts between `${` and `}`. A literal with
+/// no interpolation answers ONE even slot. `\$` never opens -- the byte
+/// before the dollar decides, exactly as the check's byte rule reads it.
+/// Two readers, one walk (P18): the checker judges the odd slots, the
+/// emitter spells the builder chain.
+export fn interp_slices(text str) -> []str {
+    ro b = text.bytes()
+    mut out = []str.new()
+    ro n = b.len() - 1
+    mut start = 1
+    mut i = 1
+    while i < n {
+        if b[i] == INTERP_BSLASH {
+            i += 2
+        } else if b[i] == INTERP_DOLLAR && i + 1 < n && b[i + 1] == INTERP_LBRACE {
+            out.push(text[start..i])
+            mut j = i + 2
+            while j < n && b[j] != INTERP_RBRACE { j += 1 }
+            out.push(text[i + 2..j])
+            i = j + 1
+            start = i
+        } else {
+            i += 1
+        }
+    }
+    if start <= n {
+        out.push(text[start..n])
+    } else {
+        // An UNCLOSED slot ran to the token's end (the lexer closes a string
+        // at the first bare quote, so a quoted literal INSIDE a slot cuts
+        // the token short -- hunt K4 shape). The empty tail keeps the
+        // even/odd contract; the form judge refuses the non-name slot.
+        out.push("")
+    }
+    out
+}
+
+/// The BYTE length a literal fragment has AFTER C reads its escapes: a
+/// backslash pair is one byte. The emitter's `.len` field needs the C
+/// answer, not the source count.
+export fn escaped_byte_len(piece str) -> int {
+    ro b = piece.bytes()
+    mut len = 0
+    mut i = 0
+    while i < b.len() {
+        if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
+        len += 1
+    }
+    len
+}
+
+/// Is this odd slot a BARE NAME -- one identifier, nothing else? The I1
+/// subset of interpolation compiles exactly that.
+export fn interp_slot_is_name(piece str) -> bool {
+    ro b = piece.bytes()
+    if b.len() == 0 { return false }
+    if !is_ident_start(b[0]) { return false }
+    for i in 1..b.len() {
+        if !is_ident_byte(b[i]) { return false }
+    }
+    true
+}
+
+/// The four bytes the slicer reads.
+const INTERP_BSLASH u8 = 0x5C  // backslash
+const INTERP_DOLLAR u8 = 0x24  // $
+const INTERP_LBRACE u8 = 0x7B  // {
+const INTERP_RBRACE u8 = 0x7D  // }
+
+/// Does this constant's initializer INTERPOLATE? The I1 boundary judge asks
+/// once, at the use site -- the substitution point, where no hoist ran.
+export fn const_init_interpolates(ctx Ctx, row ConstRow) -> bool {
+    ro cd = ctx.consts.rows[raw_crow(row)]
+    if cd.init.len() == 0 { return false }
+    ro init = cd.init[0]
+    if init.kind_of() != NodeKind.Lit { return false }
+    ro kids = branch_children(init)
+    ro t = kids[kids.len() - 1]
+    if t.kind_of() != NodeKind.LeafNode { return false }
+    if leaf_kind(t) != TokenKind.StrLit { return false }
+    interp_slices(leaf_text(t)).len() > 1
+}

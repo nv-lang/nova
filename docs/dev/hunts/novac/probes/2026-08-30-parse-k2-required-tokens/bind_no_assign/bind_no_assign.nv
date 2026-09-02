@@ -1,0 +1,17 @@
+// PROBE H3: the `=` of a `mut` binding is missing (D184: "`=` obligatory,
+// bare `ro x` / `mut x` without init = E_BINDING_REQUIRES_INIT").
+// site  : novac/src/parse/parse.nv:904 -- @push_if(kids, TokenKind.Assign)
+// novac : check rc=0, ZERO diagnostics. The NEXT statement is swallowed as the
+//         initializer: emit_c.nv:797 takes `kids[kids.len()-1]` as the init, so
+//         `novac emit` writes  nova_int b = ((nova_int)42LL);  -- two source
+//         statements silently merged into one. Measured on the emitted C text;
+//         the probe was not linked or run.
+// oracle: rc=1, "[E_BINDING_REQUIRES_INIT] `ro` / `mut` binding requires
+//         initialization ... (Plan 114 D184)" at 13:14
+module bind_no_assign
+
+fn main() {
+    mut b int
+    42
+    println(b)
+}

@@ -1,0 +1,9 @@
+module p
+
+fn main() {
+    mut x = -9223372036854775807
+    x = x - 1
+    mut d = 0
+    d = d - 1
+    println(x % d)
+}

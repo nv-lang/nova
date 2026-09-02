@@ -35,11 +35,13 @@ import ../names.{NameTable, NamespaceId}
 export type InteropTable {
     names NameTable /// identifier -> insertion index; presence is the fact, the index is incidental (NsInterop namespace)
     sym_cnt int /// how many identifiers were lifted; printed by the gate so a shell that lost its symbols is loud
+    struct_bodies NameTable /// identifiers the shell defines a `struct <name> {` BODY for -- a forward typedef is NOT here (C11 allows repeating it), so the declaration judge refuses only the real one-unit redefinition (NsInterop namespace)
 }
 
 /// An empty surface -- what a test builds when it wants no interop at all.
 export fn InteropTable.new() -> InteropTable =>
-    { names: NameTable.new(NamespaceId.NsInterop), sym_cnt: 0 }
+    { names: NameTable.new(NamespaceId.NsInterop), sym_cnt: 0,
+      struct_bodies: NameTable.new(NamespaceId.NsInterop) }
 
 /// Register one identifier the shell carries. A repeat is a no-op: the shell
 /// mentions a symbol as often as it uses it, and the table records THAT it does.
@@ -53,3 +55,15 @@ export fn InteropTable mut @add(sym str) -> () {
 /// a name, so the answer "no" becomes a refusal by name rather than a linker error.
 #realtime nogc
 export fn InteropTable @has(sym str) -> bool => @names.find(sym) >= 0
+
+/// Register a struct NAME the shell defines a body for (`struct X {` in the
+/// template). One writer: shell_surface's scan.
+export fn InteropTable mut @add_body(sym str) -> () {
+    if @struct_bodies.find(sym) >= 0 { return }
+    @struct_bodies.put(sym, 1)
+}
+
+/// Does the shell define a struct BODY under this name? The declaration
+/// judge's question: a body is the one thing a unit cannot repeat.
+#realtime nogc
+export fn InteropTable @has_body(sym str) -> bool => @struct_bodies.find(sym) >= 0

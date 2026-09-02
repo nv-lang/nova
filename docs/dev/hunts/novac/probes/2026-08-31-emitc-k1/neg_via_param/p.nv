@@ -1,0 +1,11 @@
+module p
+
+fn flip(x int) -> int {
+    -x
+}
+
+fn main() {
+    mut x = -9223372036854775807
+    x = x - 1
+    println(flip(x))
+}

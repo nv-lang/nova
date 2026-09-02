@@ -1,0 +1,10 @@
+// PROBE H1: the parameter list's OPENING paren is missing on a fn declaration.
+// site  : novac/src/parse/parse.nv:677 -- @push_if(kids, TokenKind.LParen)
+// novac : check rc=0, ZERO diagnostics; `novac emit` produces a complete,
+//         valid `nova_fn_main_impl` -- the form compiles and runs.
+// oracle: rc=1, "error: expected `(`, got `{`" at 8:9
+module fn_no_lparen
+
+fn main {
+    println("ok")
+}

@@ -1,0 +1,14 @@
+module p
+
+fn tick(n int) -> int {
+    println("tick")
+    n
+}
+
+fn count(v []int) -> int {
+    v.len()
+}
+
+fn main() {
+    println("head", count([tick(1)]))
+}

@@ -1,0 +1,14 @@
+// The field-privacy marker of a type declaration (D281): bare `priv` beside
+// the qualified spellings. Inside one module a `priv` field stays readable
+// (D47), which is exactly what this program does -- the marker changes who
+// ELSE may read `n`, and there is nobody else in one file.
+module basics.priv_type
+
+export type Counter priv {
+    n int
+}
+
+fn main() {
+    ro c = Counter { n: 41 }
+    println(c.n + 1)
+}

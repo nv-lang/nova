@@ -1,0 +1,15 @@
+module basics.match_disj_payload
+
+type Shape enum Dot | Line(int) | Rect(int, int)
+
+fn kind(s Shape) -> int {
+    match s {
+        Dot => 0
+        Line(_) | Rect(_, _) => 1
+    }
+}
+
+fn main() {
+    println(kind(Line(5)))
+    println(kind(Rect(1, 2)))
+}

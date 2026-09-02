@@ -49,9 +49,85 @@ cat > "$T/second.md" <<'EOF'
 EOF
 python "$G" "$ROOT" "$T/second.md" >/dev/null 2>&1 && bad "сломанный второй класс прошёл" || ok "сломанный второй класс пойман"
 
+# --- ЧАСТЬ 2 (274.4 шаг 5): дверь корня живёт в своём доме ----------------
+# Подложка: дерево с двумя модулями и таблица корней, где дверь названа домом.
+S="$T/src"; mkdir -p "$S/sem" "$S/emit_c"
+printf 'module novac.sem\n\nexport fn c_type(ctx Ctx, t TyId) -> str => "x"\n' > "$S/sem/mangle.nv"
+printf 'module novac.emit_c\n\nfn emit(e int) -> int => e\n' > "$S/emit_c/emit_c.nv"
+
+cat > "$T/roots.md" <<'EOF'
+## 16. Классы проблем двух месяцев
+### К1. Пример
+**Верность:** по построению.
+**Место:** types.
+**Минимальность:** снятие ломает X.
+
+## 3а. Корни и их владельцы
+
+| корень (вопрос) | владелец | дверь | дом двери | чем держится |
+|---|---|---|---|---|
+| C-ИМЯ | `sem/mangle` | `c_type` | `sem/mangle.nv` | страж мэнглинга |
+EOF
+python "$G" "$ROOT" "$T/roots.md" "$S" >/dev/null 2>&1 && ok "дверь в своём доме — зелено" || bad "законная дверь покраснела"
+python "$G" "$ROOT" "$T/roots.md" "$S" 2>/dev/null | grep -q "дверей корней" && ok "печатает счёт дверей" || bad "нет счёта дверей в строке ok"
+
+# ГЛАВНЫЙ случай: та же дверь объявлена ВТОРОЙ раз в чужом модуле.
+printf 'module novac.emit_c\n\nfn c_type(ctx Ctx, t TyId) -> str => "y"\n' >> "$S/emit_c/emit_c.nv"
+if python "$G" "$ROOT" "$T/roots.md" "$S" >/dev/null 2>&1; then
+    bad "вторая дверь в чужом модуле прошла — часть 2 не ловит главный случай"
+else
+    python "$G" "$ROOT" "$T/roots.md" "$S" 2>&1 | grep -q "dom" && ok "дверь вне дома поймана" || python "$G" "$ROOT" "$T/roots.md" "$S" 2>&1 | grep -q "c_type" && ok "дверь вне дома поймана и названа" || bad "красный, но не про дом двери"
+fi
+printf 'module novac.emit_c\n\nfn emit(e int) -> int => e\n' > "$S/emit_c/emit_c.nv"
+
+# Дверь, которой нет в доме вовсе (таблица врёт или дверь переименовали).
+sed 's/`c_type`/`c_nonexistent`/' "$T/roots.md" > "$T/gone.md"
+if python "$G" "$ROOT" "$T/gone.md" "$S" >/dev/null 2>&1; then
+    bad "дверь, которой нет в доме, прошла"
+else
+    python "$G" "$ROOT" "$T/gone.md" "$S" 2>&1 | grep -q "c_nonexistent" && ok "протухшее имя двери поймано" || bad "красный, но не про отсутствие двери"
+fi
+
+# Одноимённые методы РАЗНЫХ типов законны: квалификация обязана их различать.
+printf 'module novac.sem\n\nexport fn Interner mut @record(k int) -> int => k\n' > "$S/sem/types.nv"
+printf 'module novac.emit_c\n\nfn Checker mut @record(n int) -> int => n\n' >> "$S/emit_c/emit_c.nv"
+cat > "$T/qual.md" <<'EOF'
+## 16. Классы проблем двух месяцев
+### К1. Пример
+**Верность:** по построению.
+**Место:** types.
+**Минимальность:** снятие ломает X.
+
+## 3а. Корни и их владельцы
+
+| корень (вопрос) | владелец | дверь | дом двери | чем держится |
+|---|---|---|---|---|
+| КОНСТРУКЦИЯ | `sem` | `Interner.record` | `sem/types.nv` | страж двери типа |
+EOF
+python "$G" "$ROOT" "$T/qual.md" "$S" >/dev/null 2>&1 && ok "одноимённый метод ДРУГОГО типа не считается второй дверью" || bad "квалификация не работает: Checker mut @record спутан с Interner mut @record"
+
+# Ячейка со знаком весов (двери нет по природе) пропускается, а не падает.
+cat > "$T/scale.md" <<'EOF'
+## 16. Классы проблем двух месяцев
+### К1. Пример
+**Верность:** по построению.
+**Место:** types.
+**Минимальность:** снятие ломает X.
+
+## 3а. Корни и их владельцы
+
+| корень (вопрос) | владелец | дверь | дом двери | чем держится |
+|---|---|---|---|---|
+| ИМЯ ЯЗЫКА | `builtins` | ⚖ не функция: константы модуля | `builtins/` | страж хардкода |
+EOF
+python "$G" "$ROOT" "$T/scale.md" "$S" >/dev/null 2>&1 && ok "ячейка со знаком весов пропускается по правилу" || bad "такая ячейка покрасила стража"
+
+# Таблицы корней нет вовсе — часть 1 судит как раньше, часть 2 молчит.
+python "$G" "$ROOT" "$T/good.md" "$S" >/dev/null 2>&1 && ok "без таблицы корней страж судит только классы" || bad "отсутствие таблицы корней покрасило стража"
+
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-arch-class-proofs ok: 5/5"
+    echo "test-check-novac-arch-class-proofs ok: 12/12 (доказательства классов + дом двери, 274.4 шаг 5)"
     exit 0
 fi
 echo "test-check-novac-arch-class-proofs: FAIL ($fails)" >&2

@@ -1,0 +1,16 @@
+module basics.println_arg_effect_order
+
+type Pt { n int }
+
+fn tick(n int) -> int {
+    println("tick")
+    n
+}
+
+fn grab(p Pt) -> int {
+    p.n
+}
+
+fn main() {
+    println("head", grab(Pt { n: tick(1) }))
+}

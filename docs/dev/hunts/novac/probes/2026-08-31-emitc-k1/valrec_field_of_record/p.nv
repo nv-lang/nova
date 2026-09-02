@@ -1,0 +1,10 @@
+module p
+
+type Pt value { n int }
+type Box { p Pt }
+
+fn main() {
+    mut b = Box { p: Pt { n: 1 } }
+    b.p.n = 5
+    println(b.p.n)
+}

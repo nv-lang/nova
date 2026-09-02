@@ -1,0 +1,19 @@
+module p
+
+fn pick(c bool) -> int {
+    mut n = 0
+    if c {
+        n = 5
+        println("then")
+        n + 1
+    } else {
+        n = 7
+        println("else")
+        n + 1
+    }
+}
+
+fn main() {
+    println(pick(true))
+    println(pick(false))
+}

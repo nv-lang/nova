@@ -51,6 +51,24 @@ else
     grep -q "fresh_var" "$T/err" && ok "fresh_var вне чекера пойман" || ok "красный (текст иной, но пойман)"
 fi
 
+# --- ПРАВИЛО E: дверь подбора вне check/ и resolve/ (274.4 шаг 4) --------
+D=$(mk e1)
+printf 'module novac.emit_c\n\nfn Emitter @pick(e int) -> int => @ctx.fns.lookup(@ctx.tys, "f", @key, 0)\n' > "$D/emit_c/pick.nv"
+if run "$D"; then
+    bad "дверь подбора (lookup) в emit_c прошла — правило E не ловит"
+else
+    grep -q "lookup" "$T/err" && ok "дверь подбора вне резольвера поймана и названа" || bad "красный, но не про дверь подбора"
+fi
+
+D=$(mk e2)
+mkdir -p "$D/resolve"
+printf 'module novac.resolve\n\nfn FnIndex @walk(name str) -> int => @heads.find(name)\n\nexport fn FnIndex @only_row_of(name str) -> int => 0\n' > "$D/resolve/resolve.nv"
+run "$D" && ok "дверь подбора ВНУТРИ resolve/ законна" || bad "resolve/ покраснел о собственных дверях: $(cat "$T/err")"
+
+D=$(mk e3)
+printf 'module novac.emit_c\n\nfn Emitter @root(row int) -> bool => @ctx.fns.is_entry_row(row)\n' > "$D/emit_c/root.nv"
+run "$D" && ok "is_entry_row (предикат по строке) дверью не считается" || bad "is_entry_row покрасил E: предикат спутан с дверью"
+
 # --- чтение канала законно ------------------------------------------------
 D=$(mk rd)
 printf 'module novac.emit_c\n\nfn Emitter @emit(e int) -> int {\n    ro t = @out.type_of(e)\n    t\n}\n' > "$D/emit_c/emit_c.nv"

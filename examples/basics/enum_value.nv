@@ -1,0 +1,17 @@
+// A payload-less variant as a VALUE: bare and behind its type's name.
+module basics.enum_value
+
+type Kind enum Dot | Dash
+
+/// Every head after the match is a variant; the values arrive both ways.
+fn label(k Kind) -> int {
+    match k {
+        Dot => 1
+        Dash => 2
+    }
+}
+
+fn main() {
+    println(label(Kind.Dot))
+    println(label(Dash))
+}

@@ -1,0 +1,15 @@
+// PROBE H5: the OPENING brace of the match body is missing.
+// site  : novac/src/parse/expr.nv:284 -- @push_if(kids, TokenKind.LBrace)
+// novac : check rc=0, ZERO diagnostics; `novac emit` produces a working program.
+//         The stray `}` on line 6 does not even reach the top-level junk bucket.
+// oracle: rc=1, "error: expected `{`, got newline" at 8:30
+module match_no_lbrace
+
+fn f(n int) -> int => match n
+    0 => 1
+    _ => 2
+}
+
+fn main() {
+    println(f(0))
+}

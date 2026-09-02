@@ -1,0 +1,137 @@
+// Tuple emission: the D123 mono struct, on demand.
+//
+// Donor: none -- the mono NAME is the norm's (D123 length-prefixed scheme) and
+// the on-demand guarded typedef is the SHELL's own idiom (interop: one C name
+// for one type on both sides of the link; goes the day novac emits the whole
+// prelude). The construction discipline -- each component hoisted before ITS
+// assignment line -- is this compiler's own (hunt emit_c x K1, H1/H2).
+// Role: everything the emitter says about a TUPLE value lives here -- the
+// typedefs a unit needs, and the temporary a literal builds into. The
+// projection stays in emit_expr.nv with the other FieldAccess forms.
+// Used by: emit_c.nv -- emit() prints the typedefs right after the type
+// declarations, and the hoist walk plus the binding arm build every literal
+// through @emit_tuple_lit before the expression printer reads the temporary.
+// Guarded by: check-novac-differential.sh (corpus carriers
+// tuple_pair_projection, tuple_ctor_effect_order, tuple_mixed_pair_typedef --
+// the mixed pair is the one the shell does not carry, so it reddens without
+// the typedef walk) and the subset_test.nv holder test (B15 step 4a).
+
+module emit_c
+
+import ../sem.{Ctx, CheckOut, branch_children, leaf_kind}
+import ../types.{TyId, is_ty, raw_ty}
+import ../tree.{Node, NodeKind, raw_node}
+import ../builtins.{TypeKind}
+import ../sem.{c_struct, c_type}
+
+/// Emit a guarded typedef for every tuple type this file's channel decided
+/// (D123 mono struct, on demand -- the norm retired the blanket pre-decl).
+/// The guard (`#ifndef NOVA_TUPLE_TYPEDEF_<name>`) is the shell's own idiom,
+/// so a pair the shell already carries is simply not redefined. Order is by
+/// ascending term id, which is TOPOLOGICAL: a component interns before the
+/// tuple that holds it, so a nested pair's typedef lands first. Tuples inside
+/// generic instances arrive with E2-b2, the same boundary every instance
+/// type keeps (named, not forgotten).
+fn Emitter mut @emit_tuple_typedefs() -> () {
+    mut ids = []int.new()
+    for t in @out.types {
+        if !is_ty(t) { continue }
+        ro k = @ctx.tys.kind_of(t)
+        if k != TypeKind.TkTuple { continue }
+        ro rid = raw_ty(t)
+        mut dup = false
+        for seen in ids {
+            if seen == rid {
+                dup = true
+            } else {
+                // Not this one; the flag only ever turns on (P31).
+            }
+        }
+        if dup { continue }
+        // INSERTION into ascending order: the vector is as small as the
+        // file's distinct tuple types, and the order is the contract above.
+        mut at = ids.len()
+        for j in 0..ids.len() {
+            if ids[j] > rid && at == ids.len() {
+                at = j
+            } else {
+                // Either still below rid, or the slot is already found (P31).
+            }
+        }
+        ids.insert(at, rid)
+    }
+    for rid in ids {
+        ro t = TyId(rid)
+        ro name = c_struct(@ctx, t)
+        @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
+        @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
+        @body.append("typedef struct ${name} { ")
+        for i in 0..@ctx.tys.arg_count(t) {
+            @body.append(c_type(@ctx, @ctx.tys.arg(t, i)))
+            @body.append(" f${i}; ")
+        }
+        @body.append("} ${name};\n")
+        @body.append("#endif\n")
+    }
+}
+
+/// A tuple literal: build the mono struct into a numbered temporary, one
+/// field per component IN WRITTEN ORDER -- each component is hoisted right
+/// before its own assignment line, so a component's side effect runs where
+/// the source puts it (the H1/H2 discipline of the record constructor).
+fn Emitter mut @emit_tuple_lit(init Node, vtype TyId) -> str {
+    ro name = c_struct(@ctx, vtype)
+    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
+    @body.append("    ${name} ${tmp};\n")
+    mut i = 0
+    for c in branch_children(init) {
+        match c {
+            Leaf(_) => {} // parens and commas -- trivia, not components
+            Branch { .. } => {
+                @hoist_array_lits(c)
+                @body.append("    ${tmp}.f${i} = ")
+                @emit_expr(c)
+                @body.append(";\n")
+                i += 1
+            }
+        }
+    }
+    tmp
+}
+
+
+/// A destructuring binding (B15 step 5): the pair lands in a temporary once,
+/// and each name is a plain C local initialized from its `.fN` -- the checker
+/// bound the names to the component types, this door only spells what was
+/// decided.
+fn Emitter mut @emit_tuple_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[kids.len() - 1]
+    ro pt = @out.type_of(init.id_of())
+    ro tmp = match init.kind_of() {
+        TupleExpr => @emit_tuple_lit(init, pt)
+        // Any other initializer is an ordinary expression of the pair's
+        // type (a call, a name): it prints into its own temporary.
+        _ => {
+            @hoist_array_lits(init)
+            ro u = "_novac_tmp_t${@fresh_uniq()}"
+            @body.append("    ${c_type(@ctx, pt)} ${u} = ")
+            @emit_expr(init)
+            @body.append(";\n")
+            u
+        }
+    }
+    mut i = 0
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // Keyword, parens, commas: the pattern's trivia -- only the
+                // names become locals.
+                if leaf_kind(c) != TokenKind.Ident { continue }
+                @body.append("    ${c_type(@ctx, @ctx.tys.arg(pt, i))} ${t.text} = ${tmp}.f${i};\n")
+                i += 1
+            }
+            Branch { .. } => {}
+        }
+    }
+}

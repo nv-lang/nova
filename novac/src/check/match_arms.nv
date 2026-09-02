@@ -22,8 +22,61 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{FnLookup, decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow, is_vrow, variant_range_of}
+import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
+import ../sem.{disj_head_slots, pattern_has_disj}
+import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
+import ../sem.{is_vrow, variant_range_of}
 import ../types.{TyId, no_ty, is_ty}
+
+/// A match in STATEMENT position (274.5 wave B5): the scrutinee is typed and
+/// recorded, the binders bound, the guards typed, the bodies walked AS
+/// STATEMENTS, and coverage judged -- but no value question is asked: the
+/// arms run for effect, and demanding that `{}` agree in type with
+/// `{ println(x) }` would refuse legal code the census counts five files of.
+fn Checker mut @type_match_stmt(m Node) -> () {
+    ro kids = branch_children(m)
+    if kids.len() < 2 {
+        @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
+        return
+    }
+    ro scr = kids[1]
+    @type_expr(scr)
+    if @out.len() > 0 { return }
+    ro scr_t = type_of(scr, @ctx, @scope, @chan)
+    @record(scr, scr_t)
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        @type_arm_stmt(c, scr_t)
+    }
+    if @out.len() > 0 { return }
+    @report_if_not_exhaustive(kids, scr_t)
+}
+
+/// One statement-position arm: the value path minus the value -- binders and
+/// guards through the same door (`@type_arm` owns them), the BODY walked as
+/// a block or a statement, and the answer deliberately not asked.
+fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
+    ro mark = @scope.mark()
+    ro ak = branch_children(arm)
+    if ak.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        return
+    }
+    @bind_arm_pattern(ak, scr_t)
+    for g in ak {
+        if g.kind_of() != NodeKind.Guard { continue }
+        ro gk = branch_children(g)
+        if gk.len() < 2 { continue }
+        @type_expr(gk[1])
+    }
+    ro body = ak[arm_body_at(ak) ?? ice("check: a statement-position match arm with no body reached the checker")]
+    if body.kind_of() == NodeKind.Block {
+        @type_block(body)
+    } else {
+        @type_stmt(body)
+    }
+    @scope.release(mark)
+}
 
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
@@ -95,6 +148,21 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         // the Option form would have to be a manual match -- which the linter
         // reads as drift from `X ?? D` (W_MANUAL_COALESCE), and rightly.
         if !pat[0].is_ident() { continue }
+        // EVERY alternative head of a disjunction counts too (the
+        // pattern-alternatives wave): heads stand right after each pipe.
+        for hi in disj_head_slots(pat) {
+            match @ctx.defs.def_of(leaf_text(pat[hi])) {
+                None => {}
+                Some(hdef) => {
+                    match hdef.target {
+                        DefVariant(hrow) => {
+                            covered += if @ctx.variant_rows[raw_vrow(hrow)].sum_id == scr_t { 1 } else { 0 }
+                        }
+                        DefType(_) | DefFn(_) | DefConst(_) => {}
+                    }
+                }
+            }
+        }
         // The EXPLICIT form and not `?`: this function answers `()`, so there is
         // no wrapper to propagate into -- which is exactly the case the refusal's
         // hint reserves for a match (D86: `??` substitutes a value, an early
@@ -113,7 +181,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
                         covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
                     }
                     // Not a variant: an exhaustiveness count learns nothing.
-                    DefType(_) | DefFn(_) => return
+                    DefType(_) | DefFn(_) | DefConst(_) => return
                 }
             }
         }
@@ -187,18 +255,15 @@ fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId]) -> Option[
 /// the arm-agreement rule (F36) asked for it after the walk, outside the
 /// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
 /// diagnostic -- the binders were gone by then.
-fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
-    // An arm's binders live in the arm and nowhere else.
-    ro mark = @scope.mark()
-    ro ak = branch_children(arm)
-    if ak.len() < 1 {
-        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
-        return None
-    }
+/// Bind one arm's PATTERN into the scope: the variant's payload binders, or
+/// the whole scrutinee under a plain binder. ONE door for both arm variants
+/// (value and statement, 274.5 wave B5) -- the second copy of this walk is
+/// exactly what would drift. Answers false when the pattern is refused.
+fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
     ro pat = branch_children(ak[0])
     if pat.len() < 1 {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
-        return None
+        return false
     }
     ro p0 = pat[0]
     ro is_ident = leaf_kind(p0) == TokenKind.Ident
@@ -209,10 +274,36 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     ro vrow = if Some(def) = head_def {
         match def.target {
             DefVariant(row) => row
-            DefType(_) | DefFn(_) => no_vrow()
+            DefType(_) | DefFn(_) | DefConst(_) => no_vrow()
         }
     } else {
         no_vrow()
+    }
+    if pattern_has_disj(pat) {
+        // A disjunction binds NOTHING: two alternatives would have to agree
+        // on the binder's name AND payload type, and no carrier needs that.
+        // Any identifier of the pattern that is neither `_` nor a variant
+        // head refuses by name; `_` slots leave nothing to put in scope.
+        for c in pat {
+            match c.ident_str() {
+                Some(nm) => {
+                    if nm == "_" { continue }
+                    ro is_var = match @ctx.defs.def_of(nm) {
+                        None => false
+                        Some(d) => match d.target {
+                            DefVariant(_) => true
+                            DefType(_) | DefFn(_) | DefConst(_) => false
+                        }
+                    }
+                    if !is_var {
+                        @report_first_leaf_of(ak, DISJ_BINDER_MSG)
+                        return false
+                    }
+                }
+                None => {}
+            }
+        }
+        return true
     }
     if is_vrow(vrow) {
         mut pi = 0
@@ -249,6 +340,22 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         // `_` and a non-identifier head bind nothing by definition: an arm
         // sees the scrutinee only through a name, and there is no name here.
     }
+    true
+}
+
+/// One arm in VALUE position: bind its pattern, type its guards, type its
+/// body, and answer the body's type -- which the fold compares against the
+/// first arm's. None means the arm reported a diagnostic and has no type to
+/// offer.
+fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
+    // An arm's binders live in the arm and nowhere else.
+    ro mark = @scope.mark()
+    ro ak = branch_children(arm)
+    if ak.len() < 1 {
+        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        return None
+    }
+    if !@bind_arm_pattern(ak, scr_t) { return None }
     for g in ak {
         if g.kind_of() != NodeKind.Guard { continue }
         ro gk = branch_children(g)
@@ -258,10 +365,35 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         @type_expr(gk[1])
     }
     ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
+    // A BLOCK BODY IN VALUE POSITION (274.5 wave B9): `0 => { return 1 }` is
+    // statements that leave through `return`, so the arm yields NO value to
+    // the fold -- typed as a block, answered as None. The statement variant
+    // has read a block body since wave B5; this is the same route for the
+    // value variant, and the None is what keeps the fold honest instead of
+    // inventing a type for an arm that never produces one.
+    if body.kind_of() == NodeKind.Block {
+        @type_block(body)
+        @scope.release(mark)
+        // SILENT-OK: the block WAS judged just above -- every statement in it
+        // recorded its own answers -- and the arm itself yields no value to
+        // the fold, which is exactly what None says here. Nothing is skipped:
+        // the only thing not recorded is a type this arm never produces.
+        return None
+    }
+    // TERMINATOR above, no `else` (the intersection rule of 274.5 s2g, fourth
+    // application): an expression body falls through to the lattice, as it
+    // always has.
     @type_expr(body)
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
-    ro body_t = if @out.len() == 0 { Some(type_of(body, @ctx, @scope, @chan)) } else { None }
+    // Written as a terminator rather than an if-else: the shape guard reads an
+    // `else` here as the wildcard of the KIND test above (it is a count test,
+    // a different subject) -- and the early exit says the same thing plainly.
+    if @out.len() > 0 {
+        @scope.release(mark)
+        return None
+    }
+    ro body_t = Some(type_of(body, @ctx, @scope, @chan))
     @scope.release(mark)
     body_t
 }

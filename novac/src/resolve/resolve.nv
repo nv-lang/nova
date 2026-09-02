@@ -1,0 +1,557 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_resolve` + `method::probe` -- resolution is its own
+// phase, separate from the tables it walks (`report_method_error` / clang
+// `Sema::NoteAllOverloadCandidates` for "a refusal names the candidate set");
+// Go `types2.LookupFieldOrMethod` -- the resolver READS the object tables,
+// and the tables know nothing of it. Separate chaining (name -> first row +
+// next, TAOCP 6.4) for the index. NOT taken: inference of any kind (E2-b3),
+// and any tie-break -- an ambiguous set is refused, never resolved by an
+// order nobody declared.
+// Role: layer 6a -- THE resolver: the ONLY module that turns a callable NAME
+// into a row (274.4 step 2; one door per root).
+// Used by: check, and check alone. emit_c and mono hold no FnIndex value and
+// have no edge here: after the checker nobody resolves. sem does not know
+// this module -- the index is BUILT FROM the rows, not grown beside them.
+// Guarded by: check-novac-deps.py (the edges of this module are named in the
+// architecture table), check-novac-no-alloc-in-lookup.py (a door allocates
+// nothing), check-novac-import-exists.py.
+// novac/src/resolve -- which callable does a CALL name.
+//
+// THE RULE, in one place: a call fits a row when the FORM matches (a free
+// call cannot reach a callable declared with a receiver), the arity matches,
+// every typed position matches, and every position's MODE admits the
+// argument's CLASS. Among the rows that fit, the most SPECIFIC wins (consume
+// beats mut beats ro); a tie is an overload set and is refused rather than
+// chosen.
+//
+// WHY THE INDEX LIVES HERE AND NOT IN FnTable (274.4 step 2, measured): with
+// the chain on the table, ANY holder of Ctx could resolve names -- and the
+// emitter did (`==` on `str` picked its own row, silently, until step 1).
+// Privacy in Nova is per module (D5/D47) and an inherent method is callable
+// without import (D286), so the lock is the VALUE: the index lives in the
+// Checker, emit_c and mono hold a Ctx and no index, and there is nothing to
+// call a lookup on. The module boundary is the second lock, for free doors.
+
+module novac.resolve
+
+import ../diag.{ice}
+import ../names.{NameTable, NamespaceId}
+import ../builtins.{ENTRY_FN}
+import ../types.{TyId, is_ty, Interner}
+import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm}
+import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
+import ../sem.{positional_run, bind_slot_of, slot_is_required, mode_admits, type_admits}
+import ../sem.{ty_source_name}
+
+/// How a callable lookup turned out. A sum, not an int code: "not found"
+/// and "more than one candidate" are different answers, and both must be
+/// representable (П13.5; a silent int default is the №652 class).
+///
+/// EVERY variant carries a ROW, never a type id (owner's review 2026-08-16).
+/// Two reasons. First, the pair (receiver, name) does NOT determine a return
+/// type while the language overloads on PARAMETERS: two callables can share
+/// the pair and differ in their parameters, so a door that answered with a
+/// type would be claiming more than it can know. It answers with the
+/// candidate instead, and the caller reads `ret_id` off the row once the
+/// candidate is settled. Second, a row gives the caller the parameters too,
+/// which is exactly what choosing between overloads needs.
+///
+/// `FnOverloaded` is not "ambiguous": it means the set has more than one
+/// member and picking needs the ARGUMENT types, which `check` will have when
+/// it gets local typing (274.3 wave 3, finding C9). Today novac refuses such
+/// a call honestly rather than guessing. The payload is the FIRST row of the
+/// set — naming the whole set needs a door this file does not have yet (see
+/// the note at the bottom); the door itself stays allocation-free (П18).
+export type FnLookup enum
+    | FnFound(FnRow)
+    | FnUnknown
+    | FnOverloaded(FnRow)
+
+/// THE name index over `FnTable.rows`: name -> chain of same-named rows.
+///
+/// Built FROM the rows, not grown beside them: every row carries its own
+/// `name`, so nothing but the table is needed, and `sem` keeps not knowing
+/// this module exists. The chain used to be `FnDef.next_row` plus
+/// `FnTable.heads` -- on the table, where any Ctx holder could walk it; it
+/// moved here whole (274.4 step 2), and the walk semantics are identical:
+/// `heads` answers the LAST registered row, `next` steps to earlier ones.
+export type FnIndex priv {
+    heads NameTable /// name -> LAST registered row of that name; `next` walks the earlier ones
+    next []FnRow /// parallel to FnTable.rows: next row carrying the SAME name, `no_row()` at the end
+}
+
+/// Build the index over these rows: an empty FnIndex, then one registering
+/// pass.
+export fn FnIndex.build(fns FnTable) -> FnIndex {
+    mut ix = FnIndex { heads: NameTable.new(NamespaceId.NsCallables), next: []FnRow.new() }
+    ix.fill(fns)
+    ix
+}
+
+/// Register every row -- the same chain `FnTable.add` grew in place before
+/// the split, per row: remember the previous head, become the head. The
+/// MUTATING form on purpose (П18): registration may allocate, a lookup door
+/// may not, and the guard tells them apart by exactly this shape.
+fn FnIndex mut @fill(fns FnTable) -> () {
+    for i in 0..fns.rows.len() {
+        ro name = fns.rows[i].name
+        @next.push(FnRow(@heads.find(name)))
+        @heads.put(name, i)
+    }
+}
+
+/// WHERE the chain of this name starts, and WHAT follows a row in it -- the two
+/// halves of "walk the candidates", each allocation-free.
+///
+/// The candidate SET is what the second stage of D429 R5 needs and the exact
+/// stage never does. It was ONE door handing over a vector, and the guard
+/// refused it in the same minute (П18: a door of a table does not build) -- and
+/// the guard was right, not merely strict: `lookup` walks this chain on every
+/// call, so a set-shaped answer would put an allocation on the hot path for the
+/// sake of a caller that runs once, off it.
+#realtime nogc
+export fn FnIndex @first_row_of(name str) -> FnRow => FnRow(@heads.find(name))
+
+/// The next row carrying the SAME name, or `no_row()` at the end of the chain.
+#realtime nogc
+export fn FnIndex @next_row_of(row FnRow) -> FnRow {
+    if raw_row(row) < 0 { return no_row() }
+    @next[raw_row(row)]
+}
+
+/// The SINGLE row of this name, when the name carries exactly one.
+///
+/// `None` when the name is unknown OR overloaded, and the difference matters to
+/// the caller that asks: a refusal may name a parameter only of a declaration
+/// that is the one this call could have meant. With two candidates, "parameter
+/// `by` is passed by name only" would be a statement about a row nobody chose.
+#realtime nogc
+export fn FnIndex @only_row_of(name str) -> Option[FnRow] {
+    ro head = FnRow(@heads.find(name))
+    if raw_row(head) < 0 {
+        return None
+    } else {
+        // A row of this name exists; whether it is alone is the next question.
+    }
+    if raw_row(@next[raw_row(head)]) >= 0 {
+        return None
+    } else {
+        // No second row carries this name.
+    }
+    Some(head)
+}
+
+/// Whether a callable with this name exists at all.
+///
+/// The weakest question there is, and deliberately so: `check` walks the tree
+/// before local typing, so at that point it has neither the receiver's type nor
+/// the arguments'. A typo in the NAME is caught here; WHICH callable runs is
+/// settled later by `@lookup`, which asks with types.
+///
+/// Until 2026-08-19 this answered only about names that had a receiver — a
+/// receiver-shaped question in a form that has no receivers. Under plan 273 a
+/// method IS a function whose first parameter is the receiver, so "is there a
+/// callable called this" is the whole question, and `x.f()` failing to match
+/// any row is reported by the typed pass, not guessed here.
+#realtime nogc
+export fn FnIndex @has_name(name str) -> bool {
+    @heads.find(name) >= 0
+}
+
+/// THE entry row of this file, or None -- the root of the reachability walk.
+/// Walks the name chain rather than trusting `defs`, which is keyed by the bare
+/// name and answers with the LAST row of it: with an overload of `main` present,
+/// "the row named main" is not the same question as "the entry point".
+#realtime nogc
+export fn FnIndex @entry_row(fns FnTable) -> Option[FnRow] {
+    mut r = @heads.find(ENTRY_FN)
+    while r >= 0 {
+        ro row = FnRow(r)
+        r = raw_row(@next[raw_row(row)])
+        if fns.is_entry_row(row) { return Some(row) }
+    }
+    None
+}
+
+/// THE name index over `FieldTable.rows`: field name -> chain of same-named
+/// rows (NsFields). Same construction as FnIndex, same reason (274.4 step 3):
+/// fields resolve ONLY through a receiver type, and while the chain lived on
+/// the table, any holder of Ctx could resolve field names -- the emitter is a
+/// holder of Ctx. The chain compares the owner as an INTEGER: the first shape
+/// keyed by text ("${owner_id}.${name}"), which allocated on every access and
+/// put structure into a string right after §4а ruled "identity is not a name".
+export type FieldIndex priv {
+    names NameTable /// field name -> LAST registered row of that name; `next` walks the earlier ones
+    next []FieldRow /// parallel to FieldTable.rows: next row carrying the SAME name, `no_frow()` at the end
+}
+
+/// Build the index over these rows: an empty FieldIndex, then one registering
+/// pass.
+export fn FieldIndex.build(fields FieldTable) -> FieldIndex {
+    mut ix = FieldIndex { names: NameTable.new(NamespaceId.NsFields), next: []FieldRow.new() }
+    ix.fill(fields)
+    ix
+}
+
+/// Register every row -- the chain `FieldTable.add` grew in place before the
+/// split. The MUTATING form on purpose (П18): registration may allocate, a
+/// lookup door may not.
+fn FieldIndex mut @fill(fields FieldTable) -> () {
+    for i in 0..fields.rows.len() {
+        ro name = fields.rows[i].name
+        @next.push(FieldRow(@names.find(name)))
+        @names.put(name, i)
+    }
+}
+
+/// Does `owner_id` have a field named `fname`? The tolerant half again:
+/// `check` asks first, so a misspelled field is a diagnostic, not an ice.
+#realtime nogc
+export fn FieldIndex @has_field(fields FieldTable, owner_id TyId, fname str) -> bool {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return true }
+        r = @next[raw_frow(r)]
+    }
+    false
+}
+
+/// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
+#realtime nogc
+export fn FieldIndex @field_type(fields FieldTable, owner_id TyId, fname str) -> TyId {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return fd.type_id }
+        r = @next[raw_frow(r)]
+    }
+    // [LEGACY-#700-user-error-as-ice until:E2b3] a typo in a field name is a
+    // USER error and must be a diagnostic, not an ice; check gets local typing
+    // at E2-b3 and takes this over. Integrator review 2026-08-16.
+    ice("resolve: unknown field past check (type checker is a later wave)")
+}
+
+/// Does this row take a call with these argument types?
+///
+/// ONE rule for every callable: the arity first, then each parameter against
+/// the argument standing in the same position. A receiver is position ZERO and
+/// nothing else — plan 273 §4.4 fixes it there — so `x.f(a)` asks with the
+/// types of `[x, a]` exactly as `f(x, a)` would. There is no receiver-shaped
+/// question anywhere in this table any more: it was the last one (owner,
+/// 2026-08-19, after the same correction landed in the mangling).
+///
+/// A position the caller cannot type yet is passed as -1 and fits anything.
+/// `check` still lacks local types in some places (274.3/C9), and refusing
+/// what it cannot judge would be a guess in the other direction. ARITY,
+/// however, is always known at a call site, so it discriminates from today.
+#realtime nogc
+fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> bool {
+    ro fd = fns.rows[raw_row(row)]
+    // THE FORM FIRST. A free call cannot reach a callable declared with a
+    // receiver, and a method call cannot reach one declared without: the
+    // language keeps the two spellings apart, so resolution does too. Without
+    // this an arity coincidence was enough -- `byte_len("abc")` found
+    // `str @byte_len()` (probe 2026-08-20).
+    ro wants_recv = match form {
+        FreeCall => false
+        MethodCall => true
+    }
+    if fd.has_recv != wants_recv {
+        return false
+    } else {
+        // The declaration was written in the form the call site uses.
+    }
+    // ARITY IS NO LONGER EQUALITY (wave 4, D102). A call may write FEWER
+    // arguments than the declaration has parameters -- the omitted ones carry
+    // defaults -- and it may write them BY NAME, in which case the written
+    // order says nothing about which parameter each one means. So the question
+    // "does this row take this call" is answered by the BINDING, and the
+    // primitives it is composed of allocate nothing, which is what lets this
+    // door stay a door (check-novac-no-alloc-in-lookup).
+    ro run = positional_run(args)
+    if run < 0 {
+        // A positional argument after a named one: D102 call-rule 3.
+        return false
+    } else {
+        // Positional first, named after.
+    }
+    if run > fd.param_cnt {
+        return false
+    } else {
+        // No more positional arguments than parameters to take them.
+    }
+    mut bound = 0
+    for s in 0..fd.param_cnt {
+        ro at = bind_slot_of(fns.params, fd.param_off, fd.param_cnt, args, s)
+        if at < 0 {
+            // Nothing fills this slot: legal exactly when the declaration says
+            // what to put there.
+            if slot_is_required(fns.params, fd.param_off, s) { return false } else { continue }
+        } else {
+            // Filled -- by position or by name, and which decides the next rule.
+        }
+        if s < run && !slot_is_required(fns.params, fd.param_off, s) {
+            // A defaulted parameter is keyword-only (D102 call-rule 1).
+            return false
+        } else {
+            // Named, or required: both are legal ways to fill this slot.
+        }
+        ro p = fns.params[fd.param_off + s]
+        // THE DOOR, not `>= 0` (2026-08-23). `is_ty` is what says "this position
+        // carries a type"; the bare comparison of a `TyId` against zero answered
+        // TRUE for `no_ty()`, and every generic row stopped fitting because its
+        // type-PARAMETER was then compared against an absent type. The bare form
+        // stood here since the door was written -- it is a newtype, and asking a
+        // newtype an int's question is exactly what the door exists to prevent.
+        // Since sub-plan L2 (2026-08-26) the question is STRUCTURAL, through
+        // `type_admits`: a receiver `Vec[T]` fits `Vec[int]`, a bare parameter
+        // fits anything, and the untyped slot still admits everything.
+        if !type_admits(tys, p.type_id, args[at].type_id) {
+            return false
+        } else {
+            // Either this position is not typed yet (no_ty()), or it matches.
+        }
+        // THE MODE, by rule P14. A parameter's mode is an axis of overloading,
+        // not decoration: `tag(r)` and `tag(m)` carry the same TYPE and select
+        // different callables, so a resolution comparing types alone could not
+        // tell them apart -- it answered "overloaded, not narrowed" and refused
+        // both (measured 2026-08-21).
+        if !mode_admits(p.mode, args[at].cls) {
+            return false
+        } else {
+            // This argument's class is one this mode accepts.
+        }
+        bound += 1
+    }
+    // EVERY WRITTEN ARGUMENT FOUND A SLOT. A name no parameter carries, and a
+    // slot named twice, both leave an argument unbound -- one count refuses
+    // both, and `bind_fault` is what says which it was.
+    bound == args.len()
+}
+
+/// Does `a` beat `b` by P14 filter 4 -- no less specific in EVERY position, and
+/// strictly more specific in at least one?
+///
+/// POSITION BY POSITION, and not by a sum of the positions, because a sum is a
+/// partial order squeezed into one number and the difference it loses is the
+/// one that matters. The spec says a set varying two parameters' modes
+/// OPPOSITELY is rejected as ambiguous -- "there is no silent choice"
+/// (D84, the mode-axis amendment, Plan 184 / D326-R13/R14). A sum reaches that
+/// verdict only when the two totals happen to collide: `f(consume a, ro b,
+/// ro c)` scores 2 and `f(ro a, ro b, mut c)` scores 1, so the sum names a
+/// winner although neither is more specific everywhere.
+#realtime nogc
+fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
+    ro fa = fns.rows[raw_row(a)]
+    ro fb = fns.rows[raw_row(b)]
+    mut no_worse = fa.param_cnt == fb.param_cnt
+    mut better_somewhere = false
+    for i in 0..fa.param_cnt {
+        ro sa = fns.params[fa.param_off + i].mode.specificity()
+        ro sb = fns.params[fb.param_off + i].mode.specificity()
+        if sa < sb {
+            no_worse = false
+        } else {
+            // `a` holds this position, either by tying it or by winning it.
+        }
+        if sa > sb {
+            better_somewhere = true
+        } else {
+            // A tie here decides nothing; some other position must.
+        }
+    }
+    no_worse && better_somewhere
+}
+
+/// The candidate row for this call — or why there is none to name.
+///
+/// ONE DOOR, and it knows nothing about receivers: `x.f(a)` asks with the types
+/// of `[x, a]`, `f(a)` asks with `[a]`, and both take the same path through the
+/// same code. Counts the chain instead of trusting a flag: more than one row
+/// fitting one call is an overload SET, and its first row is handed back so the
+/// caller can enumerate the set without searching again.
+/// Several rows fitting one call is NOT an overload set by itself: since
+/// 2026-08-21 the modes decide, and `f(x T)` beside `f(mut x T)` fits a mut
+/// argument BOTH ways. The winner is the most specific one (P14 filter 4), and
+/// only a TIE at the top is a set -- which is what the spec says to refuse.
+#realtime nogc
+export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, form CallForm) -> FnLookup {
+    mut first = no_row()
+    // A CANDIDATE for the winner, raised whenever a fitting row beats it. One
+    // walk cannot finish the job: a row met later may beat the candidate while
+    // being incomparable to one met earlier, so this pass only proposes.
+    mut winner = no_row()
+    // WAS THE STANDING CANDIDATE EVER MET BY A ROW IT COULD NOT COMPARE WITH?
+    // While the answer is no, the candidate provably beats everything seen: it
+    // either beat each row outright or was replaced by one that beat IT, and
+    // domination is transitive. So this flag is what makes the verifying walk
+    // below rare instead of routine -- the owner's question, 2026-08-31: the
+    // second walk re-runs `fits` over the whole chain, and paying that on every
+    // call to settle a set that almost never occurs is the wrong trade.
+    mut met_incomparable = false
+    mut r = @heads.find(name)
+    while r >= 0 {
+        ro row = FnRow(r)
+        r = raw_row(@next[r])
+        if !fits(fns, tys, row, args, form) { continue }
+        if raw_row(first) < 0 {
+            first = row
+        } else {
+            // A later member of the same chain: the FIRST fitting row is what
+            // a future candidate-set door would walk on from, so it is kept once.
+        }
+        if raw_row(winner) < 0 {
+            winner = row
+        } else if dominates(fns, row, winner) {
+            winner = row
+        } else if dominates(fns, winner, row) {
+            // The standing candidate beats this row outright; nothing to settle.
+        } else {
+            // Incomparable. NOT a verdict: a row met later may beat them both
+            // (`f(consume a, ro b)` and `f(ro a, mut b)` are incomparable, and
+            // `f(consume a, mut b)` beats each). Deciding here would refuse a
+            // call that has a most specific answer, so the walk below decides.
+            met_incomparable = true
+        }
+    }
+    if raw_row(first) < 0 { return FnLookup.FnUnknown }
+    // THE VERIFYING PASS, and it verifies rather than recomputes: the proposed
+    // winner must beat EVERY other fitting row. If one of them is merely
+    // incomparable, the set has no most specific member and the spec refuses
+    // instead of choosing ("there is no silent choice", D84 mode-axis
+    // amendment). Nothing here is assumed, so nothing here needs an invariant.
+    mut unique = true
+    mut v = -1
+    if met_incomparable {
+        v = @heads.find(name)
+    } else {
+        // Nothing was ever incomparable with the candidate, so it beats every
+        // fitting row by transitivity and there is nothing to verify.
+    }
+    while v >= 0 {
+        ro row = FnRow(v)
+        v = raw_row(@next[v])
+        if !fits(fns, tys, row, args, form) { continue }
+        if row == winner { continue }
+        if !dominates(fns, winner, row) {
+            unique = false
+        } else {
+            // The winner beats this one outright; the rest of the chain decides.
+        }
+    }
+    if !unique {
+        // No candidate is more specific than all the others -- an overload SET.
+        // The caller enumerates it from `first`.
+        return FnLookup.FnOverloaded(first)
+    } else {
+        // One winner, and it beats every other fitting row position by position.
+    }
+    FnLookup.FnFound(winner)
+}
+
+/// E2-b3 WAVE 3B -- STRUCTURAL SATISFACTION: does `t` have every method the
+/// protocol in row `prow` requires? `None` = it does; `Some(text)` names the
+/// FIRST missing signature.
+///
+/// Donor: Go's method set. A type satisfies a contract by HAVING the methods,
+/// with no impl block, no coherence and no orphan rules -- we have none of the
+/// three (D53), so trait selection would be borrowing machinery for a question
+/// it does not answer here. The bar for the MESSAGE is the oracle's own,
+/// measured 2026-08-23: "`Plain` is missing: size() -> int" -- naming the method
+/// rather than the bound is the difference between a fixable refusal and a
+/// riddle.
+///
+/// The receiver is position ZERO of a method row (plan 273), so a required
+/// `@size() -> int` is satisfied by a row named `size` whose parameter 0 is `t`,
+/// whose remaining parameters match the signature's, and whose return type
+/// matches. A signature whose types novac could not resolve (`no_ty()`) is NOT
+/// compared on that position: refusing there would blame the candidate for the
+/// protocol's own unreadable declaration.
+export fn missing_sig_of(ctx Ctx, index FnIndex, t TyId, proto str) -> Option[str] {
+    ro pd = ctx.protos.def_of(proto)?
+    for i in pd.sig_off..(pd.sig_off + pd.sig_cnt) {
+        ro sig = ctx.protos.sigs[i]
+        if !index.has_method_for(t, ctx, sig) {
+            return Some(render_sig(ctx, sig))
+        } else {
+            // This requirement is met; the next one decides.
+        }
+    }
+    None
+}
+
+/// One required signature as a person reads it: `size() -> int`.
+fn render_sig(ctx Ctx, sig ProtoSig) -> str {
+    // A BUILDER, not repeated interpolation. `out = "${out}..."` in a loop
+    // allocates a fresh string per parameter and copies everything gathered so
+    // far each time -- quadratic in a place that runs once per refusal, but
+    // written where the next reader learns the shape from. The emitter already
+    // holds `consume body StringBuilder` and writes the whole C in one pass
+    // (`emit_c/shell.nv:76`); this was the one text-building site that did not.
+    consume sb = StringBuilder.new()
+    sb.append(sig.name)
+    sb.append("(")
+    for i in 0..sig.param_cnt {
+        if i > 0 {
+            sb.append(", ")
+        } else {
+            // The first parameter takes no separator.
+        }
+        sb.append(ty_source_name(ctx, ctx.protos.sig_params[sig.param_off + i]))
+    }
+    sb.append(")")
+    if is_ty(sig.ret_id) {
+        sb.append(" -> ")
+        sb.append(ty_source_name(ctx, sig.ret_id))
+    } else {
+        // The protocol declared no return type; the rendering says so by
+        // stopping, exactly as the source does.
+    }
+    // The tail carries NO `.into_str()`: this position has an explicit
+    // expected type, so `#coerce` yields the same result (D429 R9) and
+    // lint calls the explicit call redundant here.
+    sb
+}
+
+/// Is there a method row on `t` matching this required signature?
+///
+/// Walks the SAME-NAME chain (`heads` plus `next`), never a linear scan of
+/// the table -- the names module makes that a guard-red shape.
+#realtime nogc
+export fn FnIndex @has_method_for(t TyId, ctx Ctx, sig ProtoSig) -> bool {
+    mut r = @heads.find(sig.name)
+    while r >= 0 {
+        ro fd = ctx.fns.rows[r]
+        r = raw_row(@next[raw_row(FnRow(r))])
+        if !fd.has_recv { continue }
+        if fd.param_cnt != sig.param_cnt + 1 { continue }
+        if ctx.fns.params[fd.param_off].type_id != t { continue }
+        mut ok = true
+        for i in 0..sig.param_cnt {
+            ro want = ctx.protos.sig_params[sig.param_off + i]
+            if !is_ty(want) { continue }
+            if ctx.fns.params[fd.param_off + 1 + i].type_id != want {
+                ok = false
+            } else {
+                // This position matches; the remaining ones decide.
+            }
+        }
+        if !ok { continue }
+        if is_ty(sig.ret_id) && fd.ret_id != sig.ret_id { continue }
+        return true
+    }
+    false
+}
+
+// `candidates_from` lived in the table file until 2026-08-21 and is gone with
+// TWO reasons, both found because wrapping the type-id space made me read every
+// door of that file. It was EXPORTED and imported by three files -- and CALLED
+// BY NOBODY. And it was WRONG: it advanced the chain cursor and then pushed the
+// ADVANCED value, so the "candidate set" it built held each candidate's
+// SUCCESSOR and, on the last one, -1. Nothing ever printed a wrong list only
+// because nothing ever printed a list. A door with no caller is deleted, not
+// typed: handing `[]FnRow` to dead code would have made the defect look
+// reviewed. When a refusal really needs to name the whole candidate set (D420;
+// rustc lists the candidate impls, clang the candidate functions), it comes
+// back with a test that reads the rows back.

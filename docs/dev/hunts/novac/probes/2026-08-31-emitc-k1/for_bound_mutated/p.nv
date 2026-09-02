@@ -1,0 +1,10 @@
+module p
+
+fn main() {
+    mut n = 3
+    for i in 0..n {
+        n = 1
+        println(i)
+    }
+    println("end")
+}

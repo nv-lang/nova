@@ -38,6 +38,7 @@ export type TypeKind enum
     | TkParam /// a type parameter of the enclosing declaration, by index (E2-b1)
     | TkInfer /// an inference variable, alive only inside one body (E2-b1)
     | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
+    | TkTuple /// a structural TUPLE (D123): head = ARITY, components in the interner's args -- no declaration, its identity IS its components (B15 step 3)
 
 /// How many kinds there are. The interner's bucket arithmetic multiplies by
 /// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
@@ -45,7 +46,7 @@ export type TypeKind enum
 /// first thing to drift when a kind is added). Every dispatch on TypeKind is
 /// an exhaustive match, so a seventh kind is a compile error at each site —
 /// and this constant is the ONE place a match cannot reach, hence the note.
-export const TYPE_KIND_COUNT = 7
+export const TYPE_KIND_COUNT = 8
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"
@@ -53,6 +54,19 @@ export const ENTRY_FN = "main"
 /// Name of the print statement the subset understands (a statement form
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
+
+/// The Option FAMILY (if-let wave): the language's sum name and the shell's
+/// C family prefix (`NovaOpt_<elemC>`, by value) plus the Some tag constant.
+/// P5: names live here; the mangle door spells, the emitter reads.
+export const OPTION_SUM = "Option"
+export const OPTION_FAMILY_C = "NovaOpt_"
+export const OPTION_SOME_TAG_C = "NOVA_TAG_Option_Some"
+export const OPTION_SOME_VARIANT = "Some"
+
+/// The vector methods the for-over-a-call emission walks with (B16 wave,
+/// P5: std names live here, the emitter must not spell them itself).
+export const VEC_LEN_METHOD = "len"
+export const VEC_GET_METHOD = "get"
 
 /// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
 /// the others (P5): the emitter must not spell std names itself, and the
@@ -65,6 +79,15 @@ export const EQUAL_METHOD = "equal"
 /// that not one pair may be hard-coded in a compiler, and the same holds for
 /// the word that declares them.
 export const COERCE_ATTR = "coerce"
+
+/// The `#realtime` attribute (D172, `06-concurrency.md:5499`), optionally with
+/// its `nogc` modifier (amendment #273). novac READS it and enforces nothing:
+/// the guarantee is about what a body may CALL, and the subset compiles no
+/// effect machinery. Measured 2026-08-29: the oracle accepts an allocating
+/// body under `#realtime nogc`, so reading-and-ignoring matches the fixed
+/// point of behaviour exactly -- the day the oracle starts enforcing it, the
+/// differential corpus reddens and this decision comes back.
+export const REALTIME_ATTR = "realtime"
 
 /// The CONTEXTUAL mode word of the language -- the one a token kind cannot
 /// answer for.
@@ -118,6 +141,14 @@ export const ALIAS_MARKER = "alias"
 /// construction. D241 fixes the order of type modifiers (`value priv` is canon),
 /// which is why it is read in the marker position and not in the tail.
 export const VALUE_MARKER = "value"
+
+/// The field-privacy marker of a type declaration (D281): `type X priv { }`,
+/// `type X priv(type) { }`, `type X priv(file) { }`. Read as a leaf plus an
+/// optional balanced qualifier group, exactly like `value` plus a tuple; the
+/// subset records the form and does not judge it yet -- novac compiles one
+/// file, and inside one module a `priv` field is readable by D47, so there is
+/// nothing to refuse until cross-module compilation arrives.
+export const PRIV_MARKER = "priv"
 
 /// The word that marks a PROTOCOL declaration: `type Sized protocol { ... }`.
 ///

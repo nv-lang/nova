@@ -17,11 +17,14 @@
 module novac.check
 
 import ../source.{SourceText}
-import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../lex.{Token, TokenKind, spelling_of}
+import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
-import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds, ret_is_unit, param_default_slot}
+import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
+import ../sem.{decl_of_ty}
+import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
+import ../sem.{ret_is_unit, param_default_slot}
 import ../types.{TyId, no_ty, is_ty}
 
 
@@ -30,6 +33,9 @@ import ../types.{TyId, no_ty, is_ty}
 /// here: this pass also runs over recovered junk, and `fn main junk here ()`
 /// would otherwise produce two diagnostics for one mistake (the Err branch's
 /// and this one) — a cascade, which the no-cascade rule forbids.
+/// A declaration slot that names no type: the parameter or field is refused
+/// with the caller's wording, and the type FORMS the subset cannot read yet
+/// are told apart from a missing type entirely.
 fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     // The TYPE is located by the shared door, not by index: a parameter may
     // carry a leading MODE leaf (`fn take(consume v int)`), and `kids[1]`
@@ -69,7 +75,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         // mistake and must not be called a type form.
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
-                        KwAs | KwImport | KwUse | KwExport | KwTest | KwElse | KwExtern |
+                        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
                         KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
@@ -127,7 +133,14 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                     return
                 }
             }
-            Branch { .. } => {}
+            // A BRANCH in the type slot is a type REFERENCE the parser read
+            // whole -- `[]int`, `Vec[T]`, a generics node (274.5 wave B1, and
+            // the same answer the mode-carrying path above already gives).
+            // The type is declared; whether it RESOLVES is the resolver's
+            // question, answered at the point of use. Falling through to
+            // "must declare a type" here was the lying message the census of
+            // 2026-08-29 caught on seven of novac's own files.
+            Branch { .. } => { return }
         }
     } else {
         // Fewer than two children means there is no type slot to look at, so this
@@ -153,12 +166,15 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
     // the point of use instead of the shape being turned away wholesale.
     match kids[1] {
         Leaf(t) => {
+            // `-> (a, b)` stopped being a refusal with B15 step 4b: the one
+            // reference door reads the tuple form (typeref), exactly as `[]T`
+            // and `Vec[T]` stopped with B2 -- so LParen passes through here,
+            // and an unreadable spelling is named at the point of use.
             ro is_form = t.kind == TokenKind.LBracket ||
                 t.kind == TokenKind.Star ||
                 t.kind == TokenKind.KwRo ||
                 t.kind == TokenKind.KwMut ||
-                t.kind == TokenKind.KwFn ||
-                t.kind == TokenKind.LParen
+                t.kind == TokenKind.KwFn
             if !is_form { return }
             @report_first_leaf_of(kids, TYPE_FORM_MSG)
         }
@@ -212,6 +228,110 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 /// tuple, a function type, a qualified type. The parser reads them all (plan
 /// 9.4: the grammar is the language's, the subset is the checker's), so the
 /// refusal names the shape instead of pretending the type is missing.
+/// The largest `int` literal, as TEXT. `int` is intptr_t (Nova's rule, like
+/// Go's intgo) and 64 bits on every target novac emits for; the bound lives
+/// here as digits because the check compares digits -- parsing the literal
+/// into the type whose range is in question would inherit the very defect
+/// this rule exists to catch (#810).
+const INT_MAX_TEXT = "9223372036854775807"
+
+const INT_TOO_LARGE_MSG = "outside the subset: this integer literal does not fit in `int` -- the emitted C would wrap it silently (#810)"
+
+/// The nesting refusal (#807/#808). The number is the oracle's 512, which is
+/// normative there; the whole corpus never writes past 40 levels.
+const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 levels -- the parser stops before the stack does (#807)"
+
+const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice in one file -- the second body is dropped in silence (#811)"
+
+/// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
+/// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
+/// it never lifts.
+/// The bare-self judge's answer: `@` is a value only where a method body
+/// bound its receiver.
+const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
+
+/// The interpolation judges' two I1 answers: a slot name must be a bound
+/// LOCAL (a constant would substitute at the use site where no hoist ran),
+/// and its type must carry a builder insert the emitter spells today.
+const INTERP_NAME_MSG = "outside the subset: an interpolation slot takes a bound local name here (E2-b3) -- constants and globals arrive with I2"
+
+/// See INTERP_NAME_MSG above; the type half.
+const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of this type is not compiled yet (E2-b3) -- I1 spells str and int inserts"
+
+/// The constant-initializer boundary of I1: substitution happens at the use
+/// site, and the hoist never ran there.
+const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
+
+/// The refutable-binding judge's answer (hunt var_shadow, #875): a binding
+/// whose NAME is a visible payload-less variant is a one-variant pattern
+/// match in the language (D411), and the oracle refuses it -- novac used to
+/// accept and shadow the variant in silence.
+const REFUTABLE_BIND_MSG = "a binding pattern that names a variant is refutable -- rename the binding, or match on the value (D411)"
+
+/// The interpolated-message judge's answer (hunt N5, #873): the message is
+/// spelled into C as ONE literal, so `${...}` inside it would print itself
+/// verbatim on violation -- a silent lie about the values. Refused until the
+/// interpolation wave computes it.
+const INTERP_CONTRACT_MSG_MSG = "outside the subset: an interpolated contract message is not compiled yet (E2) -- spell the message without `\${...}`"
+
+/// The argument-form judge's answer (hunt N2, #870): a form the expression
+/// walk does not know used to FALL OUT of both walks silently -- the
+/// argument was neither refused nor printed. A branch is never punctuation.
+const PRINTLN_ARG_FORM_MSG = "outside the subset: this form is not compiled in an argument position yet (E2-b) -- bind it to a name first"
+
+/// The variant-value judge's answer (the variant-value wave): a variant
+/// that CARRIES a payload is a constructor, not a value -- name it with its
+/// arguments. A payload-less one is a value and compiles to its maker.
+const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a payload -- construct it with arguments, `Name(...)`"
+
+/// The disjunction judge's answer (the pattern-alternatives wave): a `|`
+/// pattern names variants only -- a binder would have to agree across every
+/// alternative in both name and payload type, and no carrier needs that.
+const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders only -- name the value in a separate arm"
+
+/// The if-let judges' two answers (if-let wave). The subset takes exactly
+/// the shape its carriers write: `Some` and an Option-instance initializer.
+const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"
+
+/// See IFLET_VARIANT_MSG above; the initializer half.
+const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
+
+/// The for-CALL head judge's answer (wave B16): the head must hand back a
+/// vector -- an instance of arity one -- or the loop has no element type.
+const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"
+
+/// The destructuring judge's two answers (B15 step 5). The arity text names
+/// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
+const DESTR_NOT_TUPLE_MSG = "a destructuring binding needs a TUPLE initializer -- this expression's type is not a tuple"
+
+/// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
+const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
+
+/// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
+/// itself carries none -- the boundary is a judge, not unreachability.
+const TUPLE_PARAM_MSG = "outside the subset: a tuple as a PARAMETER is not compiled yet (B15 bounds) -- return one, or pass the components"
+
+const PRIM_REDECL_MSG = "a primitive is a closed type (D35): its name cannot be redeclared -- add methods to it instead"
+
+/// D125/D371 let a user declaration SHADOW a prelude/handed-over name (user
+/// wins, a warning at most) -- but novac's C name for its own types does not
+/// carry the module yet (D381), so a shadowing type would print a second
+/// `struct Nova_<name>` beside the shell's and clang refuses the unit
+/// (measured 2026-09-01: ct.c carried both). Refused BY NAME until the
+/// module-qualified C names arrive; the norm itself stays wider on purpose.
+const SHADOW_FOREIGN_MSG = "outside the subset: the interop shell already declares a struct under this name's C spelling -- a second definition in the unit is refused by clang; pick another name (goes the day novac emits the whole prelude)"
+
+/// The three ways a record construction can disagree with its declaration
+/// (#812). The spec states the first two as numbered rules
+/// (`02-types.md:1677`): every declared field must be present, and a name the
+/// type does not have is an error. The third is the same rule read once more:
+/// naming one field twice fills the count without filling the record.
+const CTOR_MISSING_FIELD_MSG = "this record construction omits a declared field -- construction always requires every field (D17, spec 02-types.md:152 and :1677) (#812)"
+
+const CTOR_UNKNOWN_FIELD_MSG = "this record construction names a field the type does not declare (#812)"
+
+const CTOR_FIELD_TWICE_MSG = "this record construction names a field twice, so another declared field is missing (#812)"
+
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
 
@@ -220,6 +340,10 @@ const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (s
 /// it needs a temporary the emitter does not build yet, exactly like `match`
 /// outside an initializer.
 const IF_EXPR_MSG = "outside the subset: an `if` in value position is not compiled yet"
+
+/// `(a, b)` -- a tuple value. Read under its own kind since wave B15 (the
+/// comma is what tells it from grouping parens); compiling it is steps 3-4
+/// of that wave -- the pair term in the interner, then the D123 mono struct.
 
 /// `@field` -- the receiver's own field. It can only appear inside a method
 /// body, and novac does not declare methods yet, so this refusal and the
@@ -233,7 +357,7 @@ const TYPED_LOCAL_MSG = "outside the subset: a declared local type is not compil
 
 /// `"n=${n}"` -- string interpolation. The lexer keeps the literal whole, so
 /// nothing is lost; compiling it means emitting a format call.
-const INTERP_MSG = "outside the subset: string interpolation is not compiled yet"
+const INTERP_MSG = "outside the subset: only a bare name is compiled inside an interpolation yet (E2-b3) -- chains, calls and operators arrive with I2"
 
 /// `| Circle { radius f64 }` -- a record-form variant. D54 (#719) rules on how
 /// it may be destructured; the form itself arrives with records in sums.
@@ -270,6 +394,9 @@ fn import_renames(kids []Node) -> bool {
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
 
+/// `unsafe { ... }` -- D216 s8. Read since 274.5 B10, not compiled yet.
+const UNSAFE_MSG = "outside the subset: an `unsafe` block is read but not compiled yet"
+
 /// `test "name" { ... }`.
 const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"
 
@@ -293,6 +420,14 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 /// `.` where a pointer takes `->`, construction on the stack instead of
 /// `nova_alloc`, and the same for `@field` on a value receiver.
 const VALUE_METHOD_MSG = "outside the subset: a method on a `value` record needs the receiver taken by POINTER (the fixed point writes `NovaValue_X*`), and novac passes a value receiver by value -- so a `mut` method would write to a copy"
+
+/// The SAME rule as VALUE_METHOD_MSG one line up, met at a parameter instead of
+/// a receiver: the fixed point lowers a `mut x V` parameter to `V*` (plan 184,
+/// P10 ABI), and novac passes a value record BY VALUE -- the callee writes to a
+/// copy the caller never sees. Measured by the hunt (emit_c x K1, H4): the
+/// oracle prints 2, novac printed 1 in silence. `ro` reads the copy legally and
+/// `consume` owns what it got (a write is unobservable), so only `mut` refuses.
+const VALUE_MUT_PARAM_MSG = "outside the subset: a `mut` parameter of a `value` record needs the V* lowering (the fixed point writes `NovaValue_X*`), and novac passes a value record by value -- the callee would write to a copy"
 
 /// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
 /// the grammar is the language's), and D69 -- it must be last -- is a position
@@ -458,6 +593,13 @@ const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi
 fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     if kids.len() < 4 { return }
     ro head = kids[3]
+    // A CALL head is a legal form since the for-CALL wave (B16): the callee
+    // hands back a vector and typing judges exactly that -- the form rule
+    // only stops the shapes nothing downstream can judge.
+    if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
+       head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
+        return
+    }
     if head.kind_of() != NodeKind.Bin {
         // A head that is not a binary operator is EITHER a collection --
         // legal Nova, and it arrives with generics -- or a scalar, which the
@@ -475,131 +617,6 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
         }
     }
 }
-
-/// Does this statement END the function on every path?
-///
-/// A `return` does. So does an `if` whose branches ALL return -- and that
-/// second half only became possible on 2026-08-18, when the parser learned
-/// `else`: before it, an if-statement had no else branch to judge. The rule
-/// missed it and refused `fn classify(n int) -> int { if .. { return 3 }
-/// else { return 1 } }`, which the oracle accepts and which is the ordinary
-/// way to write such a function.
-///
-/// An `if` WITHOUT an else never terminates: the false path falls through,
-/// and that is exactly the shape the oracle refuses too.
-fn stmt_terminates(st Node) -> bool {
-    ro k = st.kind_of()
-    if k == NodeKind.RetStmt { return true }
-    if k != NodeKind.IfStmt { return false }
-    ro kids = branch_children(st)
-    if kids.len() <= 4 { return false }
-    ro then_b = kids[2]
-    ro else_b = kids[4]
-    block_terminates(then_b) && block_terminates(else_b)
-}
-
-/// Does this block end the function on every path? An `else if` chain
-/// arrives here as a nested IfStmt rather than a Block, and it answers
-/// through the same door.
-fn block_terminates(b Node) -> bool {
-    ro k = b.kind_of()
-    if k == NodeKind.IfStmt { return stmt_terminates(b) }
-    if k != NodeKind.Block { return false }
-    for s in branch_children(b) {
-        if stmt_terminates(s) { return true }
-    }
-    false
-}
-/// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
-/// do not.
-fn declares_a_value(rk []Node) -> bool {
-    if rk.len() <= 1 { return false }
-    if rk.len() != 3 { return true }
-    ro l = rk[1]
-    ro r = rk[2]
-    if l.kind_of() != NodeKind.LeafNode { return true }
-    if r.kind_of() != NodeKind.LeafNode { return true }
-    ro is_unit = leaf_kind(l) == TokenKind.LParen && leaf_kind(r) == TokenKind.RParen
-    !is_unit
-}
-
-/// One text for the two doors of the rule (an empty body and a statement
-/// tail): the reader must not have to wonder whether they are two limits.
-const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a value"
-
-/// A fn that declares a value must END with one -- unless the end is
-/// UNREACHABLE. The oracle started judging this on 2026-08-17 as
-/// `E_MISSING_RETURN`, and novac accepted what it rejects (class K7).
-///
-/// The rule was mirrored crudely at first and the adversarial pass caught it
-/// the same day: `fn f() -> int { return 1  <NL>  ro x = 2 }` was refused by
-/// novac and accepted by the oracle. Both are right about their halves --
-/// the tail IS a binding, and it is also DEAD, because an unconditional
-/// `return` stands before it. A refusal that fires on correct code is a
-/// defect even when it errs "towards strictness": it sends the reader to fix
-/// what is not broken.
-///
-/// Boundary re-measured across fourteen shapes (2026-08-17). Refused: a
-/// binding or assignment tail, and an empty body, WHEN no unconditional
-/// terminator stands at the top level of the body. Accepted: a tail
-/// expression, a `return`, an `if` whose branches return, a tail `while`/
-/// `for`, and anything at all after an unconditional `return` -- the oracle
-/// accepts each of these. A CONDITIONAL return does not save the tail
-/// (`if c { return 1 }` then a binding is E_MISSING_RETURN for the oracle
-/// too), which is why the scan looks at top-level statements only and does
-/// not walk into branches.
-fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
-    mut declares_value = false
-    for c in kids {
-        if c.kind_of() != NodeKind.RetType { continue }
-        // `-> ()` is the UNIT return, and unit is not a value. It used to
-        // parse as the arrow ALONE, and the length test below was enough;
-        // since type_ref reads `()` as a balanced run (the tuple form), the
-        // pair reaches the tree and the old test called it a value. The result
-        // was a refusal that told `fn nothing() -> () { }` its body ends
-        // without a value -- a body that is not supposed to produce one.
-        declares_value = declares_value || declares_a_value(branch_children(c))
-    }
-    if !declares_value { return }
-    for c in kids {
-        if c.kind_of() != NodeKind.Block { continue }
-        ro bk = branch_children(c)
-        mut last_stmt = -1
-        mut i = 0
-        mut terminates = false
-        for b in bk {
-            terminates = terminates || stmt_terminates(b)
-            last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
-            i += 1
-        }
-        // The end is unreachable: whatever stands last, it is dead code and
-        // the oracle says nothing about it. Neither do we.
-        if terminates { return }
-        if last_stmt < 0 {
-            @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
-            return
-        }
-        // [LEGACY-#676] var-index-method: `bk[i].kind_of()` with a VARIABLE
-        // index miscompiles -- the emitter takes the Vec itself for the
-        // receiver (E_RECV_METHOD_MISMATCH). The binding walks around it and
-        // goes when #676 closes.
-        ro tail_node = bk[last_stmt]
-        ro k = tail_node.kind_of()
-        // ALLOW-list, and it mirrors the emitter's condition exactly
-        // (emit_c.nv:454 `is_expr_kind(kind) && kind != Call`): the tail
-        // produces a value iff the emitter writes `return` for it. The first
-        // version asked the opposite question -- "is the tail a binding or an
-        // assignment?" -- and four shapes walked past it: a tail `if` without
-        // `else`, a tail `while`, a tail `for`, and a tail unit call like
-        // `println(...)`. The oracle refuses all four; novac emitted a
-        // function that falls off its end. Asking a deny-list about an open
-        // set is how a rule looks complete while covering two cases of six.
-        if k == NodeKind.RetStmt || (is_expr_kind(k) && k != NodeKind.Call) { return }
-        @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
-        return
-    }
-}
-
 
 /// Generic parameters are outside the subset -- and the refusal says so.
 ///
@@ -775,7 +792,7 @@ fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
 fn Checker @bounds_are_known(kids []Node) -> bool {
     for b in generic_bounds(kids) {
         if b == "" { continue }
-        if @ctx.protos.row_of(b) < 0 { return false }
+        if !@ctx.protos.def_of(b).is_some() { return false }
     }
     true
 }
@@ -846,23 +863,26 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
     @report_first_leaf_of(kids, "outside the E1 subset: two arguments that both call something, and the emitter does not fix their order yet (F65)")
 }
 
-/// A CALL in statement position is `println` and nothing else in the subset.
-/// Owner's question 2026-08-16 ("does every Call really become a println?"):
-/// it did, and the emitter's ice was the FIRST answer for `helper()` as a
-/// statement — the #652 class again, where the boundary belongs in check and
-/// the ice is only the second floor. Expression-position calls are a
-/// different question and go through the emitter's Call branch.
-fn Checker mut @report_if_bad_call_stmt(stmts []Node) -> () {
-    for st in stmts {
-        match st {
-            Leaf(_) => {}
-            Branch { kind, children, .. } => {
-                if kind != NodeKind.Call { continue }
-                if call_callee_text(children) == PRINT_FN { continue }
-                @report_first_leaf_of(children, "outside the E1 subset: a call in statement position is println only")
-            }
+
+/// The BODY block of this fn when it declares a return value, else `no_node()`:
+/// the one block whose tail call is a returned value. Asked by BOTH phases --
+/// the subset walk marks it for the statement rule, and the typing walk marks
+/// it for its own tail handling -- so the answer lives in one door. NOT
+/// exported: both phases are this module, and nobody else has the question.
+fn value_body_of(fk []Node) -> NodeId {
+    mut declares = false
+    for c in fk {
+        if c.kind_of() == NodeKind.RetType {
+            declares = declares_a_value(branch_children(c))
+        } else {
+            // Not the return type: the body search below handles the rest.
         }
     }
+    if !declares { return no_node() }
+    for c in fk {
+        if c.kind_of() == NodeKind.Block { return c.id_of() }
+    }
+    no_node()
 }
 
 /// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
@@ -879,7 +899,7 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // no locals yet, so the receiver's type is unknown and only
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
-            if @ctx.fns.has_name(t.text) { return }
+            if @res.has_name(t.text) { return }
             @refuse(t, "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)")
         }
         Branch { .. } => {}
@@ -914,15 +934,59 @@ fn Checker mut @report_err_branch(children []Node) -> () {
                 // The whole run is the subject, so the whole run is underlined.
                 ro lo = @src.offset_of(t.text)
                 ro hi = @run_end_of(children, lo + t.text.byte_len())
-                // NOT "outside the subset" any more (S9.4a closed on
-                // 2026-08-18): the parser reads the whole LANGUAGE, so a run
-                // it could not read is a SYNTAX error and the message says
-                // that. The old text blamed the subset for the parser's own
-                // ignorance -- and it was the last carrier of that class.
+                if hi == lo {
+                    // A GAP: the run has no width, so it points at nothing the
+                    // author wrote. Remembered, not said -- `tell_gap_if_silent`
+                    // says it at the end if the file had nothing else to say.
+                    if @gap_at < 0 {
+                        @gap_at = lo
+                        @gap_kind = t.kind
+                    } else {
+                        // A later gap: the FIRST one is the one told, so the
+                        // kind kept is the first one's too.
+                    }
+                    return
+                } else {
+                    // A run with WIDTH is a cause of its own and speaks now.
+                }
                 @refuse_span(lo, hi, SYNTAX_MSG)
                 return
             }
             Branch { children: inner, .. } => @report_err_branch(inner)
         }
+    }
+}
+
+/// Say the held gap, but only if the file had nothing else to say (#809/#815).
+///
+/// The whole reason gaps are held: the parser meets a missing token BEFORE its
+/// recovery marks the run that caused it, so on `fn main junk here () { }` the
+/// refusal about the absent `(` was produced first and the one about the junk
+/// second. No ordering inside the parser fixes that, because the ordering IS
+/// the problem. Here order does not matter: everything has been walked, and
+/// the question is only whether anything with width was said.
+fn Checker mut @tell_gap_if_silent() -> () {
+    if @gap_at < 0 {
+        // No gap seen: nothing was missing, or something with width covered it.
+        return
+    } else {
+        // A gap is held; whether it speaks depends on the rest of the file.
+    }
+    if @out.len() > 0 {
+        // Something the author actually wrote was already refused. The gap
+        // describes the same mistake from the other side, and saying both
+        // reports one typo twice -- which is what the oracle does not do.
+        return
+    } else {
+        // Silence otherwise: the gap is the only thing wrong with this file,
+        // and saying nothing is how `fn main() {` used to compile clean.
+    }
+    if Some(sp) = spelling_of(@gap_kind) {
+        // The door knew what it wanted, so the refusal says it (#850).
+        @refuse_span(@gap_at, @gap_at, "syntax error: expected ${sp}")
+    } else {
+        // No spelling: the gap came from recovery, which knows a form broke but
+        // not what would have mended it.
+        @refuse_span(@gap_at, @gap_at, SYNTAX_MSG)
     }
 }

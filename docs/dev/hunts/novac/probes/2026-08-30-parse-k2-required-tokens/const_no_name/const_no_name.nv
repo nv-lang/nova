@@ -1,0 +1,11 @@
+// PROBE H7: a `const` declaration with no name.
+// site  : novac/src/parse/decls.nv:153 -- @push_if(kids, TokenKind.Ident)
+// novac : check rc=0, ZERO diagnostics; emit rc=0.
+// oracle: rc=1, "error: expected identifier, got `=`" at 7:7
+module const_no_name
+
+const = 1
+
+fn main() {
+    println("ok")
+}

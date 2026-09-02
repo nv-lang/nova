@@ -1,0 +1,11 @@
+module basics.tuple_return_projection
+
+fn two() -> (int, int) {
+    (1, 2)
+}
+
+fn main() {
+    ro t = two()
+    println(t.0)
+    println(t.1)
+}

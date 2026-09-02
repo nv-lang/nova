@@ -1,0 +1,18 @@
+// The `#realtime` attribute (D172, with the `nogc` modifier of amendment #273)
+// is READ and NOT ENFORCED: the guarantee is about what a body may call, and
+// the subset compiles no effect machinery. Measured 2026-08-29 -- the oracle
+// accepts an allocating body under the same attribute, so reading-and-ignoring
+// is what matches its behaviour. Eighty-eight lines of novac's own sources
+// carry this attribute; six files stopped on it before this wave.
+module basics.realtime_attr
+
+#realtime nogc
+fn doubled(x int) -> int => x * 2
+
+#realtime
+fn tripled(x int) -> int => x * 3
+
+fn main() {
+    println(doubled(21))
+    println(tripled(14))
+}

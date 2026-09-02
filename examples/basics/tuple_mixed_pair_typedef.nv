@@ -1,0 +1,7 @@
+module basics.tuple_mixed_pair_typedef
+
+fn main() {
+    ro t = (1.5, 2)
+    println(t.0)
+    println(t.1)
+}

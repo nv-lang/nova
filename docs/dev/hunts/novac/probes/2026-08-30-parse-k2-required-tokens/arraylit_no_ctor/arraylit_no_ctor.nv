@@ -1,0 +1,14 @@
+// PROBE H12: the typed array literal `[]int.of(...)` with the CONSTRUCTOR NAME
+// missing -- `[]int.(1, 2)`.
+// site  : novac/src/parse/expr.nv:477 -- @push_if(kids, TokenKind.Ident)
+// novac : check rc=0, ZERO diagnostics; `novac emit` builds a WORKING Vec
+//         (Nova_Vec____nova_int_static_new(2) + two pushes + a len call).
+//         Measured on the emitted C text; the probe was not linked or run.
+//         The missing name is not merely accepted, it is GUESSED.
+// oracle: rc=1, "error: expected field name or index after `.`" at 11:19
+module arraylit_no_ctor
+
+fn main() {
+    ro xs = []int.(1, 2)
+    println(xs.len())
+}

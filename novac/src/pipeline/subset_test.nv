@@ -1,0 +1,946 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: the same file these tests were cut from -- rustc's ui-test habit of
+// grouping ACCEPTANCE tests by the plan wave that earned them; NOT taken:
+// golden-file assertions (a test here asserts the property, not the byte).
+// Role: acceptance tests of sub-plan 274.5 ("novac reads its own source") --
+// the waves that widen the subset: a call in statement position (B12), a
+// record constructor as an argument (B13), a tail/initializer `if` as a value
+// (B14/B14b), the index lie, the healthy import, the named gap (#850).
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file -- and it EXISTS because
+// pipeline_test.nv crossed the 1000-line limit (decision 12): the cut is by
+// MEANING, the wave-acceptance block, not by counting lines.
+// novac/src/pipeline/subset_test.nv -- what the 274.5 waves promised, held.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind, raw_node}
+import ../parse.{parse}
+import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
+import ../source.{SourceText}
+import ../diag.{ice}
+import ../check.{check_instance}
+import ../types.{TyId, no_ty}
+
+test "a tuple value is read under its own kind, grouping parens untouched (B15 steps 2+4a)" {
+    // Step 2 taught the parser to read `(a, 2)` as TupleExpr instead of
+    // growing a zero-width gap; step 4a lifted the named refusal, so the
+    // contract this test holds MOVED with it (2026-09-01): the literal now
+    // COMPILES, and the kind still tells tuples from grouping parens.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro a = 1
+ ro t = (a, 2)
+ println(t.0)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_NovaTuple_2_"))
+
+    // Grouping parens must NOT be caught by the comma rule: `(a)` stays an
+    // ordinary paren and the program stays clean of tuple machinery.
+    ro (d2, c2) = compile_to_c("fn main() {
+ ro a = 1
+ ro b = (a)
+ println(b)
+}", std)
+    assert(d2.len() == 0)
+    // The SHELL carries _NovaTuple typedefs (and its own .f0 writes) in
+    // every unit, so the clean-of-tuples assertion is on OUR construction
+    // temporary -- the _novac_ namespace is this emitter's alone.
+    assert(!c2.contains("_novac_tmp_t"))
+}
+
+test "an `if` initializer binds through the same doors as the tail form (B14)" {
+    // The owner\'s remark measured wider than the wave: the oracle also takes
+    // `if` as an INITIALIZER (`ro x = if 1 == 1 { 10 } else { 20 }` prints 10
+    // there). The parser reads value-position `if` as its OWN kind (IfExpr,
+    // same child layout), which the first version of this arm learned from a
+    // probe: the binding arm matched IfStmt and never fired.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro x = if 1 == 1 { 10 } else { 20 }
+ println(x)
+}", std)
+    assert(d.len() == 0)
+    // The TEMPORARY again, not the keyword: only the value form declares one.
+    assert(c.contains("_novac_if_t"))
+
+    // THE OTHER DIRECTION: without an `else` there is no value to bind, and
+    // the refusal must come by name -- the parser leaves the else slot absent
+    // exactly so check can see the absence.
+    ro (d2, _) = compile_to_c("fn main() {
+ ro x = if 1 == 1 { 10 }
+ println(x)
+}", std)
+    assert(d2.len() >= 1)
+}
+
+test "a tail `if` is the returned VALUE, and the branches must agree (wave B14)" {
+    // Named by measurement: five files stopped at "body ends without a value",
+    // and reading the source under each refusal gave three different forms.
+    // This is the one that does not depend on indexing.
+    //
+    // Behaviour measured against the ORACLE before any of this was written:
+    // `fn pick(n int) -> int { if n == 0 { 1 } else { 2 } }` with `pick(0)`
+    // prints 1 there.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn pick(n int) -> int {
+ if n == 0 {
+  1
+ } else {
+  2
+ }
+}
+fn main() { println(pick(0)) }", std)
+    assert(d.len() == 0)
+    // THE TEMPORARY, not the word `if`: what this wave added is the value
+    // form, and only a value form declares a result variable and assigns it
+    // from both branches. Asserting on `if (` would stay green on the old
+    // statement-only emitter.
+    assert(c.contains("_novac_if_t"))
+
+    // THE OTHER DIRECTION, and it is the rule that makes the form safe:
+    // branches that disagree have no type between them. A compiler that took
+    // the first branch would declare a temporary of one type and write the
+    // other into it -- valid C, wrong answer, no diagnostic.
+    ro (d2, _) = compile_to_c("fn pick(n int) -> int {
+ if n == 0 {
+  1
+ } else {
+  \"two\"
+ }
+}
+fn main() { println(pick(0)) }", std)
+    assert(d2.len() >= 1)
+}
+
+test "a record constructor stands in ARGUMENT position, hoisted (wave B13)" {
+    // Named by measurement: 8 of novac's 58 files stopped at "record
+    // constructor only as a binding initializer", and `builtins.nv` opens with
+    // the shape -- constructors inside a literal's `of(...)`.
+    //
+    // Behaviour checked against the oracle on the identical program before this
+    // was written: it prints 7.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Pt { n int }
+fn grab(p Pt) -> int => p.n
+fn main() { println(grab(Pt { n: 7 })) }", std)
+    assert(d.len() == 0)
+    // THE CALL SITE with the HOISTED TEMPORARY in it -- not the function name,
+    // which is in the C from the definition anyway. That distinction cost wave
+    // B12 a reverse probe: an assertion on the name alone stayed green with the
+    // fix removed.
+    assert(c.contains("novac_fn_grab__Pt__to_nova_int(_novac_tmp"))
+
+    // THE OTHER DIRECTION: a constructor whose fields do not match the
+    // declaration is still refused, and by name -- widening the POSITION must
+    // not widen what may stand there.
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn grab(p Pt) -> int => p.n
+fn main() { println(grab(Pt { nope: 7 })) }", std)
+    assert(d2.len() >= 1)
+}
+
+test "a call in statement position is compiled, not only println (wave B12)" {
+    // Named by measurement: after the import regression and the ICEs, the
+    // largest group of first refusals across novac's own 57 files was "a call
+    // in statement position is println only" -- 12 of them.
+    //
+    // What the LANGUAGE does was measured with the oracle before any of this
+    // was written: discarding a call's result is legal there and silent. So a
+    // warning here would be our invention, and the emitter writes the call
+    // followed by a semicolon -- no temporary, because nobody asked the call
+    // for an answer.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn side(n int) -> int => n + 1
+fn main() {
+ side(1)
+ println(2)
+}", std)
+    assert(d.len() == 0)
+    // THE CALL SITE, not the name. The name alone is in the C anyway -- from
+    // the function's DEFINITION -- so asserting it proves nothing, and the
+    // reverse probe said so: with the emitter change taken out the test stayed
+    // green. A test that would pass without the fix is not a test. So the
+    // assertion names what only a CALL can produce: the mangled name with an
+    // argument in it.
+    assert(c.contains("novac_fn_side__nova_int__to_nova_int(((nova_int)1LL))"))
+
+    // THE OTHER DIRECTION: what a statement call still cannot do is refused by
+    // NAME, not accepted in silence -- an unresolved callee stays an error.
+    ro (d2, _) = compile_to_c("fn main() {
+ nosuch(1)
+ println(2)
+}", std)
+    assert(d2.len() >= 1)
+}
+
+test "an index on a BOUND name is refused BY NAME, not by a lie about the name" {
+    // Found by probing, not by a test: `ro v = xs` was clean, `xs.len()` was
+    // clean, and `ro v = xs[0]` refused with "unknown name" ABOUT `xs`. The
+    // message was a lie -- the name was bound. The index arm lived in the
+    // subset walk, which holds no scope (the word `@scope` does not occur in
+    // check.nv once), so it asked an empty one.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn take(xs []int) -> int {
+ ro v = xs[0]
+ v
+}
+fn main() { println(1) }", std)
+    // WHAT CHANGED IS THE TRUTHFULNESS, not the outcome. The form is still
+    // outside the subset -- the interop shell carries no `index` for this
+    // instance, so nothing can be emitted -- but it now says THAT, instead of
+    // claiming the receiver is unbound. A refusal that names the wrong thing
+    // sends the reader to look for a typo in a name that is perfectly fine.
+    assert(d.len() >= 1)
+    for g in d {
+        assert(!g.message.contains("unknown name"))
+    }
+
+    // THE OTHER DIRECTION, and it is the half that broke first when the arm
+    // moved: an index whose receiver does NOT resolve must still be refused.
+    // Moving the arm out of the walk made this form pass in silence until the
+    // module test caught it, because the binding path calls `type_of` directly
+    // and never `@type_expr`.
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {
+ ro v = nosuch(i)[0]
+ v
+}
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+}
+
+test "an index UNDER something does not crash the compiler (#652 class)" {
+    // Found by measuring self-distance, not by a test: five of novac's own 57
+    // files ended in an internal compiler error rather than a refusal. This one
+    // is "expression kind without a type rule" -- the walk RECORDS an index's
+    // element type, and the reading door had no rule for `Index` at all, so
+    // nothing asked for it until an index stood UNDER something.
+    //
+    // An ICE is not a form outside the subset: it is a crash, and a subset that
+    // refuses by name is the whole promise of this compiler. So what this test
+    // holds is not "the form compiles" but "the answer is a REFUSAL, never a
+    // crash" -- the form itself is still outside E1 and says so by name.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type R { xs []int }
+fn f(rs []R, i int) -> int {
+ ro v = rs[i].xs[0]
+ v
+}
+fn main() { println(1) }", std)
+    for g in d {
+        assert(!g.message.contains("internal compiler error"))
+    }
+
+    // THE SECOND SHAPE of the same class, and it had a different root: here the
+    // receiver is a call to a name that does NOT exist. The walk refuses it by
+    // name, and the index door then asked `type_of` about it anyway -- and
+    // `type_of` on a call whose name is not in the registry raises an ice. So
+    // the refusal was correct and the crash came after it, which is why no
+    // probe on a well-formed program could find this.
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {
+ ro v = nosuch(i)[0]
+ v
+}
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(!g.message.contains("internal compiler error"))
+    }
+}
+
+test "a HEALTHY import is not refused -- the gap check judges only the gap" {
+    // A defect I shipped closing #815, found by re-measuring self-distance
+    // rather than by any test: the arm handed `@report_err_branch` the children
+    // of a healthy import, and that door takes the children of an Err BRANCH.
+    // The first leaf of an import is the keyword, which has width, so the
+    // width-bearing path fired every time and EVERY import was refused as "not
+    // a form of the language". First refusal of 28 of novac's own 57 files.
+    //
+    // It lived because every test about imports asked about a BROKEN one. This
+    // asks the other question, which is the one the compiler answers all day.
+    ro std = std_decls()
+
+    ro (d1, _) = compile_to_c("import lex.{Token}
+fn main() { println(1) }", std)
+    assert(d1.len() == 0)
+
+    // A relative path with the slash and the two dots, which is how novac's own
+    // files spell it -- and the spelling that made the parser swallow whole
+    // files before 2026-08-23.
+    ro (d2, _) = compile_to_c("import ../lex.{Token, TokenKind}
+fn main() { println(1) }", std)
+    assert(d2.len() == 0)
+
+    // THE OTHER DIRECTION, so the fix cannot be "stop looking inside imports":
+    // an import with no path at all is still refused (#815).
+    ro (d3, _) = compile_to_c("import
+fn main() { println(1) }", std)
+    assert(d3.len() >= 1)
+}
+
+test "the gap NAMES the token it wanted, not merely that a form broke (#850)" {
+    // Registry #850. Closing #809/#815 made a missing required token refuse --
+    // but the refusal said only "this is not a form of the language", which is
+    // true of every syntax error and helps no one who left out a `)`. The door
+    // knew the kind it wanted and threw it away; now the zero-width leaf it
+    // plants carries that kind (Roslyn `EatTokenAsKind`), and the checker reads
+    // it back.
+    //
+    // TWO KINDS and not one carrier, for the same reason the #815 test above
+    // takes four: a single carrier would hold one line of the parser rather
+    // than the class.
+    ro std = std_decls()
+
+    // a type with no name -> the wanted kind is a NAME
+    ro (d1, _) = compile_to_c("type { n int }
+fn main() { println(1) }", std)
+    assert(d1.len() >= 1)
+    assert(d1[0].message.contains("expected a name"))
+
+    // a const with no `=` -> the wanted kind is PUNCTUATION, and it comes back
+    // quoted, because the reader is meant to type it
+    ro (d2, _) = compile_to_c("const A int 1
+fn main() { println(1) }", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("expected `=`"))
+
+    // THE OTHER DIRECTION. A gap planted by recovery knows a form broke but not
+    // what would mend it, and must NOT invent an expectation. Written whole,
+    // the same shapes stay clean -- without this half the rule could name a
+    // token at every refusal and no test would notice.
+    ro (d3, _) = compile_to_c("type Pt { n int }
+const A int = 1
+fn main() { println(A) }", std)
+    assert(d3.len() == 0)
+}
+
+test "a `mut` parameter of a value record is refused by name (hunt H4)" {
+    // The fixed point lowers `mut x V` to `V*` (plan 184, P10 ABI); novac
+    // passes a value record BY VALUE, so the callee wrote to a copy and the
+    // caller never saw it: the oracle prints 2, novac printed 1 in silence
+    // (hunt emit_c x K1, H4). A form accepted and then mis-compiled is the
+    // class a named refusal exists to prevent -- the receiver case one floor
+    // up said it first.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type Pt value { n int }
+fn bump(mut p Pt) -> () {
+ p.n = p.n + 1
+}
+fn main() {
+ mut a = Pt { n: 1 }
+ bump(a)
+ println(a.n)
+}", std)
+    assert(d.len() >= 1)
+    for g in d {
+        // Named as ITSELF: the message must say it is the parameter's mode,
+        // not the receiver rule it shares a floor with.
+        assert(g.message.contains("`mut` parameter"))
+    }
+
+    // The heap record keeps the pointer path: the same program without
+    // `value` is the control the hunt shipped (ctl_gcrec_mut_param).
+    ro (d2, _) = compile_to_c("type Pt { n int }
+fn bump(mut p Pt) -> () {
+ p.n = p.n + 1
+}
+fn main() {
+ mut a = Pt { n: 1 }
+ bump(a)
+ println(a.n)
+}", std)
+    assert(d2.len() == 0)
+
+    // `ro` reads the copy legally -- refusing it would shrink the subset
+    // around no defect.
+    ro (d3, _) = compile_to_c("type Pt value { n int }
+fn peek(p Pt) -> int => p.n
+fn main() {
+ mut a = Pt { n: 1 }
+ println(peek(a))
+}", std)
+    assert(d3.len() == 0)
+}
+
+test "a tuple value compiles into the mono struct, projections are judged (B15 step 4a)" {
+    // The pair lands in a D123 mono struct built field by field, and `t.0`
+    // prints `.f0`. The C is asserted on the CALL SITE shapes (the mono name
+    // and the projection), not on a definition existing -- the B12 lesson.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro t = (1, 2)
+ println(t.0)
+ println(t.1)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_NovaTuple_2_8_nova_int_8_nova_int"))
+    assert(c.contains(".f0 = "))
+    assert(c.contains(".f0)"))
+
+    // The projection is judged against the ARITY, by name.
+    ro (d2, _) = compile_to_c("fn main() {
+ ro t = (1, 2)
+ println(t.5)
+}", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(g.message.contains("out of range"))
+    }
+
+    // A NAMED field on a tuple is its own refusal -- a tuple has no
+    // declaration for the record door to ask.
+    ro (d3, _) = compile_to_c("fn main() {
+ ro t = (1, 2)
+ println(t.x)
+}", std)
+    assert(d3.len() >= 1)
+    for g in d3 {
+        assert(g.message.contains("numbered components"))
+    }
+}
+
+test "a shadowing type carries the module in its C name; a primitive's name is closed" {
+    // Both halves are the NORM's, found by the owner's question (2026-09-01;
+    // both probes passed check in silence before): D35 closes a primitive's
+    // name forever, and D125 lets a user declaration WIN over a handed-over
+    // one -- with the C name module-qualified (D381), or the emission would
+    // print a second `struct Nova_<name>` beside the shell's and clang
+    // refuses the unit (measured on ct.c).
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type str { n int }
+fn main() {
+ println(1)
+}", std)
+    assert(d.len() >= 1)
+    for g in d {
+        assert(g.message.contains("closed type (D35)"))
+    }
+
+    // Shadowing a handed-over name is LEGAL and spelled BARE, exactly as the
+    // oracle spells it (the mangle-fixed-point guard holds that): a foreign
+    // Widget is handed in by the test, the file's own Widget wins (D125) and
+    // its struct keeps the plain name.
+    ro shadow_decls = []str.of("export type Widget { q int }
+")
+    ro (d2, c2) = compile_to_c("module p
+type Widget { n int }
+fn main() {
+ ro v = Widget { n: 7 }
+ println(v.n)
+}", shadow_decls)
+    assert(d2.len() == 0)
+    assert(c2.contains("struct Nova_Widget"))
+
+    // The one REAL collision: a name whose struct the SHELL TEMPLATE already
+    // declares (Vec) -- two definitions of one struct in one unit, refused by
+    // name. The fact comes from the interop table, which lifts the template's
+    // own identifiers -- so the full surface is used here, not the tiny
+    // std_decls.
+    ro (d2b, _) = compile_to_c_with("module p
+type Vec { n int }
+fn main() {
+ println(1)
+}", []Node.new(), interop_surface())
+    assert(d2b.len() >= 1)
+    for g in d2b {
+        assert(g.message.contains("interop shell already declares"))
+    }
+
+    // A name of one's own stays clean and unprefixed -- the mangle answers
+    // the two owners, not every declaration.
+    ro (d3, c3) = compile_to_c("type Own { n int }
+fn main() {
+ ro v = Own { n: 7 }
+ println(v.n)
+}", std)
+    assert(d3.len() == 0)
+    assert(c3.contains("struct Nova_Own"))
+    assert(!c3.contains("struct Nova_p_Own"))
+}
+
+test "a tuple RETURN type compiles: the signature spells the mono struct (B15 step 4b)" {
+    // `fn two() -> (int, int)` with a bare tail pair: the reference door
+    // reads the paren run into the step-3 term, the C name carries the D123
+    // mono spelling (a return type is an overloading axis, D84), and the
+    // tail chain returns the built temporary. Asserted on the SIGNATURE and
+    // the return -- the call site is covered by the corpus carrier.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn two() -> (int, int) {
+ (1, 2)
+}
+fn main() {
+ ro t = two()
+ println(t.0)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_NovaTuple_2_8_nova_int_8_nova_int novac_fn_two"))
+    assert(c.contains("    return _novac_tmp_t"))
+
+    // A tuple PARAMETER stays outside the wave (B15 bounds): today the
+    // parameter FORM rule refuses it upstream, and the bind judge holds the
+    // same boundary for the day the form rule narrows.
+    ro (d2, _) = compile_to_c("fn f(p (int, int)) -> int {
+ p.0
+}
+fn main() {
+ println(f((1, 2)))
+}", std)
+    assert(d2.len() >= 1)
+}
+
+test "a destructuring binding splits the pair; both judges answer by name (B15 step 5)" {
+    // `ro (a, b) = two()`: the pair lands in ONE temporary and each name is a
+    // plain local from its `.fN` -- asserted on the C shapes. The judges: a
+    // non-tuple initializer and an arity mismatch each refuse with their own
+    // text (the arity one names D123's class).
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn two() -> (int, int) {
+ (7, 9)
+}
+fn main() {
+ ro (a, b) = two()
+ println(a)
+ println(b)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains(".f0;"))
+    assert(c.contains(".f1;"))
+
+    ro (d2, _) = compile_to_c("fn main() {
+ ro (a, b, c) = (1, 2)
+ println(a)
+}", std)
+    assert(d2.len() >= 1)
+    for g in d2 {
+        assert(g.message.contains("arity mismatch"))
+    }
+
+    ro (d3, _) = compile_to_c("fn main() {
+ ro (a, b) = 5
+ println(a)
+}", std)
+    assert(d3.len() >= 1)
+    // The FIRST diagnostic is the root cause (d0 everywhere in the smoke
+    // logs); a use after the refusal may add a follower, and asserting every
+    // row would test the cascade, not the judge.
+    assert(d3[0].message.contains("needs a TUPLE initializer"))
+}
+
+test "a collection head walks the vector by len/get; a scalar head refuses (B16)" {
+    // `for x in mk()`: the head runs ONCE into a temporary, the loop guards
+    // on _method_len and reads _method_get(...).value -- the .value is the
+    // shell's Option ABI (interop), never a language Option. Asserted on the
+    // C shapes; behavior is the corpus carriers' to hold. The generic Vec
+    // head is handed IN -- the tiny std_decls carries no types, and the
+    // slice sugar cannot intern []int without it (the same hand-in the
+    // literal tests above use).
+    mut std = std_decls()
+    std.push("module std.v
+export type Vec[T] { n int }")
+    ro (d, c) = compile_to_c("fn mk() -> []int {
+ ro v = []int.of(3, 5)
+ v
+}
+fn main() {
+ for x in mk() {
+  println(x)
+ }
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("_method_len("))
+    assert(c.contains("_method_get("))
+    assert(c.contains(").value;"))
+
+    // A NAME head takes the same door.
+    ro (d2, c2) = compile_to_c("fn main() {
+ ro xs = []int.of(4)
+ for x in xs {
+  println(x)
+ }
+}", std)
+    assert(d2.len() == 0)
+    assert(c2.contains("_method_get("))
+
+    // A call that hands back a SCALAR has no element: refused by name.
+    ro (d3, _) = compile_to_c("fn one() -> int {
+ 5
+}
+fn main() {
+ for x in one() {
+  println(x)
+ }
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("does not return a vector"))
+}
+
+test "if-let binds the payload behind the tag guard; both judges answer by name" {
+    // `if Some(v) = xs.get(1)`: the Option lands in a NovaOpt_<elem> temporary
+    // (the family spelling the mangle door took with this wave), the tag
+    // guards the block, and the binder is a local from `.value` -- the
+    // shell's Option ABI, interop. Asserted on the C shapes.
+    mut std = std_decls()
+    std.push("module std.v
+export type Vec[T] { n int }
+export fn Vec[T] @get(i int) -> Option[T] => None
+export type Option[T] enum Some(T) | None")
+    ro (d, c) = compile_to_c("module p
+fn main() {
+ ro xs = [5, 9]
+ if Some(v) = xs.get(1) {
+  println(v)
+ }
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("NovaOpt_nova_int"))
+    assert(c.contains("NOVA_TAG_Option_Some"))
+    assert(c.contains(".value;"))
+
+    // A non-Option initializer refuses by name.
+    ro (d2, _) = compile_to_c("module p
+fn main() {
+ if Some(v) = 5 {
+  println(v)
+ }
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("must be an Option instance"))
+
+    // A variant other than Some refuses by name.
+    ro (d3, _) = compile_to_c("module p
+fn main() {
+ ro xs = [4]
+ if Whatever(v) = xs.get(0) {
+  println(v)
+ }
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("takes only `Some(name)`"))
+}
+
+test "pattern alternatives OR their tag tests; a named binder refuses (disjunction wave)" {
+    // `B(_) | C(_) => 1`: one arm, two tag tests ORed -- asserted on the C
+    // shape; the alternative PATH is held by the corpus carrier, which sends
+    // a value through the second head.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)
+fn f(s Tri) -> int {
+ match s {
+  A(_) => 0
+  B(_) | C(_) => 1
+ }
+}
+fn main() {
+ println(f(C(7)))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains(" || "))
+
+    // A named binder inside a disjunction refuses by name: alternatives
+    // would have to agree on the binder, and no carrier needs that.
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)
+fn f(s Tri) -> int {
+ match s {
+  A(x) | B(x) => x
+ }
+}
+fn main() {
+ println(f(B(5)))
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("takes `_` binders only"))
+}
+
+test "a requires clause guards the body through the shell's contract helper (requires wave)" {
+    // The prologue is INTEROP with the shell: the exact call the oracle
+    // emits (nova_contract_violation lives in shell.tpl.c). Asserted on the
+    // full C line -- function name, display, empty file/line (the wave's
+    // named boundary: no source-slice channel yet), and the message.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn half(n int) -> int requires n > 0, \"half wants a positive\" {
+ n / 2
+}
+fn main() {
+ println(half(8))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 1,"))
+    assert(c.contains("\"\", 1, \"half wants a positive\");"))
+
+    // The message is optional in the language (the shell's own contracts
+    // carry none): a clause that ends on its condition spells NULL -- the
+    // oracle's own spelling of absence.
+    ro (d2, c2) = compile_to_c("fn third(n int) -> int requires n > 0 {
+ n / 3
+}
+fn main() {
+ println(third(9))
+}", std)
+    assert(d2.len() == 0)
+    assert(c2.contains("\"\", 1, NULL);"))
+}
+
+test "hex literals lex as one IntLit and keep their spelling (hex wave)" {
+    // `0x0A` used to lex as IntLit(0) plus identifier `x0A` -- the F21
+    // refusal caught the pair; now the run is ONE token and its text goes
+    // to C verbatim (C reads the same spelling, so nothing converts).
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("const MASK int = 0xFF
+fn main() {
+ println(MASK)
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("0xFF"))
+
+    // The magnitude judge (#810) reads hex by its own bound (int is i64):
+    // sixteen digits led by 8 overflow, led by 7 fit.
+    ro (d2, _) = compile_to_c("fn main() {
+ println(0x8000000000000000)
+}", std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("does not fit in `int`"))
+    ro (d3, _) = compile_to_c("fn main() {
+ println(0x7FFFFFFFFFFFFFFF)
+}", std)
+    assert(d3.len() == 0)
+
+    // A broken tail is one refusal, not a silent pair: the whole run is a
+    // single ErrorTok (`0xZZ` never splits into `0` and `xZZ`).
+    ro (d4, _) = compile_to_c("fn main() {
+ println(0xZZ)
+}", std)
+    assert(d4.len() >= 1)
+}
+
+test "a payload-less variant is a value and compiles to its maker (variant-value wave)" {
+    // Both spellings write the same CalleeVariant decision a `C(7)` call
+    // does, and the emitter calls the maker the sum's declaration already
+    // emits -- asserted on the C shape for the bare and the dotted head.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Kind enum Dot | Dash
+fn f(k Kind) -> int {
+ match k {
+  Dot => 1
+  Dash => 2
+ }
+}
+fn main() {
+ println(f(Kind.Dot))
+ println(f(Dash))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("novac_make_Kind_Dot()"))
+    assert(c.contains("novac_make_Kind_Dash()"))
+
+    // A variant that CARRIES a payload is a constructor, not a value.
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B
+fn main() {
+ ro s = A
+ match s {
+  A(_) => println(1)
+  B => println(2)
+ }
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("carries a payload"))
+}
+
+test "a leading zero is decimal, not C octal -- the spelling door strips it (hunt N1)" {
+    // `println(0123)` printed 83 and a `010 =>` arm matched the other
+    // branch: the literal's TEXT went to C verbatim, and C reads its own
+    // rules. Asserted on the C spelling for both readers -- the value
+    // emitter and the pattern emitter.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn tag(n int) -> int {
+ match n {
+  010 => 1
+  _ => 0
+ }
+}
+fn main() {
+ println(0123)
+ println(tag(10))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("((nova_int)123LL)"))
+    assert(c.contains("== 10LL"))
+    assert(!c.contains("0123"))
+    assert(!c.contains("010LL"))
+}
+
+test "the contract display is escaped into its C literal; the message takes the dollar door (#872)" {
+    // `requires s != "no"` used to emit `"s != "no""` -- the literal's own
+    // quotes closed the C string and clang refused the unit; the message
+    // slot shipped `\$` through where the literal pool strips it.
+    // `!=` on str resolves through the declared `equal`; the shared
+    // std_decls() carries three unrelated methods, so this test hands its
+    // own one-liner in.
+    ro std = []str.of("fn str @equal(other str) -> bool => true")
+    ro (d, c) = compile_to_c("fn f(s str) -> int requires s != \"no\", \"cost \$5\" {
+ 1
+}
+fn main() {
+ println(f(\"yes\"))
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("s != \\\"no\\\""))
+    assert(c.contains("cost $5"))
+    assert(!c.contains("cost \\$5"))
+}
+
+test "an unknown form in println's argument position refuses instead of falling out (#870)" {
+    // `println("a", v[1], "b")` printed `ab`: the Index branch was in
+    // neither walk's list, so it was filed under punctuation by BOTH the
+    // checker and the emitter. A branch is never punctuation.
+    ro std = std_decls()
+    ro (dpr, _) = compile_to_c("fn main() {
+ ro v = []int.of(10, 20, 30)
+ println(\"a\", v[1], \"b\")
+}", std)
+    // The shared decls are poor (no Vec), so the vector literal adds its
+    // own honest refusal -- the judge's answer is sought by TEXT, not by
+    // count.
+    mut hit = false
+    for g in dpr {
+        if g.message.contains("argument position") { hit = true }
+    }
+    assert(hit)
+
+    // The literal tuple falls in the same class (the second carrier the
+    // hunt named); the refusal is the same door.
+    ro (d2, _) = compile_to_c("fn main() {
+ println(\"a\", (1, 2), \"b\")
+}", std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("argument position"))
+}
+
+test "the contract note is the checker's: a source slice and a real line (#871/#874)" {
+    // The emitter's leaf-join printed `n > - 1` for `n > -1`, and the panic
+    // said `:0:` -- the checker is the one holder of the source, so the
+    // display is the exact slice and the line is counted here, once.
+    ro std = std_decls()
+    ro (dcn, c) = compile_to_c("fn f(n int) -> int
+ requires n > -1
+{
+ n
+}
+fn main() {
+ println(f(3))
+}", std)
+    assert(dcn.len() == 0)
+    assert(c.contains("\"n > -1\", \"\", 2,"))
+}
+
+test "a binding that names a visible variant refuses as refutable (#875)" {
+    // `ro Dot = 3` under `type Kind enum Dot | Dash` used to shadow the
+    // variant in silence -- the oracle refuses it as a one-variant pattern
+    // (D411). A payload-carrying variant's bare name stays a binder.
+    ro std = std_decls()
+    ro (dvs, _) = compile_to_c("type Kind enum Dot | Dash
+fn main() {
+ ro Dot = 3
+ println(Dot)
+}", std)
+    // After the binding refuses, `println(Dot)` legally meets the
+    // variant-value path and adds the printer refusal -- judged by TEXT.
+    mut hit = false
+    for g in dvs {
+        if g.message.contains("refutable") { hit = true }
+    }
+    assert(hit)
+
+    ro (dok, _) = compile_to_c("type Tri enum A(int) | B
+fn main() {
+ ro A = 3
+ println(A)
+}", std)
+    assert(dok.len() == 0)
+}
+
+test "an interpolated literal builds its chain; non-name slots refuse (wave I1)" {
+    // The embedded sources spell `\${` so THIS file's own compiler leaves
+    // the interpolation to novac (the #873 lesson, paid twice).
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro name = \"world\"
+ ro n = 42
+ println(\"hi \${name}, n=\${n}!\")
+}", std)
+    assert(d.len() == 0)
+    // OUR chain names, absent from the shell prelude -- the shell itself
+    // carries static_new/display_spec declarations, so asserting those
+    // alone would stay green with the hoist silenced (measured).
+    assert(c.contains("_novac_isb_t"))
+    assert(c.contains("str_display_spec(_novac_isb_t"))
+    assert(c.contains("int_display_spec(_novac_isb_t"))
+    assert(c.contains("nova_print_str(_novac_istr_t"))
+
+    // A call slot refuses by name (I2 takes it).
+    ro (d2, _) = compile_to_c("fn main() {
+ ro s = \"abc\"
+ println(\"len \${s.len()}\")
+}", std)
+    assert(d2.len() >= 1)
+    mut hit = false
+    for g in d2 {
+        if g.message.contains("bare name") { hit = true }
+    }
+    assert(hit)
+
+    // A slot type outside str|int refuses by name.
+    ro (d3, _) = compile_to_c("fn main() {
+ ro f = true
+ println(\"flag \${f}\")
+}", std)
+    assert(d3.len() >= 1)
+    mut hit3 = false
+    for g in d3 {
+        if g.message.contains("slot of this type") { hit3 = true }
+    }
+    assert(hit3)
+
+    // A quoted literal INSIDE a slot cuts the token at the lexer (the K4
+    // shape): the slicer's empty tail keeps the contract and the form judge
+    // refuses -- this used to ICE with a backwards slice.
+    ro (d4, _) = compile_to_c("fn main() {
+ ro s = \"abc\"
+ println(\"x \${s.replace(\"a\", \"b\")} y\")
+}", std)
+    assert(d4.len() >= 1)
+    mut hit4 = false
+    for g in d4 {
+        if g.message.contains("bare name") { hit4 = true }
+    }
+    assert(hit4)
+}
+
+test "bare self is the receiver's value; outside a method it refuses (self wave)" {
+    // `match @` in a sum method compiles: the scrutinee temporary reads the
+    // receiver's C name. Outside a method body `@` names nothing.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Sev enum A | B
+fn Sev @tag_no() -> int {
+ match @ {
+  A => 1
+  B => 2
+ }
+}
+fn main() {
+ ro s = Sev.A
+ println(s.tag_no())
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains("= _novac_self;"))
+
+    ro (d2, _) = compile_to_c("fn main() {
+ println(@)
+}", std)
+    assert(d2.len() >= 1)
+    mut hit = false
+    for g in d2 {
+        if g.message.contains("method receiver") { hit = true }
+    }
+    assert(hit)
+}

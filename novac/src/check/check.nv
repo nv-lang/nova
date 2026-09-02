@@ -36,11 +36,13 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR}
-import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, attr_kids_name, recv_type_name, is_value_record}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR, REALTIME_ATTR}
+import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
+import ../sem.{expr_leaf_name, attr_kids_name, recv_type_name, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
+import ../resolve.{FnIndex, FieldIndex}
 
 /// State of one check run: the source (for positions), the semantic context
 /// and the diagnostics collected so far. A receiver, not a triple of
@@ -58,6 +60,25 @@ import ../types.{TyId, no_ty, is_ty}
 type Checker {
     src SourceText /// the file text: the one source of positions
     ctx Ctx /// type registry and callable table, read from the declarations
+    /// THE name index over ctx.fns (274.4 step 2): built here, held here, and
+    /// nowhere else -- emit_c and mono get a Ctx and no index, so resolution
+    /// after the checker is not merely forbidden, there is nothing to call.
+    res FnIndex
+    /// THE name index over ctx.fields (274.4 step 3): the same lock for the
+    /// field root -- fields resolve only through a receiver type, and only
+    /// the checker can ask.
+    fres FieldIndex
+    /// The FIRST gap seen in this file — a refusal whose run has zero width,
+    /// that is, a token the grammar required and nobody wrote. Held rather
+    /// than said at once: a gap points at nothing the author typed, so it is
+    /// the LAST thing worth saying about a file, and only when nothing with
+    /// width was said. `gap_at < 0` means none seen.
+    gap_at int
+    /// WHAT was wanted at `gap_at`, when the door that planted the gap knew.
+    /// `TokenKind.ErrorTok` means it did not: gaps planted by recovery carry no
+    /// expectation, and the refusal then says only that the text is not a form
+    /// of the language -- the message this field exists to improve on (#850).
+    gap_kind TokenKind
     out []Diagnostic /// diagnostics collected by this run
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
     scope Scope /// locals of the function body being typed; reset per function
@@ -66,12 +87,22 @@ type Checker {
     /// (P18/P14): a table allocated per binding turns an O(1) question into an
     /// allocation on the hot path of every `ro`/`mut` in the file.
     self_probe NameTable
+    /// Top-level names already seen in THIS file (#811). sem cannot report --
+    /// it holds no diagnostics -- and it silently keeps the FIRST declaration
+    /// of a repeated name, so the second one has to be refused here or not at
+    /// all. One table per run, the same shape `self_probe` is.
+    seen_decls NameTable
     /// The instance's substitution: `substs[i]` is the concrete type standing
     /// in type-parameter slot `i`. EMPTY for an ordinary run over a file, and
     /// that emptiness is what tells `type_fn` to skip a generic body -- there
     /// is nothing to type it under. One copy of the body is typed per
     /// instance (Go stenciling), so nothing here is parametric afterwards.
     substs []TyId
+    /// The ONE block whose tail call is a returned value: the body of the fn
+    /// being walked, when that fn declares a return type (274.5 wave B4). Set
+    /// by the FnDecl arm of each phase, read by the Block arm; there are no
+    /// nested fns, so one slot is the whole state.
+    tail_value_body NodeId
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -103,13 +134,30 @@ type Checker {
 export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
     mut c = Checker {
         src, ctx,
+        res: FnIndex.build(ctx.fns),
+        fres: FieldIndex.build(ctx.fields),
+        gap_at: -1,
+        gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        seen_decls: NameTable.new(NamespaceId.NsDefs),
+        tail_value_body: no_node(),
         substs: []TyId.new(),
     }
     c.walk(file)
+    c.tell_gap_if_silent()
     if c.out.len() == 0 {
+        // THE ENTRY IS A RESOLUTION (274.4 step 2): a name chain is walked to
+        // find it, and after the checker nobody resolves -- mono reads the
+        // channel instead of asking the registry itself.
+        match c.res.entry_row(c.ctx.fns) {
+            Some(r) => { c.chan.record_entry(r) }
+            None => {
+                // A file with no entry point: nothing to record, and mono
+                // answers "nothing reachable" from the same silence.
+            }
+        }
         c.type_file(file)
         // The disjointness walk that stood here is gone (2026-08-18): the
         // channel holds ONE sum per node now, so "a call and an
@@ -140,9 +188,22 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
 {
     mut c = Checker {
         src, ctx,
+        res: FnIndex.build(ctx.fns),
+        fres: FieldIndex.build(ctx.fields),
+        // SILENT-OK: an instance never TELLS its gap, and that is not an
+        // omission. A gap is a syntax hole, and syntax was judged when the
+        // FILE was checked -- by the time an instance is typed the same hole
+        // has already been told there, or already suppressed there. Telling
+        // it again would report one hole once per instantiation. The field is
+        // still initialised so both entries share one shape; only
+        // `tell_gap_if_silent` belongs to the file alone.
+        gap_at: -1,
+        gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        seen_decls: NameTable.new(NamespaceId.NsDefs),
+        tail_value_body: no_node(),
         substs,
     }
     c.type_fn(decl)
@@ -175,6 +236,41 @@ fn Checker mut @refuse_span(lo int, hi int, msg str) -> ()
     })
 }
 
+/// The source offset of the FIRST leaf under `e`, or -1 for a leafless
+/// recovery shape -- the left edge of a run (the contract note's writer is
+/// the one caller today).
+fn Checker @first_leaf_offset(e Node) -> int {
+    match e {
+        Leaf(t) => @src.offset_of(t.text)
+        Branch { children, .. } => {
+            for c in children {
+                ro lo = @first_leaf_offset(c)
+                if lo >= 0 { return lo }
+            }
+            -1
+        }
+    }
+}
+
+/// The 1-based line of a byte offset: newlines counted once, here -- the
+/// diagnostics keep raw offsets (LSP maps them itself, E3), but a contract
+/// panic prints a line the way the oracle does (#874).
+fn Checker @line_at(lo int) -> int {
+    ro b = @src.text.bytes()
+    mut line = 1
+    for i in 0..lo {
+        if b[i] == LF_BYTE {
+            line += 1
+        } else {
+            // Any other byte stays on its line.
+        }
+    }
+    line
+}
+
+/// The newline byte the line counter reads.
+const LF_BYTE u8 = 0x0A
+
 /// Extends `best` to the end of the LAST leaf under `children` -- the right
 /// edge of a run, in source offsets.
 ///
@@ -206,7 +302,7 @@ fn Checker @run_end_of(children []Node, best int) -> int {
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
 /// is the common case, so only the two places that actually open an
 /// initializer position say so.
-fn Checker mut @walk(n Node, init_pos bool = false) -> () {
+fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -230,7 +326,25 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_err_branch(children)
                     return
                 }
-                Block => @report_if_bad_call_stmt(children)
+                TupleBind => {
+                    // A destructuring binding (B15 step 5): its own typing arm
+                    // judges the initializer and the arity; the walk descends
+                    // into the children like any other statement's.
+                }
+                IfLet => {
+                    // `if Some(v) = expr` (if-let wave): typing judges the
+                    // initializer's Option shape and the variant; the walk
+                    // descends like any other statement's.
+                }
+                Requires => {
+                    // A contract clause (the requires wave): typing types its
+                    // condition in the parameters' scope; the walk descends.
+                }
+                // A block used to be judged for ONE thing here -- a call in
+                // statement position that was not `println`. Wave B12 made
+                // that a form of the language, so the arm has nothing of its
+                // own to say and the children are walked like anyone else's.
+                Block => {}
                 MethodCall => {
                     @report_if_unknown_method(children)
                     @report_if_ordered_args(children)
@@ -264,12 +378,27 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     } else {
                         // A free function, or a method on a pointer record.
                     }
+                    @tail_value_body = value_body_of(children)
                     @report_if_default_order(children)
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
                 }
+                ConstDecl => {
+                    // A CONSTANT IS JUDGED BY ITS INITIALIZER, and the walk
+                    // has nothing of its own to refuse here: the name goes
+                    // into the registry at collection, the type comes from
+                    // the initializer at the point of USE (274.5 wave B2),
+                    // and an initializer the subset cannot compile is refused
+                    // where it is used, with the position the user can see.
+                }
                 TypeDecl | SumDecl => {
+                    // ONE NAME, ONE DECLARATION (#811): a repeat is refused
+                    // here because sem keeps the FIRST body and drops the
+                    // second in silence -- the program then reads as though
+                    // the second were never written, and a constructor
+                    // resolves against a body its author did not mean.
+                    @report_if_name_repeats(children)
                     // A PROTOCOL DECLARATION IS JUDGED, NOT REFUSED (wave 3b).
                     // Wave 3a refused it by name -- honest while nothing could
                     // check a contract; now the registry holds the required
@@ -312,9 +441,31 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_qualifier_misplaced(children, "result")
                     @report_if_return_form(children)
                 }
+                TupleExpr => {
+                    // COMPILED since B15 step 4a: the walk descends into the
+                    // components like any other node's children; typing interns
+                    // the pair term (step 3) and the emitter lays it into a
+                    // mono struct (step 4a-3). The named refusal of step 2 is
+                    // lifted here and nowhere else -- the tail door
+                    // (tail_rules) already lets a tuple through by name.
+                }
                 IfExpr => {
-                    @report_first_leaf_of(children, IF_EXPR_MSG)
-                    return
+                    // INITIALIZER POSITION IS LEGAL since wave B14: the binding
+                    // path types it through the same doors as the tail form
+                    // (both branches, forced to agree) and the emitter lays it
+                    // into a value temporary. Everywhere else the refusal
+                    // stands, exactly as the record constructor's does.
+                    if !init_pos {
+                        @report_first_leaf_of(children, IF_EXPR_MSG)
+                        return
+                    } else {
+                        // In initializer position the walk continues into the
+                        // children like any other node's.
+                    }
+                }
+                SelfExpr => {
+                    // Bare `@` (the self wave): typing judges the receiver's
+                    // presence and type; the walk has nothing of its own.
                 }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding
@@ -338,6 +489,30 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     } else {
                         // A plain import: nothing here to judge.
                     }
+                    // The FORM is not judged, but a GAP inside it still has to
+                    // be seen: `import` with no path at all parsed clean and
+                    // compiled with exit code 0 (registry #815, probe
+                    // `import_no_path`). This arm ends the walk, so the
+                    // question is asked here or nowhere.
+                    //
+                    // ONLY THE Err CHILDREN, and the difference is a defect I
+                    // shipped closing #815. `@report_err_branch` takes the
+                    // children of an Err BRANCH -- "one Err branch, one
+                    // diagnostic at its FIRST leaf" -- and this arm handed it
+                    // the children of a HEALTHY import. The first leaf of an
+                    // import is the keyword, which has width, so the
+                    // width-bearing path fired every time: every `import` in
+                    // every file was refused as "not a form of the language".
+                    // Measured on novac's own source: the first refusal of 28
+                    // of its 57 files was their import line.
+                    for c in children {
+                        if c.kind_of() == NodeKind.Err {
+                            @report_err_branch(branch_children(c))
+                        } else {
+                            // The import's own tokens. This arm does not judge
+                            // the form, and saying so is the whole point above.
+                        }
+                    }
                     return
                 }
                 ExportDecl => {
@@ -350,21 +525,44 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     // The walk continues into the children below.
                 }
                 AttrDecl => {
-                    // `#coerce` is JUDGED, not refused (wave 5): it declares a
-                    // PAIR (D429), and the pair is read by the collector. Every
-                    // other attribute is still outside the subset -- an effect
-                    // attribute changes what the body may do, and novac compiles
-                    // none of that yet.
-                    if !attr_kids_name(children, COERCE_ATTR) {
-                        @report_first_leaf_of(children, ATTR_MSG)
+                    // TWO attributes are read (274.5 wave B6). `#coerce` is
+                    // JUDGED: it declares a PAIR (D429) the collector reads.
+                    // `#realtime` (with or without `nogc`) is READ AND NOT
+                    // ENFORCED: the guarantee is about what a body may call,
+                    // the subset compiles no effect machinery, and the oracle
+                    // -- measured 2026-08-29 on an allocating body -- does not
+                    // enforce it on these shapes either. Any OTHER attribute
+                    // stays outside the subset: an unknown attribute may
+                    // change what the declaration means, and accepting it
+                    // unread is how a subset becomes WIDER than the language.
+                    if attr_kids_name(children, COERCE_ATTR) {
+                        // The pair attribute: the collector owns it.
+                    } else if attr_kids_name(children, REALTIME_ATTR) {
+                        // Read, not enforced [INV-GUARD: check-novac-differential]
+                        // -- the corpus compares OUTCOMES against the oracle on
+                        // every file, so the day the oracle starts policing the
+                        // guarantee, this decision reddens there. See the doc of
+                        // REALTIME_ATTR for the measurement behind it.
                     } else {
-                        // The one attribute the subset reads.
+                        @report_first_leaf_of(children, ATTR_MSG)
                     }
                     return
                 }
                 TestDecl => {
-                    @report_first_leaf_of(children, TEST_MSG)
-                    return
+                    // READ, not refused wholesale (274.5 B10). A `test` block
+                    // is a name and a body, and the body is statements like
+                    // any other -- refusing the whole block hid every mistake
+                    // inside it behind one diagnostic.
+                    //
+                    // Not emitting it is CORRECT rather than a silent drop,
+                    // and that is the oracle's behaviour, not an argument:
+                    // `nova build` leaves test bodies out of the program and
+                    // `nova test` is what runs them. So the emitter's loop
+                    // skipping a TestDecl matches, and what was actually
+                    // missing was the READING -- which is the whole subject of
+                    // sub-plan 274.5.
+                    //
+                    // The walk continues into the children below.
                 }
                 NamedArg => {
                     // JUDGED, NOT REFUSED (wave 4): `f(by: 2)` is how D102 says
@@ -407,13 +605,60 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
                 }
                 RecordCtor => {
-                    if !init_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer")
+                    // AN ARGUMENT IS A LEGAL POSITION TOO (wave B13). The
+                    // emitter builds a constructor into a numbered temporary
+                    // and reads the temporary where the value is wanted, which
+                    // is exactly what an array literal has done since B8 -- so
+                    // `arg_pos` is answered here the same way `ArrayLit`
+                    // answers it a few arms below.
+                    if !init_pos && !arg_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer or a call argument")
                         return
                     } else {
-                        // In initializer position the constructor is legal;
-                        // its children are walked below like any other node.
+                        // Initializer or argument: legal, and the children are
+                        // walked below like any other node's.
                     }
+                }
+                DepthErr => {
+                    // NAMED, not generic (#807/#808): the form is legal Nova
+                    // that simply nests deeper than the compiler reads. The
+                    // limit and the wording are the oracle's, because they are
+                    // normative there (E_NESTING_TOO_DEEP) -- a subset that
+                    // invented its own number would refuse what the language
+                    // accepts. ONE diagnostic for the whole over-deep run: the
+                    // parser drained it into this single node.
+                    @report_first_leaf_of(children, NESTING_TOO_DEEP_MSG)
+                    return
+                }
+                Unsafe => {
+                    // READ, and refused BY NAME (274.5 B10). The parser gives
+                    // `unsafe { ... }` its own node now, so the refusal finally
+                    // names the form: before this, one line produced TWO wrong
+                    // refusals -- a syntax error plus a record-constructor
+                    // complaint -- and neither said `unsafe`.
+                    //
+                    // Compiling it is not this wave: the emitter has no arm for
+                    // it, and letting the form through check while emission
+                    // drops it is the silent-acceptance class this compiler
+                    // keeps closing (#809, #812, #815).
+                    @report_first_leaf_of(children, UNSAFE_MSG)
+                    return
+                }
+                Index => {
+                    // NOT TYPED HERE (fix 2026-08-31). This walk judges the
+                    // FORM of a file against the subset; it holds no scope --
+                    // the word `@scope` does not appear in this file once --
+                    // and `@type_index` reads one. So typing an index here
+                    // asked an empty scope and answered "unknown name" about a
+                    // name that WAS bound: `ro v = xs` was clean while
+                    // `ro v = xs[0]` refused, and `xs.len()` was clean too.
+                    //
+                    // The arm now lives in the typing pass (`exprs.nv`), where
+                    // `@type_fn` has already bound the parameters. The door
+                    // itself is not split: the subset refusals it carries
+                    // (a receiver that is not an application, an index that is
+                    // not `int`, a type applied to arguments) are part of the
+                    // same one question and travel with it.
                 }
                 ArrayLit => {
                     // JUDGED, not refused wholesale (sub-plan L, 2026-08-26).
@@ -422,20 +667,31 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     // and the SHELL'S surface, read as an input, decides whether
                     // the instance can be built. Initializer position only, the
                     // same threshold the record constructor has.
-                    if !init_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: array literal only as a binding initializer")
+                    // Three legal positions since wave B8: an initializer, a
+                    // call argument, and a constructor field -- the census
+                    // counted 12 field carriers and 9 argument carriers in
+                    // novac's own sources, and zero bare tails or assignments,
+                    // so those two stay out by measurement, not symmetry.
+                    if !init_pos && !arg_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: array literal only as an initializer, a call argument, or a constructor field")
                         return
                     } else {
-                        // In initializer position the literal is legal; typing
-                        // judges its elements and the shell's surface.
+                        // A legal position; typing judges the elements and
+                        // the shell's surface.
                     }
                 }
                 MatchExpr => {
-                    if !init_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: match only as a binding initializer")
+                    // Three legal positions since 274.5 wave B5: a binding
+                    // initializer, a STATEMENT (a direct child of a block --
+                    // the arms run for effect), and through init_pos also the
+                    // tail of a value body (`=>` bodies took it earlier; the
+                    // `{...}` tail is a statement position plus the typing
+                    // route of wave B4's tail machinery).
+                    if !init_pos && !stmt_pos {
+                        @report_first_leaf_of(children, "outside the E1 subset: match only as an initializer, a statement, or a body tail")
                         return
                     } else {
-                        // Initializer position: legal, walked below.
+                        // A legal position: walked below.
                     }
                 }
                 BindStmt => {
@@ -470,6 +726,12 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                     return
                 }
                 Lit => {
+                    // MAGNITUDE FIRST (#810): a literal too large for `int`
+                    // is a silent miscompile downstream -- the emitter prints
+                    // its text with an `LL` suffix and C wraps it -- so the
+                    // refusal comes before anything else this literal could
+                    // be judged for.
+                    @report_if_int_too_large(children)
                     @report_if_bad_escape(children)
                     // `"n=${n}"` reaches the tree as ONE literal leaf -- the
                     // lexer keeps the string whole -- so the interpolation is
@@ -499,7 +761,14 @@ fn Checker mut @walk(n Node, init_pos bool = false) -> () {
                 ProtoMethod => {}
             }
             for c in children {
-                @walk(c)
+                // STATEMENT POSITION is "a direct child of a Block" (274.5
+                // wave B5) and ARGUMENT POSITION is "a direct child of a call
+                // or a constructor field" (wave B8): both flags are computed
+                // in this ONE recursion, the same way init_pos is computed at
+                // its two call sites -- a position has a single definition.
+                @walk(c, stmt_pos: kind == NodeKind.Block,
+                      arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
+                               kind == NodeKind.CtorField)
             }
         }
     }

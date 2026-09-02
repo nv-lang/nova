@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_lint::builtin` for the SHAPE -- a rule that judges one
+// written token, separate from the walk that finds it. NOT taken: a lint
+// registry with levels; these two are refusals, not advice.
+// Role: layer 7 (check) -- the rules a DECLARATION or a LITERAL breaks on its
+// own, before anything about types is asked: the magnitude of an integer
+// literal (#810) and a top-level name declared twice (#811). Both came from
+// the hunt of 2026-08-30 and both are silent-acceptance defects: the first
+// let the emitted C wrap, the second let a second body vanish.
+// Used by: check.nv -- the Lit arm and the declaration arms of the walk.
+// Guarded by: check-novac-file-size.py (this file exists because rules.nv
+// crossed 1000 lines on 2026-08-30 -- the cut sem.nv, typing.nv and emit_c.nv
+// took before it), and the two class tests in pipeline_test.nv.
+// novac/src/check/literal_rules.nv -- what one written token is refused for.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
+import ../sem.{raw_frow, no_frow}
+import ../types.{TyId, is_ty}
+
+/// The MAGNITUDE of an integer literal -- the question nobody asked until
+/// registry #810 (hunter, 2026-08-30). The lexer makes an IntLit of any run of
+/// digits, the lattice types it `int` without looking, and the emitter prints
+/// the text verbatim with an `LL` suffix: `18446744073709551616` therefore
+/// overflowed a signed long long in the emitted C. That is a SILENT
+/// MISCOMPILE, not a missing refusal -- the oracle says "number too large to
+/// fit in target type" and stops.
+///
+/// The bound is `int`'s own: Nova's `int` is intptr_t (like Go's intgo), 64
+/// bits on every target novac emits for, so the largest literal is
+/// 9223372036854775807. Compared as TEXT -- by length first, then
+/// lexicographically -- because parsing it into the very type whose range is
+/// in question is how the check would inherit the defect it exists to catch.
+fn Checker mut @report_if_int_too_large(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.IntLit { continue }
+        ro t = leaf_text(c)
+        if !int_text_fits(t) {
+            @report_first_leaf_of(kids, INT_TOO_LARGE_MSG)
+            return
+        } else {
+            // Within range: nothing to say about this literal.
+        }
+    }
+}
+
+/// Does this decimal digit run fit in `int`? Compared as text against the
+/// bound, so nothing is parsed into the type whose range is being judged.
+/// Leading zeros are stripped first: `0000009` is nine, not a nine-digit
+/// number. A hex literal (the hex wave) has its own bound: at most 16 hex
+/// digits after the leading zeros, and on the 16th the first stays under 8
+/// (int is i64; `0x7FFF...` fits, `0x8000...` does not).
+fn int_text_fits(t str) -> bool {
+    if t.byte_len() > 2 && t[..2] == "0x" {
+        mut h = 2
+        while h + 1 < t.byte_len() && t[h..h + 1] == "0" { h += 1 }
+        ro hex = t[h..]
+        if hex.byte_len() < 16 { return true }
+        if hex.byte_len() > 16 { return false }
+        return !(hex[..1] > "7")
+    }
+    mut i = 0
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
+    // The upper bound is omitted: `t[i..]` says the same and the linter is
+    // right that spelling it twice adds nothing.
+    ro digits = t[i..]
+    if digits.byte_len() < INT_MAX_TEXT.byte_len() { return true }
+    if digits.byte_len() > INT_MAX_TEXT.byte_len() { return false }
+    !(digits > INT_MAX_TEXT)
+}
+
+/// A top-level name declared twice in one file (#811). The name leaf is the
+/// first identifier of the declaration; the table answers "seen already", and
+/// the second declaration is the one refused -- the first keeps the name, as
+/// sem's registry does.
+fn Checker mut @report_if_name_repeats(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.Ident { continue }
+        ro name = leaf_text(c)
+        if @seen_decls.find(name) >= 0 {
+            @report_first_leaf_of(kids, DUP_DECL_MSG)
+        } else {
+            @seen_decls.put(name, 1)
+        }
+        // The OTHER two owners of a name, judged at the same door (owner's
+        // question 2026-09-01; both probes passed check in silence before):
+        // a primitive's name is the language's forever (D35), and a
+        // handed-over name is shadowable by the NORM (D125) but not by this
+        // subset's C naming yet (D381) -- see the two messages' own docs.
+        if @ctx.builtin_names.find(name) >= 0 {
+            @report_first_leaf_of(kids, PRIM_REDECL_MSG)
+        } else if shell_struct_named(@ctx, name) {
+            // Shadowing a handed-over name is LEGAL (D125, user wins) and the
+            // oracle spells the shadowing type with the BARE name -- so novac
+            // does too (interop: one C name per type, held by the
+            // mangle-fixed-point guard). The one REAL collision is a name
+            // whose struct BODY the SHELL TEMPLATE already defines: two
+            // definitions of one struct in one unit, clang refuses. That
+            // exact fact lives in the interop table (shell_surface lifts the
+            // template's `struct <name> {` shapes), so the judge reads it.
+            @report_first_leaf_of(kids, SHADOW_FOREIGN_MSG)
+        } else {
+            // A name of one's own, or a legal bare-name shadow: nothing to
+            // refuse and nothing to record for it here.
+        }
+        return
+    }
+}
+
+/// Does the SHELL TEMPLATE already declare a struct under this type's C name?
+/// Asked by the declaration judge above; the answer is a membership question
+/// to the interop table, which shell_surface lifted from the template's own
+/// identifiers -- both spellings, because a record may come out by value.
+fn shell_struct_named(ctx Ctx, name str) -> bool {
+    ctx.interop.has_body("Nova_${name}") || ctx.interop.has_body("NovaValue_${name}")
+}
+
+/// A record construction judged against the DECLARATION it names (#812).
+///
+/// Until the hunt of 2026-08-30 nothing compared the two: `Pt { }` on
+/// `type Pt { n int }` checked clean, and the emitted C read a member nobody
+/// wrote. The oracle refuses the same file, but for another reason entirely --
+/// it reads `Pt { }` as an expression followed by a block -- so the verdict
+/// here is the SPEC's (`02-types.md:152`, and the numbered rules at `:1677`),
+/// not the oracle's. That distinction is the whole reason the registry row
+/// calls the fork resolved rather than guessed.
+///
+/// Three ways to disagree, one refusal each and only the first of them:
+/// a name the type does not declare (the author can see that one), a declared
+/// field nobody named, and a field named twice -- which fills the count while
+/// leaving a field empty.
+///
+/// A SPREAD fills the rest by construction (`{ ...src, x: 1 }`), so a ctor
+/// carrying one is judged only for names the type lacks.
+fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
+    if !is_ty(t) {
+        // The type itself was refused already; one cause, one diagnostic.
+        return
+    } else {
+        // The construction names a type this file knows.
+    }
+    ro kids = branch_children(ctor)
+    mut spread = false
+    mut named_cnt = 0
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.CtorSpread {
+            spread = true
+        } else if ck == NodeKind.CtorField {
+            named_cnt += 1
+            ro fk = branch_children(c)
+            ro want = leaf_text(fk[0])
+            if !@fres.has_field(@ctx.fields, t, want) {
+                @report_first_leaf_of(fk, CTOR_UNKNOWN_FIELD_MSG)
+                return
+            } else {
+                // The type has this field; whether every OTHER one is here is
+                // the question below.
+            }
+        } else {
+            // The type name and the braces are children too, and neither
+            // names a field.
+        }
+    }
+    if spread {
+        // What the author did not write, the spread wrote.
+        return
+    } else {
+        // Nothing fills the gaps: every declared field has to be named.
+    }
+    ro td = decl_of_ty(@ctx, t)
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    ro first = raw_frow(frange.0)
+    for j in first..first + frange.1 {
+        ro fd = @ctx.fields.rows[j]
+        mut seen = false
+        for c in kids {
+            // The terminator form on purpose: a single-variant test inside a
+            // loop has no honest empty `else` to write, and inverting it says
+            // the same thing with nothing left over.
+            if c.kind_of() != NodeKind.CtorField { continue }
+            // The scan is bounded by the RECORD's own arity -- a handful of
+            // names from one declaration, the same bound a binder scans
+            // under. It is not name resolution in a registry, which is what
+            // the discipline rule is about.
+            ro fk = branch_children(c)
+            if leaf_text(fk[0]) != fd.name { continue }
+            seen = true
+        }
+        if !seen {
+            @report_first_leaf_of(kids, CTOR_MISSING_FIELD_MSG)
+            return
+        } else {
+            // Named; on to the next declared field.
+        }
+    }
+    if named_cnt > frange.1 {
+        // Every declared field was found and the literal still has more
+        // entries than the record has fields: a name repeats.
+        @report_first_leaf_of(kids, CTOR_FIELD_TWICE_MSG)
+        return
+    } else {
+        // Counts agree: the construction fills the record exactly.
+    }
+}

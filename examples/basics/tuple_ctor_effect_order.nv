@@ -1,0 +1,12 @@
+module basics.tuple_ctor_effect_order
+
+fn tick(n int) -> int {
+    println(100 + n)
+    n
+}
+
+fn main() {
+    ro t = (tick(1), tick(2))
+    println(t.0)
+    println(t.1)
+}

@@ -1,0 +1,7 @@
+module p
+
+fn main() {
+    mut a = "b"
+    mut b = "a"
+    println(a < b)
+}

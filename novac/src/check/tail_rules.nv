@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `check_block_with_expected` for the QUESTION -- does control
+// reach the end of a body, and does the body have a value there. NOT taken:
+// a divergence type (`!`); the subset answers yes/no and refuses by name.
+// Role: layer 7 (check) -- termination and the tail value: whether a body
+// ends with a value, and whether a statement takes control away first. Waves
+// B4 (a tail call is a value), B5 (a tail match) and B9 (a block arm) all
+// grew here, which is why it is its own file.
+// Used by: check.nv -- the fn-declaration arm of the walk.
+// Guarded by: check-novac-file-size.py (this file exists because rules.nv
+// crossed 1000 lines on 2026-08-30), and the tail fixtures
+// (tail_call.nv, match_stmt.nv, match_block_arm.nv) through
+// check-novac-differential.sh.
+// novac/src/check/tail_rules.nv -- does the body end with a value.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit}
+
+/// Does this statement END the function on every path?
+///
+/// A `return` does. So does an `if` whose branches ALL return -- and that
+/// second half only became possible on 2026-08-18, when the parser learned
+/// `else`: before it, an if-statement had no else branch to judge. The rule
+/// missed it and refused `fn classify(n int) -> int { if .. { return 3 }
+/// else { return 1 } }`, which the oracle accepts and which is the ordinary
+/// way to write such a function.
+///
+/// An `if` WITHOUT an else never terminates: the false path falls through,
+/// and that is exactly the shape the oracle refuses too.
+fn stmt_terminates(st Node) -> bool {
+    ro k = st.kind_of()
+    if k == NodeKind.RetStmt { return true }
+    if k != NodeKind.IfStmt { return false }
+    ro kids = branch_children(st)
+    if kids.len() <= 4 { return false }
+    ro then_b = kids[2]
+    ro else_b = kids[4]
+    block_terminates(then_b) && block_terminates(else_b)
+}
+
+/// Does this block end the function on every path? An `else if` chain
+/// arrives here as a nested IfStmt rather than a Block, and it answers
+/// through the same door.
+fn block_terminates(b Node) -> bool {
+    ro k = b.kind_of()
+    if k == NodeKind.IfStmt { return stmt_terminates(b) }
+    if k != NodeKind.Block { return false }
+    for s in branch_children(b) {
+        if stmt_terminates(s) { return true }
+    }
+    false
+}
+/// Does this RetType promise a VALUE? `-> int` does; `-> ()` and a bare arrow
+/// do not.
+fn declares_a_value(rk []Node) -> bool {
+    if rk.len() <= 1 { return false }
+    if rk.len() != 3 { return true }
+    ro l = rk[1]
+    ro r = rk[2]
+    if l.kind_of() != NodeKind.LeafNode { return true }
+    if r.kind_of() != NodeKind.LeafNode { return true }
+    ro is_unit = leaf_kind(l) == TokenKind.LParen && leaf_kind(r) == TokenKind.RParen
+    !is_unit
+}
+
+/// One text for the two doors of the rule (an empty body and a statement
+/// tail): the reader must not have to wonder whether they are two limits.
+const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a value"
+
+/// A fn that declares a value must END with one -- unless the end is
+/// UNREACHABLE. The oracle started judging this on 2026-08-17 as
+/// `E_MISSING_RETURN`, and novac accepted what it rejects (class K7).
+///
+/// The rule was mirrored crudely at first and the adversarial pass caught it
+/// the same day: `fn f() -> int { return 1  <NL>  ro x = 2 }` was refused by
+/// novac and accepted by the oracle. Both are right about their halves --
+/// the tail IS a binding, and it is also DEAD, because an unconditional
+/// `return` stands before it. A refusal that fires on correct code is a
+/// defect even when it errs "towards strictness": it sends the reader to fix
+/// what is not broken.
+///
+/// Boundary re-measured across fourteen shapes (2026-08-17). Refused: a
+/// binding or assignment tail, and an empty body, WHEN no unconditional
+/// terminator stands at the top level of the body. Accepted: a tail
+/// expression, a `return`, an `if` whose branches return, a tail `while`/
+/// `for`, and anything at all after an unconditional `return` -- the oracle
+/// accepts each of these. A CONDITIONAL return does not save the tail
+/// (`if c { return 1 }` then a binding is E_MISSING_RETURN for the oracle
+/// too), which is why the scan looks at top-level statements only and does
+/// not walk into branches.
+fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
+    mut declares_value = false
+    for c in kids {
+        if c.kind_of() != NodeKind.RetType { continue }
+        // `-> ()` is the UNIT return, and unit is not a value. It used to
+        // parse as the arrow ALONE, and the length test below was enough;
+        // since type_ref reads `()` as a balanced run (the tuple form), the
+        // pair reaches the tree and the old test called it a value. The result
+        // was a refusal that told `fn nothing() -> () { }` its body ends
+        // without a value -- a body that is not supposed to produce one.
+        declares_value = declares_value || declares_a_value(branch_children(c))
+    }
+    if !declares_value { return }
+    for c in kids {
+        if c.kind_of() != NodeKind.Block { continue }
+        ro bk = branch_children(c)
+        mut last_stmt = -1
+        mut i = 0
+        mut terminates = false
+        for b in bk {
+            terminates = terminates || stmt_terminates(b)
+            last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
+            i += 1
+        }
+        // The end is unreachable: whatever stands last, it is dead code and
+        // the oracle says nothing about it. Neither do we.
+        if terminates { return }
+        if last_stmt < 0 {
+            @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
+            return
+        }
+        // [LEGACY-#676] var-index-method: `bk[i].kind_of()` with a VARIABLE
+        // index miscompiles -- the emitter takes the Vec itself for the
+        // receiver (E_RECV_METHOD_MISMATCH). The binding walks around it and
+        // goes when #676 closes.
+        ro tail_node = bk[last_stmt]
+        ro k = tail_node.kind_of()
+        // ALLOW-list, kept in step with the emitter's tail chain -- the
+        // `tail && j == last_branch` arms in emit_c.nv (match/if land in a
+        // temporary and return it, `is_expr_kind` returns the expression):
+        // the tail produces a value iff the emitter writes `return` for it.
+        // Named by the CHAIN and not by a line number: the hunt (emit_c x K1,
+        // P2) found the previous reference pointing at a line that had long
+        // moved on and quoting a formula the file no longer contains. The first
+        // version asked the opposite question -- "is the tail a binding or an
+        // assignment?" -- and four shapes walked past it: a tail `if` without
+        // `else`, a tail `while`, a tail `for`, and a tail unit call like
+        // `println(...)`. The oracle refuses all four; novac emitted a
+        // function that falls off its end. Asking a deny-list about an open
+        // set is how a rule looks complete while covering two cases of six.
+        // `Call` LEFT the exclusion with 274.5 wave B4: a tail call is the
+        // returned value -- eight of novac's own files end a body exactly so.
+        // `IfStmt` JOINS the allow-list with wave B14 -- named HERE rather
+        // than added to `is_expr_kind`, because that list is read by many walks
+        // and a kind put into it moves silently into every general arm (the
+        // lesson wave B13 paid for three times over).
+        if k == NodeKind.RetStmt || is_expr_kind(k) || k == NodeKind.IfStmt { return }
+        // A tuple tail IS a value since step 4b: typing records the pair term
+        // (the statement walk types a TupleExpr by its named arm) and the
+        // emitter's tail chain returns the built temporary. Named here and
+        // not in is_expr_kind -- B13's lesson, same as IfStmt above.
+        if k == NodeKind.TupleExpr { return }
+        @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
+        return
+    }
+}
+
+

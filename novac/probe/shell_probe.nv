@@ -35,6 +35,15 @@ fn main() {
     println("upper = ", s.to_ascii_upper())
     println("starts = ", s.starts_with("p"))
     println("contains = ", s.contains("ring"))
+    // The if-let wave: its carriers bind through Option-returning calls, and
+    // str.find is the E2 face of that shape -- without this line the shell
+    // carries no Nova_str_method_find and novac refuses the carrier by name.
+    ro found = s.find("ring")
+    ro ftext = match found {
+        Some(i) => "at"
+        None => "no"
+    }
+    println("find = ", ftext)
 
     // E2 records surface: the only NEW runtime helper is f64 printing —
     // record structs/alloc are emitted by novac itself into the BODY slot
@@ -47,6 +56,12 @@ fn main() {
     ro nums = [1, 2, 3]
     ro ext = [0, ...nums, 4]
     println("len = ", ext.len())
+    // `cap()` — ГЕТТЕР, и он здесь не ради красоты: амендмент D239 о вместимости
+    // литерала (2026-08-27) сформулирован над НАБЛЮДАЕМЫМ (`[7, 8].cap() == 2`),
+    // а оболочка несла только сеттер `cap(n)` (`..._method_cap__nova_int`), потому
+    // что геттер никто не звал. Без этой строки правило спеки нечем доказать
+    // концом-в-конец: novac отказывал бы по имени, называя эту самую программу.
+    println("cap = ", ext.cap())
     ro maybe = ext.get(100)
     ro text = match maybe {
         Some(n) => "some"

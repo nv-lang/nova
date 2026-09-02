@@ -1,0 +1,9 @@
+module p
+
+type Meters f64
+
+fn main() {
+    mut a = Meters(1.5)
+    a += Meters(2.25)
+    println(a)
+}

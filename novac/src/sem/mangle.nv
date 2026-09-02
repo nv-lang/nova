@@ -28,6 +28,7 @@
 module novac.sem
 
 import ../diag.{ice}
+import ../names.{raw_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
@@ -69,7 +70,7 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
         if !is_ty(cur) { return cur }
         ro is_new = match ctx.tys.kind_of(cur) {
             TkNewtype => true
-            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer => false
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => false
         }
         if !is_new { return cur }
         cur = representation_of(ctx, cur)
@@ -94,7 +95,7 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
         TkSum => {}
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype => { return false }
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple => { return false }
     }
     ro td = decl_of_ty(ctx, t)
     if is_runtime_abi_sum(td.name) { return false }
@@ -130,6 +131,7 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkNewtype => decl_of_ty(ctx, t).name
         TkApp => instance_source_name(ctx, t)
         TkParam => "a type parameter"
+        TkTuple => "a tuple"
         TkInfer => "an inference variable"
     }
 }
@@ -187,7 +189,19 @@ export fn is_value_record(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
         TkRecord => decl_of_ty(ctx, t).by_value
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer => false
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => false
+    }
+}
+
+/// Is this term a structural TUPLE? The one boolean door, exactly as
+/// `is_value_record` above: readers ask the question, never spell the kind
+/// comparison themselves -- a dispatcher on a closed set is a match, and the
+/// match lives HERE (P21).
+export fn is_tuple(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    match ctx.tys.kind_of(t) {
+        TkTuple => true
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkNewtype => false
     }
 }
 
@@ -226,9 +240,17 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // An INSTANCE of a generic record is a GC pointer like the record
             // itself; its struct is spelled the oracle's way (interop -- see
             // `instance_struct_name`).
-            TkApp => { return "${instance_struct_name(ctx, t)}*" }
+            TkApp => {
+                ro fam = family_instance_name(ctx, t)
+                if fam != "" { return fam }
+                return "${instance_struct_name(ctx, t)}*"
+            }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
+            // A tuple is a BY-VALUE mono struct (D123): its C type IS its
+            // struct name, no pointer -- the same word `value` means on a
+            // record, and the shell's own pair typedefs are structs by value.
+            TkTuple => { return mono_tuple_name(ctx, t) }
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
@@ -258,9 +280,16 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.
         TkNewtype => { return c_struct(ctx, representation_of(ctx, t)) }
-        TkApp => { return instance_struct_name(ctx, t) }
+        TkApp => {
+            ro fam = family_instance_name(ctx, t)
+            if fam != "" { return fam }
+            return instance_struct_name(ctx, t)
+        }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
+        // The typedef is self-named (`typedef struct X {...} X;`), so the
+        // struct name and the C type are the one string.
+        TkTuple => { return mono_tuple_name(ctx, t) }
     }
 }
 
@@ -283,6 +312,26 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
 /// of guessing a name a linker would then find. No program reaches it today: an
 /// instance of a handed-over sum cannot be constructed (its variants are not
 /// harvested), so nothing carrying one is ever emitted.
+/// The FAMILY spelling of a generic-sum instance, or "" for everything else:
+/// `Option[int]` is the shell's `NovaOpt_nova_int`, BY VALUE (its methods hand
+/// it back so), with no `Nova_` prefix and no star -- INTEROP, read off the
+/// shell, gone the day novac emits the whole prelude. Result (`NovaRes_`)
+/// joins when a carrier arrives; until then the instance_body ice below still
+/// names any other generic sum.
+fn family_instance_name(ctx Ctx, t TyId) -> str {
+    ro head = decl_of_ty(ctx, t)
+    ro is_sum = match head.kind {
+        TkSum => true
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_sum { return "" }
+    if head.name != OPTION_SUM { return "" }
+    if ctx.tys.arg_count(t) != 1 { return "" }
+    "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
+}
+
+/// The oracle's spelling of a generic-record instance struct
+/// (`Nova_Vec____nova_int`): interop, lifted off the shell 2026-08-26.
 fn instance_struct_name(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}"
 
 /// The constructor the shell emits for an instance: `Nova_<body>_static_new`
@@ -299,6 +348,40 @@ export fn c_instance_ctor(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, 
 export fn c_instance_method(ctx Ctx, t TyId, name str) -> str =>
     "${instance_body(ctx, t)}_method_${name}"
 
+/// A method of a PLAIN (non-instance) type as the SHELL spells it:
+/// `Nova_<type>_method_<name>` — measured on the shell 2026-08-28
+/// (`Nova_str_method_equal`, `Nova_str_method_byte_len`). Note the `Nova_`
+/// prefix, which the INSTANCE form deliberately does NOT have
+/// (`Vec____nova_int_method_push`): the oracle spells the two differently, and
+/// this door exists so that novac never guesses which of the two it needs.
+///
+/// Interop, with the same end condition as the rest of it: the door goes the day
+/// novac emits the prelude itself and every method has a body of ours.
+export fn c_shell_method(ctx Ctx, t TyId, name str) -> str =>
+    "Nova_${ty_source_name(ctx, t)}_method_${name}"
+
+/// The mono NAME of a tuple type (D123, length-prefixed):
+/// `_NovaTuple_<arity>_<len1>_<spelling1>_..._<lenN>_<spellingN>`, where a
+/// spelling is the component's C type with the pointer star written `_p`
+/// (`Nova_Vec____nova_int*` -> `Nova_Vec____nova_int_p`) and the len is the
+/// SPELLING's byte length -- unambiguous for any nesting, which is the whole
+/// point of the prefix (Itanium/Rust-v0 analog, the oracle's shell spells
+/// pairs exactly so). INTEROP, not imitation: one C name for one type on both
+/// sides of the link, and it goes the day novac emits the whole prelude.
+export fn mono_tuple_name(ctx Ctx, t TyId) -> str {
+    consume s = StringBuilder.new(cap: 48)
+    s.append("_NovaTuple_")
+    s.append("${ctx.tys.arg_count(t)}")
+    for i in 0..ctx.tys.arg_count(t) {
+        ro spell = c_type(ctx, ctx.tys.arg(t, i)).replace("*", "_p")
+        s.append("_")
+        s.append("${spell.byte_len()}")
+        s.append("_")
+        s.append(spell)
+    }
+    s
+}
+
 /// The body every instance name is built from: `<Head>____<arg>__<arg>`.
 fn instance_body(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
@@ -306,7 +389,7 @@ fn instance_body(ctx Ctx, t TyId) -> str {
         TkRecord => {}
         TkSum => ice("mangle: an instance of a generic SUM has the oracle's family spelling (NovaOpt_/NovaRes_) — arrives with the Option wave")
         // A head is a declaration; these are not declarations a `[T]` can hang on.
-        TkPrim | TkApp | TkParam | TkInfer | TkNewtype =>
+        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple =>
             ice("mangle: an application whose head is not a record or sum declaration")
     }
     consume s = StringBuilder.new(cap: 64)
@@ -339,6 +422,7 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         TkApp => "${instance_struct_name(ctx, a)}_p"
         TkSum => ice("mangle: a SUM as an instance argument — its in-name spelling is not measured on the shell")
         TkNewtype => ice("mangle: a NEWTYPE as an instance argument — its in-name spelling is not measured on the shell")
+        TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
         TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
         TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
     }
@@ -467,7 +551,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         // Every other kind is already a type: a substitution has nothing to
         // rewrite in it. Named one by one rather than through a wildcard --
         // a new kind must come here and say what it does (P21).
-        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype => {}
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple => {}
     }
     // `same_ty`, not `t`: [LEGACY-#760-newtype-ro-launder].
     same_ty(t)
@@ -532,6 +616,12 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // The newtype's OWN name, never the representation's: `f(Row)` and
         // `f(int)` are two callables, and the C name is what keeps them apart.
         TkNewtype => decl_of_ty(ctx, t).name
+        // A tuple in a callable's C name spells as its D123 mono struct --
+        // unique per component list and stable, so overloading by a tuple
+        // RETURN type works the D84 way (step 4b). A tuple PARAMETER stays
+        // outside the wave's bounds, held by the checker's named refusal in
+        // bind_typed_param, not by this spelling's absence.
+        TkTuple => mono_tuple_name(ctx, t)
         // An INSTANCE inside one of OUR names: `Vec_of_nova_int`. This is not
         // the shell's spelling (`Vec____nova_int`) on purpose -- a callable's C
         // name is ours (274 section 7.0), and the pieces are chosen so no
@@ -546,4 +636,56 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         TkParam => type_tag(ctx, subst_type(ctx, t, subst), subst)
         TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
     }
+}
+
+/// The C SPELLING of an integer literal's text. C reads a leading zero as
+/// OCTAL (hunt 2026-09-02, N1: `println(0123)` printed 83, a `010 =>` arm
+/// matched the other branch, `08` broke clang), so the decimal spelling
+/// drops the leading zeros -- the same strip the magnitude judge already
+/// performs (literal_rules.nv): ONE answer to "what number is written
+/// here", at the one door both emitters read. A hex literal keeps its
+/// text: C reads `0x` exactly as Nova does.
+export fn int_literal_c_text(t str) -> str {
+    if t.byte_len() > 2 && t[..2] == "0x" { return t }
+    mut i = 0
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
+    t[i..]
+}
+
+/// The two bytes the dollar rule reads.
+const BACKSLASH_BYTE u8 = 0x5C  // backslash
+const DOLLAR_BYTE u8 = 0x24     // $
+
+/// A Nova string literal's text as C text: the ONE dollar rule. Nova's
+/// subset escape set (\" \\ \n \t \r) matches C's one for one -- check
+/// refuses everything else by name -- with a single exception, `\$`, whose
+/// backslash must not reach clang. TWO readers spell literals into C: the
+/// shell's literal pool and the contract prologue's message slot -- the
+/// hunt (2026-09-02, its P1 contradiction) caught the pool claiming to be
+/// `the only place` while the prologue shipped the backslash through; one
+/// door ends that argument by construction.
+export fn unescape_dollar(s str) -> str {
+    ro b = s.bytes()
+    consume out = StringBuilder.new()
+    mut one = []u8.new()
+    one.push(0 as u8)
+    // A `while` and NOT `for`, on purpose: this cursor advances by ONE or by
+    // TWO (an escaped `$` consumes two bytes), so the step carries information
+    // and a range would lose it. The rule is "a cursor that always steps by one
+    // is a range" -- this one does not.
+    mut i = 0
+    while i < b.len() {
+        ro c = b[i]
+        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
+        if c == BACKSLASH_BYTE && next_is_dollar {
+            one[0] = DOLLAR_BYTE
+            out.append(one)
+            i += 2
+        } else {
+            one[0] = c
+            out.append(one)
+            i += 1
+        }
+    }
+    out
 }

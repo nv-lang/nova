@@ -1,0 +1,16 @@
+// PROBE H9: a record field carries a MODE and a type but no NAME.
+// site  : novac/src/parse/parse.nv:492 -- @push_if(fk, TokenKind.Ident)
+// novac : check rc=0, ZERO diagnostics. `novac emit` then writes
+//             struct Nova_Counter {
+//                 nova_int [];
+//             };
+//         clang -fsyntax-only on that struct: rc=1,
+//         "expected member name or ';' after declaration specifiers".
+// oracle: rc=1, "error: expected identifier, got `[`" at 12:20
+module field_no_name
+
+type Counter { mut []int }
+
+fn main() {
+    println("ok")
+}

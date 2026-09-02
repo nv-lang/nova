@@ -15,11 +15,18 @@
 module novac.emit_c
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of, raw_node}
 import ../diag.{ice}
-import ../sem.{ArgSpec, ArgClass, CallForm, carrier_of, c_callable, c_instance_method, arm_body_at, Ctx, CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct, c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row, is_value_record}
+import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
+import ../sem.{CheckOut}
+import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
+import ../sem.{int_literal_c_text, interp_slices}
+import ../tree.{raw_node}
+import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
+import ../sem.{is_value_record}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
-import ../types.{TyId, no_ty}
+import ../types.{TyId, is_ty}
+import ../sem.{is_tuple}
 
 
 /// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
@@ -115,14 +122,6 @@ fn is_call_form(op BinOp, is_float bool) -> bool {
     }
 }
 
-/// Is this the equality pair? They are the operators whose C form depends on
-/// the OPERAND type: scalars compare with `==`, `str` goes through `@equal`.
-fn is_equality(op BinOp) -> bool {
-    match op {
-        Equal | NotEqual => true
-        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
-    }
-}
 
 /// `!=` is not a second protocol method: the spec DERIVES it from `@equal`
 /// (D46 rule 3), so the emitter negates the same call.
@@ -156,19 +155,6 @@ fn c_unary_form(op UnOp) -> str {
 /// a function, not a second table), and exhaustive so a new operator must
 /// answer here too.
 
-/// The lookup key of the synthesised `equal` call: receiver, then one unknown
-/// argument. A named builder rather than a literal vector at the call site, so
-/// the shape of a key lives in one place per module.
-fn equal_key(lhs_t TyId) -> []ArgSpec {
-    mut out = []ArgSpec.new()
-    // Both positions are `ro`: `equal` READS its operands, and the mode axis
-    // (P14) has nothing to choose between here -- `ro` is the class every mode
-    // accepts, so a synthesised call asks for the least specific candidate and
-    // cannot pick a mutating overload by accident.
-    out.push(ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" })
-    out.push(ArgSpec { type_id: no_ty(), cls: ArgClass.ArgRo, name: "" })
-    out
-}
 
 /// A call's arguments, in SLOT order, with omitted slots filled from the
 /// declaration.
@@ -254,7 +240,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         if lk == TokenKind.IntLit {
             @body.append("((nova_int)")
             @body.append(if neg { "-" } else { "" })
-            @body.append(leaf_text(t))
+            @body.append(int_literal_c_text(leaf_text(t)))
             @body.append("LL)")
         } else if lk == TokenKind.FloatLit {
             @body.append("((nova_f64)")
@@ -262,6 +248,21 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(leaf_text(t))
             @body.append(")")
         } else if lk == TokenKind.StrLit {
+            // An INTERPOLATED literal was hoisted into its builder chain by
+            // the statement's walk (I1); the temporary carries the string.
+            ro itmp = @lit_tmp[raw_node(e.id_of())]
+            if itmp != "" {
+                @body.append(itmp)
+                return
+            }
+            if interp_slices(leaf_text(t)).len() > 1 {
+                // The checker types every interpolation it accepts, and the
+                // hoist walks every statement -- a miss here is a hole, not
+                // a shape to print from the pool.
+                ice("emit_c: an interpolated literal the hoist never built (I1)")
+            } else {
+                // A plain literal: the pool owns it, below.
+            }
             // A string literal in value position (binding init, method
             // argument): registered like a println literal, referenced by
             // its C name — the oracle emits the same shape.
@@ -271,10 +272,73 @@ fn Emitter mut @emit_expr(e Node) -> () {
         } else {
             ice("emit_c: literal kind outside the subset")
         }
+    } else if k == NodeKind.ArrayLit {
+        // Printed as the TEMPORARY its hoist built (wave B8): the literal is
+        // a multi-statement construction, and the statement that owns this
+        // expression hoisted it before printing. An empty name here is a
+        // hole in that contract, not a user mistake.
+        ro tmp = @lit_tmp[raw_node(e.id_of())]
+        if tmp == "" {
+            ice("emit: an array literal in expression position was never hoisted (wave B8)")
+        } else {
+            // Hoisted: the temporary carries the built vector.
+        }
+        @body.append(tmp)
+    } else if k == NodeKind.TupleExpr {
+        // The same contract as the literals above (B15 step 4a): a tuple is a
+        // multi-statement build, so what stands in the expression is the
+        // temporary its hoist filled.
+        ro ttmp = @lit_tmp[raw_node(e.id_of())]
+        if ttmp == "" {
+            ice("emit: a tuple literal in expression position was never hoisted (B15 step 4a)")
+        } else {
+            // Hoisted: the temporary carries the built pair.
+        }
+        @body.append(ttmp)
+    } else if k == NodeKind.RecordCtor {
+        // The same contract as the array literal above, and for the same
+        // reason (wave B13): a constructor is built by several C statements,
+        // so what stands in the expression is the temporary the hoist filled.
+        ro rtmp = @lit_tmp[raw_node(e.id_of())]
+        if rtmp == "" {
+            ice("emit: a record constructor in expression position was never hoisted (wave B13)")
+        } else {
+            // Hoisted: the temporary carries the built record.
+        }
+        @body.append(rtmp)
     } else if k == NodeKind.Name {
-        // `nova_bool` IS C `bool`, so the literals are the C keywords -- the
-        // same shape the oracle emits.
-        @body.append(expr_leaf_name(e))
+        // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
+        // C symbol of its own, and WHICH constant this is came from the
+        // channel -- the emitter resolves no names (274.4 rule E).
+        match @out.const_of(e.id_of()) {
+            Some(row) => {
+                ro cd = @ctx.consts.rows[raw_crow(row)]
+                if cd.init.len() > 0 {
+                    @emit_expr(cd.init[0])
+                } else {
+                    ice("emit: a constant recorded with no initializer")
+                }
+            }
+            None => {
+                if @out.has_callee(e.id_of()) {
+                    // A payload-less variant as a value (the variant-value
+                    // wave): the checker resolved the bare name to its
+                    // variant row; the maker is the oracle's own spelling.
+                    match @out.callee_of(e.id_of()).target {
+                        CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}()")
+                        CalleeFn(_) | CalleeCtor(_) => ice("emit: a bare name resolved to a non-variant callee")
+                    }
+                } else {
+                    // Not a constant: an ordinary name, and `nova_bool` IS C
+                    // `bool`, so the literals are the C keywords -- the same
+                    // shape the oracle emits.
+                    @body.append(expr_leaf_name(e))
+                }
+            }
+        }
+    } else if k == NodeKind.SelfExpr {
+        // The receiver's C name, exactly as the signature spelled it.
+        @body.append(RECV_C_NAME)
     } else if k == NodeKind.SelfField {
         // `@field` is a field of the receiver, and the receiver is parameter
         // zero under our own name. A record is a GC pointer, so the access is
@@ -284,7 +348,31 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(leaf_text(kids[1]))
         @body.append(")")
     } else if k == NodeKind.FieldAccess {
+        // `Sum.Variant` as a VALUE (the variant-value wave): the checker
+        // wrote the variant row on THIS node; nothing here is a field read.
+        if @out.has_callee(e.id_of()) {
+            match @out.callee_of(e.id_of()).target {
+                CalleeVariant(v) => {
+                    @body.append("${c_maker(@ctx, v)}()")
+                    return
+                }
+                CalleeFn(_) | CalleeCtor(_) => ice("emit: a field access resolved to a non-variant callee")
+            }
+        } else {
+            // An ordinary field access: the shapes below own it.
+        }
         ro kids = branch_children(e)
+        // A TUPLE projection prints `.fN` (D123 named-field codegen): the
+        // owner is a by-value mono struct, so the dot is not a choice here
+        // the way it is for records below.
+        if is_tuple(@ctx, @out.type_if_known(kids[0].id_of())) {
+            @body.append("(")
+            @emit_expr(kids[0])
+            @body.append(".f")
+            @body.append(leaf_text(kids[2]))
+            @body.append(")")
+            return
+        }
         @body.append("(")
         @emit_expr(kids[0])
         // A VALUE record is reached with `.`, a GC pointer with `->`. The
@@ -371,45 +459,68 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(")")
     } else if k == NodeKind.Unary {
         ro kids = branch_children(e)
-        @body.append("(")
-        @body.append(c_unary_form(un_op_of(leaf_kind(kids[0]))))
-        @body.append("(")
-        @emit_expr(kids[1])
-        @body.append("))")
+        // INT NEGATION GOES THROUGH THE CHECKED HELPER (hunt emit_c x K1, H3):
+        // `-INT_MIN` does not fit, the oracle panics ("negation overflow"),
+        // and the raw C form printed INT_MIN back in silence -- in the same
+        // file where addition two doors up goes through `nova_int_checked_add`.
+        // The node's type is the checker's answer, recorded when the unary was
+        // typed; the CARRIER decides, exactly as in the compound form (H5) --
+        // a newtype negates as what it holds.
+        ro uk = un_op_of(leaf_kind(kids[0]))
+        ro neg_int = match uk {
+            Negate => carrier_of(@ctx, @out.type_of(e.id_of())) == @ctx.prims.int_id
+            Not | BitNot => false
+        }
+        if neg_int {
+            @body.append("nova_int_checked_neg(")
+            @emit_expr(kids[1])
+            @body.append(")")
+        } else {
+            @body.append("(")
+            @body.append(c_unary_form(uk))
+            @body.append("(")
+            @emit_expr(kids[1])
+            @body.append("))")
+        }
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)
         ro op = bin_op_of(leaf_kind(kids[1]))
-        // The RESULT of a comparison is bool, so the float test must look at
-        // the OPERAND, not at the expression: `a < b` on two f64 is still an
-        // f64 comparison. Arithmetic's result type equals its operands', so
-        // the two agree there.
+        // Reading the EXPRESSION's recorded type IS reading the operands':
+        // only ARITHMETIC branches on the float test (comparisons come out as
+        // C operators whatever the flag says -- c_binary_form), and
+        // arithmetic's result type equals its operands'. The hunt (emit_c x
+        // K1, P1) read the previous wording here as a promise to look at the
+        // operand and found the code reading the node: the code was right,
+        // the words were not.
         ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
         ro form = c_binary_form(op, is_float)
         // `str` equality is the protocol method, not a C operator (D46:
         // `a == b` is `a.@equal(b)`), and `!=` is DERIVED from it — the spec
         // states the derivation, so novac spells it the same way instead of
         // inventing a second method name (owner's reminder 2026-08-16).
-        ro lhs_t = @out.type_of(kids[0].id_of())
-        if lhs_t == @ctx.prims.str_id && is_equality(op) {
+        // WHICH CALLABLE is the CHECKER's decision, and it is
+        // in the channel (274.4 §1). Until 2026-08-28 the
+        // emitter resolved the `equal` method here itself: the
+        // only resolution outside `check/` and a SECOND DOOR to
+        // one root -- on an ambiguous overload the checker
+        // refuses by name while this branch silently took the
+        // first candidate. Now the PRESENCE of a callee is the
+        // decision: recorded for an operator that dispatches,
+        // absent where a primitive C form comes out.
+        if @out.has_callee(e.id_of()) {
+            ro row = @out.callee_of(e.id_of()).callable_row()
             @body.append("((nova_int)(")
             @body.append(if op_is_not_equal(op) { "!" } else { "" })
-            // A SYNTHESISED call: `a == b` on strings becomes the oracle's
-            // `equal` method, and no node in the tree carries that decision --
-            // the emitter makes it here, so it spells the name here too. The
-            // one door takes a row; this has none, which is precisely why the
-            // exception is written out instead of being hidden in a second
-            // door (owner's question 2026-08-18).
-            // The row, then the ONE door -- the same path an ordinary method
-            // call takes. Spelling the name here would be a second decision
-            // about a symbol the registry already knows.
-            // The key of a two-parameter call: the receiver in position zero
-            // and the right-hand side after it — the same shape check builds,
-            // asked at the same door. The right side's type is not read here:
-            // `equal` takes its own type, so the position is left unknown.
-            match @ctx.fns.lookup(@ctx.tys, EQUAL_METHOD, equal_key(lhs_t), CallForm.MethodCall) {
-                FnFound(row) => @body.append(c_callable(@ctx, row, no_subst()))
-                FnOverloaded(row) => @body.append(c_callable(@ctx, row, no_subst()))
-                FnUnknown => ice("emit_c: `==` on a type whose `equal` method novac was never handed")
+            // NAMED BY WHOEVER HAS THE BODY. `str.equal` is std's, and novac
+            // compiles no std bodies — so the definition lives in the SHELL and
+            // must be called by the shell's name. Until 2026-08-28 this branch
+            // printed `c_callable`, i.e. OUR `novac_fn_equal__...`, and the link
+            // failed on an undefined symbol; nobody saw it because not one file
+            // of the corpus that novac accepts compares strings (measured).
+            if @ctx.fns.compiles_body(row) {
+                @body.append(c_callable(@ctx, row, no_subst()))
+            } else {
+                @body.append(c_shell_method(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
             }
             @body.append("(")
             @emit_expr(kids[0])
@@ -463,12 +574,46 @@ fn Emitter mut @emit_expr(e Node) -> () {
 fn Emitter mut @emit_call_stmt(call Node) -> () {
     ro kids = branch_children(call)
     if call_callee_text(kids) != PRINT_FN {
-        ice("emit: the subset knows only println calls in statement position")
+        // A CALL WHOSE RESULT IS DISCARDED (wave B12). Emitting a call as a
+        // VALUE is something this file already does; a statement is that plus a
+        // semicolon and nothing more -- no temporary is declared, because
+        // nobody asked this call for an answer.
+        //
+        // Measured with the oracle BEFORE it was written: discarding a result
+        // is legal there and silent, so warning about it here would be our
+        // invention rather than the language's rule.
+        @hoist_array_lits(call)
+        @body.append("    ")
+        @emit_expr(call)
+        @body.append(";\n")
+        return
+    } else {
+        // `println` is not an ordinary call: every argument goes to its own
+        // printer and the newline comes once, at the end. That is the path
+        // below, and it is why this door exists at all.
     }
+    // EACH ARGUMENT IS HOISTED RIGHT BEFORE ITS OWN PRINT LINE (hunt
+    // emit_c x K1, finding H1). Hoisting the whole call up front ran a
+    // constructor argument's effects AHEAD of its neighbours' prints: the
+    // oracle prints `head` then ticks, novac ticked first. println is the one
+    // place where output interleaves with argument effects, so the order of
+    // the two IS the observable.
     for c in kids {
         ro ck = c.kind_of()
+        if is_expr_kind(ck) {
+            @hoist_array_lits(c)
+        } else {
+            // Punctuation and the callee leaf hoist nothing.
+        }
         if ck == NodeKind.Lit && leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {
             ro t = branch_children(c)[0]
+            // An INTERPOLATED argument was hoisted into its chain above
+            // (I1); the temporary prints where the pool literal would.
+            ro itmp = @lit_tmp[raw_node(c.id_of())]
+            if itmp != "" {
+                @body.append("    nova_print_str(${itmp});\n")
+                continue
+            }
             ro idx = @lits.len()
             @lits.push(leaf_text(t))
             @body.append("    nova_print_str(_novac_strlit_${idx});\n")
@@ -500,8 +645,20 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
             @emit_expr(c)
             @body.append(");\n")
         } else {
-            // The callee leaf and the parenthesis leaves are not arguments;
-            // the callee itself was already refused or accepted by name above.
+            match c {
+                Leaf(_) => {
+                    // The callee leaf and the parenthesis leaves are not
+                    // arguments; the callee itself was already refused or
+                    // accepted by name above.
+                }
+                Branch { .. } => {
+                    // The checker refuses every branch it cannot type in an
+                    // argument position (#870), so a branch here is a broken
+                    // invariant, not a shape to skip -- the silent fallout
+                    // this arm replaces printed `ab` for `a20b`.
+                    ice("emit_c: an argument form the checker let through (#870)")
+                }
+            }
         }
     }
     @body.append("    nova_print_newline();\n")

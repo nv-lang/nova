@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Roslyn's `EatToken` / `EatTokenAsKind` pair for the QUESTION -- a
+// parser reading broken input needs two different answers to "the token is not
+// here". NOT taken: Roslyn's skipped-token trivia and its error-recovery
+// ranking; this subset plants one lossless Err leaf and lets `check` decide
+// whether the gap is worth saying.
+// Role: layer 2 (parse) -- taking a token that is EXPECTED at this position,
+// and the difference between "optional here" and "required here". That
+// difference is registry #809 and #815: for a year every closing bracket AND
+// eighteen other required positions were taken by the optional door, so
+// `fn main() {` with no `}` and `type { n int }` with no name both compiled
+// with exit code 0 and not one diagnostic.
+// Used by: parse.nv, expr.nv, decls.nv -- every place a comma, a keyword, a
+// name or a bracket is taken.
+// Guarded by: check-novac-required-token-door.py (a required token kind
+// through the optional door is red, base zero; so is ZERO calls of the
+// mandatory door, which is how a rename would blind it), plus the class tests
+// "an unclosed bracket is refused, not accepted in silence (#809)" and "a
+// token the grammar requires is refused when absent (#815)".
+// novac/src/parse/expect.nv -- is this token optional here, or required.
+
+module novac.parse
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+
+/// Take the token if it is the one wanted, and say ONCE what it means when it
+/// is not.
+///
+/// The phrase `if @peek() == X { kids.push(@take()) }` stood at fifty-four
+/// places in this parser: every optional comma and keyword. Each was an
+/// incomplete branching (P31) whose missing half means the same thing
+/// everywhere -- the token is optional here, there is nothing to take, and
+/// that is a valid outcome. Fifty-four empty `else` comments would say it
+/// fifty-four times; a named door says it once, and the call site gets
+/// shorter into the bargain.
+///
+/// A CLOSING bracket is not one of those, and saying it was is #809: this
+/// door used to take `}` too, so a file ending mid-body was accepted in
+/// silence. Closers go through `@push_closer` below, and the guard
+/// check-novac-closer-mandatory keeps them there.
+fn Cursor mut @push_if(mut kids []Node, k TokenKind) -> () {
+    if @peek() == k {
+        kids.push(@take())
+    } else {
+        // Nothing to take: the token is optional at this position. This is
+        // THE empty branch P31 asks to be named, and it is named here for
+        // every call site at once.
+    }
+}
+
+/// Take a token the grammar REQUIRES here; plant a gap when it is not there.
+///
+/// The twin of `@push_if`, and the difference is the whole of registry #809 and
+/// #815. `@push_if` means "optional at this position, and absence is a valid
+/// outcome" -- true of a trailing comma. This one means "nothing else can stand
+/// here and still be this form", which covers every closing bracket (its opener
+/// has already been consumed) and eighteen other positions: a name, an `=`, a
+/// `=>`, the `{` of a match, the `(` of a signature, the `in` of a for-loop.
+///
+/// Taken with the optional door, `fn main() {` with no `}` compiled with exit
+/// code 0 and not one diagnostic, and `type { n int }` compiled with no name at
+/// all.
+///
+/// ONE door, not two, and the code is what says so: while the parser tried to
+/// tell a cause from its wake, a closer needed different treatment from a name.
+/// It could not -- the parser meets a missing token BEFORE its recovery marks
+/// the run that caused it, so on `fn main junk here () { }` the refusal about
+/// the absent `(` came out first and the one about the junk second. The
+/// decision moved to `check.tell_gap_if_silent`, where order does not exist,
+/// and the two doors' bodies became identical. They are one door now.
+fn Cursor mut @push_expected(mut kids []Node, k TokenKind) -> () {
+    if @peek() == k {
+        kids.push(@take())
+    } else {
+        // Nothing else can stand here and still be this form. The zero-width
+        // Err keeps the tree lossless and hands `check` a position; WHETHER
+        // it is worth saying is the checker's call, and it makes it once for
+        // both doors (`tell_gap_if_silent`).
+        //
+        // THE LEAF CARRIES THE KIND THAT WAS WANTED (registry #850, donor
+        // Roslyn `EatTokenAsKind`, named in this file's header from the start).
+        // Until now `k` died here, so the checker could only say "this is not a
+        // form of the language" -- true, and useless to someone who left out a
+        // `)`. The leaf is safe to give a real kind because it lives INSIDE an
+        // Err branch, and every consumer of the tree filters DIRECT children by
+        // kind; nothing but the refusal reader ever looks in there.
+        kids.push(@error_node(k))
+    }
+}

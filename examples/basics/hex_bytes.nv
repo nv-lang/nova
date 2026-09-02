@@ -1,0 +1,14 @@
+// Hex integer literals: the spelling of bytes and masks (the hex wave).
+module basics.hex_bytes
+
+/// The byte a mask keeps: spelled hex, read decimal.
+const MASK = 0xFF
+
+/// A line feed, as std's json.nv spells its B_* consts.
+const LINE_FEED = 0x0A
+
+fn main() -> () {
+    println(MASK)
+    println(LINE_FEED)
+    println(0x7FFFFFFFFFFFFFFF)
+}

@@ -1,0 +1,21 @@
+// An array literal in the two positions wave B8 adds: a CALL ARGUMENT and a
+// CONSTRUCTOR FIELD. The census counted 9 argument carriers and 12 field
+// carriers in novac's own sources -- and zero bare tails or assignments, so
+// those stay outside by measurement. The literal is a multi-statement build
+// (constructor plus pushes), so the emitter hoists it into a temporary before
+// the statement that consumes it.
+module basics.array_lit_positions
+
+type Bag {
+    xs []int
+    tag str
+}
+
+fn count_of(xs []int) -> int => xs.len()
+
+fn main() {
+    println(count_of([3, 4, 5]))
+    ro b = Bag { xs: [7, 8], tag: "bag" }
+    println(b.tag)
+    println(count_of(b.xs))
+}

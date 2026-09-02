@@ -38,7 +38,12 @@ QUOTED = re.compile(r'"[A-Za-z_][A-Za-z0-9_]*(?:\$\{[^}]*\})?[A-Za-z0-9_]*"')
 # 172.14 F.2 (суммы без полезной нагрузки живут значением: `NovaValue_X`
 # плюс тег-enum `Nova_X_Tag`). Существование такого имени стережёт
 # check-novac-mangle-fixed-point — оно обязано быть в оболочке.
-ALLOWED_PREFIX = ("Nova_", "NovaValue_", "nova_", "novac_", "NOVAC_", "_novac_")
+# `_NovaTuple` -- пространство ОРАКУЛА для mono-структур кортежей (D123,
+# length-prefixed; оболочка сама несёт `_NovaTuple_2_8_nova_int_8_nova_int`).
+# Появилось у novac с волной B15 шаг 4a; существование имени стережёт
+# дифф-корпус (носитель tuple_mixed_pair_typedef краснеет без typedef-хода).
+ALLOWED_PREFIX = ("Nova_", "NovaValue_", "nova_", "novac_", "NOVAC_", "_novac_",
+                  "_NovaTuple")
 ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).
@@ -50,6 +55,10 @@ ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  # Куски имён ИНСТАНСА у оракула (интероп, сняты с оболочки 2026-08-26):
                  # конструктор `Nova_<body>_static_new`, метод `<body>_method_<name>`.
                  "_static_new", "_method_",
+                 # Кусок оракульего спеллинга УКАЗАТЕЛЯ внутри mono-имени пары
+                 # (`Nova_Vec____nova_int_p`, снято с оболочки): D123 пишет `*`
+                 # буквами, и кусок один на всех читателей (mono_tuple_name).
+                 "_p",
                  # Куски тега ИНСТАНСА внутри НАШИХ имён (`Vec_of_nova_int`): выбраны
                  # так, чтобы не совпасть с разделителем параметров `__`.
                  "_of_", "_and_",
@@ -59,7 +68,13 @@ ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  # language's words: the C name is ours (274 section 7.0) and a
                  # mode's spelling lives only in builtins (P5). `ro` carries no
                  # mark at all -- it is the default, so no earlier name moved.
-                 "m_", "c_"}
+                 "m_", "c_",
+                 # NULL -- спеллинг ОРАКУЛА для контракта без сообщения (снят с
+                 # shell.tpl.c: его же message-less requires передают NULL).
+                 # Появился с волной requires (274.5, 3-пред38); печатает его
+                 # emit_requires.nv, и подмножество до NULL не доходит (msg
+                 # обязателен), но спеллинг оракульский заранее.
+                 "NULL"}
 
 
 def main():
@@ -68,7 +83,8 @@ def main():
     if len(a) > 2:
         files = [pathlib.Path(x) for x in a[2].split()]
     else:
-        files = [root / "novac/src/sem/mangle.nv", root / "novac/src/emit_c/emit_c.nv"]
+        files = [root / "novac/src/sem/mangle.nv", root / "novac/src/emit_c/emit_c.nv",
+                 root / "novac/src/emit_c/emit_requires.nv"]
 
     names = set()
     for f in files:

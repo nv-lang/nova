@@ -1,0 +1,10 @@
+module p
+
+fn main() {
+    mut hi = 9223372036854775807
+    mut lo = hi - 1
+    for i in lo..hi {
+        println(i)
+    }
+    println("end")
+}
