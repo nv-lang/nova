@@ -611,6 +611,24 @@ but that is an anti-pattern (the linter warns).
   `#blocking` (offload to a threadpool) and `#realtime` (forbid
   parking/alloc in the body) — D172.
 
+**A function can learn where it was called from** — `#track_caller` plus the
+built-in `caller_loc()`, returning the prelude type `CallerLoc(file str, line
+int)` ([D468](decisions/08-runtime.md#d468)). Without it a diagnostic wrapper
+reports ITSELF rather than the culprit: `assert` and contracts get their
+location from the compiler, a hand-written `ice()`/`expect()` door could not.
+The attribute means "the call site flows through me", so it must be written on
+every link of a wrapper chain; in an unmarked function `caller_loc()` honestly
+returns its own line. It carries no effect — the value is a call-site constant,
+which is what lets it be used in `-> never` doors.
+
+```nova
+#track_caller
+export fn ice(msg str) -> never {
+    ro loc = caller_loc()      // where ice() was called, not this line
+    …
+}
+```
+
 **Primitive types (lowercase, an exception to the PascalCase rule):**
 - `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
 - `f32`, `f64`
