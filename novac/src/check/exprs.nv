@@ -176,7 +176,11 @@ fn Checker mut @judge_char_lit(e Node) -> () {
     // continuation byte, or a truncated sequence all disagree.
     ro bb = body.bytes()
     ro head = bb[0]
-    ro want = if head < 128 { 1 } else if head >= 240 { 4 } else if head >= 224 { 3 } else if head >= 192 { 2 } else { 0 }
+    ro want = if head < 128 { 1 }
+              else if head >= 240 { 4 }
+              else if head >= 224 { 3 }
+              else if head >= 192 { 2 }
+              else { 0 }
     if body.byte_len() != want {
         @report_first_leaf_of(kids, CHAR_WIDTH_MSG)
     } else {
