@@ -3453,23 +3453,30 @@ impl Parser {
         match tok.kind {
             TokenKind::Str(s) => {
                 self.bump();
-                // Только строки с `${` идут через desugar (interp); плоский
-                // литерал — прежний zero-cost путь (поведение не меняется).
-                if s.contains("${") {
-                    let raw = s.clone();
-                    let e = self.desugar_string_interpolation(s, tok.span)?;
-                    match e.kind {
-                        // desugar мог решить, что интерполяции по факту нет.
-                        ExprKind::StrLit(m) => Ok((Some(m), None)),
-                        // Dual-populate: `message` = сырой литерал (fallback для
-                        // codegen-сайтов, пока не поддерживающих interp — type
-                        // invariants; сохраняет прежнее поведение, без silent-drop),
-                        // `message_expr` = интерполированная форма (requires/ensures
-                        // codegen предпочитает её, вычисляя значения на сайте провала).
-                        _ => Ok((Some(raw), Some(e))),
-                    }
-                } else {
-                    Ok((Some(s), None))
+                // Реестр №881: КАЖДЫЙ литерал сообщения идёт через desugar —
+                // одна дверь, а не две. Прежде плоская строка (без `${`) шла
+                // мимо него «как zero-cost путь», и вместе с ней проезжал
+                // лексерный sentinel экранированного доллара (SOH `\x01` + `$`,
+                // см. `desugar_string_interpolation`): `requires x > 0, "cost \$5"`
+                // паниковал текстом `cost \x01$5` — невидимый управляющий байт
+                // в пользовательском сообщении. Условие `s.contains("${")` его
+                // поймать не могло: после лексера там `$5`, а не `${`.
+                // Стоимость эмиссии не меняется — плоский литерал по-прежнему
+                // возвращается как `StrLit` и эмитится прежним one-liner'ом
+                // `nova_contract_violation`; десугар флэт-строки — линейный скан
+                // во время компиляции.
+                let raw = s.clone();
+                let e = self.desugar_string_interpolation(s, tok.span)?;
+                match e.kind {
+                    // Интерполяции по факту нет (в т.ч. когда весь `$` был
+                    // экранирован) — плоское сообщение с уже снятым sentinel'ом.
+                    ExprKind::StrLit(m) => Ok((Some(m), None)),
+                    // Dual-populate: `message` = сырой литерал (fallback для
+                    // codegen-сайтов, пока не поддерживающих interp — type
+                    // invariants; сохраняет прежнее поведение, без silent-drop),
+                    // `message_expr` = интерполированная форма (requires/ensures
+                    // codegen предпочитает её, вычисляя значения на сайте провала).
+                    _ => Ok((Some(raw), Some(e))),
                 }
             }
             _ => {

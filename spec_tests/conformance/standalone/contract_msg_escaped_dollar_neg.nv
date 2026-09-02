@@ -1,0 +1,21 @@
+// Registry 881: an escaped dollar in a CONTRACT MESSAGE used to reach the user
+// with the lexer's sentinel byte still in it -- the panic read `cost \x01$5`
+// (SOH before the dollar), an invisible control character in user-visible text.
+// The flat message path skipped the desugar that strips the sentinel, and its
+// guard condition (`contains("${")`) could not see it: after lexing the text is
+// `$5`, not `${`.
+//
+// The pin is the panic text itself: EXPECT_RUNTIME_PANIC matches a substring, so
+// `cost $5` passes only when nothing sits between the space and the dollar.
+// EXPECT_RUNTIME_PANIC requires failed: cost $5 (x > 0)
+module standalone.contract_msg_escaped_dollar_neg
+
+fn f(x int) -> int
+    requires x > 0, "cost \$5"
+{
+    x
+}
+
+fn main() Io -> () {
+    println(f(-1))
+}

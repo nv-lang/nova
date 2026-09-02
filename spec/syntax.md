@@ -685,6 +685,8 @@ j.name("deploy")    // setter — переприсваивает и возвра
     .name("test")    // fluent-chain: сеттер можно вызывать цепочкой
 ```
 
+**Overload sets that differ only by parameter MODE are resolved by dominance, never by a score** (D84 mode axis; implemented 2026-09-02, registry 857). A candidate wins only if it is no less specific in every position and more specific somewhere: `consume` > `mut` > `ro`. When two candidates vary in opposite directions -- say `f(consume a, b, c)` against `f(a, mut b, mut c)` -- neither dominates, and the call is refused with `[E_OVERLOAD_AMBIGUOUS_MODE]` listing the candidates. There is no silent pick: before that date such a call compiled and quietly ran one of the two.
+
 `get_x`/`set_x` pairs — **not the canon** (there are 0 of them in std).
 `with_x(v)` — a different operation (a copy with a replaced field, not
 mutating the original). All new std code is written in the

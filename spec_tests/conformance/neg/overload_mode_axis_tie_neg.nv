@@ -1,0 +1,25 @@
+// Registry 857: two overloads whose parameter modes vary in OPPOSITE directions
+// on two positions (consume on p0 vs mut on p1+p2) are Pareto-incomparable, and
+// D84's mode-axis amendment (10-overloading.md, Plan 184 / D326-R13/R14) orders
+// exactly this shape REJECTED with the candidate list -- "no silent choice".
+// The oracle used to compile this and print 2: the old scalar specificity sum
+// (consume=3, mut=2) scored 3 vs 4 and invented a unique winner where the axis
+// has none.
+// EXPECT_COMPILE_ERROR E_OVERLOAD_AMBIGUOUS_MODE
+module neg.overload_mode_axis_tie_neg
+
+fn f(consume a int, b int, c int) -> int => a
+
+fn f(a int, mut b int, mut c int) -> int => 2
+
+fn main() Io -> () {
+    mut y = 10
+    mut z = 20
+    // The call sits OUTSIDE the interpolation on purpose: a diagnostic inside
+    // "${...}" loses its position and lands on line 1 (registry 880, found
+    // while fixing this row) -- which would make the line pin untestable.
+    // positions: neither candidate dominates, D84 orders the refusal here
+    // nova:expect E_OVERLOAD_AMBIGUOUS_MODE -- opposite mode variation on two
+    ro r = f(41 + 1, y, z)
+    print("${r}")
+}

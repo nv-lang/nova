@@ -1,0 +1,14 @@
+// Registry 857 second control: where a unique winner EXISTS on the mode axis
+// the pick keeps working -- the consume overload dominates the plain one on an
+// rvalue argument (rank vector [0,2] vs [0,0]: >= everywhere, > somewhere), so
+// this is a pick, not a rejection. Guards the fix against over-refusing.
+// EXPECT_STDOUT 42
+module standalone.overload_mode_axis_dominance_pos
+
+fn f(consume a int) -> int => a
+
+fn f(a int) -> int => 0
+
+fn main() Io -> () {
+    print("${f(41 + 1)}")
+}

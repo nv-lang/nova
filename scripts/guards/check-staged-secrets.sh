@@ -56,33 +56,50 @@ report() {
 EXCL_SELFTEST=':(exclude)scripts/guards/selftest/'
 EXCL_SELF=':(exclude)scripts/guards/check-staged-secrets.sh'
 
-if [ "$MODE" = "staged" ]; then
-    DIFF=$(git -C "$ROOT" diff --cached --unified=0 -- . "$EXCL_SELFTEST" "$EXCL_SELF" 2>/dev/null || true)
-    [ -n "$DIFF" ] || { echo "check-staged-secrets ok: staged пуст"; exit 0; }
-    SCAN=$(printf '%s\n' "$DIFF" | grep '^+' | grep -v '^+++' || true)
-else
-    # Именной список законных мест. Каждая строка обязана нести причину:
-    # путь без причины — это пропуск, выписанный молча, а таких у нас не бывает
-    # (тот же приём, что в `std-test-fail.baseline` и `doc-pair-missing.baseline`).
-    ALLOW_FILE="${NOVA_SECRETS_ALLOWLIST:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets-allowlist.baseline}"
-    ALLOW_RE=""
-    if [ -f "$ALLOW_FILE" ]; then
+# Именной список законных мест читается ДО ветвления по режиму — и это ИСПРАВЛЕНИЕ
+# (2026-09-01, найдено окном 274 при слиянии main). РАНЬШЕ список строился
+# ВНУТРИ ветки `--tree`, а режим `staged` — тот, что гоняет pre-commit хук, —
+# не видел его вовсе. Файл мог проходить проверку ДЕРЕВА и краснеть в момент
+# КОММИТА — худшее место для ложного срабатывания: оно останавливает работу и
+# приглашает обойти хук через `--no-verify`, а привычка обходить стража
+# дороже самого стража. Каждая строка списка обязана нести причину: путь без
+# причины — это пропуск, выписанный молча, а таких у нас не бывает (тот же приём,
+# что в `std-test-fail.baseline` и `doc-pair-missing.baseline`).
+ALLOW_FILE="${NOVA_SECRETS_ALLOWLIST:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/secrets-allowlist.baseline}"
+ALLOW_RE=""
+ALLOW_PATHS=""
+if [ -f "$ALLOW_FILE" ]; then
+    ALLOW_BLOCK=1
+fi
+
+if [ "${ALLOW_BLOCK:-0}" = "1" ]; then
         # CR СНИМАЕТСЯ ЗДЕСЬ (2026-08-23). `.baseline` не закреплён в
         # .gitattributes, поэтому в дереве с autocrlf он CRLF, и строка из
         # одного `\r` читается как исключение без причины — страж краснел на
         # ПУСТОЙ строке и печатал пустое имя.
-        while IFS= read -r line; do
-            line=${line%$'\r'}
-            case "$line" in ''|'#'*) continue ;; esac
-            path=$(printf '%s' "$line" | awk '{print $1}')
-            case "$line" in
-                *"#"*) : ;;
-                *) report "строка списка исключений без причины: $path" "(причина обязательна)" ;;
-            esac
-            ALLOW_RE="${ALLOW_RE}${ALLOW_RE:+|}^$(printf '%s' "$path" | sed 's/[.[\*^$]/\\&/g')"
-        done < "$ALLOW_FILE"
-    fi
+    while IFS= read -r line; do
+        line=${line%$'\r'}
+        case "$line" in ''|'#'*) continue ;; esac
+        path=$(printf '%s' "$line" | awk '{print $1}')
+        case "$line" in
+            *"#"*) : ;;
+            *) report "строка списка исключений без причины: $path" "(причина обязательна)" ;;
+        esac
+        ALLOW_RE="${ALLOW_RE}${ALLOW_RE:+|}^$(printf '%s' "$path" | sed 's/[.[\*^$]/\\&/g')"
+        ALLOW_PATHS="$ALLOW_PATHS :(exclude)$path"
+    done < "$ALLOW_FILE"
+fi
 
+if [ "$MODE" = "staged" ]; then
+    # Список применяется ПАТХСПЕК-ИСКЛЮЧЕНИЯМИ самому `git diff`: так
+    # исключённые файлы не попадают в вывод вообще, и не нужно разбирать
+    # дифф на заголовки файлов руками (разбор диффа — ещё одно место,
+    # где ошибка тихая). Список тот же, что у режима дерева.
+    # shellcheck disable=SC2086
+    DIFF=$(git -C "$ROOT" diff --cached --unified=0 -- . "$EXCL_SELFTEST" "$EXCL_SELF" $ALLOW_PATHS 2>/dev/null || true)
+    [ -n "$DIFF" ] || { echo "check-staged-secrets ok: staged пуст"; exit 0; }
+    SCAN=$(printf '%s\n' "$DIFF" | grep '^+' | grep -v '^+++' || true)
+else
     FILES=$(git -C "$ROOT" ls-files -- . "$EXCL_SELFTEST" "$EXCL_SELF" 2>/dev/null \
             | grep -vE '^(compiler-codegen/(nova_rt/(libuv|gc|libatomic_ops)|vcpkg_installed))/' || true)
     if [ -n "$ALLOW_RE" ]; then

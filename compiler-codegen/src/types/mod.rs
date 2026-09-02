@@ -15429,19 +15429,30 @@ impl<'a> TypeCheckCtx<'a> {
     /// Selection: a candidate is INELIGIBLE (dropped, mirrors `narrow_by_param_mode`'s
     /// `continue 'cand`) when a `mut` axis it declares is not satisfied by the
     /// actual call site (`mut` receiver/param requires a mutable place; `consume`
-    /// param requires `expr_mode_axis_consume_eligible`). Eligible candidates are
-    /// scored by specificity (`consume` > `mut` > `ro`, same weights as
-    /// `narrow_by_param_mode`) and the unique highest-scoring one wins. Zero
-    /// eligible or a genuine tie → `None` (honest gap, falls through to the
-    /// pre-existing legacy resolution — never a wrong silent guess).
+    /// param requires `expr_mode_axis_consume_eligible`).
+    ///
+    /// Registry №857: eligible candidates used to be compared by a SCALAR
+    /// specificity sum (`consume`=3, `mut`=2 per position) — and any scalar scale
+    /// resolves Pareto-INCOMPARABLE pairs, which is exactly the shape D84's
+    /// mode-axis amendment (10-overloading.md, "Неоднозначность невозможна по
+    /// построению") orders REJECTED: "для набора с противоположной вариацией
+    /// режима двух параметров, дающего ничью специфичности, диспатч реджектит
+    /// вызов как ambiguous с перечислением кандидатов — молчаливого выбора нет".
+    /// The probe pair `f(consume a, b, c)` / `f(a, mut b, mut c)` scored 3 vs 4
+    /// and silently picked the second. Comparison is now by DOMINANCE over the
+    /// per-position mode-rank vector (`consume`(2) > `mut`(1) > `ro`(0), receiver
+    /// axis first): the winner must be ≥ everywhere and > somewhere against every
+    /// other eligible candidate. No dominating candidate → `GenuineTie`, and the
+    /// CALLER emits the D84 rejection. Zero eligible or not an axis-only set →
+    /// `NoVerdict` (honest gap, legacy resolution — that path stays legal).
     fn mode_axis_tiebreak(
         &self,
         obj: Option<&Expr>,
         compat_fns: &[&FnDecl],
         args: &[CallArg],
-    ) -> Option<crate::diag::Span> {
+    ) -> ModeAxisVerdict {
         if compat_fns.len() < 2 {
-            return None;
+            return ModeAxisVerdict::NoVerdict;
         }
         let first = compat_fns[0];
         let same_shape = compat_fns.iter().all(|f| {
@@ -15450,7 +15461,7 @@ impl<'a> TypeCheckCtx<'a> {
                     .all(|(a, b)| typeref_equal(&a.ty, &b.ty))
         });
         if !same_shape {
-            return None;
+            return ModeAxisVerdict::NoVerdict;
         }
         let recv_mut = |f: &FnDecl| f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let axis_differs = compat_fns.windows(2).any(|w| {
@@ -15459,34 +15470,56 @@ impl<'a> TypeCheckCtx<'a> {
                     .any(|(a, b)| (a.consume, a.is_mut) != (b.consume, b.is_mut))
         });
         if !axis_differs {
-            return None;
+            return ModeAxisVerdict::NoVerdict;
         }
         let obj_mut = obj.map(|o| self.expr_mode_axis_mutable_place(o)).unwrap_or(false);
-        let mut scored: Vec<(&FnDecl, i32)> = Vec::new();
+        // Per-candidate mode-rank vector: receiver axis first, then one rank per
+        // parameter position. Ranks order the D84 specificity axis only —
+        // dominance below never adds ranks across positions.
+        let mut scored: Vec<(&FnDecl, Vec<u8>)> = Vec::new();
         'cand: for f in compat_fns {
-            let mut score = 0i32;
+            let mut ranks: Vec<u8> = Vec::with_capacity(f.params.len() + 1);
             if recv_mut(f) {
                 if !obj_mut { continue 'cand; }
-                score += 2;
+                ranks.push(1);
+            } else {
+                ranks.push(0);
             }
             for (p, a) in f.params.iter().zip(args.iter()) {
                 if p.consume {
                     if !self.expr_mode_axis_consume_eligible(a.expr()) { continue 'cand; }
-                    score += 3;
+                    ranks.push(2);
                 } else if p.is_mut {
                     if !self.expr_mode_axis_mutable_place(a.expr()) { continue 'cand; }
-                    score += 2;
+                    ranks.push(1);
+                } else {
+                    ranks.push(0);
                 }
             }
-            scored.push((*f, score));
+            scored.push((*f, ranks));
         }
-        let best = scored.iter().map(|(_, s)| *s).max()?;
-        let mut at_best = scored.iter().filter(|(_, s)| *s == best);
-        let (winner, _) = at_best.next()?;
-        if at_best.next().is_some() {
-            return None; // genuine tie — leave to the legacy resolution.
+        match scored.len() {
+            0 => ModeAxisVerdict::NoVerdict, // zero eligible — legacy's honest gap
+            1 => ModeAxisVerdict::Winner(scored[0].0.span),
+            _ => {
+                'outer: for (f, r) in &scored {
+                    for (g, s) in &scored {
+                        if f.span == g.span {
+                            continue;
+                        }
+                        let ge_all = r.iter().zip(s.iter()).all(|(a, b)| a >= b);
+                        let gt_any = r.iter().zip(s.iter()).any(|(a, b)| a > b);
+                        if !(ge_all && gt_any) {
+                            continue 'outer;
+                        }
+                    }
+                    return ModeAxisVerdict::Winner(f.span);
+                }
+                ModeAxisVerdict::GenuineTie(
+                    scored.iter().map(|(f, _)| mode_axis_candidate_desc(f)).collect(),
+                )
+            }
         }
-        Some(winner.span)
     }
 
     /// Plan 172.1 U.3.3-instance (§6/§1). Resolve a value-receiver `obj.method(args)`
@@ -16013,14 +16046,32 @@ impl<'a> TypeCheckCtx<'a> {
             Some(concrete_compat[0])
         } else if compat_spans.len() == 1 {
             Some(compat_spans[0])
-        } else if let Some(sp) = self.mode_axis_tiebreak(Some(obj), &compat_fns, args) {
+        } else {
             // №309/№317: ≥2 type-compatible candidates (the branches above all
             // missed) — try the D84 mode/receiver-mutability axis (see doc on
-            // `mode_axis_tiebreak`) before giving up. `None` (not a pure axis
-            // set, or a genuine tie) falls through unchanged.
-            Some(sp)
-        } else {
-            None
+            // `mode_axis_tiebreak`) before giving up. №857: a genuine tie on
+            // that axis is no longer a silent fall-through — D84's mode-axis
+            // amendment orders the rejection, with the candidates listed.
+            match self.mode_axis_tiebreak(Some(obj), &compat_fns, args) {
+                ModeAxisVerdict::Winner(sp) => Some(sp),
+                ModeAxisVerdict::GenuineTie(cands) => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_OVERLOAD_AMBIGUOUS_MODE] call to method `{}` is ambiguous: \
+                             {} overloads differ only by parameter modes and none dominates \
+                             (D84 mode axis: opposite mode variation — no silent pick). \
+                             Candidates: {}. Disambiguate the call site (e.g. pass a \
+                             consume-bound value or a mutable place) or remove an overload",
+                            method_name,
+                            cands.len(),
+                            cands.join("; "),
+                        ),
+                        span,
+                    ));
+                    None
+                }
+                ModeAxisVerdict::NoVerdict => None,
+            }
         };
         if let Some(sp) = chosen_span {
             self.resolved_callees.borrow_mut().insert(call_id, sp);
@@ -16457,9 +16508,36 @@ impl<'a> TypeCheckCtx<'a> {
                                     // `mode_axis_tiebreak`/`expr_mode_axis_consume_
                                     // eligible`). Only reached when the default-count
                                     // tiebreak above ALSO found no unique winner.
+                                    // №857: a genuine tie is the D84-ordered
+                                    // rejection, not a silent legacy pick.
                                     let fns: Vec<&FnDecl> = compat.iter().map(|f| **f).collect();
-                                    self.mode_axis_tiebreak(None, &fns, args)
-                                        .and_then(|sp| compat.iter().find(|f| f.span == sp).copied())
+                                    match self.mode_axis_tiebreak(None, &fns, args) {
+                                        ModeAxisVerdict::Winner(sp) =>
+                                            compat.iter().find(|f| f.span == sp).copied(),
+                                        ModeAxisVerdict::GenuineTie(cands) => {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_OVERLOAD_AMBIGUOUS_MODE] call to `{}` is \
+                                                     ambiguous: {} overloads differ only by \
+                                                     parameter modes and none dominates (D84 mode \
+                                                     axis: opposite mode variation — no silent \
+                                                     pick). Candidates: {}. Disambiguate the call \
+                                                     site (e.g. pass a consume-bound value or a \
+                                                     mutable place) or remove an overload",
+                                                    n,
+                                                    cands.len(),
+                                                    cands.join("; "),
+                                                ),
+                                                // No857: anchor on the CALL, not on the
+                                                // callee path base -- `base.span` lands on
+                                                // line 1 for a bare name (measured by the
+                                                // negative fixture's line pin).
+                                                func.span,
+                                            ));
+                                            None
+                                        }
+                                        ModeAxisVerdict::NoVerdict => None,
+                                    }
                                 }),
                         };
                         if let Some(chosen) = chosen_opt {
@@ -37244,6 +37322,29 @@ fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> Str
     }).collect();
     let r = ret.as_ref().map(|t| format!(" -> {}", render_type_ref(t))).unwrap_or_default();
     format!("{}({}){}", name, p_strs.join(", "), r)
+}
+
+/// Registry №857: the three-way outcome of `mode_axis_tiebreak`. `Winner` and
+/// `NoVerdict` keep the pre-fix behaviors (record / fall through to legacy);
+/// `GenuineTie` is the state the old `Option<Span>` could not express — a
+/// mode-axis-only overload set where NO candidate dominates, which D84's
+/// mode-axis amendment orders rejected with the candidate list, never picked
+/// silently. Carries rendered candidate signatures ready for the diagnostic.
+enum ModeAxisVerdict {
+    Winner(crate::diag::Span),
+    GenuineTie(Vec<String>),
+    NoVerdict,
+}
+
+/// №857: one overload candidate as the D84 rejection lists it — name plus
+/// parameters with their declared modes, e.g. `f(consume a int, b int, c int)`.
+fn mode_axis_candidate_desc(f: &FnDecl) -> String {
+    let recv = f.receiver.as_ref().map(|r| if r.mutable { "mut @" } else { "@" }).unwrap_or("");
+    let params: Vec<String> = f.params.iter().map(|p| {
+        let mode = if p.consume { "consume " } else if p.is_mut { "mut " } else { "" };
+        format!("{}{} {}", mode, p.name, render_type_ref(&p.ty))
+    }).collect();
+    format!("{}{}({})", recv, f.name, params.join(", "))
 }
 
 pub(crate) fn render_type_ref(t: &TypeRef) -> String {
