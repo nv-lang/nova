@@ -274,41 +274,9 @@ const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `
 /// See IFLET_VARIANT_MSG above; the initializer half.
 const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
 
-/// The PAYLOAD an Option instance carries, or no type: the head must be the
-/// language's Option sum of arity one. The same doors the for-head judge
-/// walks, asked with the family name.
-fn option_payload(ctx Ctx, t TyId) -> TyId {
-    if !is_ty(t) { return no_ty() }
-    ro k = ctx.tys.kind_of(t)
-    ro is_app = match k {
-        TkApp => true
-        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
-    }
-    if !is_app { return no_ty() }
-    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
-    if ctx.tys.arg_count(t) != 1 { return no_ty() }
-    ctx.tys.arg(t, 0)
-}
-
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
 const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"
-
-/// The ELEMENT a for-head vector carries, or no type: an instance of arity
-/// one answers its argument, anything else answers nothing -- the caller
-/// turns that into the named refusal above. The same doors the index typing
-/// walks (TkApp + arg_count + arg), asked from the for judge.
-fn for_head_elem(ctx Ctx, t TyId) -> TyId {
-    if !is_ty(t) { return no_ty() }
-    ro k = ctx.tys.kind_of(t)
-    ro is_app = match k {
-        TkApp => true
-        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
-    }
-    if !is_app { return no_ty() }
-    if ctx.tys.arg_count(t) != 1 { return no_ty() }
-    ctx.tys.arg(t, 0)
-}
 
 /// The destructuring judge's two answers (B15 step 5). The arity text names
 /// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
