@@ -53269,6 +53269,42 @@ fn walk_expr_for_handler_op_decls(
                                 }
                             }
                         }
+                    } else {
+                        // Registry №819: the op is NOT in the effect's schema.
+                        // This branch used to be absent, so a handler could
+                        // declare an operation the effect never had and the
+                        // checker said nothing -- the same shape the hunt found
+                        // in novac (#870): a form missing from a list is not
+                        // refused anywhere, it simply is not there. What
+                        // followed was never a diagnostic: codegen emitted a
+                        // vtable member that does not exist (`no member named
+                        // '<op>' in 'NovaVtable_<Eff>'`), or, when the phantom
+                        // op's return type is an unbound name, an
+                        // [INTERNAL-PANIC] `Path call return type unknown`
+                        // (the shipped carrier `examples/real_world/
+                        // orm_decorators.nv`, whose `in_transaction` was
+                        // REMOVED from `Db` in std when #570 closed -- the
+                        // handler kept implementing it).
+                        let mut known: Vec<&str> =
+                            schema_methods.iter().map(|em| em.name.as_str()).collect();
+                        known.sort_unstable();
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_HANDLER_OP_UNKNOWN] handler-literal op `{eff}.{op}` is not \
+                                 an operation of effect `{eff}`{known_part}. A handler may only \
+                                 implement operations the effect declares: check the spelling, \
+                                 or the operation may have been removed from `{eff}` while this \
+                                 handler kept implementing it.",
+                                eff = eff_last,
+                                op = m.name,
+                                known_part = if known.is_empty() {
+                                    " (that effect declares no operations)".to_string()
+                                } else {
+                                    format!(" -- it declares: {}", known.join(", "))
+                                },
+                            ),
+                            m.span,
+                        ));
                     }
                 }
             }

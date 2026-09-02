@@ -1,0 +1,22 @@
+// Registry 819 control: a handler that implements exactly the operations its
+// effect declares stays legal, including a decorator that forwards to another
+// handler. Without this the 819 refusal could pass by rejecting every handler.
+// EXPECT_STDOUT 2
+module standalone.handler_op_known_pos
+
+type Small effect {
+    ping() -> int
+}
+
+fn base() -> Effect[Small] => effect Small {
+    ping() -> int => 1
+}
+
+fn wrap(real Effect[Small]) -> Effect[Small] => effect Small {
+    ping() -> int => real.ping() + 1
+}
+
+fn main() Io -> () {
+    ro w = wrap(base())
+    println(w.ping())
+}
