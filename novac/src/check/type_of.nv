@@ -393,10 +393,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
 // rules.nv crossed the 1000-line decision (2026-09-02): this file already
 // answers "what does this type look like", and the doors are that question.
 
-/// The PAYLOAD an Option instance carries, or no type: the head must be the
-/// language's Option sum of arity one. The same doors the for-head judge
-/// walks, asked with the family name.
-fn option_payload(ctx Ctx, t TyId) -> TyId {
+/// The ONE type argument of an arity-one instance, or no type: the question
+/// both the for-head judge and the Option judge ask (the second-door guard
+/// caught them spelled twice, 2026-09-02). Anything that is not an App of
+/// arity one answers nothing; the caller turns that into its named refusal.
+fn single_type_arg(ctx Ctx, t TyId) -> TyId {
     if !is_ty(t) { return no_ty() }
     ro k = ctx.tys.kind_of(t)
     ro is_app = match k {
@@ -404,23 +405,19 @@ fn option_payload(ctx Ctx, t TyId) -> TyId {
         TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
     }
     if !is_app { return no_ty() }
-    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
     if ctx.tys.arg_count(t) != 1 { return no_ty() }
     ctx.tys.arg(t, 0)
 }
 
-/// The ELEMENT a for-head vector carries, or no type: an instance of arity
-/// one answers its argument, anything else answers nothing -- the caller
-/// turns that into the named refusal above. The same doors the index typing
-/// walks (TkApp + arg_count + arg), asked from the for judge.
-fn for_head_elem(ctx Ctx, t TyId) -> TyId {
-    if !is_ty(t) { return no_ty() }
-    ro k = ctx.tys.kind_of(t)
-    ro is_app = match k {
-        TkApp => true
-        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
-    }
-    if !is_app { return no_ty() }
-    if ctx.tys.arg_count(t) != 1 { return no_ty() }
-    ctx.tys.arg(t, 0)
+/// The PAYLOAD an Option instance carries, or no type: the single-argument
+/// door, gated on the head being the language's Option sum.
+fn option_payload(ctx Ctx, t TyId) -> TyId {
+    ro arg = single_type_arg(ctx, t)
+    if !is_ty(arg) { return no_ty() }
+    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
+    arg
 }
+
+/// The ELEMENT a for-head vector carries: the single-argument door under its
+/// wave's name (B16) -- the head kind was already judged by the caller.
+fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)
