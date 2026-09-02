@@ -160,12 +160,39 @@ export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) 
     with_read_replica(with_audited, with_sd_replica)
 }
 
-// Использование:
+// Точка входа. Прежде она стояла ЗАКОММЕНТИРОВАННОЙ, и это стоило дорого:
+// файл выглядел проверяемым, а не компилировался ни разу — за что и накопил
+// три невозможности сразу (реестр 221.1 №573 «пример проверяется не тем»,
+// №819 «операция обработчика, которой у эффекта нет», плюс несуществующий
+// `SyncDetach`). Раскомментировать прежний текст было НЕЛЬЗЯ: он звал
+// `postgres_handler`, `current_admin_id` и `run_app`, которых в файле нет, и
+// был написан на снятом `let` (D184). Поэтому здесь настоящий `main` —
+// он гоняет ту же композицию декораторов поверх capturing-handler'а из
+// этого же файла, без внешней БД.
+fn main() Io -> () {
+    mut primary_log []CapturedQuery = []
+    mut replica_log []CapturedQuery = []
+
+    with Db = build_db(
+        capturing_handler(primary_log),
+        capturing_handler(replica_log),
+        42,
+    ) {
+        Db.query(sql`SELECT * FROM users`)
+        Db.exec(sql`DELETE FROM users WHERE id = ${I(7)}`)
+    }
+
+    // Чтение ушло на replica и получило soft-delete-фильтр; удаление ушло на
+    // primary и превратилось в UPDATE — ровно то, что обещают декораторы.
+    println("replica: ${replica_log.len()} query(-ies), primary: ${primary_log.len()}")
+}
+
+// Как это выглядит с настоящим драйвером (иллюстрация, не код файла):
 //
 // ```nova
 // fn main() Net Io -> () {
-//     let primary = postgres_handler("primary.db.local")
-//     let replica = postgres_handler("replica.db.local")
+//     ro primary = postgres_handler("primary.db.local")
+//     ro replica = postgres_handler("replica.db.local")
 //
 //     with Db = build_db(primary, replica, current_admin_id()) {
 //         run_app()
