@@ -793,10 +793,14 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 // nests, so the walk ends here either way.
                 ro lk2 = branch_children(e)
                 ro lt2 = lk2[lk2.len() - 1]
-                if leaf_kind(lt2) == TokenKind.StrLit && interp_slices(leaf_text(lt2)).len() > 1 {
+                if leaf_kind(lt2) != TokenKind.StrLit {
+                    // A numeric literal: nothing to hoist.
+                    return
+                }
+                if interp_slices(leaf_text(lt2)).len() > 1 {
                     @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e, leaf_text(lt2))
                 } else {
-                    // A plain literal: nothing to hoist.
+                    // A plain string: the pool owns it.
                 }
                 return
             }
