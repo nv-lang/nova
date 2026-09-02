@@ -611,48 +611,54 @@ but that is an anti-pattern (the linter warns).
   `#blocking` (offload to a threadpool) and `#realtime` (forbid
   parking/alloc in the body) — D172.
 
-**A function can learn where it was called from** — `#track_caller` plus the
-built-in `caller_loc()`, returning the prelude type `CallerLoc(file str, line
-int)` ([D468](decisions/08-runtime.md#d468)). Without it a diagnostic wrapper
+**A function can learn where it was called from** — the prelude record
+`CallerLoc` plus the built-in `caller_loc()`
+([D468](decisions/08-runtime.md#d468)). Without them a diagnostic wrapper
 reports ITSELF rather than the culprit: `assert` and contracts get their
 location from the compiler, a hand-written `ice()`/`expect()` door could not.
-The attribute means "the call site flows through me", so it must be written on
-every link of a wrapper chain. Propagation is a property of the CALLER, not of
-the callee: an unmarked caller passes its literal call line, a marked one passes
-what it received itself — so the location travels exactly as far as the marks
-go, and stops at the first UNMARKED frame. In an unmarked function `caller_loc()` honestly returns its own line. It
-carries no effect — the value is a call-site constant, which is what lets it be
-used in `-> never` doors.
 
-**Everything in a marked function follows the attribute** — `panic`, `assert`,
-`debug_assert`, `requires`/`ensures` and `caller_loc()` alike all name the CALL
-SITE. One rule, no table to remember: a marked function behaves the same way in
-every failure it produces. The message keeps both places, so the wrapper's own
-bug stays findable:
+The call site arrives through an ORDINARY parameter with a default — there is no
+attribute and no hidden channel:
+
+```nova
+type CallerLoc { file str, line int }     // in the prelude
+fn caller_loc() -> ro CallerLoc           // built-in
+
+export fn ice(msg str, loc CallerLoc = caller_loc()) -> never { … }
+
+ice("bad")          // loc = the location of THIS call
+```
+
+`caller_loc()` means "the location of this expression", and a default is
+substituted AT THE CALL SITE — which is why the parameter ends up holding the
+caller's line and not the declaration's. One rule, no modes. It carries no
+effect, so it can be used in `-> never` doors, and it costs nothing at run time:
+there is no actual call, only a constant pointer to a static record.
+
+**Inside a function that HAS a `CallerLoc` parameter, `requires`, `ensures`,
+`assert`, `debug_assert` and `panic` use it automatically** — you do not repeat
+it on every line. Two such parameters are refused by name. To point somewhere
+that is not your own parameter, pass it explicitly: `requires cond, "msg", loc`,
+`assert(cond, loc)`, `panic("…", loc)`.
+
+**The chain is forwarded BY HAND.** A wrapper whose own caller should be blamed
+passes `loc` on:
+
+```nova
+fn ensure(ok bool, loc CallerLoc = caller_loc()) -> () {
+    if !ok { ice("assertion failed", loc) }    // omit `loc` and ice() names THIS line
+}
+```
+
+Both readings are literal and the difference is visible in the text. Nova
+follows C# and Swift here rather than Rust: no implicit propagation, and so no
+hidden parameter for the type system to carry. The price is named: forwarding is
+the author's discipline, and the compiler will not remind you.
+
+The message keeps both places, so the wrapper's own bug stays findable:
 
 ```
 caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
-```
-
-**The `?` operator follows too.** Each `?` stamps a frame into the propagation
-trace a panic prints ([D437](decisions/08-runtime.md#d437)); inside a marked
-function that frame carries the call site instead of the `?` line, which is what
-makes a thin wrapper's frames distinguishable at all. The trace's composition
-and depth are unchanged.
-
-**A contract names the caller even WITHOUT the attribute.** A violated
-`requires`/`ensures` reports the call site rather than the callee's declaration
-line, because a broken precondition is the caller's fault; the attribute then
-extends that from the immediate caller to the original one through a chain of
-wrappers. `assert` outside a marked function keeps naming itself — it is the
-function's own invariant.
-
-```nova
-#track_caller
-export fn ice(msg str) -> never {
-    ro loc = caller_loc()      // where ice() was called, not this line
-    …
-}
 ```
 
 **Primitive types (lowercase, an exception to the PascalCase rule):**
