@@ -93,7 +93,6 @@ fn Checker @is_generic_decl(f Node) -> bool {
     }
 }
 
-/// One function: fresh scope, parameters bound, then the body.
 /// Does this string literal OPEN an interpolation? A bare `$` followed by
 /// `{`, with no escaping backslash before it -- the escaped form prints a
 /// dollar and lies about nothing (#873). Spelled from bytes: a literal
@@ -121,6 +120,7 @@ const BRACE_HEAD_BYTE u8 = 0x7B
 /// The backslash that turns the pair into a printed dollar.
 const ESCAPE_HEAD_BYTE u8 = 0x5C
 
+/// One function: fresh scope, parameters bound, then the body.
 fn Checker mut @type_fn(f Node) -> () {
     @tail_value_body = value_body_of(branch_children(f))
     ro kids = branch_children(f)
