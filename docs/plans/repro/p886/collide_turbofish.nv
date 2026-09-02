@@ -1,0 +1,20 @@
+// Registry 221.1 #886 -- REPRO.
+// A method call with an EXPLICIT turbofish and an omitted DEFAULT argument.
+// callnorm.rs:548 declines this AST shape (TurboFish over Member) on purpose,
+// so the default is never backfilled. The comment on the spot predicts "a plain
+// arity mismatch -- a diagnosed compile error, never a crash". It is neither:
+// the error escapes to the C COMPILER.
+//
+//   nova build docs/plans/repro/p886/collide_turbofish.nv
+//   -> error: compiler error: ...c:NNNN: too few arguments to function call,
+//      expected 3, have 2   (Nova_Box_method_wrap____nova_str)
+module collide_turbofish
+
+type Box { slot int }
+
+fn Box @wrap[U](tag U, note str = "n") -> str => note
+
+fn main() Io -> () {
+    ro b = Box { slot: 1 }
+    println(b.wrap[str]("hi"))
+}
