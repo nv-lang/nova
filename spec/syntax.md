@@ -635,11 +635,16 @@ caller's line and not the declaration's. One rule, no modes. It carries no
 effect, so it can be used in `-> never` doors, and it costs nothing at run time:
 there is no actual call, only a constant pointer to a static record.
 
-**Inside a function that HAS a `CallerLoc` parameter, `requires`, `ensures`,
-`assert`, `debug_assert` and `panic` use it automatically** — you do not repeat
-it on every line. Two such parameters are refused by name. To point somewhere
-that is not your own parameter, pass it explicitly: `requires cond, "msg", loc`,
-`assert(cond, loc)`, `panic("…", loc)`.
+**Inside a function that HAS a `CallerLoc` parameter, `requires`, `assert`,
+`debug_assert`, `panic` and `throw` use it automatically** — you do not repeat
+it on every line; `throw` records it as the failure's `site`. **`ensures` is
+the deliberate exception:** a broken postcondition is the function's own bug —
+the caller cannot cause one even in principle — so it keeps naming itself, the
+way every contract language assigns blame (Eiffel, D, Ada). One phrase instead
+of a table: what speaks about the INPUT or outward points at the caller;
+`ensures` speaks about the function's own OUTPUT. Two such parameters are
+refused by name. To point somewhere that is not your own parameter, pass it
+explicitly: `requires cond, "msg", loc`, `assert(cond, loc)`, `panic("…", loc)`.
 
 **The chain is forwarded BY HAND.** A wrapper whose own caller should be blamed
 passes `loc` on:
