@@ -69,6 +69,7 @@ import ../mono.{Reach}
 import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx}
 import ../sem.{carrier_of}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
+import ../sem.{interp_slices}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
 import ../sem.{c_instance_ctor, c_instance_method}
@@ -785,6 +786,20 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @lit_tmp[raw_node(e.id_of())] = @emit_tuple_lit(e, @out.type_of(e.id_of()))
                 return
             }
+            if kind == NodeKind.Lit {
+                // An INTERPOLATED literal is a multi-statement build (I1):
+                // its chain hoists like any construction. A plain literal
+                // hoists nothing -- the pool owns it -- and a leaf never
+                // nests, so the walk ends here either way.
+                ro lk2 = branch_children(e)
+                ro lt2 = lk2[lk2.len() - 1]
+                if leaf_kind(lt2) == TokenKind.StrLit && interp_slices(leaf_text(lt2)).len() > 1 {
+                    @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e, leaf_text(lt2))
+                } else {
+                    // A plain literal: nothing to hoist.
+                }
+                return
+            }
             if kind != NodeKind.RecordCtor {
                 for c in children {
                     @hoist_array_lits(c)
@@ -902,6 +917,10 @@ fn Emitter mut @emit_bind(st Node) -> () {
         ro tmp = @emit_record_ctor(init, vtype)
         @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
     } else if is_expr_kind(init.kind_of()) {
+        // The initializer may CONTAIN a construction (an interpolated
+        // literal, I1): the hoist lays its chain before the binding's line,
+        // exactly as the argument path does.
+        @hoist_array_lits(init)
         @body.append("    ")
         @body.append(c_type(@ctx, vtype))
         @body.append(" ")

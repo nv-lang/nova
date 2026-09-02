@@ -891,7 +891,13 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // by type; the emitter never asks its type, and the channel holds
             // answers, not decoration. A numeric literal does get asked, so
             // the shape test below is on the literal's own token.
-            if leaf_kind(branch_children(c)[0]) == TokenKind.StrLit { continue }
+            // An INTERPOLATED one is the expression it is (I1): the judge
+            // records its type and its slot types, and the printer set holds
+            // `str` -- nothing more to ask here.
+            if leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {
+                @judge_interp_lit(c)
+                continue
+            }
             @record(c, type_of(c, @ctx, @scope, @chan))
         } else if is_expr_kind(ck) {
             // Children FIRST: the walk is what verifies that every name and

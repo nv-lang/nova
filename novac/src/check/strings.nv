@@ -23,7 +23,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../sem.{leaf_kind, leaf_text}
+import ../sem.{leaf_kind, leaf_text, interp_slices, interp_slot_is_name}
 
 /// The escapes the subset knows. Everything else is REFUSED rather than
 /// copied into the C.
@@ -91,18 +91,18 @@ fn Checker mut @report_if_interpolated(kids []Node) -> () {
         // literal; the pipeline's own test caught it. A scan that walks the
         // bytes knows whether the dollar is escaped, because it saw what
         // came before it.
-        ro b = leaf_text(c).bytes()
-        mut i = 0
-        while i + 1 < b.len() {
-            if b[i] == BACKSLASH {
-                i += 2
-                continue
-            }
-            if b[i] == DOLLAR && b[i + 1] == LBRACE {
+        ro pieces = interp_slices(leaf_text(c))
+        if pieces.len() < 2 { continue }
+        // The I1 subset compiles a BARE NAME per slot; any other form keeps
+        // the named refusal (I2 takes the chains, calls and operators the
+        // interpolation map counted).
+        mut si = 1
+        while si < pieces.len() {
+            if !interp_slot_is_name(pieces[si]) {
                 @report_first_leaf_of(kids, INTERP_MSG)
                 return
             }
-            i += 1
+            si += 2
         }
     }
 }

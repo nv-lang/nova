@@ -39,6 +39,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, digit_index, is_tuple}
+import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
 
 /// One expression: record what the emitter asks about, walk what it emits.
@@ -118,10 +119,52 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node) -> bool {
     }
 }
 
+/// The interpolated-literal judge (I1): slot names come from the SCOPE,
+/// slot types must carry a builder insert (str/int today), the literal's
+/// own type is `str`, and the piece types travel to the emitter through
+/// record_subst -- that door's doc names non-call instantiations, and this
+/// literal instantiates the display family with its slot types.
+fn Checker mut @judge_interp_lit(e Node) -> () {
+    ro kids = branch_children(e)
+    ro t = kids[kids.len() - 1]
+    if leaf_kind(t) != TokenKind.StrLit {
+        // A numeric literal: the lattice owns it, nothing to judge here.
+        return
+    }
+    ro pieces = interp_slices(leaf_text(t))
+    if pieces.len() < 2 {
+        // A plain string: the literal pool owns it.
+        return
+    }
+    mut tys = []TyId.new()
+    mut si = 1
+    while si + 0 < pieces.len() {
+        ro nm = pieces[si]
+        if !@scope.is_bound(nm) {
+            @report_first_leaf_of(kids, INTERP_NAME_MSG)
+            return
+        }
+        ro ty = @scope.type_of_name(nm)
+        if ty == @ctx.prims.str_id || ty == @ctx.prims.int_id {
+            tys.push(ty)
+        } else {
+            @report_first_leaf_of(kids, INTERP_TYPE_MSG)
+            return
+        }
+        si += 2
+    }
+    @record(e, @ctx.prims.str_id)
+    @chan.record_subst(e.id_of(), tys)
+}
+
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
-    if k == NodeKind.Name {
+    if k == NodeKind.Lit {
+        // An interpolated literal is the EXPRESSION it is (I1); a plain
+        // literal stays the lattice's business.
+        @judge_interp_lit(e)
+    } else if k == NodeKind.Name {
         // FIRST FLOOR. An unbound name is a USER mistake, and check is where a
         // user mistake becomes a diagnostic with a position. Before this, the
         // lattice met it and called it a compiler bug (an ice) -- caught by
@@ -148,9 +191,17 @@ fn Checker mut @type_expr(e Node) -> () {
                     // from its initializer, and WHICH constant it is, so the
                     // emitter substitutes the initializer instead of resolving
                     // the name itself (274.4 rule E).
-                    @record(e, @const_type_of(t.text))
+                    // I1 boundary first: an INTERPOLATED initializer would be
+                    // substituted where no hoist ran -- refused by name.
                     match @ctx.defs.const_row(t.text) {
-                        Some(row) => @chan.record_const(e.id_of(), row)
+                        Some(row) => {
+                            if const_init_interpolates(@ctx, row) {
+                                @refuse(t, INTERP_CONST_MSG)
+                                return
+                            }
+                            @record(e, @const_type_of(t.text))
+                            @chan.record_const(e.id_of(), row)
+                        }
                         None => ice("check: a constant typed by name that the registry does not carry")
                     }
                 } else {

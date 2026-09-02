@@ -20,7 +20,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
-import ../lex.{TokenKind}
+import ../lex.{TokenKind, is_ident_start, is_ident_byte}
 import ../diag.{ice}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
@@ -831,3 +831,80 @@ export fn pattern_has_disj(pat []Node) -> bool {
     false
 }
 
+
+/// The PIECES of a string literal's TOKEN TEXT (outer quotes kept by the
+/// caller's slice bounds): even slots are literal fragments (escapes kept
+/// verbatim), odd slots are the texts between `${` and `}`. A literal with
+/// no interpolation answers ONE even slot. `\$` never opens -- the byte
+/// before the dollar decides, exactly as the check's byte rule reads it.
+/// Two readers, one walk (P18): the checker judges the odd slots, the
+/// emitter spells the builder chain.
+export fn interp_slices(text str) -> []str {
+    ro b = text.bytes()
+    mut out = []str.new()
+    ro n = b.len() - 1
+    mut start = 1
+    mut i = 1
+    while i < n {
+        if b[i] == INTERP_BSLASH {
+            i += 2
+        } else if b[i] == INTERP_DOLLAR && i + 1 < n && b[i + 1] == INTERP_LBRACE {
+            out.push(text[start..i])
+            mut j = i + 2
+            while j < n && b[j] != INTERP_RBRACE { j += 1 }
+            out.push(text[i + 2..j])
+            i = j + 1
+            start = i
+        } else {
+            i += 1
+        }
+    }
+    out.push(text[start..n])
+    out
+}
+
+/// The BYTE length a literal fragment has AFTER C reads its escapes: a
+/// backslash pair is one byte. The emitter's `.len` field needs the C
+/// answer, not the source count.
+export fn escaped_byte_len(piece str) -> int {
+    ro b = piece.bytes()
+    mut len = 0
+    mut i = 0
+    while i < b.len() {
+        if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
+        len += 1
+    }
+    len
+}
+
+/// Is this odd slot a BARE NAME -- one identifier, nothing else? The I1
+/// subset of interpolation compiles exactly that.
+export fn interp_slot_is_name(piece str) -> bool {
+    ro b = piece.bytes()
+    if b.len() == 0 { return false }
+    if !is_ident_start(b[0]) { return false }
+    for i in 1..b.len() {
+        if !is_ident_byte(b[i]) { return false }
+    }
+    true
+}
+
+/// The four bytes the slicer reads.
+const INTERP_BSLASH u8 = 0x5C  // backslash
+const INTERP_DOLLAR u8 = 0x24  // $
+const INTERP_LBRACE u8 = 0x7B  // {
+const INTERP_RBRACE u8 = 0x7D  // }
+
+/// Does this constant's initializer INTERPOLATE? The I1 boundary judge asks
+/// once, at the use site -- the substitution point, where no hoist ran.
+export fn const_init_interpolates(ctx Ctx, row ConstRow) -> bool {
+    ro cd = ctx.consts.rows[raw_crow(row)]
+    if cd.init.len() == 0 { return false }
+    ro init = cd.init[0]
+    if init.kind_of() != NodeKind.Lit { return false }
+    ro kids = branch_children(init)
+    ro t = kids[kids.len() - 1]
+    if t.kind_of() != NodeKind.LeafNode { return false }
+    if leaf_kind(t) != TokenKind.StrLit { return false }
+    interp_slices(leaf_text(t)).len() > 1
+}

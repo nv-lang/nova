@@ -1,0 +1,11 @@
+// String interpolation, step I1: bare local names of type str and int.
+module basics.interp_name
+
+fn main() {
+    ro name = "world"
+    ro n = 42
+    println("hi ${name}, n=${n}!")
+    ro s = "bound ${n} end"
+    println(s)
+    println("escaped \${n} stays")
+}

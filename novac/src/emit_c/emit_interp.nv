@@ -1,0 +1,68 @@
+// An interpolated string literal as its builder chain (wave I1).
+//
+// Donor: none for the walk -- pieces alternate literal and insert, and the
+// chain follows the pieces; the runtime entry names are read off the
+// oracle's own build cache, not invented.
+// Role: the hoist's Lit arm builds here; the expression site prints the
+// temporary this door answers.
+// Used by: emit_c.nv's hoist walker, and nothing else.
+// Guarded by: check-novac-differential.sh (corpus carrier interp_name),
+// the subset_test.nv holder (asserts the chain's C shapes), and
+// check-novac-emitted-names.py holds the name spaces.
+//
+// INTEROP, named as such: Nova_StringBuilder_static_new / _method_append /
+// _consume_into_str and the display entries
+// (nova_fn_7runtime14string_builder16str_display_spec and the int one) are
+// the shell's own runtime, spelled exactly as the oracle's cache spells
+// them -- measured 2026-09-02, not guessed. The capacity formula is the
+// oracle's too: the literal bytes plus sixteen. Goes the day novac emits
+// the whole prelude.
+
+module emit_c
+
+import ../sem.{Ctx, CheckOut, branch_children, leaf_text, interp_slices, escaped_byte_len, unescape_dollar}
+import ../tree.{Node, raw_node}
+import ../diag.{ice}
+
+/// Build the chain into a fresh temporary; answer the C name that holds the
+/// finished string. The slot TYPES come from the channel -- the checker
+/// recorded them in source order, and this door only spells.
+fn Emitter mut @emit_interp_build(e Node, text str) -> str {
+    ro pieces = interp_slices(text)
+    mut cap = 16
+    mut li = 0
+    while li < pieces.len() {
+        cap += escaped_byte_len(pieces[li])
+        li += 2
+    }
+    ro sb = "_novac_isb_t${@fresh_uniq()}"
+    @body.append("    Nova_StringBuilder* ${sb} = Nova_StringBuilder_static_new(${cap});\n")
+    ro tys = @out.subst_of(e.id_of())
+    mut lit_turn = true
+    mut k = 0
+    for p in pieces {
+        if lit_turn {
+            if p.byte_len() > 0 {
+                @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\"")
+                @body.append(unescape_dollar(p))
+                @body.append("\", .len=${escaped_byte_len(p)}});\n")
+            } else {
+                // An empty fragment appends nothing -- the head of a literal
+                // that STARTS with an insert, or two inserts side by side.
+            }
+        } else {
+            if tys[k] == @ctx.prims.str_id {
+                @body.append("    nova_fn_7runtime14string_builder16str_display_spec(${sb}, (${p}), ((nova_int)0LL), false, ((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U));\n")
+            } else {
+                // The checker held the slot set to str|int (I1); int is the
+                // one remainder.
+                @body.append("    nova_fn_7runtime14string_builder16int_display_spec(${sb}, (nova_int)(${p}), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U));\n")
+            }
+            k += 1
+        }
+        lit_turn = !lit_turn
+    }
+    ro tmp = "_novac_istr_t${@fresh_uniq()}"
+    @body.append("    nova_str ${tmp} = Nova_StringBuilder_consume_into_str(${sb});\n")
+    tmp
+}

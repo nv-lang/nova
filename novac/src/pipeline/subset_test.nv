@@ -858,3 +858,46 @@ fn main() {
 }", std)
     assert(dok.len() == 0)
 }
+
+test "an interpolated literal builds its chain; non-name slots refuse (wave I1)" {
+    // The embedded sources spell `\${` so THIS file's own compiler leaves
+    // the interpolation to novac (the #873 lesson, paid twice).
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {
+ ro name = \"world\"
+ ro n = 42
+ println(\"hi \${name}, n=\${n}!\")
+}", std)
+    assert(d.len() == 0)
+    // OUR chain names, absent from the shell prelude -- the shell itself
+    // carries static_new/display_spec declarations, so asserting those
+    // alone would stay green with the hoist silenced (measured).
+    assert(c.contains("Nova_StringBuilder* _novac_isb_t"))
+    assert(c.contains("str_display_spec(_novac_isb_t"))
+    assert(c.contains("int_display_spec(_novac_isb_t"))
+    assert(c.contains("nova_print_str(_novac_istr_t"))
+
+    // A call slot refuses by name (I2 takes it).
+    ro (d2, _) = compile_to_c("fn main() {
+ ro s = \"abc\"
+ println(\"len \${s.len()}\")
+}", std)
+    assert(d2.len() >= 1)
+    mut hit = false
+    for g in d2 {
+        if g.message.contains("bare name") { hit = true }
+    }
+    assert(hit)
+
+    // A slot type outside str|int refuses by name.
+    ro (d3, _) = compile_to_c("fn main() {
+ ro f = true
+ println(\"flag \${f}\")
+}", std)
+    assert(d3.len() >= 1)
+    mut hit3 = false
+    for g in d3 {
+        if g.message.contains("slot of this type") { hit3 = true }
+    }
+    assert(hit3)
+}

@@ -246,6 +246,18 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The interpolation judges' two I1 answers: a slot name must be a bound
+/// LOCAL (a constant would substitute at the use site where no hoist ran),
+/// and its type must carry a builder insert the emitter spells today.
+const INTERP_NAME_MSG = "outside the subset: an interpolation slot takes a bound local name here -- constants and globals arrive with I2"
+
+/// See INTERP_NAME_MSG above; the type half.
+const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of this type is not compiled yet -- I1 spells str and int inserts"
+
+/// The constant-initializer boundary of I1: substitution happens at the use
+/// site, and the hoist never ran there.
+const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (I2)"
+
 /// The refutable-binding judge's answer (hunt var_shadow, #875): a binding
 /// whose NAME is a visible payload-less variant is a one-variant pattern
 /// match in the language (D411), and the oracle refuses it -- novac used to
@@ -341,7 +353,7 @@ const TYPED_LOCAL_MSG = "outside the subset: a declared local type is not compil
 
 /// `"n=${n}"` -- string interpolation. The lexer keeps the literal whole, so
 /// nothing is lost; compiling it means emitting a format call.
-const INTERP_MSG = "outside the subset: string interpolation is not compiled yet"
+const INTERP_MSG = "outside the subset: only a bare name is compiled inside an interpolation yet -- chains, calls and operators arrive with I2"
 
 /// `| Circle { radius f64 }` -- a record-form variant. D54 (#719) rules on how
 /// it may be destructured; the form itself arrives with records in sums.
