@@ -19,7 +19,8 @@
 
 module emit_c
 
-import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len, unescape_dollar, is_expr_kind, carrier_of}
+import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
+import ../sem.{unescape_dollar, is_expr_kind, carrier_of}
 import ../tree.{Node, NodeKind, raw_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}

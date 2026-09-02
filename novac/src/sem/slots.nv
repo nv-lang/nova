@@ -20,7 +20,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
-import ../lex.{TokenKind, is_ident_start, is_ident_byte}
+import ../lex.{TokenKind}
 import ../diag.{ice}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
