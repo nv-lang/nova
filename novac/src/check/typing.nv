@@ -120,6 +120,33 @@ const BRACE_HEAD_BYTE u8 = 0x7B
 /// The backslash that turns the pair into a printed dollar.
 const ESCAPE_HEAD_BYTE u8 = 0x5C
 
+/// The message-slot judge of one clause (#873): an interpolated message
+/// refuses by name -- spelled into C as one literal, `\${...}` would print
+/// itself verbatim on violation. A message-less clause and the required
+/// door's gap have nothing to judge.
+fn Checker mut @judge_contract_msg(rk []Node) -> () {
+    if rk.len() < 4 {
+        // Message-less clause: no slot to judge.
+        return
+    }
+    match rk[rk.len() - 1] {
+        Leaf(mt) => {
+            if mt.kind != TokenKind.StrLit {
+                // The required door's gap: the parser walk already refused.
+                return
+            }
+            if has_interp_head(mt.text) {
+                @refuse(mt, INTERP_CONTRACT_MSG_MSG)
+            } else {
+                // A plain message: one C literal, no lie.
+            }
+        }
+        Branch { .. } => {
+            // A recovery shape in the message slot: same door, refused.
+        }
+    }
+}
+
 /// One function: fresh scope, parameters bound, then the body.
 fn Checker mut @type_fn(f Node) -> () {
     @tail_value_body = value_body_of(branch_children(f))
@@ -246,23 +273,7 @@ fn Checker mut @type_fn(f Node) -> () {
                 // The message is spelled into C as ONE literal (#873): an
                 // interpolation inside it would print itself verbatim on
                 // violation. Refused by name until the interpolation wave.
-                if rk.len() >= 4 {
-                    match rk[rk.len() - 1] {
-                        Leaf(mt) => {
-                            if mt.kind == TokenKind.StrLit && has_interp_head(mt.text) {
-                                @refuse(mt, INTERP_CONTRACT_MSG_MSG)
-                            } else {
-                                // A plain message: one C literal, no lie.
-                            }
-                        }
-                        Branch { .. } => {
-                            // A recovery shape in the message slot: the
-                            // required door already carried the refusal.
-                        }
-                    }
-                } else {
-                    // Message-less clause: nothing to judge here.
-                }
+                @judge_contract_msg(rk)
             } else {
                 // A recovery shape: the parser's gap already named it.
             }

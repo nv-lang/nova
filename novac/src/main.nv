@@ -62,7 +62,9 @@ fn base_name(path str) -> str {
     mut cut = 0
     mut i = 0
     while i < b.len() {
-        if b[i] == SLASH_BYTE || b[i] == BACKSLASH_PATH_BYTE { cut = i + 1 } else {
+        if b[i] == SLASH_BYTE || b[i] == BACKSLASH_PATH_BYTE {
+            cut = i + 1
+        } else {
             // Any other byte belongs to the current segment.
         }
         i += 1

@@ -259,7 +259,9 @@ fn Checker @line_at(lo int) -> int {
     ro b = @src.text.bytes()
     mut line = 1
     for i in 0..lo {
-        if b[i] == LF_BYTE { line += 1 } else {
+        if b[i] == LF_BYTE {
+            line += 1
+        } else {
             // Any other byte stays on its line.
         }
     }
