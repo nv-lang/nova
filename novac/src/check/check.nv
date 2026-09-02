@@ -463,6 +463,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                         // children like any other node's.
                     }
                 }
+                SelfExpr => {
+                    // Bare `@` (the self wave): typing judges the receiver's
+                    // presence and type; the walk has nothing of its own.
+                }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding
                     // (`@`) and `@field` is a field access on it. Outside a
