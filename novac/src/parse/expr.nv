@@ -445,7 +445,8 @@ fn Cursor mut @atom() -> Node {
         uk.push(@block())
         return @node(NodeKind.Unsafe, uk)
     }
-    if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit {
+    if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit ||
+       @peek() == TokenKind.CharLit {
         return @node(NodeKind.Lit, []Node.of(@take()))
     }
     if @peek() == TokenKind.Minus {

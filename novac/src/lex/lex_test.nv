@@ -168,6 +168,26 @@ test "F21: a digit run touching an identifier byte is one refusal" {
     assert(ints == 0, "1_000 must not leave an IntLit behind")
 }
 
+test "char literal: one token, escapes whole, reserialize lossless (char wave)" {
+    ro toks = lex("ro c = 'x'\nro n = '\\n'\nro q = '\\''")
+    // 'x' after `ro c =` is one CharLit carrying its quotes verbatim.
+    assert(toks[3].kind == TokenKind.CharLit)
+    assert(toks[3].text == "'x'")
+    // The escape consumes both bytes: '\n' is ONE token, and so is the
+    // escaped quote -- it closes on the THIRD quote, not the second.
+    assert(toks[7].kind == TokenKind.CharLit)
+    assert(toks[11].kind == TokenKind.CharLit)
+    ro src = "ro c = 'x'\nro n = '\\n'\nro q = '\\''"
+    assert(reserialize(lex(src)) == src)
+
+    // The empty pair and an unclosed run are NOT plausible literals: both
+    // stay ErrorTok, lossless, exactly as every other lexer refusal.
+    ro bad = lex("ro e = ''")
+    assert(bad[3].kind == TokenKind.ErrorTok)
+    ro open = lex("ro u = 'x")
+    assert(open[3].kind == TokenKind.ErrorTok)
+}
+
 test "F22: a non-ASCII run is ONE error token, not one per letter" {
     // A Cyrillic identifier used to produce six diagnostics for one cause.
     ro toks = lex("ro \u{43f}\u{440}\u{438}\u{432}\u{435}\u{442} = 1")

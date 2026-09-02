@@ -178,6 +178,7 @@ export type Prims value {
     str_id TyId /// Type id of `str`.
     bool_id TyId /// Type id of `bool`.
     f64_id TyId /// Type id of `f64`.
+    char_id TyId /// Type id of `char` (universe ordinal 14; the char-literal wave).
 }
 
 /// A position whose type the caller cannot state yet.
@@ -412,7 +413,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // The PRIMS are types, and a declaration's type comes from its row -- the
     // seed hands back the declaration, the row hands back the term.
     ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
-                       bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]) }
+                       bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]),
+                       char_id: ty_of_row(types, seeded[14]) }
     mut fields = FieldTable.new()
     mut protos = ProtoTable.new()
     mut variant_rows = []VariantDef.new()

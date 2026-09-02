@@ -20,7 +20,7 @@ import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
 import ../sem.{CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
-import ../sem.{int_literal_c_text, interp_slices}
+import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record}
@@ -247,6 +247,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(if neg { "-" } else { "" })
             @body.append(leaf_text(t))
             @body.append(")")
+        } else if lk == TokenKind.CharLit {
+            // The codepoint through the ONE spelling door (the int literal's
+            // precedent); the C form is the one the interp chain already
+            // prints for its fill character.
+            @body.append("((nova_char)")
+            @body.append(char_literal_code(leaf_text(t)))
+            @body.append("U)")
         } else if lk == TokenKind.StrLit {
             // An INTERPOLATED literal was hoisted into its builder chain by
             // the statement's walk (I1); the temporary carries the string.

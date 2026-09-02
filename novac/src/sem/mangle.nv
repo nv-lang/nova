@@ -652,6 +652,46 @@ export fn int_literal_c_text(t str) -> str {
     t[i..]
 }
 
+/// The CODEPOINT of a char literal's text, as decimal C digits: `'A'` -> "65",
+/// a newline escape -> "10". The int literal's precedent exactly: one spelling
+/// door, every emitter through it, so two readers cannot disagree about what
+/// character is written. The judge upstream (check) refused everything but one
+/// codepoint or one defined escape, so the leftover here is an ice, not a
+/// diagnostic.
+export fn char_literal_code(t str) -> str {
+    ro body = t[1..t.byte_len() - 1]
+    ro b = body.bytes()
+    if b[0] == BACKSLASH_BYTE {
+        ro e = body[1..2]
+        if e == "n" { return "10" }
+        if e == "t" { return "9" }
+        if e == "r" { return "13" }
+        if e == "\\" { return "92" }
+        if e == "'" { return "39" }
+        if e == "\"" { return "34" }
+        if e == "0" { return "0" }
+        ice("mangle: a char escape the judge let through")
+    }
+    // One UTF-8 codepoint, 1-4 bytes: the head byte announces the length and
+    // carries the high bits, each continuation byte carries six more.
+    ro head = b[0] as int
+    if head < 128 { return "${head}" }
+    mut cp = 0
+    mut i = 1
+    if head >= 240 {
+        cp = head - 240
+    } else if head >= 224 {
+        cp = head - 224
+    } else {
+        cp = head - 192
+    }
+    while i < b.len() {
+        cp = cp * 64 + ((b[i] as int) - 128)
+        i += 1
+    }
+    "${cp}"
+}
+
 /// The two bytes the dollar rule reads.
 const BACKSLASH_BYTE u8 = 0x5C  // backslash
 const DOLLAR_BYTE u8 = 0x24     // $

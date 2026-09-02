@@ -143,6 +143,47 @@ fn Checker mut @judge_interp_lit(e Node) -> () {
     @report_first_leaf_of(kids, NESTED_INTERP_MSG)
 }
 
+/// The char-literal judge (the char wave). The lexer finds the closing quote
+/// and keeps the run VERBATIM, so WIDTH is judged here: `'ab'` is one CharLit
+/// token, and the oracle refuses it at its own lexer -- this walk is novac's
+/// stage for the same verdict. Legal: one codepoint (any UTF-8 length), or
+/// one simple escape; the unicode escape is legal Nova the subset defers.
+fn Checker mut @judge_char_lit(e Node) -> () {
+    ro kids = branch_children(e)
+    ro t = kids[kids.len() - 1]
+    if leaf_kind(t) != TokenKind.CharLit {
+        // Not this judge's literal: the int/float/str arms own the rest.
+        return
+    }
+    ro txt = leaf_text(t)
+    ro body = txt[1..txt.byte_len() - 1]
+    if body.byte_len() >= 2 && body[..1] == "\\" {
+        if body[1..2] == "u" {
+            @report_first_leaf_of(kids, CHAR_UNICODE_MSG)
+            return
+        }
+        ro legal = body[1..2] == "n" || body[1..2] == "t" || body[1..2] == "r" ||
+                   body[1..2] == "0" || body[1..2] == "\\" || body[1..2] == "'" || body[1..2] == "\""
+        if body.byte_len() != 2 || !legal {
+            @report_first_leaf_of(kids, if legal { CHAR_WIDTH_MSG } else { CHAR_ESCAPE_MSG })
+        } else {
+            // One defined escape: the mangle door spells its codepoint.
+        }
+        return
+    }
+    // A bare body is ONE codepoint exactly when its byte length equals the
+    // length its FIRST byte announces -- a second character, a stray
+    // continuation byte, or a truncated sequence all disagree.
+    ro bb = body.bytes()
+    ro head = bb[0]
+    ro want = if head < 128 { 1 } else if head >= 240 { 4 } else if head >= 224 { 3 } else if head >= 192 { 2 } else { 0 }
+    if body.byte_len() != want {
+        @report_first_leaf_of(kids, CHAR_WIDTH_MSG)
+    } else {
+        // One codepoint: the literal stands.
+    }
+}
+
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
@@ -171,6 +212,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // (a string inside a slot): the lexer splits only the outer level,
         // and the I1 judge's form rule refuses these.
         @judge_interp_lit(e)
+        @judge_char_lit(e)
     } else if k == NodeKind.Name {
         // FIRST FLOOR. An unbound name is a USER mistake, and check is where a
         // user mistake becomes a diagnostic with a position. Before this, the
@@ -703,7 +745,8 @@ fn Checker @is_numeric(t TyId) -> bool =>
 /// question the subset does not answer).
 fn Checker @is_primitive(t TyId) -> bool =>
     t == @ctx.prims.int_id || t == @ctx.prims.f64_id ||
-    t == @ctx.prims.bool_id || t == @ctx.prims.str_id
+    t == @ctx.prims.bool_id || t == @ctx.prims.str_id ||
+    t == @ctx.prims.char_id
 
 /// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
 /// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)

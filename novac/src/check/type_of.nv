@@ -157,6 +157,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             StrLit => { return ctx.prims.str_id }
             FloatLit => { return ctx.prims.f64_id }
             IntLit => { return ctx.prims.int_id }
+            CharLit => { return ctx.prims.char_id }
             _ => { ice("check: literal token kind without a type rule (#652 class)") }
         }
     }

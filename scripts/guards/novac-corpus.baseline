@@ -252,5 +252,15 @@
 # oppositely) refuses by name; the oracle agrees on this axis
 # (E_OVERLOAD_AMBIGUOUS_MODE). Reverse probe: the key door degraded to the
 # arity key -- both M1 holders redden.
-contract-match 48
-behavior-match 40
+# 2026-09-02 (10) -- 48/40 -> 49/41: the char-literal wave carrier --
+# `char_literal` (a codepoint and an escape between single quotes, compared
+# on an own fn's param): the lexer gains the quote branch (verbatim text,
+# escapes consume two bytes, the empty pair and an unclosed run stay
+# ErrorTok), the checker judges WIDTH/escape/unicode by name, `char` joins
+# Prims (universe ordinal 14) and `is_primitive` (equality admits it), and
+# the codepoint is spelled by the ONE mangle door (`'x'` -> 120). println of
+# a char stays refused: the oracle prints a literal as the glyph and a bound
+# value as its code -- the asymmetry is filed for the registry, not copied.
+# Reverse probe: the lexer branch behind `false &&` -- four holder failures.
+contract-match 49
+behavior-match 41

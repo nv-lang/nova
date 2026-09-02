@@ -76,7 +76,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
-                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit |
+                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit |
                         StrFrag | InterpOpen | InterpClose | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
@@ -263,6 +263,14 @@ const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of this type 
 /// The constant-initializer boundary of I1: substitution happens at the use
 /// site, and the hoist never ran there.
 const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
+
+/// The char-literal judge's three refusals (the char wave). The first two are
+/// the LANGUAGE's: the oracle refuses them at its lexer, novac's lexer keeps
+/// the run verbatim and the checker is its stage. The third is legal Nova the
+/// subset does not take yet, so it carries the subset wording.
+const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escape)"
+const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
+const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"
 
 /// The refutable-binding judge's answer (hunt var_shadow, #875): a binding
 /// whose NAME is a visible payload-less variant is a one-variant pattern

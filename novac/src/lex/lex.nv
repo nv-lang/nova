@@ -71,6 +71,7 @@ export type TokenKind enum
     | IntLit
     | FloatLit
     | StrLit
+    | CharLit /// one char literal: a single codepoint or one escape between single quotes, kept verbatim
     | StrFrag /// one literal fragment of an interpolated string: the first carries the opening quote, the last the closing one
     | InterpOpen /// the `${` that opens one interpolation slot inside a string
     | InterpClose /// the `}` that closes the slot (only the lexer's interp mode makes one)
@@ -167,6 +168,7 @@ export fn spelling_of(k TokenKind) -> Option[str] => match k {
     IntLit => Some("an integer literal")
     FloatLit => Some("a float literal")
     StrLit => Some("a string literal")
+    CharLit => Some("a char literal")
     StrFrag => Some("a string fragment")
     InterpOpen => Some("a slot opener")
     InterpClose => Some("a slot closer")
@@ -309,7 +311,7 @@ export fn paren_delta(k TokenKind) -> int {
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit | StrFrag | InterpOpen | InterpClose |
+        IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -325,7 +327,7 @@ export fn bracket_delta(k TokenKind) -> int {
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit | StrFrag | InterpOpen | InterpClose |
+        IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -342,7 +344,7 @@ export fn brace_delta(k TokenKind) -> int {
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit | StrFrag | InterpOpen | InterpClose |
+        IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -652,6 +654,37 @@ export fn lex(src str) -> []Token {
                 kind = TokenKind.ErrorTok
             } else {
                 // A closed literal: StrLit stands, interpolated or not.
+            }
+        } else if c == ('\'' as u8) {
+            // Char literal: ONE codepoint or ONE escape between single
+            // quotes, kept VERBATIM -- decoding is the mangle door's business
+            // (the int literal's split: one spelling door, every reader
+            // through it). The line end bounds the search exactly as it does
+            // for a string: the honest report is "unclosed HERE", not
+            // "unexpected something later". How many characters stand inside
+            // is the CHECKER's question -- the lexer only finds the closing
+            // quote, so `'ab'` lexes as one CharLit and is refused by name.
+            i += 1
+            mut ch_closed = false
+            while i < n && !ch_closed {
+                if b[i] == B_LF { break }
+                if b[i] == ('\'' as u8) {
+                    ch_closed = true
+                    i += 1
+                } else if b[i] == B_BACKSLASH && i + 1 < n {
+                    // The escape consumes BOTH bytes and is not interpreted
+                    // here: `'\''` closes on the THIRD quote, not the second.
+                    i += 2
+                } else {
+                    i += 1
+                }
+            }
+            if ch_closed && i - start > 2 {
+                kind = TokenKind.CharLit
+            } else {
+                // Unclosed, or the empty `''`: neither is a plausible char
+                // literal, and calling it one would hand the parser a lie.
+                kind = TokenKind.ErrorTok
             }
         } else {
             // TWO dispatches, both by `match`, and neither byte is read twice

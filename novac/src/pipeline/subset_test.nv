@@ -905,6 +905,42 @@ fn main() {
     assert(hit4)
 }
 
+test "a char literal types char, compares, and spells its codepoint (char wave)" {
+    // End to end: lexed verbatim, typed `char` (prims ordinal 14), compared
+    // as the C scalar, and the codepoint spelled by the ONE mangle door --
+    // `'x'` is 120, and the emitted C must carry OUR spelling of it.
+    ro std = std_decls()
+    ro (dch, c) = compile_to_c("fn tag(c char) -> int {
+ if c == 'x' { 1 } else { 2 }
+}
+fn main() {
+ ro c = 'x'
+ println(tag(c))
+}", std)
+    assert(dch.len() == 0)
+    assert(c.contains("((nova_char)120U)"))
+
+    // The judge's three refusals: width, unknown escape, deferred unicode.
+    ro (dw, _) = compile_to_c("fn main() {
+ ro a = 'ab'
+ println(1)
+}", std)
+    assert(dw.len() == 1)
+    assert(dw[0].message.contains("exactly one character"))
+    ro (dq, _) = compile_to_c("fn main() {
+ ro q = '\\q'
+ println(1)
+}", std)
+    assert(dq.len() == 1)
+    assert(dq[0].message.contains("not one the language defines"))
+    ro (du, _) = compile_to_c("fn main() {
+ ro u = '\\u{41}'
+ println(1)
+}", std)
+    assert(du.len() == 1)
+    assert(du[0].message.contains("unicode char escape"))
+}
+
 test "bare self is the receiver's value; outside a method it refuses (self wave)" {
     // `match @` in a sum method compiles: the scrutinee temporary reads the
     // receiver's C name. Outside a method body `@` names nothing.
