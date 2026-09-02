@@ -859,7 +859,15 @@ export fn interp_slices(text str) -> []str {
             i += 1
         }
     }
-    out.push(text[start..n])
+    if start <= n {
+        out.push(text[start..n])
+    } else {
+        // An UNCLOSED slot ran to the token's end (the lexer closes a string
+        // at the first bare quote, so a quoted literal INSIDE a slot cuts
+        // the token short -- hunt K4 shape). The empty tail keeps the
+        // even/odd contract; the form judge refuses the non-name slot.
+        out.push("")
+    }
     out
 }
 

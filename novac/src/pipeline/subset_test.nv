@@ -900,4 +900,18 @@ test "an interpolated literal builds its chain; non-name slots refuse (wave I1)"
         if g.message.contains("slot of this type") { hit3 = true }
     }
     assert(hit3)
+
+    // A quoted literal INSIDE a slot cuts the token at the lexer (the K4
+    // shape): the slicer's empty tail keeps the contract and the form judge
+    // refuses -- this used to ICE with a backwards slice.
+    ro (d4, _) = compile_to_c("fn main() {
+ ro s = \"abc\"
+ println(\"x \${s.replace(\"a\", \"b\")} y\")
+}", std)
+    assert(d4.len() >= 1)
+    mut hit4 = false
+    for g in d4 {
+        if g.message.contains("bare name") { hit4 = true }
+    }
+    assert(hit4)
 }
