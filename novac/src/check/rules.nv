@@ -246,6 +246,11 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The argument-form judge's answer (hunt N2, #870): a form the expression
+/// walk does not know used to FALL OUT of both walks silently -- the
+/// argument was neither refused nor printed. A branch is never punctuation.
+const PRINTLN_ARG_FORM_MSG = "outside the subset: this form is not compiled in an argument position yet (E2-b) -- bind it to a name first"
+
 /// The variant-value judge's answer (the variant-value wave): a variant
 /// that CARRIES a payload is a constructor, not a value -- name it with its
 /// arguments. A payload-less one is a value and compiles to its maker.

@@ -847,8 +847,22 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             }
             @record(c, at)
         } else {
-            // Neither a literal nor an expression: the callee leaf and the
-            // punctuation children carry no type the emitter asks for.
+            match c {
+                Leaf(_) => {
+                    // The callee leaf and the punctuation leaves carry no
+                    // type the emitter asks for.
+                }
+                Branch { .. } => {
+                    // A FORM in argument position the expression walk does
+                    // not know (hunt N2, #870): `println("a", v[1], "b")`
+                    // printed `ab` -- the argument fell out of BOTH walks
+                    // silently, because both asked the same is_expr_kind and
+                    // filed the miss under punctuation. A branch is never
+                    // punctuation: refuse by name, before the emitter.
+                    @report_first_leaf_of(branch_children(c), PRINTLN_ARG_FORM_MSG)
+                    return
+                }
+            }
         }
     }
 }

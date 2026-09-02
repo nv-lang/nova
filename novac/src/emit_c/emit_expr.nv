@@ -619,8 +619,20 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
             @emit_expr(c)
             @body.append(");\n")
         } else {
-            // The callee leaf and the parenthesis leaves are not arguments;
-            // the callee itself was already refused or accepted by name above.
+            match c {
+                Leaf(_) => {
+                    // The callee leaf and the parenthesis leaves are not
+                    // arguments; the callee itself was already refused or
+                    // accepted by name above.
+                }
+                Branch { .. } => {
+                    // The checker refuses every branch it cannot type in an
+                    // argument position (#870), so a branch here is a broken
+                    // invariant, not a shape to skip -- the silent fallout
+                    // this arm replaces printed `ab` for `a20b`.
+                    ice("emit_c: an argument form the checker let through (#870)")
+                }
+            }
         }
     }
     @body.append("    nova_print_newline();\n")

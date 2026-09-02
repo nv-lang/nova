@@ -788,3 +788,30 @@ fn main() {
     assert(c.contains("cost $5"))
     assert(!c.contains("cost \\$5"))
 }
+
+test "an unknown form in println's argument position refuses instead of falling out (#870)" {
+    // `println("a", v[1], "b")` printed `ab`: the Index branch was in
+    // neither walk's list, so it was filed under punctuation by BOTH the
+    // checker and the emitter. A branch is never punctuation.
+    ro std = std_decls()
+    ro (dpr, _) = compile_to_c("fn main() {
+ ro v = []int.of(10, 20, 30)
+ println(\"a\", v[1], \"b\")
+}", std)
+    // The shared decls are poor (no Vec), so the vector literal adds its
+    // own honest refusal -- the judge's answer is sought by TEXT, not by
+    // count.
+    mut hit = false
+    for g in dpr {
+        if g.message.contains("argument position") { hit = true }
+    }
+    assert(hit)
+
+    // The literal tuple falls in the same class (the second carrier the
+    // hunt named); the refusal is the same door.
+    ro (d2, _) = compile_to_c("fn main() {
+ println(\"a\", (1, 2), \"b\")
+}", std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("argument position"))
+}
