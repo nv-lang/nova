@@ -3248,32 +3248,22 @@ impl CEmitter {
         if kind_c == "NOVA_CONTRACT_PRE" { Ok(p) } else { Ok(None) }
     }
 
-    /// Plan 280 E3 (D468): compute the body rule's parameter from a
-    /// declaration. TWO such parameters are a refusal, not a silent pick of
-    /// the first -- registry #857's class is exactly the oracle choosing
-    /// quietly among applicable candidates.
+    /// Plan 280 E3 (D468): the body rule's parameter for this declaration.
+    ///
+    /// The REFUSAL on two such parameters lives in the checker
+    /// (`types::check_fn`, `[E_AMBIGUOUS_CALLER_LOC]`), not here -- one home,
+    /// and only the checker can attach a span. By the time codegen runs, more
+    /// than one is unreachable; taking the first keeps this total rather than
+    /// growing a second copy of the rule that could drift from it.
     fn compute_caller_loc_param(f: &FnDecl) -> Result<Option<String>, String> {
-        let mut found: Vec<String> = Vec::new();
         for p in &f.params {
             if let crate::ast::TypeRef::Named { path, .. } = &p.ty {
                 if path.last().map(|s| s.as_str()) == Some("CallerLoc") {
-                    found.push(p.name.clone());
+                    return Ok(Some(p.name.clone()));
                 }
             }
         }
-        match found.len() {
-            0 => Ok(None),
-            1 => Ok(Some(found.remove(0))),
-            _ => {
-                found.sort();
-                Err(format!(
-                    "[E_AMBIGUOUS_CALLER_LOC] function `{}` declares {} parameters of type \
-                     `CallerLoc` ({}) -- which one should `requires`/`ensures`/`assert` report? \
-                     Keep exactly one, or pass the intended location explicitly (D468).",
-                    f.name, found.len(), found.join(", ")
-                ))
-            }
-        }
+        Ok(None)
     }
 
     fn loc_for_span(&self, span_start: usize) -> (String, usize) {

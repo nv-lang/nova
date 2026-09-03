@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_AMBIGUOUS_CALLER_LOC
+//
+// Plan 280 E3 (D468): the body rule reads the function's ONE `CallerLoc`
+// parameter. Two of them is not a preference to resolve quietly -- picking the
+// first would be registry 857's class exactly, the oracle choosing among
+// applicable candidates in silence. So the declaration is refused by name.
+//
+// The refusal does NOT depend on which clause is present: an ambiguous
+// declaration is ill-formed whatever any particular check would do with it.
+module neg.m280_two_caller_loc_params_neg
+
+// nova:expect E_AMBIGUOUS_CALLER_LOC -- two parameters of type CallerLoc (`a`, `b`); the body rule has no way to choose, and choosing quietly is the defect this refusal exists to prevent (D468)
+fn two(a CallerLoc = caller_loc(), b CallerLoc = caller_loc()) -> int
+    requires 1 > 0, "unreachable"
+{
+    1
+}
+
+fn main() Io -> () {
+    println(two())
+}
