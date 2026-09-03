@@ -1255,7 +1255,15 @@ pub(crate) fn scan_interpolation_body(bytes: &[u8], brace_pos: usize) -> Option<
         let in_string = *stack.last().expect("стек не пустеет без return");
         if in_string {
             match b {
-                b'\\' => i += 2, // весь escape целиком (\" \\ \n \$ ...)
+                // Registry 832: the escaped character can be MULTI-BYTE, and a
+                // fixed `+2` lands inside it -- the same shape `lex_backtick`
+                // abandoned after registry 853 (`byte index is not a char
+                // boundary`). `i` sits on the ASCII backslash, so `i + 1` is a
+                // character boundary and `utf8_char_len` is safe to ask.
+                b'\\' => {
+                    let n = bytes.get(i + 1).map_or(1, |&nb| utf8_char_len(nb));
+                    i += 1 + n;
+                }
                 b'"' => {
                     stack.pop();
                     i += 1;
