@@ -47,3 +47,6 @@ novac/src/emit_c/shell.tpl.c -text
 # соврал и про правило, и про то, что вообще было проверено. Из 275 скриптов в
 # CRLF лежали ровно эти два; атрибут снимает класс целиком, а не эти два файла.
 *.sh            text eol=lf
+# Plan 280 E7: emission baselines are compared byte-for-byte against fresh
+# compiler output (LF). EOL translation would break every future comparison.
+*.expected.c -text

@@ -1,0 +1,17 @@
+// Registry 221.1 #887 -- REPRO. Eight lines of code; the panic names line 9.
+//
+//   nova build docs/plans/repro/p887/std_contract_loc.nv && ./std_contract_loc
+//   -> panic: std_contract_loc.nv:<N+1>: requires failed: n >= 0
+//
+// The violated contract is declared in std/src/collections/vec/mutate.nv:205,
+// not here. The reported line is (this file's line count + 1) -- a line that
+// does not exist in any file. Pad this file and the number follows the padding:
+// that control is control_padded.nv next to it.
+module std_contract_loc
+
+fn main() Io -> () {
+    mut v = Vec[int].new()
+    v.push(1)
+    v.resize(-3, 0)
+    println("unreachable")
+}

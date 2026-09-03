@@ -611,6 +611,61 @@ but that is an anti-pattern (the linter warns).
   `#blocking` (offload to a threadpool) and `#realtime` (forbid
   parking/alloc in the body) — D172.
 
+**A function can learn where it was called from** — the prelude record
+`CallerLoc` plus the built-in `caller_loc()`
+([D468](decisions/08-runtime.md#d468)). Without them a diagnostic wrapper
+reports ITSELF rather than the culprit: `assert` and contracts get their
+location from the compiler, a hand-written `ice()`/`expect()` door could not.
+
+The call site arrives through an ORDINARY parameter with a default — there is no
+attribute and no hidden channel:
+
+```nova
+type CallerLoc { file str, line int }     // in the prelude
+fn caller_loc() -> ro CallerLoc           // built-in
+
+export fn ice(msg str, loc CallerLoc = caller_loc()) -> never { … }
+
+ice("bad")          // loc = the location of THIS call
+```
+
+`caller_loc()` means "the location of this expression", and a default is
+substituted AT THE CALL SITE — which is why the parameter ends up holding the
+caller's line and not the declaration's. One rule, no modes. It carries no
+effect, so it can be used in `-> never` doors, and it costs nothing at run time:
+there is no actual call, only a constant pointer to a static record.
+
+**Inside a function that HAS a `CallerLoc` parameter, `requires`, `assert`,
+`debug_assert`, `panic` and `throw` use it automatically** — you do not repeat
+it on every line; `throw` records it as the failure's `site`. **`ensures` is
+the deliberate exception:** a broken postcondition is the function's own bug —
+the caller cannot cause one even in principle — so it keeps naming itself, the
+way every contract language assigns blame (Eiffel, D, Ada). One phrase instead
+of a table: what speaks about the INPUT or outward points at the caller;
+`ensures` speaks about the function's own OUTPUT. Two such parameters are
+refused by name. To point somewhere that is not your own parameter, pass it
+explicitly: `requires cond, "msg", loc`, `assert(cond, loc)`, `panic("…", loc)`.
+
+**The chain is forwarded BY HAND.** A wrapper whose own caller should be blamed
+passes `loc` on:
+
+```nova
+fn ensure(ok bool, loc CallerLoc = caller_loc()) -> () {
+    if !ok { ice("assertion failed", loc) }    // omit `loc` and ice() names THIS line
+}
+```
+
+Both readings are literal and the difference is visible in the text. Nova
+follows C# and Swift here rather than Rust: no implicit propagation, and so no
+hidden parameter for the type system to carry. The price is named: forwarding is
+the author's discipline, and the compiler will not remind you.
+
+The message keeps both places, so the wrapper's own bug stays findable:
+
+```
+caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
+```
+
 **Primitive types (lowercase, an exception to the PascalCase rule):**
 - `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
 - `f32`, `f64`

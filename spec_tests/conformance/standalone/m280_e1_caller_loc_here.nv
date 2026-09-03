@@ -1,0 +1,21 @@
+// EXPECT_STDOUT m280_e1_caller_loc_here.nv:9|m280_e1_caller_loc_here.nv:18|m280_e1_caller_loc_here.nv:20
+// Plan 280 E1 (D468). Two claims, both pinned to exact lines:
+//   1. `caller_loc()` written plainly in a body means HERE (line 9);
+//   2. as a parameter default it means the CALL SITE -- two calls on
+//      DIFFERENT lines (18, 20) must print DIFFERENT numbers, which is what
+//      distinguishes a real substitution from the declaration's own line.
+module standalone.m280_e1_caller_loc_here
+
+fn here() -> CallerLoc => caller_loc()
+
+fn tagged(msg str, loc CallerLoc = caller_loc()) -> str =>
+    "${loc.file}:${loc.line}"
+
+fn main() Io -> () {
+    ro h = here()
+    print("${h.file}:${h.line}")
+    print("|")
+    print(tagged("a"))
+    print("|")
+    println(tagged("b"))
+}

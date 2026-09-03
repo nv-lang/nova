@@ -1,0 +1,46 @@
+// EXPECT_STDOUT ok 7 12 done
+// Plan 280 E7 price ratchet: this fixture NEVER mentions CallerLoc, and its
+// emitted C is pinned as a committed baseline (see the .expected.c next to it).
+// It deliberately exercises the surfaces stages E1-E4 touch, so any accidental
+// cost leaking onto non-declaring code shows up here first:
+//   - a defaulted parameter, called both ways (callnorm's two-phase block);
+//   - a call made of ONLY defaults (rename map stays empty -- the trap noted
+//     in the plan's mechanism section);
+//   - a requires contract, satisfied;
+//   - an assert, satisfied;
+//   - a two-link call chain.
+//
+// BASELINE CAPTURE (metadata lives HERE, not inside the .expected.c: the
+// baseline must stay byte-identical to a fresh emission, so it carries no
+// header of its own):
+//   captured   : 2026-09-03, RE-PINNED after E1 (see the plan's E7 note)
+//   command    : NOVA_CACHE=0 nova build <this file> --keep-artifacts
+//   determinism: two cold builds compared byte-identical before pinning
+//   re-pin why : E1 added the prelude type (6 lines/module, the real cost)
+//                and shifted 56 std line numbers -- the latter is registry 887,
+//                not a cost. Any std/prelude edit re-pins this until 887 is fixed.
+//   sha256(.expected.c): d69526a037b0bc0dd4eee472f65f9775345ac2534926d397527e13b15e9a4049
+//   sha256(nova.exe)   : c93163513ceed37c9500957b3d653ffcd208b3e8105813c530d94206acbea93b
+// Ratchet: after every stage of plan 280, a fresh NOVA_CACHE=0 emission of
+// this file must equal m280_price_ratchet_baseline.expected.c byte-for-byte.
+module standalone.m280_price_ratchet_baseline
+
+fn greet(tag str = "ok") -> str => tag
+
+fn add(a int, b int = 5) -> int
+    requires a > 0, "a must be positive"
+{
+    a + b
+}
+
+fn middle(x int) -> int {
+    assert(x > 0, "x must be positive")
+    add(x, b: 10)
+}
+
+fn main() Io -> () {
+    ro g = greet()
+    ro s1 = add(2)
+    ro s2 = middle(2)
+    println("${g} ${s1} ${s2} done")
+}

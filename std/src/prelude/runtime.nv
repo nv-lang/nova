@@ -105,3 +105,14 @@ extern "nova" fn println(...items []any) -> ()
 /// ```
 #stable(since = "0.1")
 extern "nova" fn suppressed() -> []any
+
+/// The location of THIS expression: the file and line where the
+/// `caller_loc()` call itself stands after all substitutions (D468).
+/// Written as a parameter default -- `fn ice(msg str, loc CallerLoc =
+/// caller_loc())` -- it yields the CALLER's location, because a default
+/// is substituted at the call site (D102). No call exists at run time:
+/// codegen lowers every use to a constant pointer to an interned static
+/// record, one per distinct (file, line), deduplicated like string
+/// literals.
+#stable(since = "0.1")
+extern "nova" fn caller_loc() -> ro CallerLoc

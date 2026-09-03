@@ -1,0 +1,16 @@
+// Registry 221.1 #887 -- CONTROL. Identical program, four blank/comment lines
+// longer. The reported line moves by exactly the padding, proving the number is
+// derived from the ENTRY FILE'S LENGTH and not from any real source position.
+// Without this control the defect would read as "wrong line", which understates
+// it: there is no line, and the number tracks something unrelated to the code.
+module control_padded
+
+fn main() Io -> () {
+    mut v = Vec[int].new()
+    v.push(1)
+    v.resize(-3, 0)
+    println("unreachable")
+}
+// pad
+// pad
+// pad

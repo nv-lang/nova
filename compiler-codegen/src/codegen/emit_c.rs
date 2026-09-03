@@ -1770,6 +1770,17 @@ pub struct CEmitter {
     interned_blob_emit: Vec<(String, Vec<u8>)>,
     /// Близнец `interned_str_syms` для блобов — та же квадратичность.
     interned_blob_syms: std::collections::HashSet<String>,
+    /// Plan 280 E1 (D468): caller-location interning. Maps the (file, line)
+    /// of a `caller_loc()` site -> the C symbol of its single shared
+    /// `static const Nova_CallerLoc` record. Identical sites share one
+    /// record; the file string rides `interned_str_literals` (its `_buf`
+    /// byte array is the only constant-expression handle C allows inside
+    /// a static struct initializer -- a `static const nova_str` VALUE is
+    /// not one). Insertion-ordered emit list keeps output deterministic.
+    interned_callerloc: HashMap<(String, usize), String>,
+    /// (symbol, file-literal symbol, file byte length, line).
+    interned_callerloc_emit: Vec<(String, String, usize, usize)>,
+    interned_callerloc_syms: std::collections::HashSet<String>,
     /// Plan 210 Ф.8 (Go-паритет+, 2026-07-17, OPT-IN): when `Some(dir)`, blob
     /// statics are emitted as C23 `#embed "<sym>.bin"` (sidecar file written
     /// under `dir`) instead of the default `0x%02X,` hex-text array (~5.3x
@@ -2818,6 +2829,9 @@ impl CEmitter {
             interned_blob_literals: HashMap::new(),
             interned_blob_emit: Vec::new(),
             interned_blob_syms: std::collections::HashSet::new(),
+            interned_callerloc: HashMap::new(),
+            interned_callerloc_emit: Vec::new(),
+            interned_callerloc_syms: std::collections::HashSet::new(),
             blob_sidecar_dir: None,
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
@@ -7961,6 +7975,13 @@ impl CEmitter {
         // build any eq-fn bodies `register_novaopt_decl` deferred because they
         // self-referenced a type still mid-emission at registration time.
         self.drain_pending_structural_eq();
+        // Plan 280 E1 (D468): caller-location statics splice point. MUST sit
+        // AFTER every type body: the statics are `static const Nova_CallerLoc`
+        // definitions, and the interned-literals marker precedes the struct
+        // bodies (measured on the first probe: static at line 628, struct
+        // body at 633 -> 'incomplete type'). The `_buf` arrays they reference
+        // are fine either way -- they sit at the earlier marker.
+        self.line("/*__CALLERLOC_STATICS__*/");
 
         // Plan 52.2 Ф.2: forward-declare mono'd struct types для
         // const-decls с generic-типом. Без этого `const X HashMap[K,V] = [...]`
@@ -9504,6 +9525,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "/*__INTERNED_STR_LITERALS__*/",
             &format!("{}{}", interned, interned_blobs),
         );
+        // Plan 280 E1 (D468): caller-location records go to their OWN marker,
+        // placed after every type body -- a `static const Nova_CallerLoc`
+        // definition needs the complete struct, and the interned-literals
+        // marker precedes the struct bodies (first probe: 'incomplete type',
+        // static at 628 vs body at 633). The `_nova_strlit_*_buf` arrays the
+        // records reference live at the EARLIER marker, so that direction of
+        // the dependency is satisfied by construction.
+        let interned_clocs = self.render_interned_callerloc();
+        self.out = self.out.replace("/*__CALLERLOC_STATICS__*/", &interned_clocs);
 
         // Plan 70 Ф.B0 (session 2): strict-error finalization gate.
         // Cascade-blocked sites (infer_expr_c_type, register_mono_instance,
@@ -40362,6 +40392,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // По D81: assert — always runtime. Plan 194 A2.2/A4: dev-only
             // variant роль теперь у `#debug assert` (mode_erases_debug); тем
             // самым legacy `debug_assert` intrinsic-имя ретрактировано.
+            // Plan 280 E1 (D468): `caller_loc()` -- no run-time call exists.
+            // The expression lowers to a constant pointer to the interned
+            // static Nova_CallerLoc of THIS site's (file, line). A use as a
+            // parameter default yields the CALLER's location with no extra
+            // rule: callnorm clones the default INTO the call site before
+            // codegen ever runs (D102; callnorm.rs:693/:818/:834).
+            if name == "caller_loc" && args.is_empty() {
+                let line = match &self.annotation_source {
+                    Some(src) => crate::diag::byte_to_line_col(src, func.span.start).0,
+                    None => 0,
+                };
+                let file = self.source_file_name.clone();
+                let sym = self.intern_caller_loc(&file, line);
+                return Ok(format!("((Nova_CallerLoc*)&{})", sym));
+            }
             if name == "assert" {
                 if let Some(cond_arg) = args.first() {
                     let cond_expr = cond_arg.expr();
@@ -65375,6 +65420,73 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         mangled
+    }
+
+    /// Plan 280 E1 (D468): intern one caller-location site. Returns the C
+    /// symbol of the shared `static const Nova_CallerLoc` for (file, line).
+    fn intern_caller_loc(&mut self, file: &str, line: usize) -> String {
+        let key = (file.to_string(), line);
+        if let Some(sym) = self.interned_callerloc.get(&key) {
+            return sym.clone();
+        }
+        // The file string rides the existing literal interner. For a
+        // non-empty string the returned symbol has a `<sym>_buf` byte
+        // array beside it; the empty-file case (no annotation source)
+        // is rendered inline instead -- see render_interned_callerloc.
+        let fsym = if file.is_empty() {
+            String::new()
+        } else {
+            self.intern_str_literal(file)
+        };
+        // FNV-1a over "file:line" -> stable symbol; collision guard
+        // mirrors intern_str_literal (registry 221.1 #522 lesson).
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in file.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= line as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        let mut sym = format!("_nova_cloc_{:016x}", hash);
+        if self.interned_callerloc_syms.contains(&sym) {
+            let mut seq = 1usize;
+            loop {
+                let candidate = format!("_nova_cloc_{:016x}_{}", hash, seq);
+                if !self.interned_callerloc_syms.contains(&candidate) {
+                    sym = candidate;
+                    break;
+                }
+                seq += 1;
+            }
+        }
+        self.interned_callerloc_syms.insert(sym.clone());
+        self.interned_callerloc_emit
+            .push((sym.clone(), fsym, file.len(), line));
+        self.interned_callerloc.insert(key, sym.clone());
+        sym
+    }
+
+    /// Plan 280 E1 (D468): render the interned caller-location records for
+    /// the `/*__INTERNED_STR_LITERALS__*/` splice (appended after strings
+    /// and blobs, so the `_buf` arrays they reference are already defined).
+    fn render_interned_callerloc(&self) -> String {
+        if self.interned_callerloc_emit.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        out.push_str("/* Plan 280 E1 (D468): interned caller-location records. */\n");
+        let storage = self.top_level_storage();
+        for (sym, fsym, flen, line) in &self.interned_callerloc_emit {
+            let file_init = if fsym.is_empty() {
+                "{ .ptr = (const uint8_t*)\"\", .len = 0 }".to_string()
+            } else {
+                format!("{{ .ptr = {fsym}_buf, .len = {flen} }}")
+            };
+            out.push_str(&format!(
+                "{storage}const Nova_CallerLoc {sym} = {{ .file = {file_init}, .line = {line} }};\n"
+            ));
+        }
+        out
     }
 
     fn render_interned_str_literals(&self) -> String {

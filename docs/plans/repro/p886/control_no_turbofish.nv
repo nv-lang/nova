@@ -1,0 +1,14 @@
+// Registry 221.1 #886 -- CONTROL. Identical but for the turbofish: the type
+// argument is inferred instead of written. Without a control the repro would
+// read as "defaults on methods are broken", which is false and would send the
+// next window into the wrong subsystem.
+module control_no_turbofish
+
+type Box { slot int }
+
+fn Box @wrap[U](tag U, note str = "n") -> str => note
+
+fn main() Io -> () {
+    ro b = Box { slot: 1 }
+    println(b.wrap("hi"))
+}
