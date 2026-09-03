@@ -969,3 +969,45 @@ fn main() {
     }
     assert(hit)
 }
+
+test "a field whose type is declared LOWER in the file compiles (#TBD-A, hunt sem x K4)" {
+    // Both layouts, because they fail for different reasons and are held by
+    // different halves of the declaration pass: a POINTER field needs only the
+    // forward `typedef`, a field embedded BY VALUE needs the complete type,
+    // which is the body ORDER. Before them novac accepted such a file in
+    // SILENCE and emitted C clang refused, while the oracle compiled it.
+    //
+    // Asserted on ORDER, not on presence: a `typedef` existing somewhere proves
+    // nothing -- it has to stand before the body that reads the name.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Boxed { node Node }
+type Inline { at Point }
+type Node { n int }
+type Point value {
+ x int
+ y int
+}
+fn main() {
+ ro b = Boxed { node: Node { n: 9 } }
+ println(b.node.n)
+ ro i = Inline { at: Point { x: 4, y: 7 } }
+ println(i.at.x)
+}", std)
+    assert(d.len() == 0)
+
+    // The POINTER half: `Nova_Node` is named as a type before `struct Nova_Boxed`
+    // is written, so the forward pass must have put its typedef first.
+    ro fwd_node = c.find("typedef struct Nova_Node Nova_Node;") ?? -1
+    ro body_boxed = c.find("struct Nova_Boxed {") ?? -1
+    assert(fwd_node >= 0)
+    assert(body_boxed >= 0)
+    assert(fwd_node < body_boxed)
+
+    // The VALUE half: `Inline` embeds `Point` by value, so the COMPLETE
+    // `NovaValue_Point` body must precede `struct Nova_Inline`.
+    ro body_point = c.find("struct NovaValue_Point {") ?? -1
+    ro body_inline = c.find("struct Nova_Inline {") ?? -1
+    assert(body_point >= 0)
+    assert(body_inline >= 0)
+    assert(body_point < body_inline)
+}

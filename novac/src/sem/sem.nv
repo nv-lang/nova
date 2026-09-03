@@ -298,6 +298,23 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
 /// the declaration index as the identity and give the interner row its own
 /// name). That is the owner's call and a wave of its own -- recorded in sub-plan
 /// 9.1g.1 rather than settled here by whoever typed the field first.
+/// The INDEX of the declaration a nominal term names, or -1 when it names
+/// none this file holds.
+///
+/// Exists so a reader outside `sem` can key an array by declaration without
+/// importing `names`: the emitter's declaration pass needs "is this type's
+/// body already out?", and the answer is an index into its own array. The
+/// edge table (architecture section 3) has no `emit_c -> names` edge, and the
+/// honest fix is to keep `raw_decl` where it is already legal rather than to
+/// widen the graph for one subscript.
+export fn decl_index_of_ty(ctx Ctx, t TyId) -> int {
+    if !is_ty(t) { return -1 }
+    ro d = ctx.tys.decl_head_of(t)
+    if !is_decl(d) { return -1 }
+    if raw_decl(d) >= ctx.types.len() { return -1 }
+    raw_decl(d)
+}
+
 export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
     requires is_ty(t), "sem: the declaration of `no type` -- absence has no row"
 {

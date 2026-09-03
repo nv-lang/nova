@@ -21,7 +21,13 @@
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FILE="${1:-examples/basics/hello.nv}"
-NOVAC="$ROOT/novac/target/novac.exe"
+# NOVAC_BIN — мерить ПРИВАТНУЮ сборку, не устанавливая общий бинарь. Дисциплина
+# уже принята («под идущим гейтом собирай в приватный путь»), а инструмент её не
+# поддерживал: 2026-09-03 общий novac.exe оказался ЗАНЯТ открытым хэндлом после
+# гейта, `cp` не прошёл пять попыток подряд, и смоук молча померил ПРЕЖНИЙ
+# бинарь — три строки «результата», которые ничего не доказывали. Шов дешевле
+# борьбы с блокировкой и убирает целый класс ложных замеров.
+NOVAC="${NOVAC_BIN:-$ROOT/novac/target/novac.exe}"
 CACHE="${NOVAC_SMOKE_CACHE:-${TMPDIR:-/tmp}/novac-smoke-cache}"
 T="${TMPDIR:-/tmp}/novac-smoke.$$"
 mkdir -p "$CACHE" "$T"

@@ -20,8 +20,21 @@ module emit_c
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
-import ../types.{TyId}
+import ../types.{TyId, is_ty}
+import ../sem.{decl_index_of_ty}
 import ../diag.{ice}
+
+/// The forward typedef of one record or sum -- `typedef struct X X;`, nothing
+/// more.
+///
+/// A PASS OF THESE PRECEDES EVERY BODY, and that is what makes a field whose
+/// type is declared lower in the file legal C. It is enough for a POINTER,
+/// which needs only the name. A field embedded BY VALUE needs the complete
+/// type, and no typedef substitutes for that -- that half is the body ORDER.
+fn Emitter mut @emit_type_fwd(decl_id int) -> () {
+    ro td = @ctx.types[decl_id]
+    @body.append("typedef struct ${c_struct(@ctx, td.ty_id)} ${c_struct(@ctx, td.ty_id)};\n")
+}
 
 /// Record: a typedef plus the struct with one member per field row, in the
 /// declaration order the registry stored (the FieldRows arm of TypeDef.rows).
@@ -32,7 +45,12 @@ fn Emitter mut @emit_record_decl(rec_id int) -> () {
     // in `sem.decl_of_ty`, and this door no longer leans on it).
     ro td = @ctx.types[rec_id]
     ro sn = c_struct(@ctx, td.ty_id)
-    @body.append("typedef struct ${sn} ${sn};\n")
+    // THE TYPEDEF IS NOT WRITTEN HERE any more: it is emitted for EVERY record
+    // and sum in a first pass (`@emit_type_fwd`), so a field POINTING to a type
+    // declared LOWER in the file resolves. Before that pass novac accepted such
+    // a file and emitted C clang refused -- `unknown type name 'Nova_Inner'` --
+    // while the oracle compiled it and printed 9 (found by the sem x K4 hunt,
+    // probe p_forward_field_bad_c).
     @body.append("struct ${sn} {\n")
     // The FIELD range, asked of the arm that holds one: a declaration whose rows
     // are variants (or none) has no fields to write, and the door says so instead
@@ -71,7 +89,9 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
         @body.append("    ${c_tag(@ctx, VariantRow(v))},\n")
     }
     @body.append("} ${te};\n")
-    @body.append("typedef struct ${sn} ${sn};\n")
+    // The struct typedef comes from the forward pass (see @emit_record_decl).
+    // The TAG enum stays here: only this type's own body and its makers name
+    // it, and all of them follow it.
     @body.append("struct ${sn} {\n    ${te} tag;\n    union {\n")
     for v in vstart..vend {
         ro vd = @ctx.variant_rows[v]
@@ -107,5 +127,167 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
             @body.append("    _r${arrow}payload.${vd.name}._${q} = _${q};\n")
         }
         @body.append("    return _r;\n}\n\n")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE DECLARATION PASS moved here from emit_c.nv on 2026-09-03, when the
+// forward/order fix (#TBD-A) pushed that file past the thousand-line limit.
+// This file already owned the ROLE -- it writes what a declaration becomes --
+// so the pass that decides WHICH declaration goes WHEN belongs beside it. Same
+// seam decls.nv and type_decl.nv came out of parse.nv; nothing is renamed.
+// ---------------------------------------------------------------------------
+
+/// Emit declarations for every user type of the file (shell owns the rest).
+/// The dispatch is an EXHAUSTIVE match over TypeKind, not an if-chain ending
+/// in `else`: the owner's rule 2026-08-16. An `else` on a closed set means
+/// "everything I did not name is a sum", so a fourth kind would be emitted as
+/// a sum in silence — the #652 class again. With a match, a new variant is a
+/// compile error at exactly this line.
+fn Emitter mut @emit_type_decls() -> () {
+    // PASS 1 -- every struct NAME before any body. C needs only the name to
+    // take a pointer, so this alone makes a heap-record field whose type is
+    // declared LOWER in the file legal. The same skip of handed-over types
+    // applies as below: the shell declares those.
+    for t in 0..@ctx.types.len() {
+        if t < @ctx.defs.foreign_cnt { continue }
+        // THROUGH THE SAME DOOR AS THE BODIES, with `fwd_only` telling which
+        // half to write. A second exhaustive kind-match here would have been a
+        // second dispatcher on one closed set (P18) -- and the word-rule guard
+        // said so first, counting its `TkTuple` arm as growth (98 > 97). One
+        // match, two behaviours; nothing decides the kind twice.
+        @emit_decl_kind(t, true)
+    }
+    // PASS 2 -- the bodies, each AFTER every type it embeds by value.
+    //
+    // A pointer was satisfied by pass 1; a field embedded BY VALUE needs the
+    // COMPLETE type, and no typedef substitutes for that. Both halves were
+    // measured on the same shape: the pointer case failed as `unknown type
+    // name 'Nova_Inner'`, the value case as `unknown type name
+    // 'NovaValue_Inner'` (hunt sem x K4, probes p_forward_field_bad_c and
+    // p_forward_value_field_bad_c) -- while the oracle compiled both.
+    //
+    // A FIXED-POINT LOOP, not recursion: it obviously terminates, needs no
+    // state on the emitter, and its failure mode says what it means -- a round
+    // that emits NOTHING while declarations remain is a cycle of by-value
+    // fields, that is a type of infinite size, which is an illegal program the
+    // checker should have refused. Independent types still go in registry
+    // order, so nothing moves for a file without forward references.
+    mut done = []bool.new()
+    for _ in 0..@ctx.types.len() { done.push(false) }
+    mut left = 0
+    for t in 0..@ctx.types.len() {
+        // A handed-over type is declared by the shell (see pass 1's note), so
+        // it counts as already done and never blocks anyone.
+        if t < @ctx.defs.foreign_cnt {
+            done[t] = true
+        } else {
+            left += 1
+        }
+    }
+    while left > 0 {
+        mut moved = 0
+        for t in 0..@ctx.types.len() {
+            if done[t] { continue }
+            if !@inline_deps_done(t, done) { continue }
+            @emit_decl_kind(t, false)
+            done[t] = true
+            moved += 1
+            left -= 1
+        }
+        if moved == 0 {
+            ice("emit_c: a cycle of by-value fields -- a type of infinite size reached the emitter")
+        }
+    }
+}
+
+/// Are the bodies of every type this declaration embeds BY VALUE already out?
+///
+/// The predicate for "embedded by value" is not invented here: `c_type` writes
+/// a POINTER only for the `Record` shape (sem/mangle.nv) and spells every other
+/// record shape inline, and a sum is inline exactly when `is_value_sum` says so.
+/// So one door decides the layout and this one only reads it.
+fn Emitter @inline_deps_done(decl_id int, done []bool) -> bool {
+    ro td = @ctx.types[decl_id]
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+        if !@dep_done(@ctx.fields.rows[j].type_id, done) { return false }
+    }
+    ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+    for v in raw_vrow(vrange.0)..raw_vrow(vrange.0) + vrange.1 {
+        ro vd = @ctx.variant_rows[v]
+        for k in 0..vd.payload_cnt {
+            if !@dep_done(@ctx.payload_types[vd.payload_off + k], done) { return false }
+        }
+    }
+    true
+}
+
+/// One field or payload type: does it force an ORDER, and is that order met?
+///
+/// Answers `true` for everything that does NOT embed -- a primitive, a pointer,
+/// a parameter -- because those need no body before them at all.
+fn Emitter @dep_done(t TyId, done []bool) -> bool {
+    if !is_ty(t) { return true }
+    // NO KIND MATCH HERE, and that is the point: the layout is already decided
+    // by two existing doors, and asking them is one door instead of a second
+    // dispatcher (P18). `is_value_record` answers TRUE for every inline record
+    // shape and for a structural tuple term, FALSE for a heap record -- which
+    // is exactly "lies inline"; `is_value_sum` answers the same question for a
+    // sum. Both are safe on any kind (they answer FALSE for a primitive, a
+    // newtype, a parameter). My first version spelled its own exhaustive match
+    // here and the word-rule guard caught it as growth (99 > 97) -- the second
+    // match WAS the second door, and the word was only how it showed.
+    if !is_value_record(@ctx, t) && !is_value_sum(@ctx, t) { return true }
+    // A STRUCTURAL term has no declaration to wait for: a mono tuple struct is
+    // emitted by its own channel, not by this pass. Named as an honest
+    // UNDER-approximation rather than a proof -- a tuple whose component is a
+    // record declared lower would not be ordered by this door. No probe of
+    // that shape exists yet, and inventing one is V3-2's work, not this fix's.
+    ro d = decl_index_of_ty(@ctx, t)
+    if d < 0 { return true }
+    done[d]
+}
+
+/// One declaration, ONE match over its kind, serving BOTH passes.
+///
+/// `fwd_only` picks the half: the forward `typedef struct X X;` that pass 1
+/// writes for every struct before any body, or the body itself that pass 2
+/// writes once the order allows it. The two used to be two matches over the
+/// same closed set, which is the shape of a second door (P18).
+fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
+    // A HANDED-OVER TYPE IS NOT REACHED HERE: the order loop marks it done
+    // before it starts, so it neither gets a body nor blocks anyone waiting on
+    // it. The reason stands where the decision stands, and it is INTEROP with
+    // its own end condition -- our emission is glued into the oracle's shell
+    // (274 section 7.0), which already declares std's types, so emitting them
+    // again would be a second definition of one name, and novac does not even
+    // know their fields (the harvest reads names and kinds, not bodies).
+    // Measured 2026-08-24: with handed-over types in the registry the emission
+    // grew a `NovaValue_Pair` beside the file's own `Nova_Pair`. The day novac
+    // emits the whole prelude it declares them itself.
+    ro td = @ctx.types[t]
+    match td.kind {
+        TkPrim => {} // primitives own no declarations
+        TkRecord => { if fwd_only { @emit_type_fwd(t) } else { @emit_record_decl(t) } }
+        TkSum => { if fwd_only { @emit_type_fwd(t) } else { @emit_sum_decl(t) } }
+        TkApp => ice("emit_c: declaration of an applied type — instances are emitted by mono, E2-b2")
+            // A type parameter DECLARES nothing: it has no layout until a
+            // substitution names one, and the instance that carries the
+            // substitution is emitted as its own function (E2-b2). The row
+            // exists from 2026-08-20, when a parameter became a real type, so
+            // this arm went from "cannot happen" to "nothing to do" -- and it
+            // says which, rather than icing on a legal registry.
+        TkParam => {}
+            // A NEWTYPE declares NOTHING of its own: it is laid out as its
+            // representation, and every reference to it spells the
+            // representation (`c_type`). The oracle emits a `typedef` here;
+            // novac's emission shape is its own (274 section 7.0) and an
+            // unreferenced typedef would be text nobody reads.
+        TkNewtype => {}
+        TkInfer => ice("emit_c: declaration of an inference variable — a variable escaped its body")
+            // A tuple is a structural TERM: nothing ever declares one, so a
+            // registry row with this kind is a harvest bug, not a decl to emit.
+        TkTuple => ice("emit_c: a TUPLE among declarations — a structural term declares nothing")
     }
 }
