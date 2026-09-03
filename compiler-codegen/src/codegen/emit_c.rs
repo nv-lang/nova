@@ -3230,6 +3230,23 @@ impl CEmitter {
         self.current_caller_loc_param.clone()
     }
 
+    /// Plan 280 E3-b (D468): render one throw-site stamp -- either the literal
+    /// pair or, when the enclosing function declares a `CallerLoc` parameter,
+    /// the `_s` door reading it. ONE helper for all three `?`/`!!` sites:
+    /// three copies of the same branch would drift, and registry #887 is the
+    /// standing evidence that nobody re-reads a stamp once it is written.
+    fn throw_stamp(
+        &self,
+        callee: &str,
+        file_lit: &str,
+        line: usize,
+    ) -> Result<String, String> {
+        Ok(match self.caller_loc_param()? {
+            Some(p) => format!("{callee}_s({p}->file, (int){p}->line);"),
+            None => format!("{callee}(\"{file_lit}\", {line});"),
+        })
+    }
+
     /// Plan 280 E3 (D468): the body rule for a CONTRACT, which is kind-aware.
     /// Only a PRECONDITION names the caller. `ensures` is the owner's
     /// deliberate exception (2026-09-03): a broken postcondition is the
@@ -34322,7 +34339,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // uncaught-abort ветки печатают `at file:line`. Error-path only.
                 {
                     let (file_lit, line) = self.loc_for_span(span.start);
-                    self.line(&format!("nova_throw_site_set(\"{}\", {});", file_lit, line));
+                    // Plan 280 E3-b (D468): the bare-`throw` door. Found by
+                    // writing the fixture, not by reading the code -- three doors
+                    // had looked like all of them, and the fixture printed no
+                    // location at all, which is what said otherwise.
+                    let stamp = self.throw_stamp("nova_throw_site_set", &file_lit, line)?;
+                    self.line(&stamp);
                 }
                 if val_ty == "nova_str" {
                     self.line(&format!("Nova_Fail_fail({});", val));
@@ -37657,10 +37679,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             try_tmp
                         ));
                         self.indent += 1;
-                        self.line(&format!(
-                            "nova_throw_trace_push(\"{f}\", {l}); nova_throw_site_mark(\"{f}\", {l});",
-                            f = trace_file, l = trace_line
-                        ));
+                        {
+                            let push = self.throw_stamp(
+                                "nova_throw_trace_push", &trace_file, trace_line)?;
+                            let mark = self.throw_stamp(
+                                "nova_throw_site_mark", &trace_file, trace_line)?;
+                            self.line(&format!("{push} {mark}"));
+                        }
                         if err_is_str {
                             self.line(&format!(
                                 "if ({}->err_typed_type_id != NOVA_TID_NONE) {{",
@@ -37711,8 +37736,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // [M-173-error-return-trace]: push перед early-return
                         // Err — value-mode звено той же `?`-цепочки.
                         self.line(&format!(
-                            "if ({tmp}->tag == NOVA_TAG_Result_Err) {{ nova_throw_trace_push(\"{f}\", {l}); return {ctor}({tmp}->payload.Err._0); }}",
-                            tmp = try_tmp, f = trace_file, l = trace_line, ctor = err_ctor));
+                            "if ({tmp}->tag == NOVA_TAG_Result_Err) {{ {push} return {ctor}({tmp}->payload.Err._0); }}",
+                            tmp = try_tmp,
+                            push = self.throw_stamp(
+                                "nova_throw_trace_push", &trace_file, trace_line)?,
+                            ctor = err_ctor));
                     }
                     Ok(format!("({}->payload.Ok._0)", try_tmp))
                 } else {
@@ -37747,9 +37775,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // origin (RuntimeNoneError рождается здесь) → полный
                     // стемп site_set (reset трассы) как у user-throw.
                     let (bfile, bline) = self.loc_for_span(expr.span.start);
+                    // Plan 280 E3-b: same door, the RuntimeNoneError origin.
+                    let stamp = self.throw_stamp("nova_throw_site_set", &bfile, bline)?;
                     self.line(&format!(
-                        "if ({}) {{ nova_throw_site_set(\"{}\", {}); nova_throw_runtime_none_error(); }}",
-                        none_check, bfile, bline
+                        "if ({}) {{ {} nova_throw_runtime_none_error(); }}",
+                        none_check, stamp
                     ));
                     Ok(format!("({}.value)", bang_tmp))
                 } else if Self::is_result_like(&inner_ty) {
@@ -37788,10 +37818,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `?`-кадры переживают конверсию).
                     {
                         let (bfile, bline) = self.loc_for_span(expr.span.start);
-                        self.line(&format!(
-                            "nova_throw_trace_push(\"{f}\", {l}); nova_throw_site_mark(\"{f}\", {l});",
-                            f = bfile, l = bline
-                        ));
+                        {
+                            let push = self.throw_stamp(
+                                "nova_throw_trace_push", &bfile, bline)?;
+                            let mark = self.throw_stamp(
+                                "nova_throw_site_mark", &bfile, bline)?;
+                            self.line(&format!("{push} {mark}"));
+                        }
                     }
                     if err_is_str {
                         self.line(&format!(
@@ -40566,6 +40599,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let msg_val = self.emit_expr(args[0].expr())?;
                 // Plan 173 Ф.5 п.7: throw-site стемп (comma-expr, error-path only).
+                // Plan 280 E3-b (D468): body rule -- a declared `CallerLoc`
+                // parameter makes the stamp name the CALLER. The `_s` door owns
+                // the string (see the pool in effects.h): this one STORES the
+                // pointer, unlike the contract/assert doors that copy it.
+                if let Some(p) = self.caller_loc_param()? {
+                    return Ok(format!(
+                        "(nova_throw_site_set_dominant_s({}->file, (int){}->line), nv_panic({}), (nova_int)0LL)",
+                        p, p, msg_val));
+                }
                 let (file_lit, line) = self.loc_for_span(func.span.start);
                 return Ok(format!(
                     "(nova_throw_site_set_dominant(\"{}\", {}), nv_panic({}), (nova_int)0LL)",

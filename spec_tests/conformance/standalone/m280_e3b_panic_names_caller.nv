@@ -1,0 +1,21 @@
+// EXPECT_RUNTIME_PANIC m280_e3b_panic_names_caller.nv:19 (throw site)
+// Plan 280 E3-b (D468): a `throw` inside a function that declares a
+// `CallerLoc` parameter stamps the CALLER as the throw site. The marker pins
+// line 19, the call; before E3-b this named line 15, the `throw` itself.
+//
+// This half needed its own runtime door, and the reason is worth knowing
+// before touching it: the contract and assert doors COPY the file name into
+// their message immediately, so a stack buffer is safe there. The throw doors
+// STORE the pointer and read it later, when the panic renders -- so the string
+// must be owned. `nova_throw_site_set_dominant_s` interns it in a small static
+// pool whose size is derived from the 16-entry trace ring it feeds, not picked.
+module standalone.m280_e3b_panic_names_caller
+
+fn boom(msg str, loc CallerLoc = caller_loc()) Fail -> () {
+    throw msg
+}
+
+fn main() Io -> () {
+    boom("exploded")
+    println("UNREACHABLE")
+}
