@@ -9,6 +9,7 @@ typedef struct { nova_int f0; nova_int f1; } _NovaTuple2;
 #endif
 
 /* Plan 36: forward decls для user types — нужны для NovaOpt_<T> */
+typedef struct Nova_CallerLoc Nova_CallerLoc;
 typedef struct Nova_ScopeOutcome Nova_ScopeOutcome;
 typedef struct Nova_ReadBufferError Nova_ReadBufferError;
 typedef int64_t Nova_RuntimeNoneError;
@@ -620,6 +621,12 @@ static const nova_str _nova_strlit_af63a64c860190ca = { .ptr = _nova_strlit_af63
 static const uint8_t _nova_strlit_08b05d07b5566bef_buf[] = "ok";
 static const nova_str _nova_strlit_08b05d07b5566bef = { .ptr = _nova_strlit_08b05d07b5566bef_buf, .len = 2 };
 
+
+typedef struct Nova_CallerLoc Nova_CallerLoc;
+struct Nova_CallerLoc {
+    nova_str file;
+    nova_int line;
+};
 
 typedef enum {
     NOVA_TAG_ScopeOutcome_Success,
@@ -1235,6 +1242,7 @@ static inline nova_unit Nova_Application_register_finalizer(void* f) {
 static inline nova_int Nova_Application_default_exit_timeout_ms(void) {
     if (!_nova_handler_Application) { nv_panic(nova_str_from_cstr("unhandled effect `Application.default_exit_timeout_ms`: no active handler (missing `with Application = …` around this call)")); return (nova_int){0}; } return _nova_handler_Application->default_exit_timeout_ms(_nova_handler_Application->ctx);
 }
+
 
 static const nova_int Nova_const_runtime_string_builder_INITIAL_CAPACITY = ((nova_int)16LL);
 static const nova_int Nova_const_runtime_string_builder_INT_FMT_CAP = ((nova_int)20LL);
@@ -2808,7 +2816,7 @@ static nova_int nova_fn_7runtime6string18first_invalid_utf8(Nova_Vec____nova_byt
 
 static nova_str Nova_str_static_alloc_copy(const nova_byte* src, nova_int n) {
     nova_preempt_check();
-    if (!((n >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "alloc_copy", "n >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((n >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "alloc_copy", "n >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_unit _nv_if_111;
     if ((n == ((nova_int)0LL))) {
         return (nova_str){.ptr=(const uint8_t*)"", .len=0};
@@ -2908,7 +2916,7 @@ static NovaRes_nova_char_Nova_ParseCharError_p* Nova_str_method_to_char(nova_str
     nova_preempt_check();
     NovaValue_CharsIter it = Nova_str_method_chars(nova_self);
     NovaRes_nova_char_Nova_ParseCharError_p* _nv_tmp_130 = Nova_Option_method_ok_or_nova_char____Nova_ParseCharError_p(Nova_CharsIter_method_next(&(it)), nova_make_ParseCharError_Empty());
-    if (_nv_tmp_130->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("m280_price_ratchet_baseline.nv", 33); return nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(_nv_tmp_130->payload.Err._0); }
+    if (_nv_tmp_130->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("m280_price_ratchet_baseline.nv", 47); return nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(_nv_tmp_130->payload.Err._0); }
     nova_char c = (_nv_tmp_130->payload.Ok._0);
     NovaOpt_nova_char _nv_scr_131 = Nova_CharsIter_method_next(&(it));
     NovaRes_nova_char_Nova_ParseCharError_p* _nv_match_132;
@@ -3418,7 +3426,7 @@ static nova_bool Nova_str_method_contains__nova_char(nova_str nova_self, nova_ch
 
 static nova_str Nova_str_method_index(nova_str nova_self, NovaValue_Range r) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((((((nova_int)0LL) <= (r.start)) && ((r.start) <= (r.end))) && ((r.end) <= Nova_str_method_byte_len(nova_self))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "0 <= r.start && r.start <= r.end && r.end <= @byte_len()", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((((((nova_int)0LL) <= (r.start)) && ((r.start) <= (r.end))) && ((r.end) <= Nova_str_method_byte_len(nova_self))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "0 <= r.start && r.start <= r.end && r.end <= @byte_len()", "m280_price_ratchet_baseline.nv", 38, NULL);
     nova_str _nv_tmp_175 = nova_str_slice_chk((nova_self), ((r.start)), ((r.end)));
     return _nv_tmp_175;
 }
@@ -3479,7 +3487,7 @@ static nova_byte nova_fn_7runtime7fmt_buf9hex_digit(uint64_t d, nova_bool upper)
 
 static nova_int nova_fn_7runtime7fmt_buf7int_fmt(nova_int v, nova_byte* buf, nova_int cap, NovaValue_FmtSpec spec) {
     nova_preempt_check();
-    if (!(((cap >= ((nova_int)0LL)) && (((((spec.radix) == ((nova_int)10LL)) || ((spec.radix) == ((nova_int)16LL))) || ((spec.radix) == ((nova_int)8LL))) || ((spec.radix) == ((nova_int)2LL)))))) nova_contract_violation(NOVA_CONTRACT_PRE, "int_fmt", "cap >= 0 && spec.radix == 10 || spec.radix == 16 || spec.radix == 8 || spec.radix == 2", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!(((cap >= ((nova_int)0LL)) && (((((spec.radix) == ((nova_int)10LL)) || ((spec.radix) == ((nova_int)16LL))) || ((spec.radix) == ((nova_int)8LL))) || ((spec.radix) == ((nova_int)2LL)))))) nova_contract_violation(NOVA_CONTRACT_PRE, "int_fmt", "cap >= 0 && spec.radix == 10 || spec.radix == 16 || spec.radix == 8 || spec.radix == 2", "m280_price_ratchet_baseline.nv", 47, NULL);
     uint64_t radix = ((uint64_t)((spec.radix)));
     nova_bool neg = false;
     uint64_t mag = ((uint64_t)0x0ULL);
@@ -3630,7 +3638,7 @@ static nova_int nova_fn_7runtime7fmt_buf7int_fmt(nova_int v, nova_byte* buf, nov
 
 static nova_int nova_fn_7runtime7fmt_buf8bool_fmt(nova_bool v, nova_byte* buf, nova_int cap) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "bool_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "bool_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int _nv_tmp_210;
     {
         nova_int _nv_if_211;
@@ -3696,7 +3704,7 @@ static nova_int nova_fn_7runtime7fmt_buf8bool_fmt(nova_bool v, nova_byte* buf, n
 
 static nova_int nova_fn_7runtime7fmt_buf8char_fmt(nova_char v, nova_byte* buf, nova_int cap) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "char_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "char_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int cp = ((nova_int)(v));
     nova_unit _nv_if_222;
     if ((((cp < ((nova_int)0LL)) || (cp > ((nova_int)1114111LL))) || ((cp >= ((nova_int)55296LL)) && (cp <= ((nova_int)57343LL))))) {
@@ -3801,7 +3809,7 @@ static nova_int nova_fn_7runtime7fmt_buf8char_fmt(nova_char v, nova_byte* buf, n
 
 static nova_int nova_fn_7runtime7fmt_buf7f64_fmt(nova_f64 v, nova_byte* buf, nova_int cap, NovaValue_FloatKind kind, nova_int prec) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "f64_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "f64_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     NovaValue_FloatKind _nv_scr_241 = kind;
     nova_int _nv_match_242;
     int _nv_matched_243 = 0;
@@ -3828,7 +3836,7 @@ static nova_int nova_fn_7runtime7fmt_buf7f64_fmt(nova_f64 v, nova_byte* buf, nov
 
 static nova_int nova_fn_7runtime7fmt_buf7f32_fmt(nova_f32 v, nova_byte* buf, nova_int cap) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "f32_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "f32_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int _nv_tmp_246;
     {
         _nv_tmp_246 = (nova_int)(nova_f32_fmt(v, buf, cap));
@@ -3985,7 +3993,7 @@ static nova_int nova_fn_7runtime7fmt_buf14utf8_encode_at(nova_int cp, nova_byte*
 
 static nova_int nova_fn_7runtime7fmt_buf13str_debug_fmt(nova_str s, nova_byte* buf, nova_int cap) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "str_debug_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "str_debug_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_Vec____nova_byte _nv_tmp_275 = {0};
     Nova_Vec____nova_byte* bytes = Nova_str_method_bytes__sret(s, (&_nv_tmp_275));
     nova_int blen = Vec____nova_byte_method_len(bytes);
@@ -4086,7 +4094,7 @@ static nova_int nova_fn_7runtime7fmt_buf13str_debug_fmt(nova_str s, nova_byte* b
 
 static nova_int nova_fn_7runtime7fmt_buf14char_debug_fmt(nova_char v, nova_byte* buf, nova_int cap) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "char_debug_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "char_debug_fmt", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int cp = ((nova_int)(v));
     nova_unit _nv_if_294;
     if ((((cp < ((nova_int)0LL)) || (cp > ((nova_int)1114111LL))) || ((cp >= ((nova_int)55296LL)) && (cp <= ((nova_int)57343LL))))) {
@@ -4194,7 +4202,7 @@ static Nova_Vec____nova_byte* nova_fn_7runtime14string_builder12sb_clone_buf(Nov
 
 static Nova_StringBuilder* Nova_StringBuilder_static_new(nova_int cap) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_StringBuilder* _nv_tmp_312 = (Nova_StringBuilder*)nova_alloc(sizeof(Nova_StringBuilder));
     _nv_tmp_312->buf = nova_fn_7runtime14string_builder11sb_init_buf(cap);
     return _nv_tmp_312;
@@ -4202,7 +4210,7 @@ static Nova_StringBuilder* Nova_StringBuilder_static_new(nova_int cap) {
 
 static Nova_StringBuilder* Nova_StringBuilder_static_new__sret(nova_int cap, Nova_StringBuilder* _out) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_StringBuilder* _nv_tmp_313 = _out;
     _nv_tmp_313->buf = nova_fn_7runtime14string_builder11sb_init_buf(cap);
     return _nv_tmp_313;
@@ -4222,7 +4230,7 @@ static nova_int Nova_StringBuilder_method_cap(Nova_StringBuilder* nova_self) {
 
 static Nova_StringBuilder* Nova_StringBuilder_method_cap__nova_int(Nova_StringBuilder* nova_self, nova_int n) {
     nova_preempt_check();
-    if (!((n >= Nova_StringBuilder_method_byte_len(nova_self)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @byte_len()", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((n >= Nova_StringBuilder_method_byte_len(nova_self)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @byte_len()", "m280_price_ratchet_baseline.nv", 47, NULL);
     (void)(Vec____nova_byte_method_cap__nova_int((nova_self->buf), n));
     Nova_StringBuilder* _nv_tmp_316 = nova_self;
     return _nv_tmp_316;
@@ -4365,7 +4373,7 @@ static nova_str Nova_StringBuilder_consume_into_str(Nova_StringBuilder* nova_sel
 
 static Nova_StringBuilder* Nova_StringBuilder_method_reserve(Nova_StringBuilder* nova_self, nova_int n) {
     nova_preempt_check();
-    if (!((n >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "reserve", "n >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((n >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "reserve", "n >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     (void)(Vec____nova_byte_method_reserve((nova_self->buf), n));
     Nova_StringBuilder* _nv_tmp_339 = nova_self;
     return _nv_tmp_339;
@@ -4379,7 +4387,7 @@ static nova_byte* Nova_StringBuilder_method_spare(Nova_StringBuilder* nova_self)
 
 static Nova_StringBuilder* Nova_StringBuilder_method_advance(Nova_StringBuilder* nova_self, nova_int n) {
     nova_preempt_check();
-    if (!(((n >= ((nova_int)0LL)) && (n <= nova_int_checked_sub(Vec____nova_byte_method_cap((nova_self->buf)), Vec____nova_byte_method_len((nova_self->buf))))))) nova_contract_violation(NOVA_CONTRACT_PRE, "advance", "n >= 0 && n <= @buf.cap() - @buf.len()", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!(((n >= ((nova_int)0LL)) && (n <= nova_int_checked_sub(Vec____nova_byte_method_cap((nova_self->buf)), Vec____nova_byte_method_len((nova_self->buf))))))) nova_contract_violation(NOVA_CONTRACT_PRE, "advance", "n >= 0 && n <= @buf.cap() - @buf.len()", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_Vec____nova_byte* _nv_tmp_341;
     {
         _nv_tmp_341 = Vec____nova_byte_method_advance((nova_self->buf), n);
@@ -4391,7 +4399,7 @@ static Nova_StringBuilder* Nova_StringBuilder_method_advance(Nova_StringBuilder*
 
 static nova_unit Nova_StringBuilder_method_pad_in_place(Nova_StringBuilder* nova_self, nova_int mark, nova_int width, nova_char fill, Nova_Align* align) {
     nova_preempt_check();
-    if (!((((mark >= ((nova_int)0LL)) && (mark <= Nova_StringBuilder_method_byte_len(nova_self))) && (width >= ((nova_int)0LL))))) nova_contract_violation(NOVA_CONTRACT_PRE, "pad_in_place", "mark >= 0 && mark <= @byte_len() && width >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((((mark >= ((nova_int)0LL)) && (mark <= Nova_StringBuilder_method_byte_len(nova_self))) && (width >= ((nova_int)0LL))))) nova_contract_violation(NOVA_CONTRACT_PRE, "pad_in_place", "mark >= 0 && mark <= @byte_len() && width >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int end = Nova_StringBuilder_method_byte_len(nova_self);
     Nova_Vec____nova_byte* _at_buf = (nova_self->buf);
     nova_int content_len = nova_int_checked_sub(end, mark);
@@ -4526,7 +4534,7 @@ static nova_int nova_fn_7runtime14string_builder23int_display_natural_cap(nova_i
 
 static nova_unit nova_fn_7runtime14string_builder16int_display_spec(Nova_StringBuilder* sb, nova_int v, nova_int width, nova_int radix, nova_bool upper, nova_bool zero_pad, nova_bool sign_plus, nova_bool alt, Nova_Align* align, nova_char fill) {
     nova_preempt_check();
-    if (!(((((radix == ((nova_int)10LL)) || (radix == ((nova_int)16LL))) || (radix == ((nova_int)8LL))) || (radix == ((nova_int)2LL))))) nova_contract_violation(NOVA_CONTRACT_PRE, "int_display_spec", "radix == 10 || radix == 16 || radix == 8 || radix == 2", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!(((((radix == ((nova_int)10LL)) || (radix == ((nova_int)16LL))) || (radix == ((nova_int)8LL))) || (radix == ((nova_int)2LL))))) nova_contract_violation(NOVA_CONTRACT_PRE, "int_display_spec", "radix == 10 || radix == 16 || radix == 8 || radix == 2", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int natural_cap = nova_fn_7runtime14string_builder23int_display_natural_cap(radix);
     nova_unit _nv_if_366;
     if (zero_pad) {
@@ -5262,7 +5270,7 @@ static nova_str nova_fn_10standalone27m280_price_ratchet_baseline5greet(nova_str
 
 static nova_int nova_fn_10standalone27m280_price_ratchet_baseline3add(nova_int a, nova_int b) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((a > ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "add", "a > 0", "m280_price_ratchet_baseline.nv", 17, "a must be positive");
+    if (!((a > ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "add", "a > 0", "m280_price_ratchet_baseline.nv", 31, "a must be positive");
     /* SRC: a + b */
     nova_int _nv_tmp_454 = nova_int_checked_add(a, b);
     return _nv_tmp_454;
@@ -5271,7 +5279,7 @@ static nova_int nova_fn_10standalone27m280_price_ratchet_baseline3add(nova_int a
 static nova_int nova_fn_10standalone27m280_price_ratchet_baseline6middle(nova_int x) {
     nova_preempt_check();
     /* SRC: assert(x > 0, "x must be positive") */
-    (void)((nova_assert_loc((x > ((nova_int)0LL)), "x > 0", "m280_price_ratchet_baseline.nv", 23, "x must be positive"), NOVA_UNIT));
+    (void)((nova_assert_loc((x > ((nova_int)0LL)), "x > 0", "m280_price_ratchet_baseline.nv", 37, "x must be positive"), NOVA_UNIT));
     /* SRC: add(x, b: 10) */
     nova_int _nv_tmp_455;
     {
@@ -5416,7 +5424,7 @@ static Nova_Vec____nova_byte* Vec____nova_byte_method_append____Nova_Vec____nova
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__const_nova_byte_p_nova_int(const nova_byte* ptr, nova_int len) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((len >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "len >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((len >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "len >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_Vec____nova_byte* _nv_tmp_465 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
     nova_byte* _nv_tmp_466;
     {
@@ -5430,7 +5438,7 @@ static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__const_nova_byte_
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__const_nova_byte_p_nova_int__sret(const nova_byte* ptr, nova_int len, Nova_Vec____nova_byte* _out) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((len >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "len >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((len >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "len >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_Vec____nova_byte* _nv_tmp_467 = _out;
     nova_byte* _nv_tmp_468;
     {
@@ -5466,7 +5474,7 @@ static NovaRes_nova_char_Nova_ParseCharError_p* Nova_Option_method_ok_or_nova_ch
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new(nova_int cap) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_Vec____nova_byte* _nv_tmp_472 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
     _nv_tmp_472->data = nova_fn_11collections3vec9alloc_buf____nova_byte(Nova_int_method_max(cap, ((nova_int)1LL)));
     _nv_tmp_472->len = ((nova_int)0LL);
@@ -5476,7 +5484,7 @@ static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new(nova_int cap) {
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__sret(nova_int cap, Nova_Vec____nova_byte* _out) {
     nova_preempt_check();
-    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_Vec____nova_byte* _nv_tmp_473 = _out;
     _nv_tmp_473->data = nova_fn_11collections3vec9alloc_buf____nova_byte(Nova_int_method_max(cap, ((nova_int)1LL)));
     _nv_tmp_473->len = ((nova_int)0LL);
@@ -5491,7 +5499,7 @@ static nova_int Vec____nova_byte_method_cap(Nova_Vec____nova_byte* nova_self) {
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_cap__nova_int(Nova_Vec____nova_byte* nova_self, nova_int n) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!((n >= (nova_self->len)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @len", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((n >= (nova_self->len)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @len", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_unit _nv_if_474;
     if ((n == (nova_self->cap))) {
         return nova_self;
@@ -5551,7 +5559,7 @@ static Nova_Vec____nova_byte* Vec____nova_byte_method_reserve(Nova_Vec____nova_b
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_advance(Nova_Vec____nova_byte* nova_self, nova_int n) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    if (!(((n >= ((nova_int)0LL)) && (n <= nova_int_checked_sub((nova_self->cap), (nova_self->len)))))) nova_contract_violation(NOVA_CONTRACT_PRE, "advance", "n >= 0 && n <= @cap - @len", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!(((n >= ((nova_int)0LL)) && (n <= nova_int_checked_sub((nova_self->cap), (nova_self->len)))))) nova_contract_violation(NOVA_CONTRACT_PRE, "advance", "n >= 0 && n <= @cap - @len", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int* _nv_ca_481 = &((nova_self->len));
     *_nv_ca_481 = nova_int_checked_add(*_nv_ca_481, n);
     return nova_self;
@@ -5559,7 +5567,7 @@ static Nova_Vec____nova_byte* Vec____nova_byte_method_advance(Nova_Vec____nova_b
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range(Nova_Vec____nova_byte* nova_self, NovaValue_Range r) {
     nova_preempt_check();
-    if (!(((((r.start) >= ((nova_int)0LL)) && ((r.end) >= (r.start))) && ((r.end) <= (nova_self->len))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "r.start >= 0 && r.end >= r.start && r.end <= @len", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!(((((r.start) >= ((nova_int)0LL)) && ((r.end) >= (r.start))) && ((r.end) <= (nova_self->len))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "r.start >= 0 && r.end >= r.start && r.end <= @len", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int n = nova_int_checked_sub((r.end), (r.start));
     Nova_Vec____nova_byte* _nv_tmp_482 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
     nova_byte* _nv_tmp_483;
@@ -5574,7 +5582,7 @@ static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range(Nov
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range__sret(Nova_Vec____nova_byte* nova_self, NovaValue_Range r, Nova_Vec____nova_byte* _out) {
     nova_preempt_check();
-    if (!(((((r.start) >= ((nova_int)0LL)) && ((r.end) >= (r.start))) && ((r.end) <= (nova_self->len))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "r.start >= 0 && r.end >= r.start && r.end <= @len", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!(((((r.start) >= ((nova_int)0LL)) && ((r.end) >= (r.start))) && ((r.end) <= (nova_self->len))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "r.start >= 0 && r.end >= r.start && r.end <= @len", "m280_price_ratchet_baseline.nv", 47, NULL);
     nova_int n = nova_int_checked_sub((r.end), (r.start));
     Nova_Vec____nova_byte* _nv_tmp_484 = _out;
     nova_byte* _nv_tmp_485;
@@ -5642,7 +5650,7 @@ static nova_byte* nova_fn_11collections3vec9alloc_buf____nova_byte(nova_int n) {
 
 static nova_unit Nova_RawMem_static_copy_n_nonoverlapping____nova_byte(const nova_byte* src, nova_byte* dst, nova_int count) {
     nova_preempt_check();
-    if (!((count >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "copy_n_nonoverlapping", "count >= 0", "m280_price_ratchet_baseline.nv", 33, NULL);
+    if (!((count >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "copy_n_nonoverlapping", "count >= 0", "m280_price_ratchet_baseline.nv", 47, NULL);
     Nova_RawMem_static_copy_nonoverlapping(((const nova_byte*)(src)), ((nova_byte*)(dst)), nova_int_checked_mul(count, ((nova_int)sizeof(nova_byte))));
     return NOVA_UNIT;
 }

@@ -36,6 +36,13 @@ export type Option[T] enum Some(T) | None
 #stable(since = "0.1")
 export type Result[T, E] enum Ok(T) | Err(E)
 
+/// A call site: which file and line a call was made from (D468).
+/// Produced by the built-in `caller_loc()` and passed around as an
+/// ordinary value. `file` holds the path exactly as the CLI received it
+/// (the same convention `assert` and contract violations already print).
+#stable(since = "0.1")
+export type CallerLoc { file str, line int }
+
 // `Ordering` sum-type удалён — `compare.compare` возвращает int.
 //
 // Bottom-тип `never` — строчный встроенный примитив (как `int`/`bool`),

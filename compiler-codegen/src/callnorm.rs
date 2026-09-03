@@ -830,6 +830,31 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
                 if !rename.is_empty() {
                     rename_idents(&mut def, &rename);
                 }
+                // Plan 280 E1 (D468): a default that IS `caller_loc()` must
+                // carry the CALL SITE's span. The clone otherwise keeps the
+                // DECLARATION's span, and codegen would intern the
+                // declaration's line for every caller (measured on the first
+                // probe: both call sites got line 8, the declaration). The
+                // rewrite is bounded to this synthesized clone -- the same
+                // licence rename_idents holds above. Deliberately BESIDE the
+                // rename `if`, not under it: a call made of only defaults
+                // leaves `rename` empty (registry 799's firing condition) and
+                // still needs its span. BARE form only, mirroring C#/Swift
+                // (their caller-info applies to the whole default too);
+                // `caller_loc()` nested DEEPER inside a default expression is
+                // stage E2's checker-refusal work (plan 280, ловушка 5).
+                let is_bare_caller_loc = matches!(
+                    &def.kind,
+                    ExprKind::Call { func, args, .. }
+                        if args.is_empty()
+                            && matches!(&func.kind, ExprKind::Ident(n) if n == "caller_loc")
+                );
+                if is_bare_caller_loc {
+                    def.span = sp;
+                    if let ExprKind::Call { func, .. } = &mut def.kind {
+                        func.span = sp;
+                    }
+                }
                 let bn = bind_name(param);
                 stmts.push(let_stmt_typed(&bn, def, Some(param.ty.clone()), sp));
                 call_args.push(CallArg::Item(ident_expr(&bn, sp)));

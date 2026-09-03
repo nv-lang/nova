@@ -38,7 +38,7 @@ export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, sequ
 // panic / exit / assert / print / println / suppressed — selective list.
 // `suppressed()` — free accessor for the caught primary error's suppressed
 // cleanup-failures (`[]any`).
-export import std.prelude.runtime.{panic, exit, unreachable, assert, print, println, suppressed}
+export import std.prelude.runtime.{panic, exit, unreachable, assert, print, println, suppressed, caller_loc}
 
 // Canonical .new() для primitive types.
 // `int.new() => 0`, `bool.new() => false`, `f64.new() => 0.0`, etc.

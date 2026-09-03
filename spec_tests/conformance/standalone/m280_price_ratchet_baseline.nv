@@ -13,11 +13,14 @@
 // BASELINE CAPTURE (metadata lives HERE, not inside the .expected.c: the
 // baseline must stay byte-identical to a fresh emission, so it carries no
 // header of its own):
-//   captured   : 2026-09-03, tree at 5056c0661e39
+//   captured   : 2026-09-03, RE-PINNED after E1 (see the plan's E7 note)
 //   command    : NOVA_CACHE=0 nova build <this file> --keep-artifacts
 //   determinism: two cold builds compared byte-identical before pinning
-//   sha256(.expected.c): 418a96f6866f30084c3c5f279a1fcf06db794b7604491b2888de622f79ee5a84
-//   sha256(nova.exe)   : c047e383b9e07d47e82dceab880c6cacb18844a5ed06069ad3a79bba230c5c58
+//   re-pin why : E1 added the prelude type (6 lines/module, the real cost)
+//                and shifted 56 std line numbers -- the latter is registry 887,
+//                not a cost. Any std/prelude edit re-pins this until 887 is fixed.
+//   sha256(.expected.c): d69526a037b0bc0dd4eee472f65f9775345ac2534926d397527e13b15e9a4049
+//   sha256(nova.exe)   : c93163513ceed37c9500957b3d653ffcd208b3e8105813c530d94206acbea93b
 // Ratchet: after every stage of plan 280, a fresh NOVA_CACHE=0 emission of
 // this file must equal m280_price_ratchet_baseline.expected.c byte-for-byte.
 module standalone.m280_price_ratchet_baseline
