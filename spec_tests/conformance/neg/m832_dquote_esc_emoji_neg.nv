@@ -20,12 +20,6 @@
 module neg.m832_dquote_esc_emoji_neg
 
 fn main() Io -> () {
-    // The diagnostic carries no [E_...] code today, so the pin below matches its
-    // TEXT; a coded diagnostic would be pinned by code instead.
-    // nova:expect unknown escape
-    // The diagnostic carries NO [E_...] code today -- it is the bare text
-    // `unknown escape`, so the marker matches that text. Worth knowing when
-    // this fixture is next touched: a coded diagnostic would let the marker
-    // be line-pinned, which this one cannot be.
+    // nova:expect unknown escape -- a multi-byte character is not in the closed escape set of a quoted literal (D467 section 2), so it must be a diagnostic and never a crash; the pin matches TEXT because this diagnostic carries no code
     println("\🔥")
 }
