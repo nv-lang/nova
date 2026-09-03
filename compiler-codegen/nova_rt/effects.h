@@ -1191,6 +1191,20 @@ int nova_in_fiber(void);
  * stack unwind (the previous variant stored the bare `expr_str` pointer,
  * which was a static string literal; the formatted buffer is on the
  * stack and must be promoted). */
+/* Plan 280 E3 (D468): copy a Nova string's bytes into a caller-provided
+ * buffer and NUL-terminate, for the location doors that print with "%s".
+ * `CallerLoc.file` is a `nova_str` ({ptr,len}) and NOT guaranteed
+ * NUL-terminated: `caller_loc()` yields interned static literals that happen
+ * to be, but a hand-built `CallerLoc { file: <slice>, line: n }` is not.
+ * Truncates rather than overflowing; only ever reached on a failure path. */
+static inline const char* nova_loc_cstr(nova_str s, char* buf, size_t cap) {
+    size_t n = (size_t)(s.len < 0 ? 0 : s.len);
+    if (n > cap - 1) n = cap - 1;
+    if (n && s.ptr) memcpy(buf, s.ptr, n);
+    buf[n] = '\0';
+    return buf;
+}
+
 static inline void nova_assert_loc(
     nova_bool cond,
     const char* expr_str,
@@ -1259,6 +1273,25 @@ static inline void nova_assert_loc(
 static inline void nova_assert(nova_bool cond, const char* expr_str) {
     nova_assert_loc(cond, expr_str, "<unknown>", 0, NULL);
 }
+
+/* Plan 280 E3: `assert` inside a function that declares a `CallerLoc`
+ * parameter reports the CALLER's location. Thin wrapper -- the body stays in
+ * nova_assert_loc, which copies the name into its own message buffer before
+ * returning, so `fbuf` living on this frame is safe. */
+static inline void nova_assert_loc_s(
+    nova_bool cond,
+    const char* expr_str,
+    nova_str file,
+    int line,
+    const char* user_msg)
+{
+    if (!cond) {
+        char fbuf[260];
+        nova_assert_loc(cond, expr_str, nova_loc_cstr(file, fbuf, sizeof(fbuf)),
+                        line, user_msg);
+    }
+}
+
 
 /* nv_panic(msg) — D13: смерть текущего fiber'а.
  *

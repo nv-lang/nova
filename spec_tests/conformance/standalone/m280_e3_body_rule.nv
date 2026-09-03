@@ -1,0 +1,19 @@
+// EXPECT_RUNTIME_PANIC m280_e3_body_rule.nv:18: requires failed: half wants a positive
+// Plan 280 E3 (D468), the body rule: inside a function that declares a
+// `CallerLoc` parameter, `requires` reports THAT location -- the caller --
+// without naming it on the clause.
+//
+// The marker pins line 18, the CALL. Before E3 this printed line 11, the
+// clause's own line; that is the whole difference the stage exists to make.
+module standalone.m280_e3_body_rule
+
+fn half(n int, loc CallerLoc = caller_loc()) -> int
+    requires n > 0, "half wants a positive"
+{
+    n / 2
+}
+
+fn main() Io -> () {
+    println(half(4))
+    println(half(-1))
+}

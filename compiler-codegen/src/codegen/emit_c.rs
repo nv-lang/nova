@@ -811,6 +811,14 @@ pub struct CEmitter {
     /// declared param TypeRefs against these caller-declared TypeRefs, lowering
     /// leaves through `current_type_subst`.
     current_fn_param_typerefs: HashMap<String, crate::ast::TypeRef>,
+    /// Plan 280 E3 (D468): the C name of the enclosing function's single
+    /// `CallerLoc` parameter, or `Err` if it declares more than one.
+    /// Deliberately a SEPARATE field rather than a wider fill of
+    /// `current_fn_param_typerefs`: that map is only populated on the
+    /// monomorphization paths, and three existing readers use it for
+    /// generic inference -- filling it in new contexts would change what
+    /// they see. Set from the `FnDecl` at every body-emitting entry.
+    current_caller_loc_param: Result<Option<String>, String>,
     /// [M-property-testing-rot]: recursion guard for
     /// `infer_protocol_structural_binding` — protocol method signatures may
     /// mention OTHER protocols (or themselves: `Iter[T]`-returning methods on
@@ -2636,6 +2644,7 @@ impl CEmitter {
             current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
             current_fn_param_typerefs: HashMap::new(),
+            current_caller_loc_param: Ok(None),
             proto_unify_depth: std::cell::Cell::new(0),
             consume_reuse_spans: HashSet::new(),
             ref_params: std::collections::HashSet::new(),
@@ -3207,6 +3216,56 @@ impl CEmitter {
     /// annotation source (1-based) or `0` when no source is available. The
     /// returned `file` is already C-escaped so it can be dropped straight
     /// into an emitted string literal.
+    /// Plan 280 E3 (D468): the C name of the enclosing function's single
+    /// `CallerLoc` parameter, if it declares one. When it does, `requires`,
+    /// `ensures` and `assert` in its body report THAT location instead of
+    /// their own line -- the body rule.
+    ///
+    /// Reads DECLARED types (`current_fn_param_typerefs`), which the emitter
+    /// already holds for its own purposes; it is not re-deriving a checker
+    /// decision. TWO such parameters are a refusal, not a silent pick of the
+    /// first (registry #857's class: the oracle choosing quietly among
+    /// applicable candidates is exactly what this project treats as a defect).
+    fn caller_loc_param(&self) -> Result<Option<String>, String> {
+        self.current_caller_loc_param.clone()
+    }
+
+    /// Plan 280 E3 (D468): the body rule for a CONTRACT, which is kind-aware.
+    /// Only a PRECONDITION names the caller. `ensures` is the owner's
+    /// deliberate exception (2026-09-03): a broken postcondition is the
+    /// function's own bug -- the caller cannot cause one even in principle --
+    /// so it keeps naming its own line, the way Eiffel, D and Ada all assign
+    /// blame. An INVARIANT is excluded by the same reasoning, spelled out
+    /// rather than inherited: it speaks about the object's own state.
+    ///
+    /// The refusal on two parameters still propagates for every kind: an
+    /// ambiguous declaration is ill-formed whatever the clause does with it.
+    fn caller_loc_param_for_contract(
+        &self,
+        kind_c: &str,
+    ) -> Result<Option<String>, String> {
+        let p = self.current_caller_loc_param.clone()?;
+        if kind_c == "NOVA_CONTRACT_PRE" { Ok(p) } else { Ok(None) }
+    }
+
+    /// Plan 280 E3 (D468): the body rule's parameter for this declaration.
+    ///
+    /// The REFUSAL on two such parameters lives in the checker
+    /// (`types::check_fn`, `[E_AMBIGUOUS_CALLER_LOC]`), not here -- one home,
+    /// and only the checker can attach a span. By the time codegen runs, more
+    /// than one is unreachable; taking the first keeps this total rather than
+    /// growing a second copy of the rule that could drift from it.
+    fn compute_caller_loc_param(f: &FnDecl) -> Result<Option<String>, String> {
+        for p in &f.params {
+            if let crate::ast::TypeRef::Named { path, .. } = &p.ty {
+                if path.last().map(|s| s.as_str()) == Some("CallerLoc") {
+                    return Ok(Some(p.name.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn loc_for_span(&self, span_start: usize) -> (String, usize) {
         let line = match &self.annotation_source {
             Some(src) => crate::diag::byte_to_line_col(src, span_start).0,
@@ -3321,20 +3380,34 @@ impl CEmitter {
                     let region = self.out.split_off(region_start);
                     self.out.push_str(&Self::substitute_result_var_in_code(&region));
                 }
-                self.line(&format!(
-                    "nova_contract_violation_dyn({}, \"{}\", \"{}\", \"{}\", {}, {});",
-                    kind_c, fn_name, esc_src, file_lit, line, msg_var
-                ));
+                // Plan 280 E3 (D468): body rule -- a declared `CallerLoc`
+                // parameter replaces this clause's own location.
+                match self.caller_loc_param_for_contract(kind_c)? {
+                    Some(p) => self.line(&format!(
+                        "nova_contract_violation_dyn_s({}, \"{}\", \"{}\", {}->file, (int){}->line, {});",
+                        kind_c, fn_name, esc_src, p, p, msg_var
+                    )),
+                    None => self.line(&format!(
+                        "nova_contract_violation_dyn({}, \"{}\", \"{}\", \"{}\", {}, {});",
+                        kind_c, fn_name, esc_src, file_lit, line, msg_var
+                    )),
+                }
                 self.indent -= 1;
                 self.line("}");
                 return Ok(());
             }
         }
         let msg_arg = Self::contract_msg_arg(message);
-        self.line(&format!(
-            "if (!({})) nova_contract_violation({}, \"{}\", \"{}\", \"{}\", {}, {});",
-            cond_c, kind_c, fn_name, esc_src, file_lit, line, msg_arg
-        ));
+        match self.caller_loc_param_for_contract(kind_c)? {
+            Some(p) => self.line(&format!(
+                "if (!({})) nova_contract_violation_s({}, \"{}\", \"{}\", {}->file, (int){}->line, {});",
+                cond_c, kind_c, fn_name, esc_src, p, p, msg_arg
+            )),
+            None => self.line(&format!(
+                "if (!({})) nova_contract_violation({}, \"{}\", \"{}\", \"{}\", {}, {});",
+                cond_c, kind_c, fn_name, esc_src, file_lit, line, msg_arg
+            )),
+        }
         Ok(())
     }
 
@@ -26659,6 +26732,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|p| (p.name.clone(), p.ty.clone()))
                 .collect(),
         );
+        // Plan 280 E3 (D468): the body rule's parameter for THIS instantiation.
+        // Set AND restored here: the mono paths have their own entry, so without
+        // this they would inherit whatever the last ordinary function left --
+        // and a stale parameter name emitted into a contract is an undeclared
+        // identifier in C, i.e. a loud break in unrelated code.
+        let saved_caller_loc_param = std::mem::replace(
+            &mut self.current_caller_loc_param,
+            Self::compute_caller_loc_param(fn_decl),
+        );
         let saved_expected = std::mem::replace(
             &mut self.expected_record_type,
             fn_decl.return_type.as_ref().and_then(|t| {
@@ -26941,6 +27023,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_fn_return_ty = saved_ret_ty;
         self.current_fn_name = saved_fn_name;
         self.current_fn_param_typerefs = saved_param_typerefs;
+        self.current_caller_loc_param = saved_caller_loc_param;
         self.expected_record_type = saved_expected;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
@@ -28160,6 +28243,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|p| (p.name.clone(), p.ty.clone()))
                 .collect(),
         );
+        // Plan 280 E3 (D468): the body rule's parameter for THIS instantiation.
+        // Set AND restored here: the mono paths have their own entry, so without
+        // this they would inherit whatever the last ordinary function left --
+        // and a stale parameter name emitted into a contract is an undeclared
+        // identifier in C, i.e. a loud break in unrelated code.
+        let saved_caller_loc_param = std::mem::replace(
+            &mut self.current_caller_loc_param,
+            Self::compute_caller_loc_param(fn_decl),
+        );
         // Register function-typed params in fn_param_sigs with concrete types
         // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
@@ -28336,7 +28428,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.out.push_str(&fn_body);
         // Restore type substitution
         self.current_type_subst = saved_subst;
-        self.current_fn_param_typerefs = saved_param_typerefs; // [M-property-testing-rot]
+        self.current_fn_param_typerefs = saved_param_typerefs;
+        self.current_caller_loc_param = saved_caller_loc_param; // [M-property-testing-rot]
         self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D381
         Ok(())
     }
@@ -28766,6 +28859,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_fn_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
+        // Plan 280 E3 (D468): the body rule's parameter for THIS function.
+        // Restored by the caller's scope guard along with the other
+        // current_fn_* state; computed here so every contract/assert emitted
+        // from this body sees it.
+        self.current_caller_loc_param = Self::compute_caller_loc_param(f);
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
         // Plan 91.10 (D163 retracted): D163 stub generation удалён.
@@ -40435,6 +40533,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // в expression position (match arm body, if-expr branch и пр.)
                     // эмитится как `_tmp = nova_assert(...)` — C error "void to
                     // nova_unit". Pattern мирроring `(nv_panic(msg), 0)` ниже.
+                    // Plan 280 E3 (D468): body rule -- see caller_loc_param.
+                    if let Some(p) = self.caller_loc_param()? {
+                        return Ok(format!(
+                            "(nova_assert_loc_s({}, \"{}\", {}->file, (int){}->line, {}), NOVA_UNIT)",
+                            cond_val, escaped_text, p, p, msg_arg
+                        ));
+                    }
                     return Ok(format!(
                         "(nova_assert_loc({}, \"{}\", \"{}\", {}, {}), NOVA_UNIT)",
                         cond_val, escaped_text, file_lit, line, msg_arg

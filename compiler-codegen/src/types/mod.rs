@@ -6584,6 +6584,39 @@ impl<'a> TypeCheckCtx<'a> {
                 errors.push(diag);
             }
         }
+        // Plan 280 E3 (D468): the body rule reads the function's ONE `CallerLoc`
+        // parameter -- `requires`/`assert` inside the body report that location.
+        // TWO of them is refused by name rather than resolved quietly: picking
+        // the first is registry #857's class exactly (the oracle choosing among
+        // applicable candidates in silence). Refused HERE, in the checker,
+        // because a codegen-side error carries no span and the neg fixture
+        // reported "landed on line ?" -- a diagnostic that points nowhere is
+        // the very class this plan exists to remove. The span is the SECOND
+        // parameter's: that is the one the author should delete or rename.
+        {
+            let mut cl: Vec<&crate::ast::Param> = Vec::new();
+            for p in &fd.params {
+                if let TypeRef::Named { path, .. } = &p.ty {
+                    if path.last().map(|s| s.as_str()) == Some("CallerLoc") {
+                        cl.push(p);
+                    }
+                }
+            }
+            if cl.len() > 1 {
+                let names: Vec<String> =
+                    cl.iter().map(|p| format!("`{}`", p.name)).collect();
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_AMBIGUOUS_CALLER_LOC] `{}` declares {} parameters of type \
+                         `CallerLoc` ({}) — the body rule has no way to choose which one \
+                         `requires`/`assert` should report. Keep exactly one, or pass the \
+                         intended location explicitly (D468).",
+                        fd.name, cl.len(), names.join(", ")
+                    ),
+                    cl[1].span,
+                ));
+            }
+        }
         if let Some(rt) = &fd.return_type {
             if let Some(diag) = Self::channel_bare_type_diag(rt, "<return>", fd.span) {
                 errors.push(diag);

@@ -152,4 +152,37 @@ static inline void nova_contract_violation_dyn(
     abort();
 }
 
+/* Plan 280 E3 (D468): the same two doors, taking the file as a `nova_str`.
+ * Used when the violating function declares a `CallerLoc` parameter, so the
+ * reported location is the CALLER's. Both delegate immediately: the callee
+ * snprintf's the name into its own buffer, so `fbuf` on this frame outlives
+ * every read of it. */
+static inline void nova_contract_violation_s(
+    NovaContractKind kind,
+    const char* fn_name,
+    const char* contract_src,
+    nova_str file,
+    int line,
+    const char* user_msg)
+{
+    char fbuf[260];
+    nova_contract_violation(kind, fn_name, contract_src,
+                            nova_loc_cstr(file, fbuf, sizeof(fbuf)),
+                            line, user_msg);
+}
+
+static inline void nova_contract_violation_dyn_s(
+    NovaContractKind kind,
+    const char* fn_name,
+    const char* contract_src,
+    nova_str file,
+    int line,
+    nova_str user_msg)
+{
+    char fbuf[260];
+    nova_contract_violation_dyn(kind, fn_name, contract_src,
+                                nova_loc_cstr(file, fbuf, sizeof(fbuf)),
+                                line, user_msg);
+}
+
 #endif /* NOVA_CONTRACTS_H */

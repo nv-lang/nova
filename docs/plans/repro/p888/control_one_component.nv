@@ -1,0 +1,11 @@
+// Registry 221.1 #888 -- CONTROL. One positional component: BUILDS, prints 7.
+// This is why std's `type CStr(*u8)` never tripped the defect, and why the
+// row says "2+ components" rather than "positional tuples".
+module control_one_component
+
+type One(int)
+
+fn main() Io -> () {
+    ro p = One(7)
+    println(p.0)
+}

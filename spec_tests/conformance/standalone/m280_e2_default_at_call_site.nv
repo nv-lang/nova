@@ -1,0 +1,29 @@
+// EXPECT_STDOUT m280_e2_default_at_call_site.nv:24|m280_e2_default_at_call_site.nv:26|m280_e2_default_at_call_site.nv:28
+// Plan 280 E2 (D468): the default is substituted AT THE CALL SITE.
+//
+// The claim needs more than one call to be provable: with the DECLARATION's
+// line every call would print the same number and the test would pass anyway.
+// So three calls on three consecutive lines must print three different lines.
+//
+// Line 28 is the one that matters most and is the trap the plan predicted.
+// `no_args()` is a call made ENTIRELY of defaults, so callnorm's phase 1 puts
+// nothing and its rename map stays EMPTY (that map is registry 799's fix,
+// which fires only when there is at least one explicit argument). A
+// caller_loc substitution hung INSIDE that `if !rename.is_empty()` would
+// silently do nothing here and report the declaration's line. It is placed
+// BESIDE the condition instead, and this line is what proves it.
+module standalone.m280_e2_default_at_call_site
+
+fn with_arg(tag str, loc CallerLoc = caller_loc()) -> str =>
+    "${loc.file}:${loc.line}"
+
+fn no_args(loc CallerLoc = caller_loc()) -> str =>
+    "${loc.file}:${loc.line}"
+
+fn main() Io -> () {
+    print(with_arg("a"))
+    print("|")
+    print(with_arg("b"))
+    print("|")
+    println(no_args())
+}

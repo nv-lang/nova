@@ -1,0 +1,23 @@
+// EXPECT_RUNTIME_PANIC m280_e3_ensures_keeps_own_line.nv:16: ensures failed
+// Plan 280 E3 (D468) -- the BOUNDARY fixture, and the reason it exists is that
+// the first implementation got this wrong and this probe is what caught it.
+//
+// `ensures` is the owner's deliberate exception (2026-09-03): a broken
+// postcondition is the function's own bug -- the caller cannot cause one even
+// in principle -- so it keeps naming its OWN line even though the function
+// declares a `CallerLoc` parameter and its `requires` would name the caller.
+// Every contract language assigns blame this way (Eiffel, D, Ada, C#).
+//
+// The marker pins line 16, the clause. If a later change routes postconditions
+// through the body rule, this goes red and says so.
+module standalone.m280_e3_ensures_keeps_own_line
+
+fn bad_out(n int, loc CallerLoc = caller_loc()) -> int
+    ensures result > 100
+{
+    n
+}
+
+fn main() Io -> () {
+    println(bad_out(5))
+}
