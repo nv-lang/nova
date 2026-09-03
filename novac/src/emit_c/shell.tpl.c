@@ -16,6 +16,7 @@ typedef struct NovaValue_Range NovaValue_Range;
 typedef struct NovaValue_RangeIter NovaValue_RangeIter;
 typedef struct NovaValue_StepRangeIter NovaValue_StepRangeIter;
 typedef struct NovaValue_ReverseRangeIter NovaValue_ReverseRangeIter;
+typedef struct Nova_CallerLoc Nova_CallerLoc;
 typedef struct Nova_ScopeOutcome Nova_ScopeOutcome;
 typedef struct Nova_ReadBufferError Nova_ReadBufferError;
 typedef int64_t Nova_RuntimeNoneError;
@@ -672,6 +673,12 @@ struct Nova_VecIter {
     nova_int len;
 };
 
+typedef struct Nova_CallerLoc Nova_CallerLoc;
+struct Nova_CallerLoc {
+    nova_str file;
+    nova_int line;
+};
+
 typedef enum {
     NOVA_TAG_ScopeOutcome_Success,
     NOVA_TAG_ScopeOutcome_Failure,
@@ -1270,6 +1277,7 @@ static inline nova_unit Nova_Application_register_finalizer(void* f) {
 static inline nova_int Nova_Application_default_exit_timeout_ms(void) {
     if (!_nova_handler_Application) { nv_panic(nova_str_from_cstr("unhandled effect `Application.default_exit_timeout_ms`: no active handler (missing `with Application = …` around this call)")); return (nova_int){0}; } return _nova_handler_Application->default_exit_timeout_ms(_nova_handler_Application->ctx);
 }
+
 
 static const nova_int Nova_const_runtime_string_builder_INITIAL_CAPACITY = ((nova_int)16LL);
 static const nova_int Nova_const_runtime_string_builder_INT_FMT_CAP = ((nova_int)20LL);
