@@ -651,7 +651,7 @@ D, Ada). Одна фраза вместо таблицы: что говорит 
 
 ```nova
 fn ensure(ok bool, loc CallerLoc = caller_loc()) -> () {
-    if !ok { ice("assertion failed", loc) }    // omit `loc` and ice() names THIS line
+    if !ok { ice("assertion failed", loc: loc) }   // by NAME (D102); omit it and ice() names THIS line
 }
 ```
 

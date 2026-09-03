@@ -118,7 +118,11 @@
 #     same day. For novac's subset the rule is the one already applied to
 #     `#realtime`: the name is recognised, the behaviour is Carina's own work,
 #     on its own schedule. Nothing novac emits today changes.
-#   spec-queue: 47
+#   * D468 AMEND (2026-09-03) -- the explicit override forms are WITHDRAWN.
+#     Nothing to adopt: the contract grammar is unchanged, the second slot is
+#     still a string literal only. For novac this is strictly LESS work than
+#     the block asked for yesterday.
+#   spec-queue: 48
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
