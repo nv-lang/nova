@@ -1,0 +1,17 @@
+﻿// Registry 825. This file REALLY begins with U+FEFF -- byte 0 is 0xEF -- which is
+// what a Windows editor writes by default. D104 (spec/decisions/03-syntax.md:6171)
+// is normative: "UTF-8 only. A BOM at the start of the file is stripped before
+// doc-recognition." Nothing stripped it, so this file used to die with
+// `unexpected byte`, naming a character the source never contained (the first BOM
+// byte read as Latin-1) -- and the snippet drew line 1 as perfectly valid, because
+// the caret pointed at a byte a reader cannot see.
+// EXPECT_STDOUT bom stripped
+//
+// The marker deliberately sits on the SECOND line: the BOM has to be at byte 0, and
+// a marker line beginning with an invisible character would test the runner's
+// tolerance rather than the compiler's.
+module standalone.m825_bom_at_start
+
+fn main() Io -> () {
+    println("bom stripped")
+}
