@@ -42,6 +42,33 @@ fn usage_err(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(UsageError(msg.into()))
 }
 
+/// The one place that answers "is this path a Nova entry point?".
+///
+/// Registry 821: the rule lived as a COPIED LINE in eight commands, and the copy
+/// is exactly why it was both missing and too strict. `cmd_doc` had no copy at
+/// all -- `nova doc hello.txt` exited 0 and printed an empty document, a silent
+/// success on garbage input, which is the worst outcome this project recognises
+/// (class 770). And every copy compared case-SENSITIVELY, so `nova check HELLO.NV`
+/// was refused on a case-insensitive filesystem while `nova check hello.nv` on the
+/// SAME file succeeded: the answer depended on how the user typed the argument,
+/// not on what the file is. One door means the eight commands cannot disagree,
+/// because there is no longer anything for them to disagree about.
+///
+/// Case-insensitive on purpose: `.NV` and `.Nv` name the same file as `.nv` on
+/// Windows and on macOS's default filesystem, and refusing one spelling of a file
+/// we would happily compile under another is a refusal with no meaning behind it.
+pub(crate) fn require_nova_source(p: &std::path::Path) -> anyhow::Result<()> {
+    let is_nv = p
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("nv"));
+    if is_nv {
+        Ok(())
+    } else {
+        Err(usage_err(format!("not a Nova source: {}", p.display())))
+    }
+}
+
 // ---------- CLI definition ----------
 
 #[derive(Parser)]
@@ -1552,9 +1579,7 @@ fn cmd_check_explain_cache(
             return Err(usage_err(format!("path not found: {}", p.display())));
         }
         if p.is_file() {
-            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                return Err(usage_err(format!("not a Nova source: {}", p.display())));
-            }
+            require_nova_source(p)?;
             files.push(p.clone());
         } else if p.is_dir() {
             let mut found = Vec::new();
@@ -1657,9 +1682,7 @@ fn cmd_check_telemetry_cache(
             return Err(usage_err(format!("path not found: {}", p.display())));
         }
         if p.is_file() {
-            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                return Err(usage_err(format!("not a Nova source: {}", p.display())));
-            }
+            require_nova_source(p)?;
             files.push(p.clone());
         } else if p.is_dir() {
             let mut found = Vec::new();
@@ -2061,9 +2084,7 @@ fn cmd_check(
         }
         if p.is_file() {
             // Проверка расширения.
-            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                return Err(usage_err(format!("not a Nova source: {}", p.display())));
-            }
+            require_nova_source(p)?;
             files.push(p.clone());
         } else if p.is_dir() {
             let mut found = Vec::new();
@@ -2700,9 +2721,7 @@ fn cmd_lint(
             return Err(usage_err(format!("path not found: {}", p.display())));
         }
         if p.is_file() {
-            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                return Err(usage_err(format!("not a Nova source: {}", p.display())));
-            }
+            require_nova_source(p)?;
             files.push(p.clone());
         } else if p.is_dir() {
             // НЕ test_runner::walk_nv: тот — test-discovery walker и молча
@@ -3020,6 +3039,14 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
         return Ok(());
+    }
+
+    // Registry 821: `doc` was the one entry of eight without an extension check,
+    // so `nova doc hello.txt` exited 0 with an empty document instead of refusing.
+    // It goes through the same door as the other seven now. Guarded by `is_file`
+    // because a directory is legal here -- that is workspace mode, just below.
+    if path.is_file() {
+        require_nova_source(path)?;
     }
     // Plan 45 Ф.21.7: workspace-режим. Если path — каталог, рекурсивно
     // парсим все *.nv и строим multi-module DocTree.
@@ -4934,9 +4961,7 @@ fn cmd_build(
              To check multiple files: `nova check <dir>` (typecheck only).",
             path.display())));
     }
-    if path.extension().and_then(|s| s.to_str()) != Some("nv") {
-        return Err(usage_err(format!("not a Nova source: {}", path.display())));
-    }
+    require_nova_source(path)?;
 
     let build_start = std::time::Instant::now();
     let repo = find_repo_root()?;
@@ -5736,8 +5761,8 @@ fn cmd_test(
             if !abs.exists() {
                 return Err(usage_err(format!("path not found: {}", p.display())));
             }
-            if abs.is_file() && abs.extension().and_then(|s| s.to_str()) != Some("nv") {
-                return Err(usage_err(format!("not a Nova source: {}", p.display())));
+            if abs.is_file() {
+                require_nova_source(p)?;
             }
             out.push(abs);
         }

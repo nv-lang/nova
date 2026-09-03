@@ -68,9 +68,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     }
     let bench_path = opts.bench_path.canonicalize()
         .map_err(|e| anyhow!("cannot resolve path {}: {}", opts.bench_path.display(), e))?;
-    if bench_path.extension().and_then(|s| s.to_str()) != Some("nv") {
-        bail!("not a Nova source: {}", bench_path.display());
-    }
+    crate::require_nova_source(&bench_path)?;
 
     let src = std::fs::read_to_string(&bench_path)
         .map_err(|e| anyhow!("read bench source: {}", e))?;
