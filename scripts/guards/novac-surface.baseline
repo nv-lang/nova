@@ -567,7 +567,15 @@ resolve 15
 # architecture 4b) +shape_of_record_decl (ONE classification door for both
 # collectors) -decl_is_value (absorbed by that door -- its two callers were
 # exactly the two collectors). Net +1.
-sem 198
+# sem 198 -> 199 (2026-09-03, 274.6 V2a): +shape_of -- THE door of the shape
+# question, asked by `check` (the paren-form refusal) and by the holder. It is
+# the one place that gates on the type's kind; `is_value_record` now delegates
+# to it instead of carrying a second exhaustive kind-match of its own. A
+# boolean wrapper per shape was written and then REMOVED at the owner's word
+# (2026-09-03): a caller compares with the variant's own name, which the word
+# rule allows, so a wrapper would be a second door needing a periphrasis for a
+# name it may not spell. Net +1.
+sem 199
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

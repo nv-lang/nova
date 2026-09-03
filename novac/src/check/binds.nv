@@ -26,7 +26,7 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
-import ../sem.{is_paren_form_record}
+import ../sem.{shape_of}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
@@ -210,7 +210,11 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
     // identifier 'Nova_Pair'`), so novac refuses the brace form by name rather
     // than emit a struct the fixed point does not. The call form arrives in
     // V2b; until then this type constructs with `Pair(1, 2)`.
-    if is_paren_form_record(@ctx, vtype) {
+    ro paren_form = match shape_of(@ctx, vtype) {
+        NamedTupleRecord => true
+        Record | ValueRecord | AnonymousTupleRecord => false
+    }
+    if paren_form {
         @report_first_leaf_of(branch_children(ctor), PAREN_FORM_BRACE_MSG)
         return
     } else {

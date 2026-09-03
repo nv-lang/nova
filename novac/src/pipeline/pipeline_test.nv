@@ -16,7 +16,7 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
-import ../sem.{branch_children, leaf_text, is_value_record, is_paren_form_record, InteropTable}
+import ../sem.{branch_children, leaf_text, is_value_record, shape_of, InteropTable}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
@@ -473,7 +473,10 @@ fn main() { println(1) }", []str.new())
     ro ctx = context(parse(tokens_of("module m.p
 type Pair(x int, y int)
 fn main() { println(1) }")), parse_decls([]str.new()), InteropTable.new())
-    assert(is_paren_form_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
+    assert(match shape_of(ctx, ctx.ty_of_name("Pair") ?? no_ty()) {
+        NamedTupleRecord => true
+        Record | ValueRecord | AnonymousTupleRecord => false
+    })
     // And the brace form is refused by name, not accepted and emitted.
     ro (braced, _) = compile_to_c("module m.b
 type Pair(x int, y int)
