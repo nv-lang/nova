@@ -1,0 +1,18 @@
+// EXPECT_STDOUT \я
+//
+// Registry 221.1 #832, the POSITIVE half -- and the two halves expect
+// DIFFERENT things on purpose. D467 section 6: inside a backtick literal
+// the escape set is exactly three (backtick, backslash, dollar), and any
+// other character after a backslash passes through as TWO characters. That
+// is what makes `` regex`\d{3}` `` work without doubling.
+//
+// So here the backslash and the multi-byte character must BOTH survive into
+// the value. Before #832 the lexer skipped two bytes and cut the character
+// in half -- the same crash, reached through the other form.
+//
+// This one carries a two-byte Cyrillic letter after the backslash.
+module standalone.m832_backtick_esc_cyrillic_pos
+
+fn main() Io -> () {
+    println(`\я`)
+}

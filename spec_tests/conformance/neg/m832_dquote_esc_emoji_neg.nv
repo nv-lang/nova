@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR unknown escape: \🔥
+//
+// Registry 221.1 #832: the escaped character can be MULTI-BYTE, and the
+// lexer used to skip a fixed TWO BYTES past a backslash -- landing inside
+// the character and panicking with `byte index is not a char boundary`.
+// That was an ICE on legal source: anyone writing non-Latin text in a
+// string hit it, and the language server died on every keystroke.
+//
+// D467 section 2: inside `"..."` the escape set is CLOSED, so a character
+// that is not in it must be a DIAGNOSTIC -- never a crash.
+//
+// THE MARKER PINS THE CHARACTER ITSELF, and that is the whole point of this
+// fixture rather than a weaker `unknown escape`. On the quoted path the
+// shared root had a MILDER symptom than the crash it caused in backtick
+// literals: it read one BYTE as Latin-1, so the message named a character
+// the source never contained -- `\я` was reported as `\Ñ`. A marker matching
+// only `unknown escape` would stay green through exactly that lie.
+//
+// This one carries a four-byte emoji after the backslash.
+module neg.m832_dquote_esc_emoji_neg
+
+fn main() Io -> () {
+    // The diagnostic carries NO [E_...] code today -- it is the bare text
+    // `unknown escape`, so the marker matches that text. Worth knowing when
+    // this fixture is next touched: a coded diagnostic would let the marker
+    // be line-pinned, which this one cannot be.
+    println("\🔥")
+}
