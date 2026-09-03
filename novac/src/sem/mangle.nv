@@ -193,7 +193,7 @@ export fn is_value_record(ctx Ctx, t TyId) -> bool {
     // match as growth, which is how it was found.
     match shape_of(ctx, t) {
         Record => false
-        ValueRecord | NamedTupleRecord | AnonymousTupleRecord => true
+        ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => true
     }
 }
 
@@ -210,7 +210,12 @@ export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
     if !is_ty(t) { return RecordShape.Record }
     match ctx.tys.kind_of(t) {
         TkRecord => decl_of_ty(ctx, t).shape
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => RecordShape.Record
+        // A STRUCTURAL tuple term IS the anonymous shape -- it lives on the
+        // stack exactly as the declared forms do. Answering `Record` here (the
+        // first version did) meant "on the heap", which is false about a tuple
+        // and was invisible only because the tuple had a door of its own.
+        TkTuple => RecordShape.AnonPositionalTuple
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer => RecordShape.Record
     }
 }
 
@@ -248,7 +253,7 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             TkRecord => { return match shape_of(ctx, t) {
                 Record => "Nova_${decl_of_ty(ctx, t).name}*"
                 ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
-                NamedTupleRecord | AnonymousTupleRecord =>
+                NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
                     "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
             } }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
@@ -304,7 +309,7 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         TkRecord => match shape_of(ctx, t) {
             Record => "Nova_${decl_of_ty(ctx, t).name}"
             ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
-            NamedTupleRecord | AnonymousTupleRecord =>
+            NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
                 "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
         }
         TkSum => {

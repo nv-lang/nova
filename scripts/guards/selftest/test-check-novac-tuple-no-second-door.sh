@@ -28,7 +28,7 @@ mk() {
     d="$T/$1"; mkdir -p "$d/emit_c" "$d/sem" "$d/check"
     printf 'module emit_c\n\nfn Emitter mut @emit_record_ctor(e int) -> int => e\n' > "$d/emit_c/emit_c.nv"
     printf 'module novac.sem\n\n/// A tuple is a record on the stack (the rule lives in prose).\nexport fn shape_name(s int) -> str => "record"\n' > "$d/sem/sem.nv"
-    printf 'module novac.check\n\nfn Checker @on_heap(s RecordShape) -> bool {\n    match s {\n        Record => true\n        ValueRecord | NamedTupleRecord | AnonymousTupleRecord => false\n    }\n}\n' > "$d/check/check.nv"
+    printf 'module novac.check\n\nfn Checker @on_heap(s RecordShape) -> bool {\n    match s {\n        Record => true\n        ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false\n    }\n}\n' > "$d/check/check.nv"
     echo "$d"
 }
 
@@ -91,7 +91,7 @@ fi
 # --- имена вариантов в match-армах законны ----------------------------------
 set_base 0
 D=$(mk legal)
-printf 'module novac.sem\n\nfn pick(s RecordShape) -> int {\n    match s {\n        NamedTupleRecord => 1\n        AnonymousTupleRecord => 2\n        Record | ValueRecord => 0\n    }\n}\n' > "$D/sem/shape.nv"
+printf 'module novac.sem\n\nfn pick(s RecordShape) -> int {\n    match s {\n        NamedTuple => 1\n        AnonPositionalTuple => 2\n        Record | ValueRecord | PositionalTuple | AnonNamedTuple => 0\n    }\n}\n' > "$D/sem/shape.nv"
 run "$D" && ok "имена вариантов в армах — законны" || bad "имена вариантов посчитаны словом: $(cat "$T/err")"
 
 # --- комментарий с идентификатором в прозе законен ---------------------------

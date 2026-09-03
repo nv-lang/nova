@@ -88,10 +88,27 @@ export type TypeRows enum
 /// because two booleans admit "a tuple on the heap", which the language does
 /// not have -- an enumeration cannot express it, and a new variant forces
 /// every `match` to answer (P21, held by check-novac-match-exhaustive).
-/// For non-record declarations (prims, sums, newtypes) the field is dead:
-/// `is_value_record` gates on TkRecord first, and a sum's value-ness is
-/// DERIVED (`is_value_sum`), not stored.
-export type RecordShape enum Record | ValueRecord | NamedTupleRecord | AnonymousTupleRecord
+/// TWO AXES, and the names say both (the owner`s correction, 2026-09-03):
+/// does the TYPE have a name, and do its FIELDS have names? One word was
+/// hiding the difference, and the grid makes the answer readable:
+///
+///                    fields named                 fields positional
+///   declared         NamedTuple             PositionalTuple
+///   no declaration   AnonNamedTuple    AnonPositionalTuple
+///
+/// `type Pair(x int, y int)` is declared and named; `type Point(f64, f64)`
+/// is declared and positional; `(1, 2)` has no declaration and is
+/// positional (identity structural, D123).
+///
+/// `AnonNamedTuple` -- the form `(file str, line int)` -- IS NOT
+/// IN THE LANGUAGE YET (measured 2026-09-03: the oracle refuses it at parse,
+/// `expected ')', got identifier`, and no D-block describes it). The variant
+/// exists so the grid is complete and every `match` must answer for the cell;
+/// nothing produces it and the parser refuses the form, so no program reaches
+/// this shape today. It costs one arm per match and buys the honest statement
+/// that the cell is empty ON PURPOSE.
+export type RecordShape enum Record | ValueRecord | NamedTuple | PositionalTuple
+    | AnonNamedTuple | AnonPositionalTuple
 
 /// One declaration's row: index in Ctx.types (see the terminology note
 /// above). Registry rows are VALUE records: a plain record is a GC pointer --
@@ -416,8 +433,13 @@ fn register_paren_ctors(file Node, types []TypeDef, defs DefTable,
     for c in file_decls(file) {
         if c.kind_of() != NodeKind.TypeDecl { continue }
         match shape_of_record_decl(c) {
-            NamedTupleRecord => {}
-            Record | ValueRecord | AnonymousTupleRecord => { continue }
+            NamedTuple => {}
+            // The POSITIONAL declared form gets no constructor row yet: the
+            // ORACLE does not compile it either (its own C fails with
+            // `unknown type name '_NovaTuple_2_...'`, measured step 0), so a
+            // row here would offer a construction the fixed point has not.
+            // It arrives with V3, behind the verdict on that oracle defect.
+            Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => { continue }
         }
         ro tname = match decl_name_at(branch_children(c)) {
             None => continue

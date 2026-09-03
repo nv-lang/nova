@@ -419,7 +419,7 @@ export fn shape_of_record_decl(decl Node) -> RecordShape {
     // before its type (`x int`), a positional one writes the type alone. So
     // the paren says WHICH FAMILY, and the first field says WHICH MEMBER.
     //
-    // The earlier version returned NamedTupleRecord on any paren leaf and was
+    // The earlier version returned NamedTuple on any paren leaf and was
     // right only by accident: the parser reads named fields only, so a
     // positional declaration produces no `Field` node and never reaches this
     // door. Correct-by-accident stops being correct the day V3 reads the
@@ -429,13 +429,14 @@ export fn shape_of_record_decl(decl Node) -> RecordShape {
         match c {
             Leaf(t) => {
                 if t.text == VALUE_MARKER { return RecordShape.ValueRecord }
-                if leaf_kind(c) == TokenKind.LParen {
-                    paren = true
-                } else {
-                    // Any other leaf of the declaration -- the name, a generic
-                    // bracket, a marker word: the flag only ever turns on, so
-                    // there is nothing to undo here (P31 form 3).
-                }
+                // ACCUMULATION, not a dispatch. Written as an `if` with an
+                // empty `else` this reddened P21: an `else` closing a test by
+                // KIND must be an honest refusal, and "the name, a generic
+                // bracket, a marker word" is not one. The flag only ever turns
+                // ON, so there is no "everything else" case to get silently
+                // wrong -- and stated as one expression there is no branch for
+                // either guard to judge.
+                paren = paren || leaf_kind(c) == TokenKind.LParen
             }
             Branch { .. } => {}
         }
@@ -446,9 +447,12 @@ export fn shape_of_record_decl(decl Node) -> RecordShape {
         // A field that carries a NAME is the named family; one that carries
         // only a type is the positional (anonymous-component) family.
         if field_name_at(branch_children(c)).is_none() {
-            return RecordShape.AnonymousTupleRecord
+            // A DECLARED type whose fields are positional -- it HAS a name of
+            // its own, so it is not the anonymous form (owner's correction
+            // 2026-09-03: "no name" meant two things under one word).
+            return RecordShape.PositionalTuple
         }
-        return RecordShape.NamedTupleRecord
+        return RecordShape.NamedTuple
     }
     // Parens with no field at all: a recovery shape the parser already
     // refused; the plain record reading keeps the layout question answerable.

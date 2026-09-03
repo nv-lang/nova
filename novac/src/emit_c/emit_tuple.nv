@@ -75,31 +75,6 @@ fn Emitter mut @emit_tuple_typedefs() -> () {
     }
 }
 
-/// A tuple literal: build the mono struct into a numbered temporary, one
-/// field per component IN WRITTEN ORDER -- each component is hoisted right
-/// before its own assignment line, so a component's side effect runs where
-/// the source puts it (the H1/H2 discipline of the record constructor).
-fn Emitter mut @emit_tuple_lit(init Node, vtype TyId) -> str {
-    ro name = c_struct(@ctx, vtype)
-    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
-    @body.append("    ${name} ${tmp};\n")
-    mut i = 0
-    for c in branch_children(init) {
-        match c {
-            Leaf(_) => {} // parens and commas -- trivia, not components
-            Branch { .. } => {
-                @hoist_array_lits(c)
-                @body.append("    ${tmp}.f${i} = ")
-                @emit_expr(c)
-                @body.append(";\n")
-                i += 1
-            }
-        }
-    }
-    tmp
-}
-
-
 /// A destructuring binding (B15 step 5): the pair lands in a temporary once,
 /// and each name is a plain C local initialized from its `.fN` -- the checker
 /// bound the names to the component types, this door only spells what was
@@ -109,7 +84,7 @@ fn Emitter mut @emit_tuple_bind(st Node) -> () {
     ro init = kids[kids.len() - 1]
     ro pt = @out.type_of(init.id_of())
     ro tmp = match init.kind_of() {
-        TupleExpr => @emit_tuple_lit(init, pt)
+        TupleExpr => @emit_record_ctor(init, pt, true)
         // Any other initializer is an ordinary expression of the pair's
         // type (a call, a name): it prints into its own temporary.
         _ => {

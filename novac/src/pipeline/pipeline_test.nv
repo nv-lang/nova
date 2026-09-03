@@ -516,8 +516,8 @@ fn main() { println(1) }", []str.new())
 type Pair(x int, y int)
 fn main() { println(1) }")), parse_decls([]str.new()), InteropTable.new())
     assert(match shape_of(ctx, ctx.ty_of_name("Pair") ?? no_ty()) {
-        NamedTupleRecord => true
-        Record | ValueRecord | AnonymousTupleRecord => false
+        NamedTuple => true
+        Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false
     })
     // And the brace form is refused by name, not accepted and emitted.
     ro (braced, _) = compile_to_c("module m.b

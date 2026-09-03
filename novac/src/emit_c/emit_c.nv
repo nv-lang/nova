@@ -388,7 +388,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
                 // into the general path, which prints the hoisted temporary and
                 // ices when there is none. Nothing hoists here, because the
                 // body IS the initializer -- so this arm has to be asked first.
-                ro rtmp = @emit_record_ctor(e, ret)
+                ro rtmp = @emit_record_ctor(e, ret, false)
                 @body.append("    return ${rtmp};\n")
             } else if is_expr_kind(e.kind_of()) {
                 @body.append("    return ")
@@ -488,7 +488,7 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     // is not in is_expr_kind (B13's lesson), and without this
                     // arm the 4a statement arm would BUILD AND DROP the pair
                     // while the function falls off its end.
-                    ro ttmp = @emit_tuple_lit(c, @out.type_of(c.id_of()))
+                    ro ttmp = @emit_record_ctor(c, @out.type_of(c.id_of()), true)
                     @body.append("    return ")
                     @body.append(ttmp)
                     @body.append(";\n")
@@ -745,7 +745,7 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         // build IS the emission and the temporary is simply not read (B15
         // step 4a; found by the tail probe, where check passed the form and
         // this door iced).
-        ro dropped = @emit_tuple_lit(st, @out.type_of(st.id_of()))
+        ro dropped = @emit_record_ctor(st, @out.type_of(st.id_of()), true)
         @body.append("    (void)")
         @body.append(dropped)
         @body.append(";\n")
@@ -817,7 +817,10 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 return
             }
             if kind == NodeKind.TupleExpr {
-                @lit_tmp[raw_node(e.id_of())] = @emit_tuple_lit(e, @out.type_of(e.id_of()))
+                // THE SAME DOOR as the brace constructor, positionally named
+                // (274.6 V3-1): a tuple is a record on the stack, so it builds
+                // where a record builds.
+                @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()), true)
                 return
             }
             if kind == NodeKind.InterpStr {
@@ -840,14 +843,19 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 }
                 return
             }
-            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
+            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()), false)
         }
     }
 }
 
 /// A record constructor at a binding: builds the value into a numbered
 /// temporary and answers its name, which the binding then reads.
-fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
+/// `positional` says WHERE the field name comes from, and it is a parameter
+/// rather than a test on the node because the caller already knows: a brace
+/// constructor names its fields, a parenthesised literal numbers them. A test
+/// here would have to tell the constructor's HEAD (a `Name` child) from a
+/// component, and that is exactly the kind of guess this compiler removes.
+fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str {
     ro rec = c_struct(@ctx, vtype)
     // F30: the temporary is NUMBERED, not named after the binding --
         // a name may be bound twice in one scope (the oracle accepts it)
@@ -866,6 +874,7 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
     } else {
         @body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
     }
+    mut pos = 0
     for c in branch_children(init) {
         ro ck = c.kind_of()
         if ck == NodeKind.CtorSpread {
@@ -893,6 +902,20 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
                 @body.append(fname)
             }
             @body.append(";\n")
+        } else if positional && is_expr_kind(ck) {
+            // A POSITIONAL component (274.6 V3-1): the same build, the same
+            // hoist before its own assignment line -- only the field name is
+            // the position instead of a written word. This is why the fold
+            // preserves effect order BY CONSTRUCTION: the carrier
+            // `tuple_ctor_effect_order` pins `(tick(1), tick(2))` through
+            // exactly these two assignments, and a compound literal (the shape
+            // V2b uses for a declared constructor) would not pin it at all --
+            // C leaves the order of initializers unspecified.
+            @hoist_array_lits(c)
+            @body.append("    ${tmp}${arrow}f${pos} = ")
+            @emit_expr(c)
+            @body.append(";\n")
+            pos += 1
         } else {
             // The '{' ',' '}' leaves of the constructor: punctuation
             // stores no field, so the temporary is left as it is.
@@ -938,7 +961,7 @@ fn Emitter mut @emit_bind(st Node) -> () {
     if init.kind_of() == NodeKind.TupleExpr {
         // The same contract as the record constructor below: built into a
         // temporary, the binding reads the temporary's name (B15 step 4a).
-        ro ttmp = @emit_tuple_lit(init, vtype)
+        ro ttmp = @emit_record_ctor(init, vtype, true)
         @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${ttmp};\n")
         return
     }
@@ -948,7 +971,7 @@ fn Emitter mut @emit_bind(st Node) -> () {
         // place that assumed every record is. Measured 2026-08-23 -- the C read
         // `NovaValue_Pt* a = _novac_tmp_t1;`, initializing a pointer with a
         // struct, and clang is what said so.
-        ro tmp = @emit_record_ctor(init, vtype)
+        ro tmp = @emit_record_ctor(init, vtype, false)
         @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
     } else if is_expr_kind(init.kind_of()) {
         // The initializer may CONTAIN a construction (an interpolated

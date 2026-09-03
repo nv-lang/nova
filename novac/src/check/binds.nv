@@ -210,9 +210,25 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
     // identifier 'Nova_Pair'`), so novac refuses the brace form by name rather
     // than emit a struct the fixed point does not. The call form arrives in
     // V2b; until then this type constructs with `Pair(1, 2)`.
+    // BOTH DECLARED PAREN FORMS, not just the named one: `type Point(f64,
+    // f64)` is constructed by call exactly as `type Pair(x int, y int)` is.
+    // Listing only `NamedTuple` was right BY ACCIDENT -- the parser does not
+    // read the positional declaration yet, so nothing reached the arm (owner
+    // caught it 2026-09-03, the same class as the LParen reading).
+    //
+    // The refusal itself follows the SPEC, not a gap in the oracle: D215
+    // ("Constructing", amendment 2026-08-05) defines construction of a
+    // parenthesised type as POSITIONAL -- `Vec3(1.0, 2.0, 3.0)` -- and does
+    // not define a brace form at all. The oracle ACCEPTS the brace form at
+    // check and then fails to emit it; that is registry #889, and the fix
+    // there is to refuse it in the checker, as we already do. So this arm is
+    // not a workaround waiting for the oracle to catch up -- it is the rule,
+    // and it stays even after #889 is fixed.
+    //
+    // The ANONYMOUS forms answer false: they have no name a brace could write.
     ro paren_form = match shape_of(@ctx, vtype) {
-        NamedTupleRecord => true
-        Record | ValueRecord | AnonymousTupleRecord => false
+        NamedTuple | PositionalTuple => true
+        Record | ValueRecord | AnonNamedTuple | AnonPositionalTuple => false
     }
     if paren_form {
         @report_first_leaf_of(branch_children(ctor), PAREN_FORM_BRACE_MSG)

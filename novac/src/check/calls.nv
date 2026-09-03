@@ -323,9 +323,18 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     // put a row in the callable table at collect, so arity, named arguments,
     // defaults and coercion are the EXISTING resolver's answers -- this door
     // only routes there and records the construction.
+    // `PositionalTuple` answers FALSE here and that is a DEFERRAL, not an
+    // oversight: `register_paren_ctors` (sem.nv) puts a constructor row only
+    // for the NAMED form. The oracle cannot emit the positional one from TWO
+    // components up (`unknown type name '_NovaTuple_2_...'`) -- registry #888,
+    // narrowed by the integrator: `type One(int)` DOES build, which is why
+    // `type CStr(*u8)` in std never tripped over it. Routing here without a
+    // row would refuse with "not a callable novac knows", naming the wrong
+    // cause. The two places move TOGETHER: when V3 registers positional
+    // constructors, this arm turns true with them.
     ro paren_form = match shape_of(@ctx, type_id) {
-        NamedTupleRecord => true
-        Record | ValueRecord | AnonymousTupleRecord => false
+        NamedTuple => true
+        Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false
     }
     if paren_form {
         @record_paren_ctor(e, kids, type_id)

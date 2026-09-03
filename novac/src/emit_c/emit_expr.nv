@@ -457,9 +457,14 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // nowhere. One expression, so nothing is hoisted (274.6 V2b).
             CalleeFn(row) => {
                 ro rt = @ctx.fns.rows[raw_row(row)].ret_id
+                // Same deferral as the checker's routing door: only the
+                // NAMED form has a constructor row today, so only it can
+                // reach this arm. The three places -- registration (sem),
+                // routing (check/calls) and this emission -- move together;
+                // when V3 registers positional constructors, all three turn.
                 ro ctor = match shape_of(@ctx, rt) {
-                    NamedTupleRecord => !@ctx.fns.compiles_body(row)
-                    Record | ValueRecord | AnonymousTupleRecord => false
+                    NamedTuple => !@ctx.fns.compiles_body(row)
+                    Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false
                 }
                 if ctor {
                     @body.append("((${c_struct(@ctx, rt)}){")
