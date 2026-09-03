@@ -1,0 +1,8 @@
+module f6_mut_tuple_bind
+
+fn main() {
+    mut (a, b) = (1, 2)
+    a = a + 10
+    println(a)
+    println(b)
+}

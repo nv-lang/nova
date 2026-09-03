@@ -1,0 +1,10 @@
+module f3_brace_full
+
+type Point(x int, y int)
+
+fn main() {
+    ro p = Point(1, 2)
+    ro {x, y} = p
+    println(x)
+    println(y)
+}
