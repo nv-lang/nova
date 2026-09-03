@@ -429,7 +429,13 @@ export fn shape_of_record_decl(decl Node) -> RecordShape {
         match c {
             Leaf(t) => {
                 if t.text == VALUE_MARKER { return RecordShape.ValueRecord }
-                if leaf_kind(c) == TokenKind.LParen { paren = true }
+                if leaf_kind(c) == TokenKind.LParen {
+                    paren = true
+                } else {
+                    // Any other leaf of the declaration -- the name, a generic
+                    // bracket, a marker word: the flag only ever turns on, so
+                    // there is nothing to undo here (P31 form 3).
+                }
             }
             Branch { .. } => {}
         }
