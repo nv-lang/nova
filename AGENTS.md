@@ -236,12 +236,12 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 
 - **Plan-bound** markers (followups of a specific plan) live in that plan's **Followups** section in `docs/plans/<plan>.md`.
 - **Floating** markers (cross-cutting, not owned by any plan) — the *open* ones are listed in [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md), the curated **OPEN-view** (what is still live and actionable).
-- [docs/dev/simplifications.md](docs/dev/simplifications.md) is the append-only **history log** of all markers/simplifications — *not* a status view. It records that a marker existed; it does not tell you whether it is still open.
+- [docs/dev/simplifications.md](docs/dev/simplifications.md) is the live list of **deliberate SIMPLIFICATIONS in force** — each with its rationale and the condition that removes it. It is **not** a log of all markers, and it is not a status view of the backlog. **What must NOT go there** (the file says so in its own header, after a cleanup the owner ordered when it had turned into a dump): bug diagnoses and fix chronicles — not at all; closed simplifications — they move to `docs/history/simplifications-closed.md` at the moment of closing; reports of work done. Correction 2026-09-04: this line used to call it "the history log of all markers", and the Lifecycle below told every window to log EVERY floating marker there. A window following that faithfully lands in the case the target file forbids — measured, by the window that did it.
 
 **Lifecycle:**
 
-1. Create a floating marker → add a row to `backlog-followups.md` **and** log the change in `simplifications.md` (house style).
-2. Resolve it → **remove the row** from `backlog-followups.md` (the history stays in `simplifications.md` and the commit). Keep the OPEN-view short — only live items.
+1. Create a floating marker → add a row to `backlog-followups.md`. **Additionally** log it in `simplifications.md` **only when the marker IS a deliberate simplification** — scope knowingly cut, with a rationale and a removal condition. A defect, a suspicion or a diagnosis does NOT go there: the marker row is its whole record.
+2. Resolve it → **remove the row** from `backlog-followups.md` (the commit keeps the history; a simplification that had an entry moves to `docs/history/simplifications-closed.md`). Keep the OPEN-view short — only live items.
 3. When a marker grows into its own plan → move it to that plan's Followups and drop it from the backlog.
 4. Before starting work in a subsystem, scan `backlog-followups.md` for relevant open items.
 
