@@ -2,3 +2,5 @@
 *.c
 *.exe
 *.obj
+# Plan 280 E7: deliberate committed emission baselines are NOT build artifacts.
+!*.expected.c
