@@ -394,7 +394,12 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // above), and they say so instead of being swallowed by a `_`.
             return match chan.callee_of(e.id_of()).target {
                 CalleeCtor(id) => id
-                CalleeFn(_) => ice("check: a type in call position recorded as a function call")
+                // A CONSTRUCTOR is a function (the owner's rule, 2026-09-03),
+                // so a type in call position may legitimately be recorded as
+                // one -- and then the expression's type is the row's RETURN,
+                // which for a constructor is the record itself. This line iced
+                // until V2b, when the rule made the case real.
+                CalleeFn(row) => same_ty(ctx.fns.rows[raw_row(row)].ret_id)
                 CalleeVariant(_) => ice("check: a type in call position recorded as a variant construction")
             }
         }

@@ -376,11 +376,83 @@ export fn collect(file Node, decls []Node, interop InteropTable) -> Ctx {
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
     harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces)
+    // CONSTRUCTORS of the parenthesised record form, and AFTER the collector
+    // on purpose: `own_cnt` is fixed inside `collect_types_with` (the last
+    // line of it), so a row added there would answer `compiles_body == true`
+    // -- and a synthesized constructor has NO body to emit. Registered here it
+    // answers false, which is the truth: the emitter prints a compound literal
+    // for it, never a call (274.6 V2b).
+    register_paren_ctors(file, ctx.types, ctx.defs, ctx.tys, ctx.fns)
     // The interop surface is HANDED, like the declarations: the collector never
     // reads the shell itself -- one reader per input, and the reader of this one
     // lives beside the shell (emit_c.shell_surface).
     ctx.interop = interop
     ctx
+}
+
+/// The CONSTRUCTOR of every parenthesised record declaration in this file.
+///
+/// The owner's rule (2026-09-03): "the constructor that creates a tuple IS its
+/// declaration -- an ordinary function with every ordinary capability,
+/// defaults included". So it is registered as a row of the callable table and
+/// nothing else: arity, named arguments, defaults and coercion are then the
+/// EXISTING call resolver's, and this wave adds no checker logic for them.
+///
+/// THREE decisions, each measured rather than chosen:
+///
+/// 1. AFTER `collect_types_with`, because `own_cnt` is fixed at its last line:
+///    a row added inside it would claim a body it does not have.
+/// 2. NO `defs.add` under the type's name. `FnIndex.build` reads `fns.rows`
+///    directly (resolve.nv:85-101), so the row alone makes `Pair(1, 2)`
+///    resolvable -- while `defs` is one flat last-put-wins namespace, so
+///    writing the constructor there would EVICT the type's own `DefType` entry
+///    and break every later reference to the type by name.
+/// 3. The default expression is read from the FIELD NODE, not from the field
+///    table: `FieldDef` stores name, type and owner -- no default -- and the
+///    same door parameters use (`param_default_slot`) reads the `= expr` tail
+///    off any children list.
+fn register_paren_ctors(file Node, types []TypeDef, defs DefTable,
+                        mut tys Interner, mut fns FnTable) -> () {
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.TypeDecl { continue }
+        match shape_of_record_decl(c) {
+            NamedTupleRecord => {}
+            Record | ValueRecord | AnonymousTupleRecord => { continue }
+        }
+        ro tname = match decl_name_at(branch_children(c)) {
+            None => continue
+            Some(i) => leaf_text(branch_children(c)[i])
+        }
+        mut ret = no_ty()
+        for td in types {
+            if td.name == tname {
+                ret = td.ty_id
+            } else {
+                // Another declaration of this file: the scan is over the whole
+                // table because a type is found by name only here, and the
+                // match either sets the answer or leaves it (P31 form 3).
+            }
+        }
+        if !is_ty(ret) { continue }
+        mut params = []ParamDef.new()
+        for fc in branch_children(c) {
+            if fc.kind_of() != NodeKind.Field { continue }
+            ro fk = branch_children(fc)
+            ro nm = match field_name_at(fk) {
+                None => continue
+                Some(i) => leaf_text(fk[i])
+            }
+            ro ft = match field_type_at(fk) {
+                None => no_ty()
+                Some(i) => ty_of_type_ref(fk, i, no_ty(), []str.new(),
+                                          []TyId.new(), types, defs, tys)
+            }
+            params.push(ParamDef { name: nm, type_id: ft, mode: ParamMode.ModeRo,
+                                   default_expr: param_default_slot(fk) })
+        }
+        if params.len() == 0 { continue }
+        fns.add(tname, ret, false, params, []str.new(), []str.new())
+    }
 }
 
 /// The type and declaration registry of ONE file (without methods:

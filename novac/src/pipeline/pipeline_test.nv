@@ -450,6 +450,48 @@ fn main() {
     assert(!is_value_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
 }
 
+test "a parenthesised record CONSTRUCTS by call, with defaults, and names a missing slot (V2b)" {
+    // The owner's rule made literal: the constructor IS the declaration, an
+    // ordinary function -- so it is registered as a row of the callable table
+    // and the EXISTING resolver answers arity, named arguments and defaults.
+    // Nothing in this wave taught the checker those; the holder proves it by
+    // exercising all three through one declaration.
+    //
+    // WHAT THIS HOLDER DOES NOT JUDGE, named so nobody reads it as more:
+    // the EMISSION. `compile_to_c` does not compile the C it returns, so
+    // stubbing the emitter's constructor arm leaves this test green (measured
+    // 2026-09-03 -- the reverse probe was toothless here). The emission is held
+    // by the CARRIER `examples/basics/named_tuple.nv` through the byte-for-byte
+    // smoke: with the arm stubbed novac prints a call to a C function that
+    // exists nowhere and the build fails. Two sides, two holders.
+    ro (clean, _) = compile_to_c("module m.c
+type Pair(x int, y int)
+type Complex(re f64 = 0.0, im f64 = 0.0)
+fn main() {
+ ro p = Pair(1, 2)
+ println(p.x)
+ ro c = Complex()
+ println(c.re)
+ ro d = Complex(re: 3.5)
+ println(d.re)
+}", []str.new())
+    assert(clean.len() == 0)
+    // A SLOT WITH NO VALUE is named, and by the ordinary refuser: the oracle
+    // says "expects exactly 2 arguments", we say WHICH parameter is missing --
+    // the same cause, a more precise sentence, and neither is invented here.
+    ro (short, _) = compile_to_c("module m.s
+type Pair(x int, y int)
+fn main() {
+ ro p = Pair(1)
+ println(p.x)
+}", []str.new())
+    mut named_slot = false
+    for d in short {
+        if d.message.contains("omits `y`") { named_slot = true }
+    }
+    assert(named_slot)
+}
+
 test "the parenthesised record form is READ, and its brace construction refused (V2a)" {
     // `type Pair(x int, y int)` is a record whose fields are written in one
     // line (D215). Before wave V2a the parser handed the tail to `@type_ref`,

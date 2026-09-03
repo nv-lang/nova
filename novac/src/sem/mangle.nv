@@ -30,6 +30,7 @@ module novac.sem
 import ../diag.{ice}
 import ../names.{raw_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name, OPTION_FAMILY_C, OPTION_SUM}
+import ../builtins.{PAREN_RECORD_C_PREFIX}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -242,10 +243,14 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // pointer form made the copy an alias. The oracle's own shape is
             // `struct NovaValue_<name>` by value, with only a RECEIVER taken as
             // a pointer (shell.tpl.c, `NovaValue_CharsIter*`).
-            TkRecord => {
-                if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
-                return "Nova_${decl_of_ty(ctx, t).name}*"
-            }
+            // The shape decides both the prefix and whether a pointer is
+            // written: only a plain record lives on the heap (see c_struct).
+            TkRecord => { return match shape_of(ctx, t) {
+                Record => "Nova_${decl_of_ty(ctx, t).name}*"
+                ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
+                NamedTupleRecord | AnonymousTupleRecord =>
+                    "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
+            } }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
                 if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
@@ -289,9 +294,18 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
     }
     match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
-        TkRecord => {
-            if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
-            return "Nova_${decl_of_ty(ctx, t).name}"
+        // THE SHAPE decides the prefix, and all three spellings are the
+        // ORACLE's, measured off its own emission (P25 -- the fixed point of
+        // behaviour, and here of the interop name): a plain record is
+        // `Nova_X`, a `value` record `NovaValue_X`, and the parenthesised
+        // form `NovaTuple_X` (read 2026-09-03 from the oracle's C for
+        // `type Pair(x int, y int)`: `struct NovaTuple_Pair { nova_int x;
+        // nova_int y; }` -- members BY FIELD NAME, no positional f0/f1).
+        TkRecord => match shape_of(ctx, t) {
+            Record => "Nova_${decl_of_ty(ctx, t).name}"
+            ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
+            NamedTupleRecord | AnonymousTupleRecord =>
+                "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
         }
         TkSum => {
             if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }

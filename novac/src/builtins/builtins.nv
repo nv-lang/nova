@@ -58,6 +58,17 @@ export const PRINT_FN = "println"
 /// The Option FAMILY (if-let wave): the language's sum name and the shell's
 /// C family prefix (`NovaOpt_<elemC>`, by value) plus the Some tag constant.
 /// P5: names live here; the mangle door spells, the emitter reads.
+/// The ORACLE's C prefix for a record declared in the parenthesised form
+/// (`type Pair(x int, y int)` becomes `struct NovaTuple_Pair`). Measured off
+/// its own emission 2026-09-03, not chosen: our C links into its shell, so the
+/// spelling is the fixed point's (P25), and by P5 an ABI name lives in this
+/// registry as data -- written ONCE, asked by the mangling door.
+///
+/// This is also the ONE line of novac that spells the word the owner's rule of
+/// 2026-09-03 reserves to their approval; keeping it here is what makes that
+/// line auditable instead of scattered through the mangler.
+export const PAREN_RECORD_C_PREFIX = "NovaTuple_"
+
 export const OPTION_SUM = "Option"
 export const OPTION_FAMILY_C = "NovaOpt_"
 export const OPTION_SOME_TAG_C = "NOVA_TAG_Option_Some"

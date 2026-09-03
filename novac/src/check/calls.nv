@@ -31,6 +31,7 @@ import ../builtins.{TypeKind}
 import ../sem.{ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
+import ../sem.{shape_of, call_callee_text}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnLookup, missing_sig_of}
 
@@ -317,6 +318,21 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     } else {
         // A type the registry holds: which KIND decides the rest.
     }
+    // THE PARENTHESISED FORM CONSTRUCTS BY CALL, and its constructor is an
+    // ORDINARY FUNCTION (the owner's rule, 2026-09-03): `register_paren_ctors`
+    // put a row in the callable table at collect, so arity, named arguments,
+    // defaults and coercion are the EXISTING resolver's answers -- this door
+    // only routes there and records the construction.
+    ro paren_form = match shape_of(@ctx, type_id) {
+        NamedTupleRecord => true
+        Record | ValueRecord | AnonymousTupleRecord => false
+    }
+    if paren_form {
+        @record_paren_ctor(e, kids, type_id)
+        return
+    } else {
+        // Not the parenthesised form: the newtype question below answers.
+    }
     ro is_newtype = match decl_of_ty(@ctx, type_id).kind {
         TkNewtype => true
         TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => false
@@ -347,6 +363,37 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     // lines up -- so its binding is the identity, recorded like every other so
     // the emitter has one way to walk a call.
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []TyId.new(), identity_slots(1))
+}
+
+/// The construction of a PARENTHESISED record by call (`Pair(1, 2)`).
+///
+/// The constructor is a row of the callable table, so the resolution is the
+/// ordinary one: the same typed key every free call builds, the same lookup,
+/// the same refusals by name. What is recorded is a CONSTRUCTION
+/// (`CalleeCtor`) with the row's slots, because the emitter prints a compound
+/// literal for it -- there is no C function of that name to call, and
+/// `compiles_body` says so (the row is registered after `own_cnt` is fixed).
+fn Checker mut @record_paren_ctor(e Node, kids []Node, type_id TyId) -> () {
+    ro cname = call_callee_text(kids)
+    ro key = typed_free_key(kids, @ctx, @scope, @chan)
+    match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
+        FnFound(row) => {
+            ro fd = @ctx.fns.rows[raw_row(row)]
+            // `CalleeFn`, not `CalleeCtor`, and that is the owner's rule made
+            // literal: the constructor IS a function, so it is recorded as one
+            // -- and the emitter then HAS the row, which is what a defaulted
+            // slot needs to read its value. `CalleeCtor` carries a type and no
+            // row, and the first probe of `Complex()` iced on exactly that.
+            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
+                bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
+            @record(e, type_id)
+        }
+        // The name IS the type's, so an overload set cannot arise: one
+        // declaration, one constructor row. A miss is an argument fault, and
+        // the free-call refuser names which rule it is -- arity, a slot with
+        // no value, or a type that does not fit.
+        FnOverloaded(_) | FnUnknown => @refuse_free_call(kids, cname, key)
+    }
 }
 
 /// A GENERIC candidate cannot fit an exact key: until the turbofish

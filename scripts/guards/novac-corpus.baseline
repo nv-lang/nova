@@ -272,5 +272,14 @@
 # the short circuit. `?? return` is retracted (D86 amend) -- parsed, refused
 # by name. Reverse probe: the parser link behind `false &&` -- three holder
 # failures and the carrier smoke red. Self-read: syntax 322 -> 272.
-contract-match 50
-behavior-match 42
+# 50/42 -> 51/43 (2026-09-03, 274.6 V2b): carrier examples/basics/named_tuple.nv
+# -- the parenthesised record form constructed BY CALL, with defaults and a
+# named argument (`Pair(1, 2)`, `Complex()`, `Complex(re: 3.5)`). The
+# constructor is registered as an ordinary function row (the owner's rule), so
+# arity, named arguments and defaults are the existing resolver's answers and
+# the wave added no checker logic for them; emission is the oracle's own
+# compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
+# emitter's constructor arm stubbed -> novac prints a call to a C function that
+# exists nowhere and the carrier fails to build.
+contract-match 51
+behavior-match 43

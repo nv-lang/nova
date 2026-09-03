@@ -20,6 +20,7 @@ import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
 import ../sem.{CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
+import ../sem.{shape_of}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
@@ -448,13 +449,48 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // int, and the answer is a sum, not a wrapper).
         match cr.target {
             CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}(")
-            CalleeFn(row) => @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
+            // A CONSTRUCTOR is a function whose return type is a
+            // parenthesised record and whose body novac does not emit -- so
+            // the call site prints the ORACLE's own construction, a compound
+            // literal on the stack (`((NovaTuple_Pair){1LL, 2LL})`, read off
+            // its C 2026-09-03), never a call to a C function that exists
+            // nowhere. One expression, so nothing is hoisted (274.6 V2b).
+            CalleeFn(row) => {
+                ro rt = @ctx.fns.rows[raw_row(row)].ret_id
+                ro ctor = match shape_of(@ctx, rt) {
+                    NamedTupleRecord => !@ctx.fns.compiles_body(row)
+                    Record | ValueRecord | AnonymousTupleRecord => false
+                }
+                if ctor {
+                    @body.append("((${c_struct(@ctx, rt)}){")
+                    @emit_bound_args(kids, 1, false, e.id_of(), row)
+                    @body.append("})")
+                    return
+                } else {
+                    // An ordinary callable: its C name opens below.
+                }
+                @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
+            }
             // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
             // its representation at runtime -- zero cost, D-newtype. So the
             // emission is the ARGUMENT and nothing else: no wrapper, no cast
             // (C needs none between a typedef and its underlying type). The
             // oracle writes a redundant cast here; the shape of our emission is
             // ours (274 section 7.0) as long as the behaviour is identical.
+            // A TYPE in call position CONSTRUCTS, and WHICH construction is
+            // the SHAPE's answer (274.6 V2b):
+            //
+            //   * a NEWTYPE is its representation at runtime -- zero cost,
+            //     so the emission is the ARGUMENT and nothing else: no
+            //     wrapper, no cast (C needs none between a typedef and its
+            //     underlying type). The oracle writes a redundant cast here;
+            //     the shape of our emission is ours (274 section 7.0) as
+            //     long as the behaviour is identical.
+            //   * the PARENTHESISED record form is a COMPOUND LITERAL, one
+            //     expression on the stack -- read off the oracle's own C
+            //     2026-09-03: `((NovaTuple_Pair){1LL, 2LL})`. One expression
+            //     is why this needs no hoist, unlike the brace constructor
+            //     (which builds field by field through a temporary).
             CalleeCtor(_) => {
                 for c in kids {
                     if !is_expr_kind(c.kind_of()) { continue }

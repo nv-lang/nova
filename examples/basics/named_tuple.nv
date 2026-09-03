@@ -1,0 +1,18 @@
+// The parenthesised record form (D215): fields written in one line, and the
+// constructor is a CALL -- an ordinary function, so it takes defaults and
+// named arguments like any other (plan 274.6, waves V2a/V2b).
+module basics.named_tuple
+
+type Pair(x int, y int)
+
+type Complex(re f64 = 0.0, im f64 = 0.0)
+
+fn main() {
+    ro p = Pair(1, 2)
+    println(p.x)
+    println(p.y)
+    ro c = Complex()
+    println(c.re)
+    ro d = Complex(re: 3.5)
+    println(d.re)
+}
