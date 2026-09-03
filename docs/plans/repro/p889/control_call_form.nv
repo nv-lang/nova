@@ -1,0 +1,12 @@
+// Registry 221.1 #889 -- CONTROL. The spec's own construction form for the
+// same declaration: BUILDS, prints 1. Without this control the row would read
+// as "named tuples are broken", which is false and would send the next window
+// into the wrong subsystem.
+module control_call_form
+
+type Named(x int, y int)
+
+fn main() Io -> () {
+    ro p = Named(1, 2)
+    println(p.x)
+}

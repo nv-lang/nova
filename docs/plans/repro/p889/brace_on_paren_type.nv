@@ -1,0 +1,14 @@
+// Registry 221.1 #889 -- REPRO. `nova check` green, `nova build` fails in C
+// (undeclared identifier 'Nova_Pair' / NovaTuple_Pair).
+// NOTE the direction of the fix: D215 says construction of a paren-declared
+// type is POSITIONAL (`Vec3(1.0, 2.0, 3.0)`, amendment 2026-08-05). The brace
+// form is not a construction form the spec defines -- so the defect is that
+// the CHECKER ACCEPTS it, not that codegen fails to support it.
+module brace_on_paren_type
+
+type Named(x int, y int)
+
+fn main() Io -> () {
+    ro p = Named { x: 1, y: 2 }
+    println(p.x)
+}

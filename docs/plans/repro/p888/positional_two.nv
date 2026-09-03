@@ -1,0 +1,13 @@
+// Registry 221.1 #888 -- REPRO. `nova check` green, `nova build` fails in C.
+//   error: unknown type name '_NovaTuple_2_8_nova_int_8_nova_int'
+// D215's own table declares this form legal: `type X(T1, T2)` -- positional
+// tuple, stack, value semantics. The control next door shows ONE component
+// builds fine, so the trigger is arity, not the positional form itself.
+module positional_two
+
+type Two(int, int)
+
+fn main() Io -> () {
+    ro p = Two(1, 2)
+    println(p.0)
+}
