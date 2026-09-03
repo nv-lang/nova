@@ -1,0 +1,13 @@
+module f2c_defaulted_positional
+
+// The OTHER direction of D102 on the synthesized ctor row: a DEFAULTED field
+// passed POSITIONALLY. novac refuses this for an ordinary function
+// (novac/fixtures/default_named/neg_1.nv), so this asks whether the ctor row
+// is judged by the same rule.
+type Pair(x int, y int = 5)
+
+fn main() {
+    ro p = Pair(1, 2)
+    println(p.x)
+    println(p.y)
+}

@@ -1,6 +1,0 @@
-module p
-
-fn main() {
-    println(08)
-    println(09)
-}

@@ -1,0 +1,14 @@
+module k2_value_sum_control
+
+// CONTROL for k1: the same sum with NO newtype over it, so
+// `is_arg_anywhere` answers false and `is_value_sum` answers true.
+type Color enum Red | Green
+
+fn rank(c Color) -> int => match c {
+    Red => 1
+    Green => 2
+}
+
+fn main() {
+    println(rank(Color.Green))
+}

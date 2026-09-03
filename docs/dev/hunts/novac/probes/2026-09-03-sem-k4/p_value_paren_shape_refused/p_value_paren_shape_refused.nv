@@ -1,0 +1,8 @@
+module p_value_paren_shape_refused
+type Point value(x int, y int)
+
+fn main() {
+    ro p = Point(1, 2)
+    println(p.x)
+    println(p.y)
+}

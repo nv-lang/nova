@@ -1,0 +1,19 @@
+module k1_value_sum_flip
+
+// `is_value_sum` (novac/src/sem/mangle.nv:103) stands in for the oracle's
+// "non-generic" clause with `ctx.tys.is_arg_anywhere(t)`. A NEWTYPE's
+// representation rides in the SAME interner arg pool (mangle.nv:41-50), so
+// declaring a newtype over this payload-less sum makes it "an argument
+// somewhere" and flips its placement from NovaValue_Color to Nova_Color*.
+type Color enum Red | Green
+
+type Shade Color
+
+fn rank(c Color) -> int => match c {
+    Red => 1
+    Green => 2
+}
+
+fn main() {
+    println(rank(Color.Green))
+}

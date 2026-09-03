@@ -1,0 +1,9 @@
+module p00_baseline_named
+
+type Pair(x int, y int)
+
+fn main() {
+    ro p = Pair(1, 2)
+    println(p.x)
+    println(p.y)
+}

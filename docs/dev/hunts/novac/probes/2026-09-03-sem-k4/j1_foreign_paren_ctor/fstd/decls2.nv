@@ -1,0 +1,5 @@
+module decls2
+
+// The std text verbatim (std/src/runtime/sync.nv:117), handed over as a
+// declaration rather than declared in the file.
+type CasRawInt(ok bool, witness int)

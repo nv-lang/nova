@@ -1,0 +1,9 @@
+module h1_named_arg_plain_fn
+
+// CONTROL for f2: the SAME D102 question asked of an ORDINARY function.
+// If novac refuses this and accepts f2, the rule is enforced on one path only.
+fn add(x int, y int) -> int => x + y
+
+fn main() {
+    println(add(x: 1, y: 2))
+}

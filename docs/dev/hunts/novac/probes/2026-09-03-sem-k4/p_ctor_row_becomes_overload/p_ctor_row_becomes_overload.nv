@@ -1,0 +1,8 @@
+module p_ctor_row_becomes_overload
+type Pair(x int, y int)
+
+fn Pair(a int) -> int => a + 100
+
+fn main() {
+    println(Pair(7))
+}

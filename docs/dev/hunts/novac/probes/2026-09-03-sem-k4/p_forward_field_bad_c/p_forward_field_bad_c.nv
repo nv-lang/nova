@@ -1,0 +1,9 @@
+module p_forward_field_bad_c
+type Outer(inner Inner)
+
+type Inner { n int }
+
+fn main() {
+    ro o = Outer(Inner { n: 9 })
+    println(o.inner.n)
+}

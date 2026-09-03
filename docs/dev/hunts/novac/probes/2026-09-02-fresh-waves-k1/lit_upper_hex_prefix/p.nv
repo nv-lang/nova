@@ -1,5 +1,0 @@
-module p
-
-fn main() {
-    println(0X1F)
-}

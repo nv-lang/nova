@@ -1,0 +1,9 @@
+module p_field_declared_before_ok
+type Inner value { n int }
+
+type Outer(inner Inner)
+
+fn main() {
+    ro o = Outer(Inner { n: 9 })
+    println(o.inner.n)
+}

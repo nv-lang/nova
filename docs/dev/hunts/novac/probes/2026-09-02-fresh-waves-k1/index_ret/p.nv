@@ -1,9 +1,0 @@
-module p
-
-fn head(v []int) -> int {
-    v[0]
-}
-
-fn main() {
-    println(head([]int.of(10, 20)))
-}

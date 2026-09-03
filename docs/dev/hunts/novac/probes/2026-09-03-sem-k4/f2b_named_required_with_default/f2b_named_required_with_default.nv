@@ -1,0 +1,11 @@
+module f2b_named_required_with_default
+
+// Sharpens f2: `y` HAS a default (so D102 makes it keyword-only), `x` does
+// not (so D102 makes it positional-only). Only `x` is passed, BY NAME.
+type Pair(x int, y int = 5)
+
+fn main() {
+    ro p = Pair(x: 1)
+    println(p.x)
+    println(p.y)
+}
