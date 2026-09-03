@@ -1,0 +1,8 @@
+module p_index_arg
+
+fn twice(n int) -> int => n + n
+
+fn main() {
+    ro v = []int.of(3, 4, 5)
+    println(twice(v[1]))
+}

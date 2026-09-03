@@ -1,0 +1,8 @@
+module p_match_interp
+
+type Col enum Red | Blue
+
+fn main() {
+    ro c = Col.Red
+    println("${match c { Red => 1, Blue => 2 }}")
+}

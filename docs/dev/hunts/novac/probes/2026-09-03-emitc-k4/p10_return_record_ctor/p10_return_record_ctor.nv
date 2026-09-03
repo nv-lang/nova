@@ -1,0 +1,16 @@
+module p10_return_record_ctor
+
+// The SECOND SYNTAX of p9's property, in another statement family: the
+// RetStmt arm (emit_c.nv:611-615) prints its operand with @emit_expr and
+// nothing else, while the fn-expression-body door one file up
+// (emit_c.nv:334-348) asks @emit_record_ctor for the very same construction
+// in the very same "this is the function's answer" position.
+type Pnt { x int }
+
+fn mk(n int) -> Pnt {
+    return Pnt { x: n }
+}
+
+fn main() {
+    println(mk(7).x)
+}

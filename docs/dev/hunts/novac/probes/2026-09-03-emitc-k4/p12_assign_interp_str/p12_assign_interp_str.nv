@@ -1,0 +1,13 @@
+module p12_assign_interp_str
+
+// Same property as p9, another construction: an interpolated string is built
+// by a statement CHAIN (@emit_interp_build), so the printer only prints the
+// temporary the hoist left in @lit_tmp (emit_expr.nv:347-352). The AssignStmt
+// arm (emit_c.nv:618-673) never calls @hoist_array_lits.
+fn main() {
+    ro n = 7
+    mut s = "a"
+    println(s)
+    s = "n=${n}"
+    println(s)
+}

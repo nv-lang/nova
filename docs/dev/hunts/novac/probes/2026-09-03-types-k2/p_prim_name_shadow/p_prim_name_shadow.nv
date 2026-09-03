@@ -1,0 +1,16 @@
+module p_prim_name_shadow
+
+// K2 on the NAME-BUILDING side. `type_tag` (novac/src/sem/mangle.nv) spells a
+// PRIMITIVE with its runtime ABI name (`prim_c_name` -> "nova_int") and a
+// RECORD with its DECLARED name -- two different name spaces flattened into one
+// string. A record literally named `nova_int` therefore tags exactly as `int`.
+type nova_int value { v int }
+
+fn f(x int) -> int => x + 1
+
+fn f(x nova_int) -> int => x.v + 2
+
+fn main() {
+    println(f(10))
+    println(f(nova_int { v: 20 }))
+}

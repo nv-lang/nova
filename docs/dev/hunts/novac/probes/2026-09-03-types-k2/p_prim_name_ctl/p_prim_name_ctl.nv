@@ -1,0 +1,14 @@
+module p_prim_name_ctl
+
+// CONTROL for p_prim_name_shadow: the SAME two overloads, the record renamed
+// so its tag is not the primitive's ABI spelling.
+type Wrapped value { v int }
+
+fn f(x int) -> int => x + 1
+
+fn f(x Wrapped) -> int => x.v + 2
+
+fn main() {
+    println(f(10))
+    println(f(Wrapped { v: 20 }))
+}

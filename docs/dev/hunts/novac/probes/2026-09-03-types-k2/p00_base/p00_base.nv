@@ -1,0 +1,5 @@
+module p00_base
+
+fn main() {
+    println(1)
+}

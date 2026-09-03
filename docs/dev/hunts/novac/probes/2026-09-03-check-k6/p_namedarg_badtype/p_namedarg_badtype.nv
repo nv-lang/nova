@@ -1,0 +1,8 @@
+module p_namedarg_badtype
+
+fn scaled(n int, by int = 2) -> int => n * by
+
+fn main() {
+    ro s = "hi"
+    println(scaled(10, by: s))
+}

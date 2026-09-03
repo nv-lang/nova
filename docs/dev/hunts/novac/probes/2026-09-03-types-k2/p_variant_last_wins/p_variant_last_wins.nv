@@ -1,0 +1,21 @@
+module p_variant_last_wins
+
+// K2. `DefTable` (novac/src/sem/defs.nv:@add) is ONE FLAT table keyed by a bare
+// string, and a variant of a sum is registered in it under its BARE name
+// ("LAST PUT WINS"). Two sums that spell one variant alike therefore have only
+// the LAST of them in the table -- so `Color.Green` is looked up as the string
+// "Green" (check/exprs.nv:@judge_type_head_variant) and comes back as MOOD's
+// variant, whose sum is not `Color`.
+type Color enum Red | Green
+type Mood enum Green | Blue
+
+fn rank(c Color) -> int {
+    match c {
+        Red => 1
+        Green => 2
+    }
+}
+
+fn main() {
+    println(rank(Color.Green))
+}

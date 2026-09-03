@@ -1,0 +1,19 @@
+module p22_tail_if_stmt_in_void_fn
+
+// The THIRD syntax of p2/p4's property. The tail-duty flag is by POSITION
+// only (emit_c.nv:325, `!is_entry_row(row)`), so the `if` that ends this
+// unit-returning body is taken for the function's VALUE and routed to
+// @emit_if_value (emit_c.nv:432-440), which asks the channel for a type the
+// checker never recorded -- an `if` STATEMENT has none.
+fn side(n int) -> () {
+    if n > 0 {
+        println("pos")
+    } else {
+        println("non")
+    }
+}
+
+fn main() {
+    side(1)
+    side(-1)
+}

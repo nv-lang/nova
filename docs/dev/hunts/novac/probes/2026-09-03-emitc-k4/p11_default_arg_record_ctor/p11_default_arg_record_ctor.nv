@@ -1,0 +1,15 @@
+module p11_default_arg_record_ctor
+
+// A THIRD syntax of the same property: the omitted slot's default is emitted
+// AT THE CALL SITE (emit_expr.nv:208-219, @emit_slot_default) straight through
+// @emit_expr -- no hoist walk ever visits that expression, because it is not
+// part of the caller's tree at all. Every other position that can hold a
+// construction runs @hoist_array_lits first.
+type Pnt { x int }
+
+fn depth(p Pnt = Pnt { x: 5 }) -> int => p.x
+
+fn main() {
+    println(depth(Pnt { x: 1 }))
+    println(depth())
+}

@@ -1,0 +1,7 @@
+module p_namedarg_unknown_name
+
+fn scaled(n int, by int = 2) -> int => n * by
+
+fn main() {
+    println(scaled(10, by: nosuchname))
+}

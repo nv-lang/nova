@@ -1,0 +1,17 @@
+module p18_match_arm_interp
+
+// The same property as p12-p15, in a FOURTH position and a THIRD file:
+// emit_match.nv:64 (@emit_arm_value) prints the arm's expression with
+// @emit_expr and no hoist walk. So the class is not "the AssignStmt arm
+// forgot a line" -- it is every @emit_expr call site that is not one of the
+// eight the hoist walk guards.
+// (The first arm is a plain literal so that the match's own type is `str`
+// through the lattice's first-arm rule; the interpolation sits in the second.)
+fn main() {
+    ro n = 7
+    ro s = match n {
+        1 => "one"
+        _ => "many=${n}"
+    }
+    println(s)
+}

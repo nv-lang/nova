@@ -1,0 +1,28 @@
+module p_tag_seam
+
+// K2 on the NAME-BUILDING side. `c_tag` (novac/src/sem/mangle.nv) builds
+// `NOVAC_TAG_<module>_<Sum>_<Variant>` by plain concatenation, and `_` is a
+// legal character inside every one of those names -- so the separator carries
+// no information. `Foo_Bar` + `Baz` and `Foo` + `Bar_Baz` are two different
+// variants of two different sums under ONE C enum constant.
+type Foo_Bar enum Baz | Qux
+type Foo enum Bar_Baz | Quux
+
+fn f(x Foo_Bar) -> int {
+    match x {
+        Baz => 1
+        Qux => 2
+    }
+}
+
+fn g(y Foo) -> int {
+    match y {
+        Bar_Baz => 3
+        Quux => 4
+    }
+}
+
+fn main() {
+    println(f(Foo_Bar.Baz))
+    println(g(Foo.Bar_Baz))
+}

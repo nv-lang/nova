@@ -1,0 +1,18 @@
+module p_tuple_newtype_ctl
+
+// CONTROL for p_tuple_newtype_name: the same shape with no newtype, so the two
+// tuple types have two different mono names.
+fn tagged() -> (str, int) {
+    ("x", 2)
+}
+
+fn plain() -> (int, int) {
+    (3, 4)
+}
+
+fn main() {
+    ro a = tagged()
+    ro b = plain()
+    println(a.1)
+    println(b.1)
+}

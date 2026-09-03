@@ -1,0 +1,10 @@
+module p_const_eats_type
+
+// THIRD FORM: a module CONSTANT and a TYPE in the one flat namespace.
+type Limit { n int }
+const Limit = 3
+
+fn main() {
+    mut l = Limit { n: 7 }
+    println(l.n)
+}

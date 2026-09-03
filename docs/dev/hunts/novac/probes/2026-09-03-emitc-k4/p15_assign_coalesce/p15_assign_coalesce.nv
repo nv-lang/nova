@@ -1,0 +1,13 @@
+module p15_assign_coalesce
+
+// The SECOND CONSTRUCTION carrying p12/p13/p14's property (the first is the
+// interpolated string): `a ?? b` is also built by statements
+// (@emit_coalesce, emit_c.nv:496) and also only printed from @lit_tmp
+// (emit_expr.nv:353-360). A grep for InterpStr would not find this one.
+fn main() {
+    ro v = [7, 8]
+    mut n = 0
+    println(n)
+    n = v.get(0) ?? 0
+    println(n)
+}

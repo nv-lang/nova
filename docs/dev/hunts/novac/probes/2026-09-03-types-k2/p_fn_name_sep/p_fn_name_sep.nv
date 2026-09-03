@@ -1,0 +1,14 @@
+module p_fn_name_sep
+
+// K2 on the NAME-BUILDING side. `c_callable` (novac/src/sem/mangle.nv) joins
+// the callable's name and its parameter type tags with `__`, and `_` is legal
+// inside an identifier -- so a function whose NAME ends in `__nova_int` is
+// indistinguishable from the same function taking one `int`.
+fn g__nova_int() -> int => 1
+
+fn g(x int) -> int => x + 1
+
+fn main() {
+    println(g__nova_int())
+    println(g(10))
+}

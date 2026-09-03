@@ -1,0 +1,17 @@
+module p_prim_name_shadow_newtype
+
+// SECOND SYNTAX of the same property as p_prim_name_shadow (the property is
+// "a primitive and a user declaration land in one flat tag string", not "a
+// value record"): here the colliding declaration is a NEWTYPE, whose
+// `type_tag` arm is a different line of novac/src/sem/mangle.nv (657) than the
+// record's (654) -- a grep for the record arm would never find this one.
+type nova_bool bool
+
+fn f(x bool) -> int => 1
+
+fn f(x nova_bool) -> int => 2
+
+fn main() {
+    println(f(true))
+    println(f(nova_bool(false)))
+}

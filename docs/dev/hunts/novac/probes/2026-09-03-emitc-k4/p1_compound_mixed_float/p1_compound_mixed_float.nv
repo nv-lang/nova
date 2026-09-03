@@ -1,0 +1,18 @@
+module p1_compound_mixed_float
+
+// "Is this arithmetic FLOAT?" is decided TWICE, by two different rules:
+//   emit_expr.nv:557  ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
+//                      -- the type of the WHOLE binary node (its result)
+//   emit_c.nv:649     ro is_float = carrier_of(@ctx, @out.type_of(kids[2].id_of())) == f64
+//                      -- the type of the RIGHT OPERAND of a compound assign
+// On `f + 2` with f:f64 the result type is f64, so the first says float.
+// On `f += 2` the right operand is int, so the second says int.
+fn main() {
+    mut a = 1.5
+    a = a + 2
+    println(a)
+
+    mut b = 1.5
+    b += 2
+    println(b)
+}

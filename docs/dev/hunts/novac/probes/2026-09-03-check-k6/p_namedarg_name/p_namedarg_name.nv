@@ -1,0 +1,8 @@
+module p_namedarg_name
+
+fn scaled(n int, by int = 2) -> int => n * by
+
+fn main() {
+    ro k = 5
+    println(scaled(10, by: k))
+}

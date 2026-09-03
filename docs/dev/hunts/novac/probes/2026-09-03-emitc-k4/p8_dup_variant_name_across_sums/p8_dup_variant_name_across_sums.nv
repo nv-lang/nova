@@ -1,0 +1,23 @@
+module p8_dup_variant_name_across_sums
+
+// "WHICH variant does this pattern head name?" is the checker's decision --
+// it needs it for exhaustiveness. The match emitter decides it a SECOND time,
+// by the bare spelling, through the flat last-wins registry:
+//   emit_match.nv:132  if Some(def) = @ctx.defs.def_of(leaf_text(p0))
+//   emit_match.nv:143  @emit_tag_test(uniq, vrow, scr_t)  -> c_tag(ctx, vrow)
+// This is the very shape the CALL path was corrected away from on 2026-08-19
+// (emit_expr.nv:437-443). Two sums may spell a variant the same way, and the
+// registry answers with whichever was written LAST.
+type Hue enum Red | Green
+
+type Ink enum Red | Blue
+
+fn rank(a Hue) -> int => match a {
+    Red => 1
+    Green => 2
+}
+
+fn main() {
+    println(rank(Hue.Red))
+    println(rank(Hue.Green))
+}

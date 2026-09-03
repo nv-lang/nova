@@ -1,0 +1,19 @@
+module p2_tail_call_in_void_fn
+
+// "Does this statement produce the function's return value?" is decided TWICE:
+//   emit_c.nv:325  @emit_block_stmts_fn(c, !@ctx.fns.is_entry_row(row))
+//                   -- tail duty by POSITION: every non-entry callable has it,
+//                      whatever it returns;
+//   emit_c.nv:367  if !has_expr_body && ret == @ctx.prims.int_id
+//                   -- the trailing safety return, by the RETURN TYPE.
+// A unit-returning function whose last statement is a call therefore takes the
+// `return <expr>` arm (emit_c.nv:451) instead of the statement arm
+// (@emit_call_stmt), which is the only arm that knows about println.
+fn side() -> () {
+    println("from side")
+}
+
+fn main() {
+    side()
+    println("done")
+}

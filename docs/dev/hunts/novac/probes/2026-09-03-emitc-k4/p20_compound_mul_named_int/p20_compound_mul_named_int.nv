@@ -1,0 +1,16 @@
+module p20_compound_mul_named_int
+
+// p1's PROPERTY, not p1's spelling: the operator is `*=` instead of `+=` and
+// the right operand is a NAMED binding instead of a literal. One door
+// (emit_c.nv:649-670) serves every compound operator, so every one of
+// `+= -= *= /= %=` carries it.
+fn main() {
+    ro k = 2
+    mut a = 1.5
+    a = a * k
+    println(a)
+
+    mut b = 1.5
+    b *= k
+    println(b)
+}
