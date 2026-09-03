@@ -16,7 +16,7 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
-import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
+import ../sem.{branch_children, leaf_text, is_value_record, is_paren_form_record, InteropTable}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
@@ -448,6 +448,44 @@ fn main() {
     // add one -- an edge is a line in the table of section 3, with a contract.
     ro ctx = context(parse(tokens_of(src)), parse_decls([]str.of(handed)), InteropTable.new())
     assert(!is_value_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
+}
+
+test "the parenthesised record form is READ, and its brace construction refused (V2a)" {
+    // `type Pair(x int, y int)` is a record whose fields are written in one
+    // line (D215). Before wave V2a the parser handed the tail to `@type_ref`,
+    // which read the parens as a flat run of leaves with no `Field` node, so
+    // `shape_of_decl` classified Pair as a NEWTYPE over `int` -- both field
+    // names and the second field vanished in silence.
+    //
+    // TWO criteria in one test because they are one mechanism: the declaration
+    // must READ (zero diagnostics on a file that only declares it), and the
+    // BRACE construction must be refused BY NAME -- the oracle accepts
+    // `Pair { x: 1 }` at check and then fails to emit it (`undeclared
+    // identifier 'Nova_Pair'`, measured 2026-09-03), so emitting a struct here
+    // would invent a construction the fixed point does not have. The call form
+    // `Pair(1, 2)` is the one that works, and it arrives with V2b.
+    ro (clean, _) = compile_to_c("module m.p
+type Pair(x int, y int)
+fn main() { println(1) }", []str.new())
+    assert(clean.len() == 0)
+    // The SHAPE is the registry's answer, asked through the door (P24: no
+    // reading a C name back apart).
+    ro ctx = context(parse(tokens_of("module m.p
+type Pair(x int, y int)
+fn main() { println(1) }")), parse_decls([]str.new()), InteropTable.new())
+    assert(is_paren_form_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
+    // And the brace form is refused by name, not accepted and emitted.
+    ro (braced, _) = compile_to_c("module m.b
+type Pair(x int, y int)
+fn main() {
+ ro p = Pair { x: 1, y: 2 }
+ println(p.x)
+}", []str.new())
+    mut named = false
+    for d in braced {
+        if d.message.contains("constructed by call") { named = true }
+    }
+    assert(named)
 }
 
 test "a `value` record answers is_value_record -- the POSITIVE side of the shape" {

@@ -413,14 +413,39 @@ export fn recv_type_name(kids []Node) -> Option[str] {
 /// collectors); the scan is unchanged -- the marker is a leaf between the
 /// name and the body, read off the declaration node.
 export fn shape_of_record_decl(decl Node) -> RecordShape {
+    // THE PAREN LEAF SAYS "parenthesised", NOT "named" -- the owner caught this
+    // reading (2026-09-03): `type Point(f64, f64)` also opens with `(`. The
+    // honest discriminant is the FIELD: a named field writes an identifier
+    // before its type (`x int`), a positional one writes the type alone. So
+    // the paren says WHICH FAMILY, and the first field says WHICH MEMBER.
+    //
+    // The earlier version returned NamedTupleRecord on any paren leaf and was
+    // right only by accident: the parser reads named fields only, so a
+    // positional declaration produces no `Field` node and never reaches this
+    // door. Correct-by-accident stops being correct the day V3 reads the
+    // positional form.
+    mut paren = false
     for c in branch_children(decl) {
         match c {
             Leaf(t) => {
                 if t.text == VALUE_MARKER { return RecordShape.ValueRecord }
+                if leaf_kind(c) == TokenKind.LParen { paren = true }
             }
             Branch { .. } => {}
         }
     }
+    if !paren { return RecordShape.Record }
+    for c in branch_children(decl) {
+        if c.kind_of() != NodeKind.Field { continue }
+        // A field that carries a NAME is the named family; one that carries
+        // only a type is the positional (anonymous-component) family.
+        if field_name_at(branch_children(c)).is_none() {
+            return RecordShape.AnonymousTupleRecord
+        }
+        return RecordShape.NamedTupleRecord
+    }
+    // Parens with no field at all: a recovery shape the parser already
+    // refused; the plain record reading keeps the layout question answerable.
     RecordShape.Record
 }
 

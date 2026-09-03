@@ -496,6 +496,42 @@ fn Cursor mut @type_decl() -> Node {
             kids.push(@node(NodeKind.Field, fk))
         }
         @push_expected(kids, TokenKind.RBrace)
+    } else if @peek() == TokenKind.LParen {
+        // THE PARENTHESISED RECORD FORM (D215): `type Pair(x int, y int)` and
+        // `type Complex(re f64 = 0.0)`. It is a record whose fields are written
+        // in one line and whose constructor is a CALL -- the same fields the
+        // brace form declares, so it produces the SAME `Field` nodes and rides
+        // the record path from here (plan 274.6 wave V2). Positional fields
+        // (`type Point(f64, f64)`) are NOT read here: the oracle itself fails to
+        // compile them (measured, step 0), so that form waits for V3; a leaf
+        // where a field name belongs falls through to the recovery bucket.
+        kids.push(@take())
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            mut fk = []Node.new()
+            if @at_mode_word() {
+                fk.push(@take())
+            } else {
+                // No mode: read-only by default (D176), exactly as the brace form.
+            }
+            @push_expected(fk, TokenKind.Ident) // field name
+            fk.append(@type_ref())              // same door parameters and brace fields use
+            // A DEFAULT: `type Complex(re f64 = 0.0)`. The constructor is an
+            // ordinary function, so its default is read exactly as a
+            // parameter's is (parse.nv param loop): the `=` leaf then an
+            // expression, and D102 tells required from defaulted downstream.
+            if @peek() == TokenKind.Assign {
+                fk.push(@take())
+                fk.push(@expr())
+            } else {
+                // No default: a required field.
+            }
+            kids.push(@node(NodeKind.Field, fk))
+            // The comma between fields is trivia to the declaration: shape and
+            // collect read `Field` nodes, and a comma leaf among the kids is
+            // ignored, exactly as the parameter loop treats it.
+            @push_if(kids, TokenKind.Comma)
+        }
+        @push_expected(kids, TokenKind.RParen)
     } else if @peek() != TokenKind.Eof && !TOP_LEVEL_STOPS.contains(@peek()) {
         // A NEWTYPE or an ALIAS: `type Row int`, `type Row alias int`. The tail
         // is a TYPE REFERENCE, and one branch reads both -- the `alias` word is

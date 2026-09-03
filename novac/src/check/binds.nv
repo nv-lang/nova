@@ -25,7 +25,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at, is_paren_form_record}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
@@ -203,6 +203,18 @@ fn Checker mut @type_bind(st Node) -> () {
 /// know it and deriving it again would be the same mistake one level down
 /// (#812: the walk in check.nv sees the node but not the type).
 fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
+    // A NAMED-TUPLE record (`type Pair(x int, y int)`) is CONSTRUCTED BY CALL,
+    // not by brace: the oracle accepts `Pair { x: 1 }` at check but fails to
+    // emit it (measured 2026-09-03, step 0 of plan 274.6 V2 -- `undeclared
+    // identifier 'Nova_Pair'`), so novac refuses the brace form by name rather
+    // than emit a struct the fixed point does not. The call form arrives in
+    // V2b; until then this type constructs with `Pair(1, 2)`.
+    if is_paren_form_record(@ctx, vtype) {
+        @report_first_leaf_of(branch_children(ctor), PAREN_FORM_BRACE_MSG)
+        return
+    } else {
+        // A plain or value record: the brace form is its construction.
+    }
     @report_if_ctor_fields_wrong(ctor, vtype)
     for c in branch_children(ctor) {
         ro ck = c.kind_of()

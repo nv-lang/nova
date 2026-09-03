@@ -186,13 +186,35 @@ fn module_prefix(ctx Ctx) -> str {
 /// from having no payloads (A4). One door, so the three readers -- the C type,
 /// the struct name and the emission of a construction -- cannot disagree.
 export fn is_value_record(ctx Ctx, t TyId) -> bool {
-    if !is_ty(t) { return false }
+    // DELEGATES: one door answers the shape, the booleans are readings of it.
+    // Two doors each with their own exhaustive kind-match were the shape of a
+    // second door (P18) -- and the guard of the word rule counted the second
+    // match as growth, which is how it was found.
+    match shape_of(ctx, t) {
+        Record => false
+        ValueRecord | NamedTupleRecord | AnonymousTupleRecord => true
+    }
+}
+
+/// Is this declaration the PARENTHESISED record form (`type Pair(x int, y int)`)?
+/// A reading of the shape, like `is_value_record` -- callers ask, they never
+/// spell the comparison themselves (P18).
+export fn is_paren_form_record(ctx Ctx, t TyId) -> bool {
+    match shape_of(ctx, t) {
+        NamedTupleRecord => true
+        Record | ValueRecord | AnonymousTupleRecord => false
+    }
+}
+
+/// THE shape of a type's declaration -- the one door, and the only place that
+/// gates on the kind. A type that declares no record answers `Record`: the
+/// shape field is dead for it, and `Record` is the reading every caller of the
+/// booleans above already expects for a non-record (heap, no inline layout).
+export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
+    if !is_ty(t) { return RecordShape.Record }
     match ctx.tys.kind_of(t) {
-        TkRecord => match decl_of_ty(ctx, t).shape {
-            Record => false
-            ValueRecord | NamedTupleRecord | AnonymousTupleRecord => true
-        }
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => false
+        TkRecord => decl_of_ty(ctx, t).shape
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => RecordShape.Record
     }
 }
 
