@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: what a DECLARATION becomes in C -- its NAME, and the ORDER in which it
+//   is written. Two questions that a body-emission test cannot ask: a name is
+//   right or wrong regardless of any body, and an order is a relation BETWEEN
+//   declarations.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-file-size.py (this split), check-novac-module-tests.
+//
+// Split out of subset_test.nv on 2026-09-03, when the order holder of #TBD-A
+// pushed that file past the thousand-line limit. Same seam overload_test.nv
+// came out of; nothing is renamed and no assertion changes.
+
+module novac.pipeline
+
+test "a shadowing type carries the module in its C name; a primitive's name is closed" {
+    // Both halves are the NORM's, found by the owner's question (2026-09-01;
+    // both probes passed check in silence before): D35 closes a primitive's
+    // name forever, and D125 lets a user declaration WIN over a handed-over
+    // one -- with the C name module-qualified (D381), or the emission would
+    // print a second `struct Nova_<name>` beside the shell's and clang
+    // refuses the unit (measured on ct.c).
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type str { n int }
+fn main() {
+ println(1)
+}", std)
+    assert(d.len() >= 1)
+    for g in d {
+        assert(g.message.contains("closed type (D35)"))
+    }
+
+    // Shadowing a handed-over name is LEGAL and spelled BARE, exactly as the
+    // oracle spells it (the mangle-fixed-point guard holds that): a foreign
+    // Widget is handed in by the test, the file's own Widget wins (D125) and
+    // its struct keeps the plain name.
+    ro shadow_decls = []str.of("export type Widget { q int }
+")
+    ro (d2, c2) = compile_to_c("module p
+type Widget { n int }
+fn main() {
+ ro v = Widget { n: 7 }
+ println(v.n)
+}", shadow_decls)
+    assert(d2.len() == 0)
+    assert(c2.contains("struct Nova_Widget"))
+
+    // The one REAL collision: a name whose struct the SHELL TEMPLATE already
+    // declares (Vec) -- two definitions of one struct in one unit, refused by
+    // name. The fact comes from the interop table, which lifts the template's
+    // own identifiers -- so the full surface is used here, not the tiny
+    // std_decls.
+    ro (d2b, _) = compile_to_c_with("module p
+type Vec { n int }
+fn main() {
+ println(1)
+}", []Node.new(), interop_surface())
+    assert(d2b.len() >= 1)
+    for g in d2b {
+        assert(g.message.contains("interop shell already declares"))
+    }
+
+    // A name of one's own stays clean and unprefixed -- the mangle answers
+    // the two owners, not every declaration.
+    ro (d3, c3) = compile_to_c("type Own { n int }
+fn main() {
+ ro v = Own { n: 7 }
+ println(v.n)
+}", std)
+    assert(d3.len() == 0)
+    assert(c3.contains("struct Nova_Own"))
+    assert(!c3.contains("struct Nova_p_Own"))
+}
+
+test "a field whose type is declared LOWER in the file compiles (#TBD-A, hunt sem x K4)" {
+    // Both layouts, because they fail for different reasons and are held by
+    // different halves of the declaration pass: a POINTER field needs only the
+    // forward `typedef`, a field embedded BY VALUE needs the complete type,
+    // which is the body ORDER. Before them novac accepted such a file in
+    // SILENCE and emitted C clang refused, while the oracle compiled it.
+    //
+    // Asserted on ORDER, not on presence: a `typedef` existing somewhere proves
+    // nothing -- it has to stand before the body that reads the name.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Boxed { node Node }
+type Inline { at Point }
+type Node { n int }
+type Point value {
+ x int
+ y int
+}
+fn main() {
+ ro b = Boxed { node: Node { n: 9 } }
+ println(b.node.n)
+ ro i = Inline { at: Point { x: 4, y: 7 } }
+ println(i.at.x)
+}", std)
+    assert(d.len() == 0)
+
+    // The POINTER half: `Nova_Node` is named as a type before `struct Nova_Boxed`
+    // is written, so the forward pass must have put its typedef first.
+    ro fwd_node = c.find("typedef struct Nova_Node Nova_Node;") ?? -1
+    ro body_boxed = c.find("struct Nova_Boxed {") ?? -1
+    assert(fwd_node >= 0)
+    assert(body_boxed >= 0)
+    assert(fwd_node < body_boxed)
+
+    // The VALUE half: `Inline` embeds `Point` by value, so the COMPLETE
+    // `NovaValue_Point` body must precede `struct Nova_Inline`.
+    ro body_point = c.find("struct NovaValue_Point {") ?? -1
+    ro body_inline = c.find("struct Nova_Inline {") ?? -1
+    assert(body_point >= 0)
+    assert(body_inline >= 0)
+    assert(body_point < body_inline)
+}

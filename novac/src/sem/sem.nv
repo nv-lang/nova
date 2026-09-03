@@ -298,6 +298,15 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
 /// the declaration index as the identity and give the interner row its own
 /// name). That is the owner's call and a wave of its own -- recorded in sub-plan
 /// 9.1g.1 rather than settled here by whoever typed the field first.
+export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
+    requires is_ty(t), "sem: the declaration of `no type` -- absence has no row"
+{
+    ro d = ctx.tys.decl_head_of(t)
+    assert(is_decl(d) && raw_decl(d) < ctx.types.len(),
+        "sem: a nominal term names a declaration this file's table does not hold")
+    ctx.types[raw_decl(d)]
+}
+
 /// The INDEX of the declaration a nominal term names, or -1 when it names
 /// none this file holds.
 ///
@@ -313,15 +322,6 @@ export fn decl_index_of_ty(ctx Ctx, t TyId) -> int {
     if !is_decl(d) { return -1 }
     if raw_decl(d) >= ctx.types.len() { return -1 }
     raw_decl(d)
-}
-
-export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
-    requires is_ty(t), "sem: the declaration of `no type` -- absence has no row"
-{
-    ro d = ctx.tys.decl_head_of(t)
-    assert(is_decl(d) && raw_decl(d) < ctx.types.len(),
-        "sem: a nominal term names a declaration this file's table does not hold")
-    ctx.types[raw_decl(d)]
 }
 
 /// The TYPE of a declaration -- the other direction, and the one the name
