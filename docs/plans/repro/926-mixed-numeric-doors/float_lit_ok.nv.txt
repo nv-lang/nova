@@ -1,0 +1,9 @@
+// door: int literal against a float operand and a float literal into an f32 declaration — expected to be accepted (D55 literal adaptation)
+module float_lit_ok
+
+fn main() Io -> () {
+    ro b f64 = 2.5
+    println(b + 1)
+    ro x f32 = 1.5
+    println(x)
+}

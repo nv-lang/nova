@@ -43,6 +43,31 @@ anymore.
 
 ## Numeric ↔ numeric
 
+### There is no automatic widening in an operation ([D405](decisions/02-types.md#d405), amended 2026-09-04)
+
+Every widening below happens because you wrote `as`. Nova does **not** pick the wider
+type for you when two numeric types meet in one operation — no "take the larger",
+no integer promoted to float, no signed compared against unsigned. Mixed operands are
+a compile error, and the conversion you meant is written down.
+
+This is the rule C spent decades teaching everyone to fear: `u32(4294967295) ==
+i32(-1)` is `true` in C, because the signed operand is converted to unsigned behind
+your back. In Nova it does not compile.
+
+The 2026-09-04 amendment states the rule by **category** rather than by listing
+operators, after three doors were measured outside the original list: relational
+operands of different signedness, an integer against a float, and negation of an
+unsigned value. All three answered, and answered wrongly.
+
+Two relaxations, and both are about **literals only**, where no second type exists to
+disagree with:
+
+- a float literal is accepted in a float position without `as` (`ro x f32 = 1.5`);
+- an untyped literal adapts to the float operand beside it (`b + 1` where `b f64`),
+  the way an untyped constant does in Go.
+
+A value of type `int` next to a value of type `f64` is still an error, literal or not.
+
 ### Widening (no precision loss)
 
 | From → To | Via | Semantics |

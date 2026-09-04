@@ -1,0 +1,9 @@
+// door: u32 == i32 and u32 < i32 — comparison operators are not in the D405 operator list
+module cmp_signedness
+
+fn main() Io -> () {
+    ro u u32 = 4294967295 as u32
+    ro s i32 = -1 as i32
+    println(u == s)
+    println(u < s)
+}

@@ -1,0 +1,7 @@
+// door: CONTROL: float literal into an int declaration — must be an error
+module float_lit_neg
+
+fn main() Io -> () {
+    ro n int = 1.5
+    println(n)
+}

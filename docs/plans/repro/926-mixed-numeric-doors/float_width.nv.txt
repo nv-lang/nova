@@ -1,0 +1,9 @@
+// door: f32 + f64 and f32 < f64 — mixed float widths (D405 speaks only of integers)
+module float_width
+
+fn main() Io -> () {
+    ro a f32 = 1.5 as f32
+    ro b f64 = 2.5
+    println(a + b)
+    println(a < b)
+}
