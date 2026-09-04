@@ -14,7 +14,7 @@
 module novac.check
 
 import ../tree.{Node, BinOp, bin_op_of}
-import ../sem.{leaf_kind, leaf_text}
+import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../types.{TyId, no_ty}
 import ../builtins.{EQUAL_METHOD}
 import ../resolve.{FnLookup}
@@ -124,6 +124,6 @@ fn is_equality(op BinOp) -> bool {
 /// TYPE since E2-b3 M3: with it the lookup narrows an `equal`
 /// overload set itself, and what stays overloaded is a tie.
 fn equality_key(lhs_t TyId, rhs_t TyId) -> []ArgSpec => [
-    ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "" },
-    ArgSpec { type_id: rhs_t, cls: ArgClass.ArgRo, name: "" },
+    ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "", lit: LitArg.NotLit },
+    ArgSpec { type_id: rhs_t, cls: ArgClass.ArgRo, name: "", lit: LitArg.NotLit },
 ]

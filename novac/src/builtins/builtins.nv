@@ -218,13 +218,36 @@ export const UNIT_TYPE_NAME = "()"
 /// times across 50 files (measured 2026-08-21).
 export const SELF_TYPE = "Self"
 
-/// One pre-declared type of the universe: (source name, runtime C spelling).
-/// The C spelling of a PRIMITIVE is part of the runtime ABI (nova_rt.h) — a
-/// fact, not a mangling result; everything non-primitive goes through the
-/// mangling door.
+/// The FAMILY of a primitive -- the axis every rule about primitives actually
+/// asks about (D227 literal typing, D405 mixed widths, D363 built-in operator
+/// dispatch): is it an integer, a float, text, a truth value, a character, the
+/// unit. Until 2026-09-04 the checker asked "is this an integer" as
+/// `t == prims.int_id`, so every integer but `int` fell out of every rule at
+/// once -- ten of the sixteen types below were declared here and reachable
+/// nowhere (registry #910). The family lives in the table because the table is
+/// the ONE home of primitive facts (P5); a predicate in the checker listing the
+/// members by id would be the copy this module exists to prevent.
+export type PrimFamily enum
+    | PfInt /// a signed or unsigned integer of some width: int, uint, i8..i64, u8..u64
+    | PfFloat /// an IEEE float: f32, f64
+    | PfStr /// str
+    | PfBool /// bool
+    | PfChar /// char
+    | PfUnit /// ()
+
+/// One pre-declared type of the universe: (source name, runtime C spelling,
+/// family, width, signedness). The C spelling of a PRIMITIVE is part of the
+/// runtime ABI (nova_rt.h) — a fact, not a mangling result; everything
+/// non-primitive goes through the mangling door. Width and signedness are the
+/// spec's own axis for a scalar (D315 `Scalar{width, signed}`): the literal
+/// range rule (D227 rule 3) and the mixed-width rule (D405) read them; the
+/// non-numeric rows carry 0 and false because the questions do not apply.
 export type BuiltinType value {
     name str /// canonical Nova spelling
     c_name str /// runtime ABI spelling (nova_rt.h)
+    family PrimFamily /// which rules apply to it
+    bits int /// width in bits for a numeric row (int/uint: 64 on every target novac emits for -- address-sized, D129/D130); 0 otherwise
+    signed bool /// a signed integer; false for unsigned and for every non-integer row
 }
 
 // The universe, in Prims order; the seed hands the ACTUAL ids back
@@ -253,21 +276,21 @@ export type BuiltinType value {
 // So the table stays private and the ONE reader door below hands it out.
 // [LEGACY-#701-export-ro-vector] goes when the oracle exports `ro` values.
 ro universe = []BuiltinType.of(
-    BuiltinType { name: "int", c_name: "nova_int" },
-    BuiltinType { name: "str", c_name: "nova_str" },
-    BuiltinType { name: "bool", c_name: "nova_bool" },
-    BuiltinType { name: "f64", c_name: "nova_f64" },
-    BuiltinType { name: "uint", c_name: "nova_uint" },
-    BuiltinType { name: "i8", c_name: "int8_t" },
-    BuiltinType { name: "i16", c_name: "int16_t" },
-    BuiltinType { name: "i32", c_name: "int32_t" },
-    BuiltinType { name: "i64", c_name: "int64_t" },
-    BuiltinType { name: "u8", c_name: "nova_byte" },
-    BuiltinType { name: "u16", c_name: "uint16_t" },
-    BuiltinType { name: "u32", c_name: "uint32_t" },
-    BuiltinType { name: "u64", c_name: "uint64_t" },
-    BuiltinType { name: "f32", c_name: "nova_f32" },
-    BuiltinType { name: "char", c_name: "nova_char" },
+    BuiltinType { name: "int", c_name: "nova_int", family: PrimFamily.PfInt, bits: 64, signed: true },
+    BuiltinType { name: "str", c_name: "nova_str", family: PrimFamily.PfStr, bits: 0, signed: false },
+    BuiltinType { name: "bool", c_name: "nova_bool", family: PrimFamily.PfBool, bits: 0, signed: false },
+    BuiltinType { name: "f64", c_name: "nova_f64", family: PrimFamily.PfFloat, bits: 64, signed: true },
+    BuiltinType { name: "uint", c_name: "nova_uint", family: PrimFamily.PfInt, bits: 64, signed: false },
+    BuiltinType { name: "i8", c_name: "int8_t", family: PrimFamily.PfInt, bits: 8, signed: true },
+    BuiltinType { name: "i16", c_name: "int16_t", family: PrimFamily.PfInt, bits: 16, signed: true },
+    BuiltinType { name: "i32", c_name: "int32_t", family: PrimFamily.PfInt, bits: 32, signed: true },
+    BuiltinType { name: "i64", c_name: "int64_t", family: PrimFamily.PfInt, bits: 64, signed: true },
+    BuiltinType { name: "u8", c_name: "nova_byte", family: PrimFamily.PfInt, bits: 8, signed: false },
+    BuiltinType { name: "u16", c_name: "uint16_t", family: PrimFamily.PfInt, bits: 16, signed: false },
+    BuiltinType { name: "u32", c_name: "uint32_t", family: PrimFamily.PfInt, bits: 32, signed: false },
+    BuiltinType { name: "u64", c_name: "uint64_t", family: PrimFamily.PfInt, bits: 64, signed: false },
+    BuiltinType { name: "f32", c_name: "nova_f32", family: PrimFamily.PfFloat, bits: 32, signed: true },
+    BuiltinType { name: "char", c_name: "nova_char", family: PrimFamily.PfChar, bits: 0, signed: false },
     // THE UNIT. Its source spelling is `()`, not a word -- so it is the one
     // entry of this table whose `name` is punctuation, and that is deliberate:
     // the table maps a SOURCE SPELLING to a runtime ABI name, and the unit has
@@ -276,7 +299,22 @@ ro universe = []BuiltinType.of(
     //
     // It goes LAST so no seeded ordinal moves: `Prims` reads the first four by
     // index, and an insertion above would have silently renamed them.
-    BuiltinType { name: "()", c_name: "nova_unit" })
+    BuiltinType { name: "()", c_name: "nova_unit", family: PrimFamily.PfUnit, bits: 0, signed: false })
+
+/// THE ROW of a primitive by its universe ordinal -- family, width, signedness
+/// and both spellings in one value, for the doors in `sem/type_shape` that
+/// answer "is this an integer / a float / which width" about a type TERM. One
+/// door handing out the row rather than three handing out fields: the callers
+/// that ask one fact (`family`) and the caller that asks three (the literal
+/// range rule) read the same value, and the table stays the only home (P5).
+/// A value record of two strings, an enum, an int and a bool -- copying it
+/// allocates nothing, so the door keeps П18.
+#realtime nogc
+export fn prim_row(ordinal int) -> BuiltinType
+    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+{
+    universe[ordinal]
+}
 
 /// The runtime ABI spelling of a primitive by its universe ordinal — THE
 /// door the mangler asks (E2-b1 step 3). It used to be a field copied onto

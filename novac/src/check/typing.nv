@@ -30,7 +30,7 @@ import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
-import ../sem.{raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
+import ../sem.{LitArg, raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -488,7 +488,7 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
             // are known before any typing happens. The NAME is known here too,
             // and it is what a defaulted parameter is reached by (D102).
             ro ax = arg_expr_of(c)
-            out.push(ArgSpec { type_id: no_ty(), cls: arg_class(ax, scope), name: arg_name_of(c) })
+            out.push(ArgSpec { type_id: no_ty(), cls: arg_class(ax, scope), name: arg_name_of(c), lit: LitArg.NotLit })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.

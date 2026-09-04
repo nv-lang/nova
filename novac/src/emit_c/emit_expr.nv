@@ -27,6 +27,8 @@ import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_
 import ../sem.{is_value_record}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, is_ty}
+import ../sem.{prim_row_of, is_int_prim}
+import ../builtins.{BuiltinType}
 
 
 /// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
@@ -42,27 +44,32 @@ import ../types.{TyId, is_ty}
 /// primitive half; `check` refuses the rest at the operator's position rather
 /// than letting this table answer for a type it knows nothing about.
 ///
-/// `is_float` comes from the checker's channel: float arithmetic is raw C
-/// (the oracle's shape, and floats have no overflow trap), int arithmetic
-/// goes through the runtime's checked helpers, comparisons are C operators
-/// either way.
-fn c_binary_form(op BinOp, is_float bool) -> str {
+/// The ROW comes from the checker's channel (the operands' type, through its
+/// carrier): float arithmetic is raw C (the oracle's shape, and floats have no
+/// overflow trap), integer arithmetic goes through the runtime's checked
+/// helper OF THAT WIDTH -- `nova_int_checked_add`, `nova_i8_checked_add`,
+/// `nova_uint_checked_add`: the helper is named by the Nova spelling of the
+/// type, measured off the oracle's own emission 2026-09-04 -- and comparisons
+/// are C operators either way. Until that day the helper was spelled for `int`
+/// alone, which is one of the twelve places ten widths fell out of (#910).
+fn c_binary_form(op BinOp, row BuiltinType) -> str {
+    ro is_float = is_float_row(row)
     match op {
         Add => {
             if is_float { return "+" }
-            "nova_int_checked_add"
+            "nova_${row.name}_checked_add"
         }
         Sub => {
             if is_float { return "-" }
-            "nova_int_checked_sub"
+            "nova_${row.name}_checked_sub"
         }
         Mul => {
             if is_float { return "*" }
-            "nova_int_checked_mul"
+            "nova_${row.name}_checked_mul"
         }
         Div => {
             if is_float { return "/" }
-            "nova_int_checked_div"
+            "nova_${row.name}_checked_div"
         }
         Modulo => {
             // The float remainder is `fmod`, not a C operator -- and it IS
@@ -72,7 +79,7 @@ fn c_binary_form(op BinOp, is_float bool) -> str {
             // follows the DIVIDEND as in C and Rust; there is no
             // divide-by-zero panic here, IEEE-754 gives NaN.
             if is_float { return "fmod" }
-            "nova_int_checked_rem"
+            "nova_${row.name}_checked_rem"
         }
         Less => "<"
         LessEq => "<="
@@ -89,6 +96,51 @@ fn c_binary_form(op BinOp, is_float bool) -> str {
         ShiftRight => ">>"
         Range => ice("emit_c: a range reached expression emission -- for-heads consume it")
     }
+}
+
+/// Does arithmetic on this universe row run in FLOATING point -- raw C
+/// operators -- rather than through the runtime's checked integer helpers?
+fn is_float_row(r BuiltinType) -> bool {
+    match r.family {
+        PfFloat => true
+        PfInt | PfStr | PfBool | PfChar | PfUnit => false
+    }
+}
+
+/// The universe row an EXPRESSION's arithmetic runs in: its type's CARRIER (a
+/// newtype computes as what it holds -- hunt emit_c x K1, H5) looked up in the
+/// table. A carrier that is not a primitive never reaches emission: the
+/// checker refuses arithmetic on records and sums at the operator, so here it
+/// is a broken invariant, not a shape to guess about.
+fn Emitter @arith_row(t TyId) -> BuiltinType =>
+    prim_row_of(@ctx.tys, carrier_of(@ctx, t)) ?? ice("emit_c: arith_row on a carrier that is no primitive")
+
+/// The runtime PRINTER of a carrier type -- the oracle prints each argument of
+/// `println` with its own printer, one per family and width (measured off its
+/// emission 2026-09-04): `nova_print_int` for every signed integer and for the
+/// unsigned ones up to 32 bits, `nova_print_uint` for `u64` and `uint`,
+/// `nova_print_f32`/`nova_print_f64` by width, `nova_print_str`,
+/// `nova_print_bool`. Found by the generics scouting 2026-08-16: this used to
+/// be a bare `else` printing anything unknown AS AN INT -- a record would have
+/// had its GC pointer printed as a number, in silence. The set of types is
+/// open, so the honest form names every case it handles and ices on the rest;
+/// the checker's printer set (`@is_printable_carrier`) refuses first.
+fn Emitter @printer_of(t TyId) -> str {
+    if t == @ctx.prims.str_id { return "nova_print_str" }
+    if t == @ctx.prims.bool_id { return "nova_print_bool" }
+    ro row = prim_row_of(@ctx.tys, t) ?? ice("emit_c: printer_of on a carrier that is no primitive row")
+    match row.family {
+        PfFloat => {
+            if row.bits == 32 { return "nova_print_f32" }
+            return "nova_print_f64"
+        }
+        PfInt => {
+            if !row.signed && row.bits == 64 { return "nova_print_uint" }
+            return "nova_print_int"
+        }
+        PfStr | PfBool | PfChar | PfUnit => {}
+    }
+    ice("emit_c: printer_of reached a primitive family without a printer (char and unit; str and bool are answered above)")
 }
 
 /// Does this operator emit as a C INFIX operator inside a truth-value cast?
@@ -237,15 +289,27 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro t = lkids[lkids.len() - 1]
         ro neg = lkids.len() > 1 // [Minus, lit]
         ro lk = leaf_kind(t)
-        if lk == TokenKind.IntLit {
-            @body.append("((nova_int)")
+        if lk == TokenKind.IntLit || lk == TokenKind.FloatLit {
+            // THE POSITION'S TYPE, when the checker decided one (D227 rule 2:
+            // a literal beside an `i8` operand IS an `i8`); with nothing
+            // recorded the literal is its own kind (D44). The cast spells the
+            // row's C name, as the oracle does -- `((int8_t)1)`,
+            // `((nova_byte)100U)`, `((uint64_t)5000000001ULL)` -- and the
+            // suffix follows the row's signedness. Until 2026-09-04 every
+            // integer literal was `((nova_int)...LL)` whatever its position.
+            ro own_ty = if lk == TokenKind.FloatLit { @ctx.prims.f64_id } else { @ctx.prims.int_id }
+            ro decided = @out.type_if_known(e.id_of())
+            ro row = @arith_row(if is_ty(decided) { decided } else { own_ty })
+            @body.append("((")
+            @body.append(row.c_name)
+            @body.append(")")
             @body.append(if neg { "-" } else { "" })
-            @body.append(int_literal_c_text(leaf_text(t)))
-            @body.append("LL)")
-        } else if lk == TokenKind.FloatLit {
-            @body.append("((nova_f64)")
-            @body.append(if neg { "-" } else { "" })
-            @body.append(leaf_text(t))
+            if lk == TokenKind.IntLit {
+                @body.append(int_literal_c_text(leaf_text(t)))
+                @body.append(if row.signed { "LL" } else { "ULL" })
+            } else {
+                @body.append(leaf_text(t))
+            }
             @body.append(")")
         } else if lk == TokenKind.CharLit {
             // The codepoint through the ONE spelling door (the int literal's
@@ -554,12 +618,16 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // typed; the CARRIER decides, exactly as in the compound form (H5) --
         // a newtype negates as what it holds.
         ro uk = un_op_of(leaf_kind(kids[0]))
+        ro carrier = carrier_of(@ctx, @out.type_of(e.id_of()))
         ro neg_int = match uk {
-            Negate => carrier_of(@ctx, @out.type_of(e.id_of())) == @ctx.prims.int_id
+            Negate => is_int_prim(@ctx.tys, carrier)
             Not | BitNot => false
         }
         if neg_int {
-            @body.append("nova_int_checked_neg(")
+            // The checked helper OF THIS WIDTH -- `nova_i8_checked_neg(a)` is
+            // what the oracle emits for `-a` on an `i8` (measured 2026-09-04);
+            // the name follows the Nova spelling, as the binary helpers do.
+            @body.append("nova_${@arith_row(carrier).name}_checked_neg(")
             @emit_expr(kids[1])
             @body.append(")")
         } else {
@@ -579,8 +647,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // K1, P1) read the previous wording here as a promise to look at the
         // operand and found the code reading the node: the code was right,
         // the words were not.
-        ro is_float = @out.type_of(e.id_of()) == @ctx.prims.f64_id
-        ro form = c_binary_form(op, is_float)
+        ro row = @arith_row(@out.type_of(e.id_of()))
+        ro is_float = is_float_row(row)
+        ro form = c_binary_form(op, row)
         // `str` equality is the protocol method, not a C operator (D46:
         // `a == b` is `a.@equal(b)`), and `!=` is DERIVED from it — the spec
         // states the derivation, so novac spells it the same way instead of
@@ -710,24 +779,9 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
             // holds, and the channel keeps the declared type because that is
             // what resolution needs. Two questions, two doors.
             ro at = carrier_of(@ctx, @out.type_of(c.id_of()))
-            if at == @ctx.prims.str_id {
-                @body.append("    nova_print_str(")
-            } else if at == @ctx.prims.bool_id {
-                @body.append("    nova_print_bool(")
-            } else if at == @ctx.prims.f64_id {
-                @body.append("    nova_print_f64(")
-            } else if at == @ctx.prims.int_id {
-                @body.append("    nova_print_int(")
-            } else {
-                // Found by the generics scouting 2026-08-16: this used to be a
-                // bare `else` printing anything unknown AS AN INT — a record
-                // would have had its GC pointer printed as a number, in
-                // silence. The set of types is open, so there is no exhaustive
-                // match to write; the honest form is to name every case we
-                // handle and refuse the rest. The first floor (a check-level
-                // refusal) arrives with local typing, 274.3 wave 3 / C9.
-                ice("emit_c: println of a type with no printer in the subset")
-            }
+            @body.append("    ")
+            @body.append(@printer_of(at))
+            @body.append("(")
             @emit_expr(c)
             @body.append(");\n")
         } else {

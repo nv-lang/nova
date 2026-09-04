@@ -663,8 +663,9 @@ fn Emitter mut @emit_stmt(st Node) -> () {
                 // different road. The TARGET is a binding; the walk recorded
                 // its type when it bound the name, and its carrier is what the
                 // arithmetic runs in. A newtype computes as what it holds.
-                ro is_float = carrier_of(@ctx, @out.type_of(kids[2].id_of())) == @ctx.prims.f64_id
-                ro form = c_binary_form(op, is_float)
+                ro row = @arith_row(@out.type_of(kids[2].id_of()))
+                ro is_float = is_float_row(row)
+                ro form = c_binary_form(op, row)
                 // The target appears on the RIGHT of a compound assignment
                 // too (`a += b` is `a = a + b`), and it is written the same
                 // way there: as an EXPRESSION, so `@n += 1` works for the same

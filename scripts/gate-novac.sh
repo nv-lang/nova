@@ -383,6 +383,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция �
 par_add "$ROOT/scripts/guards/check-novac-string-build-door.py" "строка собирается склейкой самой с собой вместо StringBuilder (П36)"
 par_add "$ROOT/scripts/guards/check-novac-required-token-door.py" "требуемый грамматикой токен взят необязательной дверью (#809/#815)"
 par_add "$ROOT/scripts/guards/check-novac-recovery-closer.py" "место восстановления парсера может съесть закрывающий токен объемлющей формы (274.3/F15)"
+par_add "$ROOT/scripts/guards/check-novac-prim-id-compare.py" "«это целое?» спрошено сравнением с одним id вместо двери семьи (№910): сравнений с prims.int_id/f64_id больше базы"
 par_add "$ROOT/scripts/guards/check-novac-subset-debt-dated.py" "отказ «пока не компилируется» без этапа: долг без срока становится нормой"
 par_add "$ROOT/scripts/guards/check-novac-tyid-door.py" "идентификатор типа сравнивается с нулём вместо двери (П18)"
 par_add "$ROOT/scripts/guards/check-novac-file-decls-door.py" "объявления файла берутся мимо двери file_decls (П18)"

@@ -20,11 +20,14 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
+import ../sem.{LitArg}
 import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
 import ../sem.{is_vrow, is_arg_node, arg_expr_of, arg_name_of}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{decl_of_ty}
 import ../sem.{option_payload, for_head_elem}
+import ../sem.{is_numeric_prim, is_float_prim}
+import ../types.{Interner}
 import ../builtins.{TypeKind}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
@@ -39,7 +42,7 @@ fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope 
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
     // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
     // the precedent the whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: arg_class(recv, scope), name: "" })
+    out.push(ArgSpec { type_id: recv_t, cls: arg_class(recv, scope), name: "", lit: LitArg.NotLit })
     out.append(typed_args(kids, from, ctx, scope, chan))
     out
 }
@@ -62,7 +65,7 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
             // the wrapper adds.
             ro ax = arg_expr_of(c)
             out.push(ArgSpec { type_id: type_of(ax, ctx, scope, chan),
-                               cls: arg_class(ax, scope), name: arg_name_of(c) })
+                               cls: arg_class(ax, scope), name: arg_name_of(c), lit: lit_arg_of(ax) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -74,11 +77,13 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
 
 /// WHAT this argument is, for rule P14: a place, a temporary, or a promise.
 ///
-/// The classes are decided by the SHAPE of the expression and, for a name, by
-/// how it was bound -- which is why the scope carries the mode. An owned
-/// temporary is a value nobody else holds: a literal, a call result, a
+/// The classes are decided by the SHAPE of the expression and, for a BOUND
+/// NAME, by how it was bound -- which is why the scope carries the mode. An
+/// owned temporary is a value nobody else holds: a literal, a call result, a
 /// constructor, the value of an operator or of a `match`. A name answers with
-/// its binding. A FIELD or an index of something is judged conservatively as
+/// its binding, and so does the receiver `@`: it IS a bound name (typing.nv
+/// binds RECV_BINDING to the callable's receiver mode before the body is
+/// walked). A FIELD or an index of something is judged conservatively as
 /// `ro`: it is a place, but whether it is a MUTABLE place is a question about
 /// its owner, and answering it wrongly would hand a caller a write it never
 /// asked for -- `ro` is the class every mode accepts, so a conservative answer
@@ -86,21 +91,92 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
 #realtime nogc
 fn arg_class(e Node, scope Scope) -> ArgClass {
     ro k = e.kind_of()
-    if k == NodeKind.Name {
-        ro nm = expr_leaf_name(e)
-        // `true`/`false` are literals wearing a name: they are bound nowhere,
-        // and a temporary is exactly what they are.
-        if !scope.is_bound(nm) { return ArgClass.ArgOwnedTemp }
-        return match scope.mode_of_name(nm) {
-            ModeRo => ArgClass.ArgRo
-            ModeMut => ArgClass.ArgMut
-            ModeConsume => ArgClass.ArgConsume
-        }
+    if k == NodeKind.Name || k == NodeKind.SelfExpr {
+        // A BOUND NAME -- written as an identifier, or as the receiver `@`.
+        // THE RECEIVER ANSWERS AS A NAME, NOT AS A TEMPORARY (hunt check x K4,
+        // 2026-09-04). Until this arm knew it, a SelfExpr fell to the tail
+        // below as an owned temporary, although its mode was bound in the
+        // scope and read by nobody: every `mut` method called through `@` was
+        // refused (152 such methods in novac's own source), a `consume`
+        // method through `@` was ACCEPTED where the oracle refuses, and an
+        // overload by receiver mode picked the `ro` body in silence. Three
+        // syntaxes carry the receiver -- `@m()`, `f(@)`, `(@).m()` -- and
+        // all three arrive here.
+        return class_of_binding(binding_name_of(e), scope)
     }
     if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
     if k == NodeKind.FieldAccess { return ArgClass.ArgRo }
     ArgClass.ArgOwnedTemp
 }
+
+/// The name a BOUND expression is looked up under: an identifier's own text,
+/// or the receiver's symbol for `@` (typing.nv binds RECV_BINDING to the
+/// callable's receiver mode before the body is walked).
+#realtime nogc
+fn binding_name_of(e Node) -> str {
+    if e.kind_of() == NodeKind.SelfExpr { return RECV_BINDING }
+    expr_leaf_name(e)
+}
+
+/// The class of a BOUND name: the ONE answerer for a name and for `@` (the
+/// K4 hunt found the second spelling answered by shape instead). A name bound
+/// nowhere -- `true`/`false` are literals wearing a name -- is a temporary,
+/// which is exactly what it is.
+#realtime nogc
+fn class_of_binding(nm str, scope Scope) -> ArgClass {
+    if !scope.is_bound(nm) { return ArgClass.ArgOwnedTemp }
+    match scope.mode_of_name(nm) {
+        ModeRo => ArgClass.ArgRo
+        ModeMut => ArgClass.ArgMut
+        ModeConsume => ArgClass.ArgConsume
+    }
+}
+
+/// Is this expression a BARE NUMERIC LITERAL -- `1`, `-1`, `0x1F`, `2.5` -- the
+/// one shape whose type its POSITION decides (D227 rule 2)? Asked when a call's
+/// typed key is built, so the resolver can admit it into any parameter of its
+/// family (`ArgSpec.lit`), and by the operand door below. A string or char
+/// literal is not one: their types are their own.
+#realtime nogc
+fn lit_arg_of(e Node) -> LitArg {
+    if e.kind_of() != NodeKind.Lit { return LitArg.NotLit }
+    ro lk_kids = branch_children(e)
+    ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
+    if lk == TokenKind.IntLit { return LitArg.IntLitArg }
+    if lk == TokenKind.FloatLit { return LitArg.FloatLitArg }
+    LitArg.NotLit
+}
+
+/// The type an OPERAND takes beside the other operand: a bare numeric literal
+/// takes the other side's numeric type when its family admits it (D405: "an
+/// int literal without an explicit width infers to the type of the other
+/// operand"; D227 rule 2 for a float literal), anything else keeps its own.
+/// ONE door for the lattice and the judge: the lattice answers "what type does
+/// `a + 1` have" on demand, the judge decides and RECORDS the literal's type;
+/// both must say the same, so both ask here (#908's lesson: two answerers to
+/// one question diverge on the first form one of them forgets).
+///
+/// Returns through `same_ty`: the oracle's readonly analysis refuses returning
+/// a `ro` parameter of a wrapped index space as a plain value (the door's own
+/// doc names the cost), and the module tests are compiled by the oracle.
+#realtime nogc
+fn adapt_operand(e Node, own TyId, other TyId, tys Interner) -> TyId {
+    if !is_ty(other) { return same_ty(own) }
+    match lit_arg_of(e) {
+        NotLit => { return same_ty(own) }
+        IntLitArg => { if !is_numeric_prim(tys, other) { return same_ty(own) } }
+        FloatLitArg => { if !is_float_prim(tys, other) { return same_ty(own) } }
+    }
+    same_ty(other)
+}
+
+/// `int` beside `f64`, either way round -- the ONE mixed numeric pair the
+/// ORACLE accepts, measured 2026-09-04 (`1 + 2.5` and `int + f64` both build
+/// and print the double). D405's mixed-width rule is about INTEGER widths, so
+/// this pair is not refused; the result is `f64`, as the oracle prints it.
+#realtime nogc
+fn int_f64_mix(ctx Ctx, a TyId, b TyId) -> bool =>
+    (a == ctx.prims.int_id && b == ctx.prims.f64_id) || (a == ctx.prims.f64_id && b == ctx.prims.int_id)
 
 /// The TARGET type of a cast, resolved from the type written after `as`.
 ///
@@ -148,6 +224,13 @@ fn cast_target_of(e Node, ctx Ctx) -> TyId {
 fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     ro k = e.kind_of()
     if k == NodeKind.Lit {
+        // DECIDED BY THE WALK when the literal stands in a TYPED POSITION -- a
+        // parameter of another width, the other operand of an operator (D227
+        // rule 2, D405): the walk records the position's type and this door
+        // reads it, as it does for `??` below. With nothing recorded the
+        // literal is its own kind (D44: `int`, `f64`).
+        ro decided = chan.type_if_known(e.id_of())
+        if is_ty(decided) { return decided }
         // A negated literal is [Minus, lit] — judge the LAST leaf.
         ro lk_kids = branch_children(e)
         ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
@@ -307,16 +390,25 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             Less | LessEq | Greater | GreaterEq => { return ctx.prims.bool_id }
             Equal | NotEqual => { return ctx.prims.bool_id }
             AndAlso | OrElse => { return ctx.prims.bool_id }
-            BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { return ctx.prims.int_id }
             Range => { ice("check: a range is not an expression outside a for-head") }
-            Add | Sub | Mul | Div | Modulo => {}
+            // Arithmetic AND the bitwise family: the operands' OWN numeric type,
+            // decided below -- `u8 & 0x0F` is a `u8` (D405: one concrete integer
+            // type on both sides), not an `int`. Until 2026-09-04 the bitwise arms
+            // answered `int` without looking (#910).
+            Add | Sub | Mul | Div | Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => {}
         }
-        ro lt = type_of(kids[0], ctx, scope, chan)
-        ro rt = type_of(kids[2], ctx, scope, chan)
-        if lt == ctx.prims.f64_id || rt == ctx.prims.f64_id { return ctx.prims.f64_id }
-        // Both sides must be PROVEN int — arithmetic on str/bool/records is
-        // not a silent int (#652 class), it is an invariant break here.
-        if lt == ctx.prims.int_id && rt == ctx.prims.int_id { return ctx.prims.int_id }
+        ro lt0 = type_of(kids[0], ctx, scope, chan)
+        ro rt0 = type_of(kids[2], ctx, scope, chan)
+        // A bare literal on one side takes the other side's type (the one
+        // door the judge records through -- see adapt_operand).
+        ro lt = adapt_operand(kids[0], lt0, rt0, ctx.tys)
+        ro rt = adapt_operand(kids[2], rt0, lt0, ctx.tys)
+        // Both sides PROVEN the same numeric primitive: that is the result
+        // (`i8 + i8` is `i8`, `f32 * f32` is `f32`) -- arithmetic on
+        // str/bool/records is not a silent int (#652 class), it is an
+        // invariant break here.
+        if lt == rt && is_numeric_prim(ctx.tys, lt) { return lt }
+        if int_f64_mix(ctx, lt, rt) { return ctx.prims.f64_id }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
         // has no operand typing yet, so today it reaches here.
         ice("check: binary arithmetic on non-numeric operands past check (#652 class)")
