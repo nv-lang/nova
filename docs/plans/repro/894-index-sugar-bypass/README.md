@@ -12,16 +12,16 @@
 ## Как запускать
 
 ```sh
-nova-cli/target/release/nova.exe check docs/plans/repro/894-index-sugar-bypass/sugar.nv
-nova-cli/target/release/nova.exe check docs/plans/repro/894-index-sugar-bypass/explicit.nv
+nova-cli/target/release/nova.exe check docs/plans/repro/894-index-sugar-bypass/sugar.nv.txt
+nova-cli/target/release/nova.exe check docs/plans/repro/894-index-sugar-bypass/explicit.nv.txt
 ```
 
 ## Что замерено 2026-09-04 (интегратор, один бинарь)
 
 | проба | ответ |
 |---|---|
-| `sugar.nv` — `t[k]`, ключ `TyId`, параметр `FnRow` | **`ok`, rc=0** |
-| `explicit.nv` — `t.index(k)`, тот же ключ | **`[E_NO_MATCHING_OVERLOAD]`** |
+| `sugar.nv.txt` — `t[k]`, ключ `TyId`, параметр `FnRow` | **`ok`, rc=0** |
+| `explicit.nv.txt` — `t.index(k)`, тот же ключ | **`[E_NO_MATCHING_OVERLOAD]`** |
 
 Контроль — это половина, которая делает находку дефектом, а не отсутствующей
 возможностью: компилятор проверку УМЕЕТ и делает её на явном вызове, а на сахаре
@@ -30,3 +30,16 @@ nova-cli/target/release/nova.exe check docs/plans/repro/894-index-sugar-bypass/e
 Код ошибки у меня вышел `E_NO_MATCHING_OVERLOAD`, а строка называет `E7301` —
 расхождение записано в самой строке и не сглажено: по существу оба суть отказ,
 но чинящему важно знать, что дверь отказа может быть не та, которую он ждёт.
+
+## Поправка 2026-09-04: суффикс
+
+Файлы лежали как `.nv`, и это нарушение правила №695 (шапка
+`docs/plans/repro/README.md`, п. 2): улику держат под `.nv.txt`, потому что по
+`**/*.nv` ходят восемь стражей, а улика по природе КРАСНАЯ — иначе она не улика.
+Заметил не я, а окно-исследователь, сверяя свои шесть каталогов с моим: у него
+правило соблюдено везде. Переименовано, ссылки в этом файле поправлены; строка
+реестра №894 ссылается на КАТАЛОГ и правки не потребовала.
+
+Стоит назвать, почему я его нарушил: каталог заводился в спешке, ради вердикта
+по чужой строке, и шапку соседнего README я не открыл. Ровно та же причина, по
+которой исходные пробы этой находки вообще исчезли из дерева.
