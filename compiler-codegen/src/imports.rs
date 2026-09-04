@@ -249,6 +249,9 @@ fn compute_prelude_imports(
         // when present (sanitization: `.` → `_`), else the rolling facade.
         // Soft-fail: edition specified but file absent → fall back silently.
         let mut edition_pin_used = false;
+        // Registry 822: remember every path actually looked at, so the refusal
+        // below can list them the way the import resolver lists its own.
+        let mut searched: Vec<std::path::PathBuf> = Vec::new();
         if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
             if let Some(edition) = &manifest.edition {
                 let sanitized = crate::manifest::sanitize_edition(edition);
@@ -256,6 +259,7 @@ fn compute_prelude_imports(
                     let pin_path = stdlib_dir
                         .join("prelude")
                         .join(format!("{}.nv", sanitized));
+                    searched.push(pin_path.clone());
                     if crate::source_index::is_file(&pin_path) {
                         prelude_imports.push(prelude_import(Some(&sanitized)));
                         edition_pin_used = true;
@@ -265,8 +269,61 @@ fn compute_prelude_imports(
         }
         if !edition_pin_used {
             let prelude_path = stdlib_dir.join("prelude.nv");
+            searched.push(prelude_path.clone());
             if crate::source_index::is_file(&prelude_path) {
                 prelude_imports.push(prelude_import(None));
+            } else {
+                // Registry 822 -- the SILENCE was the defect, and the irony is that
+                // the `#prelude(...)` branch twenty lines above already refuses
+                // loudly, naming the expected file and offering a hint. It is the
+                // DEFAULT branch -- the one every ordinary program takes -- that used
+                // to fall through without a word. The user then got `undefined
+                // identifier `println`` pointing at their own perfectly correct
+                // source: the compiler blaming the author for the absence of the
+                // compiler's own half.
+                //
+                // Measured against the loud neighbour on the SAME deficit: a missing
+                // `std.time.duration` is answered with `cannot find module ...
+                // searched: <paths>`. One deficit, two opposite reactions. They are
+                // the same reaction now, and deliberately in the same shape.
+                //
+                // The trigger is not exotic. Our own quickstart warns that without the
+                // leading dot in `. ./setup-env.ps1` the variables never get set, so
+                // this is the EXPECTED beginner mistake, met in the first five minutes.
+                let env_set = std::env::var_os("NOVA_STD_PATH").is_some();
+                // Absolute for display, and this is the whole point of the row: a
+                // relative `std\prelude.nv` with no stated base is the same kind of
+                // half-answer the silent fall-through was. Display only -- the
+                // resolution itself is untouched.
+                let abs = |p: &std::path::Path| -> String {
+                    if p.is_absolute() {
+                        p.display().to_string()
+                    } else {
+                        std::env::current_dir()
+                            .map(|c| c.join(p).display().to_string())
+                            .unwrap_or_else(|_| p.display().to_string())
+                    }
+                };
+                let searched_lines = searched
+                    .iter()
+                    .map(|p| format!("     {}", abs(p)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Err(anyhow!(
+                    "cannot find the standard library prelude\n  \
+                     searched:\n{}\n  \
+                     std package root resolved to: {}\n  \
+                     env NOVA_STD_PATH is {}\n  \
+                     hint: the std root is taken from, highest first: (1) env \
+                     NOVA_STD_PATH, (2) `std = \"...\"` under [workspace] or [package] \
+                     in nova.toml, (3) <project root>/std\n  \
+                     without it every name the prelude provides (`println`, `Option`, \
+                     ...) resolves to nothing, and the error would land on your source \
+                     instead of here",
+                    searched_lines,
+                    abs(stdlib_dir),
+                    if env_set { "set" } else { "NOT set" },
+                ));
             }
         }
     }
