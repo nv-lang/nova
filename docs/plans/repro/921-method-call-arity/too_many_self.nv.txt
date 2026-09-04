@@ -1,0 +1,15 @@
+// Registry 921, form 2 of 4: `self.take(1, 2)` -- the DOTTED self-call form, same
+// arity error. This is the form window 274 recorded as "refused by name"; measured
+// on the integrator's binary it is NOT refused -- `nova check` says ok.
+module p921_too_many_self
+
+type Box priv { n int }
+fn Box.new() -> Box => { n: 0 }
+fn Box mut @take(n int) -> () { @n = n }
+fn Box mut @drive() -> () { self.take(1, 2) }
+
+fn main() Io -> () {
+    mut b = Box.new()
+    b.drive()
+    println(b.n)
+}
