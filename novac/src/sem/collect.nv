@@ -31,6 +31,106 @@ import ../types.{Interner, TyId, no_ty, is_ty}
 /// collect() brings those in from the signatures it read).
 export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new())
 
+/// Register the VARIANTS of one sum declaration: a `DefVariant` row per variant
+/// (the name door), its payload types, and the sum's row rewritten to point at
+/// its variant range. THE ONE DOOR for both sides of the seam -- the compiled
+/// file's own sums and the sums novac was handed as declarations (274.5 wave
+/// "variants of handed sums", 2026-09-04): until then only the file's own sums
+/// got their variants, and `TokenKind.KwFn` written in another module was
+/// refused as "not one of its variants" 249 times over novac's own source.
+///
+/// The sum's row must already exist (pass 1 for the file's own, `harvest_types`
+/// for the handed ones); a name that owns no row here -- a duplicate -- registers
+/// nothing, and check judges the duplicate. Payload type names resolve through
+/// the registry as it stands at the call: a payload naming a type not yet
+/// registered is skipped, as it always was.
+fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
+                         mut variant_rows []VariantDef, mut payload_types []TyId) -> () {
+    ro skids = branch_children(c)
+    if skids.len() < 2 { return }
+    if skids[1].kind_of() != NodeKind.LeafNode { return }
+    ro sname = leaf_text(skids[1])
+    ro sum_decl = defs.type_decl(sname) ?? no_decl()
+    if !is_decl(sum_decl) { return }
+    if raw_decl(sum_decl) >= types.len() { return }
+    ro srow = types[raw_decl(sum_decl)]
+    if srow.name != sname { return } // a duplicate name owns no row here
+    // The term came from the pass that built the row: the variants carry it,
+    // and nobody re-interns it.
+    ro sum_ty = srow.ty_id
+    ro off = variant_rows.len()
+    mut vcnt = 0
+    for v in branch_children(c) {
+        // Only Variant children carry a row. The `enum` marker, the sum's own
+        // name leaf and the `|` separators share this list, and recovery
+        // debris is check's to report -- sem registers only what it understood
+        // (274.3/F-B4). A guard says that once; an `else` here would be a
+        // branch on a VARIANT test, which the no-default-branch rule reserves
+        // for `match`.
+        if v.kind_of() != NodeKind.Variant { continue }
+        ro vk = branch_children(v)
+        // A variant with no name (recovery after a broken sum_id): skipped --
+        // check is the judge, sem does not fail (274.3/F-B4).
+        if vk.len() < 1 { continue }
+        // The name is the FIRST identifier leaf, not a fixed index. Both shapes
+        // exist: `| Red(int)` puts a pipe leaf ahead of it, `type Color enum
+        // Red(int)` does not -- the first variant of the inline form follows
+        // the marker directly. A fixed index 1 read the payload's `(` there and
+        // the sum came out with a nameless variant (2026-08-17).
+        mut name_at = -1
+        mut vi = 0
+        for vn in vk {
+            if name_at < 0 && vn.kind_of() == NodeKind.LeafNode
+                && leaf_kind(vn) == TokenKind.Ident {
+                name_at = vi
+            }
+            vi += 1
+        }
+        if name_at < 0 { continue }
+        ro vname = leaf_text(vk[name_at])
+        defs.add(vname, DefTarget.DefVariant(VariantRow(variant_rows.len())))
+        ro poff = payload_types.len()
+        mut pcnt = 0
+        // payload type names sit between '(' and ')'
+        for j in name_at + 1..vk.len() {
+            // [LEGACY-#676] var-index-method: `vk[j].kind_of()` with a VARIABLE
+            // index miscompiles in the oracle (E_RECV_METHOD_MISMATCH: receiver
+            // resolves as Vec; a constant index works). Found 2026-08-14; the
+            // binding hop is the workaround.
+            ro pj = vk[j]
+            if pj.kind_of() != NodeKind.LeafNode { continue }
+            if leaf_kind(pj) != TokenKind.Ident { continue }
+            ro pdecl = defs.type_decl(leaf_text(pj)) ?? no_decl()
+            if !is_decl(pdecl) { continue }
+            ro pt = ty_of_row(types, pdecl)
+            payload_types.push(pt)
+            pcnt += 1
+        }
+        variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt })
+        vcnt += 1
+    }
+    types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
+                                          tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
+                                          ty_id: sum_ty, name: sname,
+                                          rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
+}
+
+/// Does this handed sum declaration bind type parameters? Read off the row
+/// `harvest_types` built for it (its `tparam_cnt`), not off the syntax again --
+/// one reader of the declaration's head, and the row is it. A declaration that
+/// owns no row (a duplicate name) answers "generic" so that the caller skips
+/// it: registering variants against a row that is not this sum's would be the
+/// silent mix-up the duplicate test in `register_sum_variants` also refuses.
+fn handed_sum_is_generic(c Node, types []TypeDef, defs DefTable) -> bool {
+    ro skids = branch_children(c)
+    if skids.len() < 2 { return true }
+    if skids[1].kind_of() != NodeKind.LeafNode { return true }
+    ro d = defs.type_decl(leaf_text(skids[1])) ?? no_decl()
+    if !is_decl(d) { return true }
+    if raw_decl(d) >= types.len() { return true }
+    types[raw_decl(d)].tparam_cnt > 0
+}
+
 /// The same registry, plus the declarations novac was HANDED.
 ///
 /// Two doors and not one flag: a caller that has no foreign declarations (every
@@ -64,7 +164,31 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // reads signatures is below. The boundary is fixed immediately after, so the
     // reader can let the file's own declaration shadow a foreign one of the same
     // name.
+    mut variant_rows = []VariantDef.new()
+    mut payload_types = []TyId.new()
     harvest_types(decls, types, defs, tys)
+    // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
+    // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
+    // loop `harvest_types` registered a handed sum's NAME and skipped its
+    // variants, with a reason that had expired: "constructing one needs a path
+    // form the subset does not compile" -- the form compiles since wave V3-4b,
+    // and novac's own source writes `TokenKind.KwFn` and `NodeKind.Requires`
+    // from other modules 249 times, each refused as "not one of its variants".
+    // Foreign rows go in BEFORE the seal, so a variant the compiled file also
+    // declares is overwritten by the file's own (last put wins = shadowing).
+    // GENERIC handed sums stay as they were -- a named width, not an oversight:
+    // `Option[T]` arrives from the prelude, and its `Some`/`None` are compiled
+    // by the if-let wave's own door (builtins OPTION_*); registering them here
+    // with an unresolved `T` payload would send `Some(3)` down the general
+    // variant path with an uninstantiated sum. The day the two doors are one,
+    // this test goes.
+    for d in decls {
+        for c in file_decls(d) {
+            if c.kind_of() != NodeKind.SumDecl { continue }
+            if handed_sum_is_generic(c, types, defs) { continue }
+            register_sum_variants(c, types, defs, variant_rows, payload_types)
+        }
+    }
     defs.seal_foreign()
     // The PRIMS are types, and a declaration's type comes from its row -- the
     // seed hands back the declaration, the row hands back the term.
@@ -74,8 +198,6 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                        unit_id: ty_of_row(types, seeded[15]) }
     mut fields = FieldTable.new()
     mut protos = ProtoTable.new()
-    mut variant_rows = []VariantDef.new()
-    mut payload_types = []TyId.new()
     mut fns = FnTable.new()
     mut fn_decl_rows = []FnRow.new()
     // The pairs THIS file declares (D429). std's are appended later by
@@ -319,75 +441,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 }
             }
         } else if k == NodeKind.SumDecl {
-            ro skids = branch_children(c)
-            if skids.len() < 2 { continue }
-            if skids[1].kind_of() != NodeKind.LeafNode { continue }
-            ro sname = leaf_text(skids[1])
-            ro sum_decl = defs.type_decl(sname) ?? no_decl()
-            if !is_decl(sum_decl) { continue }
-            if raw_decl(sum_decl) >= types.len() { continue }
-            ro srow = types[raw_decl(sum_decl)]
-            if srow.name != sname { continue } // a duplicate name owns no row here
-            // The term came from pass 1, where the row was built: the variants
-            // carry it, and nobody re-interns it.
-            ro sum_ty = srow.ty_id
-            ro off = variant_rows.len()
-            mut vcnt = 0
-            for v in branch_children(c) {
-                // Only Variant children carry a row. The `enum` marker, the
-                // sum's own name leaf and the `|` separators share this list,
-                // and recovery debris is check's to report -- sem registers
-                // only what it understood (274.3/F-B4). A guard says that once;
-                // an `else` here would be a branch on a VARIANT test, which the
-                // no-default-branch rule reserves for `match`.
-                if v.kind_of() != NodeKind.Variant { continue }
-                ro vk = branch_children(v)
-                    // A variant with no name (recovery after a broken sum_id):
-                    // skipped — check is the judge, sem does not fail (274.3/F-B4).
-                    if vk.len() < 1 { continue }
-                    // The name is the FIRST identifier leaf, not a fixed index.
-                    // Both shapes exist: `| Red(int)` puts a pipe leaf ahead of
-                    // it, `type Color enum Red(int)` does not -- the first
-                    // variant of the inline form follows the marker directly.
-                    // A fixed index 1 read the payload's `(` there and the sum
-                    // came out with a nameless variant (2026-08-17).
-                    mut name_at = -1
-                    mut vi = 0
-                    for vn in vk {
-                        if name_at < 0 && vn.kind_of() == NodeKind.LeafNode
-                            && leaf_kind(vn) == TokenKind.Ident {
-                            name_at = vi
-                        }
-                        vi += 1
-                    }
-                    if name_at < 0 { continue }
-                    ro vname = leaf_text(vk[name_at])
-                    defs.add(vname, DefTarget.DefVariant(VariantRow(variant_rows.len())))
-                    ro poff = payload_types.len()
-                    mut pcnt = 0
-                    // payload type names sit between '(' and ')'
-                    for j in name_at + 1..vk.len() {
-                        // [LEGACY-#676] var-index-method: `vk[j].kind_of()`
-                        // with a VARIABLE index miscompiles in the oracle
-                        // (E_RECV_METHOD_MISMATCH: receiver resolves as Vec;
-                        // a constant index works). Found 2026-08-14; the
-                        // binding hop is the workaround.
-                        ro pj = vk[j]
-                        if pj.kind_of() != NodeKind.LeafNode { continue }
-                        if leaf_kind(pj) != TokenKind.Ident { continue }
-                        ro pdecl = defs.type_decl(leaf_text(pj)) ?? no_decl()
-                        if !is_decl(pdecl) { continue }
-                        ro pt = ty_of_row(types, pdecl)
-                        payload_types.push(pt)
-                        pcnt += 1
-                    }
-                variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt })
-                vcnt += 1
-            }
-            types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
-                                                  tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
-                                                  ty_id: sum_ty, name: sname,
-                                                  rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
+            // ONE door for the file's own sums and the handed ones (the loop
+            // after `harvest_types` above): the variants of a sum are
+            // registered by `register_sum_variants`, whichever side declared it.
+            register_sum_variants(c, types, defs, variant_rows, payload_types)
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }

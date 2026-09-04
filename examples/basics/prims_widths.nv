@@ -22,9 +22,21 @@ fn add_f32(a f32, b f32) -> f32 => a + b
 fn less_i16(a i16, b i16) -> bool => a < b
 fn same_u32(a u32, b u32) -> bool => a == b
 fn neg_i8(a i8) -> i8 => -a
+// NEGATION ON AN UNSIGNED WIDTH: no checked helper exists for it in the runtime
+// (signed only -- unsigned negation is well-defined two's-complement), so this
+// must come out as raw C. Without this line the corpus never negated an
+// unsigned and the wave shipped an undefined symbol; found by a recheck.
+fn neg_u8(a u8) -> u8 => -a
 fn bump_i32(a i32) -> i32 => a + 1
 fn mask_u8(a u8) -> u8 => a & 0x0F
 fn half_f32(a f32) -> f32 => a / 2.0
+// Division and remainder per family: signed traps on MIN/-1, unsigned only on
+// zero -- two different runtime macros, one emitted name shape.
+fn div_i16(a i16, b i16) -> i16 => a / b
+fn rem_i16(a i16, b i16) -> i16 => a % b
+fn div_u32(a u32, b u32) -> u32 => a / b
+fn rem_u32(a u32, b u32) -> u32 => a % b
+fn div_uint(a uint, b uint) -> uint => a / b
 
 fn main() {
     println("i8 ", add_i8(1, 2))
@@ -40,7 +52,13 @@ fn main() {
     println("less ", less_i16(3, 4))
     println("same ", same_u32(9, 9))
     println("neg ", neg_i8(5))
+    println("negu ", neg_u8(5))
     println("bump ", bump_i32(41))
     println("mask ", mask_u8(0xAB))
     println("half ", half_f32(5.0))
+    println("divi ", div_i16(100, 7))
+    println("remi ", rem_i16(100, 7))
+    println("divu ", div_u32(100, 7))
+    println("remu ", rem_u32(100, 7))
+    println("divp ", div_uint(100, 7))
 }

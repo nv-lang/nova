@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/handed_sum_test.nv -- the holders of the wave "variants of
+// handed sums" (plan 274.5 section 3-pred61, 2026-09-04): a sum novac was HANDED
+// as a declaration offers its variants exactly as the compiled file's own sums
+// do, and a type that is no sum answers the right cause. Reverse probe: with the
+// handed-variants loop in collect_types_with removed the first case reddens
+// ("not one of its variants"); with the non-sum branch of the judge removed the
+// last case reddens on its message.
+
+module novac.pipeline
+
+/// A handed sum, written as a std declaration would be handed.
+fn handed_sum() -> []str => []str.of("type Tk enum\n    | A\n    | B\n")
+
+test "a variant of a HANDED sum is a value, and match arms name it (3-pred61)" {
+    // Before the wave: the head `Tk` was known as a type (harvest registered the
+    // name) and `B` was known as nothing (harvest skipped the variants), so
+    // `Tk.B` was refused as "not one of its variants" -- 249 times over novac's
+    // own source, which writes `TokenKind.KwFn` from module `lex` in `parse`.
+    ro (d, c) = compile_to_c("fn main() {\n ro k = Tk.B\n match k {\n A => println(1)\n B => println(2)\n }\n}", handed_sum())
+    assert(d.len() == 0, messages(d))
+    // The tag is spelled by the mangle door -- module prefix, sum, variant --
+    // so the holder pins the sum-and-variant tail, not the whole constant.
+    assert(c.contains("_Tk_B"), c)
+}
+
+test "a name that is no variant of the handed sum is still refused by name (3-pred61)" {
+    ro (d, _) = compile_to_c("fn main() {\n ro k = Tk.C\n println(1)\n}", handed_sum())
+    assert(d.len() >= 1, "Tk.C must be refused")
+    assert(messages(d).contains("not one of its variants"))
+}
+
+test "the file's own sum shadows a handed one of the same name (D125, last put wins)" {
+    // The handed `Tk` has A and B; the file declares its own `Tk` with C only.
+    // Its own variant is what `Tk.C` means, and the handed `B` is not a variant
+    // of the file's `Tk`.
+    ro (d, _) = compile_to_c("type Tk enum\n    | C\nfn main() {\n ro k = Tk.C\n match k {\n C => println(3)\n }\n}", handed_sum())
+    assert(d.len() == 0, messages(d))
+    ro (d2, _) = compile_to_c("type Tk enum\n    | C\nfn main() {\n ro k = Tk.B\n println(1)\n}", handed_sum())
+    assert(d2.len() >= 1, "the handed B is no variant of the file's own Tk")
+}
+
+test "a type that is no sum is not told it has variants -- the refusal names the real cause (#922 family)" {
+    // `Box.new(...)` in an argument position reached the variant judge and was
+    // refused as "not one of its variants": the wrong cause for a record head.
+    ro decls = []str.of("type Box { n int }\nfn Box.new(n int) -> Box\n")
+    ro (d, _) = compile_to_c("fn take(b Box) -> int => 1\nfn main() {\n println(take(Box.new(1)))\n}", decls)
+    assert(d.len() >= 1, "a static call in argument position is outside the subset today")
+    assert(!messages(d).contains("not one of its variants"), messages(d))
+    assert(messages(d).contains("call on a TYPE"), messages(d))
+}

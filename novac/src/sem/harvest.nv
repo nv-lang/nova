@@ -157,10 +157,14 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
             // the third time this session that a guess about a closed set was
             // corrected by a build rather than by a check.
             if k == NodeKind.SumDecl {
-                // The VARIANTS are not read, for the same reason the fields are
-                // not: constructing one needs a path form the subset does not
-                // compile, so reading them now would be a capability with no
-                // obligation.
+                // The VARIANTS are registered by `collect_types_with` right after
+                // this pass, through the same door the file's own sums take
+                // (`register_sum_variants`) -- once the variant tables exist. This
+                // comment used to say they were not read "because constructing
+                // one needs a path form the subset does not compile"; that stopped
+                // being true with wave V3-4b, the code kept the skip, and novac's
+                // own `TokenKind.KwFn` from another module was refused 249 times
+                // (2026-09-04). Here only the NAME and the KIND go in.
                 types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
                                      tparam_cnt: tp_cnt,
                                      ty_id: tys.sum(id), name: tname,

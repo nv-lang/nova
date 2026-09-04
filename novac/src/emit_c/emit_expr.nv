@@ -45,13 +45,18 @@ import ../builtins.{BuiltinType}
 /// than letting this table answer for a type it knows nothing about.
 ///
 /// The ROW comes from the checker's channel (the operands' type, through its
-/// carrier): float arithmetic is raw C (the oracle's shape, and floats have no
-/// overflow trap), integer arithmetic goes through the runtime's checked
-/// helper OF THAT WIDTH -- `nova_int_checked_add`, `nova_i8_checked_add`,
-/// `nova_uint_checked_add`: the helper is named by the Nova spelling of the
-/// type, measured off the oracle's own emission 2026-09-04 -- and comparisons
-/// are C operators either way. Until that day the helper was spelled for `int`
-/// alone, which is one of the twelve places ten widths fell out of (#910).
+/// carrier): float arithmetic is raw C (floats have no overflow trap), integer
+/// arithmetic goes through the runtime's checked helper OF THAT WIDTH, and
+/// comparisons are C operators either way.
+///
+/// THE HELPER NAME IS A RUNTIME ABI FACT, not a spelling copied from the
+/// oracle (P25): `nova_rt/effects.h` defines `nova_<T>_checked_add/sub/mul`
+/// for every member of `Ints` by macro (`NOVA_DEFINE_CHECKED_OPS`, plan 206
+/// F.1b / D423, the Swift trap-default model), and `_checked_div/_rem` for
+/// signed and unsigned alike. `<T>` there IS the Nova spelling of the type, so
+/// the name is a function of the universe row -- the same shape `prim_c_name`
+/// has. Until 2026-09-04 the helper was spelled for `int` alone, which is one
+/// of the twelve places ten widths fell out of (#910).
 fn c_binary_form(op BinOp, row BuiltinType) -> str {
     ro is_float = is_float_row(row)
     match op {
@@ -619,14 +624,21 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // a newtype negates as what it holds.
         ro uk = un_op_of(leaf_kind(kids[0]))
         ro carrier = carrier_of(@ctx, @out.type_of(e.id_of()))
-        ro neg_int = match uk {
-            Negate => is_int_prim(@ctx.tys, carrier)
+        // NEGATION IS CHECKED ONLY FOR SIGNED WIDTHS, and that is the RUNTIME's
+        // own rule, not a preference: `nova_rt/effects.h` defines
+        // `nova_<T>_checked_neg` under NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG for
+        // i8/i16/i32/i64 only -- "unsigned negation is well-defined
+        // two's-complement", says the header, so there is nothing to trap and no
+        // such symbol exists. Measured 2026-09-04 by a probe that LINKED: emitting
+        // `nova_u8_checked_neg` for `-a` on a `u8` produced an undefined symbol,
+        // while the same program built and printed 251 through the oracle. The
+        // first version of this wave had exactly that defect; it was found by a
+        // recheck, not by the corpus, because no carrier negated an unsigned.
+        ro neg_signed = match uk {
+            Negate => is_int_prim(@ctx.tys, carrier) && @arith_row(carrier).signed
             Not | BitNot => false
         }
-        if neg_int {
-            // The checked helper OF THIS WIDTH -- `nova_i8_checked_neg(a)` is
-            // what the oracle emits for `-a` on an `i8` (measured 2026-09-04);
-            // the name follows the Nova spelling, as the binary helpers do.
+        if neg_signed {
             @body.append("nova_${@arith_row(carrier).name}_checked_neg(")
             @emit_expr(kids[1])
             @body.append(")")

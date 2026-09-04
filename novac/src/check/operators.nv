@@ -13,10 +13,11 @@
 
 module novac.check
 
-import ../tree.{Node, BinOp, bin_op_of}
+import ../tree.{Node, BinOp, bin_op_of, un_op_of}
 import ../sem.{LitArg, leaf_kind, leaf_text}
+import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
 import ../types.{TyId, no_ty}
-import ../builtins.{EQUAL_METHOD}
+import ../builtins.{EQUAL_METHOD, BuiltinType}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
 import ../sem.{identity_slots, branch_children, ParamMode}
@@ -127,3 +128,131 @@ fn equality_key(lhs_t TyId, rhs_t TyId) -> []ArgSpec => [
     ArgSpec { type_id: lhs_t, cls: ArgClass.ArgRo, name: "", lit: LitArg.NotLit },
     ArgSpec { type_id: rhs_t, cls: ArgClass.ArgRo, name: "", lit: LitArg.NotLit },
 ]
+
+// ---- The operator JUDGES: which operand types an operator is compiled for ----
+// Moved here from exprs.nv on 2026-09-04, when the ten-widths wave pushed that
+// file past a thousand lines (decision 12: cut by meaning into co-equal files
+// of the module). This file owns operators; the judges are the operator half
+// of the checker, the dispatch decision above is the other half.
+
+/// In Nova EVERY operator dispatches through a protocol on a user type
+/// (D46/D363: `a + b` is `a.@plus(b)`, `a < b` is `a.@compare(b) < 0`,
+/// `a == b` is `a.@equal(b)`), and the subset does not do that dispatch yet.
+/// So the C form is a function of the operator AND the operand type, not of
+/// the operator alone -- owner's correction 2026-08-16.
+///
+/// Until the protocol path exists (it needs bounds, E2-b3), an operator whose
+/// operands are not the primitives the subset can emit is an honest refusal
+/// at the operator's own position -- not the ice the lattice would raise one
+/// level down, and not a silently wrong primitive emission.
+/// Returns whether it refused.
+fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
+    ro lt0 = type_of(kids[0], @ctx, @scope, @chan)
+    ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
+    // D227/D405: a bare numeric literal takes the OTHER operand's type. The
+    // lattice's door decides (adapt_operand, one door for both readers); the
+    // walk RECORDS the decision here and judges the literal's range against
+    // its new type before anything else is asked about the pair.
+    ro lt = adapt_operand(kids[0], lt0, rt0, @ctx.tys)
+    ro rt = adapt_operand(kids[2], rt0, lt0, @ctx.tys)
+    if lt != lt0 {
+        if !@lit_fits_or_refuse(kids[0], lt) { return true }
+        @record(kids[0], lt)
+    } else {
+        // The left operand kept its own type: nothing was decided for it here.
+    }
+    if rt != rt0 {
+        if !@lit_fits_or_refuse(kids[2], rt) { return true }
+        @record(kids[2], rt)
+    } else {
+        // The right operand kept its own type: nothing was decided for it here.
+    }
+    ro op = bin_op_of(leaf_kind(kids[1]))
+    ro both_numeric = @is_numeric(lt) && @is_numeric(rt)
+    // D405: two NAMED numeric operands of different width or signedness are
+    // a USER error, not a subset limit and not protocol dispatch -- the only
+    // mixed pair the oracle takes is `int` with `f64` (measured; int_f64_mix).
+    if both_numeric && lt != rt && !int_f64_mix(@ctx, lt, rt) {
+        match kids[1] {
+            Leaf(t) => @refuse(t, MIXED_WIDTH_MSG)
+            Branch { .. } => {}
+        }
+        return true
+    }
+    ro numeric = both_numeric
+    ro ints = lt == rt && is_int_prim(@ctx.tys, lt)
+    ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
+    ro same_prim = lt == rt && @is_primitive(lt)
+    // Each operator states WHICH operands the subset can emit for it. The
+    // match is exhaustive, so a new operator cannot slip in without an
+    // answer -- and the answer is a refusal, never a guess.
+    match op {
+        Add | Sub | Mul | Div | Modulo => { if numeric { return false } }
+        Less | LessEq | Greater | GreaterEq => { if numeric { return false } }
+        Equal | NotEqual => { if same_prim { return false } }
+        AndAlso | OrElse => { if bools { return false } }
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
+        Range => { if numeric { return false } }
+    }
+    match kids[1] {
+        Leaf(t) => @refuse(t, "outside the subset: this operator on these operands dispatches through a protocol (D46: @plus / @compare / @equal), and protocol dispatch arrives with bounds")
+        Branch { .. } => {}
+    }
+    true
+}
+
+/// Does the subset know how to print this type? The emitter has one printer
+/// per type and no generic path; a type outside the set is a refusal here,
+/// never an ice there.
+fn Checker @has_printer(t TyId) -> bool => @is_printable_carrier(carrier_of(@ctx, t))
+
+/// The printer set, asked of the CARRIER: a newtype prints as what it holds
+/// (`println(Row(7))` prints 7, which is what the oracle does), so the peel
+/// happens once, here, and not at each comparison. Every NUMERIC primitive
+/// prints (the oracle prints each width with its own printer -- the emitter's
+/// table), plus `str` and `bool`; `char` is the char wave's.
+fn Checker @is_printable_carrier(t TyId) -> bool =>
+    is_numeric_prim(@ctx.tys, t) || t == @ctx.prims.str_id || t == @ctx.prims.bool_id
+
+/// What arithmetic and ordering accept in the subset: every numeric primitive
+/// of the universe (D363: primitives dispatch built in), asked of the FAMILY
+/// door and not of two ids -- ten widths fell out of this rule while it named
+/// `int` and `f64` by id (#910).
+fn Checker @is_numeric(t TyId) -> bool => is_numeric_prim(@ctx.tys, t)
+
+/// Every primitive of novac's universe but the unit -- equality accepts any of
+/// them, as long as both sides are the SAME one (mixed-type equality is a
+/// conversion question the subset does not answer).
+fn Checker @is_primitive(t TyId) -> bool {
+    match prim_row_of(@ctx.tys, t) {
+        Some(r) => family_has_values(r)
+        None => false
+    }
+}
+
+/// Every family but the unit has VALUES two of which can be equal; a nested
+/// `match` inside an arm is a form novac does not read about itself yet, so the
+/// inner question lives in its own function.
+fn family_has_values(r BuiltinType) -> bool {
+    match r.family {
+        PfUnit => false
+        PfInt | PfFloat | PfStr | PfBool | PfChar => true
+    }
+}
+
+/// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
+/// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
+/// and is refused at the operator's own position. Returns whether it refused.
+fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
+    ro t = type_of(kids[1], @ctx, @scope, @chan)
+    match un_op_of(leaf_kind(kids[0])) {
+        Not => { if t == @ctx.prims.bool_id { return false } }
+        Negate => { if @is_numeric(t) { return false } }
+        BitNot => { if is_int_prim(@ctx.tys, t) { return false } }
+    }
+    match kids[0] {
+        Leaf(tk) => @refuse(tk, "outside the subset: this prefix operator on this operand dispatches through a protocol (D46: @neg / @bitnot), and protocol dispatch arrives with bounds")
+        Branch { .. } => {}
+    }
+    true
+}
