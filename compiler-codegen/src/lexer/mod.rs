@@ -37,10 +37,23 @@ impl<'a> Lexer<'a> {
     /// Plan 42 Sub-plan 42.4 шаг 2: lexer с explicit FileId.
     /// Все Span'ы (tokens + EOF) получат этот file_id.
     pub fn new_with_file_id(src: &'a str, file_id: FileId) -> Self {
+        // D104 (spec/decisions/03-syntax.md:6171) is normative: "UTF-8 only. A BOM
+        // at the start of the file is stripped before doc-recognition." Registry 825:
+        // nothing stripped it anywhere, so a file saved by a Windows editor -- which
+        // writes a BOM by default -- died with `unexpected byte`, naming a character
+        // the source never contained (the first BOM byte read as Latin-1). Worse, the
+        // snippet drew the line as perfectly valid, because the caret pointed at a
+        // byte a reader cannot see.
+        //
+        // We STEP OVER the BOM rather than trimming `src`: every Span keeps indexing
+        // the real file, so reported offsets and columns stay honest. Only at offset
+        // zero -- U+FEFF anywhere else remains an error, which is the point of the
+        // norm saying "at the start of the file".
+        let pos = if src.as_bytes().starts_with(&[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
         Self {
             src,
             bytes: src.as_bytes(),
-            pos: 0,
+            pos,
             file_id,
         }
     }
@@ -1255,7 +1268,15 @@ pub(crate) fn scan_interpolation_body(bytes: &[u8], brace_pos: usize) -> Option<
         let in_string = *stack.last().expect("стек не пустеет без return");
         if in_string {
             match b {
-                b'\\' => i += 2, // весь escape целиком (\" \\ \n \$ ...)
+                // Registry 832: the escaped character can be MULTI-BYTE, and a
+                // fixed `+2` lands inside it -- the same shape `lex_backtick`
+                // abandoned after registry 853 (`byte index is not a char
+                // boundary`). `i` sits on the ASCII backslash, so `i + 1` is a
+                // character boundary and `utf8_char_len` is safe to ask.
+                b'\\' => {
+                    let n = bytes.get(i + 1).map_or(1, |&nb| utf8_char_len(nb));
+                    i += 1 + n;
+                }
                 b'"' => {
                     stack.pop();
                     i += 1;
@@ -1633,5 +1654,36 @@ mod interp_nested_string_tests {
     fn scan_interpolation_body_none_when_unterminated() {
         let bytes = b"${x";
         assert_eq!(scan_interpolation_body(bytes, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod bom_tests {
+    use super::lex;
+
+    /// Registry 825, and the CONTROL matters more than the fix: a BOM at the start
+    /// is skipped, a BOM anywhere else is still refused. Stripping unconditionally
+    /// would swallow an invisible character in the middle of a file, which is the
+    /// exact opposite of what a diagnostic is for.
+    #[test]
+    fn bom_at_offset_zero_is_skipped_a_stray_one_still_errors() {
+        let bom = char::from_u32(0xFEFF)
+            .expect("U+FEFF is a valid scalar value")
+            .to_string();
+
+        let plain = lex("fn").expect("plain source lexes");
+        let bommed = lex(&format!("{}fn", bom)).expect("a leading BOM must not be an error");
+        assert_eq!(bommed.len(), plain.len(), "a BOM must not add or eat a token");
+
+        // We step OVER the BOM instead of trimming `src`, and this is why: every
+        // Span keeps indexing the real file, so `fn` is reported at byte 3, where it
+        // actually sits. A trimmed source would report a column the file does not have.
+        assert_eq!(bommed[0].span.start, 3, "spans must index the real file");
+        assert_eq!(plain[0].span.start, 0);
+
+        assert!(
+            lex(&format!("fn {}x", bom)).is_err(),
+            "U+FEFF away from offset 0 must still be refused"
+        );
     }
 }

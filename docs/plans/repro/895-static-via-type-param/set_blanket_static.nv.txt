@@ -1,0 +1,9 @@
+// Registry 895, carrier 2: a STATIC type-set blanket — the form D310 spells out literally (`fn[T SignedInts] T.parse(...)`, 02-types.md:7578) — is never emitted.
+module set_blanket_static
+
+fn[T SignedInts] T @ordinal() -> int => @ as int
+fn[T SignedInts] T.from_ordinal(i int) -> T => i as T
+fn main() Io -> () {
+    ro x = i64.from_ordinal(3)
+    println(x.ordinal())
+}

@@ -49,10 +49,10 @@ pub fn generate(opts: DashboardOpts) -> Result<i32> {
     let entries = history::list(opts.repo, &opts.history_branch)?;
     if entries.is_empty() {
         return Err(anyhow!(
-            "no entries в branch `{}` — run `nova bench history-add` сначала",
+            "no entries in branch `{}` -- run `nova bench history-add` first",
             opts.history_branch));
     }
-    eprintln!("dashboard: found {} entries в branch `{}`",
+    eprintln!("dashboard: found {} entries in branch `{}`",
         entries.len(), opts.history_branch);
 
     let take_n = entries.len().min(opts.max_entries);
@@ -137,7 +137,7 @@ pub fn generate(opts: DashboardOpts) -> Result<i32> {
         serde_json::to_string_pretty(&raw_json)?)
         .map_err(|e| anyhow!("write data.json: {}", e))?;
 
-    eprintln!("dashboard: wrote {} files в {}", series_data.len() + 2,
+    eprintln!("dashboard: wrote {} files in {}", series_data.len() + 2,
         opts.out_dir.display());
     eprintln!("dashboard: open {}/index.html", opts.out_dir.display());
     Ok(0)

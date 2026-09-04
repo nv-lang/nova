@@ -728,6 +728,7 @@ impl Parser {
             doc: module_doc,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            prelude_missing: None,
         })
     }
 
@@ -8292,6 +8293,22 @@ impl Parser {
                 }
                 continue;
             }
+            // D467 section 7 point 4, registry 833: a backslash before a NEWLINE
+            // is not an escape -- section 6 fixes the backtick escape set at
+            // exactly three, so this backslash passes through as itself and the
+            // newline belongs to the two branches ABOVE (CRLF normalisation and
+            // indent stripping). Letting the escape branch swallow it made the
+            // literal's VALUE depend on how the file was checked out: with CRLF a
+            // lone \n survived and the indent was stripped, with LF nothing
+            // survived and it was not -- measured 13 against 10 on byte-identical
+            // text. Consume the backslash alone and let the loop continue.
+            if block && b == b'\\'
+                && matches!(bytes.get(i + 1), Some(&b'\n') | Some(&b'\r'))
+            {
+                parts.last_mut().expect("parts non-empty").push('\\');
+                i += 1;
+                continue;
+            }
             if b == b'\\' && i + 1 < bytes.len() {
                 let cur = parts.last_mut().expect("parts non-empty");
                 let esc_len = match bytes[i + 1] {
@@ -13308,6 +13325,55 @@ mod tests {
         // "a\nb\n" (отступ 4 снят, хвостовая строка закрывающего backtick
         // содержимого не даёт).
         assert_eq!(body(&lf), "a\nb\n");
+    }
+
+    /// Registry 221.1 #833: the same section 7 point 4, but with a BACKSLASH at
+    /// end of line -- the shape that was broken while the test above passed.
+    ///
+    /// The escape branch used to consume the backslash plus ONE character. When
+    /// that character was a newline it stole it from the two branches above:
+    /// with CRLF a lone `\\n` survived and the indent WAS stripped, with LF
+    /// nothing survived and it was NOT. Byte-identical text, different value --
+    /// 13 against 10 -- which is exactly what point 4 exists to forbid: the
+    /// value of a constant must not depend on how the file was checked out.
+    ///
+    /// Section 6 settles what the right answer is: the backtick escape set is
+    /// EXACTLY three (backtick, backslash, dollar), so a backslash before a
+    /// newline is not an escape at all -- it passes through as itself, and the
+    /// newline belongs to the hygiene rules. Both spellings must give the same
+    /// value, and the row itself named it: 9.
+    #[test]
+    fn backtick_block_backslash_eol_crlf_equals_lf() {
+        let src = |nl: &str| {
+            format!("module t\nfn f() -> str => `{nl}    abcde{bs}{nl}    fghij{nl}    `\n",
+                    nl = nl, bs = "\\")
+        };
+        let crlf = parse_or_panic(&src("\r\n"));
+        let lf = parse_or_panic(&src("\n"));
+        let body = |m: &Module| -> String {
+            let Item::Fn(f) = &m.items[0] else { panic!("expected a function") };
+            let FnBody::Expr(e) = &f.body else { panic!("expected an expression body") };
+            let ExprKind::StrLit(s) = &e.kind else {
+                panic!("expected a string literal, got {:?}", e.kind)
+            };
+            s.clone()
+        };
+        assert_eq!(
+            body(&crlf).len(),
+            body(&lf).len(),
+            "a backslash at end of line made the literal's LENGTH depend on the \
+             line terminator: CRLF {:?} against LF {:?} (D467 section 7 point 4)",
+            body(&crlf),
+            body(&lf)
+        );
+        // The exact value, derived from section 7 rather than copied from the
+        // row: head newline dropped, indent 4 stripped from every content line,
+        // the backslash passing through as itself, the newline after it content,
+        // and the tail newline kept because the closing backtick is on its own
+        // line. The row quotes 9 for the hunter's own probe text, which is a
+        // DIFFERENT string -- importing that number without recomputing it for
+        // this one is what the first run of this test caught.
+        assert_eq!(body(&lf), "abcde\\\nfghij\n");
     }
 
     #[test]

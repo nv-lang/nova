@@ -68,9 +68,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     }
     let bench_path = opts.bench_path.canonicalize()
         .map_err(|e| anyhow!("cannot resolve path {}: {}", opts.bench_path.display(), e))?;
-    if bench_path.extension().and_then(|s| s.to_str()) != Some("nv") {
-        bail!("not a Nova source: {}", bench_path.display());
-    }
+    crate::require_nova_source(&bench_path)?;
 
     let src = std::fs::read_to_string(&bench_path)
         .map_err(|e| anyhow!("read bench source: {}", e))?;
@@ -477,7 +475,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
     if files.is_empty() {
         bail!("no .nv files found in directory: {}", dir.display());
     }
-    eprintln!("nova bench: discovered {} .nv files в {}", files.len(), dir.display());
+    eprintln!("nova bench: discovered {} .nv files in {}", files.len(), dir.display());
 
     let mut total_benches = 0usize;
 

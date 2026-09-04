@@ -1,0 +1,12 @@
+// door: FnRow + const N int (a typed constant, not a literal; must be an error)
+module const_int
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    println((a + N) as int)
+}

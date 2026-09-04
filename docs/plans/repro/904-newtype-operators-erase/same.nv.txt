@@ -1,0 +1,14 @@
+// Registry TBD, CONTROL 2: operators on ONE newtype work and keep the type — this is the
+// part that must survive any fix.
+module same
+
+type FnRow int
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro b = 2 as FnRow
+    println(a < b)
+    println((a + b) as int)
+    ro m = if a < b { b } else { a }
+    println(m as int)
+}

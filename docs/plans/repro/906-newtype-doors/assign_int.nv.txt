@@ -1,0 +1,16 @@
+// door: assigning a TyId into a plain int variable (must be an error under (a))
+module assign_int
+
+type FnRow int
+type TyId int
+fn FnRow @hash() -> u64 => (@ as int) as u64
+fn FnRow @equal(o FnRow) -> bool => (@ as int) == (o as int)
+fn TyId @hash() -> u64 => (@ as int) as u64
+fn TyId @equal(o TyId) -> bool => (@ as int) == (o as int)
+
+fn main() Io -> () {
+    mut n int = 1
+    ro t = 2 as TyId
+    n = t
+    println(n)
+}

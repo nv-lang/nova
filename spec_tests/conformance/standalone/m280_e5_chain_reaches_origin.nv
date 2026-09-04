@@ -1,0 +1,30 @@
+// EXPECT_RUNTIME_PANIC m280_e5_chain_reaches_origin.nv:29
+// Plan 280 E5 (D468) -- the acceptance of registry 221.1 #683, and the whole
+// reason the row was opened: a diagnostic door wrapped in another door must
+// name the ORIGINAL caller, not the middle link.
+//
+// Two wrappers. `ice` is the door; `ensure` wraps it; `main` calls `ensure` on
+// line 29. The marker pins 29. Line 24 -- inside `ensure`, where `ice` is
+// actually called -- is what a naive implementation prints, and what #683
+// measured on novac's own `ice()` before any of this existed. The redness
+// probe shows it directly: drop the `loc: loc` forwarding and this fixture
+// reports line 24, the middle link, which is the disease itself.
+//
+// The forwarding is BY NAME (`loc: loc`), not positional: D102 makes a
+// defaulted parameter keyword-only, and the positional spelling does not
+// compile at all. Every example in the spec said otherwise until this fixture
+// was built -- reading had never caught it.
+module standalone.m280_e5_chain_reaches_origin
+
+fn ice(msg str, loc CallerLoc = caller_loc()) -> never {
+    panic("${msg} @ ${loc.file}:${loc.line}")
+}
+
+fn ensure(ok bool, loc CallerLoc = caller_loc()) -> () {
+    if !ok { ice("check failed", loc: loc) }
+}
+
+fn main() Io -> () {
+    ensure(true)
+    ensure(false)
+}

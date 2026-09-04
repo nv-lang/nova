@@ -156,7 +156,7 @@ pub fn scan_history(repo: &Path, branch: &str)
 {
     let entries = history::list(repo, branch)?;
     if entries.is_empty() {
-        return Err(anyhow!("no entries в branch `{}`", branch));
+        return Err(anyhow!("no entries in branch `{}`", branch));
     }
     let mut chronological: Vec<history::HistoryEntry> = entries.clone();
     chronological.reverse();  // list returns newest first; want oldest first.

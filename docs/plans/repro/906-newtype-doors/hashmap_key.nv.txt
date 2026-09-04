@@ -1,0 +1,16 @@
+// door: HashMap[FnRow, str].insert with a TyId key (must be an error)
+module hashmap_key
+
+type FnRow int
+type TyId int
+fn FnRow @hash() -> u64 => (@ as int) as u64
+fn FnRow @equal(o FnRow) -> bool => (@ as int) == (o as int)
+fn TyId @hash() -> u64 => (@ as int) as u64
+fn TyId @equal(o TyId) -> bool => (@ as int) == (o as int)
+
+fn main() Io -> () {
+    ro t = 1 as TyId
+    mut m = HashMap[FnRow, str].new()
+    m.insert(t, "x")
+    println(m.len())
+}

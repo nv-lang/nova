@@ -1,0 +1,10 @@
+// Registry 898, CONTROL 2: the alias as a parameter type — builds, prints 1.
+module param
+
+type Words alias Vec[str]
+fn count(w Words) -> int => w.len()
+fn main() Io -> () {
+    mut v = Vec[str].new()
+    v.push("x")
+    println(count(v))
+}

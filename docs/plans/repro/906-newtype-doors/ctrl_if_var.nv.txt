@@ -1,0 +1,11 @@
+// door: CONTROL: if-expression with int and str branches (must be an error)
+module ctrl_if_var
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    ro n = 1
+    ro s = "s"
+    ro m = if n == 1 { n } else { s }
+    println(m)
+}

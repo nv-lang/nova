@@ -1,0 +1,9 @@
+// Registry 897, CONTROL: a non-generic alias used as a type annotation — builds and prints 1.
+module plain_alias
+
+type Words alias Vec[str]
+fn main() Io -> () {
+    mut n Words = Vec[str].new()
+    n.push("x")
+    println(n.len())
+}

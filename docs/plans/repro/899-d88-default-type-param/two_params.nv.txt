@@ -1,0 +1,19 @@
+// Registry 899, carrier 1: `type Table[T, I Ordinal = int]`, then `Table[str]` — D88 says the default fills the missing argument.
+module two_params
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+type FnRow int
+fn FnRow @ordinal() -> int => @ as int
+fn FnRow.from_ordinal(i int) -> FnRow => i as FnRow
+fn int @ordinal() -> int => @
+fn int.from_ordinal(i int) -> int => i
+type Table[T, I Ordinal = int] priv { raw Vec[T] }
+fn Table[T, I Ordinal].new() -> Table[T, I] => { raw: Vec[T].new() }
+fn Table[T, I Ordinal] @at(i I) -> T => @raw[i.ordinal()]
+fn main() Io -> () {
+    mut a = Table[str].new()
+    println(a.at(0))
+}

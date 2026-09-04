@@ -1,0 +1,13 @@
+// door: match FnRow against a TyId const pattern (must be an error)
+module match_const
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro s = match a { ONE => "one", _ => "other" }
+    println(s)
+}

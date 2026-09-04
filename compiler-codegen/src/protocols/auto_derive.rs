@@ -4685,6 +4685,7 @@ mod tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            prelude_missing: None,
         }
     }
 

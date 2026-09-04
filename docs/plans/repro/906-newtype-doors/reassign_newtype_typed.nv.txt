@@ -1,0 +1,11 @@
+// door: re-assignment x = t with both declared (mut x FnRow, ro t TyId) — must be an error
+module reassign_newtype_typed
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    mut x FnRow = 1 as FnRow
+    ro t TyId = 1 as TyId
+    x = t
+    println(x as int)
+}

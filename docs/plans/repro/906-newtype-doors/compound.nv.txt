@@ -1,0 +1,14 @@
+// door: compound assignment FnRow += TyId (must be an error under rule (a))
+module compound
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    mut a = 1 as FnRow
+    ro t = 1 as TyId
+    a += t
+    println(a as int)
+}

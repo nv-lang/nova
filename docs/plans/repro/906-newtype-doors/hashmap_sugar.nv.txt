@@ -1,0 +1,17 @@
+// door: HashMap[FnRow, str] read via [] with a TyId key (894 class)
+module hashmap_sugar
+
+type FnRow int
+type TyId int
+fn FnRow @hash() -> u64 => (@ as int) as u64
+fn FnRow @equal(o FnRow) -> bool => (@ as int) == (o as int)
+fn TyId @hash() -> u64 => (@ as int) as u64
+fn TyId @equal(o TyId) -> bool => (@ as int) == (o as int)
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro t = 1 as TyId
+    mut m = HashMap[FnRow, str].new()
+    m.insert(a, "x")
+    println(m[t])
+}

@@ -273,6 +273,100 @@ fn compute_prelude_imports(
     Ok(prelude_imports)
 }
 
+/// Registry 822: готовая диагностика «прелюд ожидался и не найден», или `None`.
+///
+/// ДВА ПРЕДЫДУЩИХ МЕСТА БЫЛИ НЕВЕРНЫ, и оба ошибались одинаково — превращали
+/// дефицит в ОТКАЗ там, где он ещё не ошибка:
+///
+///   * в `compute_prelude_imports` — покраснели шесть тестов
+///     `entry_folder_module_tests`, каждый из которых передаёт каталог, буквально
+///     названный `no_stdlib`, и утверждает, что резолв импортов всё равно
+///     проходит. Это ЗАЯВЛЕННОЕ свойство слоя, а не недосмотр;
+///   * на границе `check_pipeline` — упал самотест `check-oracle-nesting-depth`,
+///     который компилирует временный `legal_paren.nv` настоящим бинарём. Отказ
+///     на границе валит ЛЮБУЮ компиляцию без прелюда, включая программы, которым
+///     он не нужен: `legal_paren.nv` не ссылается ни на одно его имя.
+///
+/// Отсюда третья форма: функция ничего не решает, она СЧИТАЕТ. Признак едет с
+/// модулем и превращается в диагностику там, где имя действительно не
+/// разрешилось, — то есть там, где дефицит впервые становится ОШИБКОЙ.
+pub fn prelude_deficit_message(
+    module: &Module,
+    stdlib_dir: &Path,
+    entry_path: &Path,
+) -> Option<String> {
+    if crate::manifest::is_prelude_self_module(&module.name) {
+        return None;
+    }
+    if module
+        .attrs
+        .iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude))
+    {
+        return None;
+    }
+    // `#prelude(...)` отказывает сам, громко и с ожидаемым файлом; второй,
+    // иначе сформулированный голос ему не нужен.
+    if module
+        .attrs
+        .iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::PartialPrelude(_)))
+    {
+        return None;
+    }
+
+    let mut searched: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
+        if let Some(edition) = &manifest.edition {
+            let sanitized = crate::manifest::sanitize_edition(edition);
+            if !sanitized.is_empty() {
+                let pin_path = stdlib_dir
+                    .join("prelude")
+                    .join(format!("{}.nv", sanitized));
+                if crate::source_index::is_file(&pin_path) {
+                    return None;
+                }
+                searched.push(pin_path);
+            }
+        }
+    }
+    let prelude_path = stdlib_dir.join("prelude.nv");
+    if crate::source_index::is_file(&prelude_path) {
+        return None;
+    }
+    searched.push(prelude_path);
+
+    // Абсолютные пути для показа: относительный `std/prelude.nv` без названного
+    // основания — тот же полуответ, что и молчание. Только показ, резолв не тронут.
+    let abs = |p: &std::path::Path| -> String {
+        if p.is_absolute() {
+            p.display().to_string()
+        } else {
+            std::env::current_dir()
+                .map(|c| c.join(p).display().to_string())
+                .unwrap_or_else(|_| p.display().to_string())
+        }
+    };
+    let searched_lines = searched
+        .iter()
+        .map(|p| format!("     {}", abs(p)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let env_set = std::env::var_os("NOVA_STD_PATH").is_some();
+    Some(format!(
+        "cannot find the standard library prelude\n  \
+         searched:\n{}\n  \
+         std package root resolved to: {}\n  \
+         env NOVA_STD_PATH is {}\n  \
+         hint: the std root is taken from, highest first: (1) env NOVA_STD_PATH, \
+         (2) `std = \"...\"` under [workspace] or [package] in nova.toml, \
+         (3) <project root>/std",
+        searched_lines,
+        abs(stdlib_dir),
+        if env_set { "set" } else { "NOT set" },
+    ))
+}
+
 /// Signature-only pre-pass over the full import graph.
 ///
 /// Walks the same import graph as [`resolve_imports_inline_ex`] (same path
@@ -747,6 +841,10 @@ pub fn resolve_imports_inline_ex(
     include_test_peers: bool,
 ) -> Result<()> {
     crate::imports_stats::note_resolve_call();
+    // Registry 822: признак, а не отказ. Установка поля не меняет поток
+    // управления, поэтому не может сломать вызывающих, которые НАМЕРЕННО
+    // резолвят без стандартной библиотеки (шесть тестов ниже в этом файле).
+    module.prelude_missing = prelude_deficit_message(module, stdlib_dir, entry_path);
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
     // Plan 42.14 Ф.3 ([M11]): cycle detection keyed by declared module
     // name (Vec<String>), не canonical PathBuf — symlink-safe.

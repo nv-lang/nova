@@ -66,6 +66,17 @@ pub struct Module {
     /// stale (already-consumed) outer value. Populated by `alpha_rename`;
     /// empty (`Default`) for any module without this pattern.
     pub consume_reuse_spans: std::collections::HashSet<crate::diag::Span>,
+
+    /// Registry 822: «прелюд ожидался и не найден» — готовая диагностика или
+    /// `None`. ПРИЗНАК, а не отказ, и это третья редакция фикса: отказ в
+    /// резолве импортов ломает шесть тестов, заявляющих, что резолв работает
+    /// без стандартной библиотеки, а отказ на границе конвейера валит
+    /// программы, которым прелюд НЕ НУЖЕН. Дефицит обязан называться там, где
+    /// программа в прелюде ОТКАЗАЛАСЬ, то есть на неразрешённом имени.
+    ///
+    /// Поле ХВОСТОВОЕ намеренно: структуру видит снимок `novac`, и поле,
+    /// поставленное не в конец, сдвигает раскладку (№693(2)).
+    pub prelude_missing: Option<String>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.

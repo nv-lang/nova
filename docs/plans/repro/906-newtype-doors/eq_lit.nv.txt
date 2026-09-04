@@ -1,0 +1,12 @@
+// door: FnRow == 1 (literal adapts; should be ok)
+module eq_lit
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    println(a == 1)
+}

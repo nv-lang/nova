@@ -408,6 +408,37 @@ static inline void nova_assert_no_ambient_error_staging(void) {
 #  define NOVA_ASSERT_NO_AMBIENT_ERROR_STAGING() ((void)0)
 #endif
 
+static inline const char* nova_loc_cstr(nova_str s, char* buf, size_t cap);
+
+/* Plan 280 E3-b (D468): storage for a location that arrives as a `nova_str`.
+ *
+ * The contract and assert doors could take a stack buffer because they copy
+ * the name into their own message immediately. These doors CANNOT: they STORE
+ * the pointer (`e->file = file` below, and `_nova_throw_site.file`), and it is
+ * read later, when the panic is rendered. A `CallerLoc` produced by
+ * `caller_loc()` points at an interned static and would be safe, but a
+ * hand-built `CallerLoc { file: <slice>, line: n }` is not, so the string has
+ * to be owned here.
+ *
+ * SIZE IS DERIVED, NOT PICKED. At most NOVA_THROW_TRACE_CAP (16) trace entries
+ * plus the one dominant site are live at any moment -- 17. The pool rotates,
+ * so slot k is reused after NOVA_LOC_POOL_CAP more interns; with 24 > 17 the
+ * entry that owned it has already been overwritten in the 16-ring by then, so
+ * no live pointer is ever clobbered. Literal call sites do not consume slots
+ * at all: only the CallerLoc path interns.
+ *
+ * Truncation over overflow, like every other location buffer here. */
+#define NOVA_LOC_POOL_CAP 24
+#define NOVA_LOC_POOL_LEN 260
+static char _nova_loc_pool[NOVA_LOC_POOL_CAP][NOVA_LOC_POOL_LEN];
+static int  _nova_loc_pool_next = 0;
+
+static inline const char* nova_loc_intern(nova_str s) {
+    char* slot = _nova_loc_pool[_nova_loc_pool_next % NOVA_LOC_POOL_CAP];
+    _nova_loc_pool_next++;
+    return nova_loc_cstr(s, slot, NOVA_LOC_POOL_LEN);
+}
+
 static inline void nova_throw_trace_reset(void) {
     _nova_throw_trace.count = 0;
 }
@@ -468,6 +499,26 @@ static inline void nova_throw_site_set_dominant(const char* file, int line) {
 static inline void nova_throw_site_mark(const char* file, int line) {
     _nova_throw_site.file = file;
     _nova_throw_site.line = line;
+}
+
+/* Plan 280 E3-b (D468): the same three doors taking the file as a `nova_str`,
+ * used when the throwing function declares a `CallerLoc` parameter. Each owns
+ * its string through the pool above -- see the note there for why a stack
+ * buffer is wrong here and right for the contract doors. */
+static inline void nova_throw_trace_push_s(nova_str file, int line) {
+    nova_throw_trace_push(nova_loc_intern(file), line);
+}
+
+static inline void nova_throw_site_set_s(nova_str file, int line) {
+    nova_throw_site_set(nova_loc_intern(file), line);
+}
+
+static inline void nova_throw_site_set_dominant_s(nova_str file, int line) {
+    nova_throw_site_set_dominant(nova_loc_intern(file), line);
+}
+
+static inline void nova_throw_site_mark_s(nova_str file, int line) {
+    nova_throw_site_mark(nova_loc_intern(file), line);
 }
 
 /* fwd (D462): the renderer below prints the throw site via this helper. */

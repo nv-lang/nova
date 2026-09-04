@@ -1,0 +1,12 @@
+// Registry 899, carrier 2: `type Span[I = int]` and the bare name `Span` in an annotation — D88: `Complex` without brackets ≡ `Complex[f64]`.
+module bare_name
+
+type Span[I = int] value {
+    ro start I
+    ro end I
+}
+fn Span[I] @width(f fn(I) -> int) -> int => f(@end) - f(@start)
+fn main() Io -> () {
+    ro s Span = { start: 2, end: 5 }
+    println(s.width(|x| x))
+}

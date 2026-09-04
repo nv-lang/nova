@@ -1,0 +1,10 @@
+// door: CONTROL: Option[int] = Some(str variable) (must be an error)
+module ctrl_option_var
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    ro s = "s"
+    ro o Option[int] = Some(s)
+    println(o.is_some())
+}

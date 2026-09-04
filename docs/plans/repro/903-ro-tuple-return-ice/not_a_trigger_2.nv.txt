@@ -1,0 +1,24 @@
+// Registry 903, ОТРИЦАТЕЛЬНОЕ свидетельство #2: тоже СОБИРАЕТСЯ.
+// Ближе к настоящему: поле-вектор внутри кортежа, разбор внутри ДРУГОЙ функции,
+// целое из пары участвует в арифметике — всё, чем настоящий случай отличался
+// от свидетельства #1. И всё равно зелено.
+module not_a_trigger_2
+
+type Big(sign int, limbs Vec[u32])
+
+fn round_to_precision(m Big, prec int) -> ro (Big, int) {
+    ro b = prec - 1
+    if b <= 0 { return (Big(m.sign, m.limbs), 0) }
+    return (m, b)
+}
+
+fn use_it(n Big, prec int) -> int {
+    ro (rounded, bits_lost) = round_to_precision(n, prec)
+    ro final_exp = rounded.sign + bits_lost
+    return final_exp
+}
+
+fn main() Io -> () {
+    ro b = Big(1, Vec[u32].of(1, 2))
+    println("${use_it(b, 3)}")
+}

@@ -111,7 +111,7 @@ fn run_heap(opts: ProfileOpts) -> Result<i32> {
     // profile sampling not yet wired in runtime").
     //
     // Phase B: real runtime integration через bench.h heap-sampler thread.
-    eprintln!("profile/heap: invoking bench-exe (stub — runtime sampler в Phase B)");
+    eprintln!("profile/heap: invoking bench-exe (stub -- runtime sampler in Phase B)");
 
     let mut cmd = Command::new(opts.bench_exe);
     cmd.env("NOVA_BENCH_SAMPLES", opts.samples_override.to_string());
@@ -157,7 +157,7 @@ fn run_gc(opts: ProfileOpts) -> Result<i32> {
     let stub = format!(
         "GC pause profile (stub — Plan 57.B integration)\n\
          bench exit: {:?}\n\
-         note: gc.last_pause_ns API в Plan 32 ext (TBD).\n",
+         note: gc.last_pause_ns API in Plan 32 ext (TBD).\n",
         output.status.code());
     std::fs::write(opts.out, stub)
         .map_err(|e| anyhow!("write gc profile: {}", e))?;

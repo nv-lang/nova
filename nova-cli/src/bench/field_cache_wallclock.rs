@@ -356,9 +356,7 @@ fn discover_files(p: &Path) -> Result<Vec<PathBuf>> {
         bail!("path not found: {}", p.display());
     }
     if p.is_file() {
-        if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-            bail!("not a Nova source: {}", p.display());
-        }
+        crate::require_nova_source(p)?;
         return Ok(vec![p.to_path_buf()]);
     }
     let mut out = Vec::new();

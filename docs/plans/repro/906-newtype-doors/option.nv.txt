@@ -1,0 +1,13 @@
+// door: Option[FnRow] = Some(TyId) (must be an error)
+module option
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro t = 1 as TyId
+    ro o Option[FnRow] = Some(t)
+    println(o.is_some())
+}

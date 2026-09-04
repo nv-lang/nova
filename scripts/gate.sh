@@ -672,6 +672,13 @@ step loop "второго индекса планов нет (№612)"
 guard "$ROOT/scripts/guards/check-no-handwritten-plan-index.sh" "$ROOT" \
     || fail "рукописная сводка планов вернулась"
 
+# Правило №695: улика хранится как `.nv.txt`. Ярус loop, потому что шаг — один
+# `find` по `docs/plans/repro/`: ни компилятора, ни сборки. Заведён 2026-09-04,
+# когда замер показал 57 нарушений при нуле стражей — правило было документом.
+step loop "суффикс улик (правило №695 — улика не притворяется фикстурой)"
+guard "$ROOT/scripts/guards/check-repro-evidence-suffix.sh" "$ROOT" \
+    || fail "улика под docs/plans/repro/ лежит как .nv (правило №695)"
+
 # D456/№568/№579: граница эффекта — API на Nova, а не таблица системных вызовов.
 # Правило жило прозой с 2026-08-11 без единого механизма, и обход в `Net.lookup`
 # прожил недели, защищённый комментарием, учившим несуществующему ограничению.
@@ -999,6 +1006,16 @@ guard --deadline 120 "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROO
 # проверялась вовсе, а строка «ok:» печаталась. Молчание — не успех (№770).
 step push "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
 guard "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
+
+# Реестр 221.1 №823: язык ПОСТАВЛЯЕМОГО вывода CLI. Стоит здесь, а не выше,
+# по той же причине, что и соседи: страж судит то, что бинарь ПЕЧАТАЕТ, и
+# выше `cargo build --release` он мерил бы протухший бинарь — ровно урок,
+# записанный двадцатью строками выше про check-examples-strict-effects.
+# Бинаря нет — страж КРАСНЕЕТ, а не молчит (урок №813 из соседнего абзаца:
+# молчание не успех).
+step push "cli-language (кириллица в --help, в JSON-схеме и в текстах ошибок CLI)"
+guard "$ROOT/scripts/guards/check-cli-output-language.sh" "$ROOT" \
+    || fail "рост кириллицы в поставляемом выводе CLI (№823)"
 
 step push "mega-CU (spec_tests/conformance, one CU)"
 if body_runs; then

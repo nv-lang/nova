@@ -350,10 +350,10 @@ mod tests {
         // {:.2} даёт "1000.00 KB" — accept either form.
         let near_mb = fmt_bytes(999_999);
         assert!(near_mb.ends_with("KB"),
-            "expected KB unit для 999_999, got {}", near_mb);
+            "expected KB unit for 999_999, got {}", near_mb);
         let near_gb = fmt_bytes(999_999_999);
         assert!(near_gb.ends_with("MB"),
-            "expected MB unit для 999_999_999, got {}", near_gb);
+            "expected MB unit for 999_999_999, got {}", near_gb);
     }
 
     #[test]

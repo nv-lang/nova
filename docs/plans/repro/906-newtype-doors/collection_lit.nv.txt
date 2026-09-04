@@ -1,0 +1,14 @@
+// door: collection literal []FnRow with a TyId element (must be an error)
+module collection_lit
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro t = 2 as TyId
+    ro v []FnRow = [a, t]
+    println(v.len())
+}

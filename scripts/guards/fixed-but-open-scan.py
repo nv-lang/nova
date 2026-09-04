@@ -66,6 +66,30 @@ def fixed_numbers(root, histfile):
             ["git", "-C", root, "log", "--format=%h|%s", "HEAD"],
             stderr=subprocess.STDOUT).decode("utf-8", "replace")
     seen = {}
+    # ОТКАТ ОТМЕНЯЕТ ФИКС (2026-09-04, реестр 221.1 №822). `git log` идёт от
+    # нового к старому, поэтому `revert(#N)`, встреченный РАНЬШЕ в этом обходе,
+    # случился ПОЗЖЕ соответствующего `fix(#N)` — и значит правки в дереве нет.
+    #
+    # Почему это правка стража, а не запись в базу исключений: база держит
+    # строки, которые честно остаются открытыми ПРИ СЛИТОЙ правке (починен
+    # носитель, класс открыт; фикс частичный). Откаченный фикс — не тот случай:
+    # правки нет вовсе, и запись туда назвала бы неверную причину, то есть
+    # оставила бы в базе долг, которого не существует. База, куда кладут не по
+    # смыслу, перестаёт читаться.
+    #
+    # Замер, из которого правка выросла: 2026-09-04 фикс №822 был слит
+    # (`fix(#822)`) и в тот же день откачен (`revert(#822)`), потому что оба
+    # выбранных места проверки оказались неверны. Страж требовал закрыть строку
+    # или забазировать её — и оба ответа были бы ложью.
+    reverted = set()
+    for line in raw.split("\n"):
+        if "|" not in line:
+            continue
+        _sha, subj = line.split("|", 1)
+        rm = re.match(r"^revert\(([^)]*)\)", subj.split(":", 1)[0])
+        if rm:
+            for num in re.findall(r"#(\d{2,4})", rm.group(1)):
+                reverted.add(int(num))
     for line in raw.split("\n"):
         if "|" not in line:
             continue
@@ -82,6 +106,8 @@ def fixed_numbers(root, histfile):
         if not m:
             continue
         for num in re.findall(r"#(\d{2,4})", m.group(1)):
+            if int(num) in reverted:
+                continue
             seen.setdefault(int(num), sha.strip())
     return seen
 

@@ -251,7 +251,7 @@ fn call_anthropic(cfg: &AiConfig, prompt: &str, dry_run: bool) -> Result<AiRespo
     });
     if dry_run {
         return Ok(AiResponse {
-            text: format!("DRY RUN — would POST к https://api.anthropic.com/v1/messages with body:\n{}",
+            text: format!("DRY RUN -- would POST to https://api.anthropic.com/v1/messages with body:\n{}",
                 serde_json::to_string_pretty(&body)?),
             tokens_used: None,
             model: cfg.model.clone(),
@@ -274,7 +274,7 @@ fn call_anthropic(cfg: &AiConfig, prompt: &str, dry_run: bool) -> Result<AiRespo
         bail!("Anthropic API error: {}", msg);
     }
     let text = v.pointer("/content/0/text").and_then(|x| x.as_str())
-        .ok_or_else(|| anyhow!("missing content[0].text в Anthropic response"))?
+        .ok_or_else(|| anyhow!("missing content[0].text in Anthropic response"))?
         .to_string();
     let in_tok = v.pointer("/usage/input_tokens").and_then(|x| x.as_u64())
         .unwrap_or(0) as u32;
@@ -296,7 +296,7 @@ fn call_openai(cfg: &AiConfig, prompt: &str, dry_run: bool) -> Result<AiResponse
     });
     if dry_run {
         return Ok(AiResponse {
-            text: format!("DRY RUN — would POST к https://api.openai.com/v1/chat/completions:\n{}",
+            text: format!("DRY RUN -- would POST to https://api.openai.com/v1/chat/completions:\n{}",
                 serde_json::to_string_pretty(&body)?),
             tokens_used: None,
             model: cfg.model.clone(),
@@ -317,7 +317,7 @@ fn call_openai(cfg: &AiConfig, prompt: &str, dry_run: bool) -> Result<AiResponse
         bail!("OpenAI API error: {}", msg);
     }
     let text = v.pointer("/choices/0/message/content").and_then(|x| x.as_str())
-        .ok_or_else(|| anyhow!("missing choices[0].message.content в OpenAI response"))?
+        .ok_or_else(|| anyhow!("missing choices[0].message.content in OpenAI response"))?
         .to_string();
     let tok = v.pointer("/usage/total_tokens").and_then(|x| x.as_u64())
         .map(|n| n as u32);

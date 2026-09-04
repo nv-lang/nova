@@ -1,0 +1,12 @@
+// door: returning a TyId from fn -> FnRow (must be an error)
+module ret
+
+type FnRow int
+type TyId int
+fn FnRow @hash() -> u64 => (@ as int) as u64
+fn FnRow @equal(o FnRow) -> bool => (@ as int) == (o as int)
+fn TyId @hash() -> u64 => (@ as int) as u64
+fn TyId @equal(o TyId) -> bool => (@ as int) == (o as int)
+
+fn g(t TyId) -> FnRow { mut u = t; u }
+fn main() Io -> () => println(g(1 as TyId) as int)
