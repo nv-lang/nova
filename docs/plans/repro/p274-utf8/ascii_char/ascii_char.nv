@@ -1,0 +1,6 @@
+module ascii_char
+
+fn main() {
+    ro c = 'y'
+    println(c)
+}

@@ -1,0 +1,6 @@
+module two_same
+
+fn main() {
+    println("same text")
+    println("same text")
+}
