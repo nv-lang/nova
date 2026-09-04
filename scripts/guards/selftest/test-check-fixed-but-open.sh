@@ -134,6 +134,26 @@ check "a number merely mentioned beside fix(...) is not a fix" "$(run)" "0"
 mk "905:open"
 check "a number inside fix(...) still counts" "$(run)" "1"
 
+# 15. ОТКАТ ОТМЕНЯЕТ ФИКС (2026-09-04, реестр 221.1 №822). `git log` идёт от
+# нового к старому, поэтому `revert(#907)` ПЕРВОЙ строкой истории означает, что
+# он случился ПОЗЖЕ фикса. Правки в дереве нет — строка честно открыта.
+printf '%s\n' \
+  'eeeeeee|revert(#907): both places were wrong, the fix is removed' \
+  'fffffff|fix(#907): a fix that was later reverted' > "$HIST"
+: > "$BASE"
+mk "907:open"
+check "a later revert(#N) cancels fix(#N)" "$(run)" "0"
+
+# 16. И обратная сторона, без которой пункт 15 ничего не доказывает: страж,
+# который гасит ЛЮБОЙ фикс при виде любого отката, прошёл бы 15 так же успешно.
+# Откат ЧУЖОГО номера не отменяет ничего.
+printf '%s\n' \
+  'eeeeeee|revert(#908): an unrelated revert' \
+  'fffffff|fix(#907): a landed fix, untouched by that revert' > "$HIST"
+: > "$BASE"
+mk "907:open"
+check "a revert of a DIFFERENT number cancels nothing" "$(run)" "1"
+
 echo "  passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
