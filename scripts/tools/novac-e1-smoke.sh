@@ -133,7 +133,13 @@ if [ ! -f "$PCH" ]; then
 fi
 
 # ---- 3. novac emit -> compile against PCH -> link with the oracle's argv --
-"$NOVAC" emit "$FILE" > "$T/novac.c" 2>"$T/emit.err" || fail "novac emit упал: $(cat "$T/emit.err")"
+# ОТКАЗ ОБЯЗАН ПОКАЗАТЬ ДИАГНОСТИКИ (2026-09-04). novac печатает диагностики
+# JSON-строками в STDOUT, а этот шаг читал только stderr — и на пробе из десяти
+# отказов `E_NOVAC_SUBSET` дым сказал «novac emit упал:» и НИЧЕГО после
+# двоеточия. Отказ без слов — тот же класс, что «молчание читается как успех»:
+# по нему идут искать крах компилятора, а был обычный отказ по подмножеству.
+"$NOVAC" emit "$FILE" > "$T/novac.c" 2>"$T/emit.err" \
+    || fail "novac emit упал: stderr «$(cat "$T/emit.err")»; диагностики из stdout ($(grep -c '"code"' "$T/novac.c") шт.): $(grep -o '"message":"[^"]*"' "$T/novac.c" | head -3 | tr '\n' ' ' | cut -c1-400)"
 # the emission's first include IS the PCH prelude; drop that one line
 sed '0,/^#include "nova_rt\/nova_rt.h"$/{//d}' "$T/novac.c" > "$T/body.c"
 eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -include-pch \"$PCH\" -c \"$T/body.c\" -o \"$T/body.o\"" > "$T/cc.out" 2>&1 \
