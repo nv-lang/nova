@@ -133,6 +133,23 @@ ro err = (300 as u32).try_to_u8()      // Err(RangeError) — не влезло
 ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — отрицательное → unsigned
 ```
 
+**FROM A FLOAT TOO, UNDER THE SAME NAME (D430 amendment R6, 2026-09-04).** A second
+blanket family, `fn[S Floats] S @try_to_<T>()`, covers `f32` and `f64`. The semantics
+are the integers' semantics, and that is the point of the amendment: the question is
+**"did it fit", not "was it exact"**. The fractional part truncates toward zero, then
+the target's range is checked; NaN and the infinities are `Err`.
+
+```nova
+ro ok  = (2.5).try_to_i16()            // Ok(2) — усечено к нулю, влезло
+ro neg = (-2.5).try_to_i16()           // Ok(-2) — к нулю, не вниз
+ro big = (70000.5).try_to_i16()        // Err(RangeError) — не влезло
+ro nan = (0.0 / 0.0).try_to_i16()      // Err(RangeError)
+```
+
+One name, one meaning across the whole family: a method whose promise shifts with the
+kind of its receiver reads as one thing and behaves as two. Donors: Swift's `Int16(f)`,
+C#'s `checked`.
+
 `RangeError` — a unit type ("didn't fit", no payload — the fact itself is
 exhaustive). `as` remains the fast truncating cast, unchanged — `try_to_*`
 does not replace it, but adds a checked alternative alongside.
