@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-atomics-door-selftest.$$"
 mkdir -p "$T/src/atomics" "$T/src/sched"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1. Законный: примитивы внутри двери atomics/ + чистый файл снаружи — зелено.
 cat > "$T/src/atomics/door.nv" <<'EOF'
@@ -47,7 +47,7 @@ python "$G" "$ROOT" "$T/src" >/dev/null 2>&1 && bad "вложенное нару
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-atomics-door ok: 7/7"
+    echo "test-check-novac-atomics-door ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-atomics-door: FAIL ($fails)" >&2

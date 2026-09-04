@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-frontend-shape-selftest.$$"
 mkdir -p "$T"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1–3. Законный: пары «(узел, диагностики)», тип с полем span — зелено,
 # строка ok:, БЕЗ предупреждений.
@@ -65,7 +65,7 @@ python "$G" "$ROOT" "$T/empty" 2>/dev/null | grep -q 'ok: судить нече�
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-frontend-shape ok: 8/8"
+    echo "test-check-novac-frontend-shape ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-frontend-shape: FAIL ($fails)" >&2

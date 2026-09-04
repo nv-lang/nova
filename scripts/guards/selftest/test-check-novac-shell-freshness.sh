@@ -22,8 +22,9 @@ T="${TMPDIR:-/tmp}/novac-shell-freshness-selftest.$$"
 mkdir -p "$T/bins"
 trap 'rm -rf "$T"' 0
 fails=0
-ok()  { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { sh "$G" "$@" > "$T/out" 2> "$T/err"; }
 
 TPL="$ROOT/novac/src/emit_c/shell.tpl.c"
@@ -110,7 +111,7 @@ else
 fi
 
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-shell-freshness ok: 7/7"
+    echo "test-check-novac-shell-freshness ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-shell-freshness: FAIL ($fails)" >&2

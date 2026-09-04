@@ -6,8 +6,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-inv-selftest.$$"
 mkdir -p "$T"
 fails=0
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1. Законный: разделы карты со счётчиками — зелено, со строкой ok:.
 cat > "$T/good.md" <<'EOF'
@@ -41,7 +42,7 @@ python "$G" "$ROOT" "$T/last.md" >/dev/null 2>&1 && bad "последний бе
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-arch-invariants ok: 3/3"
+    echo "test-check-novac-arch-invariants ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-arch-invariants: FAIL ($fails)" >&2

@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-strkeys-selftest.$$"
 mkdir -p "$T"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1. Законный: сканируемой директории нет — зелёный «судить нечего» со строкой ok: (№645).
 python "$G" "$ROOT" "$T/absent" 2>/dev/null | grep -q 'ok:' && ok "нет novac/src — зелено, строка ok:" || bad "нет novac/src — нет строки ok: (№645)"
@@ -116,7 +116,7 @@ python "$G" "$ROOT" "$T/g10" >/dev/null 2>&1 && ok "цепочка с целоч
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-no-string-keys ok: 12/12"
+    echo "test-check-novac-no-string-keys ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-no-string-keys: FAIL ($fails)" >&2
