@@ -25,7 +25,7 @@ bad() { echo "  ПРОВАЛ: $1"; FAIL=$((FAIL + 1)); }
 
 # 1. внутренние свойства
 if bash "$GUARD" --selftest >/dev/null 2>&1; then
-    ok "внутренний --selftest зелёный (шесть свойств)"
+    ok "внутренний --selftest зелёный (семь свойств)"
 else
     bad "внутренний --selftest красный"
 fi
@@ -42,14 +42,27 @@ fi
 #    настоящего ровно одним файлом.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/docs/plans/repro/planted" "$TMP/scripts/guards"
+mkdir -p "$TMP/docs/plans/repro/901-planted" "$TMP/scripts/guards"
+# С НАСТОЯЩЕЙ базой стража и одной уликой ПРАВИЛЬНОГО суффикса дерево обязано
+# быть зелёным. Случай стоит именно с настоящей базой, а не с придуманной: он
+# ловит расхождение базы с деревом, которое иначе заметит только гейт.
 REAL=$(grep -E '^bare_nv=[0-9]+$' "$ROOT_REPO/scripts/guards/repro-evidence-suffix.baseline" | tail -1)
 printf '%s\n' "$REAL" > "$TMP/scripts/guards/repro-evidence-suffix.baseline"
-: > "$TMP/docs/plans/repro/planted/evidence.nv.txt"
+: > "$TMP/docs/plans/repro/901-planted/evidence.nv.txt"
 if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
-    bad "правильный суффикс красит (ложное срабатывание)"
+    ok "правильный суффикс при настоящей базе -- зелено ($REAL)"
 else
-    # тут база 57, а файлов 0 — падение, и оно ТОЖЕ красное по построению
+    bad "правильный суффикс красит (ложное срабатывание) при базе $REAL"
+fi
+
+# И отдельно — что падение ниже базы всё-таки красное. Раньше это свойство
+# проверялось ПОБОЧНО, потому что настоящая база была 55, а дерево пустым; когда
+# база стала нулём, случай молча перестал его проверять. Теперь база задаётся
+# явно, и свойство не зависит от того, чему равна настоящая.
+printf 'bare_nv=5\n' > "$TMP/scripts/guards/repro-evidence-suffix.baseline"
+if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
+    bad "падение ниже базы прошло молча -- храповик остался бы высоким"
+else
     ok "падение ниже базы красное (храповик не оставляют высоким)"
 fi
 printf 'bare_nv=0\n' > "$TMP/scripts/guards/repro-evidence-suffix.baseline"
@@ -58,7 +71,7 @@ if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
 else
     bad "'.nv.txt' при базе 0 покрашен"
 fi
-: > "$TMP/docs/plans/repro/planted/evidence.nv"
+: > "$TMP/docs/plans/repro/901-planted/evidence.nv"
 if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
     bad "подложенная улика '.nv' НЕ покрашена"
 else
