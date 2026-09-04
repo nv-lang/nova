@@ -89,7 +89,7 @@ struct Cli {
     /// checking. Adds two diagnostics on top of the normal checker —
     /// `E_UNDECLARED_TRANSITIVE_EFFECT` (calling a fn/method whose signature
     /// carries effect `E` from a fn that neither declares `E` nor handles it
-    /// via an enclosing `with E = …` block — D62 §Правило 1's default
+    /// via an enclosing `with E = …` block -- D62 §Rule 1's default
     /// warning promoted to a hard error) and `E_EFFECT_ERASED_IN_FN_TYPE`
     /// (assigning/passing/returning a fn VALUE into a narrower fn-type,
     /// silently dropping an effect obligation). No language-semantics
@@ -99,19 +99,19 @@ struct Cli {
     #[arg(long = "strict-effects", global = true)]
     strict_effects: bool,
 
-    /// Включить SMT-верификацию контрактов (`requires`/`ensures`/`invariant`/
-    /// `axiom`) во время компиляции. **ВЫКЛЮЧЕНА ПО УМОЛЧАНИЮ** — решение
-    /// владельца 2026-08-08 (реестр 221.1 №437): пофазный замер показал, что
-    /// `verify_module` съедал **47 % всего времени чекера**, гоняясь на каждом
-    /// модуле, включая модули без единого контракта.
+    /// Enable SMT verification of contracts (`requires`/`ensures`/`invariant`/
+    /// `axiom`) during compilation. **OFF BY DEFAULT** -- decision
+    /// of the owner 2026-08-08 (registry 221.1 #437): a phased measurement showed that
+    /// `verify_module` consumed **47 % of all checker time**, running on every
+    /// module, including modules without a single contract.
     ///
-    /// БЕЗОПАСНОСТЬ НЕ СТРАДАЕТ: результат верификации используется ТОЛЬКО чтобы
-    /// УБРАТЬ рантайм-проверки (доказанные контракты, границы индексов,
-    /// переполнения → zero-cost release). Нет доказательств → ничего не
-    /// элидируется → ВСЁ проверяется на исполнении. Флаг влияет на скорость
-    /// компиляции и на скорость готовой программы, но не на её корректность.
+    /// SAFETY IS NOT AFFECTED: the verification result is used ONLY to
+    /// REMOVE runtime checks (proven contracts, index bounds,
+    /// overflows → zero-cost release). No proof → nothing is
+    /// elided → EVERYTHING is checked at runtime. The flag affects the speed
+    /// of compilation and the speed of the resulting program, not its correctness.
     ///
-    /// Включать для release-сборок, где нужна элизия проверок, и для замеров.
+    /// Enable for release builds that need check elision, and for measurements.
     #[arg(long = "verify", global = true)]
     verify: bool,
 
@@ -173,7 +173,7 @@ enum Cmd {
     ///
     /// Polymorphic positional path: file → single check, directory → recursive walk.
     /// Multiple paths supported. Empty → check current workspace (walks parents
-    /// до nova.toml).
+    /// up to nova.toml).
     Check {
         /// Paths to check (files or directories). If empty, uses workspace root.
         #[arg(num_args = 0..)]
@@ -187,12 +187,12 @@ enum Cmd {
         /// Show extra info per file (timing, expanded warnings).
         #[arg(long, short = 'v', conflicts_with = "quiet")]
         verbose: bool,
-        /// List files that would be checked, without checking. Useful для
-        /// отладки --skip / implicit-excludes.
+        /// List files that would be checked, without checking. Useful for
+        /// debugging --skip / implicit-excludes.
         #[arg(long)]
         list: bool,
         /// Output format. `human` (default) — colored per-file; `short` —
-        /// `file:line:col: msg` для grep. JSON/SARIF/JUnit — sub-plan 36.A.
+        /// `file:line:col: msg` for grep. JSON/SARIF/JUnit -- sub-plan 36.A.
         #[arg(long, default_value = "human", value_parser = ["human", "short"])]
         format: String,
         /// Include std/runtime/ (auto-gen, normally skipped).
@@ -211,11 +211,11 @@ enum Cmd {
         /// Human-readable summary on stdout.
         #[arg(long = "telemetry-cache")]
         telemetry_cache: bool,
-        /// Plan 123.6 (V6): emit telemetry в JSON format (machine-
+        /// Plan 123.6 (V6): emit telemetry in JSON format (machine-
         /// readable). Requires --telemetry-cache.
         #[arg(long = "telemetry-json")]
         telemetry_json: bool,
-        /// Plan 123.6.1 (V6.1): compare current telemetry с baseline
+        /// Plan 123.6.1 (V6.1): compare current telemetry with baseline
         /// JSON file. If methods_affected_pct drops >5% OR
         /// caches_total drops >10% → exit code 1 (CI regression
         /// gate). Requires --telemetry-cache.
@@ -231,26 +231,26 @@ enum Cmd {
         /// --telemetry-baseline.
         #[arg(long = "telemetry-gate-caches-drop", value_name = "F")]
         telemetry_gate_caches_drop: Option<f64>,
-        /// Plan 185: прогнать конвенционные W_*-правила (`nova lint`-реестр)
-        /// внутри check — те же правила поверх ТОГО ЖЕ реестра.
+        /// Plan 185: run convention W_* rules (the `nova lint` registry)
+        /// inside check -- the same rules over the SAME registry.
         #[arg(long = "lint")]
         lint: bool,
     },
-    /// Plan 185: машинные проверки конвенций (W_*-правила реестра).
+    /// Plan 185: machine checks of conventions (registry W_* rules).
     ///
-    /// Прогоняет реестр конвенционных правил (lints.rs::CONV_RULES) по
-    /// .nv-файлам БЕЗ type-check/codegen. Вывод — формат check
-    /// (`файл:строка:кол: warning: текст [W_ID]`). Без `--deny` находки —
-    /// информационные (`warning`, exit 0); с `--deny` — CI/приёмочный
-    /// жёсткий гейт (`error`, exit 1 при любом хите).
+    /// Runs the registry of convention rules (lints.rs::CONV_RULES) over
+    /// .nv files WITHOUT type-check/codegen. Output -- check format
+    /// (`file:line:col: warning: text [W_ID]`). Without `--deny` findings --
+    /// are informational (`warning`, exit 0); with `--deny` -- a CI/acceptance
+    /// hard gate (`error`, exit 1 on any hit).
     Lint {
         /// Paths (files or directories). If empty, uses workspace root.
         #[arg(num_args = 0..)]
         paths: Vec<PathBuf>,
-        /// Прогнать только выбранные правила: `--rule W_X,W_Y`.
+        /// Run only the selected rules: `--rule W_X,W_Y`.
         #[arg(long = "rule", value_name = "W_ID[,W_ID...]")]
         rule: Option<String>,
-        /// Показать реестр правил (id + описание) и выйти.
+        /// Show the rule registry (id + description) and exit.
         #[arg(long = "list-rules")]
         list_rules: bool,
         /// Include std/runtime/ (auto-gen, normally skipped).
@@ -259,15 +259,15 @@ enum Cmd {
         /// Skip files whose path matches this substring (repeatable).
         #[arg(long = "skip", value_name = "PATTERN")]
         skip: Vec<String>,
-        /// Показать только находки и summary (без per-file ok).
+        /// Show only findings and the summary (no per-file ok).
         #[arg(long, short = 'q')]
         quiet: bool,
-        /// Plan 185 Ф.3 ([M-185-lint-deny-gate]): CI/приёмочный гейт (W→E).
-        /// Без значения — денай ВСЕ правила; `--deny=W_X,W_Y` — только
-        /// перечисленные (остальные находки остаются info-`warning`, не
-        /// валят прогон). Денай-находки печатаются как `error` и переводят
-        /// exit-код в 1. Требует `=` для значения (`--deny=W_X`), иначе
-        /// следующий токен ушёл бы в `paths`.
+        /// Plan 185 Ph.3 ([M-185-lint-deny-gate]): CI/acceptance gate (W→E).
+        /// Without a value -- deny ALL rules; `--deny=W_X,W_Y` -- only
+        /// the listed ones (other findings stay info-`warning`, they do not
+        /// fail the run). Denied findings print as `error` and flip
+        /// the exit code to 1. Requires `=` for the value (`--deny=W_X`), otherwise
+        /// the next token would go into `paths`.
         #[arg(
             long = "deny",
             value_name = "W_ID[,W_ID...]",
@@ -283,62 +283,62 @@ enum Cmd {
     Run {
         file: PathBuf,
     },
-    /// Plan 03.1 Ф.5: добавить зависимость в `[dependencies]` nova.toml
-    /// текущего пакета и обновить nova.lock.toml.
+    /// Plan 03.1 Ph.5: add a dependency to `[dependencies]` in nova.toml
+    /// of the current package and update nova.lock.toml.
     Add {
-        /// Имя зависимости (должно совпадать с `[package].name` пакета).
+        /// Dependency name (must match the package's `[package].name`).
         name: String,
-        /// Локальная path-зависимость: путь к каталогу пакета.
+        /// Local path dependency: path to the package directory.
         #[arg(long, value_name = "DIR", conflicts_with = "git")]
         path: Option<String>,
-        /// Plan 204 дофикс №2 (owner correction №3): разрешить `--path`,
-        /// выходящий за границу текущего git-репозитория, записать голым
-        /// `path` в `[dependencies]` (старое поведение). Без флага такой
-        /// `--path` отклоняется с подсказкой (git-форма + nova.override.toml
-        /// [replace]) — path вне репы не clone-safe.
+        /// Plan 204 follow-up fix #2 (owner correction #3): allow a `--path`
+        /// that leaves the current git repository, writing it as a bare
+        /// `path` in `[dependencies]` (old behaviour). Without the flag such a
+        /// `--path` is rejected with a hint (git form + nova.override.toml
+        /// [replace]) -- a path outside the repo is not clone-safe.
         #[arg(long, requires = "path")]
         allow_external_path: bool,
-        /// Git-зависимость: URL репозитория.
+        /// Git dependency: repository URL.
         #[arg(long, value_name = "URL")]
         git: Option<String>,
-        /// Git-пин: тег (только с --git).
+        /// Git pin: tag (only with --git).
         #[arg(long, requires = "git", conflicts_with_all = ["branch", "rev", "version"])]
         tag: Option<String>,
-        /// Git-пин: ветка (только с --git).
+        /// Git pin: branch (only with --git).
         #[arg(long, requires = "git", conflicts_with_all = ["tag", "rev", "version"])]
         branch: Option<String>,
-        /// Git-пин: commit / rev (только с --git).
+        /// Git pin: commit / rev (only with --git).
         #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch", "version"])]
         rev: Option<String>,
-        /// Plan 03.2: git-пин semver-диапазоном (`^1.2`) — только с --git.
+        /// Plan 03.2: git pin by semver range (`^1.2`) -- only with --git.
         #[arg(long, requires = "git", conflicts_with_all = ["tag", "branch", "rev"])]
         version: Option<String>,
     },
-    /// Plan 03.1 Ф.5 / 03.2 Ф.4: пере-резолвить git-зависимости и
-    /// обновить nova.lock.toml. Без аргумента — все git-зависимости.
+    /// Plan 03.1 Ph.5 / 03.2 Ph.4: re-resolve git dependencies and
+    /// update nova.lock.toml. Without an argument -- all git dependencies.
     Update {
-        /// Имя зависимости для обновления (опционально — иначе все git).
+        /// Dependency name to update (optional -- otherwise all git ones).
         name: Option<String>,
-        /// Plan 03.2: зафиксировать точную версию —
+        /// Plan 03.2: pin an exact version --
         /// `nova update --precise foo@1.2.3`.
         #[arg(long, value_name = "NAME@VERSION", conflicts_with = "name")]
         precise: Option<String>,
     },
-    /// Plan 03.4: effect-surface пакета — агрегированные эффекты его
-    /// публичного API («использует Net, Fs»).
+    /// Plan 03.4: effect-surface of a package -- the aggregated effects of its
+    /// public API ("uses Net, Fs").
     Info {
-        /// Путь к пакету (.nv-файл / каталог) либо имя зависимости из
-        /// `[dependencies]` текущего пакета.
+        /// Path to the package (.nv file / directory) or a dependency name from
+        /// `[dependencies]` of the current package.
         target: String,
-        /// Формат вывода.
+        /// Output format.
         #[arg(long, default_value = "human", value_parser = ["human", "json"])]
         format: String,
-        /// Plan 03.4 Ф.2: сравнить effect-surface с базовым
-        /// пакетом/версией (путь либо имя зависимости).
+        /// Plan 03.4 Ph.2: compare the effect-surface with a baseline
+        /// package/version (a path or a dependency name).
         #[arg(long, value_name = "PATH|dep")]
         diff: Option<String>,
-        /// С `--diff`: ненулевой exit-код, если появились новые
-        /// эффекты (CI-gate против supply-chain).
+        /// With `--diff`: a non-zero exit code if new
+        /// effects appeared (a CI gate against supply-chain risk).
         #[arg(long = "fail-on-new", requires = "diff")]
         fail_on_new: bool,
     },
@@ -361,74 +361,74 @@ enum Cmd {
         /// By default only items marked `export` are documented.
         #[arg(long = "include-private")]
         include_private: bool,
-        /// Plan 45 Ф.7: run doc-tests (`nova` fenced code blocks) instead
+        /// Plan 45 Ph.7: run doc-tests (`nova` fenced code blocks) instead
         /// of rendering. Reports pass/fail/skipped per test.
         #[arg(long = "test")]
         run_doc_tests: bool,
-        /// Plan 45 Ф.14: validate doc-content without rendering. Reports
+        /// Plan 45 Ph.14: validate doc-content without rendering. Reports
         /// broken intra-doc-links and missing summaries; exits non-zero
         /// on any issue. Useful in CI.
         #[arg(long = "check")]
         check: bool,
-        /// Plan 45 Ф.15: re-render on file change (mtime poll, 500ms).
+        /// Plan 45 Ph.15: re-render on file change (mtime poll, 500ms).
         /// Ctrl-C to exit. Works with --format and --check.
         #[arg(long = "watch")]
         watch: bool,
-        /// Plan 45 Ф.21.6 / D105: report doc-coverage metrics
+        /// Plan 45 Ph.21.6 / D105: report doc-coverage metrics
         /// (% items with summary, broken down by kind). Useful in CI.
         #[arg(long = "coverage")]
         coverage: bool,
-        /// Plan 45 Ф.33.2: doc-coverage CI gate. If `--coverage-threshold N`
-        /// is given (0-100), exit с non-zero code если % documented items <
-        /// threshold. Useful как CI step: `nova doc <dir> --coverage --coverage-threshold 80`.
+        /// Plan 45 Ph.33.2: doc-coverage CI gate. If `--coverage-threshold N`
+        /// is given (0-100), exit with a non-zero code if % documented items <
+        /// threshold. Useful as a CI step: `nova doc <dir> --coverage --coverage-threshold 80`.
         #[arg(long = "coverage-threshold", value_name = "PERCENT")]
         coverage_threshold: Option<u32>,
-        /// Plan 45 Ф.24.13: number of parallel parse jobs for workspace mode.
+        /// Plan 45 Ph.24.13: number of parallel parse jobs for workspace mode.
         /// Default 0 = auto (uses all logical CPUs). Ignored for single-file.
         #[arg(long = "jobs", default_value = "0")]
         jobs: usize,
-        /// Plan 45 Ф.24.10: diff two JSON doc outputs for semver change detection.
+        /// Plan 45 Ph.24.10: diff two JSON doc outputs for semver change detection.
         /// Usage: nova doc --diff old.json new.json
         /// Exit code: 0 = no breaking changes, 1 = major, 2 = minor, 3 = patch.
         #[arg(long = "diff", num_args = 2, value_names = ["OLD", "NEW"])]
         diff: Option<Vec<PathBuf>>,
-        /// Plan 45 Ф.24.9: scan workspace directory for call-sites and attach
+        /// Plan 45 Ph.24.9: scan workspace directory for call-sites and attach
         /// top-3 usage examples to each documented fn. Accepts a path to the
         /// workspace root (all *.nv files scanned recursively).
         #[arg(long = "scrape-examples", value_name = "WORKSPACE")]
         scrape_examples: Option<PathBuf>,
-        /// Plan 45 Ф.25.1: treat diagnostic warnings as errors. With
+        /// Plan 45 Ph.25.1: treat diagnostic warnings as errors. With
         /// `--strict`, the command exits non-zero if any warnings were
         /// produced (malformed doc-attrs, unknown doc-test modifiers,
         /// ambiguous intra-doc-links). Useful in CI to enforce clean docs.
         #[arg(long = "strict")]
         strict: bool,
-        /// Plan 45 Ф.25.4: mutation testing for contracts. Generates
+        /// Plan 45 Ph.25.4: mutation testing for contracts. Generates
         /// mutants (`>` ↔ `>=`, `==` ↔ `!=`, drop `requires`) for each
         /// function with contracts; reports survived mutants (under-tested
-        /// boundaries). Nova-unique — никто из rustdoc/godoc/typedoc не
-        /// делает mutation testing для specifications.
+        /// boundaries). Nova-unique -- none of rustdoc/godoc/typedoc
+        /// does mutation testing for specifications.
         ///
-        /// Default — text-based heuristic (быстро, ~1ms per mutant).
+        /// Default -- a text-based heuristic (fast, ~1ms per mutant).
         /// `--real-exec` — actually run mutated doc-tests (true positive
         /// guarantee, ~100ms per mutant per test).
         #[arg(long = "mutate-contracts")]
         mutate_contracts: bool,
-        /// Plan 45 Ф.28.2: enable real-exec mode для `--mutate-contracts`.
-        /// Substitutes mutated_expr в source и actually runs doc-tests
-        /// через test_runner. Slower (~100ms per mutant per test) но
-        /// gives true positive guarantee. Без флага — text-based heuristic.
+        /// Plan 45 Ph.28.2: enable real-exec mode for `--mutate-contracts`.
+        /// Substitutes mutated_expr in the source and actually runs doc-tests
+        /// through test_runner. Slower (~100ms per mutant per test) but
+        /// gives a true positive guarantee. Without the flag -- the text heuristic.
         #[arg(long = "real-exec", requires = "mutate_contracts")]
         real_exec: bool,
-        /// Plan 45 Ф.31.4: write multi-page HTML output to directory.
+        /// Plan 45 Ph.31.4: write multi-page HTML output to directory.
         /// Each module → separate file (`<module.path>.html`). `index.html`
-        /// — workspace overview. Only valid с `--format html`.
+        /// -- workspace overview. Only valid with `--format html`.
         #[arg(long = "output-dir", value_name = "DIR")]
         output_dir: Option<PathBuf>,
     },
-    /// Plan 45 Ф.32.1 — query JSON doc output via DSL.
+    /// Plan 45 Ph.32.1 -- query JSON doc output via DSL.
     ///
-    /// Reads `nova doc --format json` output, filters items по query DSL,
+    /// Reads `nova doc --format json` output, filters items by a query DSL,
     /// prints matched results as compact JSON.
     ///
     /// Query syntax: comma-separated key=value pairs. Supported keys:
@@ -440,18 +440,18 @@ enum Cmd {
     ///   nova doc-query out.json "name=add,has-contracts=true"
     ///   nova doc-query out.json "module-prefix=std,effect=Fs"
     ///
-    /// Foundation для future MCP server (Ф.32.2).
+    /// Foundation for a future MCP server (Ph.32.2).
     DocQuery {
         /// Path to JSON file produced by `nova doc --format json`.
         json_file: PathBuf,
-        /// Query DSL string (see command help для syntax).
+        /// Query DSL string (see command help for the syntax).
         #[arg(default_value = "")]
         query: String,
     },
-    /// Plan 45 Ф.32.3 — MCP server (JSON-RPC over stdio).
+    /// Plan 45 Ph.32.3 -- MCP server (JSON-RPC over stdio).
     ///
     /// Reads line-delimited JSON-RPC requests from stdin, writes responses
-    /// to stdout. Compatible с MCP clients (Claude Code, MCP Inspector).
+    /// to stdout. Compatible with MCP clients (Claude Code, MCP Inspector).
     ///
     /// Tools exposed:
     ///   - query_items(query) — search via DSL
@@ -463,10 +463,10 @@ enum Cmd {
     ///
     /// MCP client connects, sends `initialize`, then `tools/list`/`tools/call`.
     DocMcp {
-        /// Path to .nv source или .json (pre-generated `nova doc --format json`).
+        /// Path to .nv source or .json (pre-generated `nova doc --format json`).
         file: PathBuf,
-        /// Plan 45 Ф.34.1: run as HTTP server на 127.0.0.1:PORT (POST /mcp).
-        /// По умолчанию — stdio JSON-RPC loop.
+        /// Plan 45 Ph.34.1: run as HTTP server on 127.0.0.1:PORT (POST /mcp).
+        /// By default -- a stdio JSON-RPC loop.
         #[arg(long = "port", value_name = "PORT")]
         port: Option<u16>,
     },
@@ -499,19 +499,18 @@ enum Cmd {
         /// Keep .c / .exe / .obj build artifacts after the build.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
-        /// Plan 48 Ф.7.6: max monomorphization-instantiation depth (guards
+        /// Plan 48 Ph.7.6: max monomorphization-instantiation depth (guards
         /// against polymorphic recursion). Default 500 unless overridden
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
         mono_depth: Option<usize>,
-        /// Plan 194 A2.1 (замена Plan 140 Ф.2 / D24 amend `enforce|off`):
-        /// contract build-policy. `checked` — ничего не элидируется кроме
-        /// уже доказанного (default для `--mode dev`). `optimized` (default
-        /// для `--mode release`) / `verified` — в этом атоме поведенчески
-        /// для `--mode release`) сейчас поведенчески идентичен `checked`
-        /// (Z3-driven различия — атомы A2.2+). Legacy `off` и `verified` убраны
-        /// — недоказанные контракты ВСЕГДА проверяются в runtime под обоими
-        /// режимами (статическая верификация — per-fn `#verify`, не build-режим).
+        /// Plan 194 A2.1 (replacing Plan 140 Ph.2 / D24 amend `enforce|off`):
+        /// contract build-policy. `checked` -- nothing is elided except what is
+        /// already proven (default for `--mode dev`). `optimized` (default for
+        /// `--mode release`) is currently behaviourally identical to `checked`;
+        /// the Z3-driven differences are atoms A2.2+. Legacy `off` and `verified`
+        /// are removed -- unproven contracts are ALWAYS checked at runtime under
+        /// both modes (static verification is per-fn `#verify`, not a build mode).
         #[arg(long = "contracts", value_parser = ["checked", "optimized"])]
         contracts: Option<String>,
     },
@@ -590,7 +589,7 @@ enum Cmd {
         /// Example: `nova test std/ --skip std/runtime/`.
         #[arg(long = "skip", value_name = "PATTERN")]
         skip: Vec<String>,
-        /// Plan 48 Ф.7.6: max monomorphization-instantiation depth (guards
+        /// Plan 48 Ph.7.6: max monomorphization-instantiation depth (guards
         /// against polymorphic recursion). Default 500 unless overridden
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
@@ -667,7 +666,7 @@ enum Cmd {
         /// Reserved for Plan 27 — currently accepted but has no effect.
         #[arg(long, value_parser = ["boehm", "malloc"])]
         gc: Option<String>,
-        /// Plan 48 Ф.7.6: max monomorphization-instantiation depth (guards
+        /// Plan 48 Ph.7.6: max monomorphization-instantiation depth (guards
         /// against polymorphic recursion). Default 500 unless overridden
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
@@ -680,7 +679,7 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
-    /// Plan 33.3 Ф.13: Contract inspection commands.
+    /// Plan 33.3 Ph.13: Contract inspection commands.
     ///
     /// Subcommands: list, verify, suggest, counterexample.
     /// All output JSON (AI-friendly schema). See docs/contracts-diag-schema.json.
@@ -689,7 +688,7 @@ enum Cmd {
     /// Plan 57: Benchmark commands.
     ///
     /// Subcommands: run, diff, gate.
-    /// Runs `bench "..." { measure { ... } }` declarations с Criterion-style
+    /// Runs `bench "..." { measure { ... } }` declarations with Criterion-style
     /// adaptive sampling, statistical analysis (median/MAD/Welch's t-test),
     /// JSON v1 schema output, reproducibility metadata.
     #[command(subcommand)]
@@ -732,7 +731,7 @@ enum Cmd {
         format: String,
     },
 
-    /// Plan 144.1 / Ф.1: compute the per-type GC pointer-offset bitmap for every
+    /// Plan 144.1 / Ph.1: compute the per-type GC pointer-offset bitmap for every
     /// named type (record / sum / named-tuple / newtype) plus the built-in
     /// `str` value type, and report it. For each type the report lists the
     /// byte-offsets of GC-managed pointer slots in the emitted C layout; sum
@@ -788,8 +787,8 @@ enum DaemonCmd {
 /// Plan 57: `nova bench <subcommand>`.
 #[derive(Subcommand)]
 enum BenchCmd {
-    /// Run benchmarks in a .nv file. Compiles в release-mode, запускает,
-    /// собирает samples, выводит таблицу + опционально JSON/CSV/markdown.
+    /// Run benchmarks in a .nv file. Compiles in release-mode, runs,
+    /// collects samples, prints a table + optionally JSON/CSV/markdown.
     Run {
         /// Path to a .nv file containing `bench "..." { ... }` declarations.
         file: PathBuf,
@@ -809,8 +808,8 @@ enum BenchCmd {
         #[arg(long, default_value = "boehm")]
         gc: String,
         /// Build mode (release|dev). Release is preferred for bench
-        /// (5-20× faster + stable timings); dev is fallback когда
-        /// release-mode требует lld (linux LTO). Default: release.
+        /// (5-20× faster + stable timings); dev is fallback when
+        /// release-mode requires lld (linux LTO). Default: release.
         #[arg(long, default_value = "release")]
         mode: String,
         /// Toolchain (auto|clang|msvc|gcc).
@@ -840,12 +839,12 @@ enum BenchCmd {
         /// Write CSV result to file.
         #[arg(long = "out-csv")]
         out_csv: Option<PathBuf>,
-        /// Write markdown result to file (для PR comment).
+        /// Write markdown result to file (for PR comment).
         #[arg(long = "out-md")]
         out_md: Option<PathBuf>,
         /// Plan 57.B.2: Criterion-compatible JSON output directory.
         /// Layout: `<dir>/<safe-name>/new/{estimates,sample,benchmark}.json`.
-        /// Compatible с cargo-criterion --message-format=criterion.
+        /// Compatible with cargo-criterion --message-format=criterion.
         #[arg(long = "out-criterion")]
         out_criterion: Option<PathBuf>,
         /// Plan 57.A.5: profile mode (cpu|heap|gc) + output path.
@@ -868,7 +867,7 @@ enum BenchCmd {
         #[arg(long, default_value = "terminal")]
         format: String,
         /// Plan 57.F.2: AI regression interpretation. Opt-in — sends
-        /// diff + git context к LLM (NOVA_AI_API_KEY required).
+        /// diff + git context to LLM (NOVA_AI_API_KEY required).
         #[arg(long)]
         explain: bool,
         /// Override AI config path (default: ~/.nova-ai.toml).
@@ -877,14 +876,14 @@ enum BenchCmd {
         /// Override max tokens (default: 4000).
         #[arg(long = "ai-max-tokens")]
         ai_max_tokens: Option<u32>,
-        /// AI dry-run: print would-be request body без API call.
+        /// AI dry-run: print would-be request body without API call.
         #[arg(long = "ai-dry-run")]
         ai_dry_run: bool,
-        /// Baseline git SHA (для diff context). Auto-detected from
-        /// JSON metadata если возможно.
+        /// Baseline git SHA (for diff context). Auto-detected from
+        /// JSON metadata if possible.
         #[arg(long = "baseline-sha")]
         baseline_sha: Option<String>,
-        /// New git SHA (для diff context). Auto-detected from JSON.
+        /// New git SHA (for diff context). Auto-detected from JSON.
         #[arg(long = "new-sha")]
         new_sha: Option<String>,
     },
@@ -898,7 +897,7 @@ enum BenchCmd {
         #[arg(long)]
         config: Option<PathBuf>,
         /// Path to .nova-bench-noise.json (Plan 57.A.3 auto noise-floor).
-        /// Default: ./.nova-bench-noise.json если есть.
+        /// Default: ./.nova-bench-noise.json if present.
         #[arg(long = "noise")]
         noise: Option<PathBuf>,
     },
@@ -923,32 +922,32 @@ enum BenchCmd {
     MembwCheck,
     /// Plan 57.H.2: Hyperfine-style cross-binary timing — wall-clock
     /// measurement of arbitrary external commands. Output schema-compatible
-    /// с `nova bench diff` (per-binary entry в JSON v1).
+    /// with `nova bench diff` (per-binary entry in JSON v1).
     ///
     /// Example:
     ///   nova bench hyperfine \
     ///     "old=./nova-old build large.nv" \
     ///     "new=./nova-new build large.nv" \
     ///     --samples 10 --warmup 2 --out result.json
-    /// Plan 57.H.3: Run binary под Valgrind Callgrind, deterministic
-    /// CPU instructions count (cross-platform fallback к perf_event_open
-    /// Linux-only). Works на macOS + Linux with valgrind installed.
+    /// Plan 57.H.3: Run binary under Valgrind Callgrind, deterministic
+    /// CPU instructions count (cross-platform fallback to perf_event_open
+    /// Linux-only). Works on macOS + Linux with valgrind installed.
     ///
     /// Example:
     ///   nova bench callgrind ./my-bench --gc malloc --cache-sim
     Callgrind {
         /// Executable path.
         binary: PathBuf,
-        /// Args для executable.
+        /// Args for executable.
         #[arg(num_args = 0..)]
         args: Vec<String>,
         /// Enable cache simulation (I1/D1/LL miss counts). Slower.
         #[arg(long = "cache-sim")]
         cache_sim: bool,
-        /// Optional cwd для command.
+        /// Optional cwd for command.
         #[arg(long = "workdir")]
         workdir: Option<PathBuf>,
-        /// JSON output path для CallgrindResult.
+        /// JSON output path for CallgrindResult.
         #[arg(long = "out")]
         out: Option<PathBuf>,
     },
@@ -956,7 +955,7 @@ enum BenchCmd {
     #[command(name = "callgrind-check")]
     CallgrindCheck,
     Hyperfine {
-        /// Specs: each "name=binary args..." или просто "binary args...".
+        /// Specs: each "name=binary args..." or just "binary args...".
         #[arg(required = true, num_args = 1..)]
         specs: Vec<String>,
         /// Warmup runs (discarded). Default 3.
@@ -968,7 +967,7 @@ enum BenchCmd {
         /// Per-command timeout seconds. Default 300 (5 min).
         #[arg(long = "timeout", default_value_t = 300)]
         timeout_secs: u64,
-        /// Optional cwd для commands.
+        /// Optional cwd for commands.
         #[arg(long = "workdir")]
         workdir: Option<PathBuf>,
         /// JSON output path (default: print to stdout).
@@ -977,10 +976,10 @@ enum BenchCmd {
     },
     /// Plan 57.D.4: Print recommended history branch name based on
     /// NOVA_BENCH_RUNNER_ID env (multi-runner CI matrix support).
-    /// Returns `bench-history` если env не set, иначе `bench-history-<id>`.
+    /// Returns `bench-history` if env is not set, otherwise `bench-history-<id>`.
     #[command(name = "runner-branch")]
     RunnerBranch,
-    /// Plan 57.E.5: detect changepoints (anomalies) в historical median
+    /// Plan 57.E.5: detect changepoints (anomalies) in historical median
     /// time-series per bench via PELT algorithm. Identifies regimes
     /// where perf significantly shifted (≥5% delta).
     #[command(name = "history-anomalies")]
@@ -996,10 +995,10 @@ enum BenchCmd {
     /// Subcommands: list (configured remotes), ping (health), run.
     #[command(subcommand)]
     Remote(BenchRemoteCmd),
-    /// Plan 57.C.8: Measure per-pass compile time для corpus file(s).
-    /// Wraps nova build с NOVA_PERF_TIMER=1; parses __PERF__ markers.
+    /// Plan 57.C.8: Measure per-pass compile time for corpus file(s).
+    /// Wraps nova build with NOVA_PERF_TIMER=1; parses __PERF__ markers.
     Corpus {
-        /// .nv file or directory с .nv files.
+        /// .nv file or directory with .nv files.
         path: PathBuf,
         /// JSON output (default: terminal table).
         #[arg(long)]
@@ -1008,7 +1007,7 @@ enum BenchCmd {
         /// Generates echarts stacked bar chart per-file + detail table.
         #[arg(long)]
         html: Option<PathBuf>,
-        /// Custom echarts URL (для offline режима).
+        /// Custom echarts URL (for offline mode).
         #[arg(long = "echarts-url",
               default_value = "https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js")]
         echarts_url: String,
@@ -1025,7 +1024,7 @@ enum BenchCmd {
     /// Plan 123.6.2.1 (V6.2.1): Real wall-clock measurement of field-cache
     /// runtime impact. Builds each file twice (NOVA_FIELD_CACHE=1 vs =0),
     /// runs N samples per variant, reports median, speedup, and the V6.2
-    /// static cycle estimate side-by-side для cross-validation.
+    /// static cycle estimate side-by-side for cross-validation.
     ///
     /// Example:
     ///   nova bench field-cache nova_tests/plan123_6_2_1/ \
@@ -1048,7 +1047,7 @@ enum BenchCmd {
         /// Toolchain (auto|clang|msvc|gcc).
         #[arg(long, default_value = "auto")]
         toolchain: String,
-        /// GC backend (malloc|boehm). Reserved для future `nova build --gc`.
+        /// GC backend (malloc|boehm). Reserved for future `nova build --gc`.
         #[arg(long, default_value = "boehm")]
         gc: String,
         /// Build timeout in seconds (per variant).
@@ -1063,7 +1062,7 @@ enum BenchCmd {
         /// Baseline JSON for regression gate (compares geomean_speedup_pct).
         #[arg(long)]
         baseline: Option<PathBuf>,
-        /// Regression threshold в percentage points. If
+        /// Regression threshold in percentage points. If
         /// `baseline_geomean − new_geomean > threshold`, exit 1.
         /// Default 2.0 pp.
         #[arg(long = "gate-regression-pp")]
@@ -1097,8 +1096,8 @@ enum BenchCmd {
         #[arg(long, default_value = "auto")]
         branch: String,
     },
-    /// Plan 57.C.6: squash older history entries по retention policy.
-    /// Yearly squash recommended (см. docs/dev/perf-conventions.md).
+    /// Plan 57.C.6: squash older history entries per retention policy.
+    /// Yearly squash recommended (see docs/dev/perf-conventions.md).
     #[command(name = "history-squash")]
     HistorySquash {
         /// Squash entries older than this date (YYYY-MM-DD UTC).
@@ -1147,24 +1146,24 @@ enum BenchRemoteCmd {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// SSH health check для one remote.
+    /// SSH health check for one remote.
     Ping {
         /// Remote name.
         name: String,
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Parallel bench run на N remotes; gather results в gather-into dir.
+    /// Parallel bench run on N remotes; gather results into gather-into dir.
     Run {
         /// Bench .nv file path (relative to repo root on remote).
         bench: PathBuf,
         /// Comma-separated remote names (or "all").
         #[arg(long, default_value = "all")]
         remotes: String,
-        /// Output directory для per-remote JSON results.
+        /// Output directory for per-remote JSON results.
         #[arg(long = "gather-into", default_value = "remote-results")]
         gather_into: PathBuf,
-        /// Optional git SHA to checkout перед бенчем.
+        /// Optional git SHA to checkout before the bench.
         #[arg(long)]
         sha: Option<String>,
         #[arg(long)]
@@ -1172,7 +1171,7 @@ enum BenchRemoteCmd {
     },
 }
 
-/// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
+/// Plan 33.3 Ph.13: `nova contracts <subcommand>`.
 #[derive(Subcommand)]
 enum ContractsCmd {
     /// List all contracts in a Nova source file.

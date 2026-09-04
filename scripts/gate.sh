@@ -991,6 +991,16 @@ guard --deadline 120 "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROO
 step push "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
 guard "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
 
+# Реестр 221.1 №823: язык ПОСТАВЛЯЕМОГО вывода CLI. Стоит здесь, а не выше,
+# по той же причине, что и соседи: страж судит то, что бинарь ПЕЧАТАЕТ, и
+# выше `cargo build --release` он мерил бы протухший бинарь — ровно урок,
+# записанный двадцатью строками выше про check-examples-strict-effects.
+# Бинаря нет — страж КРАСНЕЕТ, а не молчит (урок №813 из соседнего абзаца:
+# молчание не успех).
+step push "cli-language (кириллица в --help, в JSON-схеме и в текстах ошибок CLI)"
+guard "$ROOT/scripts/guards/check-cli-output-language.sh" "$ROOT" \
+    || fail "рост кириллицы в поставляемом выводе CLI (№823)"
+
 step push "mega-CU (spec_tests/conformance, one CU)"
 if body_runs; then
     MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"

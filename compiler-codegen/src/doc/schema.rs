@@ -18,7 +18,7 @@ const SCHEMA_V1: &str = r##"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nova-lang.org/schemas/nova-doc-v1.json",
   "title": "Nova doc output (D107 schema v1.0.0)",
-  "description": "Output produced by `nova doc <file> --format json`. Stable v1.0.0 (Plan 45 Ф.28.3). Deterministic byte-for-byte; keys alphabetically sorted; arrays sorted by stable id. Soak period (Ф.24.5–Ф.28) прошёл без breaking drift; promoted to stable. Backward-compatible additions разрешены без major bump; breaking changes — major bump format_version.",
+  "description": "Output produced by `nova doc <file> --format json`. Stable v1.0.0 (Plan 45 Ph.28.3). Deterministic byte-for-byte; keys alphabetically sorted; arrays sorted by stable id. The soak period (Ph.24.5-Ph.28) passed with no breaking drift; promoted to stable. Backward-compatible additions are allowed without a major bump; a breaking change bumps the major of format_version.",
   "type": "object",
   "required": ["format_version", "nova_version", "doc_tests", "links", "modules", "items"],
   "additionalProperties": false,
@@ -26,7 +26,7 @@ const SCHEMA_V1: &str = r##"{
     "format_version": {
       "type": "integer",
       "const": 1,
-      "description": "Schema version. Stable v1.0.0 (Plan 45 Ф.28.3). Bump major on breaking change; minor additions allowed without bump."
+      "description": "Schema version. Stable v1.0.0 (Plan 45 Ph.28.3). Bump major on breaking change; minor additions allowed without bump."
     },
     "generated_at": {
       "type": "string",
@@ -38,7 +38,7 @@ const SCHEMA_V1: &str = r##"{
     },
     "source_root": {
       "type": "string",
-      "description": "Plan 45 Ф.22.3 / D107: absolute path to the documented source root (file's parent for single-file, workspace dir for `nova doc <dir>`). Omitted when caller did not set it (e.g., library API without path context)."
+      "description": "Plan 45 Ph.22.3 / D107: absolute path to the documented source root (file's parent for single-file, workspace dir for `nova doc <dir>`). Omitted when caller did not set it (e.g., library API without path context)."
     },
     "doc_tests": {
       "type": "array",
@@ -62,7 +62,7 @@ const SCHEMA_V1: &str = r##"{
     },
     "warnings": {
       "type": "array",
-      "description": "Plan 45 Ф.25.1: diagnostic warnings (malformed doc-attrs, unknown doc-test modifiers, ambiguous intra-doc links). Non-fatal — author should review. `nova doc --strict` returns exit 1 if non-empty. Sorted by (item_id, rule, message), deduplicated.",
+      "description": "Plan 45 Ph.25.1: diagnostic warnings (malformed doc-attrs, unknown doc-test modifiers, ambiguous intra-doc links). Non-fatal — author should review. `nova doc --strict` returns exit 1 if non-empty. Sorted by (item_id, rule, message), deduplicated.",
       "items": { "$ref": "#/$defs/DocWarning" }
     }
   },
@@ -88,11 +88,11 @@ const SCHEMA_V1: &str = r##"{
       "type": "object",
       "required": ["id", "kind", "module_path", "name", "source"],
       "properties": {
-        "aliases": { "type": "array", "items": { "type": "string" }, "description": "Plan 45 Ф.3 / D105: search-aliases from `#doc_alias(...)`. Sorted + deduplicated." },
+        "aliases": { "type": "array", "items": { "type": "string" }, "description": "Plan 45 Ph.3 / D105: search-aliases from `#doc_alias(...)`. Sorted + deduplicated." },
         "deprecation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Deprecation" }] },
         "description": { "type": ["string", "null"] },
         "doc_attrs": { "type": "array", "items": { "type": "object" }, "description": "Reserved for unrecognized doc-attrs (forward-compat)." },
-        "doc_test_handlers": { "type": ["string", "null"], "description": "Plan 45 Ф.3 / D105: `#doc(test_handlers=\"path\")` — handler-path for doc-tests." },
+        "doc_test_handlers": { "type": ["string", "null"], "description": "Plan 45 Ph.3 / D105: `#doc(test_handlers=\"path\")` — handler-path for doc-tests." },
         "id": { "type": "string", "description": "Stable id: `<module_path>::<name>` or `<module_path>::<Type>.<method>`." },
         "kind": { "type": "string", "enum": ["fn", "type", "const", "effect", "protocol"] },
         "module_path": { "type": "string" },
@@ -255,7 +255,7 @@ const SCHEMA_V1: &str = r##"{
       "type": "object",
       "required": ["item_id", "message", "rule"],
       "additionalProperties": false,
-      "description": "Plan 45 Ф.25.1: non-fatal diagnostic from doc-tooling. Author should review; tools may treat as error via `--strict`.",
+      "description": "Plan 45 Ph.25.1: non-fatal diagnostic from doc-tooling. Author should review; tools may treat as error via `--strict`.",
       "properties": {
         "rule": { "type": "string", "description": "Machine-readable rule name (e.g., `malformed-stability-attr`, `unknown-doc-attr`, `unknown-doctest-modifier`, `ambiguous-link`)." },
         "item_id": { "type": "string", "description": "Item id where the issue was found, or `<module:path>` for module-level." },
@@ -292,8 +292,8 @@ const SCHEMA_V1: &str = r##"{
       "required": ["tier"],
       "additionalProperties": false,
       "properties": {
-        "feature": { "type": ["string", "null"], "description": "Plan 45 Ф.22.2 / D105: для `#unstable(feature = \"name\")` — имя feature-флага. null для stable/experimental." },
-        "note": { "type": ["string", "null"], "description": "Plan 45 Ф.22.2 / D105: для `#experimental(note = \"...\")` — объяснение, что может измениться. null для stable/unstable." },
+        "feature": { "type": ["string", "null"], "description": "Plan 45 Ph.22.2 / D105: for `#unstable(feature = \"name\")` -- the name of the feature flag. null for stable/experimental." },
+        "note": { "type": ["string", "null"], "description": "Plan 45 Ph.22.2 / D105: for `#experimental(note = \"...\")` -- an explanation of what may change. null for stable/unstable." },
         "since": { "type": ["string", "null"] },
         "tier": { "type": "string", "enum": ["stable", "unstable", "experimental"] }
       }
@@ -305,8 +305,8 @@ const SCHEMA_V1: &str = r##"{
       "properties": {
         "file_id": { "type": "integer" },
         "line": { "type": "integer", "minimum": 1 },
-        "peer_file": { "type": ["string", "null"], "description": "Plan 45 Ф.23.11: peer-file attribution для folder-modules (file name внутри module-folder). null для file-modules." },
-        "url": { "type": "string", "description": "Plan 45 Ф.25.3: web URL к источнику (e.g., GitHub/GitLab/Codeberg). Опционально — populated если NOVA_DOC_SOURCE_URL_TEMPLATE env var задан. Template: `https://.../{path}#L{line}`." }
+        "peer_file": { "type": ["string", "null"], "description": "Plan 45 Ph.23.11: peer-file attribution for folder-modules (the file name inside the module folder). null for file-modules." },
+        "url": { "type": "string", "description": "Plan 45 Ph.25.3: web URL of the source (e.g., GitHub/GitLab/Codeberg). Optional -- populated when the NOVA_DOC_SOURCE_URL_TEMPLATE env var is set. Template: `https://.../{path}#L{line}`." }
       }
     }
   }
