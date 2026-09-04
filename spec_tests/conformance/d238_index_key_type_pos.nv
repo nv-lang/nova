@@ -8,13 +8,19 @@
 // Read together they say something neither says alone: the checker draws the line
 // between `FnRow` and `TyId`, rather than merely saying SOMETHING about brackets.
 //
-// WHAT IS DELIBERATELY ABSENT, so the gap reads as a decision. There is no write
-// case here. A user `mut @index` write does not survive codegen today — registry
-// #628, the other half of plan 281 F.1: the emitter's dispatch branch builds its
-// lookup key by string-trimming the mangled C type name while the overload table
-// is keyed by the bare template name, so the lookup never hits and the write falls
-// out as raw pointer arithmetic. Adding a write test here would redden the corpus
-// for a defect this fixture is not about. It arrives with #628, in the same phase.
+// WHY THERE IS NO WRITE CASE HERE, and the reason CHANGED during the phase — the
+// first version of this header said a `mut @index` write does not survive codegen,
+// which was true when written and is not true now. #628 landed in the same wave: the
+// emitter no longer builds its lookup key by string-trimming the mangled C type name,
+// and writes through a user `@index` compile and run. Leaving that sentence in place
+// would have made this fixture assert a defect that had been fixed two commits
+// earlier — a stale reason is worse than no reason, because it is quoted.
+//
+// The write case still lives elsewhere rather than here, and now for an ordinary
+// reason: `standalone/d628_generic_index_both_sides.nv` exercises read AND write on a
+// GENERIC receiver, which is where the codegen half actually failed. This file is
+// about the CHECKER accepting the right key and refusing the wrong ones; adding a
+// write here would test the other half in the wrong place.
 //
 // Spec: spec/decisions/03-syntax.md D238. Единица: folder-module `spec_tests.conformance`.
 module spec_tests.conformance
