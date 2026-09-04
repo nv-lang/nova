@@ -63,6 +63,14 @@ def main():
         print("  места и схемы; машинный читатель её не разберёт.", file=sys.stderr)
         return 1
 
+    if not files:
+        # МИШЕНЬ УЕХАЛА, А НЕ «НАРУШЕНИЙ НЕТ» (класс №911, страж
+        # check-guard-empty-root): каталог есть, подсудных файлов ноль —
+        # печатать здесь правдоподобный счёт значит выдавать пустоту за
+        # проверенное. Формулировка донорская, от check-novac-file-size.py.
+        print(f"{NAME} ok: судить нечего (0 .nv-файлов в {src})")
+        return 0
+
     print(f"{NAME} ok: голых panic( в novac/src нет (дверь — ice() в diag)")
     return 0
 

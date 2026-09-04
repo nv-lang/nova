@@ -112,6 +112,14 @@ def main():
               "здесь — константа/дверь.", file=sys.stderr)
         return 1
 
+    if not judged:
+        # МИШЕНЬ УЕХАЛА, А НЕ «НАРУШЕНИЙ НЕТ» (класс №911, страж
+        # check-guard-empty-root): каталог есть, подсудных файлов ноль —
+        # печатать здесь правдоподобный счёт значит выдавать пустоту за
+        # проверенное. Формулировка донорская, от check-novac-file-size.py.
+        print(f"{NAME} ok: судить нечего (0 .nv-файлов в {src})")
+        return 0
+
     print(f"{NAME} ok: файлов .nv: {len(judged)}, имён в списке: {len(names)} "
           f"(из builtins.nv: {len(from_builtins)} + прелюдия), хардкод-имён вне builtins.nv: 0")
     return 0
