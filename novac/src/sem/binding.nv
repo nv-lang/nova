@@ -172,6 +172,7 @@ export type BindFault enum
     | FaultPositionalAfterNamed(int) /// argument index: a positional argument stands after a named one (D102 call-rule 3)
     | FaultTooManyArgs(int) /// how many arguments were written; the declaration takes fewer
     | FaultPositionalDefaulted(int) /// slot: a parameter with a default was passed positionally (D102 call-rule 1)
+    | FaultNamedRequired(int) /// slot: a parameter WITHOUT a default was passed by name (D102 call-rule 2, as amended 2026-09-04)
     | FaultUnknownName(int) /// argument index: no parameter of this declaration carries that name
     | FaultDuplicate(int) /// slot: bound twice — positionally and by name, or twice by name (D102 call-rule 5)
     | FaultMissing(int) /// slot: a parameter without a default that nobody passed (D102 call-rule 6)
@@ -284,10 +285,23 @@ export fn bind_fault(params []ParamDef, off int, cnt int, args []ArgSpec) -> Bin
         } else {
             // Bound: by position or by name, and which decides the next rule.
         }
-        if s < run && !slot_is_required(params, off, s) {
-            return BindFault.FaultPositionalDefaulted(s)
+        // THE PAIR IS SYMMETRIC since D102's edit of 2026-09-04 (owner): a
+        // REQUIRED parameter binds positionally, a DEFAULTED one binds by
+        // name, and the position of an argument tells the reader which it is.
+        // `s < run` means this slot was filled POSITIONALLY -- so the two arms
+        // below are the two halves of one rule, not two rules.
+        if s < run {
+            if !slot_is_required(params, off, s) {
+                return BindFault.FaultPositionalDefaulted(s)
+            } else {
+                // Required and positional: exactly where it belongs.
+            }
         } else {
-            // Either named, or required — both legal.
+            if slot_is_required(params, off, s) {
+                return BindFault.FaultNamedRequired(s)
+            } else {
+                // Defaulted and named: exactly where it belongs.
+            }
         }
         bound += 1
     }

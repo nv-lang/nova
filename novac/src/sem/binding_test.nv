@@ -46,6 +46,7 @@ fn fault_is(f BindFault, tag str, at int) -> bool {
         FaultPositionalAfterNamed(i) => tag == "after-named" && i == at
         FaultTooManyArgs(n) => tag == "too-many" && n == at
         FaultPositionalDefaulted(s) => tag == "positional-defaulted" && s == at
+        FaultNamedRequired(s) => tag == "named-required" && s == at
         FaultUnknownName(i) => tag == "unknown-name" && i == at
         FaultDuplicate(s) => tag == "duplicate" && s == at
         FaultMissing(s) => tag == "missing" && s == at
@@ -166,4 +167,29 @@ test "slot_binding_in: the slot takes the argument standing where the parameter 
     assert(slot_binding_in(ctx.tys, want, got, 1) == i)
     assert(!is_ty(slot_binding_in(ctx.tys, want, got, 0)))
     assert(!is_ty(slot_binding_in(ctx.tys, want, other, 1)))
+}
+
+test "D102 is SYMMETRIC: required binds positionally, defaulted binds by name" {
+    // Both halves of one rule, and each has to refuse its own way -- a test
+    // that only checks one half would have passed on 2026-09-04, when the
+    // edit landed in `bind_fault` and a second copy of the rule in `fits`
+    // went on accepting `f(1, by: 2)`. The copy is gone; this holds the rule.
+    mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
+    ro ps = bump_params(ctx.prims.int_id)
+
+    // `bump(1)` -- required positionally, defaulted omitted: binds.
+    ro ok1 = []ArgSpec.of(pos_arg(ctx.prims.int_id))
+    assert(fault_is(bind_fault(ps, 0, 2, ok1), "none", 0))
+
+    // `bump(1, by: 2)` -- required positionally, defaulted BY NAME: binds.
+    ro ok2 = []ArgSpec.of(pos_arg(ctx.prims.int_id), named_arg(ctx.prims.int_id, "by"))
+    assert(fault_is(bind_fault(ps, 0, 2, ok2), "none", 0))
+
+    // `bump(x: 1)` -- REQUIRED parameter passed BY NAME: refused, slot 0.
+    ro bad1 = []ArgSpec.of(named_arg(ctx.prims.int_id, "x"))
+    assert(fault_is(bind_fault(ps, 0, 2, bad1), "named-required", 0))
+
+    // `bump(1, 2)` -- DEFAULTED parameter passed POSITIONALLY: refused, slot 1.
+    ro bad2 = []ArgSpec.of(pos_arg(ctx.prims.int_id), pos_arg(ctx.prims.int_id))
+    assert(fault_is(bind_fault(ps, 0, 2, bad2), "positional-defaulted", 1))
 }

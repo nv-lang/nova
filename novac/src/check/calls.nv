@@ -163,6 +163,8 @@ fn Checker @binding_refusal(row FnRow, key []ArgSpec) -> Option[str] {
         FaultNone => None
         FaultPositionalDefaulted(s) => Some(
             "parameter `${@ctx.fns.params[off + s].name}` has a default value, so it is passed by name only (D102)")
+        FaultNamedRequired(s) => Some(
+            "parameter `${@ctx.fns.params[off + s].name}` has no default value, so it is passed positionally, not by name (D102)")
         FaultMissing(s) => Some(
             "this call omits `${@ctx.fns.params[off + s].name}`, a parameter with no default value")
         FaultDuplicate(s) => Some(
@@ -245,6 +247,9 @@ fn Checker @coerces_into(row FnRow, key []ArgSpec) -> bool {
         FaultPositionalAfterNamed(_) => return false
         FaultTooManyArgs(_) => return false
         FaultPositionalDefaulted(_) => return false
+        // Same answer as its mirror above, and for the same reason: a call that
+        // does not BIND is not a candidate, whichever half of D102 it breaks.
+        FaultNamedRequired(_) => return false
         FaultUnknownName(_) => return false
         FaultDuplicate(_) => return false
         FaultMissing(_) => return false
