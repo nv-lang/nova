@@ -5678,12 +5678,35 @@ integer) в Nova bootstrap. Маппируется в C-тип `uint64_t` **(AME
 симметричным unsigned pair. `int as uint` cast **saturates** (negative → 0);
 `int as u64` — direct bit-cast (существующее поведение сохранено).
 
+> **АМЕНДМЕНТ 2026-09-04 (решение владельца; исследование
+> `docs/dev/research/2026-09-04-numeric-widening.md` §5, реестр №928, проба
+> `docs/plans/repro/928-as-int-uint-saturation/`).** Две правки к этому блоку.
+>
+> **1. `uint` — РАЗНЫЙ тип с `u64`, как `int` с `i64` (D129, AMEND Plan 133).** Слово «alias»
+> в заголовке и в Q1 — историческое, из эпохи до Plan 133: `uint` → `nova_uint`
+> (`uintptr_t`, address-sized), `u64` → `uint64_t` (всегда 64 бита); на bootstrap они совпадают
+> по ширине, но это РАЗНЫЕ типы с разными mangle-именами (`NovaOpt_nova_uint` ≠
+> `NovaOpt_uint64_t`), как Go `uint` ≠ `uint64`, Rust `usize` ≠ `u64`. Следствие для D405:
+> «одинаковый конкретный числовой тип» значит одинаковый ПО ИМЕНИ — `int + i64`, `uint + u64`,
+> `ro e u64 = c` при `c uint` — ошибки, явный `as`. Сегодня чекер сравнивает ширины и
+> пропускает всё это (строка реестра «чекер считает int ≡ i64»); это дефект по букве D129.
+>
+> **2. Q2 СНЯТ: `int as uint` — bit-pattern, как всякий `iN → uM` (таблица D54).** Q2 вводил
+> насыщение для одной пары (`-1 as uint → 0`), тогда как `-1 as u64`, `(-5 as i32) as uint`
+> и все прочие знаковые→беззнаковые — bit-pattern: одна операция, три ответа (№928). Довод
+> Plan 70.5 Q2 («Rust bit-cast hostile») был общим, норма — частной; владелец выбрал единую
+> таблицу D54: `as` — «я явно попросил переинтерпретацию», для отсечения есть имена
+> (`@try_to_uint()` D430, `max(0, x) as uint`), для битов имени, кроме `as`, нет; доноры
+> Rust/Go/Java. Helper `nova_int_to_uint` и acceptance-строка «`int as uint` saturates» —
+> ретрагированы; насыщение остаётся только у float → int (донор Rust 1.45). Страницы
+> `conversions.*` («между целочисленными ширинами всегда wraparound») были правы.
+
 **Дизайн (Q1-Q4, подтверждены 2026-05-19).**
 
 | Вопрос | Решение | Обоснование |
 |---|---|---|
 | **Q1: alias или distinct?** | Alias `u64` (= `uint64_t`) | Mirror `int` = `i64` alias pattern; нет multi-arch story в bootstrap |
-| **Q2: int→uint cast** | `as uint` saturates (neg → 0) | D54 precedent (float→int); Rust bit-cast hostile; Swift trap verbose |
+| **Q2: int→uint cast** | ~~`as uint` saturates (neg → 0)~~ **СНЯТО 2026-09-04** — bit-pattern по таблице D54 | ~~D54 precedent (float→int); Rust bit-cast hostile; Swift trap verbose~~ см. амендмент выше |
 | **Q3: Indexing** | Keep `int` (no change) | Breaking change для 100+ APIs; Swift/Go/Kotlin используют signed indexing |
 | **Q4: Literal default** | `int` (keep current) | Backward compat; `42 as uint` или `let x uint = 42` для opt-in |
 
@@ -5710,7 +5733,7 @@ Rust's `usize`). Bootstrap-grade alias.
 
 **Acceptance criteria.**
 - [x] `let x uint = 42 as uint` компилируется
-- [x] `int as uint` saturates (neg → 0) — `nova_int_to_uint` helper
+- [x] ~~`int as uint` saturates (neg → 0) — `nova_int_to_uint` helper~~ СНЯТО 2026-09-04 (амендмент выше)
 - [x] `int as u64` остаётся bit-cast (no saturation)
 - [x] `[]uint` → `NovaArray_uint64_t*`
 - [x] `Option[uint]` → `NovaOpt_uint64_t`
@@ -16968,7 +16991,8 @@ unsigned `-x` «не тронутым». Компилятор исполняет
 
 1. Операнды **любого** числового оператора — бинарного арифметического (`+ - * / %`), битового
    (`>> << & | ^`), сравнения (`== != < <= > >=`), составного присваивания (`+=` и прочие) — имеют
-   **один и тот же конкретный числовой тип**: одинаковую ширину и знаковость для целых, одинаковую
+   **один и тот же конкретный числовой тип — по имени, не по ширине** (`int` ≠ `i64`, `uint` ≠ `u64`
+   по D129/D130, хоть на bootstrap они и равны по ширине): одинаковую ширину и знаковость для целых, одинаковую
    ширину для чисел с плавающей точкой (`f32` с `f32`, `f64` с `f64` — `f32 + f64` сегодня молча
    расширяется до `f64`, проба `float_width`); целое и число с плавающей точкой не смешиваются.
    Список операторов в правиле выше — иллюстрация, не граница: правило — категория «числовой

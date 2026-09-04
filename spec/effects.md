@@ -16,7 +16,8 @@ erasure — in [D12](decisions/04-effects.md#d12), [D13](decisions/08-runtime.md
 
 ## Central principle
 
-Network, disk, time, randomness, logging, errors, mutation — in Nova these
+Network, disk, time, randomness, logging, errors, mutation, launching a process
+(`std.os`, `Command.new(...).run()` — Plan 265 Ф.1, [D453](decisions/04-effects.md#d453)) — in Nova these
 are all **effects**. A function declares in its signature the effects it
 uses itself; calls to other functions do not pull those functions' effects
 up into the caller's signature (the exception is `Fail` — errors are visible
@@ -360,6 +361,13 @@ fn server(ids []int) -> () =>
     }
 ```
 
+**The outcome of cancellation is visible in the VALUE of the scope** ([D455](decisions/06-concurrency.md#d455)):
+a scope with `cancel:` returns not `T` but `Outcome[T]` = `Done(T) | Cancelled`, and the caller
+takes the outcome apart with `match`. Without `cancel:` the type is as before — only the one
+who ordered cancellation pays. The reason: cancellation throws nothing, and without an outcome
+in the value "the scope finished" and "the scope was cancelled" are indistinguishable — so a
+correct completion has nothing to check.
+
 The supervision strategy is an ordinary **effect-handler** (`Supervisor`,
 [D416](decisions/06-concurrency.md#d416)), not a named parameter:
 ready-made policies — `sup.stop()` (the failed one is "dropped", the others
@@ -550,6 +558,41 @@ fn parse(s str) -> Result[int, ParseError] => ...
 Two styles of the same thing. `Fail` — sugar over `Result`.
 The default for application code is `Fail` (more readable); for libraries
 with an important error type — explicit `Result`.
+
+## What an effect operation looks like ([D456](decisions/04-effects.md#d456))
+
+An effect operation is an ordinary Nova function with exactly one element taken away:
+the receiver `@`, because an effect has no instance. Everything else the language can
+do is available to it and expected of it — generics, `Result`/`Option`, records and
+sums, collections, function parameters, named types instead of bare numbers.
+
+The converse is a rule too: at an effect boundary there is no negative `errno` in
+place of an error, no empty string as the sign of "none", no traversal by index
+(`_len` + `_at`), no out-parameters, no raw `int` handles, no counters beside the
+data, and no `str` holding non-UTF-8 bytes. C forms live in the `extern "C"` layer
+`ffi.nv` and inside the `real_*` handler: **the handler is a translator, not a
+pass-through channel.**
+
+The reason is not beauty. The effect boundary is exactly what the author of a mock
+sees, and substitutability is what we call the language's distinction: if a C form is
+visible in the declaration, the translation simply has not been written, and everyone
+who writes a test will have to write it.
+
+**One exception, and the owner's decision of 2026-08-12 made it a named refusal rather
+than a silent failure:** generics in effects are NOT supported on either axis of
+generalisation — neither on the operation (`type Wrap effect { around[T](body
+fn() -> T) -> T }`, registry 221.1 #570) nor on the effect itself (`type Store[T]
+effect { ... }`, registry 221.1 #614). Before that decision both forms passed
+`nova check` green and failed only in the C compiler (`Nova_T*`/`unknown type
+name 'NovaVtable_Store'`) — now the checker rejects both with a named error
+(`E_EFFECT_OP_GENERIC_UNSUPPORTED` / `E_EFFECT_GENERIC_UNSUPPORTED`) right at the
+declaration. Rank-2 polymorphism through a vtable slot with a single signature is open
+question Q6; only the retracted bootstrap interpreter ever supported it. The compiler
+intrinsic `Fail[E]` is the exception to the refusal: it is the sugar target of
+`throw`/`!!` with its own runtime machinery, not a user effect through the common
+vtable path. For comparison: a generic PROTOCOL works both as a bound and directly as
+a type (a box with a vtable) — verified by build and run. So the matter is not
+generics as such, but the effect's vtable.
 
 ## The main point
 
