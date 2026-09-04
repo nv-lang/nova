@@ -22,6 +22,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
+import ../diag.{ice}
 import ../lex.{TokenKind}
 
 /// WHICH SHAPE a destructuring pattern was written in -- brace or round.
@@ -86,6 +87,21 @@ export fn pattern_binders(kids []Node) -> []Node {
             Leaf(t) => {
                 // The pattern ends at `=`; everything after it is the value.
                 if t.kind == TokenKind.Assign { return out }
+                // AN IDENTIFIER LEAF INSIDE A PATTERN IS A BINDER THE PARSER
+                // FAILED TO WRAP. Loud on purpose: the readers filter by node
+                // kind, so an unwrapped name would simply not be collected --
+                // the binding would vanish and the emitter would spell a local
+                // nobody declared. The invariant "every pattern name is a
+                // `Name` node" was held by nothing but the parser's memory
+                // until this line; a future pattern shape whose author forgets
+                // `@push_binder` now fails here instead of silently binding
+                // nothing.
+                // Braces, parens, commas, `..` and the keyword are the
+                // pattern's trivia and bind nothing; the `continue` is the
+                // other branch (P31 form 2, the shape this file already uses
+                // twice). What is left can only be the unwrapped name.
+                if t.kind != TokenKind.Ident { continue }
+                ice("sem: a pattern name that is not a binder node -- the parser must wrap every one")
             }
             Branch { .. } => {
                 // SKIPPED, and the `continue` is the other branch (P31 form 2,
