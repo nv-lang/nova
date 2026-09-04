@@ -22,15 +22,16 @@ module tuple
 type FnRow int
 type TyId int
 
-type Table(rows Vec[str])
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
 
-fn Table @index(i FnRow) -> str => self.rows[i as int]
+fn Table @index(i FnRow) -> str => @rows[i as int]
 fn Table mut @index(i FnRow, val str) -> () {
-    self.rows[i as int] = val
+    @rows[i as int] = val
 }
 
 fn main() Io -> () {
-    mut t = Table(Vec[str].of("a", "b"))
+    mut t = Table.new()
     mut other = 0
 
     // wrong key type through the tuple door: TyId where FnRow is declared

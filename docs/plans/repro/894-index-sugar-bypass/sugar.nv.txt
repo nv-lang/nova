@@ -6,12 +6,13 @@ module sugar
 type FnRow int
 type TyId int
 
-type Table(rows Vec[str])
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
 
-fn Table @index(i FnRow) -> str => self.rows[i as int]
+fn Table @index(i FnRow) -> str => @rows[i as int]
 
 fn main() Io -> () {
-    ro t = Table(Vec[str].of("a", "b"))
+    ro t = Table.new()
     ro k = 1 as TyId
     println(t[k])
 }

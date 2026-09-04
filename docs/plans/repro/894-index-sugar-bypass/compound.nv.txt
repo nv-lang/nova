@@ -12,15 +12,16 @@ module compound
 type FnRow int
 type TyId int
 
-type Table(cells Vec[int])
+type Table priv { cells Vec[int] }
+fn Table.new() -> Table => { cells: Vec[int].of(10, 20) }
 
-fn Table @index(i FnRow) -> int => self.cells[i as int]
+fn Table @index(i FnRow) -> int => @cells[i as int]
 fn Table mut @index(i FnRow, val int) -> () {
-    self.cells[i as int] = val
+    @cells[i as int] = val
 }
 
 fn main() Io -> () {
-    mut t = Table(Vec[int].of(10, 20))
+    mut t = Table.new()
     ro k = 1 as TyId
     t[k] += 5
     println(t[1 as FnRow])

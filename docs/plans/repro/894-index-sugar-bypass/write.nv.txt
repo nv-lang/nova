@@ -13,15 +13,16 @@ module write
 type FnRow int
 type TyId int
 
-type Table(rows Vec[str])
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
 
-fn Table @index(i FnRow) -> str => self.rows[i as int]
+fn Table @index(i FnRow) -> str => @rows[i as int]
 fn Table mut @index(i FnRow, val str) -> () {
-    self.rows[i as int] = val
+    @rows[i as int] = val
 }
 
 fn main() Io -> () {
-    mut t = Table(Vec[str].of("a", "b"))
+    mut t = Table.new()
     ro k = 1 as TyId
     t[k] = "z"
     println(t[0 as FnRow])
