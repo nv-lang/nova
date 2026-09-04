@@ -75,11 +75,15 @@ not which pairs of types may meet. Every one of these is refused, and the conver
 you intend is written with `as`:
 
 ```nova
-u32 == i32     // error — different signedness
-i64 < i32      // error — different width
-f32 < f64      // error — different width, both float
-int < f64      // error — integer against float
+u32 == i32     // ошибка — разная знаковость
+i64 < i32      // ошибка — разная ширина
+f32 < f64      // ошибка — разная ширина, оба float
+int < f64      // ошибка — целое против float
 ```
+
+**Unary minus is defined for signed types only.** `-x` with an unsigned `x` is a compile
+error, not a modular wrap (`-200u8` does not become `56`); what you mean is written
+`-(x as i16)`.
 
 ### Widening (no precision loss)
 
@@ -349,6 +353,25 @@ Sums are untouched: `SqlValue.I(x)` is still inserted for a variable -- there
 the compiler DERIVES the only matching variant instead of inventing the author's
 claim. For the old softness on your own newtype, declare it as a
 [`#coerce`](decisions/02-types.md#d429) pair.
+
+**Operators on a newtype stay inside the newtype ([D52](decisions/02-types.md#d52) amend,
+2026-09-04).** Arithmetic and comparison are defined between two values of the *same*
+newtype (plus a literal, which adapts); the arithmetic result is that newtype, a
+comparison is `bool`. Two different newtypes over the same representation, or a newtype
+against a value of the representation, do not meet in an operator — the conversion is
+written with `as`. This is Go's rule for `type FnRow int`, and it is what makes typed
+indices worth having: `row_id == ty_id` must not compile.
+
+```nova
+type FnRow int
+type TyId int
+ro a = 1 as FnRow
+ro t = 1 as TyId
+ro n = 1
+a + 1              // ok — литерал адаптируется, результат FnRow
+a == t             // ошибка — разные newtype
+a + n              // ошибка — newtype против типизированного int; пишется (a as int) + n
+```
 
 ---
 

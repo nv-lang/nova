@@ -1657,7 +1657,10 @@ newtype `type MyI8 i8` не входит в `{i8}` автоматически �
 листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
 type-set как члена). **Один set не смешивает signed/unsigned целые**
 (`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInts`/`UnsignedInts` в
-prelude (`std/prelude/protocols.nv`) разделены по этой оси.
+prelude (`std/prelude/protocols.nv`) разделены по этой оси; `Ints` — их полное
+объединение, единственная разрешённая смесь (D430 R1): D310 запрещает *частичный*
+signed/unsigned микс, а монорфизация per член резолвит `T.MAX`/`T.MIN` per-instance; `Floats` —
+`f32 | f64` (добавлен 2026-09-04). Всего set'ов четыре.
 
 Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 

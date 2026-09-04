@@ -1628,7 +1628,10 @@ a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
 listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
 type-set as a member). **One set does not mix signed/unsigned integers**
 (`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInts`/`UnsignedInts`
-in the prelude (`std/prelude/protocols.nv`) are split along this axis.
+in the prelude (`std/prelude/protocols.nv`) are split along this axis; `Ints` is their
+full union — the one mix D430 R1 allows, because D310 forbids a *partial* signed/unsigned
+mix and per-member monomorphisation resolves `T.MAX`/`T.MIN` per instance — and `Floats`
+is `f32 | f64` (added 2026-09-04). Four sets in all.
 
 Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
