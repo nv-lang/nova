@@ -1,0 +1,15 @@
+module p1
+
+type Sig enum Off | On(int)
+
+fn mk(n int) -> Sig {
+    ro s = Sig.On(n)
+    s
+}
+
+fn main() {
+    match mk(3) {
+        Off => println(0)
+        On(v) => println(v)
+    }
+}

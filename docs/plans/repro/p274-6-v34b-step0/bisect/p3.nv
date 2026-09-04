@@ -1,0 +1,14 @@
+module p3
+
+type Sig enum Off | On(int)
+
+fn mk(n int) -> Sig {
+    return Sig.On(n)
+}
+
+fn main() {
+    match mk(3) {
+        Off => println(0)
+        On(v) => println(v)
+    }
+}
