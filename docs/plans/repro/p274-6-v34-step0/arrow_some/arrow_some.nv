@@ -1,0 +1,8 @@
+module arrow_some
+
+// Control: the SAME Some(n) as an arrow body -- named refusal.
+fn mk(n int) -> Option[int] => Some(n)
+
+fn main() {
+    if Some(a) = mk(2) { println(a) }
+}

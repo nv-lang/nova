@@ -17,13 +17,14 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, OPTION_SUM}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
 import ../sem.{is_vrow, is_arg_node, arg_expr_of, arg_name_of}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{decl_of_ty}
+import ../sem.{option_payload, for_head_elem}
 import ../builtins.{TypeKind}
 
 /// The lookup key of a call whose every position CAN be typed: the receiver in
@@ -157,8 +158,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             StrLit => { return ctx.prims.str_id }
             FloatLit => { return ctx.prims.f64_id }
             IntLit => { return ctx.prims.int_id }
+            CharLit => { return ctx.prims.char_id }
             _ => { ice("check: literal token kind without a type rule (#652 class)") }
         }
+    }
+    if k == NodeKind.Coalesce {
+        // DECIDED by the walk (the payload of the left side), read here --
+        // re-deriving it would be the second door the channel exists to close.
+        return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.Name {
         ro nm = expr_leaf_name(e)
@@ -204,6 +211,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     // is a field access on it and needs no separate rule. Outside a method the
     // binding does not exist, and the answer is absence -- which `check`
     // refuses by name rather than icing here (P12).
+    if k == NodeKind.InterpStr {
+        // The walk records str where it judges the slots; silence is a
+        // refused literal, and readers act on no_ty().
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.SelfExpr {
         // The walk recorded the receiver's type where it verified the
         // binding; silence is `@` outside a method, already refused.
@@ -383,7 +395,12 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // above), and they say so instead of being swallowed by a `_`.
             return match chan.callee_of(e.id_of()).target {
                 CalleeCtor(id) => id
-                CalleeFn(_) => ice("check: a type in call position recorded as a function call")
+                // A CONSTRUCTOR is a function (the owner's rule, 2026-09-03),
+                // so a type in call position may legitimately be recorded as
+                // one -- and then the expression's type is the row's RETURN,
+                // which for a constructor is the record itself. This line iced
+                // until V2b, when the rule made the case real.
+                CalleeFn(row) => same_ty(ctx.fns.rows[raw_row(row)].ret_id)
                 CalleeVariant(_) => ice("check: a type in call position recorded as a variant construction")
             }
         }
@@ -393,36 +410,3 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     }
     ice("check: expression kind without a type rule — no silent int default (#652 class)")
 }
-
-// The shape doors of two judges (if-let, B16), moved here co-equal when
-// rules.nv crossed the 1000-line decision (2026-09-02): this file already
-// answers "what does this type look like", and the doors are that question.
-
-/// The ONE type argument of an arity-one instance, or no type: the question
-/// both the for-head judge and the Option judge ask (the second-door guard
-/// caught them spelled twice, 2026-09-02). Anything that is not an App of
-/// arity one answers nothing; the caller turns that into its named refusal.
-fn single_type_arg(ctx Ctx, t TyId) -> TyId {
-    if !is_ty(t) { return no_ty() }
-    ro k = ctx.tys.kind_of(t)
-    ro is_app = match k {
-        TkApp => true
-        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
-    }
-    if !is_app { return no_ty() }
-    if ctx.tys.arg_count(t) != 1 { return no_ty() }
-    ctx.tys.arg(t, 0)
-}
-
-/// The PAYLOAD an Option instance carries, or no type: the single-argument
-/// door, gated on the head being the language's Option sum.
-fn option_payload(ctx Ctx, t TyId) -> TyId {
-    ro arg = single_type_arg(ctx, t)
-    if !is_ty(arg) { return no_ty() }
-    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
-    arg
-}
-
-/// The ELEMENT a for-head vector carries: the single-argument door under its
-/// wave's name (B16) -- the head kind was already judged by the caller.
-fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)

@@ -1,0 +1,15 @@
+module p21_paren_base_value_record
+
+// emit_expr.nv:405 decides `.` vs `->` from `@out.type_if_known(base)` and
+// names its own silent default: "A position the channel has no answer for
+// keeps the pointer form". Two readings of one judgment -- the checker knows
+// the base's type (it typed the access), the emitter re-asks a channel that
+// may be silent for THIS node and then guesses.
+// A parenthesised base is a node the checker walks through without recording.
+type Pnt(x int, y int)
+
+fn main() {
+    ro p = Pnt(1, 2)
+    println(p.x)
+    println((p).x)
+}

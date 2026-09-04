@@ -1,0 +1,11 @@
+module p_index_methodarg
+
+type Box { n int }
+
+fn Box @plus(k int) -> int => @n + k
+
+fn main() {
+    ro xs = []int.of(3, 4, 5)
+    ro b = Box { n: 10 }
+    println(b.plus(xs[1]))
+}

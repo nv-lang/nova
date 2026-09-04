@@ -1,0 +1,13 @@
+module opt_some
+
+// Second bisect: no types, no methods -- just a function handing back
+// `Option[int]` built with `Some`/`None`, and one `if Some(x) = ...`.
+
+fn mk(n int) -> Option[int] {
+    if n < 0 { return None }
+    Some(n)
+}
+
+fn main() {
+    if Some(a) = mk(2) { print("${a}") }
+}

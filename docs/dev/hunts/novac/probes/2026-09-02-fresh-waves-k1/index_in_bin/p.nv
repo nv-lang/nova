@@ -1,6 +1,0 @@
-module p
-
-fn main() {
-    ro v = []int.of(10, 20, 30)
-    println("a", v[1] + 1, "b")
-}

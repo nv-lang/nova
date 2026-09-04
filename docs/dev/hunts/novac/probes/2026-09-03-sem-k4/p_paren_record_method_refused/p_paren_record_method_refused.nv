@@ -1,0 +1,9 @@
+module p_paren_record_method_refused
+type Pair(x int, y int)
+
+fn Pair @sum() -> int => @x + @y
+
+fn main() {
+    ro p = Pair(3, 4)
+    println(p.sum())
+}

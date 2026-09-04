@@ -1,0 +1,10 @@
+module p_index_tail
+
+fn head(v []int) -> int {
+    v[0]
+}
+
+fn main() {
+    ro xs = []int.of(7, 8, 9)
+    println(head(xs))
+}

@@ -23,7 +23,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../sem.{leaf_kind, leaf_text, interp_slices, interp_slot_is_name}
+import ../sem.{leaf_kind, leaf_text, interp_slices}
 
 /// The escapes the subset knows. Everything else is REFUSED rather than
 /// copied into the C.
@@ -93,17 +93,11 @@ fn Checker mut @report_if_interpolated(kids []Node) -> () {
         // came before it.
         ro pieces = interp_slices(leaf_text(c))
         if pieces.len() < 2 { continue }
-        // The I1 subset compiles a BARE NAME per slot; any other form keeps
-        // the named refusal (I2 takes the chains, calls and operators the
-        // interpolation map counted).
-        mut si = 1
-        while si < pieces.len() {
-            if !interp_slot_is_name(pieces[si]) {
-                @report_first_leaf_of(kids, INTERP_MSG)
-                return
-            }
-            si += 2
-        }
+        // Since I2 the lexer splits every top-level interpolation, so a
+        // WHOLE literal with a live slot is a string nested inside another
+        // slot -- one refusal, one name (typing's judge is the backstop).
+        @report_first_leaf_of(kids, NESTED_INTERP_MSG)
+        return
     }
 }
 

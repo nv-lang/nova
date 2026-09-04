@@ -1,0 +1,11 @@
+module i2_value_paren_brace
+
+// `shape_of_record_decl` tests the `value` word BEFORE the paren, so this
+// declaration is filed as `ValueRecord` and the BRACE form is then allowed.
+type Point value(x int, y int)
+
+fn main() {
+    ro p = Point { x: 1, y: 2 }
+    println(p.x)
+    println(p.y)
+}

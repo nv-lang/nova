@@ -1,0 +1,19 @@
+module p5_tail_call_not_last_control
+
+// CONTROL for p2: the very same unit-returning function and the very same
+// `println` call -- only an assignment now stands after it, so the call is no
+// longer the LAST branch child of the block and the tail-duty arm
+// (emit_c.nv:451) does not fire. The call then takes the statement door
+// (@emit_call_stmt), which is the one that knows about println.
+// Green here + ice in p2 = the divergence is the tail-position rule, not the
+// call.
+fn side() -> () {
+    mut acc = 0
+    println("from side")
+    acc = acc + 1
+}
+
+fn main() {
+    side()
+    println("done")
+}

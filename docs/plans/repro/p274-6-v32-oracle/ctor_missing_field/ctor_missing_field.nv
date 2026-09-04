@@ -1,0 +1,14 @@
+module ctor_missing_field
+
+// The oracle accepts a record constructor that names only SOME of the fields.
+// `b` is never written and reads back as zero.
+
+type Pt {
+    ro a int
+    ro b int
+}
+
+fn main() {
+    ro p = Pt { a: 1 }
+    print("${p.a} ${p.b}")
+}

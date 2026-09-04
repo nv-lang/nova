@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/type_shape.nv -- what a resolved TYPE TERM looks like: the
+// questions both phases ask about a `TyId` and neither may answer twice.
+//
+// Donor: rustc `Ty::kind()` accessors plus the `ty::util` predicates -- the
+// shape of a type is ASKED of the term, and each question has exactly one
+// implementation that every consumer shares; NOT taken: a `TypeFolder`/visitor
+// framework, because novac's subset asks three fixed questions and a framework
+// would be a mechanism with no question (K7).
+// Role: layer 3 -- doors over a type TERM: does it carry exactly one argument,
+//   is it the language's Option (and what is its payload), what does a for-head
+//   hand out per step. Written once, asked by the checker AND the emitter.
+// Used by: check/type_of.nv, check/typing.nv, check/methods.nv, check/exprs.nv
+//   (the judges) and emit_c/emit_for.nv (the spelling).
+// Guarded by: check-novac-second-door.py (these three exist because the same
+//   question was spelled twice before), check-novac-surface.py (their move out
+//   of `check` raised the sem base, named in that baseline).
+//
+// WHY A FILE AND NOT `mangle.nv`, where `shape_of`/`is_tuple` already sit: that
+// file's role line says MANGLING -- every C identifier as a function of the
+// entity -- and the type-shape questions drifted in there for want of a home.
+// This is the home. Moving `shape_of` and its neighbours here is the next
+// tenant's job and NOT this wave's: they have thirty-odd call sites, and mixing
+// that move with a behaviour wave would put two risks in one merge.
+//
+// Split out of check/type_of.nv on 2026-09-04 (wave 274.6 V3-4a): the emitter
+// was recomputing a for-head's element type with a raw interner call while the
+// checker asked the door -- the same judgment written twice, which is what the
+// second-door guard exists to stop. `emit_c` imports `check` nowhere (measured,
+// not assumed), so the door had to rise to the layer both phases share.
+
+module novac.sem
+
+import ../types.{TyId, no_ty, is_ty}
+import ../builtins.{TypeKind, OPTION_SUM}
+
+/// The ONE type argument of an arity-one instance, or no type: the question
+/// both the for-head judge and the Option judge ask (the second-door guard
+/// caught them spelled twice, 2026-09-02). Anything that is not an App of
+/// arity one answers nothing; the caller turns that into its named refusal.
+fn single_type_arg(ctx Ctx, t TyId) -> TyId {
+    if !is_ty(t) { return no_ty() }
+    ro k = ctx.tys.kind_of(t)
+    ro is_app = match k {
+        TkApp => true
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_app { return no_ty() }
+    if ctx.tys.arg_count(t) != 1 { return no_ty() }
+    ctx.tys.arg(t, 0)
+}
+
+/// The PAYLOAD an Option instance carries, or no type: the single-argument
+/// door, gated on the head being the language's Option sum.
+export fn option_payload(ctx Ctx, t TyId) -> TyId {
+    ro arg = single_type_arg(ctx, t)
+    if !is_ty(arg) { return no_ty() }
+    if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
+    arg
+}
+
+/// The ELEMENT a for-head vector carries: the single-argument door under its
+/// wave's name (B16) -- the head kind was already judged by the caller.
+export fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)

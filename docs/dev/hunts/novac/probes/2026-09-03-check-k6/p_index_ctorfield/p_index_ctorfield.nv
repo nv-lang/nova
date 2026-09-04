@@ -1,0 +1,9 @@
+module p_index_ctorfield
+
+type Box { n int }
+
+fn main() {
+    ro xs = []int.of(3, 4, 5)
+    ro b = Box { n: xs[2] }
+    println(b.n)
+}

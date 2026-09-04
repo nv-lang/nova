@@ -1,0 +1,16 @@
+module p9_assign_array_lit
+
+// "HOW does a multi-statement construction become C in an initializer
+// position?" is answered TWICE:
+//   emit_c.nv:912-936 (@emit_bind)   -- ArrayLit/TupleExpr/RecordCtor have
+//     their own door, everything else is hoisted first;
+//   emit_c.nv:618-673 (the AssignStmt arm) -- the same question, and it
+//     answers "just print it": no ctor door, no @hoist_array_lits.
+// `ro v = [1,2]` and `v = [3,4]` are the same construction in the same
+// position of the same statement family.
+fn main() {
+    mut v = [1, 2]
+    println(v.len())
+    v = [3, 4, 5]
+    println(v.len())
+}

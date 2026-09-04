@@ -1,0 +1,18 @@
+module p4_tail_userfn_in_void_fn
+
+// The SECOND SYNTAX of the same property as p2: the tail-duty flag is
+// `!is_entry_row(row)` (emit_c.nv:325) and knows nothing about the return
+// type, while the trailing safety return one door below asks
+// `ret == int_id` (emit_c.nv:367). Here the tail is an ordinary user call,
+// so nothing about `println` is involved -- the emission is
+// `return <int expr>;` inside a unit-returning C function.
+fn mk() -> int => 5
+
+fn side() -> () {
+    mk()
+}
+
+fn main() {
+    side()
+    println("done")
+}

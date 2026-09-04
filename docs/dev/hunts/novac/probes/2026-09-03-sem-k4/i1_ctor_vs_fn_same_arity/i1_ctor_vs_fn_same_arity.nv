@@ -1,0 +1,13 @@
+module i1_ctor_vs_fn_same_arity
+
+// TWO answers to "what is `Pair` in call position", same arity.
+// `register_paren_ctors` (sem.nv) pushes a CALLABLE row named `Pair` and
+// deliberately does NOT touch `defs`, so the type keeps its `DefType` entry
+// and the ctor becomes one candidate of an ordinary overload set.
+type Pair(x int, y int)
+
+fn Pair(a int, b int) -> int => a * 100 + b
+
+fn main() {
+    println(Pair(3, 4))
+}

@@ -1,0 +1,17 @@
+module p_variant_ctl
+
+// CONTROL for p_variant_last_wins: the SAME two sums, but no shared variant
+// spelling, so nothing overwrites anything in the flat table.
+type Color enum Red | Green
+type Mood enum Teal | Blue
+
+fn rank(c Color) -> int {
+    match c {
+        Red => 1
+        Green => 2
+    }
+}
+
+fn main() {
+    println(rank(Color.Green))
+}

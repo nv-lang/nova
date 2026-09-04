@@ -1,0 +1,17 @@
+module p6_user_println_shadow
+
+// "WHICH callable does this call name?" is the checker's decision and it is in
+// the channel (`@out.callee_of`). The statement door decides it a SECOND time,
+// from the spelled TEXT:
+//   emit_expr.nv:638  if call_callee_text(kids) != PRINT_FN { ...ordinary... }
+// A user function spelled `println` therefore takes the builtin printer path.
+fn println(n int) -> () {
+    nova_marker()
+}
+
+fn nova_marker() -> () {
+}
+
+fn main() {
+    println(7)
+}

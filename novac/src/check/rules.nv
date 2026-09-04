@@ -76,7 +76,8 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
-                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | RParen | LBrace |
+                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 |
+                        StrFrag | InterpOpen | InterpClose | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
                         Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
@@ -246,21 +247,23 @@ const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
 /// it never lifts.
+/// The nested-interpolation judge's answer (I2): the lexer splits one
+/// level; a literal with a live slot inside another slot stays whole, and
+/// the chain has no arm for it yet.
+const NESTED_INTERP_MSG = "outside the subset: an interpolation nested inside another slot is not compiled yet (E2-b3)"
+
 /// The bare-self judge's answer: `@` is a value only where a method body
 /// bound its receiver.
 const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
 
-/// The interpolation judges' two I1 answers: a slot name must be a bound
-/// LOCAL (a constant would substitute at the use site where no hoist ran),
-/// and its type must carry a builder insert the emitter spells today.
-const INTERP_NAME_MSG = "outside the subset: an interpolation slot takes a bound local name here (E2-b3) -- constants and globals arrive with I2"
-
-/// See INTERP_NAME_MSG above; the type half.
+/// The slot-type judge's answer: a slot's type must carry a builder insert
+/// the emitter spells today.
 const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of this type is not compiled yet (E2-b3) -- I1 spells str and int inserts"
 
 /// The constant-initializer boundary of I1: substitution happens at the use
 /// site, and the hoist never ran there.
 const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
+
 
 /// The refutable-binding judge's answer (hunt var_shadow, #875): a binding
 /// whose NAME is a visible payload-less variant is a one-variant pattern
@@ -299,10 +302,6 @@ const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Optio
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
 const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"
-
-/// The destructuring judge's two answers (B15 step 5). The arity text names
-/// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
-const DESTR_NOT_TUPLE_MSG = "a destructuring binding needs a TUPLE initializer -- this expression's type is not a tuple"
 
 /// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
 const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
@@ -864,26 +863,7 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
 }
 
 
-/// The BODY block of this fn when it declares a return value, else `no_node()`:
-/// the one block whose tail call is a returned value. Asked by BOTH phases --
-/// the subset walk marks it for the statement rule, and the typing walk marks
-/// it for its own tail handling -- so the answer lives in one door. NOT
-/// exported: both phases are this module, and nobody else has the question.
-fn value_body_of(fk []Node) -> NodeId {
-    mut declares = false
-    for c in fk {
-        if c.kind_of() == NodeKind.RetType {
-            declares = declares_a_value(branch_children(c))
-        } else {
-            // Not the return type: the body search below handles the rest.
-        }
-    }
-    if !declares { return no_node() }
-    for c in fk {
-        if c.kind_of() == NodeKind.Block { return c.id_of() }
-    }
-    no_node()
-}
+
 
 /// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
 /// judged against the ONE subset table. An unknown method is an honest
@@ -900,7 +880,19 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
             if @res.has_name(t.text) { return }
-            @refuse(t, "outside the subset: no such method in the declarations handed to novac (or the name is overloaded)")
+            // A VARIANT of a declared sum wears the method-call shape when it
+            // carries a payload (`Sum.On(3)`). It is a construction, not a
+            // method, and the callable index has never heard of it -- asking
+            // that index was what made this the second of the two refusals the
+            // spelling collected (2026-09-04, wave V3-4b). The typing walk owns
+            // the decision; this judge only has to stop claiming the name is a
+            // missing method.
+            if @is_known_variant(t.text) { return }
+            // The parenthetical "(or the name is overloaded)" died with E2-b3
+            // M3: `has_name` answers existence alone, so an overloaded name
+            // never reaches this refusal -- the tail described a case this
+            // judge cannot see, and a diagnostic must not guess (D420).
+            @refuse(t, "outside the subset: no such method in the declarations handed to novac")
         }
         Branch { .. } => {}
     }

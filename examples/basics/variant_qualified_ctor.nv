@@ -1,0 +1,36 @@
+module basics.variant_qualified_ctor
+
+// A variant of a declared sum, built in BOTH spellings, with and without a
+// payload:
+//
+//   Sig.Off      qualified, no payload   -- worked before this wave
+//   On(3)        bare, with payload      -- worked before this wave
+//   Sig.On(n)    qualified, with payload -- the form this carrier earns
+//
+// The third one parses as a METHOD CALL, which is why it used to be refused
+// with "no such method": the judge asked the CALLABLE index about a variant's
+// name. One form of the language, three spellings, one door.
+
+type Sig enum Off | On(int)
+
+fn from_int(n int) -> Sig {
+    if n <= 0 { return Sig.Off }
+    Sig.On(n)
+}
+
+fn bare(n int) -> Sig => On(n)
+
+fn show(s Sig) -> int {
+    match s {
+        Off => 0
+        On(v) => v
+    }
+}
+
+fn main() {
+    println(show(from_int(7)))
+    println(show(from_int(0)))
+    println(show(bare(5)))
+    ro q = Sig.Off
+    println(show(q))
+}

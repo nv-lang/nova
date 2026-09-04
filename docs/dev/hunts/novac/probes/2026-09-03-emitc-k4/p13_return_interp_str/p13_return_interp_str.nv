@@ -1,0 +1,12 @@
+module p13_return_interp_str
+
+// Same property as p9/p12 in the RetStmt arm (emit_c.nv:611-615): the operand
+// goes straight to @emit_expr with no hoist walk, while the very same
+// construction in a binding initializer (emit_c.nv:936) is hoisted first.
+fn label(n int) -> str {
+    return "n=${n}"
+}
+
+fn main() {
+    println(label(7))
+}

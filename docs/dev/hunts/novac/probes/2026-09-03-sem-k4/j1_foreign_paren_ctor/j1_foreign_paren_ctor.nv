@@ -1,0 +1,15 @@
+module j1_foreign_paren_ctor
+
+// A FOREIGN named tuple in call position. `Pair` is declared in the
+// declarations dir handed to novac (see fstd/decls.nv), so:
+//   * harvest.nv:175 files it with shape = NamedTuple;
+//   * sem.nv:433 (register_paren_ctors) walks file_decls(file) ONLY, so no
+//     constructor row exists for it;
+//   * check/calls.nv:335 routes on the SHAPE alone -> record_paren_ctor;
+//   * check/calls.nv:404 then has to answer FnUnknown, and its own comment
+//     says "A miss is an ARGUMENT fault".
+// Run with: NOVA_STD_PATH=<this dir>/fstd
+fn main() {
+    ro p = Pair(1, 2)
+    println(1)
+}

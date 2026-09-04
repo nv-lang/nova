@@ -1,0 +1,7 @@
+module unknown_call
+
+// A call to a name that does NOT exist. A user typo, the most ordinary
+// mistake there is -- it must be a NAMED refusal, never an ICE.
+fn main() {
+    nosuch(1)
+}

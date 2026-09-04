@@ -73,7 +73,9 @@ import ../sem.{interp_slices}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
 import ../sem.{c_instance_ctor, c_instance_method}
+import ../sem.{decl_index_of_ty}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
+import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
@@ -132,9 +134,9 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
         lt.push("")
     }
     consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lits: []str.new(),
-                          lit_tmp: lt, body: StringBuilder.new() }
+                          lit_tmp: lt, body: StringBuilder.new(),
+                          fres: FieldIndex.build(ctx.fields) }
     e.emit_type_decls()
-    e.emit_tuple_typedefs()
     e.emit_instance_protos(insts)
     e.emit_file(file)
     for inst in insts {
@@ -144,51 +146,6 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     render(lits, code)
 }
 
-
-/// Emit declarations for every user type of the file (shell owns the rest).
-/// The dispatch is an EXHAUSTIVE match over TypeKind, not an if-chain ending
-/// in `else`: the owner's rule 2026-08-16. An `else` on a closed set means
-/// "everything I did not name is a sum", so a fourth kind would be emitted as
-/// a sum in silence — the #652 class again. With a match, a new variant is a
-/// compile error at exactly this line.
-fn Emitter mut @emit_type_decls() -> () {
-    for t in 0..@ctx.types.len() {
-        // A HANDED-OVER TYPE IS DECLARED BY THE SHELL, not by us. Our emission is
-        // glued into the oracle's shell (274 section 7.0), and the shell already
-        // declares std's types -- so emitting them again would be a second
-        // definition of one name, and novac does not even know their fields (the
-        // harvest reads names and kinds, not bodies). Measured 2026-08-24: with
-        // handed-over types in the registry the emission grew a `NovaValue_Pair`
-        // beside the file's own `Nova_Pair`. This is INTEROP with its own end
-        // condition: the day novac emits the whole prelude it declares them
-        // itself, and this test goes with the shell.
-        if t < @ctx.defs.foreign_cnt { continue }
-        ro td = @ctx.types[t]
-        match td.kind {
-            TkPrim => {} // primitives own no declarations
-            TkRecord => @emit_record_decl(t)
-            TkSum => @emit_sum_decl(t)
-            TkApp => ice("emit_c: declaration of an applied type — instances are emitted by mono, E2-b2")
-            // A type parameter DECLARES nothing: it has no layout until a
-            // substitution names one, and the instance that carries the
-            // substitution is emitted as its own function (E2-b2). The row
-            // exists from 2026-08-20, when a parameter became a real type, so
-            // this arm went from "cannot happen" to "nothing to do" -- and it
-            // says which, rather than icing on a legal registry.
-            TkParam => {}
-            // A NEWTYPE declares NOTHING of its own: it is laid out as its
-            // representation, and every reference to it spells the
-            // representation (`c_type`). The oracle emits a `typedef` here;
-            // novac's emission shape is its own (274 section 7.0) and an
-            // unreferenced typedef would be text nobody reads.
-            TkNewtype => {}
-            TkInfer => ice("emit_c: declaration of an inference variable — a variable escaped its body")
-            // A tuple is a structural TERM: nothing ever declares one, so a
-            // registry row with this kind is a harvest bug, not a decl to emit.
-            TkTuple => ice("emit_c: a TUPLE among declarations — a structural term declares nothing")
-        }
-    }
-}
 
 /// Emit every fn declaration of the file in source order.
 fn Emitter mut @emit_file(file Node) -> () {
@@ -387,7 +344,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
                 // into the general path, which prints the hoisted temporary and
                 // ices when there is none. Nothing hoists here, because the
                 // body IS the initializer -- so this arm has to be asked first.
-                ro rtmp = @emit_record_ctor(e, ret)
+                ro rtmp = @emit_record_ctor(e, ret, false)
                 @body.append("    return ${rtmp};\n")
             } else if is_expr_kind(e.kind_of()) {
                 @body.append("    return ")
@@ -487,7 +444,7 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     // is not in is_expr_kind (B13's lesson), and without this
                     // arm the 4a statement arm would BUILD AND DROP the pair
                     // while the function falls off its end.
-                    ro ttmp = @emit_tuple_lit(c, @out.type_of(c.id_of()))
+                    ro ttmp = @emit_record_ctor(c, @out.type_of(c.id_of()), true)
                     @body.append("    return ")
                     @body.append(ttmp)
                     @body.append(";\n")
@@ -525,6 +482,39 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     @body.append("    } else {\n")
     @emit_block_value(kids[4], uniq)
     @body.append("    }\n")
+}
+
+/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
+/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
+/// is emitted INSIDE the else branch, so its effects run only when the left
+/// side is None, which is what the oracle does and what a reader expects.
+///
+/// The shape is `@emit_if_value`'s and the `(T){0}` initialiser is there for
+/// the same reason: a temporary only conditionally written would otherwise
+/// answer whatever the stack held. Both branches always write here; the
+/// initialiser costs one C token and removes the question.
+fn Emitter mut @emit_coalesce(e Node) -> str {
+    ro qk = branch_children(e)
+    ro ot = @out.type_of(qk[0].id_of())
+    ro res_t = @out.type_of(e.id_of())
+    ro u = @fresh_uniq()
+    ro opt = "_novac_tmp_t${u}"
+    ro res = "_novac_qq_t${u}"
+    @hoist_array_lits(qk[0])
+    @body.append("    ${c_type(@ctx, ot)} ${opt} = ")
+    @emit_expr(qk[0])
+    @body.append(";\n")
+    @body.append("    ${c_type(@ctx, res_t)} ${res} = (${c_type(@ctx, res_t)}){0};\n")
+    @body.append("    if (${opt}.tag == ${OPTION_SOME_TAG_C}) {\n")
+    @body.append("        ${res} = ${opt}.value;\n")
+    @body.append("    } else {\n")
+    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
+    // to the None branch alone -- that is the short circuit, in one place.
+    @hoist_array_lits(qk[2])
+    @body.append("        ${res} = ")
+    @emit_expr(qk[2])
+    @body.append(";\n    }\n")
+    res
 }
 
 /// Emit a block whose LAST statement is its value: everything before it runs
@@ -711,12 +701,12 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         // build IS the emission and the temporary is simply not read (B15
         // step 4a; found by the tail probe, where check passed the form and
         // this door iced).
-        ro dropped = @emit_tuple_lit(st, @out.type_of(st.id_of()))
+        ro dropped = @emit_record_ctor(st, @out.type_of(st.id_of()), true)
         @body.append("    (void)")
         @body.append(dropped)
         @body.append(";\n")
-    } else if k == NodeKind.TupleBind {
-        @emit_tuple_bind(st)
+    } else if k == NodeKind.DestructureBind {
+        @emit_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         @emit_if_let(st)
     } else {
@@ -783,25 +773,24 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 return
             }
             if kind == NodeKind.TupleExpr {
-                @lit_tmp[raw_node(e.id_of())] = @emit_tuple_lit(e, @out.type_of(e.id_of()))
+                // THE SAME DOOR as the brace constructor, positionally named
+                // (274.6 V3-1): a tuple is a record on the stack, so it builds
+                // where a record builds.
+                @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()), true)
+                return
+            }
+            if kind == NodeKind.InterpStr {
+                @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e)
+                return
+            }
+            if kind == NodeKind.Coalesce {
+                @lit_tmp[raw_node(e.id_of())] = @emit_coalesce(e)
                 return
             }
             if kind == NodeKind.Lit {
-                // An INTERPOLATED literal is a multi-statement build (I1):
-                // its chain hoists like any construction. A plain literal
-                // hoists nothing -- the pool owns it -- and a leaf never
-                // nests, so the walk ends here either way.
-                ro lk2 = branch_children(e)
-                ro lt2 = lk2[lk2.len() - 1]
-                if leaf_kind(lt2) != TokenKind.StrLit {
-                    // A numeric literal: nothing to hoist.
-                    return
-                }
-                if interp_slices(leaf_text(lt2)).len() > 1 {
-                    @lit_tmp[raw_node(e.id_of())] = @emit_interp_build(e, leaf_text(lt2))
-                } else {
-                    // A plain string: the pool owns it.
-                }
+                // A literal hoists nothing: the pool owns a plain string,
+                // and the interpolated form is its own InterpStr node since
+                // I2 (a nested-in-slot literal is refused by the checker).
                 return
             }
             if kind != NodeKind.RecordCtor {
@@ -810,14 +799,19 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 }
                 return
             }
-            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()))
+            @lit_tmp[raw_node(e.id_of())] = @emit_record_ctor(e, @out.type_of(e.id_of()), false)
         }
     }
 }
 
 /// A record constructor at a binding: builds the value into a numbered
 /// temporary and answers its name, which the binding then reads.
-fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
+/// `positional` says WHERE the field name comes from, and it is a parameter
+/// rather than a test on the node because the caller already knows: a brace
+/// constructor names its fields, a parenthesised literal numbers them. A test
+/// here would have to tell the constructor's HEAD (a `Name` child) from a
+/// component, and that is exactly the kind of guess this compiler removes.
+fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str {
     ro rec = c_struct(@ctx, vtype)
     // F30: the temporary is NUMBERED, not named after the binding --
         // a name may be bound twice in one scope (the oracle accepts it)
@@ -836,6 +830,7 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
     } else {
         @body.append("    ${rec}* ${tmp} = (${rec}*)nova_alloc(sizeof(${rec}));\n")
     }
+    mut pos = 0
     for c in branch_children(init) {
         ro ck = c.kind_of()
         if ck == NodeKind.CtorSpread {
@@ -863,6 +858,20 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId) -> str {
                 @body.append(fname)
             }
             @body.append(";\n")
+        } else if positional && is_expr_kind(ck) {
+            // A POSITIONAL component (274.6 V3-1): the same build, the same
+            // hoist before its own assignment line -- only the field name is
+            // the position instead of a written word. This is why the fold
+            // preserves effect order BY CONSTRUCTION: the carrier
+            // `tuple_ctor_effect_order` pins `(tick(1), tick(2))` through
+            // exactly these two assignments, and a compound literal (the shape
+            // V2b uses for a declared constructor) would not pin it at all --
+            // C leaves the order of initializers unspecified.
+            @hoist_array_lits(c)
+            @body.append("    ${tmp}${arrow}f${pos} = ")
+            @emit_expr(c)
+            @body.append(";\n")
+            pos += 1
         } else {
             // The '{' ',' '}' leaves of the constructor: punctuation
             // stores no field, so the temporary is left as it is.
@@ -908,7 +917,7 @@ fn Emitter mut @emit_bind(st Node) -> () {
     if init.kind_of() == NodeKind.TupleExpr {
         // The same contract as the record constructor below: built into a
         // temporary, the binding reads the temporary's name (B15 step 4a).
-        ro ttmp = @emit_tuple_lit(init, vtype)
+        ro ttmp = @emit_record_ctor(init, vtype, true)
         @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${ttmp};\n")
         return
     }
@@ -918,7 +927,7 @@ fn Emitter mut @emit_bind(st Node) -> () {
         // place that assumed every record is. Measured 2026-08-23 -- the C read
         // `NovaValue_Pt* a = _novac_tmp_t1;`, initializing a pointer with a
         // struct, and clang is what said so.
-        ro tmp = @emit_record_ctor(init, vtype)
+        ro tmp = @emit_record_ctor(init, vtype, false)
         @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
     } else if is_expr_kind(init.kind_of()) {
         // The initializer may CONTAIN a construction (an interpolated

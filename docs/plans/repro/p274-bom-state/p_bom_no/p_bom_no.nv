@@ -1,0 +1,5 @@
+module p_bom_no
+
+fn main() {
+    println(7)
+}

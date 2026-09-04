@@ -16,7 +16,7 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
-import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
+import ../sem.{branch_children, leaf_text, is_value_record, shape_of, InteropTable}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
@@ -448,6 +448,112 @@ fn main() {
     // add one -- an edge is a line in the table of section 3, with a contract.
     ro ctx = context(parse(tokens_of(src)), parse_decls([]str.of(handed)), InteropTable.new())
     assert(!is_value_record(ctx, ctx.ty_of_name("Pair") ?? no_ty()))
+}
+
+test "a parenthesised record CONSTRUCTS by call, with defaults, and names a missing slot (V2b)" {
+    // The owner's rule made literal: the constructor IS the declaration, an
+    // ordinary function -- so it is registered as a row of the callable table
+    // and the EXISTING resolver answers arity, named arguments and defaults.
+    // Nothing in this wave taught the checker those; the holder proves it by
+    // exercising all three through one declaration.
+    //
+    // WHAT THIS HOLDER DOES NOT JUDGE, named so nobody reads it as more:
+    // the EMISSION. `compile_to_c` does not compile the C it returns, so
+    // stubbing the emitter's constructor arm leaves this test green (measured
+    // 2026-09-03 -- the reverse probe was toothless here). The emission is held
+    // by the CARRIER `examples/basics/named_tuple.nv` through the byte-for-byte
+    // smoke: with the arm stubbed novac prints a call to a C function that
+    // exists nowhere and the build fails. Two sides, two holders.
+    ro (clean, _) = compile_to_c("module m.c
+type Pair(x int, y int)
+type Complex(re f64 = 0.0, im f64 = 0.0)
+fn main() {
+ ro p = Pair(1, 2)
+ println(p.x)
+ ro c = Complex()
+ println(c.re)
+ ro d = Complex(re: 3.5)
+ println(d.re)
+}", []str.new())
+    assert(clean.len() == 0)
+    // A SLOT WITH NO VALUE is named, and by the ordinary refuser: the oracle
+    // says "expects exactly 2 arguments", we say WHICH parameter is missing --
+    // the same cause, a more precise sentence, and neither is invented here.
+    ro (short, _) = compile_to_c("module m.s
+type Pair(x int, y int)
+fn main() {
+ ro p = Pair(1)
+ println(p.x)
+}", []str.new())
+    mut named_slot = false
+    for d in short {
+        if d.message.contains("omits `y`") { named_slot = true }
+    }
+    assert(named_slot)
+}
+
+test "the parenthesised record form is READ, and its brace construction refused (V2a)" {
+    // `type Pair(x int, y int)` is a record whose fields are written in one
+    // line (D215). Before wave V2a the parser handed the tail to `@type_ref`,
+    // which read the parens as a flat run of leaves with no `Field` node, so
+    // `shape_of_decl` classified Pair as a NEWTYPE over `int` -- both field
+    // names and the second field vanished in silence.
+    //
+    // TWO criteria in one test because they are one mechanism: the declaration
+    // must READ (zero diagnostics on a file that only declares it), and the
+    // BRACE construction must be refused BY NAME -- the oracle accepts
+    // `Pair { x: 1 }` at check and then fails to emit it (`undeclared
+    // identifier 'Nova_Pair'`, measured 2026-09-03), so emitting a struct here
+    // would invent a construction the fixed point does not have. The call form
+    // `Pair(1, 2)` is the one that works, and it arrives with V2b.
+    ro (clean, _) = compile_to_c("module m.p
+type Pair(x int, y int)
+fn main() { println(1) }", []str.new())
+    assert(clean.len() == 0)
+    // The SHAPE is the registry's answer, asked through the door (P24: no
+    // reading a C name back apart).
+    ro ctx = context(parse(tokens_of("module m.p
+type Pair(x int, y int)
+fn main() { println(1) }")), parse_decls([]str.new()), InteropTable.new())
+    assert(match shape_of(ctx, ctx.ty_of_name("Pair") ?? no_ty()) {
+        NamedTuple => true
+        Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false
+    })
+    // And the brace form is refused by name, not accepted and emitted.
+    ro (braced, _) = compile_to_c("module m.b
+type Pair(x int, y int)
+fn main() {
+ ro p = Pair { x: 1, y: 2 }
+ println(p.x)
+}", []str.new())
+    mut named = false
+    for d in braced {
+        if d.message.contains("constructed by call") { named = true }
+    }
+    assert(named)
+}
+
+test "a `value` record answers is_value_record -- the POSITIVE side of the shape" {
+    // Until 2026-09-03 NOTHING held this direction: `NovaValue_` was asserted
+    // nowhere and the only is_value_record test was the negative above, so the
+    // whole "value record = stack" axis stood on good behaviour (found by the
+    // plan-recheck of 274.6). This is the holder wave V1's reverse probe
+    // reddens: stub the ValueRecord arm of `is_value_record` to answer false
+    // and this assert goes red; restore it and it greens.
+    //
+    // Judged through the DOOR, not the C text: P24 forbids reading a C name
+    // back apart, and check-novac-mangling-one-way refuses Nova-prefixed
+    // spellings in test asserts -- the door IS sem's answer about the type.
+    ro src = "module m.v
+type P value { n int }
+fn main() {
+ ro p = P { n: 7 }
+ println(p.n)
+}"
+    ro (diags, _) = compile_to_c(src, []str.new())
+    assert(diags.len() == 0)
+    ro ctx = context(parse(tokens_of(src)), parse_decls([]str.new()), InteropTable.new())
+    assert(is_value_record(ctx, ctx.ty_of_name("P") ?? no_ty()))
 }
 
 test "a type nobody declared is still refused by name" {

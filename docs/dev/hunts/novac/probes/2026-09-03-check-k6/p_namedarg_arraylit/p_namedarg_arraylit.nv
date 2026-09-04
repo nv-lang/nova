@@ -1,0 +1,7 @@
+module p_namedarg_arraylit
+
+fn pick(k int, from []int = []int.of(0)) -> int => k
+
+fn main() {
+    println(pick(1, from: []int.of(9, 8)))
+}

@@ -1,0 +1,19 @@
+module p_variant_vs_fn
+
+// FOURTH FORM of the one-flat-namespace property: a top-level FUNCTION and a
+// VARIANT share `DefTable` (novac/src/sem/defs.nv), and the function is
+// declared last, so its `DefFn` row overwrites the variant's `DefVariant` row.
+type Color enum Red | Green
+
+fn Red(n int) -> int => n * 2
+
+fn rank(c Color) -> int {
+    match c {
+        Red => 1
+        Green => 2
+    }
+}
+
+fn main() {
+    println(rank(Color.Red))
+}

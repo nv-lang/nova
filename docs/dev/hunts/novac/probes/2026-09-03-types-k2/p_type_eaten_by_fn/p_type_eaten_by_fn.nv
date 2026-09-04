@@ -1,0 +1,14 @@
+module p_type_eaten_by_fn
+
+// FIFTH FORM of the one-flat-namespace property: a TYPE and a top-level
+// FUNCTION share `DefTable` (novac/src/sem/defs.nv:111, "LAST PUT WINS"), and
+// the function is declared second, so `type_decl("Box")` (defs.nv:200) then
+// answers None for a type the file declares.
+type Box { n int }
+
+fn Box(n int) -> int => n * 3
+
+fn main() {
+    mut b = Box { n: 7 }
+    println(b.n)
+}

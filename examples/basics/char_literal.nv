@@ -1,0 +1,20 @@
+// The char literal (the char wave): a codepoint or one escape between single
+// quotes -- lexed verbatim, typed `char`, compared as the C scalar it is, and
+// emitted through the one spelling door (`'x'` -> `((nova_char)120U)`).
+module basics.char_literal
+
+fn tag(c char) -> int {
+    if c == 'x' { 1 } else { 2 }
+}
+
+fn nl(c char) -> int {
+    if c == '\n' { 7 } else { 8 }
+}
+
+fn main() {
+    ro c = 'x'
+    println(tag(c))
+    println(tag('A'))
+    println(nl('\n'))
+    println(nl('z'))
+}

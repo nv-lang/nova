@@ -82,12 +82,40 @@ export type TypeRows enum
     | VariantRows(VariantRow, int)
 
 /// One type of the file registry; a type id is this record's interned
-/// index in Ctx.types (see the terminology note above). Registry rows are
-/// VALUE records: a plain record is a GC pointer — one heap allocation per
-/// row; `value` keeps rows inline in the vector buffer.
+/// The SHAPE of a record declaration -- one enumeration, the spec's own
+/// taxonomy (D215; architecture 4b). `Record` lives on the HEAP behind a GC
+/// pointer; the other three live on the stack. One field instead of flags,
+/// because two booleans admit "a tuple on the heap", which the language does
+/// not have -- an enumeration cannot express it, and a new variant forces
+/// every `match` to answer (P21, held by check-novac-match-exhaustive).
+/// TWO AXES, and the names say both (the owner`s correction, 2026-09-03):
+/// does the TYPE have a name, and do its FIELDS have names? One word was
+/// hiding the difference, and the grid makes the answer readable:
+///
+///                    fields named                 fields positional
+///   declared         NamedTuple             PositionalTuple
+///   no declaration   AnonNamedTuple    AnonPositionalTuple
+///
+/// `type Pair(x int, y int)` is declared and named; `type Point(f64, f64)`
+/// is declared and positional; `(1, 2)` has no declaration and is
+/// positional (identity structural, D123).
+///
+/// `AnonNamedTuple` -- the form `(file str, line int)` -- IS NOT
+/// IN THE LANGUAGE YET (measured 2026-09-03: the oracle refuses it at parse,
+/// `expected ')', got identifier`, and no D-block describes it). The variant
+/// exists so the grid is complete and every `match` must answer for the cell;
+/// nothing produces it and the parser refuses the form, so no program reaches
+/// this shape today. It costs one arm per match and buys the honest statement
+/// that the cell is empty ON PURPOSE.
+export type RecordShape enum Record | ValueRecord | NamedTuple | PositionalTuple
+    | AnonNamedTuple | AnonPositionalTuple
+
+/// One declaration's row: index in Ctx.types (see the terminology note
+/// above). Registry rows are VALUE records: a plain record is a GC pointer --
+/// one heap allocation per row; `value` keeps rows inline in the vector buffer.
 export type TypeDef value {
     kind TypeKind /// Which row table the off/cnt range addresses.
-    by_value bool /// Declared `value`: the type lives INLINE where a plain record is a GC pointer. Written by the source, so it is stored -- `kind` answers which rows a declaration owns, and layout is not that
+    shape RecordShape /// The record's shape (see RecordShape above). REPLACES the old `by_value bool` (owner's rule, architecture 4b): the word of the source (`value`, the parenthesised tuple form) decides it at collect, exactly once
     ty_id TyId /// The interned term of this declaration (types.Interner id): Prim / Record(decl) / Sum(decl). E2-b1 seam — consumers migrate to it one by one; the declaration index stays the DeclId.
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
@@ -178,6 +206,7 @@ export type Prims value {
     str_id TyId /// Type id of `str`.
     bool_id TyId /// Type id of `bool`.
     f64_id TyId /// Type id of `f64`.
+    char_id TyId /// Type id of `char` (universe ordinal 14; the char-literal wave).
 }
 
 /// A position whose type the caller cannot state yet.
@@ -238,7 +267,8 @@ export type Ctx {
 fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordinal int) -> DeclId {
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
-    types.push(TypeDef { kind: TypeKind.TkPrim, by_value: false, ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
+    types.push(TypeDef { kind: TypeKind.TkPrim, shape: RecordShape.Record,
+                         ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -275,6 +305,23 @@ export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
     assert(is_decl(d) && raw_decl(d) < ctx.types.len(),
         "sem: a nominal term names a declaration this file's table does not hold")
     ctx.types[raw_decl(d)]
+}
+
+/// The INDEX of the declaration a nominal term names, or -1 when it names
+/// none this file holds.
+///
+/// Exists so a reader outside `sem` can key an array by declaration without
+/// importing `names`: the emitter's declaration pass needs "is this type's
+/// body already out?", and the answer is an index into its own array. The
+/// edge table (architecture section 3) has no `emit_c -> names` edge, and the
+/// honest fix is to keep `raw_decl` where it is already legal rather than to
+/// widen the graph for one subscript.
+export fn decl_index_of_ty(ctx Ctx, t TyId) -> int {
+    if !is_ty(t) { return -1 }
+    ro d = ctx.tys.decl_head_of(t)
+    if !is_decl(d) { return -1 }
+    if raw_decl(d) >= ctx.types.len() { return -1 }
+    raw_decl(d)
 }
 
 /// The TYPE of a declaration -- the other direction, and the one the name
@@ -363,11 +410,88 @@ export fn collect(file Node, decls []Node, interop InteropTable) -> Ctx {
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
     harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces)
+    // CONSTRUCTORS of the parenthesised record form, and AFTER the collector
+    // on purpose: `own_cnt` is fixed inside `collect_types_with` (the last
+    // line of it), so a row added there would answer `compiles_body == true`
+    // -- and a synthesized constructor has NO body to emit. Registered here it
+    // answers false, which is the truth: the emitter prints a compound literal
+    // for it, never a call (274.6 V2b).
+    register_paren_ctors(file, ctx.types, ctx.defs, ctx.tys, ctx.fns)
     // The interop surface is HANDED, like the declarations: the collector never
     // reads the shell itself -- one reader per input, and the reader of this one
     // lives beside the shell (emit_c.shell_surface).
     ctx.interop = interop
     ctx
+}
+
+/// The CONSTRUCTOR of every parenthesised record declaration in this file.
+///
+/// The owner's rule (2026-09-03): "the constructor that creates a tuple IS its
+/// declaration -- an ordinary function with every ordinary capability,
+/// defaults included". So it is registered as a row of the callable table and
+/// nothing else: arity, named arguments, defaults and coercion are then the
+/// EXISTING call resolver's, and this wave adds no checker logic for them.
+///
+/// THREE decisions, each measured rather than chosen:
+///
+/// 1. AFTER `collect_types_with`, because `own_cnt` is fixed at its last line:
+///    a row added inside it would claim a body it does not have.
+/// 2. NO `defs.add` under the type's name. `FnIndex.build` reads `fns.rows`
+///    directly (resolve.nv:85-101), so the row alone makes `Pair(1, 2)`
+///    resolvable -- while `defs` is one flat last-put-wins namespace, so
+///    writing the constructor there would EVICT the type's own `DefType` entry
+///    and break every later reference to the type by name.
+/// 3. The default expression is read from the FIELD NODE, not from the field
+///    table: `FieldDef` stores name, type and owner -- no default -- and the
+///    same door parameters use (`param_default_slot`) reads the `= expr` tail
+///    off any children list.
+fn register_paren_ctors(file Node, types []TypeDef, defs DefTable,
+                        mut tys Interner, mut fns FnTable) -> () {
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.TypeDecl { continue }
+        match shape_of_record_decl(c) {
+            NamedTuple => {}
+            // The POSITIONAL declared form gets no constructor row yet: the
+            // ORACLE does not compile it either (its own C fails with
+            // `unknown type name '_NovaTuple_2_...'`, measured step 0), so a
+            // row here would offer a construction the fixed point has not.
+            // It arrives with V3, behind the verdict on that oracle defect.
+            Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => { continue }
+        }
+        ro tname = match decl_name_at(branch_children(c)) {
+            None => continue
+            Some(i) => leaf_text(branch_children(c)[i])
+        }
+        mut ret = no_ty()
+        for td in types {
+            if td.name == tname {
+                ret = td.ty_id
+            } else {
+                // Another declaration of this file: the scan is over the whole
+                // table because a type is found by name only here, and the
+                // match either sets the answer or leaves it (P31 form 3).
+            }
+        }
+        if !is_ty(ret) { continue }
+        mut params = []ParamDef.new()
+        for fc in branch_children(c) {
+            if fc.kind_of() != NodeKind.Field { continue }
+            ro fk = branch_children(fc)
+            ro nm = match field_name_at(fk) {
+                None => continue
+                Some(i) => leaf_text(fk[i])
+            }
+            ro ft = match field_type_at(fk) {
+                None => no_ty()
+                Some(i) => ty_of_type_ref(fk, i, no_ty(), []str.new(),
+                                          []TyId.new(), types, defs, tys)
+            }
+            params.push(ParamDef { name: nm, type_id: ft, mode: ParamMode.ModeRo,
+                                   default_expr: param_default_slot(fk) })
+        }
+        if params.len() == 0 { continue }
+        fns.add(tname, ret, false, params, []str.new(), []str.new())
+    }
 }
 
 /// The type and declaration registry of ONE file (without methods:
@@ -412,7 +536,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // The PRIMS are types, and a declaration's type comes from its row -- the
     // seed hands back the declaration, the row hands back the term.
     ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
-                       bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]) }
+                       bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]),
+                       char_id: ty_of_row(types, seeded[14]) }
     mut fields = FieldTable.new()
     mut protos = ProtoTable.new()
     mut variant_rows = []VariantDef.new()
@@ -479,7 +604,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             defs.add(tname, DefTarget.DefType(d))
             // A SUM's value-ness is DERIVED, not declared: `is_value_sum` reads
             // it off the payloads (A4), so the row says nothing here.
-            types.push(TypeDef { kind: TypeKind.TkSum, by_value: false,
+            types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
                                  tparam_cnt: generic_names(nk).len(), ty_id: tys.sum(d), name: tname,
                                  rows: TypeRows.NoRows })
             continue
@@ -514,7 +639,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
                 types.push(TypeDef { kind: TypeKind.TkRecord,
-                                     tparam_cnt: generic_names(nk).len(), by_value: decl_is_value(c),
+                                     tparam_cnt: generic_names(nk).len(), shape: shape_of_record_decl(c),
                                      ty_id: tys.record(d), name: tname,
                                      rows: TypeRows.NoRows })
             }
@@ -523,7 +648,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // representation is a type reference and may point forward.
                 ro d = DeclId(types.len())
                 defs.add(tname, DefTarget.DefType(d))
-                types.push(TypeDef { kind: TypeKind.TkNewtype, by_value: false,
+                types.push(TypeDef { kind: TypeKind.TkNewtype, shape: RecordShape.Record,
                                      tparam_cnt: 0, ty_id: no_ty(), name: tname,
                                      rows: TypeRows.NoRows })
             }
@@ -611,7 +736,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                     // would lose the declaration's own word one pass after
                     // reading it.
                     types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
-                                                          by_value: types[raw_decl(owner_id)].by_value,
+                                                          shape: types[raw_decl(owner_id)].shape,
                                                           tparam_cnt: types[raw_decl(owner_id)].tparam_cnt,
                                                           ty_id: mine.ty_id,
                                                           name: tname,
@@ -630,7 +755,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                         Some(spec) => {
                             if raw_decl(spec.under_decl) < types.len() {
                                 types[raw_decl(owner_id)] = TypeDef {
-                                    kind: TypeKind.TkNewtype, by_value: false,
+                                    kind: TypeKind.TkNewtype, shape: RecordShape.Record,
                                     tparam_cnt: 0,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
                                     name: tname, rows: TypeRows.NoRows }

@@ -3,6 +3,38 @@
 # Храповик В ОБЕ СТОРОНЫ: рост без поднятия базы — красный (обоснуй в коммите),
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
+#
+#   2026-09-04 (окно 274, волна В3-2а), sem 202 -> 206: четыре двери, и все
+#   четыре -- следствие ОДНОГО решения, принятого за меня двумя стражами.
+#   Связыватель образца стал узлом `Name`, потому что
+#   `check-novac-channel-one-writer` запрещает эмиттеру спрашивать дверь
+#   подбора, а `check-novac-resolve-discipline` запрещает линейный скан по
+#   именам в `sem`: щели между ними нет, и остаётся единственная конструкция --
+#   тип имени ЛЕЖИТ В КАНАЛЕ, записанный чекером. Отсюда `pattern_binders`
+#   (связыватели образца; обход останавливается на `=`, потому что
+#   инициализатор -- такой же узел `Name` и наивный обход съел бы его) и
+#   `binder_text` (имя связывателя); обе спрашивают ОБЕ фазы.
+#   Плюс `option_payload` и `for_head_elem`, переехавшие из `check/type_of.nv`
+#   в новый `sem/type_shape.nv` волной В3-4а по той же причине: эмиттер выводил
+#   тип элемента цикла вторично, а `emit_c` не импортирует `check` ни разу
+#   (замерено грепом, не предположено), значит дверь обязана подняться в слой,
+#   общий для обеих фаз.
+#
+#   2026-09-04 (окно 274, волна В3-2), sem 200 -> 202: `brace_pattern` и
+#   `has_rest` -- два вопроса, которые ОБРАЗЕЦ разбора отвечает о себе: в какой
+#   форме он написан (круглая -- по позиции, фигурная -- по имени) и несёт ли
+#   он `..`. Наружу они нужны потому, что спрашивают их ДВЕ фазы: чекер выбирает
+#   чтение, эмиттер выбирает написание. Первая редакция держала эти вопросы в
+#   каждой фазе своим кодом, и `check-novac-second-door` поймал их при сходстве
+#   1.00 -- дверь наружу здесь дешевле второй копии внутри.
+#   2026-09-03 (окно 274), sem 199 -> 200: `decl_index_of_ty` — ИНДЕКС
+#   объявления, которое называет номинальный терм, или -1. Заведена, чтобы
+#   читатель ВНЕ `sem` мог держать массив по объявлению, не импортируя `names`:
+#   проходу объявлений в эмиссии нужен вопрос «тело этого типа уже вышло?», а
+#   ответ — подписка в его собственный массив. Ребра `emit_c -> names` в таблице
+#   архитектуры §3 нет, и честный выход — оставить `raw_decl` там, где он уже
+#   законен, а не расширять граф ради одной подписки. Соседка `decl_of_ty`
+#   отдаёт СТРОКУ и для этого не годится.
 # Пересъём 2026-08-16 (хвост Э2-б1, канал чекера): sem 54 -> 53. Рост НЕ отменяет
 # требования сузить, а исполняет его иначе: +11 — это КАНАЛ (`CheckOut`,
 # `CalleeRef`, `SubstRef` и их двери), новый публичный контракт модуля, ради
@@ -111,7 +143,12 @@
 # OPTION_SOME_TAG_C/OPTION_SOME_VARIANT — имя языковой суммы, семейный
 # C-префикс оболочки, tag-константа Some и имя варианта (P5: имена в
 # builtins; спеллит mangle-дверь, судит чекер, эмиттер читает).
-builtins 32
+# builtins 32 -> 33 (2026-09-03, 274.6 V2b): +PAREN_RECORD_C_PREFIX -- the
+# ORACLE's C prefix for a record declared in the parenthesised form, read off
+# its own emission. An ABI name lives in this registry by P5 (written once, as
+# data) and the mangling door is its one reader; the alternative was the same
+# string spelled at two sites in the mangler.
+builtins 33
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -558,7 +595,24 @@ resolve 15
 # и эмиттер цепи), +escaped_byte_len (C-длина фрагмента после эскейпов --
 # .len у (nova_str){...}), +interp_slot_is_name (суд формы слота И1),
 # +const_init_interpolates (застава подстановки const, где hoist не бегал).
-sem 197
+# sem 197 -> 196 (2026-09-02, волна И2): -interp_slot_is_name — суд формы
+# слота умер вместе с I1-путём (лексер режет верхний уровень, слоты —
+# настоящие узлы); interp_slices/escaped_byte_len живут (nested-суд и
+# эмиттер фрагментов).
+# sem 196 -> 197 (2026-09-02, char-literal wave): `char_literal_code` (mangle) exported -- the ONE spelling door of a char literal's codepoint, read by the emitter (`'x'` -> 120), the int literal's `int_literal_c_text` precedent. Two readers must never disagree about the number, so the door is shared, hence exported.
+# sem 197 -> 198 (2026-09-03, 274.6 V1): +RecordShape (the shape enumeration,
+# architecture 4b) +shape_of_record_decl (ONE classification door for both
+# collectors) -decl_is_value (absorbed by that door -- its two callers were
+# exactly the two collectors). Net +1.
+# sem 198 -> 199 (2026-09-03, 274.6 V2a): +shape_of -- THE door of the shape
+# question, asked by `check` (the paren-form refusal) and by the holder. It is
+# the one place that gates on the type's kind; `is_value_record` now delegates
+# to it instead of carrying a second exhaustive kind-match of its own. A
+# boolean wrapper per shape was written and then REMOVED at the owner's word
+# (2026-09-03): a caller compares with the variant's own name, which the word
+# rule allows, so a wrapper would be a second door needing a periphrasis for a
+# name it may not spell. Net +1.
+sem 206
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

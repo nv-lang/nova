@@ -20,7 +20,8 @@ import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
 import ../sem.{CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
-import ../sem.{int_literal_c_text, interp_slices}
+import ../sem.{shape_of}
+import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record}
@@ -247,6 +248,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(if neg { "-" } else { "" })
             @body.append(leaf_text(t))
             @body.append(")")
+        } else if lk == TokenKind.CharLit {
+            // The codepoint through the ONE spelling door (the int literal's
+            // precedent); the C form is the one the interp chain already
+            // prints for its fill character.
+            @body.append("((nova_char)")
+            @body.append(char_literal_code(leaf_text(t)))
+            @body.append("U)")
         } else if lk == TokenKind.StrLit {
             // An INTERPOLATED literal was hoisted into its builder chain by
             // the statement's walk (I1); the temporary carries the string.
@@ -336,6 +344,20 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 }
             }
         }
+    } else if k == NodeKind.InterpStr {
+        ro itmp2 = @lit_tmp[raw_node(e.id_of())]
+        if itmp2 == "" {
+            ice("emit_c: an interpolated string the hoist never built (I2)")
+        }
+        @body.append(itmp2)
+    } else if k == NodeKind.Coalesce {
+        // The hoist built the temporary and the guard that fills it (the
+        // short circuit lives there); the expression IS that name.
+        ro qtmp = @lit_tmp[raw_node(e.id_of())]
+        if qtmp == "" {
+            ice("emit_c: a `??` the hoist never built (coalesce wave)")
+        }
+        @body.append(qtmp)
     } else if k == NodeKind.SelfExpr {
         // The receiver's C name, exactly as the signature spelled it.
         @body.append(RECV_C_NAME)
@@ -391,6 +413,23 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The ROW the checker decided on, not a name rebuilt from the receiver's
         // type: after the checker, nobody infers.
         ro cr = @out.callee_of(e.id_of())
+        // `Sum.Variant(x)` WEARS THIS SHAPE and is a CONSTRUCTION, not a call:
+        // the checker recorded a variant row, and asking that record for a
+        // callable row ices by design ("a variant row is not a callable row").
+        // The same maker the unqualified `Variant(x)` prints, from the same
+        // recorded decision -- one form of the language, two spellings, one
+        // emission (2026-09-04, wave V3-4b).
+        match cr.target {
+            CalleeVariant(v) => {
+                @body.append("${c_maker(@ctx, v)}(")
+                @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr))
+                @body.append(")")
+                return
+            }
+            CalleeFn(_) | CalleeCtor(_) => {
+                // An ordinary method call: the row below is the decision.
+            }
+        }
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
         // carries an empty one, so there is no branch here to get wrong.
@@ -427,13 +466,53 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // int, and the answer is a sum, not a wrapper).
         match cr.target {
             CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}(")
-            CalleeFn(row) => @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
+            // A CONSTRUCTOR is a function whose return type is a
+            // parenthesised record and whose body novac does not emit -- so
+            // the call site prints the ORACLE's own construction, a compound
+            // literal on the stack (`((NovaTuple_Pair){1LL, 2LL})`, read off
+            // its C 2026-09-03), never a call to a C function that exists
+            // nowhere. One expression, so nothing is hoisted (274.6 V2b).
+            CalleeFn(row) => {
+                ro rt = @ctx.fns.rows[raw_row(row)].ret_id
+                // Same deferral as the checker's routing door: only the
+                // NAMED form has a constructor row today, so only it can
+                // reach this arm. The three places -- registration (sem),
+                // routing (check/calls) and this emission -- move together;
+                // when V3 registers positional constructors, all three turn.
+                ro ctor = match shape_of(@ctx, rt) {
+                    NamedTuple => !@ctx.fns.compiles_body(row)
+                    Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false
+                }
+                if ctor {
+                    @body.append("((${c_struct(@ctx, rt)}){")
+                    @emit_bound_args(kids, 1, false, e.id_of(), row)
+                    @body.append("})")
+                    return
+                } else {
+                    // An ordinary callable: its C name opens below.
+                }
+                @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
+            }
             // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
             // its representation at runtime -- zero cost, D-newtype. So the
             // emission is the ARGUMENT and nothing else: no wrapper, no cast
             // (C needs none between a typedef and its underlying type). The
             // oracle writes a redundant cast here; the shape of our emission is
             // ours (274 section 7.0) as long as the behaviour is identical.
+            // A TYPE in call position CONSTRUCTS, and WHICH construction is
+            // the SHAPE's answer (274.6 V2b):
+            //
+            //   * a NEWTYPE is its representation at runtime -- zero cost,
+            //     so the emission is the ARGUMENT and nothing else: no
+            //     wrapper, no cast (C needs none between a typedef and its
+            //     underlying type). The oracle writes a redundant cast here;
+            //     the shape of our emission is ours (274 section 7.0) as
+            //     long as the behaviour is identical.
+            //   * the PARENTHESISED record form is a COMPOUND LITERAL, one
+            //     expression on the stack -- read off the oracle's own C
+            //     2026-09-03: `((NovaTuple_Pair){1LL, 2LL})`. One expression
+            //     is why this needs no hoist, unlike the brace constructor
+            //     (which builds field by field through a temporary).
             CalleeCtor(_) => {
                 for c in kids {
                     if !is_expr_kind(c.kind_of()) { continue }

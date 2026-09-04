@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: the same habit subset_test.nv names -- rustc's ui-test grouping of
+// acceptance tests by the wave that earned them; NOT taken: golden files.
+// Role: acceptance tests of E2-b3 overload resolution (sub-plan 274.5, waves
+// M1/M3): the typed method key picks by argument types, and a real D84 tie --
+// method or free -- is refused by name, never chosen.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file -- and it EXISTS because
+// subset_test.nv crossed the 1000-line limit (decision 12): the cut is by
+// MEANING, the overload-resolution block, exactly as subset_test.nv itself
+// was once cut from pipeline_test.nv.
+// novac/src/pipeline/overload_test.nv -- what E2-b3 M1/M3 promised, held.
+
+module novac.pipeline
+
+test "a method overload is narrowed by the argument types (E2-b3 M1)" {
+    // Two `absorb` overloads on an own type, split by the argument's TYPE.
+    // Until M1 the method key carried `no_ty()` in every argument slot, so
+    // this pair was refused as "overloaded and novac does not type arguments
+    // yet". The pick decides the SYMBOL: each call must name its OWN
+    // overload's C spelling (our scheme carries the parameter types).
+    ro std = std_decls()
+    ro (dpk, c) = compile_to_c("type Tally {
+ n int
+}
+fn Tally @absorb(x int) -> int => @n + x
+fn Tally @absorb(s str) -> int => @n + 90
+fn main() {
+ ro t = Tally { n: 10 }
+ println(\"\${t.absorb(5)}\")
+ println(\"\${t.absorb(\"abc\")}\")
+}", std)
+    assert(dpk.len() == 0)
+    assert(c.contains("absorb__Tally__nova_int__to_nova_int(t,"))
+    assert(c.contains("absorb__Tally__nova_str__to_nova_int(t,"))
+}
+
+test "the D84 tie text arrives at the FREE path too (E2-b3 M3)" {
+    // The free-call FnOverloaded arm said "not narrowed yet (arrives with
+    // the checker, E2-b3)" -- a lie since M1: typed_free_key has been the
+    // key all along, so what stays overloaded is a real tie. Same guard as
+    // the method arm (key_fully_typed), one rule for both call forms.
+    // The oracle refuses the same class (E_OVERLOAD_AMBIGUOUS_MODE).
+    ro std = std_decls()
+    ro (dft, _) = compile_to_c("fn take(consume a int, b int) -> int => a + b
+fn take(a int, mut b int) -> int => a - b
+fn main() {
+ mut m = 2
+ println(\"\${take(7, m)}\")
+}", std)
+    mut ftie = false
+    for g in dft {
+        if g.message.contains("more than one function and none is more specific") { ftie = true }
+    }
+    assert(ftie)
+}
+
+test "a real D84 tie refuses by name, never chooses (E2-b3 M1)" {
+    // Modes varying OPPOSITELY across two positions: `take(consume, ro)`
+    // beside `take(ro, mut)` both fit `bx.take(7, m)` and neither dominates
+    // (P14 filter 4). D84's mode-axis amendment says refuse the tie -- "there
+    // is no silent choice". The oracle agrees on this axis
+    // (E_OVERLOAD_AMBIGUOUS_MODE, probed 2026-09-02).
+    ro std = std_decls()
+    ro (dtie, _) = compile_to_c("type Box {
+ v int
+}
+fn Box @take(consume a int, b int) -> int => a + b
+fn Box @take(a int, mut b int) -> int => a - b
+fn main() {
+ ro bx = Box { v: 1 }
+ mut m = 2
+ println(\"\${bx.take(7, m)}\")
+}", std)
+    mut tie = false
+    for g in dtie {
+        if g.message.contains("none is more specific") { tie = true }
+    }
+    assert(tie)
+}
+
+test "`??` is judged: a non-Option left side and `?? return` refuse by name (coalesce wave)" {
+    // The POSITIVE path (payload/fallback, the tag guard, the short circuit)
+    // is the CARRIER's -- examples/basics/coalesce.nv, held byte-for-byte by
+    // the corpus smoke. It cannot live here: these shared decls are poor (no
+    // Vec, so no `get`), and the subset's only Option source is a std method.
+    // What belongs here is the JUDGE, and it speaks without any Option at all.
+    ro std = std_decls()
+
+    // `?? return` is retracted (D86 amend): read by the parser, refused by
+    // name here -- the oracle refuses it in its checker for the same reason.
+    ro (dr, _) = compile_to_c("fn main() {
+ ro n = 1
+ ro v = n ?? return 0
+ println(v)
+}", std)
+    mut ret_hit = false
+    for g in dr {
+        if g.message.contains("does not take `return`") { ret_hit = true }
+    }
+    assert(ret_hit)
+
+    // A left side that is no Option has no payload to answer with.
+    ro (dn, _) = compile_to_c("fn main() {
+ ro n = 1
+ println(n ?? 0)
+}", std)
+    mut non_opt = false
+    for g in dn {
+        if g.message.contains("unwraps an `Option`") { non_opt = true }
+    }
+    assert(non_opt)
+}

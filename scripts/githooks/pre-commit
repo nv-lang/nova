@@ -76,7 +76,19 @@ fi
 # (merge ne schitaetsya resheniem: u strazha stoit --no-merges).
 NOVA_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 NOVA_TOML="$NOVA_ROOT/novac/nova.toml"
-if [ -f "$NOVA_TOML" ] && [ ! -f "$NOVA_ROOT/.git/MERGE_HEAD" ] \
+# GITDIR SPRASHIVAEM U GIT, a ne sobiraem kak "$NOVA_ROOT/.git": v worktree
+# `.git` -- eto FAYL so ssylkoy, a MERGE_HEAD lezhit v
+# <repo>/.git/worktrees/<imya>/. Poetomu propusk sliyaniy nizhe ne srabatyval
+# NIKOGDA imenno tam, gde sliyaniya i proishodyat: main prinadlezhit
+# integratoru, i kazhdoe okno slivaet ego v SVOYOM worktree.
+# Zamereno 2026-09-03 (okno 274): hook potreboval opustit schetchik 47 -> 39,
+# potomu chto SQ_HAVE schitaet HEAD DO sliyaniya. Poslushatsya znachilo by
+# otkatit schetchik integratora na vosem i pokrasnit CI -- rovno tot vred,
+# radi kotorogo pravilo zavedeno (reestr 846).
+# IMENNO --absolute-git-dir: obychnyy --git-dir pechataet OTNOSITELNYY `.git`
+# iz glavnoy kopii (urok uzhe zapisan v check-commit-language.sh, stroka 147).
+NOVA_GITDIR="$(git rev-parse --absolute-git-dir 2>/dev/null)"
+if [ -f "$NOVA_TOML" ] && [ ! -f "$NOVA_GITDIR/MERGE_HEAD" ] \
    && git diff --cached --name-only | grep -q '^spec/decisions/'; then
   SQ_POINT=$(tr -d '\r' < "$NOVA_TOML" \
              | sed -n 's/^#[[:space:]]*spec-point:[[:space:]]*\([0-9-]*\)$/\1/p')

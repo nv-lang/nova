@@ -186,8 +186,13 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
   закрывается заглушкой/TODO; фазирование — это порядок, не урезание объёма.
 - **Followup-маркеры `[M-…]`** — отложенная работа:
   - привязанные к плану → секция *Followups* того плана;
-  - «плавающие» → [docs/plans/backlog-followups.md](../plans/backlog-followups.md) (**только живые/открытые**) + запись
-    в [docs/dev/simplifications.md](simplifications.md) (**история**, append-only).
+  - «плавающие» → [docs/plans/backlog-followups.md](../plans/backlog-followups.md) (**только живые/открытые**).
+    Запись в [simplifications.md](simplifications.md) — **не всегда**: тот файл держит
+    действующие осознанные УПРОЩЕНИЯ (с обоснованием и условием снятия), а диагнозы
+    дефектов и хроники фиксов его шапка запрещает прямо. Условие — в
+    [AGENTS.md](../../AGENTS.md#followup-markers-m), здесь не повторяется (правка
+    2026-09-04: тут стояло безусловное «+ запись», и окно, честно ему следуя,
+    попадало в запрещённый файлом случай).
   - Жизненный цикл маркера описан в [AGENTS.md](../../AGENTS.md#followup-markers-m).
 
 ## 5. Рабочий цикл (как подхватить и вести работу)

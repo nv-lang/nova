@@ -1,0 +1,12 @@
+module block_tail_some
+
+// Bisect between some_return (arrow body, named refusal) and return_none
+// (block body WITH an early return, ICE): a BLOCK body whose tail is the
+// same `Some(n)` and which has no `return` at all.
+fn mk(n int) -> Option[int] {
+    Some(n)
+}
+
+fn main() {
+    if Some(a) = mk(2) { println(a) }
+}

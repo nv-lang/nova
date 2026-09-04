@@ -1,0 +1,20 @@
+module sum_ctor
+
+// Is "a variant as a value" a general question or an Option-shaped one?
+// A user-declared sum with a nullary variant and a payload variant, built in
+// the three positions that matter: binding initializer, tail, argument.
+
+type Sig enum Off | On(int)
+
+fn mk(n int) -> Sig {
+    if n <= 0 { return Sig.Off }
+    Sig.On(n)
+}
+
+fn main() {
+    ro s = mk(3)
+    match s {
+        Off => println(0)
+        On(v) => println(v)
+    }
+}

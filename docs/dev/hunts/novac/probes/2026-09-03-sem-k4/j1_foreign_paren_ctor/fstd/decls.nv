@@ -1,0 +1,8 @@
+module decls
+
+// A HANDED-OVER (foreign) named-tuple declaration. `harvest_types`
+// (novac/src/sem/harvest.nv:175) files it with `shape_of_record_decl`, so its
+// stored shape IS `NamedTuple` -- but `register_paren_ctors`
+// (novac/src/sem/sem.nv:433) walks `file_decls(file)` only, so no constructor
+// row is ever created for it.
+type Pair(x int, y int)

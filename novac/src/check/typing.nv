@@ -30,7 +30,7 @@ import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
-import ../sem.{raw_crow}
+import ../sem.{raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -42,6 +42,7 @@ import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, 
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
+import ../sem.{option_payload, for_head_elem}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -315,12 +316,30 @@ fn Checker mut @type_block(b Node) -> () {
                 if i == tail_at && c.kind_of() == NodeKind.Call {
                     // TERMINATOR, not an else (the two shape guards meet on
                     // a variant test, and continue satisfies both).
+                    //
+                    // THE MARK, and it is not decoration (registry #902): the
+                    // walk below refuses an unknown callee BY NAME, and the
+                    // lattice ices on a name the registry does not carry. Ask
+                    // it after a refusal and a user's typo becomes "internal
+                    // compiler error" -- measured on `fn mk(n int) -> int {
+                    // nosuch(n) }`, while the same call in EVERY other position
+                    // (arrow body, statement, binding initializer) was refused
+                    // by name. The rule was written at each entrance that
+                    // remembered it, and these two tails did not.
+                    ro tmark = @out.len()
                     @type_expr(c)
+                    if @out.len() > tmark {
+                        i += 1
+                        continue
+                    } else {
+                        // Nothing refused: the tail is a value, and its type
+                        // is the fn's answer.
+                    }
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
                     } else {
-                        // An unresolved tail call was refused by the walk.
+                        // Resolved but untypeable: the walk already spoke.
                     }
                     i += 1
                     continue
@@ -331,12 +350,22 @@ fn Checker mut @type_block(b Node) -> () {
                     // type recorded for the emitter, which declares the
                     // result temporary with it (the same contract the
                     // FnExprBody entrance has carried since the start).
+                    // The SAME mark as the tail call above, for the same
+                    // reason (#902): a refused arm leaves a node the lattice
+                    // cannot answer about, and asking anyway is an ice.
+                    ro mmark = @out.len()
                     @type_match(c)
+                    if @out.len() > mmark {
+                        i += 1
+                        continue
+                    } else {
+                        // Every arm typed: the match is a value.
+                    }
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
                     } else {
-                        // A refused tail match: the diagnostics carry it.
+                        // Resolved but untypeable: the walk already spoke.
                     }
                     i += 1
                     continue
@@ -735,8 +764,8 @@ fn Checker mut @type_stmt(st Node) -> () {
         // discards it -- and the emitter reads the recorded type to build
         // the dropped temporary (B15 step 4a).
         @type_expr(st)
-    } else if k == NodeKind.TupleBind {
-        @type_tuple_bind(st)
+    } else if k == NodeKind.DestructureBind {
+        @type_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         @type_if_let(st)
     } else if is_expr_kind(k) {
@@ -788,77 +817,6 @@ fn Checker mut @type_if_let(st Node) -> () {
     @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
     @type_block(kids[7])
     @scope.release(mark)
-}
-
-/// A destructuring binding `ro (a, b) = expr` (B15 step 5): the initializer
-/// is typed first, its recorded type must be a TUPLE of exactly the pattern's
-/// arity (both judged by name -- the arity text names D123's own class), and
-/// each name binds to its component's type under the binding's mode.
-fn Checker mut @type_tuple_bind(st Node) -> () {
-    ro kids = branch_children(st)
-    ro init = kids[kids.len() - 1]
-    ro before = @out.len()
-    match init {
-        Leaf(_) => {
-            // SILENT-OK: a recovery shape -- the parser could not read an
-            // initializer, and the gap it planted already says what was
-            // expected; a second report here would be the cascade.
-            return
-        }
-        Branch { .. } => @type_expr(init)
-    }
-    if @out.len() > before { return }
-    ro pt = type_of(init, @ctx, @scope, @chan)
-    if !is_tuple(@ctx, pt) {
-        @report_first_leaf_of(kids, DESTR_NOT_TUPLE_MSG)
-        // The names still BIND (to no type): a use downstream would otherwise
-        // cascade "unknown name" over the one mistake already named here --
-        // the no-cascade rule this walk holds everywhere else.
-        for c in kids {
-            match c {
-                Leaf(t) => {
-                    // Trivia of the pattern (keyword, parens, commas, gaps)
-                    // binds nothing; only the names do.
-                    if t.kind != TokenKind.Ident { continue }
-                    @scope.bind(t.text, no_ty(), bind_mode_at(kids))
-                }
-                Branch { .. } => {}
-            }
-        }
-        // SILENT-OK: the refusal above is the decision; the binds keep the
-        // uses from cascading over the one mistake already named.
-        return
-    }
-    // RECORDED, not merely computed (the FieldAccess lesson of 4a): the
-    // emitter reads the initializer node through the strict door to spell
-    // the temporary, and the lattice answer above is not a record.
-    @record(init, pt)
-    mut bound = 0
-    for c in kids {
-        match c {
-            Leaf(t) => {
-                if t.kind == TokenKind.Ident {
-                    if bound < @ctx.tys.arg_count(pt) {
-                        @scope.bind(t.text, @ctx.tys.arg(pt, bound), bind_mode_at(kids))
-                    } else {
-                        // Past the tuple's arity: the count judge below names
-                        // it once, for the whole pattern.
-                    }
-                    bound += 1
-                } else {
-                    // The keyword, parens, commas and the recovery gaps: the
-                    // pattern's trivia, not names.
-                }
-            }
-            Branch { .. } => {}
-        }
-    }
-    if bound != @ctx.tys.arg_count(pt) {
-        @report_first_leaf_of(kids, DESTR_ARITY_MSG)
-    } else {
-        // Every component found its name; the initializer's record already
-        // carries the pair's type for the emitter.
-    }
 }
 
 /// A println statement: each argument carries its own printer, so each

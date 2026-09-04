@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `hir` pattern accessors -- the shape of a pattern is asked of
+// the node, not counted by the reader; NOT taken: a visitor, for the reason
+// slots.nv gives about its own doors.
+// Role: layer 3 -- the two questions a DESTRUCTURING PATTERN answers about
+//   ITSELF: which shape it was written in, and whether it carries `..`.
+//   Asked by BOTH the checker and the emitter, which is why they live here
+//   and not in either. A field's TYPE is deliberately NOT here: that is a
+//   question about the DECLARATION, and `resolve.FieldIndex` is its door --
+//   a scan written here lasted one afternoon before the resolve guard
+//   named it a second answer (2026-09-04).
+// Used by: check/destructure.nv (picks the reading), emit_c/emit_destructure.nv
+//   (picks the spelling).
+// Guarded by: check-novac-second-door.py -- these doors exist because the same
+//   question was written twice, once in each phase, and caught at a similarity
+//   of 1.00 (2026-09-04).
+//
+// Split out of slots.nv the same day: that file crossed a thousand lines, and
+// the seam is real -- these three answer about ONE form, the rest of slots.nv
+// answers about every node shape there is.
+
+module novac.sem
+
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+import ../lex.{TokenKind}
+
+/// WHICH SHAPE a destructuring pattern was written in -- brace or round.
+///
+/// One door because the question has one answer and TWO readers: the checker
+/// picks the reading, the emitter picks the spelling. Written twice first
+/// (2026-09-04) and caught by check-novac-second-door at a similarity of 1.00
+/// -- which is the same class this compiler exists to remove, committed by the
+/// window removing it elsewhere the same day.
+export fn brace_pattern(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // Trivia is SKIPPED, and the `continue` is the other branch
+                // (P31 form 2, the shape `literal_elems` above already uses).
+                // Written as two ifs with empty elses first, which P21 read as
+                // a dispatcher over token kinds -- and it was right: the
+                // question is not "which kind is this" but "is this an
+                // opener", and one test says so.
+                ro opener = t.kind == TokenKind.LBrace || t.kind == TokenKind.LParen
+                if !opener { continue }
+                return t.kind == TokenKind.LBrace
+            }
+            Branch { .. } => {}
+        }
+    }
+    // No opener at all: a recovery shape, and the round reading is the one
+    // that existed before the brace form -- so it stays the default.
+    false
+}
+
+/// Does the pattern carry `..`? A partial field list is legal only with it
+/// (D411), and its absence is what the refusal names.
+export fn has_rest(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // Same shape as the door above: skip what is not the marker.
+                if t.kind != TokenKind.DotDot { continue }
+                return true
+            }
+            Branch { .. } => {}
+        }
+    }
+    false
+}
+
+/// THE BINDERS of a destructuring pattern, in written order.
+///
+/// A binder is a `Name` node -- the parser wraps every pattern name since
+/// 2026-09-04, so the checker can record its type and the emitter can read it
+/// instead of working the field out a second time.
+///
+/// The walk STOPS at `=`, and that stop is the whole point: the initializer of
+/// `ro (a, b) = p` is a `Name` node too, and a walk that merely collected
+/// branches would take the value being destructured for one of the names it
+/// binds.
+export fn pattern_binders(kids []Node) -> []Node {
+    mut out = []Node.new()
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // The pattern ends at `=`; everything after it is the value.
+                if t.kind == TokenKind.Assign { return out }
+                // AN IDENTIFIER LEAF INSIDE A PATTERN IS A BINDER THE PARSER
+                // FAILED TO WRAP. Loud on purpose: the readers filter by node
+                // kind, so an unwrapped name would simply not be collected --
+                // the binding would vanish and the emitter would spell a local
+                // nobody declared. The invariant "every pattern name is a
+                // `Name` node" was held by nothing but the parser's memory
+                // until this line; a future pattern shape whose author forgets
+                // `@push_binder` now fails here instead of silently binding
+                // nothing.
+                // Braces, parens, commas, `..` and the keyword are the
+                // pattern's trivia and bind nothing; the `continue` is the
+                // other branch (P31 form 2, the shape this file already uses
+                // twice). What is left can only be the unwrapped name.
+                if t.kind != TokenKind.Ident { continue }
+                ice("sem: a pattern name that is not a binder node -- the parser must wrap every one")
+            }
+            Branch { .. } => {
+                // SKIPPED, and the `continue` is the other branch (P31 form 2,
+                // the shape the two doors above already use). The only other
+                // branch a pattern holds is the Err node recovery leaves where
+                // a name was missing -- it binds nothing.
+                if c.kind_of() != NodeKind.Name { continue }
+                out.push(c)
+            }
+        }
+    }
+    out
+}
+
+/// The NAME a binder carries: its single identifier child.
+export fn binder_text(b Node) -> str {
+    ro kids = branch_children(b)
+    if kids.len() == 0 { return "" }
+    leaf_text(kids[0])
+}

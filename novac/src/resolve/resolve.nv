@@ -38,9 +38,9 @@ import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
 import ../types.{TyId, is_ty, Interner}
-import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm}
+import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
-import ../sem.{positional_run, bind_slot_of, slot_is_required, mode_admits, type_admits}
+import ../sem.{bind_slot_of, mode_admits, type_admits}
 import ../sem.{ty_source_name}
 
 /// How a callable lookup turned out. A sum, not an int code: "not found"
@@ -269,34 +269,35 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
     // "does this row take this call" is answered by the BINDING, and the
     // primitives it is composed of allocate nothing, which is what lets this
     // door stay a door (check-novac-no-alloc-in-lookup).
-    ro run = positional_run(args)
-    if run < 0 {
-        // A positional argument after a named one: D102 call-rule 3.
-        return false
-    } else {
-        // Positional first, named after.
+    // THE BINDING IS ASKED, NOT RE-DERIVED (2026-09-04). Every D102 rule about
+    // WHICH argument fills WHICH slot lives in `bind_fault`, and this door used
+    // to carry a second copy of them: positional run, arity, the missing slot,
+    // the keyword-only rule. Two copies of one judgment is the K4 class this
+    // compiler exists to stop repeating, and they DID diverge the moment the
+    // rule changed -- D102's edit of 2026-09-04 landed in `bind_fault` and this
+    // copy went on accepting `f(1, b: 2)` for a required `b`. So the binding is
+    // one question with one answer, and what stays here is what `bind_fault`
+    // does NOT know: the call FORM, the argument TYPE and its MODE.
+    //
+    // Allocation-free, as this door must be: `BindFault` is a value sum with an
+    // int payload, and every primitive under it already satisfied
+    // check-novac-no-alloc-in-lookup.
+    match bind_fault(fns.params, fd.param_off, fd.param_cnt, args) {
+        FaultNone => {}
+        FaultPositionalAfterNamed(_) => return false
+        FaultTooManyArgs(_) => return false
+        FaultPositionalDefaulted(_) => return false
+        FaultNamedRequired(_) => return false
+        FaultUnknownName(_) => return false
+        FaultDuplicate(_) => return false
+        FaultMissing(_) => return false
     }
-    if run > fd.param_cnt {
-        return false
-    } else {
-        // No more positional arguments than parameters to take them.
-    }
-    mut bound = 0
     for s in 0..fd.param_cnt {
         ro at = bind_slot_of(fns.params, fd.param_off, fd.param_cnt, args, s)
-        if at < 0 {
-            // Nothing fills this slot: legal exactly when the declaration says
-            // what to put there.
-            if slot_is_required(fns.params, fd.param_off, s) { return false } else { continue }
-        } else {
-            // Filled -- by position or by name, and which decides the next rule.
-        }
-        if s < run && !slot_is_required(fns.params, fd.param_off, s) {
-            // A defaulted parameter is keyword-only (D102 call-rule 1).
-            return false
-        } else {
-            // Named, or required: both are legal ways to fill this slot.
-        }
+        // The declaration's own default fills this slot -- there is no argument
+        // whose type or mode could be judged, and the binding above already
+        // said the omission is legal.
+        if at < 0 { continue } else {}
         ro p = fns.params[fd.param_off + s]
         // THE DOOR, not `>= 0` (2026-08-23). `is_ty` is what says "this position
         // carries a type"; the bare comparison of a `TyId` against zero answered
@@ -322,12 +323,11 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
         } else {
             // This argument's class is one this mode accepts.
         }
-        bound += 1
     }
-    // EVERY WRITTEN ARGUMENT FOUND A SLOT. A name no parameter carries, and a
-    // slot named twice, both leave an argument unbound -- one count refuses
-    // both, and `bind_fault` is what says which it was.
-    bound == args.len()
+    // Every argument found its slot and every slot its argument: `bind_fault`
+    // answered that above, and the counting that used to live here went with
+    // the copy.
+    true
 }
 
 /// Does `a` beat `b` by P14 filter 4 -- no less specific in EVERY position, and

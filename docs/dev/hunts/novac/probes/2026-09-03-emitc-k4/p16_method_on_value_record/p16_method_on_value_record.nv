@@ -1,0 +1,19 @@
+module p16_method_on_value_record
+
+// "HOW is a field of a record reached in C?" is answered TWICE, and only one
+// of the two asks:
+//   emit_expr.nv:405 (FieldAccess) -- `.` for a value record, `->` otherwise,
+//     the decision read from is_value_record;
+//   emit_expr.nv:369 (SelfField)   -- `->` unconditionally, no question asked.
+// A method whose receiver is a VALUE record is where the two part: the
+// signature passes `NovaValue_Pnt` by value (emit_c.nv:283, c_type) and the
+// body dereferences it.
+type Pnt value { x int  y int }
+
+fn Pnt @total() -> int => @x + @y
+
+fn main() {
+    ro p = Pnt { x: 1, y: 2 }
+    println(p.x)
+    println(p.total())
+}

@@ -1,0 +1,8 @@
+module p_for_paren_head
+
+fn main() {
+    ro xs = []int.of(4, 6, 8)
+    for v in (xs) {
+        println(v)
+    }
+}

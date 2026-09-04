@@ -1,0 +1,8 @@
+module f1_tuple_bind
+
+fn main() {
+    ro p = (1, 2)
+    ro (a, b) = p
+    println(a)
+    println(b)
+}

@@ -1,0 +1,13 @@
+module p19_record_field_tuple_typedef_order
+
+// emit_decls.nv:244-249 names this shape itself: "a tuple whose component is
+// a record declared lower would not be ordered by this door. No probe of that
+// shape exists yet." The tuple TYPEDEFS are written after every declaration
+// (emit_c.nv:138-139), so a record embedding a tuple BY VALUE names a struct
+// C has not seen.
+type Holder value { p (int, int) }
+
+fn main() {
+    ro h = Holder { p: (1, 2) }
+    println(h.p.0)
+}

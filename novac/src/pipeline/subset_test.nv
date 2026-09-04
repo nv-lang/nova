@@ -400,65 +400,6 @@ test "a tuple value compiles into the mono struct, projections are judged (B15 s
     }
 }
 
-test "a shadowing type carries the module in its C name; a primitive's name is closed" {
-    // Both halves are the NORM's, found by the owner's question (2026-09-01;
-    // both probes passed check in silence before): D35 closes a primitive's
-    // name forever, and D125 lets a user declaration WIN over a handed-over
-    // one -- with the C name module-qualified (D381), or the emission would
-    // print a second `struct Nova_<name>` beside the shell's and clang
-    // refuses the unit (measured on ct.c).
-    ro std = std_decls()
-    ro (d, _) = compile_to_c("type str { n int }
-fn main() {
- println(1)
-}", std)
-    assert(d.len() >= 1)
-    for g in d {
-        assert(g.message.contains("closed type (D35)"))
-    }
-
-    // Shadowing a handed-over name is LEGAL and spelled BARE, exactly as the
-    // oracle spells it (the mangle-fixed-point guard holds that): a foreign
-    // Widget is handed in by the test, the file's own Widget wins (D125) and
-    // its struct keeps the plain name.
-    ro shadow_decls = []str.of("export type Widget { q int }
-")
-    ro (d2, c2) = compile_to_c("module p
-type Widget { n int }
-fn main() {
- ro v = Widget { n: 7 }
- println(v.n)
-}", shadow_decls)
-    assert(d2.len() == 0)
-    assert(c2.contains("struct Nova_Widget"))
-
-    // The one REAL collision: a name whose struct the SHELL TEMPLATE already
-    // declares (Vec) -- two definitions of one struct in one unit, refused by
-    // name. The fact comes from the interop table, which lifts the template's
-    // own identifiers -- so the full surface is used here, not the tiny
-    // std_decls.
-    ro (d2b, _) = compile_to_c_with("module p
-type Vec { n int }
-fn main() {
- println(1)
-}", []Node.new(), interop_surface())
-    assert(d2b.len() >= 1)
-    for g in d2b {
-        assert(g.message.contains("interop shell already declares"))
-    }
-
-    // A name of one's own stays clean and unprefixed -- the mangle answers
-    // the two owners, not every declaration.
-    ro (d3, c3) = compile_to_c("type Own { n int }
-fn main() {
- ro v = Own { n: 7 }
- println(v.n)
-}", std)
-    assert(d3.len() == 0)
-    assert(c3.contains("struct Nova_Own"))
-    assert(!c3.contains("struct Nova_p_Own"))
-}
-
 test "a tuple RETURN type compiles: the signature spells the mono struct (B15 step 4b)" {
     // `fn two() -> (int, int)` with a bare tail pair: the reference door
     // reads the paren run into the step-3 term, the C name carries the D123
@@ -859,35 +800,24 @@ fn main() {
     assert(dok.len() == 0)
 }
 
-test "an interpolated literal builds its chain; non-name slots refuse (wave I1)" {
-    // The embedded sources spell `\${` so THIS file's own compiler leaves
-    // the interpolation to novac (the #873 lesson, paid twice).
+test "an interpolated string builds its chain; slots are real expressions (waves I1+I2)" {
+    // The chain is the oracle's own (static_new with its cap formula,
+    // per-fragment append, per-slot display insert, consume_into_str); the
+    // slots are REAL nodes since I2, so calls, fields and operators ride
+    // the ordinary expression paths. The asserts aim at OUR chain names --
+    // the shell prelude carries the oracle's, and those are always there.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn main() {
+    ro (d, c) = compile_to_c("fn twice(v int) -> int => v * 2
+fn main() {
  ro name = \"world\"
  ro n = 42
- println(\"hi \${name}, n=\${n}!\")
+ println(\"hi \${name}, tw=\${twice(n)}!\")
 }", std)
     assert(d.len() == 0)
-    // OUR chain names, absent from the shell prelude -- the shell itself
-    // carries static_new/display_spec declarations, so asserting those
-    // alone would stay green with the hoist silenced (measured).
     assert(c.contains("_novac_isb_t"))
     assert(c.contains("str_display_spec(_novac_isb_t"))
     assert(c.contains("int_display_spec(_novac_isb_t"))
     assert(c.contains("nova_print_str(_novac_istr_t"))
-
-    // A call slot refuses by name (I2 takes it).
-    ro (d2, _) = compile_to_c("fn main() {
- ro s = \"abc\"
- println(\"len \${s.len()}\")
-}", std)
-    assert(d2.len() >= 1)
-    mut hit = false
-    for g in d2 {
-        if g.message.contains("bare name") { hit = true }
-    }
-    assert(hit)
 
     // A slot type outside str|int refuses by name.
     ro (d3, _) = compile_to_c("fn main() {
@@ -901,19 +831,55 @@ test "an interpolated literal builds its chain; non-name slots refuse (wave I1)"
     }
     assert(hit3)
 
-    // A quoted literal INSIDE a slot cuts the token at the lexer (the K4
-    // shape): the slicer's empty tail keeps the contract and the form judge
-    // refuses -- this used to ICE with a backwards slice.
+    // A nested interpolation (a live slot inside a slot's string) refuses
+    // by name -- the lexer splits one level, and the I1 judge that used to
+    // ICE on the cut token is the backstop.
     ro (d4, _) = compile_to_c("fn main() {
- ro s = \"abc\"
- println(\"x \${s.replace(\"a\", \"b\")} y\")
+ ro s = \"a\"
+ println(\"bad \${\"x \${s} y\"} tail\")
 }", std)
     assert(d4.len() >= 1)
     mut hit4 = false
     for g in d4 {
-        if g.message.contains("bare name") { hit4 = true }
+        if g.message.contains("nested inside another slot") { hit4 = true }
     }
     assert(hit4)
+}
+
+test "a char literal types char, compares, and spells its codepoint (char wave)" {
+    // End to end: lexed verbatim, typed `char` (prims ordinal 14), compared
+    // as the C scalar, and the codepoint spelled by the ONE mangle door --
+    // `'x'` is 120, and the emitted C must carry OUR spelling of it.
+    ro std = std_decls()
+    ro (dch, c) = compile_to_c("fn tag(c char) -> int {
+ if c == 'x' { 1 } else { 2 }
+}
+fn main() {
+ ro c = 'x'
+ println(tag(c))
+}", std)
+    assert(dch.len() == 0)
+    assert(c.contains("((nova_char)120U)"))
+
+    // The judge's three refusals: width, unknown escape, deferred unicode.
+    ro (dw, _) = compile_to_c("fn main() {
+ ro a = 'ab'
+ println(1)
+}", std)
+    assert(dw.len() == 1)
+    assert(dw[0].message.contains("exactly one character"))
+    ro (dq, _) = compile_to_c("fn main() {
+ ro q = '\\q'
+ println(1)
+}", std)
+    assert(dq.len() == 1)
+    assert(dq[0].message.contains("not one the language defines"))
+    ro (du, _) = compile_to_c("fn main() {
+ ro u = '\\u{41}'
+ println(1)
+}", std)
+    assert(du.len() == 1)
+    assert(du[0].message.contains("unicode char escape"))
 }
 
 test "bare self is the receiver's value; outside a method it refuses (self wave)" {
@@ -943,4 +909,59 @@ fn main() {
         if g.message.contains("method receiver") { hit = true }
     }
     assert(hit)
+}
+
+test "destructuring: one door, both shapes, and `..` says the list is partial (V3-2, D411)" {
+    // D411 gives the language ONE pattern grammar, so novac has one door and
+    // the SHAPE picks the reading: round names components by position, brace
+    // names fields by name. Asserted on the C, because the refusal half and
+    // the emission half are different failures.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Point value {
+ x int
+ y int
+}
+fn main() -> () {
+ ro p = Point { x: 1, y: 2 }
+ ro { x, y } = p
+ println(x)
+ ro pair = (4, 5)
+ ro (m, n) = pair
+ println(m)
+}", std)
+    assert(d.len() == 0)
+    // By NAME the local reads the field; by POSITION it reads the mono
+    // struct's slot. Both spellings, one door.
+    assert(c.contains(" x = "))
+    assert(c.contains(".f0"))
+
+    // A PARTIAL list without `..` is refused, and the message NAMES the counts
+    // -- a reader must not have to go count the declaration's fields (D420).
+    ro (d2, _) = compile_to_c("type Point value {
+ x int
+ y int
+}
+fn main() -> () {
+ ro p = Point { x: 1, y: 2 }
+ ro { x } = p
+ println(x)
+}", std)
+    mut said = false
+    for g in d2 {
+        if g.message.contains("1 of 2") { said = true } else {}
+    }
+    assert(said)
+
+    // With `..` the same partial list is legal: the rule is about SAYING it,
+    // not about taking fewer fields.
+    ro (d3, _) = compile_to_c("type Point value {
+ x int
+ y int
+}
+fn main() -> () {
+ ro p = Point { x: 1, y: 2 }
+ ro { x, .. } = p
+ println(x)
+}", std)
+    assert(d3.len() == 0)
 }

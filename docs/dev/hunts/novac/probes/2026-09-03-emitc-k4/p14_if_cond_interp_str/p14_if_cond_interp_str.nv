@@ -1,0 +1,10 @@
+module p14_if_cond_interp_str
+
+// Same property again, in the IfStmt arm (emit_c.nv:571-575): the condition
+// goes straight to @emit_expr, with no hoist walk over it.
+fn main() {
+    ro n = 7
+    if "n=${n}" == "n=7" {
+        println("yes")
+    }
+}

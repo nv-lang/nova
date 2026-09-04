@@ -1,0 +1,32 @@
+module basics.forward_type_ref
+
+// A field whose type is declared LOWER in the same file, in BOTH layouts --
+// the two halves fail for different reasons and are held by different halves
+// of the emitter's declaration pass, so one carrier holds both.
+//
+// `Boxed` takes its field by POINTER (a plain record lives on the heap), so it
+// needs only the forward `typedef`. `Inline` embeds a `value` record BY VALUE,
+// so it needs the COMPLETE type before it -- that is the body ORDER, and no
+// typedef substitutes for it. Before both, novac ACCEPTED this file in silence
+// and emitted C that clang refused (`unknown type name 'Nova_Node'` and
+// `'NovaValue_Point'`), while the oracle compiled it and printed the numbers
+// below.
+
+type Boxed { node Node }
+
+type Inline { at Point }
+
+type Node { n int }
+
+type Point value {
+    x int
+    y int
+}
+
+fn main() {
+    ro b = Boxed { node: Node { n: 9 } }
+    println(b.node.n)
+    ro i = Inline { at: Point { x: 4, y: 7 } }
+    println(i.at.x)
+    println(i.at.y)
+}

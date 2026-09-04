@@ -1,0 +1,12 @@
+module p3_compound_int_target_float_rhs
+
+// The MIRROR of p1: the same one judgment ("is this arithmetic float?"), the
+// same two places, the float sitting on the other side this time.
+//   emit_c.nv:649 reads the RIGHT operand's carrier, so `m += 2.5` on an int
+//   target picks the raw C `+` and stores a truncated double back into
+//   `nova_int`.
+fn main() {
+    mut m = 1
+    m += 2.5
+    println(m)
+}

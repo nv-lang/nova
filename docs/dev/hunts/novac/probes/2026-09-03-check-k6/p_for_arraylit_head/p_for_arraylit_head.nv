@@ -1,0 +1,7 @@
+module p_for_arraylit_head
+
+fn main() {
+    for v in []int.of(4, 6, 8) {
+        println(v)
+    }
+}

@@ -1,0 +1,6 @@
+module p_interp_ifexpr
+
+fn main() {
+    ro c = true
+    println("v=${if c { 1 } else { 2 }}")
+}

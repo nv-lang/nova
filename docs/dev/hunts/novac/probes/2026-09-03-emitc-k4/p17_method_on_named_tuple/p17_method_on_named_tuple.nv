@@ -1,0 +1,16 @@
+module p17_method_on_named_tuple
+
+// The SECOND SYNTAX of p16's shape: `is_value_record` is true for the
+// NamedTuple form too (sem/mangle.nv:196), so a method here reaches the same
+// unconditional `->` at emit_expr.nv:369. The `value` keyword is one spelling
+// of the property, the parenthesised declaration is another -- a grep for
+// `value` finds only the first.
+type Pnt(x int, y int)
+
+fn Pnt @total() -> int => @x + @y
+
+fn main() {
+    ro p = Pnt(1, 2)
+    println(p.x)
+    println(p.total())
+}

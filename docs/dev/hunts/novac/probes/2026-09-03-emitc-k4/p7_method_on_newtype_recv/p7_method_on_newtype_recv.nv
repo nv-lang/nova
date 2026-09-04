@@ -1,0 +1,16 @@
+module p7_method_on_newtype_recv
+
+// The method-call door names the C function TWICE, by two different rules:
+//   emit_expr.nv:419-427
+//     ours   -> c_callable(ctx, cr.callable_row(), ...)   -- the CHECKER's row
+//     shell  -> c_instance_method(ctx, @out.type_of(recv), leaf_text(name))
+//               -- the receiver's DECLARED type plus the spelled method name,
+//                  rebuilt here instead of read from the row.
+// A newtype receiver is the case where the two answers part: the checker
+// resolves against the CARRIER (`str`), the name is rebuilt from `Tag`.
+type Tag str
+
+fn main() {
+    ro t = Tag("abc")
+    println(t.byte_len())
+}

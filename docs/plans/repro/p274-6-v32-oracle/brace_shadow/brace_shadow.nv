@@ -1,0 +1,16 @@
+module brace_shadow
+
+// The oracle accepts a brace destructuring whose bound name already exists in
+// scope, and the C it emits does not compile.
+
+type Pt {
+    ro x int
+    ro y int
+}
+
+fn main() {
+    ro x = 7
+    ro p = Pt { x: 1, y: 2 }
+    ro {x, y} = p
+    print("${x} ${y}")
+}

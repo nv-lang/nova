@@ -1,0 +1,15 @@
+module record_holds_tuple
+
+// The ordering the fold is supposed to fix: a DECLARED type whose body embeds
+// a TUPLE by value. The record's body needs the pair's typedef, and today the
+// pair's typedef is written by a door of its own that runs AFTER the whole
+// declaration pass.
+
+type Outer value {
+    ro p (int, int)
+}
+
+fn main() {
+    ro o = Outer { p: (1, 2) }
+    println(o.p.1)
+}

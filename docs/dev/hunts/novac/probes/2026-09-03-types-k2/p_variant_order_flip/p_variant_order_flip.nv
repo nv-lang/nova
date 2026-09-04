@@ -1,0 +1,20 @@
+module p_variant_order_flip
+
+// ONE LEVER against p_variant_last_wins: the SAME two sums, the SAME body,
+// only the DECLARATION ORDER swapped. If the table were keyed by (sum, name)
+// nothing would move; because `DefTable` (novac/src/sem/defs.nv) is keyed by
+// the bare string and the last put wins, the very same source now compiles --
+// and it is `Mood.Green` that would be refused instead.
+type Mood enum Green | Blue
+type Color enum Red | Green
+
+fn rank(c Color) -> int {
+    match c {
+        Red => 1
+        Green => 2
+    }
+}
+
+fn main() {
+    println(rank(Color.Green))
+}

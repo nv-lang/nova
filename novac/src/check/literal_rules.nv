@@ -208,3 +208,30 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
         // Counts agree: the construction fills the record exactly.
     }
 }
+
+/// The char-literal judge's three refusals (the char wave), homed here with
+/// the other one-written-token rules rather than in rules.nv, which the wave
+/// pushed past a thousand lines. The first two are the LANGUAGE's: the oracle
+/// refuses them at its lexer, novac's lexer keeps the run verbatim and the
+/// checker is its stage. The third is legal Nova the subset does not take yet,
+/// so it carries the subset wording. The judge itself (`@judge_char_lit`)
+/// reads these from exprs.nv -- one module, co-equal files.
+const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escape)"
+const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
+const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"
+
+/// The `??` judge's two refusals (the coalesce wave). The first is the
+/// LANGUAGE's: `X ?? return R` was retracted by the D86 amendment, the oracle
+/// parses it and always refuses in its checker, and novac is at the same
+/// stage with the same verdict. The second is the subset's: `??` unwraps an
+/// Option, so a left side that is not one has no payload to answer with.
+const COALESCE_RETURN_MSG = "`??` does not take `return` on its right -- the form is retracted (D86); bind the value and return on the next line"
+const COALESCE_NONOPT_MSG = "outside the subset: `??` unwraps an `Option`, and this left side is not one"
+
+/// The brace form of a parenthesised record. Not "outside the subset": the
+/// ORACLE fails to emit it too (`Pair { x: 1 }` on `type Pair(x int, y int)`
+/// passes its check and dies in C with `undeclared identifier 'Nova_Pair'`,
+/// measured 2026-09-03), so refusing it keeps novac on the fixed point instead
+/// of inventing a construction the language does not compile. The call form is
+/// the one that works.
+const PAREN_FORM_BRACE_MSG = "this type is declared in the parenthesised form, so it is constructed by call -- `Pair(1, 2)`, not `Pair { x: 1 }`"

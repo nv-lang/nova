@@ -1,0 +1,10 @@
+module f2_paren_ctor_bind
+
+type Point(x int, y int)
+
+fn main() {
+    ro p = Point(1, 2)
+    ro Point(x, y) = p
+    println(x)
+    println(y)
+}

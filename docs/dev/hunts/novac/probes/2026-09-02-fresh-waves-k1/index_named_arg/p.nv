@@ -1,8 +1,0 @@
-module p
-
-fn grab(n int) -> int { n }
-
-fn main() {
-    ro v = []int.of(10, 20, 30)
-    println(grab(n: v[1]))
-}

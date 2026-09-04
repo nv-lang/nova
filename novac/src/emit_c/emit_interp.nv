@@ -1,13 +1,13 @@
-// An interpolated string literal as its builder chain (wave I1).
+// An interpolated string as its builder chain (waves I1/I2).
 //
-// Donor: none -- pieces alternate literal and insert, and the chain simply
-// follows the pieces; nothing here needed a pattern beyond the walk.
-// Role: the hoist's Lit arm builds here; the expression site prints the
-// temporary this door answers.
+// Donor: none -- fragments alternate with slot expressions, and the chain
+// simply follows the children; nothing here needed a pattern beyond the walk.
+// Role: the hoist's InterpStr arm builds here; the expression site prints
+// the temporary this door answers.
 // Used by: emit_c.nv's hoist walker, and nothing else.
-// Guarded by: check-novac-differential.sh (corpus carrier interp_name),
-// the subset_test.nv holder (asserts the chain's C shapes), and
-// check-novac-emitted-names.py holds the name spaces.
+// Guarded by: check-novac-differential.sh (corpus carriers interp_name and
+// the I2 ones), the subset_test.nv holder (asserts the chain's C shapes),
+// and check-novac-emitted-names.py holds the name spaces.
 //
 // INTEROP, named as such: Nova_StringBuilder_static_new / _method_append /
 // _consume_into_str and the display entries
@@ -19,49 +19,69 @@
 
 module emit_c
 
-import ../sem.{Ctx, CheckOut, branch_children, leaf_text, interp_slices, escaped_byte_len, unescape_dollar}
-import ../tree.{Node, raw_node}
+import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
+import ../sem.{unescape_dollar, is_expr_kind, carrier_of}
+import ../tree.{Node, NodeKind, raw_node}
+import ../lex.{TokenKind}
 import ../diag.{ice}
 
 /// Build the chain into a fresh temporary; answer the C name that holds the
-/// finished string. The slot TYPES come from the channel -- the checker
-/// recorded them in source order, and this door only spells.
-fn Emitter mut @emit_interp_build(e Node, text str) -> str {
-    ro pieces = interp_slices(text)
+/// finished string. Fragments carry their quotes on the outer edges only --
+/// the slices below strip exactly those.
+fn Emitter mut @emit_interp_build(e Node) -> str {
+    ro kids = branch_children(e)
     mut cap = 16
-    mut li = 0
-    while li < pieces.len() {
-        cap += escaped_byte_len(pieces[li])
-        li += 2
+    for fi in 0..kids.len() {
+        ro c = kids[fi]
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) != TokenKind.StrFrag { continue }
+        cap += escaped_byte_len(frag_body(leaf_text(c), fi == 0, fi == kids.len() - 1))
     }
     ro sb = "_novac_isb_t${@fresh_uniq()}"
     @body.append("    Nova_StringBuilder* ${sb} = Nova_StringBuilder_static_new(${cap});\n")
-    ro tys = @out.subst_of(e.id_of())
-    mut lit_turn = true
-    mut k = 0
-    for p in pieces {
-        if lit_turn {
-            if p.byte_len() > 0 {
+    for fi in 0..kids.len() {
+        ro c = kids[fi]
+        ro ck = c.kind_of()
+        if ck == NodeKind.LeafNode {
+            if leaf_kind(c) != TokenKind.StrFrag {
+                // The `\${` and `}` markers: punctuation of the form.
+                continue
+            }
+            ro piece = frag_body(leaf_text(c), fi == 0, fi == kids.len() - 1)
+            if piece.byte_len() > 0 {
                 @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\"")
-                @body.append(unescape_dollar(p))
-                @body.append("\", .len=${escaped_byte_len(p)}});\n")
+                @body.append(unescape_dollar(piece))
+                @body.append("\", .len=${escaped_byte_len(piece)}});\n")
             } else {
-                // An empty fragment appends nothing -- the head of a literal
-                // that STARTS with an insert, or two inserts side by side.
+                // An empty fragment appends nothing.
+            }
+        } else if is_expr_kind(ck) {
+            ro st = carrier_of(@ctx, @out.type_of(c.id_of()))
+            if st == @ctx.prims.str_id {
+                @body.append("    nova_fn_7runtime14string_builder16str_display_spec(${sb}, (")
+                @emit_expr(c)
+                @body.append("), ((nova_int)0LL), false, ((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U));\n")
+            } else {
+                // The checker held the slot set to str|int; int remains.
+                @body.append("    nova_fn_7runtime14string_builder16int_display_spec(${sb}, (nova_int)(")
+                @emit_expr(c)
+                @body.append("), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U));\n")
             }
         } else {
-            if tys[k] == @ctx.prims.str_id {
-                @body.append("    nova_fn_7runtime14string_builder16str_display_spec(${sb}, (${p}), ((nova_int)0LL), false, ((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U));\n")
-            } else {
-                // The checker held the slot set to str|int (I1); int is the
-                // one remainder.
-                @body.append("    nova_fn_7runtime14string_builder16int_display_spec(${sb}, (nova_int)(${p}), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U));\n")
-            }
-            k += 1
+            // Recovery leaves inside an Err branch: already refused.
         }
-        lit_turn = !lit_turn
     }
     ro tmp = "_novac_istr_t${@fresh_uniq()}"
     @body.append("    nova_str ${tmp} = Nova_StringBuilder_consume_into_str(${sb});\n")
     tmp
+}
+
+/// A fragment's BODY: the first fragment sheds its opening quote, the last
+/// its closing one -- the token texts carry them for losslessness. Position
+/// is passed IN: the first probe compared node ids, and the id equality
+/// answered true for every pair, shaving both edges off every fragment.
+fn frag_body(t str, first bool, last bool) -> str {
+    ro lo = if first { 1 } else { 0 }
+    ro hi = if last { t.byte_len() - 1 } else { t.byte_len() }
+    t[lo..hi]
 }

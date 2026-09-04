@@ -1,0 +1,20 @@
+// String interpolation, step I2: slots are real expressions.
+module basics.interp_expr
+
+const LIM = 9
+
+type Pt { n int }
+
+/// A method the slot calls -- the ordinary paths carry the chain.
+fn Pt @dbl() -> int => @n * 2
+
+fn twice(v int) -> int => v * 2
+
+fn wrap(s str) -> str => s
+
+fn main() {
+    ro p = Pt { n: 5 }
+    ro i = 2
+    println("m=${p.dbl()} tw=${twice(4)} fld=${p.n} sum=${i + 3} lim=${LIM}")
+    println("k4=${wrap("in")} end")
+}

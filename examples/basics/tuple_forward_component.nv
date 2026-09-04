@@ -1,0 +1,26 @@
+module basics.tuple_forward_component
+
+// A structural pair whose COMPONENT TYPE is declared BELOW it in the file, and
+// declared `value` so the component is embedded rather than pointed at.
+//
+// What this pins: the typedef of the pair must be written after `Inner`'s body
+// is complete. Until 2026-09-04 that held by CALL ORDER -- a door of its own,
+// invoked right after the declaration pass -- and from V3-3 it holds because
+// the structural terms are the declaration pass's last step. The carrier does
+// not care which of the two it is; it fails the moment neither is true.
+//
+// Honest about what it does NOT cover, because the measurement said so: the
+// shape where the order could actually go wrong is a DECLARED type embedding a
+// pair by value, and the subset refuses a pair as a field type by name
+// ("this type form is not compiled yet"). So no carrier can reach that today,
+// and this one pins the direction that is reachable.
+
+fn main() {
+    ro i = Inner { v: 7 }
+    ro p = (i, 2)
+    println(p.1)
+}
+
+type Inner value {
+    ro v int
+}

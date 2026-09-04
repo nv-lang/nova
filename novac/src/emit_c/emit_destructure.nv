@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_mir_build::thir::pattern` lowering of an irrefutable
+// `let` pattern -- the scrutinee goes into ONE temporary and every binding
+// reads out of it, which is exactly the shape C forces here too;
+// NOT taken: rustc's match-tree machinery for refutable patterns, because an
+// irrefutable binding has no arms to weigh and building one would be a
+// mechanism with no question to answer (K7).
+// Role: what a DESTRUCTURING BINDING becomes in C -- both shapes. `ro (a, b) =
+//   e` reads components by POSITION, `ro { x, y } = e` and `ro { x, .. } = e`
+//   read fields by NAME. One door, because the language has one pattern
+//   grammar; what differs is how a name finds its value, and that is two lines.
+// Used by: emit_c.nv -- the statement walk, on NodeKind.DestructureBind.
+// Guarded by: check-novac-differential.sh (corpus carrier
+//   destructure_record.nv -- both shapes, the `..` rule and the
+//   scrutinee-once property, byte-for-byte against the oracle),
+//   check-novac-second-door.py (this door and the checker ask ONE shape door
+//   in sem, not two copies) and the subset_test.nv holder.
+//
+// Split out of emit_tuple.nv on 2026-09-04, when the brace shape landed: the
+// door stopped being about tuples the moment it served records too, and the
+// file it sat in is about the D123 mono struct.
+
+module emit_c
+
+import ../sem.{Ctx, CheckOut, branch_children, leaf_kind, leaf_text}
+import ../sem.{c_type, is_value_record, brace_pattern, pattern_binders, binder_text}
+import ../types.{TyId}
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+
+/// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
+/// name becomes a plain C local read out of it.
+///
+/// ONCE is the whole contract, and it is the same one V3-1 proved for the
+/// constructor: `ro (a, b) = mk()` calls `mk` a single time, so a side effect
+/// in it prints once. A shape that re-read the scrutinee per name would be
+/// correct on pure values and silently wrong on effectful ones.
+///
+/// The two shapes differ in ONE question -- how a name finds its value. By
+/// POSITION it is the mono struct's `.fN`; by NAME it is the field itself,
+/// reached with `.` on an inline value and `->` on a GC pointer, exactly as
+/// every other field access is spelled.
+fn Emitter mut @emit_destructure_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[kids.len() - 1]
+    ro pt = @out.type_of(init.id_of())
+    ro tmp = match init.kind_of() {
+        TupleExpr => @emit_record_ctor(init, pt, true)
+        // Any other initializer is an ordinary expression of the pair's
+        // type (a call, a name): it prints into its own temporary.
+        _ => {
+            @hoist_array_lits(init)
+            ro u = "_novac_tmp_t${@fresh_uniq()}"
+            @body.append("    ${c_type(@ctx, pt)} ${u} = ")
+            @emit_expr(init)
+            @body.append(";\n")
+            u
+        }
+    }
+    ro by_name = brace_pattern(kids)
+    ro reach = if is_value_record(@ctx, pt) { "." } else { "->" }
+    mut i = 0
+    for b in pattern_binders(kids) {
+        // THE CHANNEL, and nothing else. The checker decided this binder's
+        // type -- which field it names, or which component -- and recorded it
+        // on the binder node; this door only spells the decision. Until
+        // 2026-09-04 it asked the field index itself, which the channel guard
+        // refuses by name and was right to: a second asker becomes a second
+        // answer the day the two spellings drift.
+        ro nm = binder_text(b)
+        ro nt = c_type(@ctx, @out.type_of(b.id_of()))
+        if by_name {
+            @body.append("    ${nt} ${nm} = ${tmp}${reach}${nm};\n")
+        } else {
+            @body.append("    ${nt} ${nm} = ${tmp}.f${i};\n")
+        }
+        i += 1
+    }
+}

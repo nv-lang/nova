@@ -30,6 +30,7 @@ module novac.sem
 import ../diag.{ice}
 import ../names.{raw_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name, OPTION_FAMILY_C, OPTION_SUM}
+import ../builtins.{PAREN_RECORD_C_PREFIX}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -186,10 +187,35 @@ fn module_prefix(ctx Ctx) -> str {
 /// from having no payloads (A4). One door, so the three readers -- the C type,
 /// the struct name and the emission of a construction -- cannot disagree.
 export fn is_value_record(ctx Ctx, t TyId) -> bool {
-    if !is_ty(t) { return false }
+    // DELEGATES: one door answers the shape, the booleans are readings of it.
+    // Two doors each with their own exhaustive kind-match were the shape of a
+    // second door (P18) -- and the guard of the word rule counted the second
+    // match as growth, which is how it was found.
+    match shape_of(ctx, t) {
+        Record => false
+        ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => true
+    }
+}
+
+/// THE shape of a type's declaration -- the one door, and the only place that
+/// gates on the kind. A boolean wrapper per shape is NOT written: the owner's
+/// rule (2026-09-03) is that a caller compares with the variant's own name,
+/// which the word rule allows, and a wrapper would be a second door needing a
+/// periphrasis for a name it may not spell. `is_value_record` stays because it
+/// answers a DIFFERENT question -- placement, asked by ten sites -- not a
+/// rephrasing of one variant. A type that declares no record answers `Record`: the
+/// shape field is dead for it, and `Record` is the reading every caller of the
+/// booleans above already expects for a non-record (heap, no inline layout).
+export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
+    if !is_ty(t) { return RecordShape.Record }
     match ctx.tys.kind_of(t) {
-        TkRecord => decl_of_ty(ctx, t).by_value
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkTuple => false
+        TkRecord => decl_of_ty(ctx, t).shape
+        // A STRUCTURAL tuple term IS the anonymous shape -- it lives on the
+        // stack exactly as the declared forms do. Answering `Record` here (the
+        // first version did) meant "on the heap", which is false about a tuple
+        // and was invisible only because the tuple had a door of its own.
+        TkTuple => RecordShape.AnonPositionalTuple
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer => RecordShape.Record
     }
 }
 
@@ -222,10 +248,14 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // pointer form made the copy an alias. The oracle's own shape is
             // `struct NovaValue_<name>` by value, with only a RECEIVER taken as
             // a pointer (shell.tpl.c, `NovaValue_CharsIter*`).
-            TkRecord => {
-                if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
-                return "Nova_${decl_of_ty(ctx, t).name}*"
-            }
+            // The shape decides both the prefix and whether a pointer is
+            // written: only a plain record lives on the heap (see c_struct).
+            TkRecord => { return match shape_of(ctx, t) {
+                Record => "Nova_${decl_of_ty(ctx, t).name}*"
+                ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
+                NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
+                    "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
+            } }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
                 if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
@@ -269,9 +299,18 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
     }
     match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
-        TkRecord => {
-            if is_value_record(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
-            return "Nova_${decl_of_ty(ctx, t).name}"
+        // THE SHAPE decides the prefix, and all three spellings are the
+        // ORACLE's, measured off its own emission (P25 -- the fixed point of
+        // behaviour, and here of the interop name): a plain record is
+        // `Nova_X`, a `value` record `NovaValue_X`, and the parenthesised
+        // form `NovaTuple_X` (read 2026-09-03 from the oracle's C for
+        // `type Pair(x int, y int)`: `struct NovaTuple_Pair { nova_int x;
+        // nova_int y; }` -- members BY FIELD NAME, no positional f0/f1).
+        TkRecord => match shape_of(ctx, t) {
+            Record => "Nova_${decl_of_ty(ctx, t).name}"
+            ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
+            NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
+                "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
         }
         TkSum => {
             if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
@@ -652,6 +691,49 @@ export fn int_literal_c_text(t str) -> str {
     t[i..]
 }
 
+/// The CODEPOINT of a char literal's text, as decimal C digits: `'A'` -> "65",
+/// a newline escape -> "10". The int literal's precedent exactly: one spelling
+/// door, every emitter through it, so two readers cannot disagree about what
+/// character is written. The judge upstream (check) refused everything but one
+/// codepoint or one defined escape, so the leftover here is an ice, not a
+/// diagnostic.
+export fn char_literal_code(t str) -> str {
+    ro body = t[1..t.byte_len() - 1]
+    ro b = body.bytes()
+    if b[0] == BACKSLASH_BYTE {
+        // BYTES, not one-letter strings: the P24 scanner reads a quoted
+        // identifier-like string in an emitting module as a printed C name,
+        // and it is right to -- a char literal is the honest spelling here.
+        ro e = b[1]
+        if e == ('n' as u8) { return "10" }
+        if e == ('t' as u8) { return "9" }
+        if e == ('r' as u8) { return "13" }
+        if e == BACKSLASH_BYTE { return "92" }
+        if e == ('\'' as u8) { return "39" }
+        if e == ('"' as u8) { return "34" }
+        if e == ('0' as u8) { return "0" }
+        ice("mangle: a char escape the judge let through")
+    }
+    // One UTF-8 codepoint, 1-4 bytes: the head byte announces the length and
+    // carries the high bits, each continuation byte carries six more.
+    ro head = b[0] as int
+    if head < 128 { return "${head}" }
+    mut cp = 0
+    mut i = 1
+    if head >= 240 {
+        cp = head - 240
+    } else if head >= 224 {
+        cp = head - 224
+    } else {
+        cp = head - 192
+    }
+    while i < b.len() {
+        cp = cp * 64 + ((b[i] as int) - 128)
+        i += 1
+    }
+    "${cp}"
+}
+
 /// The two bytes the dollar rule reads.
 const BACKSLASH_BYTE u8 = 0x5C  // backslash
 const DOLLAR_BYTE u8 = 0x24     // $
@@ -664,28 +746,10 @@ const DOLLAR_BYTE u8 = 0x24     // $
 /// hunt (2026-09-02, its P1 contradiction) caught the pool claiming to be
 /// `the only place` while the prologue shipped the backslash through; one
 /// door ends that argument by construction.
-export fn unescape_dollar(s str) -> str {
-    ro b = s.bytes()
-    consume out = StringBuilder.new()
-    mut one = []u8.new()
-    one.push(0 as u8)
-    // A `while` and NOT `for`, on purpose: this cursor advances by ONE or by
-    // TWO (an escaped `$` consumes two bytes), so the step carries information
-    // and a range would lose it. The rule is "a cursor that always steps by one
-    // is a range" -- this one does not.
-    mut i = 0
-    while i < b.len() {
-        ro c = b[i]
-        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
-        if c == BACKSLASH_BYTE && next_is_dollar {
-            one[0] = DOLLAR_BYTE
-            out.append(one)
-            i += 2
-        } else {
-            one[0] = c
-            out.append(one)
-            i += 1
-        }
-    }
-    out
-}
+export fn unescape_dollar(s str) -> str =>
+    // ONE CALL, not a cursor. The first version walked the bytes through a
+    // reusable one-byte buffer, and the owner asked the obvious question
+    // (2026-09-04): std already answers this. `@replace` takes every
+    // occurrence -- `@replacen` is the one that counts -- which is exactly
+    // the contract here: no `\$` may reach clang, not merely the first.
+    s.replace("\$", "$")

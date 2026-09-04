@@ -1,5 +1,0 @@
-module p
-
-fn main() {
-    println("a", (1, 2), "b")
-}

@@ -1,0 +1,12 @@
+// The `??` operator (the coalesce wave): the payload of an Option when it has
+// one, the fallback when it does not -- and the fallback's effects run ONLY in
+// the None branch. The Option comes from a std method, the subset's live form
+// (`Some(x)` construction and `Option[T]` parameter types are not subset forms
+// yet, measured 2026-09-02, so a carrier must not use them).
+module basics.coalesce
+
+fn main() {
+    ro xs = []int.of(10, 20, 30)
+    println(xs.get(1) ?? 0)
+    println(xs.get(9) ?? 0)
+}

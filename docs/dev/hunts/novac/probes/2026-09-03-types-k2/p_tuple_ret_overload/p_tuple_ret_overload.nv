@@ -1,0 +1,20 @@
+module p_tuple_ret_overload
+
+// Hint 1, second try: `type_tag` (novac/src/sem/mangle.nv) spells a TUPLE
+// return with `mono_tuple_name`, which spells a NEWTYPE component as its
+// CARRIER -- so two callables whose only difference is the tuple return type
+// get ONE C name, which is exactly the collision the return type was added to
+// the name to close.
+type Row int
+
+fn two() -> (Row, int) {
+    (Row(1), 2)
+}
+
+fn two() -> (int, int) {
+    (3, 4)
+}
+
+fn main() {
+    println(5)
+}

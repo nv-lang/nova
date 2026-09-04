@@ -1,0 +1,7 @@
+module p_index_arraylit
+
+fn main() {
+    ro xs = []int.of(3, 4, 5)
+    ro ys = []int.of(xs[0], xs[2])
+    println(ys[1])
+}

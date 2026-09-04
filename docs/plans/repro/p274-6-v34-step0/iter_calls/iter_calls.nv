@@ -1,0 +1,30 @@
+module iter_calls
+
+// Bisect of the ICE seen on iter_protocol.nv: the SAME two types and the SAME
+// two methods, but no `for` at all -- the calls are written by hand. If this
+// ices too, the ICE is about `Some(v)` / method resolution, not about walking.
+
+type Count {
+    ro limit int
+}
+
+type CountIter {
+    mut at int
+    ro stop int
+}
+
+fn Count @iter() -> CountIter => { at: 0, stop: @limit }
+
+fn CountIter mut @next() -> Option[int] {
+    if @at >= @stop { return None }
+    ro v = @at
+    @at = @at + 1
+    Some(v)
+}
+
+fn main() {
+    ro c = Count { limit: 3 }
+    mut it = c.iter()
+    if Some(a) = it.next() { print("${a}") }
+    if Some(b) = it.next() { print("${b}") }
+}

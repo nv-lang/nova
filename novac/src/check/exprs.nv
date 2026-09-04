@@ -41,6 +41,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, digit_index, is_tuple}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
+import ../sem.{option_payload}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -60,14 +61,75 @@ fn Checker mut @const_type_of(name str) -> TyId {
     type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
-/// `Sum.Variant` as a VALUE (the variant-value wave): a head that names a
-/// TYPE followed by the dot and one of ITS variants is the variant's value,
-/// not a field read -- and the head must not go through the name walk (a
-/// type name is no bound value). Answers true when THIS node was decided:
-/// recorded with the same CalleeVariant row a `C(7)` call writes, or
-/// refused (a payload-carrying variant, a non-variant after the type's
-/// dot). Answers false when the shape is an ordinary field access.
-fn Checker mut @judge_type_head_variant(e Node, kids []Node) -> bool {
+/// The payload half of the door above: `Sum.Variant(x)`, and the refusal a
+/// payload-carrying variant earns when it is written with no arguments at all.
+///
+/// The arguments are walked FIRST, by the rule every call in this file follows:
+/// the key of a construction is its arguments, and a refusal among them makes
+/// the decision untrustworthy. The binding is the IDENTITY, exactly as the
+/// unqualified `Variant(x)` records it -- a variant's payload is positional by
+/// construction, with no names to bind by and no defaults to omit.
+fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow VariantRow, arg_from int) -> () {
+    if arg_from < 0 {
+        // `Sum.Variant` with a payload and no argument list: the same refusal
+        // this door has always given, now in its own branch.
+        @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+        return
+    }
+    ro before = @out.len()
+    mut i = 0
+    for c in kids {
+        if i >= arg_from && is_expr_kind(c.kind_of()) {
+            @type_expr(c)
+        } else {
+            // The head, the dot, the variant's name and the punctuation: no
+            // expression stands there, and the cursor still has to advance.
+        }
+        i += 1
+    }
+    if @out.len() > before {
+        // An argument was refused: the construction's type would be built over
+        // a value nobody trusts, and the walk has already spoken.
+        return
+    }
+    ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+    @record(e, vd.sum_id)
+    @chan.record_callee(e.id_of(),
+        CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(arg_count(kids, arg_from)))
+}
+
+/// Is this name a VARIANT of some declared sum? Asked by the method judge
+/// above, which must not call a construction a missing method. The definition
+/// registry answers -- the same `def_of` every other variant question uses, so
+/// there is no second table to disagree with.
+fn Checker @is_known_variant(name str) -> bool {
+    match @ctx.defs.def_of(name) {
+        None => false
+        Some(d) => match d.target {
+            DefVariant(_) => true
+            DefType(_) | DefFn(_) | DefConst(_) => false
+        }
+    }
+}
+
+/// `Sum.Variant` as a VALUE: a head that names a TYPE followed by the dot and
+/// one of ITS variants is the variant's value, not a field read -- and the head
+/// must not go through the name walk (a type name is no bound value). Answers
+/// true when THIS node was decided: recorded with the same CalleeVariant row a
+/// `C(7)` call writes, or refused (a non-variant after the type's dot, or a
+/// payload-carrying variant written with no arguments). Answers false when the
+/// shape is an ordinary field access.
+///
+/// `arg_from` is what makes ONE door serve BOTH spellings (2026-09-04, wave
+/// V3-4b): `-1` for `Sum.Variant`, where the tree has no argument list, and the
+/// index the arguments start at for `Sum.Variant(x)`, which the parser reads as
+/// a METHOD CALL. Before this the second spelling reached no door at all: the
+/// method judge asked the CALLABLE index about the variant's name, found
+/// nothing and refused with "no such method", while the very same construction
+/// written `Variant(x)` compiled byte-for-byte against the oracle. One form of
+/// the language, two spellings, one door -- the second door would have been the
+/// copy this compiler exists to avoid.
+fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bool {
     if kids[0].kind_of() != NodeKind.Name {
         // A computed head (a call, a chain): an ordinary field access.
         return false
@@ -92,12 +154,12 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node) -> bool {
                     DefVariant(vrow) => {
                         ro vd = @ctx.variant_rows[raw_vrow(vrow)]
                         if vd.sum_id == head_t {
-                            if vd.payload_cnt == 0 {
+                            if vd.payload_cnt == 0 && arg_from < 0 {
                                 @record(e, vd.sum_id)
                                 @chan.record_callee(e.id_of(),
                                     CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
                             } else {
-                                @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+                                @judge_qualified_payload(e, kids, vt, vrow, arg_from)
                             }
                             return true
                         }
@@ -136,34 +198,132 @@ fn Checker mut @judge_interp_lit(e Node) -> () {
         // A plain string: the literal pool owns it.
         return
     }
-    mut tys = []TyId.new()
-    mut si = 1
-    while si + 0 < pieces.len() {
-        ro nm = pieces[si]
-        if !@scope.is_bound(nm) {
-            @report_first_leaf_of(kids, INTERP_NAME_MSG)
-            return
-        }
-        ro ty = @scope.type_of_name(nm)
-        if ty == @ctx.prims.str_id || ty == @ctx.prims.int_id {
-            tys.push(ty)
-        } else {
-            @report_first_leaf_of(kids, INTERP_TYPE_MSG)
-            return
-        }
-        si += 2
+    // Since I2 the lexer splits every top-level interpolation into an
+    // InterpStr node -- a WHOLE literal with a live slot can only be a
+    // string nested inside another slot, and that form is refused by name
+    // (the I2 chain builds one level).
+    @report_first_leaf_of(kids, NESTED_INTERP_MSG)
+}
+
+/// The char-literal judge (the char wave). The lexer finds the closing quote
+/// and keeps the run VERBATIM, so WIDTH is judged here: `'ab'` is one CharLit
+/// token, and the oracle refuses it at its own lexer -- this walk is novac's
+/// stage for the same verdict. Legal: one codepoint (any UTF-8 length), or
+/// one simple escape; the unicode escape is legal Nova the subset defers.
+fn Checker mut @judge_char_lit(e Node) -> () {
+    ro kids = branch_children(e)
+    ro t = kids[kids.len() - 1]
+    if leaf_kind(t) != TokenKind.CharLit {
+        // Not this judge's literal: the int/float/str arms own the rest.
+        return
     }
-    @record(e, @ctx.prims.str_id)
-    @chan.record_subst(e.id_of(), tys)
+    ro txt = leaf_text(t)
+    ro body = txt[1..txt.byte_len() - 1]
+    if body.byte_len() >= 2 && body[..1] == "\\" {
+        if body[1..2] == "u" {
+            @report_first_leaf_of(kids, CHAR_UNICODE_MSG)
+            return
+        }
+        ro legal = body[1..2] == "n" || body[1..2] == "t" || body[1..2] == "r" ||
+                   body[1..2] == "0" || body[1..2] == "\\" || body[1..2] == "'" || body[1..2] == "\""
+        if body.byte_len() != 2 || !legal {
+            @report_first_leaf_of(kids, if legal { CHAR_WIDTH_MSG } else { CHAR_ESCAPE_MSG })
+        } else {
+            // One defined escape: the mangle door spells its codepoint.
+        }
+        return
+    }
+    // A bare body is ONE codepoint exactly when its byte length equals the
+    // length its FIRST byte announces -- a second character, a stray
+    // continuation byte, or a truncated sequence all disagree.
+    ro bb = body.bytes()
+    ro head = bb[0]
+    ro want = if head < 128 { 1 }
+              else if head >= 240 { 4 }
+              else if head >= 224 { 3 }
+              else if head >= 192 { 2 }
+              else { 0 }
+    if body.byte_len() != want {
+        @report_first_leaf_of(kids, CHAR_WIDTH_MSG)
+    } else {
+        // One codepoint: the literal stands.
+    }
 }
 
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
-    if k == NodeKind.Lit {
-        // An interpolated literal is the EXPRESSION it is (I1); a plain
-        // literal stays the lattice's business.
+    if k == NodeKind.InterpStr {
+        // Every slot's expression is a real node (I2): walked, typed, and
+        // its display type judged -- str and int carry builder inserts
+        // today. The literal's own type is str; the emitter reads the slot
+        // types from the nodes, not from a side record.
+        ro ikids = branch_children(e)
+        for c in ikids {
+            if !is_expr_kind(c.kind_of()) { continue }
+            ro before = @out.len()
+            @type_expr(c)
+            if @out.len() > before { return }
+            ro st = type_of(c, @ctx, @scope, @chan)
+            if st == @ctx.prims.str_id || st == @ctx.prims.int_id {
+                @record(c, st)
+            } else {
+                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                return
+            }
+        }
+        @record(e, @ctx.prims.str_id)
+    } else if k == NodeKind.Coalesce {
+        // `a ?? b`: the payload of `a` when it is Some, `b` when it is None.
+        // The TYPE is the LEFT side's payload and never the right's -- the
+        // oracle's own rule (`v.first() ?? 0` on a `Vec[uint]` is `uint`, not
+        // the literal's `int`), so the right side is CHECKED against it and
+        // does not decide it.
+        ro qk = branch_children(e)
+        ro before = @out.len()
+        @type_expr(qk[0])
+        if @out.len() > before { return }
+        // `?? return` is spotted by the LEAF, and the question is asked of a
+        // leaf only: a fallback EXPRESSION is a branch, and asking a branch
+        // for its token kind is an ice (measured on the wave's first probe).
+        if qk.len() > 2 {
+            match qk[2] {
+                Leaf(rt) => {
+                    if rt.kind == TokenKind.KwReturn {
+                        @report_first_leaf_of(qk, COALESCE_RETURN_MSG)
+                        return
+                    } else {
+                        // A leaf fallback (a name, a literal): typed below.
+                    }
+                }
+                Branch { .. } => {
+                    // An expression fallback: typed below like any other.
+                }
+            }
+        } else {
+            // A recovery shape with no fallback at all: the parser spoke.
+        }
+        ro lt = type_of(qk[0], @ctx, @scope, @chan)
+        ro payload = option_payload(@ctx, lt)
+        if !is_ty(payload) {
+            @report_first_leaf_of(qk, COALESCE_NONOPT_MSG)
+            return
+        } else {
+            // An Option: its payload is this expression's type.
+        }
+        if qk.len() > 2 {
+            @type_expr(qk[2])
+            if @out.len() > before { return }
+        } else {
+            // A recovery shape with no fallback: the parser already spoke.
+        }
+        @record(e, payload)
+    } else if k == NodeKind.Lit {
+        // An interpolated literal reaching the tree WHOLE is a nested one
+        // (a string inside a slot): the lexer splits only the outer level,
+        // and the I1 judge's form rule refuses these.
         @judge_interp_lit(e)
+        @judge_char_lit(e)
     } else if k == NodeKind.Name {
         // FIRST FLOOR. An unbound name is a USER mistake, and check is where a
         // user mistake becomes a diagnostic with a position. Before this, the
@@ -281,7 +441,7 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         // SILENT-OK: the head judge DECIDED for this node -- recorded the
         // variant's value or refused -- and the field walk must not run twice.
-        if @judge_type_head_variant(e, kids) { return }
+        if @judge_type_head_variant(e, kids, -1) { return }
         ro before = @out.len()
         @type_expr(kids[0])
         // The mark, not the file's count: a refusal in an EARLIER declaration
@@ -347,13 +507,41 @@ fn Checker mut @type_expr(e Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: a method call needs a name after the dot")
             return
         }
+        // `Sum.Variant(x)` WEARS THIS SHAPE and is not a method call. Asked
+        // before the receiver is walked, because a type name is no bound value
+        // and the name walk would refuse it as unknown -- the first of the two
+        // refusals this spelling used to collect.
+        if @judge_type_head_variant(e, kids, 3) {
+            // SILENT-OK: the door DECIDED -- it recorded the construction and
+            // its type, or refused the shape. Nothing is left for the method
+            // path to say about this node.
+            return
+        } else {
+            // Not a variant construction: an ordinary method call, judged below.
+        }
+        // ARGUMENTS FIRST -- the free-call rule of 2026-08-21, arriving here
+        // with the typed method key (E2-b3 M1). The key of a call IS its
+        // argument types, and the walk is what VERIFIES each argument before
+        // the lattice is asked; a refusal anywhere in the children stops the
+        // resolution, because the type the key would carry is not trustworthy.
         ro before = @out.len()
         @type_expr(kids[0])
+        mut i = 0
+        for c in kids {
+            if i > 2 && is_expr_kind(c.kind_of()) {
+                @type_expr(c)
+            } else {
+                // Children 0..2 are the receiver, the dot and the method
+                // name, and a punctuation leaf is no expression: nothing to
+                // walk, and the cursor still has to advance.
+            }
+            i += 1
+        }
         // The mark, not the file's count (274.4 step 2): the file-wide
         // `== 0` guard silenced the judge for every method call after the
         // FIRST refusal anywhere in the file -- no refusal, no recorded
         // type, and the silence was covered by type_of re-resolving the
-        // name (the second door). The question is about THIS receiver.
+        // name (the second door). The question is about THIS call's children.
         if @out.len() == before {
             ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
             @record(kids[0], recv_t)
@@ -365,20 +553,10 @@ fn Checker mut @type_expr(e Node) -> () {
             // had to be two doors. Same lookup door the diagnostics use.
             @record_method_callee(e, kids, recv_t)
         } else {
-            // THIS receiver was refused, so its type is not trustworthy and
-            // nothing is recorded; the arguments are still walked below, so
-            // one run shows the user every mistake.
-        }
-        mut i = 0
-        for c in kids {
-            if i > 2 && is_expr_kind(c.kind_of()) {
-                @type_expr(c)
-            } else {
-                // Children 0..2 are the receiver, the dot and the method
-                // name, and a punctuation leaf is no expression: nothing to
-                // walk, and the cursor still has to advance.
-            }
-            i += 1
+            // The receiver or an argument was refused: the walk above already
+            // spoke, and a key built over a refused child would resolve on a
+            // type nobody trusts. One run still shows every mistake -- the
+            // children were all walked before this mark was read.
         }
     } else if k == NodeKind.Call {
         ro kids = branch_children(e)
@@ -440,8 +618,21 @@ fn Checker mut @type_expr(e Node) -> () {
                 ro key = typed_free_key(kids, @ctx, @scope, @chan)
                 match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
                     FnFound(row) => @record_free_callee(e, kids, row, key)
-                    FnOverloaded(_) => @report_first_leaf_of(kids,
-                        "outside the subset: an overloaded function is not narrowed yet (arrives with the checker, E2-b3)")
+                    // What stays overloaded under a TYPED key is a real D84
+                    // tie -- unless a slot novac could not type matched every
+                    // overload, which is ignorance, not ambiguity (the M1
+                    // guard; one rule for both call forms). Coercion never
+                    // breaks a tie: D429 R5 ranks pairs BELOW an exact fit,
+                    // and here two exact fits already stand.
+                    FnOverloaded(_) => {
+                        if key_fully_typed(key) {
+                            @report_first_leaf_of(kids,
+                                "this call fits more than one function and none is more specific -- an ambiguity is refused, never chosen (D84)")
+                        } else {
+                            @report_first_leaf_of(kids,
+                                "outside the subset: an argument's type is not decided yet, so this overloaded function is not narrowed")
+                        }
+                    }
                     // The name may be known and the arity may match: what did
                     // not fit is then a TYPE, and the refusal says which of the
                     // three it is (D420: name the cause you established, not
@@ -677,7 +868,8 @@ fn Checker @is_numeric(t TyId) -> bool =>
 /// question the subset does not answer).
 fn Checker @is_primitive(t TyId) -> bool =>
     t == @ctx.prims.int_id || t == @ctx.prims.f64_id ||
-    t == @ctx.prims.bool_id || t == @ctx.prims.str_id
+    t == @ctx.prims.bool_id || t == @ctx.prims.str_id ||
+    t == @ctx.prims.char_id
 
 /// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
 /// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)

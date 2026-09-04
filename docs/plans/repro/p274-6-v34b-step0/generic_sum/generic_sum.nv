@@ -1,0 +1,13 @@
+module generic_sum
+
+// Step 2 depends on this: Option[T] is a GENERIC sum. Can novac take a
+// user-declared one at all today?
+type Box[T] enum Empty | Full(T)
+
+fn main() {
+    ro b = Box[int].Full(3)
+    match b {
+        Empty => println(0)
+        Full(v) => println(v)
+    }
+}

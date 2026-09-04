@@ -1,0 +1,9 @@
+module some_return
+
+// The exact ICE trigger, isolated: `Some(...)` as a function TAIL.
+// No types, no methods, no loop, no if-let.
+fn mk(n int) -> Option[int] => Some(n)
+
+fn main() {
+    if Some(a) = mk(2) { println(a) }
+}

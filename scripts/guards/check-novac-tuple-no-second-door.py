@@ -1,0 +1,155 @@
+# -*- coding: utf-8 -*-
+"""scripts/guards/check-novac-tuple-no-second-door.py — слово `tuple` живёт
+только в комментариях и в именах вариантов формы записи; кортеж — это запись
+на стеке, и своей бухгалтерии у него нет.
+
+ПРАВИЛО (владелец, 2026-09-03, дословно по смыслу): «слово tuple может
+встречаться в комментариях и в Record | ValueRecord | NamedTupleRecord |
+AnonymousTupleRecord, больше нигде; конструктор по созданию кортежа это и есть
+его декларация, т.е. обычная функция со всеми обычными возможностями, в том
+числе параметры по умолчанию; если хочешь завести слово tuple в имени файла
+или в коде — только при моём согласовании; всё, что касается сейчас tuple,
+должно быть удалено».
+
+Первая редакция (2026-09-02) судила только эмиттер: двери с tuple в имени,
+ветки TkTuple/is_tuple, свою механику умолчаний. Владелец усилил правило до
+СЛОВА: особой сущности «кортеж» в коде нет вообще — есть запись на стеке, чью
+форму несёт вариант перечисления, а её конструктор есть её
+декларация, обычная функция с умолчаниями через D102. Значит идентификатору,
+виду узла, виду типа или файлу со словом tuple взяться неоткуда — кроме двух
+имён вариантов перечисления, которые и несут это знание (архитектура §4б).
+
+ЧТО СЧИТАЕТСЯ НАРУШЕНИЕМ:
+  A. имя файла в novac/src, содержащее tuple (сегодня: emit_c/emit_tuple.nv);
+  B. строка КОДА (не комментария), где после удаления разрешённых
+     идентификаторов-вариантов (см. ALLOWED) остаётся `tuple`
+     в любом регистре — идентификаторы, виды узлов и типов, строковые
+     литералы, всё.
+
+ЧТО РАЗРЕШЕНО:
+  * комментарии (`//`, `///`) — прозой о кортежах объясняют само правило;
+  * имена вариантов формы записи точным написанием (список ALLOWED ниже,
+    решётка владельца по двум осям — архитектура §4б).
+  НИКАКИХ других исключений страж не несёт. ABI-спеллинг оракула
+  (`_NovaTuple_...` в мангле) сознательно НЕ исключён: он в базе и давит
+  вниз, а его судьба — вопрос владельцу в плане 274.6 §5, не решение стража.
+
+ХРАПОВИК. На день усиления слово живёт в 100 строках кода 23 файлов плюс одно
+имя файла — база 101, снята прогоном, не назначена. Число может только
+ПАДАТЬ, цель — 0; рост красный сразу (новое слово tuple в коде не заводится
+без согласования владельца), снижение без правки базы тоже красное. База —
+`novac-tuple-doors.baseline`, строка `tuple_words=N`.
+
+ОГРАНИЧЕНИЕ ФОРМЫ, названное честно: комментарий отрезается по первому `//`
+без разбора строковых литералов, поэтому `tuple` в строковом литерале ПОСЛЕ
+`//` в той же строке страж не увидит. Такая строка — эмиссия C-комментария
+текстом, для правила слова это тоже проза. Обратной дыры (код, посчитанный
+комментарием и потому пропущенный рост) эвристика не создаёт: отрезается
+только хвост за `//`.
+
+$1 — корень; $2 — override сканируемой директории (шов самотеста).
+"""
+import pathlib
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+
+NAME = "check-novac-tuple-no-second-door"
+BASE_FILE = "novac-tuple-doors.baseline"
+# Имена вариантов формы записи (`RecordShape`). Владелец задал решётку по
+# ДВУМ осям 2026-09-03 -- имя у типа и имена у полей -- и разрешил имена
+# сократить: арм `match` обязан быть ОДНОЙ строкой (многострочный
+# `|`-образец язык не берёт), а полные написания переполняли её за 120
+# байт. Четыре имени вместо прежних двух -- это те же варианты, а не рост.
+ALLOWED = ("NamedTuple", "PositionalTuple", "AnonNamedTuple",
+           "AnonPositionalTuple")
+
+
+def read_base(guards_dir):
+    """База храповика: одно число `tuple_words=N`. Нет числа — судить не по чему."""
+    p = guards_dir / BASE_FILE
+    if not p.is_file():
+        return None
+    for raw in p.read_bytes().decode("utf-8", "replace").split("\n"):
+        line = raw.strip()
+        if line.startswith("tuple_words="):
+            try:
+                return int(line[len("tuple_words="):].strip())
+            except ValueError:
+                return None
+    return None
+
+
+def main():
+    root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+    src = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root / "novac" / "src"
+    guards_dir = pathlib.Path(__file__).resolve().parent
+
+    if not src.is_dir():
+        print(f"{NAME} ok: судить нечего — нет {src}")
+        return 0
+
+    base = read_base(guards_dir)
+    if base is None:
+        print(f"{NAME}: FAIL — нет базы храповика {BASE_FILE} (или в ней нет строки "
+              f"`tuple_words=N`): без базы страж не отличит рост от снижения и "
+              f"молча пропустил бы новое слово.", file=sys.stderr)
+        return 1
+
+    fname_hits = []
+    code_hits = []
+    nfiles = 0
+    for f in sorted(src.rglob("*.nv")):
+        rel = f.relative_to(src).as_posix()
+        nfiles += 1
+        if "tuple" in f.name.lower():
+            fname_hits.append(rel)
+        for n, raw in enumerate(f.read_bytes().decode("utf-8", "replace").split("\n"), 1):
+            stripped = raw.lstrip()
+            if stripped.startswith("//"):
+                continue
+            code = raw
+            i = code.find("//")
+            if i >= 0:
+                code = code[:i]
+            for a in ALLOWED:
+                code = code.replace(a, "")
+            if "tuple" in code.lower():
+                code_hits.append((rel, n, raw.strip()))
+
+    words = len(fname_hits) + len(code_hits)
+
+    if words > base:
+        print(f"{NAME}: FAIL — слово `tuple` в коде ВЫРОСЛО: {words} > база {base}. "
+              f"Новое слово tuple в коде или имени файла — только с согласования "
+              f"владельца (правило 2026-09-03).", file=sys.stderr)
+        for rel in fname_hits:
+            print(f"  {rel} — имя файла со словом tuple", file=sys.stderr)
+        cur = ""
+        for rel, n, line in sorted(code_hits):
+            if rel != cur:
+                cur = rel
+                print(f"  {rel}:", file=sys.stderr)
+            print(f"      {n}: {line[:110]}", file=sys.stderr)
+        print("  Кортеж — ЗАПИСЬ НА СТЕКЕ; его форма — вариант перечисления", file=sys.stderr)
+        print("  (см. ALLOWED в самом страже), его конструктор — его", file=sys.stderr)
+        print("  декларация, обычная функция с умолчаниями D102. Слову tuple в коде", file=sys.stderr)
+        print("  места нет; см. план 274.6 и архитектуру §4б.", file=sys.stderr)
+        return 1
+
+    if words < base:
+        print(f"{NAME}: FAIL — слово `tuple` в коде СНИЗИЛОСЬ ({words} < база {base}), "
+              f"а база не опущена. Опусти `tuple_words={words}` в {BASE_FILE} тем же "
+              f"слиянием: иначе следующий рост до прежней цифры пройдёт молча.",
+              file=sys.stderr)
+        return 1
+
+    goal = " — ЦЕЛЬ 0" if words > 0 else " (цель достигнута)"
+    print(f"{NAME} ok: файлов .nv: {nfiles}, строк кода со словом tuple: {len(code_hits)}, "
+          f"файлов-имён: {len(fname_hits)}, всего {words} (== база {base}){goal}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

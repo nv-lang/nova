@@ -1,0 +1,10 @@
+module d
+
+fn mk(n int) -> int {
+    ro v = nosuch(n)
+    v
+}
+
+fn main() {
+    println(1)
+}

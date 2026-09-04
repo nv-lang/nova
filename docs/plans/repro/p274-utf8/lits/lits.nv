@@ -1,0 +1,8 @@
+module lits
+
+fn main() {
+    println("одно и то же")
+    println("одно и то же")
+    ro c = 'у'
+    println(c)
+}

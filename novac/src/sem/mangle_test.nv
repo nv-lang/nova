@@ -186,7 +186,7 @@ test "the MODULE PATH is part of a C name: two modules, two names" {
 fn seed_head(mut ctx Ctx, name str, arity int) -> DeclId {
     ro id = DeclId(ctx.types.len())
     ctx.defs.add(name, DefTarget.DefType(id))
-    ctx.types.push(TypeDef { kind: TypeKind.TkRecord, by_value: false, tparam_cnt: arity,
+    ctx.types.push(TypeDef { kind: TypeKind.TkRecord, shape: RecordShape.Record, tparam_cnt: arity,
                              ty_id: ctx.tys.record(id), name, rows: TypeRows.NoRows })
     id
 }

@@ -1,0 +1,20 @@
+module p_variant_eaten_by_type
+
+// SECOND FORM of p_type_eaten_by_variant, with the DECLARATION ORDER flipped:
+// the sum comes first, so its variant row is the one that gets overwritten by
+// the record's `DefType` row in the same flat table (defs.nv:@add, last put
+// wins). The property is one table for four kinds of entity; the syntax is
+// whichever of the two is written second.
+type Color enum Red | Green
+type Red { n int }
+
+fn rank(c Color) -> int {
+    match c {
+        Red => 1
+        Green => 2
+    }
+}
+
+fn main() {
+    println(rank(Color.Green))
+}

@@ -1,0 +1,332 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_parse `item.rs` (`parse_item_struct` / `parse_item_enum`) --
+// there too the reader of a TYPE item is its own seam, because one leading
+// keyword opens a form whose tails have nothing in common with each other:
+// a brace body, a parenthesised body, a pipe chain, a bare representation.
+//
+// Role: the reader of ONE declaration -- `type ...` in every tail the language
+//   spells: record (brace and parenthesised, D215), value record (D241),
+//   privacy marker (D281), sum (`enum`, with and without pipes), protocol,
+//   newtype and alias. Plus `@proto_method`, which only this reader calls.
+// Used by: parse.nv -- its top-level loop; decls.nv via `export`.
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py,
+//   check-novac-doc-language.py, check-novac-branch-complete.py.
+//
+// Split out of parse.nv on 2026-09-03, when the parenthesised record form of
+// plan 274.6 (wave V2) pushed that file past the thousand-line limit -- the
+// same seam decls.nv came out of on 2026-08-18 and type_ref.nv a day earlier.
+// Nothing is renamed and nothing changes shape: the cut is where the file
+// already had a boundary.
+
+module novac.parse
+
+import ../lex.{TokenKind, brace_delta, paren_delta}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER}
+import ../tree.{Node, NodeKind}
+
+/// `type Name { field type ... }` — fields are newline-separated pairs of
+/// idents, no commas. `type Name` followed by leading `|` variants is a sum
+/// (the corpus form on the pin; the oracle accepts it — divergence registry,
+/// prediction 1). A non-brace, non-pipe tail falls into the top loop's
+/// recovery on the next token.
+fn Cursor mut @type_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwType
+    @push_expected(kids, TokenKind.Ident)
+    if @peek() == TokenKind.LBracket {
+        kids.push(@generics())
+    } else {
+        // The type declares no parameters. ABSENT is not EMPTY here: E2-b2
+        // asks whether a Generics node exists, and a node built over nothing
+        // would answer yes for `type Point`.
+    }
+    // The CANONICAL sum carries the `enum` marker -- `type Color enum` -- and
+    // novac refused it until 2026-08-17: it parsed ONLY the older
+    // pipes-without-marker shape, that is, the spelling the project moved away
+    // from, while rejecting the one the convention requires. Every probe
+    // written the canonical way fell into the junk bucket before reaching any
+    // rule about sums, which is how the missing exhaustiveness check stayed
+    // invisible. The marker is kept in the tree -- the tree is lossless.
+    // A PROTOCOL declaration -- `type Sized protocol { @size() -> int }`.
+    //
+    // Measured 2026-08-23 on the tour example (form taken from
+    // examples/tour/methods.nv, not invented): the oracle compiles that file
+    // and novac answered "syntax error: this is not a form of the language" --
+    // about a form the language HAS. The word `protocol` fell into the
+    // newtype/alias branch below as if it were a representation, and the brace
+    // body behind it became junk. Exactly the shape the newtype branch was
+    // added for on 2026-08-21, one form later.
+    //
+    // The body is read as a BALANCED BRACE RUN and kept whole: the tree is
+    // lossless, and the method signatures inside are not interpreted by this
+    // wave (dispatch is wave 3b). `sem` sees the marker and refuses BY NAME,
+    // which is the whole point -- a named subset refusal instead of calling a
+    // legal form a non-language.
+    if @peek_ident(PROTOCOL_MARKER) {
+        kids.push(@take())
+        if @peek() == TokenKind.LBrace {
+            kids.push(@take())
+            // ONE SIGNATURE PER `@`. Wave 3a kept the body as a balanced brace
+            // run, which was enough to stop calling the form a non-language --
+            // but a raw run cannot be COMPARED with a type's method set, and
+            // that comparison is the whole of wave 3b. So the body is read as
+            // signatures now, and anything that is not one stays a leaf: the
+            // tree is lossless and `check` refuses what it cannot judge.
+            while @peek() == TokenKind.At {
+                kids.push(@proto_method())
+            }
+            @push_expected(kids, TokenKind.RBrace)
+        } else {
+            // `type Sized protocol` with no body: broken input, and the top
+            // loop recovers the next token into its own Err branch rather than
+            // this declaration swallowing it.
+        }
+        return @node(NodeKind.TypeDecl, kids)
+    } else {
+        // Not a protocol: the sum marker and the record/newtype tails follow.
+    }
+    // A VALUE record or a VALUE sum: the word stands where `enum` and
+    // `protocol` stand, and D241 fixes that order. Until 2026-08-23 it fell into
+    // the NEWTYPE tail below -- read as if it were a representation -- and the
+    // brace body behind it became top-level junk, so the refusal said "this is
+    // not a form of the language" about a form the language has. Six of novac's
+    // own files stop on exactly this, the largest single form in the self-build
+    // measurement of that day.
+    if @peek_ident(VALUE_MARKER) {
+        kids.push(@take())
+    } else {
+        // No `value` marker: the record is a GC pointer, the language's default.
+    }
+    // The PRIVACY marker (D281), read the same way `value` is -- a leaf
+    // between the name and the body -- PLUS its optional qualifier group:
+    // `priv`, `priv(type)`, `priv(file)` are all one form, and reading only
+    // the bare word would drop the qualified spellings into the junk bucket
+    // half-read. The group is a balanced paren run, the same walk a tuple
+    // type takes; what stands inside is not judged yet (one-file compilation
+    // has no cross-module privacy to enforce).
+    if @peek_ident(PRIV_MARKER) {
+        kids.push(@take())
+        if @peek() == TokenKind.LParen {
+            mut depth = 0
+            while !@at_eof() {
+                ro pk = @peek()
+                ro delta = paren_delta(pk)
+                depth += delta
+                kids.push(@take())
+                if depth == 0 { break }
+            }
+        } else {
+            // Bare `priv`: no qualifier written, fields are module-private.
+        }
+    } else {
+        // No privacy marker: fields keep the default visibility. (The `value`
+        // marker above needs no else of its own: its absence IS the default,
+        // a GC-pointer record, and the walk simply moves on.)
+    }
+    ro is_sum_marker = @peek_ident(SUM_MARKER)
+    if is_sum_marker {
+        kids.push(@take())
+        // The first variant may follow the marker directly:
+        // `type Color enum Red(int) | Green(int)`. The pipe loop below cannot
+        // start on it, so it is read here and the loop takes the rest.
+        if @peek() == TokenKind.Ident {
+            mut vk = []Node.of(@take())
+            // A RECORD-form variant: `| Circle { radius f64 }`. Read as a
+            // balanced brace run -- the fields inside are name/type pairs
+            // and the checker walks them. D54 (#719) rules on how such a
+            // variant may be destructured, and a rule cannot land before
+            // the form is read at all.
+            if @peek() == TokenKind.LBrace {
+                mut depth = 0
+                while !@at_eof() {
+                    depth += brace_delta(@peek())
+                    vk.push(@take())
+                    if depth == 0 { break }
+                }
+            } else {
+                // Not a record-form variant: the paren form below answers.
+            }
+            if @peek() == TokenKind.LParen {
+                vk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    vk.push(@take())
+                    @push_if(vk, TokenKind.Comma)
+                }
+                @push_expected(vk, TokenKind.RParen)
+            } else {
+                // A variant without a payload is whole as its name alone.
+            }
+            kids.push(@node(NodeKind.Variant, vk))
+        } else {
+            // The marker is followed by `|` or by nothing, so every variant
+            // comes from the pipe loop below and there is no first one here.
+        }
+    } else {
+        // No marker: the older pipes-only sum, or a record type. Both are
+        // read below, and the marker leaf is simply not in the tree.
+    }
+    if @peek() == TokenKind.Pipe {
+        while @peek() == TokenKind.Pipe {
+            mut vk = []Node.of(@take()) // '|'
+            @push_expected(vk, TokenKind.Ident)
+            // A RECORD-form variant: `| Circle { radius f64 }`. Read as a
+            // balanced brace run -- the fields inside are name/type pairs
+            // and the checker walks them. D54 (#719) rules on how such a
+            // variant may be destructured, and a rule cannot land before
+            // the form is read at all.
+            if @peek() == TokenKind.LBrace {
+                mut depth = 0
+                while !@at_eof() {
+                    depth += brace_delta(@peek())
+                    vk.push(@take())
+                    if depth == 0 { break }
+                }
+            } else {
+                // Not a record-form variant: the paren form below answers.
+            }
+            if @peek() == TokenKind.LParen {
+                vk.push(@take())
+                while @peek() == TokenKind.Ident {
+                    vk.push(@take()) // payload type name
+                    @push_if(vk, TokenKind.Comma)
+                }
+                @push_expected(vk, TokenKind.RParen)
+            } else {
+                // `| Red` carries no payload; an empty paren pair would be a
+                // shape the source never wrote, so nothing is added.
+            }
+            kids.push(@node(NodeKind.Variant, vk))
+        }
+        return @node(NodeKind.SumDecl, kids)
+    }
+    // `type Color enum Red(int)` -- marker present, no pipe followed.
+    if is_sum_marker { return @node(NodeKind.SumDecl, kids) }
+    if @peek() == TokenKind.LBrace {
+        kids.push(@take())
+        // A FIELD MAY CARRY A MODE: `type Counter { mut n int }` is Nova the
+        // oracle compiles, and novac answered "this is not a form of the
+        // language" -- about a form the language HAS (measured 2026-08-23,
+        // while wiring the write path of wave 3g). The word is read by the SAME
+        // door parameters use (`@at_mode_word`): `mut` is not a keyword in this
+        // lexer, and one door for one question keeps the four words spelled
+        // once (P5).
+        //
+        // The loop condition follows the mode, not the name: a body opening
+        // with `mut` starts with KwMut, so a condition testing only for an
+        // identifier stopped before the first field and dropped the whole body
+        // into the junk bucket.
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            mut fk = []Node.new()
+            if @at_mode_word() {
+                fk.push(@take())
+            } else {
+                // No mode: the field is read-only by default (D176).
+            }
+            @push_expected(fk, TokenKind.Ident) // field name
+            // THE TYPE IS READ BY THE SAME DOOR PARAMETERS USE (274.5 wave
+            // B1). It used to be one Ident, so `xs []int` and `rows Vec[T]`
+            // were unreadable in a field while both are read in a parameter
+            // and in a return type since step B2 -- one form, two answers,
+            // which is the shape this compiler exists to stop repeating.
+            // Measured 2026-08-29: seven of novac's own files stop here.
+            fk.append(@type_ref())
+            kids.push(@node(NodeKind.Field, fk))
+        }
+        @push_expected(kids, TokenKind.RBrace)
+    } else if @peek() == TokenKind.LParen {
+        // THE PARENTHESISED RECORD FORM (D215): `type Pair(x int, y int)` and
+        // `type Complex(re f64 = 0.0)`. It is a record whose fields are written
+        // in one line and whose constructor is a CALL -- the same fields the
+        // brace form declares, so it produces the SAME `Field` nodes and rides
+        // the record path from here (plan 274.6 wave V2). Positional fields
+        // (`type Point(f64, f64)`) are NOT read here: the oracle cannot compile
+        // them from TWO components up -- registry #888, narrowed by the
+        // integrator, `type One(int)` DOES build -- so that form waits for V3;
+        // a leaf where a field name belongs falls to the recovery bucket.
+        kids.push(@take())
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            mut fk = []Node.new()
+            if @at_mode_word() {
+                fk.push(@take())
+            } else {
+                // No mode: read-only by default (D176), exactly as the brace form.
+            }
+            @push_expected(fk, TokenKind.Ident) // field name
+            fk.append(@type_ref())              // same door parameters and brace fields use
+            // A DEFAULT: `type Complex(re f64 = 0.0)`. The constructor is an
+            // ordinary function, so its default is read exactly as a
+            // parameter's is (parse.nv param loop): the `=` leaf then an
+            // expression, and D102 tells required from defaulted downstream.
+            if @peek() == TokenKind.Assign {
+                fk.push(@take())
+                fk.push(@expr())
+            } else {
+                // No default: a required field.
+            }
+            kids.push(@node(NodeKind.Field, fk))
+            // The comma between fields is trivia to the declaration: shape and
+            // collect read `Field` nodes, and a comma leaf among the kids is
+            // ignored, exactly as the parameter loop treats it.
+            @push_if(kids, TokenKind.Comma)
+        }
+        @push_expected(kids, TokenKind.RParen)
+    } else if @peek() != TokenKind.Eof && !TOP_LEVEL_STOPS.contains(@peek()) {
+        // A NEWTYPE or an ALIAS: `type Row int`, `type Row alias int`. The tail
+        // is a TYPE REFERENCE, and one branch reads both -- the `alias` word is
+        // kept as a leaf and `sem` tells the two apart (a newtype is a distinct
+        // type, an alias is the same type under a second name).
+        //
+        // Until 2026-08-21 this branch did not exist and the tail fell into the
+        // top-level junk bucket, so `type Row int` came back "this is not a
+        // form of the language" -- about a form the language HAS and the oracle
+        // compiles (measured by the integrator the same day: both spellings
+        // build, run, and enforce the distinction). The plan's own newtype
+        // section was half right: the form was missing from NOVAC, not from
+        // Nova.
+        ro is_alias = @peek_ident(ALIAS_MARKER)
+        if is_alias {
+            kids.push(@take())
+        } else {
+            // No `alias` word: the tail is the representation of a NEWTYPE.
+        }
+        kids.append(@type_ref())
+    } else {
+        // Nothing follows, or the next token starts another declaration: the
+        // top loop recovers it into its own Err branch, so the mistake keeps
+        // its own diagnostic instead of being swallowed by this one.
+    }
+    @node(NodeKind.TypeDecl, kids)
+}
+
+/// Parse ONE required signature of a protocol body: `@name(params) -> T`.
+///
+/// Narrow on purpose. A protocol method is a SIGNATURE and nothing else -- no
+/// body, no default, no mode -- so this reader is not `@fn_decl` with parts
+/// switched off; sharing that path would mean teaching it a shape it never has.
+/// What this reader does NOT accept it leaves as leaves, and `check` refuses by
+/// name: a parser that guesses is worse than one that stops.
+fn Cursor mut @proto_method() -> Node {
+    mut kids = []Node.of(@take()) // At
+    @push_expected(kids, TokenKind.Ident) // method name
+    if @peek() == TokenKind.LParen {
+        kids.push(@take())
+        while @peek() == TokenKind.Ident {
+            mut pk = []Node.of(@take()) // parameter name
+            pk.append(@type_ref())
+            @push_if(pk, TokenKind.Comma)
+            kids.push(@node(NodeKind.Param, pk))
+        }
+        @push_expected(kids, TokenKind.RParen)
+    } else {
+        // No parameter list: broken input. The RParen is absent rather than
+        // invented, and `check` sees the absence.
+    }
+    if @peek() == TokenKind.Arrow {
+        mut rt = []Node.of(@take())
+        rt.append(@type_ref())
+        kids.push(@node(NodeKind.RetType, rt))
+    } else {
+        // A protocol method without a declared return type: the absence is
+        // VISIBLE (no RetType node), which is what lets `check` name it.
+    }
+    @node(NodeKind.ProtoMethod, kids)
+}

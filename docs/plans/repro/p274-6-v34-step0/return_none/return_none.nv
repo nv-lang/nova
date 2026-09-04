@@ -1,0 +1,12 @@
+module return_none
+
+// Isolating further: a block body with `return None` and a tail `Some(n)`.
+// The tail alone is a NAMED refusal (some_return.nv); this adds the return.
+fn mk(n int) -> Option[int] {
+    if n < 0 { return None }
+    Some(n)
+}
+
+fn main() {
+    if Some(a) = mk(2) { println(a) }
+}

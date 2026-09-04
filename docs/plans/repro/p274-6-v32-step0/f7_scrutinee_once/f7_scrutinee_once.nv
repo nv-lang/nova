@@ -1,0 +1,12 @@
+module f7_scrutinee_once
+
+fn mk() -> (int, int) {
+    println(99)
+    (1, 2)
+}
+
+fn main() {
+    ro (a, b) = mk()
+    println(a)
+    println(b)
+}

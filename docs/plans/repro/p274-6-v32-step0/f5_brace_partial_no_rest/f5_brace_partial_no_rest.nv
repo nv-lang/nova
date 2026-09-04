@@ -1,0 +1,9 @@
+module f5_brace_partial_no_rest
+
+type Point(x int, y int)
+
+fn main() {
+    ro p = Point(1, 2)
+    ro {x} = p
+    println(x)
+}

@@ -1,0 +1,24 @@
+module p_tuple_newtype_name
+
+// Hint 1 of the brief: are there two DIFFERENT component lists that give ONE
+// `mono_tuple_name` (novac/src/sem/mangle.nv)? A component is spelled by
+// `c_type`, and `c_type` of a NEWTYPE is its representation's -- so `(Row, int)`
+// and `(int, int)` are two different interner rows under one C name, and the
+// `#ifndef NOVA_TUPLE_TYPEDEF_<name>` guard in emit_c/emit_tuple.nv makes the
+// SECOND typedef vanish silently.
+type Row int
+
+fn tagged() -> (Row, int) {
+    (Row(1), 2)
+}
+
+fn plain() -> (int, int) {
+    (3, 4)
+}
+
+fn main() {
+    ro a = tagged()
+    ro b = plain()
+    println(a.1)
+    println(b.1)
+}

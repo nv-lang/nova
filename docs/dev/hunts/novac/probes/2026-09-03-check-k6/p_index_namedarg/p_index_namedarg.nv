@@ -1,0 +1,8 @@
+module p_index_namedarg
+
+fn scaled(n int, by int = 2) -> int => n * by
+
+fn main() {
+    ro xs = []int.of(3, 4, 5)
+    println(scaled(10, by: xs[0]))
+}

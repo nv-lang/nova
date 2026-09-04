@@ -1,0 +1,9 @@
+module p_namedarg_call
+
+fn three() -> int => 3
+
+fn scaled(n int, by int = 2) -> int => n * by
+
+fn main() {
+    println(scaled(10, by: three()))
+}

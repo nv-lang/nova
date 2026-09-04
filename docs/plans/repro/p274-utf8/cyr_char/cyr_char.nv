@@ -1,0 +1,11 @@
+module cyr_char
+
+// A char literal holding a NON-ASCII codepoint. The same literal with an ASCII
+// character is refused BY NAME (println does not cover char); this one ices.
+// Nothing else is in the file, so `println` is not part of the question.
+fn take(c char) -> int => 1
+
+fn main() {
+    ro c = 'у'
+    println(take(c))
+}

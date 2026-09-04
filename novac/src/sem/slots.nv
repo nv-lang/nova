@@ -20,7 +20,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
-import ../lex.{TokenKind, is_ident_start, is_ident_byte}
+import ../lex.{TokenKind}
 import ../diag.{ice}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
@@ -402,23 +402,61 @@ export fn recv_type_name(kids []Node) -> Option[str] {
     None
 }
 
-/// Does this type declaration carry the `value` marker?
+/// The SHAPE a record declaration wrote in the source: `value` after the
+/// name makes a ValueRecord, otherwise a plain (heap) Record. ONE door for
+/// the two collectors (sem pass 1 and harvest) -- wave V2 of plan 274.6
+/// adds the parenthesised tuple forms here, which is why the answer is the
+/// RecordShape enumeration and not a boolean: the shapes are four (D215,
+/// architecture 4b), and a boolean could not say which.
 ///
-/// Read positionally, like every other marker of a declaration: the word stands
-/// after the name (and after the generics), which is where D241 fixes it. The
-/// FIRST identifier is the declared name, so the search starts past it -- a type
-/// named `value` would otherwise answer yes about itself.
-export fn decl_is_value(decl Node) -> bool {
-    mut seen_name = false
+/// Absorbs the old `decl_is_value` (its two callers are exactly the two
+/// collectors); the scan is unchanged -- the marker is a leaf between the
+/// name and the body, read off the declaration node.
+export fn shape_of_record_decl(decl Node) -> RecordShape {
+    // THE PAREN LEAF SAYS "parenthesised", NOT "named" -- the owner caught this
+    // reading (2026-09-03): `type Point(f64, f64)` also opens with `(`. The
+    // honest discriminant is the FIELD: a named field writes an identifier
+    // before its type (`x int`), a positional one writes the type alone. So
+    // the paren says WHICH FAMILY, and the first field says WHICH MEMBER.
+    //
+    // The earlier version returned NamedTuple on any paren leaf and was
+    // right only by accident: the parser reads named fields only, so a
+    // positional declaration produces no `Field` node and never reaches this
+    // door. Correct-by-accident stops being correct the day V3 reads the
+    // positional form.
+    mut paren = false
     for c in branch_children(decl) {
-        if !c.is_ident() { continue }
-        if !seen_name {
-            seen_name = true
-            continue
+        match c {
+            Leaf(t) => {
+                if t.text == VALUE_MARKER { return RecordShape.ValueRecord }
+                // ACCUMULATION, not a dispatch. Written as an `if` with an
+                // empty `else` this reddened P21: an `else` closing a test by
+                // KIND must be an honest refusal, and "the name, a generic
+                // bracket, a marker word" is not one. The flag only ever turns
+                // ON, so there is no "everything else" case to get silently
+                // wrong -- and stated as one expression there is no branch for
+                // either guard to judge.
+                paren = paren || leaf_kind(c) == TokenKind.LParen
+            }
+            Branch { .. } => {}
         }
-        if leaf_text(c) == VALUE_MARKER { return true }
     }
-    false
+    if !paren { return RecordShape.Record }
+    for c in branch_children(decl) {
+        if c.kind_of() != NodeKind.Field { continue }
+        // A field that carries a NAME is the named family; one that carries
+        // only a type is the positional (anonymous-component) family.
+        if field_name_at(branch_children(c)).is_none() {
+            // A DECLARED type whose fields are positional -- it HAS a name of
+            // its own, so it is not the anonymous form (owner's correction
+            // 2026-09-03: "no name" meant two things under one word).
+            return RecordShape.PositionalTuple
+        }
+        return RecordShape.NamedTuple
+    }
+    // Parens with no field at all: a recovery shape the parser already
+    // refused; the plain record reading keeps the layout question answerable.
+    RecordShape.Record
 }
 
 /// The representation a type declaration names, or None when it declares a
@@ -600,6 +638,11 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // expression" and iced (wave 3g, measured 2026-08-23).
     k == NodeKind.SelfField ||
     k == NodeKind.SelfExpr ||
+    k == NodeKind.InterpStr ||
+    // `a ?? b` is an expression, and its VALUE is what the argument or the
+    // binding reads -- the emitter hoists it into a temporary the way it
+    // hoists an interpolation chain (the coalesce wave).
+    k == NodeKind.Coalesce ||
     k == NodeKind.MatchExpr ||
     // An array literal is an expression since wave B8 let it stand in
     // argument and constructor-field position; the walks that skip
@@ -886,17 +929,6 @@ export fn escaped_byte_len(piece str) -> int {
     len
 }
 
-/// Is this odd slot a BARE NAME -- one identifier, nothing else? The I1
-/// subset of interpolation compiles exactly that.
-export fn interp_slot_is_name(piece str) -> bool {
-    ro b = piece.bytes()
-    if b.len() == 0 { return false }
-    if !is_ident_start(b[0]) { return false }
-    for i in 1..b.len() {
-        if !is_ident_byte(b[i]) { return false }
-    }
-    true
-}
 
 /// The four bytes the slicer reads.
 const INTERP_BSLASH u8 = 0x5C  // backslash

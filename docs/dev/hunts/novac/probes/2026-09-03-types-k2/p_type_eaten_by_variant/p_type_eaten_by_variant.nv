@@ -1,0 +1,13 @@
+module p_type_eaten_by_variant
+
+// K2. One flat namespace for four different kinds of entity: a TYPE and a
+// VARIANT share it (`DefTarget` in novac/src/sem/defs.nv). The sum is collected
+// after the record, so the variant row overwrites the record's `DefType` row --
+// and `type_decl("Red")` (defs.nv:@type_decl) then answers None.
+type Red { n int }
+type Color enum Red | Green
+
+fn main() {
+    mut r = Red { n: 7 }
+    println(r.n)
+}

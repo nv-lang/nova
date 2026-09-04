@@ -1,0 +1,11 @@
+module block_tail_unknown
+
+// Is the block-tail hole general, or only about Option constructors?
+// The tail here is an UNKNOWN callee, which the arrow body refuses by name.
+fn mk(n int) -> int {
+    nosuch(n)
+}
+
+fn main() {
+    println(mk(2))
+}

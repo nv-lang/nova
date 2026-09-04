@@ -1,0 +1,17 @@
+module p_order_positional
+
+fn a() -> int {
+    println("a")
+    1
+}
+
+fn b() -> int {
+    println("b")
+    2
+}
+
+fn take(x int, y int) -> int => x + y
+
+fn main() {
+    println(take(a(), b()))
+}

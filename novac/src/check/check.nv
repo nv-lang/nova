@@ -326,7 +326,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_err_branch(children)
                     return
                 }
-                TupleBind => {
+                DestructureBind => {
                     // A destructuring binding (B15 step 5): its own typing arm
                     // judges the initializer and the arity; the walk descends
                     // into the children like any other statement's.
@@ -466,6 +466,16 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                 SelfExpr => {
                     // Bare `@` (the self wave): typing judges the receiver's
                     // presence and type; the walk has nothing of its own.
+                }
+                InterpStr => {
+                    // An interpolated string (I2): typing judges each slot's
+                    // expression and the display set; the walk descends into
+                    // the slot expressions like anyone else's children.
+                }
+                Coalesce => {
+                    // `a ?? b` (the coalesce wave): typing judges the left
+                    // side's Option and refuses `?? return`; the walk descends
+                    // into both sides like anyone else's children.
                 }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding

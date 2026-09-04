@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_hir_typeck` handling of an irrefutable `let` pattern --
+// the pattern is judged against the scrutinee's type and each binder gets its
+// type from the place it names, which is exactly the two readings below;
+// NOT taken: its match-arm exhaustiveness machinery, because an irrefutable
+// binding has one arm and building a tree for it would be a mechanism with no
+// question (K7).
+// Role: layer 4 -- the checker's judgment of a DESTRUCTURING binding, both
+//   shapes. Round names components by POSITION and needs a structural tuple;
+//   brace names fields by NAME and needs a type whose fields have names, plus
+//   D411's `..` rule for a partial list.
+// Used by: check/typing.nv -- the statement walk, on NodeKind.DestructureBind.
+// Guarded by: check-novac-differential.sh (corpus carrier
+//   destructure_record.nv), the subset_test.nv holder, and
+//   check-novac-second-door.py (the SHAPE question lives once, in sem).
+//
+// Split out of typing.nv on 2026-09-04, when the brace reading pushed that
+// file past the thousand-line limit. The seam is the form: everything here
+// answers one question -- what a pattern means against a type.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../source.{Span}
+import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice}
+import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
+import ../sem.{raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
+import ../resolve.{FnLookup}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
+import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
+import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
+import ../sem.{shape_of}
+import ../sem.{pattern_binders, binder_text}
+import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
+import ../sem.{ty_source_name, c_shell_method, is_value_record}
+
+// The refusals live HERE, beside the reading that raises them: they moved
+// out of rules.nv on 2026-09-04 when this wave pushed that file past the
+// thousand-line limit, and the seam is the same one this file is cut on --
+// one form of the language, its judgment and its words together.
+
+/// The destructuring judge's two answers (B15 step 5). The arity text names
+/// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
+const DESTR_NOT_TUPLE_MSG = "a destructuring binding needs a TUPLE initializer -- this expression's type is not a tuple"
+
+/// The BRACE reading's two answers (D411). A name that is not a field of the
+/// type, and a partial field list written without `..`.
+///
+/// The second text carries D411's OWN diagnostic tag rather than one invented
+/// here: the rule is the language's, so the code the reader searches for has
+/// to be the language's too.
+const DESTR_NO_FIELD_MSG = "a brace destructuring binding names a field this type does not declare (D411)"
+
+/// See DESTR_NO_FIELD_MSG above; this is the `..` half.
+/// The counts are IN the text because the reader has to know how far off
+/// the pattern is without counting fields by hand -- the oracle names them
+/// too, and a refusal that says only "some" sends the reader to the
+/// declaration (D420).
+fn destr_needs_rest_msg(named int, total int) -> str =>
+    "record-pattern binding lists ${named} of ${total} field(s) without `..` (D411, E_RECORD_PATTERN_NEEDS_REST)"
+import ../types.{TyId, no_ty, is_ty}
+
+/// A destructuring binding `ro (a, b) = expr` (B15 step 5): the initializer
+/// is typed first, its recorded type must be a TUPLE of exactly the pattern's
+/// arity (both judged by name -- the arity text names D123's own class), and
+/// each name binds to its component's type under the binding's mode.
+fn Checker mut @type_destructure_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[kids.len() - 1]
+    ro before = @out.len()
+    match init {
+        Leaf(_) => {
+            // SILENT-OK: a recovery shape -- the parser could not read an
+            // initializer, and the gap it planted already says what was
+            // expected; a second report here would be the cascade.
+            return
+        }
+        Branch { .. } => @type_expr(init)
+    }
+    if @out.len() > before { return }
+    ro pt = type_of(init, @ctx, @scope, @chan)
+    // WHICH SHAPE THE SOURCE WROTE decides which question the type must
+    // answer. D411 gives one pattern grammar, so this is ONE door with two
+    // readings, not two doors: a round pattern names components BY POSITION
+    // and needs a structural tuple; a brace pattern names them BY FIELD and
+    // needs a type whose fields have names. The opening leaf is what the
+    // parser kept for exactly this question.
+    if brace_pattern(kids) {
+        // RECORDED BEFORE THE READING, exactly as the positional path does
+        // below: the emitter spells the temporary from the initializer's type
+        // and reads it out of the channel. My first version returned early and
+        // skipped this -- the emitter then iced with "a hole in the channel",
+        // which is precisely the assert doing its job.
+        @record(init, pt)
+        @type_brace_destructure(kids, pt)
+        // SILENT-OK: the decision was taken by the reading just called -- it
+        // binds every name and reports its own refusals; the initializer's
+        // type is recorded one line above, which is what the emitter reads.
+        return
+    } else {
+        // The round shape: the positional reading below.
+    }
+    // THE SHAPE DOOR, not a boolean wrapper: `shape_of`'s own rule is that a
+    // caller compares with the variant's OWN name, and the shape table
+    // (sem.nv, the two-axis grid) makes `Anon*` mean "no declaration" -- so
+    // this arm is exactly what the old `is_tuple` answered, spelled through
+    // the one door instead of a second one beside it.
+    ro anon_positional = match shape_of(@ctx, pt) {
+        AnonPositionalTuple => true
+        Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
+    }
+    if !anon_positional {
+        @report_first_leaf_of(kids, DESTR_NOT_TUPLE_MSG)
+        // The names still BIND (to no type): a use downstream would otherwise
+        // cascade "unknown name" over the one mistake already named here --
+        // the no-cascade rule this walk holds everywhere else.
+        for b in pattern_binders(kids) {
+            @record(b, no_ty())
+            @scope.bind(binder_text(b), no_ty(), bind_mode_at(kids))
+        }
+        // SILENT-OK: the refusal above is the decision; the binds keep the
+        // uses from cascading over the one mistake already named.
+        return
+    }
+    // RECORDED, not merely computed (the FieldAccess lesson of 4a): the
+    // emitter reads the initializer node through the strict door to spell
+    // the temporary, and the lattice answer above is not a record.
+    @record(init, pt)
+    mut bound = 0
+    for b in pattern_binders(kids) {
+        // RECORDED on the binder, and that record is the point of the wave:
+        // the emitter has no scope, so without it the component's type would
+        // be derived a second time in a second phase.
+        ro ct = if bound < @ctx.tys.arg_count(pt) {
+            @ctx.tys.arg(pt, bound)
+        } else {
+            // Past the tuple's arity: the count judge below names it once for
+            // the whole pattern, and the name binds to no type meanwhile.
+            no_ty()
+        }
+        @record(b, ct)
+        @scope.bind(binder_text(b), ct, bind_mode_at(kids))
+        bound += 1
+    }
+    if bound != @ctx.tys.arg_count(pt) {
+        @report_first_leaf_of(kids, DESTR_ARITY_MSG)
+    } else {
+        // Every component found its name; the initializer's record already
+        // carries the pair's type for the emitter.
+    }
+}
+
+/// The BRACE reading of a destructuring binding: names bind to FIELDS.
+///
+/// Two rules, both D411's and neither invented here: every named field must
+/// exist on the type, and a PARTIAL list needs `..` — writing fewer fields
+/// without it is refused, because "I take only some" has to be said out loud.
+/// The names still bind after a refusal, exactly as the positional reading
+/// does: a use downstream would otherwise cascade over the one mistake.
+fn Checker mut @type_brace_destructure(kids []Node, pt TyId) -> () {
+    mut named = 0
+    mut bad = false
+    for b in pattern_binders(kids) {
+        ro nm = binder_text(b)
+        // THE FIELD'S TYPE IS DECIDED HERE AND RECORDED HERE. The matching
+        // door (`FieldIndex`) belongs to the checker by rule -- the emitter
+        // may not ask it, and asking it in `sem` would be a linear scan the
+        // resolve guard refuses. Both refusals point at the same construction:
+        // the binder is a NODE, so the decision fits in the channel and the
+        // emitter reads what was decided instead of deciding again.
+        ro ft = if @fres.has_field(@ctx.fields, pt, nm) {
+            @fres.field_type(@ctx.fields, pt, nm)
+        } else {
+            if !bad {
+                @report_first_leaf_of(kids, DESTR_NO_FIELD_MSG)
+                bad = true
+            } else {
+                // One refusal for the pattern: the rest would cascade.
+            }
+            no_ty()
+        }
+        @record(b, ft)
+        @scope.bind(nm, ft, bind_mode_at(kids))
+        named += 1
+    }
+    // A NAME THAT IS NOT A FIELD was already refused once above, and the
+    // `..` rule below would then count against a pattern the reader has
+    // already been told about -- one refusal per pattern, not two.
+    if bad {
+        // SILENT-OK: the refusal above IS the decision, and every name is bound
+        // to `no_ty()` so a use downstream does not cascade over it.
+        return
+    } else {
+        // Every name is a field: the count rule below still has to speak.
+    }
+    // THE `..` RULE. Fewer names than the type has fields is legal only when
+    // the pattern says so; D411 owns this rule and its diagnostic code.
+    // THE FIELD COUNT comes from the declaration row, through the door that
+    // already answers it (`field_range_of`) -- a second way to count fields
+    // would be a second answer to one question.
+    ro fr = field_range_of(decl_of_ty(@ctx, pt)) ?? (no_frow(), 0)
+    if named < fr.1 && !has_rest(kids) {
+        @report_first_leaf_of(kids, destr_needs_rest_msg(named, fr.1))
+    } else {
+        // Either the whole field list, or a partial one that said `..`.
+    }
+}
