@@ -1,0 +1,8 @@
+// Registry TBD, CONTROL: the same bound on a free generic function IS checked at the call.
+module free_fn
+
+fn only_ints[T Ints](x T) -> T => x
+fn main() Io -> () {
+    ro f f64 = 2.5
+    println(only_ints(f))
+}

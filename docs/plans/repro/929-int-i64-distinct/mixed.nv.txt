@@ -1,0 +1,18 @@
+// Registry TBD: the checker treats `int` as `i64` and `uint` as `u64`; D129 (AMEND Plan 133)
+// says they are distinct types that merely share a width on the 64-bit bootstrap target.
+module mixed
+
+fn take64(x i64) -> i64 => x
+
+fn main() Io -> () {
+    ro a int = 5
+    ro b i64 = 7 as i64
+    println(a + b)          // expected: error (different types) — got: ok
+    println(a == b)         // expected: error — got: ok
+    println(take64(a))      // expected: E7301 — got: ok
+    ro c uint = 5 as uint
+    ro d u64 = 7 as u64
+    println(c + d)          // expected: error — got: ok
+    ro e u64 = c            // expected: E7301 — got: ok
+    println(e)
+}

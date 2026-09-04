@@ -1,0 +1,7 @@
+// Registry TBD: same blanket called on `str` — also passes `nova check`, fails only in C.
+module method_str
+
+fn main() Io -> () {
+    ro s = "x"
+    println(s.try_to_i16().is_ok())
+}
