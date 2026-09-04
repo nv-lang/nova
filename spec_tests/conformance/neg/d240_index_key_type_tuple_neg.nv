@@ -23,7 +23,7 @@ type FnRow int
 type TyId int
 
 type Table priv { rows Vec[str] }
-fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
+fn Table.new() -> Table => { rows: ["a", "b"] }
 fn Table @index(i FnRow) -> str => @rows[i as int]
 fn Table mut @index(i FnRow, val str) -> () {
     @rows[i as int] = val

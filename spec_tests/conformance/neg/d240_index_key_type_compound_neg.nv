@@ -22,7 +22,7 @@ type FnRow int
 type TyId int
 
 type Counters priv { cells Vec[int] }
-fn Counters.new() -> Counters => { cells: Vec[int].of(10, 20) }
+fn Counters.new() -> Counters => { cells: [10, 20] }
 fn Counters @index(i FnRow) -> int => @cells[i as int]
 fn Counters mut @index(i FnRow, val int) -> () {
     @cells[i as int] = val

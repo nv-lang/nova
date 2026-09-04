@@ -932,4 +932,10 @@ no_caveat=26
 #   ОДИННАДЦАТИ дверей одного правила держат ТРИ. Клетка подтверждена мерой,
 #   а не впечатлением, и это уже пятая строка её семьи (821, 893, 894, 904, 906).
 
-blockers=43
+# 2026-09-04: 43 -> 44. The single new blocker is #921 (an instance-method call whose
+# argument COUNT matches no overload was accepted and reached clang). Found by window
+# 274's hunter on the `@` form, widened by the integrator to all four call forms and
+# both directions, marked blocking on the CARRIER argument: unlike #888, whose form
+# has zero occurrences in this tree, this one's carriers are other people's typos.
+# The rise is discovery, not regression -- the defect predates the row by months.
+blockers=44

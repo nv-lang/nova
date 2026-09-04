@@ -23,7 +23,7 @@ type FnRow int
 type TyId int
 
 type Table priv { rows Vec[str] }
-fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
+fn Table.new() -> Table => { rows: ["a", "b"] }
 fn Table @index(i FnRow) -> str => @rows[i as int]
 
 fn read_with_the_wrong_key() Io -> () {
