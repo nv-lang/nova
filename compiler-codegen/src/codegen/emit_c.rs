@@ -33916,6 +33916,66 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // assumes a `->data` field that a raw pointer lacks.
                         // Identified by: ends with `*`, and is not a NovaArray /
                         // Vec / str / known struct collection type.
+                        // Registry #628, the WRITE door of D240. This special case
+                        // knows four shapes — NovaArrHdr collection, fixed array,
+                        // Vec[T], raw pointer — and consulted `method_overloads` in
+                        // NONE of them, so a user type with a declared
+                        // `mut @index(key, val)` never dispatched at all: it fell into
+                        // the raw-pointer branch below (`is_raw_pointer_storage_c`
+                        // answers true for ANY single pointer that is not
+                        // NovaArray_/Nova_Vec____) and came out as `(arr)[i] = (v);`.
+                        // Measured: clang refused with `assigning to 'Nova_Table' from
+                        // incompatible type`, i.e. the diagnostic arrived from the
+                        // wrong tool, about generated code the author never wrote.
+                        //
+                        // Same repair as the read door, for the same reason: synthesize
+                        // `obj.index(key, val)` and let the ordinary Call path resolve
+                        // the overload and monomorphize it. `id: target.id` matches the
+                        // `call_id` the checker used when it checked this write
+                        // (plan 281 F.1), so the resolved callee is already in the
+                        // channel waiting to be read.
+                        //
+                        // Nothing has been emitted for this statement yet on this path,
+                        // so the AST nodes go in directly — each is evaluated exactly
+                        // once, by the synthetic call.
+                        {
+                            let tname = self.debt_strip_nova_trim_start(&arr_obj_ty);
+                            let base =
+                                tname.split("____").next().unwrap_or(tname.as_str()).to_string();
+                            let has_setter = [tname.clone(), base].iter().any(|t| {
+                                self.method_overloads
+                                    .get(&(t.clone(), "index".to_string()))
+                                    .is_some_and(|sigs| {
+                                        sigs.iter().any(|s| {
+                                            s.is_instance && s.param_c_types.len() == 2
+                                        })
+                                    })
+                            });
+                            if has_setter {
+                                let synthetic_call = Expr {
+                                    kind: ExprKind::Call {
+                                        func: Box::new(Expr::new(
+                                            ExprKind::Member {
+                                                obj: arr_obj.clone(),
+                                                name: "index".to_string(),
+                                            },
+                                            target.span,
+                                        )),
+                                        args: vec![
+                                            CallArg::Item((**index).clone()),
+                                            CallArg::Item(value.clone()),
+                                        ],
+                                        trailing: None,
+                                    },
+                                    span: target.span,
+                                    id: target.id,
+                                    debug_only: target.debug_only,
+                                };
+                                let call_c = self.emit_expr(&synthetic_call)?;
+                                self.line(&format!("{};", call_c));
+                                return Ok(());
+                            }
+                        }
                         if Self::is_raw_pointer_storage_c(&arr_obj_ty) {
                             // Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend):
                             // `p[i] = v` index WRITE on a raw pointer — this
@@ -38988,16 +39048,88 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // невозможен generically. Оставлен un-checked (исторический путь).
                     Ok(format!("({})[{}]", o, i))
                 } else if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') && !obj_ty.ends_with("**") {
-                    // D238: user-defined @index protocol — dispatch to @index method if registered.
+                    // D238: user-defined @index protocol — dispatch to the `@index`
+                    // method.
+                    //
+                    // Registry #628. This branch USED to look the method up itself and
+                    // was dead for every generic receiver: it built the table key by
+                    // string-trimming the MANGLED C type (`debt_strip_nova_trim_start`
+                    // gives `Table____nova_int__nova_str`) while `method_overloads` is
+                    // keyed by the BARE TEMPLATE name (`("Table","index")`,
+                    // registered at the `is_generic_recv` site with the parameter types
+                    // ERASED). Those two strings can never meet, the lookup returned
+                    // None every time, and control fell one line down into raw pointer
+                    // arithmetic — `a[i]` on a user type compiled to `(o)[i]`. For a
+                    // NON-generic receiver the two spellings coincide, which is exactly
+                    // why the row once "did not reproduce" on a non-generic control and
+                    // was closed by carrier.
+                    //
+                    // The repair is not a better string key. A mangled name is not an
+                    // identity and must not be one: this whole defect is what happens
+                    // when codegen re-derives what the checker already resolved. So the
+                    // dispatch is handed to the path that does it properly — synthesize
+                    // `obj.index(key)` and re-emit through the ordinary Call/Member
+                    // route, which reuses the EXISTING generic-method overload
+                    // resolution and monomorphization. The neighbouring Range form
+                    // (`v[a..b]`, ~38590) has done exactly this since Plan 194 Ф.3 and
+                    // says so in its own comment; the scalar form simply never adopted
+                    // it, and that omission IS the bug.
+                    //
+                    // `id: expr.id` is load-bearing, not copied ritual: the checker
+                    // records the resolved callee under the INDEX node's own `ExprId`
+                    // (`check_instance_overload`'s `call_id`, plan 281 F.1), and the
+                    // Call path reads `resolved_callees` by exactly that id. Reusing it
+                    // is where the two halves of the phase meet — the checker resolves
+                    // once, codegen reads instead of guessing (channel doctrine 196).
+                    //
+                    // SINGLE EVALUATION IS NOT AUTOMATIC HERE and the file has been
+                    // bitten before ([M-open-range-len-source-hardcoded]: the old Vec
+                    // range path embedded `obj.clone()` twice and double-evaluated a
+                    // side-effecting receiver at the C level). `i` was already emitted
+                    // above, so handing the raw `index` AST to a synthetic call would
+                    // emit it a second time. Both receiver and key are therefore
+                    // materialized into temps first, and the synthetic call refers to
+                    // those.
                     let tname = self.debt_strip_nova_trim_start(&obj_ty);
-                    let key = (tname, "index".to_string());
-                    // Clone c_name before any mutable borrow (emit_expr needs &mut self).
-                    let index_c_name = self.method_overloads.get(&key)
-                        .and_then(|sigs| sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1))
-                        .map(|sig| sig.c_name.clone());
-                    if let Some(c_name) = index_c_name {
+                    let base = tname.split("____").next().unwrap_or(tname.as_str()).to_string();
+                    let has_index = self
+                        .method_overloads
+                        .contains_key(&(tname.clone(), "index".to_string()))
+                        || self
+                            .method_overloads
+                            .contains_key(&(base, "index".to_string()));
+                    if has_index {
                         let o = self.emit_expr(obj)?;
-                        return Ok(format!("{}({}, {})", c_name, o, i));
+                        let recv_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = ({});", obj_ty, recv_tmp, o));
+                        self.var_types.insert(recv_tmp.clone(), obj_ty.clone());
+                        let idx_ty = self.infer_expr_c_type(index);
+                        let idx_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = ({});", idx_ty, idx_tmp, i));
+                        self.var_types.insert(idx_tmp.clone(), idx_ty);
+                        let synthetic_call = Expr {
+                            kind: ExprKind::Call {
+                                func: Box::new(Expr::new(
+                                    ExprKind::Member {
+                                        obj: Box::new(Expr::new(
+                                            ExprKind::Ident(recv_tmp),
+                                            expr.span,
+                                        )),
+                                        name: "index".to_string(),
+                                    },
+                                    expr.span,
+                                )),
+                                args: vec![CallArg::Item(Expr::new(
+                                    ExprKind::Ident(idx_tmp),
+                                    expr.span,
+                                ))],
+                                trailing: None,
+                            },
+                            span: expr.span,
+                            id: expr.id,
+                            debug_only: expr.debug_only,
+                        };
+                        return self.emit_expr(&synthetic_call);
                     }
                     let o = self.emit_expr(obj)?;
                     // Nova_ pointer without @index: raw C pointer index (e.g. typed raw pointer).

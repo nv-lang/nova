@@ -12341,6 +12341,59 @@ impl<'a> TypeCheckCtx<'a> {
                                         obj, "index", &args, gs, scope, e.span, errors,
                                         e.id,
                                     );
+                                    // Registry #628, the checker's own half of the
+                                    // codegen defect. Having RESOLVED the overload we
+                                    // also materialize its return type into the
+                                    // channel, because the alternative is codegen
+                                    // guessing — and the guess it makes is the
+                                    // `_ => nova_int` fallback the POISON 6453 audit
+                                    // named. Measured before this line existed:
+                                    // `println(t[k])` on a generic user table emitted
+                                    // `nova_print_int` for a `str`-returning `@index`,
+                                    // a CC-FAIL two steps away from the real cause.
+                                    //
+                                    // Why the audit's gate («generic receiver → write
+                                    // nothing») is not simply lifted: it was RIGHT. The
+                                    // old producer cloned the declared return verbatim,
+                                    // so `Vec[str][i]` was annotated a bare `Named{T}`.
+                                    // What was missing was a substituted source, not a
+                                    // looser gate. `resolve_instance_method_return_arity`
+                                    // IS that source — it substitutes the receiver's
+                                    // carrier generics, disambiguates overloads by arity
+                                    // and argument type instead of taking `fns.first()`,
+                                    // and refuses to answer at all while the result still
+                                    // mentions any residual type-param. Bail there means
+                                    // legacy, exactly as before.
+                                    //
+                                    // Guarded by `!contains_key`: the structural
+                                    // element-materialization below owns `[]T`/`[N]T`
+                                    // and must keep winning for them.
+                                    if e.id.is_set()
+                                        && !self
+                                            .resolved_types_buf
+                                            .borrow()
+                                            .contains_key(&e.id)
+                                    {
+                                        if let Some(ret) = self
+                                            .resolve_instance_method_return_arity(
+                                                &obj_tr,
+                                                "index",
+                                                Some(1),
+                                                Some((&args, scope)),
+                                                Some(e.id),
+                                                None,
+                                                gs,
+                                            )
+                                        {
+                                            let rt = Self::mark_type_params(
+                                                ResolvedType::from_type_ref(&ret),
+                                                gs,
+                                            );
+                                            self.resolved_types_buf
+                                                .borrow_mut()
+                                                .insert(e.id, rt);
+                                        }
+                                    }
                                 }
                             }
                         }
