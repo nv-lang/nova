@@ -68,6 +68,19 @@ disagree with:
 
 A value of type `int` next to a value of type `f64` is still an error, literal or not.
 
+**Belonging to one category is not permission to mix inside it.** Both `f32` and `f64`
+are floats; `f32 < f64` is still an error. Both `i32` and `i64` are signed integers;
+`i64 < i32` is still an error. The category decides which operators exist for a type,
+not which pairs of types may meet. Every one of these is refused, and the conversion
+you intend is written with `as`:
+
+```nova
+u32 == i32     // error — different signedness
+i64 < i32      // error — different width
+f32 < f64      // error — different width, both float
+int < f64      // error — integer against float
+```
+
 ### Widening (no precision loss)
 
 | From → To | Via | Semantics |

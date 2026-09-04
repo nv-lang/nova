@@ -690,6 +690,11 @@ type UnsignedInts set u8 | u16 | u32 | u64 | uint
 // ВКЛЮЧАЕТ И БЕЗЗНАКОВЫЕ (все 10 целых типов) — не «только знаковые».
 type Ints set i8 | i16 | i32 | i64 | int | u8 | u16 | u32 | u64 | uint
 
+/// All floating-point widths. Named plural like `Ints`/`SignedInts`/`UnsignedInts`
+/// (D310 amendment 2026-08-17); defined 2026-09-04 (owner decision) — until then the
+/// name existed only in the spec prose. Blanket target for `fn[T Floats] T @...`.
+type Floats set f32 | f64
+
 // Three blanket methods over compiler intrinsic `@overflowing_add/_sub/_mul`:
 // `checked_*` -> Option[T], `wrapping_*` -> T, `saturating_*` -> T.
 // `unchecked_*` отложен.
