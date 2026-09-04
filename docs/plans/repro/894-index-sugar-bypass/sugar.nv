@@ -1,0 +1,17 @@
+// Registry 894, the defect itself: indexing a FnRow table with a TyId key.
+// `nova check` says `ok`. The whole point of newtype indices is that this
+// must not compile.
+module sugar
+
+type FnRow int
+type TyId int
+
+type Table(rows Vec[str])
+
+fn Table @index(i FnRow) -> str => self.rows[i as int]
+
+fn main() Io -> () {
+    ro t = Table(Vec[str].of("a", "b"))
+    ro k = 1 as TyId
+    println(t[k])
+}

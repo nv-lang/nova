@@ -1,0 +1,17 @@
+// Registry 894, the CONTROL that turns this from a missing feature into a
+// contradiction: the SAME key, the SAME method, called explicitly, is refused
+// with [E_NO_MATCHING_OVERLOAD]. One call, two doors, opposite answers.
+module explicit
+
+type FnRow int
+type TyId int
+
+type Table(rows Vec[str])
+
+fn Table @index(i FnRow) -> str => self.rows[i as int]
+
+fn main() Io -> () {
+    ro t = Table(Vec[str].of("a", "b"))
+    ro k = 1 as TyId
+    println(t.index(k))
+}
