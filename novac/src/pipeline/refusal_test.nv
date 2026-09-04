@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's ui tests for ICE regressions -- a crash that a user's input
+// can reach is pinned by a test that asserts the DIAGNOSTIC, not the crash;
+// NOT taken: golden stderr files (these assert the property, not the bytes).
+// Role: the discipline every entrance of the checker owes -- a user error
+//   leaves through a diagnostic, never through an ice (P12). One test per
+//   defect class, each carrying the CONTROLS that proved the class, because a
+//   control is what tells a class from its carrier.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file.
+//
+// Split out of subset_test.nv on 2026-09-04, when that file crossed the
+// thousand-line limit. The cut is by MEANING and not by count: those tests
+// hold what the subset ACCEPTS, these hold how it REFUSES.
+// novac/src/pipeline/refusal_test.nv -- a refusal is named, never an ice.
+
+module novac.pipeline
+
+import ../tree.{Node}
+import ../diag.{Diagnostic}
+
+test "an unknown callee in TAIL position is a named refusal, not an ice (registry #902)" {
+    // The tail of a block asked the lattice about a node the walk had just
+    // REFUSED. The walk refuses an unknown callee by name; the lattice ices on
+    // a name the registry does not carry; and nothing between them stopped the
+    // second from running. A user's typo came out as "internal compiler error".
+    //
+    // The mark-and-stop discipline (`before = out.len()`, leave if it grew) is
+    // written at every other entrance of this walk -- assignment, method call,
+    // loop head, argument. The two TAIL entrances did not have it. That is the
+    // class: one rule, several doors, written where each door's author
+    // remembered it.
+    ro std = std_decls()
+    ro (d902, _) = compile_to_c("fn mk(n int) -> int {
+ nosuch(n)
+}", std)
+    assert(d902.len() > 0)
+    assert(!d902[0].message.contains("internal compiler error"))
+
+    // THE THREE CONTROLS, and they are the reason this test names a class and
+    // not a carrier: the SAME call in every other position was always refused
+    // by name, which is what proved the hole belongs to the tail entrance
+    // rather than to the callee or to `Option`.
+    ro (d_arrow, _) = compile_to_c("fn mk(n int) -> int => nosuch(n)", std)
+    assert(d_arrow.len() > 0)
+    assert(!d_arrow[0].message.contains("internal compiler error"))
+
+    ro (d_stmt, _) = compile_to_c("fn main() {
+ nosuch(1)
+}", std)
+    assert(d_stmt.len() > 0)
+    assert(!d_stmt[0].message.contains("internal compiler error"))
+
+    ro (d_bind, _) = compile_to_c("fn mk(n int) -> int {
+ ro v = nosuch(n)
+ v
+}", std)
+    assert(d_bind.len() > 0)
+    assert(!d_bind[0].message.contains("internal compiler error"))
+
+    // AND THE TAIL STILL WORKS when the callee is known: the fix must stop the
+    // second question after a refusal, not stop asking it at all.
+    ro (d_ok, _) = compile_to_c("fn known(x int) -> int => x
+fn mk(n int) -> int {
+ known(n)
+}", std)
+    assert(d_ok.len() == 0)
+}

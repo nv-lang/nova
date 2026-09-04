@@ -1,0 +1,5 @@
+module g
+
+fn mk(n int) -> int {
+    nosuch(n)
+}

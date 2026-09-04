@@ -316,12 +316,30 @@ fn Checker mut @type_block(b Node) -> () {
                 if i == tail_at && c.kind_of() == NodeKind.Call {
                     // TERMINATOR, not an else (the two shape guards meet on
                     // a variant test, and continue satisfies both).
+                    //
+                    // THE MARK, and it is not decoration (registry #902): the
+                    // walk below refuses an unknown callee BY NAME, and the
+                    // lattice ices on a name the registry does not carry. Ask
+                    // it after a refusal and a user's typo becomes "internal
+                    // compiler error" -- measured on `fn mk(n int) -> int {
+                    // nosuch(n) }`, while the same call in EVERY other position
+                    // (arrow body, statement, binding initializer) was refused
+                    // by name. The rule was written at each entrance that
+                    // remembered it, and these two tails did not.
+                    ro tmark = @out.len()
                     @type_expr(c)
+                    if @out.len() > tmark {
+                        i += 1
+                        continue
+                    } else {
+                        // Nothing refused: the tail is a value, and its type
+                        // is the fn's answer.
+                    }
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
                     } else {
-                        // An unresolved tail call was refused by the walk.
+                        // Resolved but untypeable: the walk already spoke.
                     }
                     i += 1
                     continue
@@ -332,12 +350,22 @@ fn Checker mut @type_block(b Node) -> () {
                     // type recorded for the emitter, which declares the
                     // result temporary with it (the same contract the
                     // FnExprBody entrance has carried since the start).
+                    // The SAME mark as the tail call above, for the same
+                    // reason (#902): a refused arm leaves a node the lattice
+                    // cannot answer about, and asking anyway is an ice.
+                    ro mmark = @out.len()
                     @type_match(c)
+                    if @out.len() > mmark {
+                        i += 1
+                        continue
+                    } else {
+                        // Every arm typed: the match is a value.
+                    }
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
                     } else {
-                        // A refused tail match: the diagnostics carry it.
+                        // Resolved but untypeable: the walk already spoke.
                     }
                     i += 1
                     continue

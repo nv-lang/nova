@@ -1,0 +1,7 @@
+module b
+
+fn mk(n int) -> int => nosuch(n)
+
+fn main() {
+    println(1)
+}

@@ -1,0 +1,11 @@
+module e
+
+fn known(x int) -> int => x
+
+fn mk(n int) -> int {
+    known(n)
+}
+
+fn main() {
+    println(mk(2))
+}

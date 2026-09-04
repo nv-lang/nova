@@ -1,0 +1,10 @@
+module f
+
+fn mk(n int) -> int {
+    println(n)
+    nosuch(n)
+}
+
+fn main() {
+    println(1)
+}
