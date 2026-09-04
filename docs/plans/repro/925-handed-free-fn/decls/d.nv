@@ -1,0 +1,5 @@
+// A handed declaration: a FREE function, signature only -- the shape novac
+// gets for every free function of a neighbouring module (NOVAC_SELF_PATH) and
+// of std. `harvest_fn` returns early on it (no receiver), so it is registered
+// nowhere.
+fn helper(n int) -> int
