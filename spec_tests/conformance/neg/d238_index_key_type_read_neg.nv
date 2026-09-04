@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// D238 — reading `a[k]` on a user `@index(i FnRow)` with a key of a DIFFERENT
+// newtype. Registry #894: until 2026-09-04 the bracket form compared the key
+// with nothing at all, while the explicit `a.index(k)` on the same type and the
+// same method has always been checked. Measured to the end before the fix: this
+// program compiled, RAN, and printed the row at index 1 — the compiler silently
+// returned a row from a table declared for another key type.
+//
+// `FnRow` and `TyId` share a representation, so C never catches the swap either.
+// That is the whole reason this is a compile error rather than a runtime one:
+// after a release, a silent narrowing breaks code that is already written.
+//
+// One of FOUR fixtures, one per door the bracket form takes into the checker —
+// read (here), write, compound, tuple-assign. Two fixtures over four doors is how
+// the sibling row #628 closed by carrier once already.
+//
+// Spec: spec/decisions/03-syntax.md D238. Positive half:
+// `spec_tests/conformance/d238_index_key_type_pos.nv`.
+module neg.d238_index_key_type_read_neg
+
+type FnRow int
+type TyId int
+
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
+fn Table @index(i FnRow) -> str => @rows[i as int]
+
+fn read_with_the_wrong_key() Io -> () {
+    ro t = Table.new()
+    ro k = 1 as TyId
+    // nova:expect E_NO_MATCHING_OVERLOAD -- the table declares `@index(i FnRow)`, the key is a `TyId`; the bracket form must refuse with the SAME diagnostic the explicit `t.index(k)` gives, because it is now the same check (#894)
+    println(t[k])
+}

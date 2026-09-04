@@ -1,0 +1,36 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// D240 — compound `a[k] += v` on a user `@index` with a key of a DIFFERENT
+// newtype. Registry #894, the COMPOUND door.
+//
+// Why this is a door of its own and not a copy of the write fixture: a compound
+// assignment READS through the node and then writes back, so the setter's second
+// argument is `a[k] + v`, not `v`. Checking the key against the SETTER here would
+// type-check an expression the program never forms. What the compound form does
+// literally is call the one-parameter reader with the key — and that is what the
+// checker compares, which is why this fixture pins the READER's diagnostic even
+// though the statement is a write.
+//
+// The distinction is not academic: it is the difference between a check that
+// happens to pass today and one that stays right when the setter's value type
+// stops matching the element type.
+//
+// Spec: spec/decisions/03-syntax.md D240.
+module neg.d240_index_key_type_compound_neg
+
+type FnRow int
+type TyId int
+
+type Counters priv { cells Vec[int] }
+fn Counters.new() -> Counters => { cells: Vec[int].of(10, 20) }
+fn Counters @index(i FnRow) -> int => @cells[i as int]
+fn Counters mut @index(i FnRow, val int) -> () {
+    @cells[i as int] = val
+}
+
+fn bump_with_the_wrong_key() Io -> () {
+    mut c = Counters.new()
+    ro k = 1 as TyId
+    // nova:expect E_NO_MATCHING_OVERLOAD -- `c[k] += 5` reads through `@index(i FnRow)` before it writes, and the key is a `TyId`; the read half is a real call the program makes, so it is the half that is checked (#894)
+    c[k] += 5
+}

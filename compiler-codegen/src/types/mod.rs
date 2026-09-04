@@ -9578,30 +9578,35 @@ impl<'a> TypeCheckCtx<'a> {
                 // clang refused with `assigning to 'Nova_Table' from incompatible
                 // type` -- an error from the wrong tool, about the wrong thing.
                 //
-                // `AssignOp::Assign` only, for now. A compound `a[k] += v` reads
-                // AND writes through the same node, so its setter argument is not
-                // `value` but `a[k] <op> value`; passing `value` here would type-
-                // check the wrong expression and could pass where it must fail.
-                // The compound and tuple-assign doors get their own entries with
-                // their own probes -- `compound.nv.txt` and `tuple.nv.txt` are
-                // already in `docs/plans/repro/894-index-sugar-bypass/` waiting.
-                if matches!(op, AssignOp::Assign) {
-                    if let ExprKind::Index { obj, index } = &target.kind {
-                        if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
-                            if let Some(tname) = Self::typeref_named_base(&obj_tr) {
-                                if self
-                                    .method_overloads(tname, "index")
-                                    .is_some_and(|v| !v.is_empty())
-                                {
-                                    let args = [
+                // A plain `a[k] = v` calls the two-parameter setter, so both the key
+                // and the value are checked against it. A compound `a[k] += v` is a
+                // READ followed by a write through the same node: its setter argument
+                // is `a[k] <op> value`, not `value`, so handing `value` to the setter
+                // would type-check an expression the program never forms -- and could
+                // pass where it must fail. What the compound form DOES do literally is
+                // call the one-parameter reader with `k`, so that is what gets checked
+                // here: the key, against the same reader the read door uses. The value
+                // half of a compound write stays with the arithmetic rules that already
+                // own it.
+                if let ExprKind::Index { obj, index } = &target.kind {
+                    if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                        if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                            if self
+                                .method_overloads(tname, "index")
+                                .is_some_and(|v| !v.is_empty())
+                            {
+                                let args: Vec<CallArg> = if matches!(op, AssignOp::Assign) {
+                                    vec![
                                         CallArg::Item((**index).clone()),
                                         CallArg::Item(value.clone()),
-                                    ];
-                                    self.check_instance_overload(
-                                        obj, "index", &args, gs, scope, target.span,
-                                        errors, target.id,
-                                    );
-                                }
+                                    ]
+                                } else {
+                                    vec![CallArg::Item((**index).clone())]
+                                };
+                                self.check_instance_overload(
+                                    obj, "index", &args, gs, scope, target.span,
+                                    errors, target.id,
+                                );
                             }
                         }
                     }
