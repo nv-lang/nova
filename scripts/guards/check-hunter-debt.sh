@@ -25,6 +25,11 @@
 # территории для дефектов):
 #   novac:  novac/src/*.nv без *_test.nv
 #   oracle: compiler-codegen/src/*.rs
+#   guards: scripts/guards/* без *.baseline и *.list — САМОТЕСТЫ ВКЛЮЧЕНЫ, в
+#           отличие от двух треков выше: самотест лжёт так же, как страж
+#           (2026-09-04 держатель окна 274 проходил с правилом снятым), так
+#           что его строки — территория, а не дописка. Трек заведён по слову
+#           владельца «добавь в охотника искать ошибки в твоих стражах».
 # Именно added, не net: рефакторный чурн рождает дефекты не хуже роста.
 #
 # БЮДЖЕТ — число ВЛАДЕЛЬЦА в scripts/guards/hunter-debt.baseline (не
@@ -36,7 +41,7 @@ ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BASE="${NOVA_HUNTER_DEBT_BASELINE:-$(cd "$(dirname "$0")" && pwd)/hunter-debt.baseline}"
 
 if [ ! -f "$BASE" ]; then
-    echo "check-hunter-debt: FAIL — нет базы $BASE (budget_novac=, budget_oracle=, anchor=)" >&2
+    echo "check-hunter-debt: FAIL — нет базы $BASE (budget_novac=, budget_oracle=, budget_guards=, anchor=)" >&2
     exit 1
 fi
 # Ключ читается СТРОГО один раз. Дыра, найденная панелью запуском: при `tail -1`
@@ -103,11 +108,12 @@ SUMMARY=""
 TMPDUP="${TMPDIR:-/tmp}/hunter-debt-dup.$$"
 TMPP="${TMPDIR:-/tmp}/hunter-debt-pairs.$$"
 trap 'rm -f "$TMPDUP" "$TMPP"' 0 2 15
-for TRACK in novac oracle; do
+for TRACK in novac oracle guards; do
     BUDGET=$(key1 "budget_$TRACK") || { rc=1; continue; }
     case "$TRACK" in
         novac)  SURFACE="novac/src/*.nv";           EXCL='_test[.]nv$' ;;
         oracle) SURFACE="compiler-codegen/src/*.rs"; EXCL='/tests?/' ;;
+        guards) SURFACE="scripts/guards/*";          EXCL='[.](baseline|list)$' ;;
     esac
     CLOCK=$(find_clock "$TRACK" | head -1 | cut -d' ' -f1)
     SRC="отчёт"

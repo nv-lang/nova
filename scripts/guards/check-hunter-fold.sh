@@ -63,7 +63,7 @@ rc=0
 SUMMARY=""
 TSEEN="${TMPDIR:-/tmp}/hunter-fold-refs.$$"
 trap 'rm -f "$TSEEN"' 0 2 15
-for TRACK in novac oracle; do
+for TRACK in novac oracle guards; do
     DIR="$HUNTS_BASE/$TRACK"
     : > "$TSEEN"
     [ -d "$DIR" ] || continue  # отсутствие каталога краснит mark-страж, не этот
