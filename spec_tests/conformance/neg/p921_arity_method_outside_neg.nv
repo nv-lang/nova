@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// Registry 921, form 3 of 4: `b.take(1, 2)` called from OUTSIDE the type.
+//
+// This is the form that makes the row a tag blocker, and the fixture says so because
+// the reason is not obvious from the code. The refusal is loud either way -- before
+// the fix clang caught it -- and a loud refusal did NOT make sibling row #888 a
+// blocker. The discriminator is carriers: #888's form has zero occurrences in this
+// tree and has to be written deliberately, while this one's carriers are other
+// people's typos. Calling a method with the wrong number of arguments is the
+// commonest mistake a newcomer makes, and before this fixture the newcomer met it as
+// a C compiler error about code they had never written.
+module neg.p921_arity_method_outside_neg
+
+type Box priv { n int }
+fn Box.new() -> Box => { n: 0 }
+fn Box mut @take(n int) -> () { @n = n }
+
+fn main() Io -> () {
+    mut b = Box.new()
+    // nova:expect E_NO_MATCHING_OVERLOAD -- `take` declares one parameter, the call offers two; the ordinary outside call is the same door as `@take` and `self.take` (#921)
+    b.take(1, 2)
+    println(b.n)
+}

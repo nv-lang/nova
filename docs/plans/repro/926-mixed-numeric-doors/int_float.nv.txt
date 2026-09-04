@@ -1,0 +1,8 @@
+// door: i64 + f64 — D405 names only integer operands; D54 says no implicit numeric coercion anywhere
+module int_float
+
+fn main() Io -> () {
+    ro c i64 = 5 as i64
+    ro f f64 = 1.5
+    println(c + f)
+}

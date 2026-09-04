@@ -1,0 +1,14 @@
+// Registry 921, form 3 of 4: `b.take(1, 2)` -- called from OUTSIDE the type. This is
+// the form an ordinary user writes, and the one that makes the row a tag blocker:
+// its carriers are not fixtures in our tree, they are other people's typos.
+module p921_too_many_outside
+
+type Box priv { n int }
+fn Box.new() -> Box => { n: 0 }
+fn Box mut @take(n int) -> () { @n = n }
+
+fn main() Io -> () {
+    mut b = Box.new()
+    b.take(1, 2)
+    println(b.n)
+}

@@ -1,0 +1,8 @@
+// door: i64 < i32 — same-signedness, different width, comparison
+module cmp_width
+
+fn main() Io -> () {
+    ro c i64 = 5 as i64
+    ro d i32 = 7 as i32
+    println(c < d)
+}

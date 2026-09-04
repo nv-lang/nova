@@ -1,0 +1,23 @@
+// Registry TBD: `int as uint` saturates (D130 Q2) while every other signed->unsigned `as`
+// is bit-pattern (D54 table) — one operation, three answers.
+module casts
+
+fn main() Io -> () {
+    println((-1 as i8) as u8)        // 255            D54 bit-pattern
+    println((-1 as i32) as u32)      // 4294967295     D54
+    println((-1 as i64) as u64)      // 2^64-1         D54
+    ro d int = -1
+    println(d as u64)                // 2^64-1         D130: int as u64 = bit-cast
+    println(d as uint)               // 0              D130 Q2: saturates — the odd one
+    ro e i32 = -5 as i32
+    println(e as uint)               // 2^64-5         bit-pattern again: same target, other source
+    ro big u64 = 18446744073709551615 as u64
+    println(big as int)              // -1             D54
+    println(big as i32)              // -1             D54 wraparound
+    ro b i32 = 300 as i32
+    println(b as u8)                 // 44
+    ro f f64 = 70000.5
+    println(f as i16)                // 32767 saturation
+    println((-1.0) as u16)           // 0
+    println(1e20 as int)             // INT64_MAX
+}

@@ -1,0 +1,8 @@
+// door: unary minus on u8 — no rule in D405/D54; Rust rejects; C wraps
+module neg_unsigned
+
+fn main() Io -> () {
+    ro a u8 = 200 as u8
+    ro n = -a
+    println(n)
+}

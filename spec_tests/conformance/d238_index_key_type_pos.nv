@@ -1,0 +1,53 @@
+// D238 — the POSITIVE half of registry #894: a user `@index` whose key is a
+// NEWTYPE accepts that newtype and nothing else. Four negative fixtures pin the
+// four doors that must refuse a foreign key (`neg/d238_index_key_type_read_neg`,
+// `neg/d240_index_key_type_write_neg`, `neg/d240_index_key_type_compound_neg`,
+// `neg/d240_index_key_type_tuple_neg`); this file pins that the legal key still
+// works, which is the half that keeps a fix from being a ban.
+//
+// Read together they say something neither says alone: the checker draws the line
+// between `FnRow` and `TyId`, rather than merely saying SOMETHING about brackets.
+//
+// WHY THERE IS NO WRITE CASE HERE, and the reason CHANGED during the phase — the
+// first version of this header said a `mut @index` write does not survive codegen,
+// which was true when written and is not true now. #628 landed in the same wave: the
+// emitter no longer builds its lookup key by string-trimming the mangled C type name,
+// and writes through a user `@index` compile and run. Leaving that sentence in place
+// would have made this fixture assert a defect that had been fixed two commits
+// earlier — a stale reason is worse than no reason, because it is quoted.
+//
+// The write case still lives elsewhere rather than here, and now for an ordinary
+// reason: `standalone/d628_generic_index_both_sides.nv` exercises read AND write on a
+// GENERIC receiver, which is where the codegen half actually failed. This file is
+// about the CHECKER accepting the right key and refusing the wrong ones; adding a
+// write here would test the other half in the wrong place.
+//
+// Spec: spec/decisions/03-syntax.md D238. Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D894FnRow int
+
+type D894Table priv { rows Vec[str] }
+fn D894Table.new() -> D894Table => { rows: ["alpha", "beta", "gamma"] }
+fn D894Table @index(i D894FnRow) -> str => @rows[i as int]
+
+test "user @index with a newtype key accepts that newtype (D238, #894)" {
+    ro t = D894Table.new()
+    ro k = 1 as D894FnRow
+    assert(t[k] == "beta")
+}
+
+test "the newtype key is not merely ignored -- it selects the row (D238, #894)" {
+    ro t = D894Table.new()
+    assert(t[0 as D894FnRow] == "alpha")
+    assert(t[2 as D894FnRow] == "gamma")
+}
+
+test "the explicit call and the bracket sugar agree (D238, #894)" {
+    ro t = D894Table.new()
+    ro k = 2 as D894FnRow
+    // The whole defect was that these two disagreed: the explicit form checked its
+    // argument, the sugar did not. They now go through one check, so they must also
+    // agree on the accepted value.
+    assert(t[k] == t.index(k))
+}

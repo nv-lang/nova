@@ -133,7 +133,7 @@
 #     Go. For novac this is not work yet: the subset has no newtype operators
 #     at all -- but when it gets them, the rule says the operator asks the same
 #     door the call asks, which is the shape novac already wants.
-#   spec-queue: 52
+#   spec-queue: 55
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

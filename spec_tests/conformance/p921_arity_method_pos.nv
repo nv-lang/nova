@@ -1,0 +1,63 @@
+// Registry 921, the POSITIVE half: correct arity keeps working, in every form, and
+// the legal reasons a call may LOOK like the wrong count still resolve.
+//
+// Four negative fixtures pin the four doors that must refuse a wrong argument count
+// (`neg/p921_arity_method_{at_form,self_form,outside,too_few}_neg.nv`). This file is
+// the half that keeps the fix from being a ban -- and it carries more than a happy
+// path, because the danger with an arity check is not that it fails to fire but that
+// it fires where the language says a call is legal.
+//
+// Three such cases are pinned below, and each is a way the fix could have been wrong:
+// a default-valued parameter may legally be omitted (D102), so counting declared
+// parameters against supplied arguments is NOT the rule; a named argument supplies a
+// parameter without occupying a positional slot (D102 again); and a genuine overload
+// set means "no overload matches this count" must consider every member, not the
+// first one found.
+//
+// Spec: D102 (defaults are keyword-only, optional parameters may be omitted).
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type P921Box priv { n int }
+fn P921Box.new() -> P921Box => { n: 0 }
+
+fn P921Box mut @take(n int) -> () { @n = n }
+fn P921Box @get(i int) -> int => @n + i
+
+// D102: an optional parameter may be omitted -- arity is a RANGE, not a number.
+fn P921Box @scaled(by int, plus int = 0) -> int => @n * by + plus
+
+// A real overload set on one name: the arity check must consult all members.
+fn P921Box @at(i int) -> int => @n + i
+fn P921Box @at(i int, bias int) -> int => @n + i + bias
+
+test "correct arity through every call form (D238-adjacent, #921)" {
+    mut b = P921Box.new()
+    b.take(5)
+    assert(b.get(1) == 6)
+}
+
+test "an omitted default-valued parameter is NOT an arity error (D102, #921)" {
+    mut b = P921Box.new()
+    b.take(3)
+    assert(b.scaled(2) == 6)
+    // NOT `scaled(2, 1)`: D102 makes a defaulted parameter keyword-ONLY, so the
+    // positional form is refused -- by the compiler, with a machine-applicable
+    // "pass `plus` by name". The first draft of this fixture broke that very rule
+    // while documenting it, which is the sharpest possible argument for the rule:
+    // supplying an optional positionally reads as arity and is not.
+    assert(b.scaled(2, plus: 1) == 7)
+}
+
+test "a named argument fills its parameter without a positional slot (D102, #921)" {
+    mut b = P921Box.new()
+    b.take(3)
+    assert(b.scaled(2, plus: 4) == 10)
+}
+
+test "an overload set is searched by count, not by first member (#921)" {
+    mut b = P921Box.new()
+    b.take(10)
+    assert(b.at(1) == 11)
+    assert(b.at(1, 2) == 13)
+}

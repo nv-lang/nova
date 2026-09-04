@@ -1034,8 +1034,20 @@
 #   продолжить: разбор второго слота контракта идёт по ТИПУ, то есть в чекере.
 #   ДОЛГ ПРЕЖНИЙ И НЕ ОТМЕНЯЕТСЯ: вернуть lines вниз. Отсюда — только вниз.
 
-lines=67398
-infer=242
+# 2026-09-04 (registry #628, plan 281 F.1): 67398 -> 67530 (+132), infer 242 -> 243.
+# DIRECTION: TOWARD the channel, which is the only direction this ratchet permits.
+# The emitter's user-@index dispatch used to build its lookup key by string-trimming
+# the mangled C type name and compare it against a table keyed by the bare template
+# name -- two spellings that can never meet, so the branch was dead for every generic
+# receiver and `a[k]` fell out as raw pointer arithmetic. It now synthesizes an
+# ordinary `obj.index(key)` call and re-emits through the normal Call path, which
+# ASKS the existing overload resolution and monomorphization instead of guessing --
+# the same move the neighbouring Range form has made since plan 194 F.3.
+# So the added lines REMOVE a guess rather than add one. The `infer` count rises by
+# one for the same reason: the write door now consults `method_overloads` before
+# falling through to pointer arithmetic.
+lines=67530
+infer=243
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):
 # 64416 -> 64444 (+28, ВСЕ строки — doc-comment объясняющий диагноз, код
 # сам — одно условие `t.name != "str"`). ПУТЬ B (emit-слой, не канал):

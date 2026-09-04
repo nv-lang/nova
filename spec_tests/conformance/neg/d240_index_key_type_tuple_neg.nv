@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// D236/D240 — an index as a TUPLE-ASSIGNMENT target, `(a[k], other) = (v, w)`,
+// with a key of a DIFFERENT newtype. Registry #894, the FOURTH door — the one the
+// row did not know about until the checker was mapped door by door on 2026-09-04.
+//
+// It earns a fixture because it reaches the checker by a third route again:
+// `Stmt::TupleAssign` walks its left-hand elements as ordinary expressions, so the
+// index arrives WITHOUT the assign-target marker the plain write carries. The key
+// is therefore compared against the reader.
+//
+// Reading the code alone had suggested this door checked nothing at all, not even
+// the `ro`/`mut` freeze. That was wrong and a probe said so: writing through a
+// `ro` binding here is refused by `E_TUPLE_ASSIGN_LHS_NOT_MUT` (Plan 136, D236),
+// which lives elsewhere than the check the reading had looked for. The lesson is
+// worth more than the fixture: an absent call proves nothing until you have found
+// where the rule actually lives.
+//
+// Spec: spec/decisions/03-syntax.md D240; Plan 136 (D236) for the tuple form.
+module neg.d240_index_key_type_tuple_neg
+
+type FnRow int
+type TyId int
+
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: ["a", "b"] }
+fn Table @index(i FnRow) -> str => @rows[i as int]
+fn Table mut @index(i FnRow, val str) -> () {
+    @rows[i as int] = val
+}
+
+fn tuple_assign_with_the_wrong_key() Io -> () {
+    mut t = Table.new()
+    mut other = 0
+    ro k = 1 as TyId
+    // nova:expect E_NO_MATCHING_OVERLOAD -- the tuple door walks `t[k]` as a plain expression, so the key meets `@index(i FnRow)` and a `TyId` is refused there (#894)
+    (t[k], other) = ("z", 1)
+}

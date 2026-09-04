@@ -1,0 +1,8 @@
+// door: CONTROL: u8 + i16 arithmetic — D405 works here
+module ctrl_arith
+
+fn main() Io -> () {
+    ro a u8 = 200 as u8
+    ro b i16 = 100 as i16
+    println(a + b)
+}

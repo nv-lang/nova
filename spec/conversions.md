@@ -43,6 +43,48 @@ anymore.
 
 ## Numeric ↔ numeric
 
+### There is no automatic widening in an operation ([D405](decisions/02-types.md#d405), amended 2026-09-04)
+
+Every widening below happens because you wrote `as`. Nova does **not** pick the wider
+type for you when two numeric types meet in one operation — no "take the larger",
+no integer promoted to float, no signed compared against unsigned. Mixed operands are
+a compile error, and the conversion you meant is written down.
+
+This is the rule C spent decades teaching everyone to fear: `u32(4294967295) ==
+i32(-1)` is `true` in C, because the signed operand is converted to unsigned behind
+your back. In Nova it does not compile.
+
+The 2026-09-04 amendment states the rule by **category** rather than by listing
+operators, after three doors were measured outside the original list: relational
+operands of different signedness, an integer against a float, and negation of an
+unsigned value. All three answered, and answered wrongly.
+
+Two relaxations, and both are about **literals only**, where no second type exists to
+disagree with:
+
+- a float literal is accepted in a float position without `as` (`ro x f32 = 1.5`);
+- an untyped literal adapts to the float operand beside it (`b + 1` where `b f64`),
+  the way an untyped constant does in Go.
+
+A value of type `int` next to a value of type `f64` is still an error, literal or not.
+
+**Belonging to one category is not permission to mix inside it.** Both `f32` and `f64`
+are floats; `f32 < f64` is still an error. Both `i32` and `i64` are signed integers;
+`i64 < i32` is still an error. The category decides which operators exist for a type,
+not which pairs of types may meet. Every one of these is refused, and the conversion
+you intend is written with `as`:
+
+```nova
+u32 == i32     // ошибка — разная знаковость
+i64 < i32      // ошибка — разная ширина
+f32 < f64      // ошибка — разная ширина, оба float
+int < f64      // ошибка — целое против float
+```
+
+**Unary minus is defined for signed types only.** `-x` with an unsigned `x` is a compile
+error, not a modular wrap (`-200u8` does not become `56`); what you mean is written
+`-(x as i16)`.
+
 ### Widening (no precision loss)
 
 | From → To | Via | Semantics |
@@ -311,6 +353,25 @@ Sums are untouched: `SqlValue.I(x)` is still inserted for a variable -- there
 the compiler DERIVES the only matching variant instead of inventing the author's
 claim. For the old softness on your own newtype, declare it as a
 [`#coerce`](decisions/02-types.md#d429) pair.
+
+**Operators on a newtype stay inside the newtype ([D52](decisions/02-types.md#d52) amend,
+2026-09-04).** Arithmetic and comparison are defined between two values of the *same*
+newtype (plus a literal, which adapts); the arithmetic result is that newtype, a
+comparison is `bool`. Two different newtypes over the same representation, or a newtype
+against a value of the representation, do not meet in an operator — the conversion is
+written with `as`. This is Go's rule for `type FnRow int`, and it is what makes typed
+indices worth having: `row_id == ty_id` must not compile.
+
+```nova
+type FnRow int
+type TyId int
+ro a = 1 as FnRow
+ro t = 1 as TyId
+ro n = 1
+a + 1              // ok — литерал адаптируется, результат FnRow
+a == t             // ошибка — разные newtype
+a + n              // ошибка — newtype против типизированного int; пишется (a as int) + n
+```
 
 ---
 

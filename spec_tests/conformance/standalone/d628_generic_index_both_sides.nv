@@ -1,0 +1,61 @@
+// EXPECT_STDOUT beta|zeta
+//
+// D238/D240 — the SECOND fixture row #628's reopened acceptance names: a BARE magic
+// `@index` on a GENERIC record, exercised on BOTH sides, read and write.
+//
+// WHY A SECOND ONE, WHEN THE FIRST IS STILL IN FORCE. #628 closed once on
+// `standalone/d628_user_index_bracket.nv`, a NON-generic `#impl(Index[K,V])` carrier,
+// and reopened because that carrier could not see the defect. The emitter's dispatch
+// branch built its lookup key by string-trimming the mangled C type name --
+// `Table____nova_int__nova_str` -- while the overload table is keyed by the bare
+// template name, `("Table", "index")`. For a non-generic type those two spellings
+// coincide letter for letter and the branch works; for a generic one they can never
+// meet, the lookup returns nothing, and `a[i]` fell out as raw pointer arithmetic.
+// So the row's own note is the rule this file enforces: closing #628 on a
+// non-generic carrier is closing it on the only case that was never broken.
+//
+// The write side has its own reason to be here rather than folded into the read one.
+// It is intercepted by a different function entirely -- a `Stmt::Assign` special case
+// in the emitter that runs BEFORE the target reaches expression emission, and that
+// knew only NovaArrHdr collections, fixed arrays, Vec and raw pointers. A user type
+// landed in the raw-pointer branch and produced `(arr)[i] = (v);`, which clang
+// refused. Read and write are two doors; a fixture through one proves nothing about
+// the other.
+//
+// Spec: spec/decisions/03-syntax.md D238 (read), D240 (write).
+module standalone.d628_generic_index_both_sides
+
+type D628Ordinal protocol {
+    @ordinal() -> int
+}
+
+type D628Row int
+fn D628Row @ordinal() -> int => @ as int
+
+type D628Table[I D628Ordinal, T] priv { raw Vec[T] }
+
+fn D628Table[I D628Ordinal, T].new() -> D628Table[I, T] => { raw: Vec[T].new() }
+fn D628Table[I D628Ordinal, T] @index(i I) -> T => @raw[i.ordinal()]
+fn D628Table[I D628Ordinal, T] mut @index(i I, v T) -> () {
+    @raw[i.ordinal()] = v
+}
+fn D628Table[I D628Ordinal, T] mut @push(v T) -> () {
+    @raw.push(v)
+}
+
+fn main() Io -> () {
+    mut t = D628Table[D628Row, str].new()
+    t.push("alpha")
+    t.push("beta")
+
+    // READ through the bracket sugar on a generic receiver -- the half that fell out
+    // as raw pointer arithmetic before the fix.
+    ro one = 1 as D628Row
+    print(t[one])
+
+    print("|")
+
+    // WRITE through the bracket sugar, the other door and the other emitter path.
+    t[one] = "zeta"
+    print(t[one])
+}

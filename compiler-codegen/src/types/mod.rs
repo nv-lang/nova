@@ -9551,7 +9551,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
             Stmt::Const(_) => {}
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign { target, op, value, .. } => {
                 // №367 (window p375-ptr2): mark `target` as the top-level
                 // assignment place BEFORE walking it — consumed by the
                 // `ExprKind::Unary`/`ExprKind::Index` arms (see
@@ -9565,6 +9565,52 @@ impl<'a> TypeCheckCtx<'a> {
                 // D175/D176 (Plan 108): check that we're not assigning to a
                 // readonly field or through a readonly index.
                 self.check_target_readonly(target, scope, errors);
+                // Registry #894, WRITE door (plan 281 F.1). The read door is
+                // handled in `f1_expr_inner`'s `ExprKind::Index` arm and is
+                // deliberately skipped for an assignment target, because a write
+                // does not call the one-parameter reader -- it calls the setter
+                // `mut @index(key, val)`, whose SECOND argument only exists here.
+                // So the entry has to be installed per door; that is a cost the
+                // phase counts rather than a duplication.
+                //
+                // Measured before the fix, on one binary: `t[k] = "z"` with a key
+                // of the wrong newtype passed `nova check` and reached C, where
+                // clang refused with `assigning to 'Nova_Table' from incompatible
+                // type` -- an error from the wrong tool, about the wrong thing.
+                //
+                // A plain `a[k] = v` calls the two-parameter setter, so both the key
+                // and the value are checked against it. A compound `a[k] += v` is a
+                // READ followed by a write through the same node: its setter argument
+                // is `a[k] <op> value`, not `value`, so handing `value` to the setter
+                // would type-check an expression the program never forms -- and could
+                // pass where it must fail. What the compound form DOES do literally is
+                // call the one-parameter reader with `k`, so that is what gets checked
+                // here: the key, against the same reader the read door uses. The value
+                // half of a compound write stays with the arithmetic rules that already
+                // own it.
+                if let ExprKind::Index { obj, index } = &target.kind {
+                    if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                        if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                            if self
+                                .method_overloads(tname, "index")
+                                .is_some_and(|v| !v.is_empty())
+                            {
+                                let args: Vec<CallArg> = if matches!(op, AssignOp::Assign) {
+                                    vec![
+                                        CallArg::Item((**index).clone()),
+                                        CallArg::Item(value.clone()),
+                                    ]
+                                } else {
+                                    vec![CallArg::Item((**index).clone())]
+                                };
+                                self.check_instance_overload(
+                                    obj, "index", &args, gs, scope, target.span,
+                                    errors, target.id,
+                                );
+                            }
+                        }
+                    }
+                }
                 // **Plan 147 Ф.3 (D246, L1 binding):** reassigning the NAME
                 // (`x = v` where target is a plain Ident) requires a `mut`
                 // binding. A `ro`-bound local is fixed (L1) — even an explicit
@@ -9741,6 +9787,51 @@ impl<'a> TypeCheckCtx<'a> {
                 for e in rhs { self.f1_expr(e, gs, scope, errors); }
             }
         }
+    }
+
+    /// Registry #921: the tail of the `[E_NO_MATCHING_OVERLOAD]` message when the
+    /// candidate set was emptied by ARGUMENT COUNT rather than by argument type.
+    ///
+    /// D84 (`10-overloading.md`) makes arity the fourth axis of overloading and
+    /// FILTER 1 of call-site resolution — "отбрасываются кандидаты с числом
+    /// параметров, не совпадающим с числом аргументов на call-site". A call that
+    /// empties the set at Filter 1 is exactly as unresolvable as one emptied at
+    /// Filter 2 (types), which has always been reported; only the count case was
+    /// silent, and it reached the user as a C compiler error about generated code.
+    ///
+    /// Shared by all three call shapes that carry an overload set (instance method,
+    /// free function, static method) so the sentence a user reads does not depend on
+    /// which of the three they happened to write. The declared arities are listed
+    /// because with an overload set "expects 1" would be a lie.
+    ///
+    /// A variadic candidate is NOT summarised as a number — `bind_call_args` accepts
+    /// any count at or above its non-variadic prefix (D69), so it can never be the
+    /// reason a set is empty, and printing its parameter count would name a limit
+    /// that does not exist.
+    fn arity_mismatch_tail(declared: &[usize], any_variadic: bool, given: usize) -> String {
+        let mut uniq: Vec<usize> = declared.to_vec();
+        uniq.sort_unstable();
+        uniq.dedup();
+        let accepts = match uniq.as_slice() {
+            [] => "accepts no argument list".to_string(),
+            [n] => format!("accepts {}", Self::plural_args(*n)),
+            _ => {
+                let names: Vec<String> = uniq.iter().map(|n| n.to_string()).collect();
+                format!("accepts {} arguments", names.join(" or "))
+            }
+        };
+        format!(
+            "{}{}, but {} {} given",
+            accepts,
+            if any_variadic { " (plus a variadic form)" } else { "" },
+            given,
+            if given == 1 { "was" } else { "were" },
+        )
+    }
+
+    /// `1 argument` / `2 arguments` — used only by `arity_mismatch_tail`.
+    fn plural_args(n: usize) -> String {
+        format!("{} argument{}", n, if n == 1 { "" } else { "s" })
     }
 
     /// Plan 152.1 Ф.1: strip `ro`/`mut`/`unsafe` wrappers and return the base
@@ -12248,6 +12339,108 @@ impl<'a> TypeCheckCtx<'a> {
                                  byte-range slice `s[a..b]`.".to_string(),
                                 e.span,
                             ));
+                        }
+                        // Registry #894 (plan 281 F.1): the KEY of `a[k]` was compared
+                        // with NOTHING, while the explicit `a.index(k)` on the same type
+                        // and the same method IS checked. One operation, two doors,
+                        // opposite answers -- measured: the bracket form compiles AND
+                        // RUNS, returning a row from a table declared for a different
+                        // key type.
+                        //
+                        // The bracket form is routed into the SAME check the explicit
+                        // call uses rather than given a comparison of its own. A second
+                        // implementation of one rule beside the first is exactly the
+                        // disease this row was filed about ("one rule, several doors"),
+                        // and it would let the two forms drift into different diagnostics
+                        // again the next time either is touched.
+                        //
+                        // `check_instance_overload`, NOT `find_method_decl`, and that is
+                        // not a stylistic preference: the POISON 6453 audit
+                        // (docs/plans/172.1-tally-audit-2026-07-02.md) measured that
+                        // `find_method_decl` hands back `fns.first()` off a HashMap walk,
+                        // while `Vec` keeps THREE overloads under the key `index`
+                        // (`@index(i int) -> T`, `@index(r Range) -> Self`,
+                        // `mut @index(i, val)`) -- so the declared key type it yields is an
+                        // arbitrary pick. The shared check walks every overload by
+                        // applicability and carries the receiver's `subst`.
+                        //
+                        // Two forms deliberately NOT covered here, each because the key is
+                        // not the whole question at that door:
+                        //   * a Range index (`v[a..b]`) never reaches this point -- it is
+                        //     intercepted by `index_is_range` above and resolves against a
+                        //     different overload;
+                        //   * an assignment TARGET (`a[k] = v`, `a[k] += v`, and the
+                        //     tuple-assign form) calls the two-parameter setter, whose
+                        //     second argument does not exist at this node. Those doors get
+                        //     their own entry where key and value are both in hand; see
+                        //     plan 281 F.1, which counts that as part of the phase rather
+                        //     than a surprise.
+                        if !is_assign_target_top {
+                            if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                                if self
+                                    .method_overloads(tname, "index")
+                                    .is_some_and(|v| !v.is_empty())
+                                {
+                                    let args = [CallArg::Item((**index).clone())];
+                                    self.check_instance_overload(
+                                        obj, "index", &args, gs, scope, e.span, errors,
+                                        e.id,
+                                    );
+                                    // Registry #628, the checker's own half of the
+                                    // codegen defect. Having RESOLVED the overload we
+                                    // also materialize its return type into the
+                                    // channel, because the alternative is codegen
+                                    // guessing — and the guess it makes is the
+                                    // `_ => nova_int` fallback the POISON 6453 audit
+                                    // named. Measured before this line existed:
+                                    // `println(t[k])` on a generic user table emitted
+                                    // `nova_print_int` for a `str`-returning `@index`,
+                                    // a CC-FAIL two steps away from the real cause.
+                                    //
+                                    // Why the audit's gate («generic receiver → write
+                                    // nothing») is not simply lifted: it was RIGHT. The
+                                    // old producer cloned the declared return verbatim,
+                                    // so `Vec[str][i]` was annotated a bare `Named{T}`.
+                                    // What was missing was a substituted source, not a
+                                    // looser gate. `resolve_instance_method_return_arity`
+                                    // IS that source — it substitutes the receiver's
+                                    // carrier generics, disambiguates overloads by arity
+                                    // and argument type instead of taking `fns.first()`,
+                                    // and refuses to answer at all while the result still
+                                    // mentions any residual type-param. Bail there means
+                                    // legacy, exactly as before.
+                                    //
+                                    // Guarded by `!contains_key`: the structural
+                                    // element-materialization below owns `[]T`/`[N]T`
+                                    // and must keep winning for them.
+                                    if e.id.is_set()
+                                        && !self
+                                            .resolved_types_buf
+                                            .borrow()
+                                            .contains_key(&e.id)
+                                    {
+                                        if let Some(ret) = self
+                                            .resolve_instance_method_return_arity(
+                                                &obj_tr,
+                                                "index",
+                                                Some(1),
+                                                Some((&args, scope)),
+                                                Some(e.id),
+                                                None,
+                                                gs,
+                                            )
+                                        {
+                                            let rt = Self::mark_type_params(
+                                                ResolvedType::from_type_ref(&ret),
+                                                gs,
+                                            );
+                                            self.resolved_types_buf
+                                                .borrow_mut()
+                                                .insert(e.id, rt);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         // Plan 172.1 U.4.4 (element half): materialize the ELEMENT type of an
                         // `[]T`/`[N]T` index `arr[i]` into the checker channel — the convention
@@ -16164,6 +16357,44 @@ impl<'a> TypeCheckCtx<'a> {
                 ),
                 span,
             ));
+        } else if !any_arity && !overloads.is_empty() {
+            // Registry #921. `overload_applicability` answers `None` when
+            // `bind_call_args` cannot bind the call to that candidate at all — the
+            // arity failure — and this function's own doc used to call that case
+            // someone else's: "a wrong-arity situation reported elsewhere
+            // (BoundCtx), NOT a no-matching-overload by type". Measured 2026-09-04:
+            // BoundCtx does not report it either. Its `resolve_instance_method`
+            // filters candidates BY ARITY before diagnosing (Attempt 2), so when no
+            // overload matches the count it returns `None`, `check_call_argbind`
+            // returns early, and `bind_call_args` — the very thing that would have
+            // produced the message — is never reached. The deferral pointed at a
+            // door that does not open, so `b.take(1, 2)` and `b.get()` both passed
+            // the checker and reached clang.
+            //
+            // Reported HERE, and not by lifting BoundCtx's filter, because this is
+            // the place that knows the whole overload set: D84's Filter 1 is about
+            // the set being emptied, and only the owner of the set can say that it
+            // was. Lifting the filter would instead make resolution pick a candidate
+            // whose arity does not match, which is a different and worse change.
+            //
+            // Same code as the type case above on purpose. "No overload matches" is
+            // one rule; giving the count its own code would put two names on one
+            // question — the shape row #894 was filed about, and the shape the fix
+            // for it removed.
+            let declared: Vec<usize> = overloads.iter().map(|f| f.params.len()).collect();
+            let any_variadic = overloads
+                .iter()
+                .any(|f| f.params.iter().any(|p| p.is_variadic));
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_NO_MATCHING_OVERLOAD] no overload of method `{}` on type `{}` \
+                     {}",
+                    method_name,
+                    type_name,
+                    Self::arity_mismatch_tail(&declared, any_variadic, args.len()),
+                ),
+                span,
+            ));
         }
         // Plan 172.2 [M-instance-method-arg-scalar-narrowing]: IMPLICIT NARROWING on a
         // method argument — the dispatch hole (single-overload scalar narrowing like
@@ -16565,6 +16796,58 @@ impl<'a> TypeCheckCtx<'a> {
                                 ),
                                 base.span,
                             ));
+                        } else if !any_arity && !multi.is_empty() && !scope.contains_key(n) {
+                            // The `!scope.contains_key(n)` guard is NOT defensive
+                            // habit — it was measured. Without it the corpus went
+                            // from 0 to 3 failures, all from one shape: this arm
+                            // reaches `self.sig.fn_decls.get(n)` without ever asking
+                            // whether `n` is a LOCAL binding shadowing a global of
+                            // the same name. In a compile unit where a fixture
+                            // declares `fn f(a int)` twice and std happens to call a
+                            // closure PARAMETER also called `f`, `f()` was matched
+                            // against the fixture's global overloads and refused for
+                            // taking no arguments. The call was legal; the lookup was
+                            // wrong.
+                            //
+                            // The pre-existing diagnostic below never hit this because
+                            // `any_arity` stayed false in exactly that case -- the
+                            // silence I am removing was accidentally covering for a
+                            // second defect. So the guard belongs to my branch, which
+                            // is new: widening it into the arm's own lookup would
+                            // change RESOLUTION, not just diagnosis, and that is a
+                            // different change with a different blast radius. The
+                            // arm's missing shadow check is noted here rather than
+                            // fixed here.
+                            //
+                            // Registry #921, the free-function shape of the same hole.
+                            // The comment four lines up deferred this to BoundCtx;
+                            // BoundCtx skips it for exactly this case --
+                            // `check_call_argbind` matches `[single]` and answers
+                            // `_ => return` as soon as a name carries two or more
+                            // FnDecls. So the deferral chain ended nowhere, and it was
+                            // measured rather than reasoned: a wrong-count call to an
+                            // overloaded free function reached C.
+                            //
+                            // Fixed alongside the method shape rather than after it.
+                            // Row #921 demands class-level acceptance, and "the same
+                            // rule with the same hole, three code sites" is the
+                            // definition of a class -- repairing one and leaving the
+                            // others is the carrier fix its caveat forbids.
+                            let declared: Vec<usize> =
+                                multi.iter().map(|f| f.params.len()).collect();
+                            let any_variadic = multi
+                                .iter()
+                                .any(|f| f.params.iter().any(|p| p.is_variadic));
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}` {}",
+                                    n,
+                                    Self::arity_mismatch_tail(
+                                        &declared, any_variadic, args.len()
+                                    ),
+                                ),
+                                base.span,
+                            ));
                         }
                         // Plan 172.1 U.3.1 §0 extension: record UNIQUE arity+type-compat
                         // overload in resolved_callees + resolved_types_buf. Mirrors the
@@ -16841,6 +17124,28 @@ impl<'a> TypeCheckCtx<'a> {
                                 Some(false) => any_arity = true,
                                 None => {}
                             }
+                        }
+                        if !any_arity && !multi.is_empty() {
+                            // Registry #921, the static-method shape. Third and last
+                            // site of one rule; see the instance-method site for why
+                            // the count case is reported here and not deferred.
+                            let declared: Vec<usize> =
+                                multi.iter().map(|f| f.params.len()).collect();
+                            let any_variadic = multi
+                                .iter()
+                                .any(|f| f.params.iter().any(|p| p.is_variadic));
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` {}",
+                                    parts[0],
+                                    parts[1],
+                                    Self::arity_mismatch_tail(
+                                        &declared, any_variadic, args.len()
+                                    ),
+                                ),
+                                base.span,
+                            ));
+                            return;
                         }
                         if any_arity && compat.is_empty() {
                             errors.push(Diagnostic::new(

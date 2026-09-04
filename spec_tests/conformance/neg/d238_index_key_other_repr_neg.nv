@@ -1,0 +1,37 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// D238 — the SECOND negative row #894's acceptance names in so many words: "a
+// newtype key of the wrong type AND a key of a DIFFERENT REPRESENTATION, both
+// through `[]`". The four door fixtures beside this one all pass a `TyId` where a
+// `FnRow` is declared — two newtypes over `int`, so one representation. This file
+// is the other half: a `str` key where `FnRow` is declared.
+//
+// WHY THE ROW ASKED FOR BOTH, and why one does not cover the other. Before the fix
+// the two halves failed DIFFERENTLY, and that difference was the row's whole
+// argument for blocking the tag. Same representation: the program compiled, ran,
+// and silently returned a row from a table declared for another key type — C cannot
+// catch it because both are integers underneath. Different representation: the
+// program also passed the checker, but died at clang, which is loud and wrong-tooled
+// rather than silent and wrong-answered.
+//
+// After the fix both are refused at the call site by the same check, which is the
+// point: the checker's answer no longer depends on what the two types happen to look
+// like in C. A fix that repaired only the silent half would leave the loud half
+// reporting a C error about generated code, and the four door fixtures alone would
+// not have noticed.
+//
+// Spec: spec/decisions/03-syntax.md D238. Positive half:
+// `spec_tests/conformance/d238_index_key_type_pos.nv`.
+module neg.d238_index_key_other_repr_neg
+
+type FnRow int
+
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: ["a", "b"] }
+fn Table @index(i FnRow) -> str => @rows[i as int]
+
+fn read_with_a_key_of_another_representation() Io -> () {
+    ro t = Table.new()
+    // nova:expect E_NO_MATCHING_OVERLOAD -- the table declares `@index(i FnRow)`, an int newtype, and the key here is a `str`; the checker must refuse it at the call site rather than letting clang complain about the generated C (#894)
+    println(t["not an index"])
+}

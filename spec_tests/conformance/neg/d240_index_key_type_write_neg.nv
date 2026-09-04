@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// D240 — writing `a[k] = v` on a user `mut @index(i FnRow, val str)` with a key of
+// a DIFFERENT newtype. Registry #894, the WRITE door.
+//
+// The write is a separate door from the read and needs its own fixture: it does
+// not call the one-parameter reader at all, it calls the two-parameter setter,
+// and it is intercepted in a different place of the checker entirely
+// (`Stmt::Assign`, not the `ExprKind::Index` expression arm). Before the fix this
+// door was as silent as the read one; measured, it reached C and clang refused
+// with `assigning to 'Nova_Table' from incompatible type` — an error from the
+// wrong tool, about the wrong thing, pointing at generated code the author never
+// wrote.
+//
+// Spec: spec/decisions/03-syntax.md D240. Positive half:
+// `spec_tests/conformance/d238_index_key_type_pos.nv`.
+module neg.d240_index_key_type_write_neg
+
+type FnRow int
+type TyId int
+
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: ["a", "b"] }
+fn Table @index(i FnRow) -> str => @rows[i as int]
+fn Table mut @index(i FnRow, val str) -> () {
+    @rows[i as int] = val
+}
+
+fn write_with_the_wrong_key() Io -> () {
+    mut t = Table.new()
+    ro k = 1 as TyId
+    // nova:expect E_NO_MATCHING_OVERLOAD -- the setter declares `mut @index(i FnRow, val str)`, the key is a `TyId`; the write door is checked against the SETTER, so both key and value are compared (#894)
+    t[k] = "z"
+}

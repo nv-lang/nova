@@ -555,6 +555,44 @@ Do not use them for other purposes.
   non-`ro` return type -- branch tails of `if`/`match` included. A local bound
   to a FRESH value (a call result, a literal, a constructor, `.clone()`) is an
   ordinary local, however non-mutable its binding is.
+- **Named tuple: built by position, destructured by name**
+  ([D215/D222 amendment](decisions/02-types.md), 2026-08-05).
+  `Vec3(1.0, 2.0, 3.0)` — construction is positional; the named form exists
+  only for fields with a default (the general D102 rule). Destructuring — the
+  curly form `{ x, y }`; the round `(a, b)` on a named tuple is forbidden: its
+  field names are part of the contract, and a by-order unpack would silently
+  break under a legitimate reordering of the fields.
+- **Anonymous type with NAMED components**
+  ([D469](decisions/02-types.md#d469), owner decision 2026-09-04):
+  `fn loc() -> (file str, line int)`. Fills the last empty cell of the grid of
+  forms — a name on the TYPE and names on the FIELDS are two independent axes,
+  and the combination "no type, fields named" was missing until now. The point
+  shows on multi-value returns: `-> (str, int)` makes the caller remember the
+  ORDER, `-> (file str, line int)` names the meaning in place and survives a
+  reordering. Identity is STRUCTURAL and includes the component names:
+  `(file str, line int)` and `(path str, line int)` are different types. Access
+  by name (`l.file`), destructuring by the curly form, positional construction —
+  all by the general rules of forms. **The form did NOT exist in the language
+  before this block** (measured: `expected ')', got identifier`), so the block
+  introduces it rather than describes it.
+  **A detail brought into line 2026-09-04 (owner decision).** This page was
+  right all along; it was D102 itself that diverged: its rule 2 said "a
+  parameter without a default binds positionally **or** by name", and on that
+  basis the D215 amendment declared itself in conflict with D102 while agreeing
+  with it. D102 now says what this page says: **required — positional, defaulted
+  — by name**. The same decision removed the example `ro Point(x, y) = p`
+  (`03-syntax.md`): destructuring does not name the type — `(x, y)` for the
+  positional form, `{ x, y }` for the named one, exactly as the line above says.
+- **Three levels of ownership strictness, two of them available on a type**
+  ([D447](decisions/02-types.md#d447), 2026-08-05): an ordinary type copies
+  freely; `type X consume` — must-consume, has to be used up on every exit path
+  ([D133](decisions/02-types.md#d133)); `#no_copy type X` — **affine: cannot be
+  bound to a second name, but may be forgotten**. The third form covers the case
+  where an obligation to consume is meaningless — a value holding a counter
+  allocates nothing and has nothing to close, yet must not be copied, because
+  every copy would become a separate counter. The trait is **declared, not
+  inferred**: a structural check would see a plain number inside and conclude
+  "safe to copy" — the semantics contradict the field layout.
 - `Display`/`@display(mut w Write)` — string representation for
   `${expr}` interpolation and `str.from(v)` on a user type
   ([D73](decisions/08-runtime.md#d73)).
@@ -1628,7 +1666,10 @@ a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
 listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
 type-set as a member). **One set does not mix signed/unsigned integers**
 (`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInts`/`UnsignedInts`
-in the prelude (`std/prelude/protocols.nv`) are split along this axis.
+in the prelude (`std/prelude/protocols.nv`) are split along this axis; `Ints` is their
+full union — the one mix D430 R1 allows, because D310 forbids a *partial* signed/unsigned
+mix and per-member monomorphisation resolves `T.MAX`/`T.MIN` per instance — and `Floats`
+is `f32 | f64` (added 2026-09-04). Four sets in all.
 
 Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
