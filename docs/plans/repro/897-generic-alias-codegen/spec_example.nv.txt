@@ -1,0 +1,9 @@
+// Registry 897, carrier 1: the spec's own example `type StringMap[V] alias HashMap[str, V]` (02-types.md:224). Checker ok; C has no `Nova_StringMap____nova_int`.
+module spec_example
+
+type StringMap[V] alias HashMap[str, V]
+fn main() Io -> () {
+    mut m = StringMap[int].new()
+    m.insert("a", 1)
+    println(m.len())
+}

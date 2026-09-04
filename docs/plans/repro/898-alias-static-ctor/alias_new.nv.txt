@@ -1,0 +1,9 @@
+// Registry 898, carrier 1: `Words.new()` then a method — codegen has no type for the value, single-key fallback lands on `StringBuilder`.
+module alias_new
+
+type Words alias Vec[str]
+fn main() Io -> () {
+    mut n = Words.new()
+    n.push("x")
+    println(n.len())
+}

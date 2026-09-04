@@ -1,0 +1,5 @@
+// Registry 896, CONTROL: the same blanket method, called directly with no protocol in sight — the checker finds it.
+module dispatch
+
+fn[T SignedInts] T @ordinal() -> int => @ as int
+fn main() Io -> () => println((7 as i32).ordinal())

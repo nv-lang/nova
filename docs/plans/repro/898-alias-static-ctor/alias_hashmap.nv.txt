@@ -1,0 +1,9 @@
+// Registry 898, carrier 2: same shape over `HashMap[str, int]` — `.insert` lands on `StringBuilder` too, so it is not a `Vec` special case.
+module alias_hashmap
+
+type Cfg alias HashMap[str, int]
+fn main() Io -> () {
+    mut c = Cfg.new()
+    c.insert("a", 1)
+    println(c.len())
+}

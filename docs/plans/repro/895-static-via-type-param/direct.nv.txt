@@ -1,0 +1,14 @@
+// Registry 895, CONTROL: the same static method called on the concrete newtype, no type parameter — builds and prints 42.
+module direct
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+type FnRow int
+fn FnRow @ordinal() -> int => @ as int
+fn FnRow.from_ordinal(i int) -> FnRow => i as FnRow
+fn main() Io -> () {
+    ro r = FnRow.from_ordinal(41)
+    println(r.ordinal() + 1)
+}

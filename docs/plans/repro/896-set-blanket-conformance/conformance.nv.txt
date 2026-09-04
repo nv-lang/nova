@@ -1,0 +1,11 @@
+// Registry 896, the defect: both protocol methods are given by a `SignedInts` blanket; `int` still `does not satisfy Ordinal`.
+module conformance
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+fn[T SignedInts] T @ordinal() -> int => @ as int
+fn[T SignedInts] T.from_ordinal(i int) -> T => i as T
+fn take[I Ordinal](i I) -> int => i.ordinal()
+fn main() Io -> () => println(take(7))

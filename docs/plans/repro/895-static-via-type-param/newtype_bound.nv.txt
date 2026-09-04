@@ -1,0 +1,15 @@
+// Registry 895, carrier 1: `I.from_ordinal(n)` with `I = FnRow` (newtype over int) — codegen resolves the static against the representation `int`, not the newtype.
+module newtype_bound
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+type FnRow int
+fn FnRow @ordinal() -> int => @ as int
+fn FnRow.from_ordinal(i int) -> FnRow => i as FnRow
+fn mk[I Ordinal](n int) -> I => I.from_ordinal(n)
+fn main() Io -> () {
+    ro r = mk[FnRow](41)
+    println(r.ordinal() + 1)
+}

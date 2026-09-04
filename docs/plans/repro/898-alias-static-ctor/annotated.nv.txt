@@ -1,0 +1,9 @@
+// Registry 898, CONTROL 1: the alias as an annotation, value built through the target's name — builds, prints 1.
+module annotated
+
+type Words alias Vec[str]
+fn main() Io -> () {
+    mut n Words = Vec[str].new()
+    n.push("x")
+    println(n.len())
+}

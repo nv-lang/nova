@@ -1,0 +1,23 @@
+// Registry 628, second carrier, WRITE: `t[0] = v` with `mut @index(i I, v T)` — `const nova_str` assigned to the struct.
+module write
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+type FnRow int
+fn FnRow @ordinal() -> int => @ as int
+fn FnRow.from_ordinal(i int) -> FnRow => i as FnRow
+fn int @ordinal() -> int => @
+fn int.from_ordinal(i int) -> int => i
+type Table[I Ordinal, T] priv { raw Vec[T] }
+fn Table[I Ordinal, T].new() -> Table[I, T] => { raw: Vec[T].new() }
+fn Table[I Ordinal, T] @index(i I) -> T => @raw[i.ordinal()]
+fn Table[I Ordinal, T] mut @index(i I, v T) -> () { @raw[i.ordinal()] = v }
+fn Table[I Ordinal, T] mut @push(v T) -> () { @raw.push(v) }
+fn main() Io -> () {
+    mut t = Table[int, str].new()
+    t.push("a")
+    t[0] = "z"
+    println(t[0])
+}
