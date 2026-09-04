@@ -1,0 +1,5 @@
+export type Outcome[T] enum Finished(T) | Aborted
+export fn outcome() -> int {
+    return 1
+}
+export extern "nova" fn park_me() -> ()

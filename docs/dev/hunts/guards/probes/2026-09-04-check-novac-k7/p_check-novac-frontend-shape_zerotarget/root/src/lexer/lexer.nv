@@ -1,0 +1,4 @@
+module novac.lexer
+
+export fn lex(src str) -> Result[TokenStream, LexError] {
+}

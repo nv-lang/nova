@@ -1,0 +1,6 @@
+fn c_prim(ord int) -> str {
+    return "nova_int"
+}
+fn c_fn(name str) -> str {
+    return "novac_fn_${name}"
+}

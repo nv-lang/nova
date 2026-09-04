@@ -1,0 +1,7 @@
+module a
+
+fn f(args []ParamDef, at int, fd FnDef) -> bool {
+    if 0 <= args[at].type_id { return true }
+    if fd.ret_id > -1 { return true }
+    false
+}

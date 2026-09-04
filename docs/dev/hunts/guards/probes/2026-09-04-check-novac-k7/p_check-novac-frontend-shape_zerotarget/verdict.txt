@@ -1,0 +1,2 @@
+rc=0
+check-novac-frontend-shape ok: файлов 1, экспортов fn 1, '-> Result[' во фронтенде: 0

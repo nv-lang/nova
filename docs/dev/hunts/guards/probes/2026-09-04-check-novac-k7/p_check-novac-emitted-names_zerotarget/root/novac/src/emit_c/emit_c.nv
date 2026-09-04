@@ -1,0 +1,3 @@
+fn emit_head(b StringBuilder) -> () {
+    @b.append("NOVA_UNIT")
+}

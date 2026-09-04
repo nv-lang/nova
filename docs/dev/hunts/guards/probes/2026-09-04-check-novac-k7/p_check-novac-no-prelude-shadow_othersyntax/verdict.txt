@@ -1,0 +1,2 @@
+rc=0
+check-novac-no-prelude-shadow ok: имён прелюдии: 2, файлов novac/src: 1, теней: 0

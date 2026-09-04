@@ -1,0 +1,6 @@
+module novac.names
+
+/// A table with no namespace at all.
+export type FlatTable {
+    map HashMap[str, int] /// the NamespaceId key component is nowhere: this table has none
+}

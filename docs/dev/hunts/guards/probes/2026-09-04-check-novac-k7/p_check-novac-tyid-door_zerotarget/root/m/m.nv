@@ -1,0 +1,6 @@
+module a
+
+fn f(args []ParamDef, at int, fd FnDef) -> bool {
+    if args[at].tyid >= 0 && fd.rettype >= 0 { return true }
+    false
+}

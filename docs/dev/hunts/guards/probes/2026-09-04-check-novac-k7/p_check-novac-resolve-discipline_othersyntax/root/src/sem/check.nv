@@ -1,0 +1,14 @@
+/// Resolve through the table door; a miss is ice, not an int.
+fn type_of_name(t NameTable, n NameId) -> TyId {
+    ro id = t.lookup(n)
+    if !is_ty(id) { return ice("unknown name after a clean check") }
+    return decls.type_of(id)
+}
+fn find_decl(d Decls, name str) -> DeclId {
+    for x in d.items { if name == x.text { return x.id } }
+    return no_decl()
+}
+fn find_field(d Decls, ident str) -> DeclId {
+    for x in d.items { if x.text == ident { return x.id } }
+    return no_decl()
+}

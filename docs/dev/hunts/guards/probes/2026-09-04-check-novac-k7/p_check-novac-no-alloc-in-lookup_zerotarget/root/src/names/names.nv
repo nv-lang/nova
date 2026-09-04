@@ -1,0 +1,5 @@
+export fn NameRegistry @at(owner int, name str) -> int {
+    ro key = "${owner}.${name}"
+    ro seen = []int.of(1, 2, 3)
+    return @map.get(key) + seen[0]
+}
