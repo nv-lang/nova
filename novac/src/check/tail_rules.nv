@@ -16,7 +16,7 @@
 module novac.check
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit}
 
 /// Does this statement END the function on every path?
@@ -158,4 +158,31 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
     }
 }
 
-
+/// The BODY block of this fn when it declares a return value, else `no_node()`:
+/// the one block whose tail call is a returned value. Asked by BOTH phases --
+/// the subset walk marks it for the statement rule, and the typing walk marks
+/// it for its own tail handling -- so the answer lives in one door. NOT
+/// exported: both phases are this module, and nobody else has the question.
+///
+/// Moved here from rules.nv on 2026-09-04, when that file crossed a thousand
+/// lines: the OTHER half of this question -- does the declaration promise a
+/// value at all -- has always lived in this file, and the two halves belong
+/// together.
+fn value_body_of(fk []Node) -> NodeId {
+    mut declares = false
+    for c in fk {
+        // Only the RETURN TYPE answers this; the rest of the declaration is
+        // the body search below. Written as an `else` holding a comment until
+        // 2026-09-04, when P21 called that else "work, not a refusal" -- and
+        // it was right: what had kept it quiet was a coincidence, a `@refuse`
+        // of the NEXT function standing inside the guard's twelve-line window.
+        // A rule that holds by coincidence is not held.
+        if c.kind_of() != NodeKind.RetType { continue }
+        declares = declares_a_value(branch_children(c))
+    }
+    if !declares { return no_node() }
+    for c in fk {
+        if c.kind_of() == NodeKind.Block { return c.id_of() }
+    }
+    no_node()
+}

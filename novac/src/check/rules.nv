@@ -863,26 +863,7 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
 }
 
 
-/// The BODY block of this fn when it declares a return value, else `no_node()`:
-/// the one block whose tail call is a returned value. Asked by BOTH phases --
-/// the subset walk marks it for the statement rule, and the typing walk marks
-/// it for its own tail handling -- so the answer lives in one door. NOT
-/// exported: both phases are this module, and nobody else has the question.
-fn value_body_of(fk []Node) -> NodeId {
-    mut declares = false
-    for c in fk {
-        if c.kind_of() == NodeKind.RetType {
-            declares = declares_a_value(branch_children(c))
-        } else {
-            // Not the return type: the body search below handles the rest.
-        }
-    }
-    if !declares { return no_node() }
-    for c in fk {
-        if c.kind_of() == NodeKind.Block { return c.id_of() }
-    }
-    no_node()
-}
+
 
 /// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
 /// judged against the ONE subset table. An unknown method is an honest
@@ -899,6 +880,14 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // the name's existence is judged; the exact pair (receiver
             // type, name) is finding C9 of plan 274.3, wave 3.
             if @res.has_name(t.text) { return }
+            // A VARIANT of a declared sum wears the method-call shape when it
+            // carries a payload (`Sum.On(3)`). It is a construction, not a
+            // method, and the callable index has never heard of it -- asking
+            // that index was what made this the second of the two refusals the
+            // spelling collected (2026-09-04, wave V3-4b). The typing walk owns
+            // the decision; this judge only has to stop claiming the name is a
+            // missing method.
+            if @is_known_variant(t.text) { return }
             // The parenthetical "(or the name is overloaded)" died with E2-b3
             // M3: `has_name` answers existence alone, so an overloaded name
             // never reaches this refusal -- the tail described a case this

@@ -413,6 +413,23 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The ROW the checker decided on, not a name rebuilt from the receiver's
         // type: after the checker, nobody infers.
         ro cr = @out.callee_of(e.id_of())
+        // `Sum.Variant(x)` WEARS THIS SHAPE and is a CONSTRUCTION, not a call:
+        // the checker recorded a variant row, and asking that record for a
+        // callable row ices by design ("a variant row is not a callable row").
+        // The same maker the unqualified `Variant(x)` prints, from the same
+        // recorded decision -- one form of the language, two spellings, one
+        // emission (2026-09-04, wave V3-4b).
+        match cr.target {
+            CalleeVariant(v) => {
+                @body.append("${c_maker(@ctx, v)}(")
+                @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr))
+                @body.append(")")
+                return
+            }
+            CalleeFn(_) | CalleeCtor(_) => {
+                // An ordinary method call: the row below is the decision.
+            }
+        }
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
         // carries an empty one, so there is no branch here to get wrong.

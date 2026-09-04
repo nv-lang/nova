@@ -61,14 +61,75 @@ fn Checker mut @const_type_of(name str) -> TyId {
     type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
-/// `Sum.Variant` as a VALUE (the variant-value wave): a head that names a
-/// TYPE followed by the dot and one of ITS variants is the variant's value,
-/// not a field read -- and the head must not go through the name walk (a
-/// type name is no bound value). Answers true when THIS node was decided:
-/// recorded with the same CalleeVariant row a `C(7)` call writes, or
-/// refused (a payload-carrying variant, a non-variant after the type's
-/// dot). Answers false when the shape is an ordinary field access.
-fn Checker mut @judge_type_head_variant(e Node, kids []Node) -> bool {
+/// The payload half of the door above: `Sum.Variant(x)`, and the refusal a
+/// payload-carrying variant earns when it is written with no arguments at all.
+///
+/// The arguments are walked FIRST, by the rule every call in this file follows:
+/// the key of a construction is its arguments, and a refusal among them makes
+/// the decision untrustworthy. The binding is the IDENTITY, exactly as the
+/// unqualified `Variant(x)` records it -- a variant's payload is positional by
+/// construction, with no names to bind by and no defaults to omit.
+fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow VariantRow, arg_from int) -> () {
+    if arg_from < 0 {
+        // `Sum.Variant` with a payload and no argument list: the same refusal
+        // this door has always given, now in its own branch.
+        @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+        return
+    }
+    ro before = @out.len()
+    mut i = 0
+    for c in kids {
+        if i >= arg_from && is_expr_kind(c.kind_of()) {
+            @type_expr(c)
+        } else {
+            // The head, the dot, the variant's name and the punctuation: no
+            // expression stands there, and the cursor still has to advance.
+        }
+        i += 1
+    }
+    if @out.len() > before {
+        // An argument was refused: the construction's type would be built over
+        // a value nobody trusts, and the walk has already spoken.
+        return
+    }
+    ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+    @record(e, vd.sum_id)
+    @chan.record_callee(e.id_of(),
+        CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(arg_count(kids, arg_from)))
+}
+
+/// Is this name a VARIANT of some declared sum? Asked by the method judge
+/// above, which must not call a construction a missing method. The definition
+/// registry answers -- the same `def_of` every other variant question uses, so
+/// there is no second table to disagree with.
+fn Checker @is_known_variant(name str) -> bool {
+    match @ctx.defs.def_of(name) {
+        None => false
+        Some(d) => match d.target {
+            DefVariant(_) => true
+            DefType(_) | DefFn(_) | DefConst(_) => false
+        }
+    }
+}
+
+/// `Sum.Variant` as a VALUE: a head that names a TYPE followed by the dot and
+/// one of ITS variants is the variant's value, not a field read -- and the head
+/// must not go through the name walk (a type name is no bound value). Answers
+/// true when THIS node was decided: recorded with the same CalleeVariant row a
+/// `C(7)` call writes, or refused (a non-variant after the type's dot, or a
+/// payload-carrying variant written with no arguments). Answers false when the
+/// shape is an ordinary field access.
+///
+/// `arg_from` is what makes ONE door serve BOTH spellings (2026-09-04, wave
+/// V3-4b): `-1` for `Sum.Variant`, where the tree has no argument list, and the
+/// index the arguments start at for `Sum.Variant(x)`, which the parser reads as
+/// a METHOD CALL. Before this the second spelling reached no door at all: the
+/// method judge asked the CALLABLE index about the variant's name, found
+/// nothing and refused with "no such method", while the very same construction
+/// written `Variant(x)` compiled byte-for-byte against the oracle. One form of
+/// the language, two spellings, one door -- the second door would have been the
+/// copy this compiler exists to avoid.
+fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bool {
     if kids[0].kind_of() != NodeKind.Name {
         // A computed head (a call, a chain): an ordinary field access.
         return false
@@ -93,12 +154,12 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node) -> bool {
                     DefVariant(vrow) => {
                         ro vd = @ctx.variant_rows[raw_vrow(vrow)]
                         if vd.sum_id == head_t {
-                            if vd.payload_cnt == 0 {
+                            if vd.payload_cnt == 0 && arg_from < 0 {
                                 @record(e, vd.sum_id)
                                 @chan.record_callee(e.id_of(),
                                     CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
                             } else {
-                                @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+                                @judge_qualified_payload(e, kids, vt, vrow, arg_from)
                             }
                             return true
                         }
@@ -380,7 +441,7 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         // SILENT-OK: the head judge DECIDED for this node -- recorded the
         // variant's value or refused -- and the field walk must not run twice.
-        if @judge_type_head_variant(e, kids) { return }
+        if @judge_type_head_variant(e, kids, -1) { return }
         ro before = @out.len()
         @type_expr(kids[0])
         // The mark, not the file's count: a refusal in an EARLIER declaration
@@ -445,6 +506,18 @@ fn Checker mut @type_expr(e Node) -> () {
         if kids.len() < 3 {
             @report_first_leaf_of(kids, "outside the subset: a method call needs a name after the dot")
             return
+        }
+        // `Sum.Variant(x)` WEARS THIS SHAPE and is not a method call. Asked
+        // before the receiver is walked, because a type name is no bound value
+        // and the name walk would refuse it as unknown -- the first of the two
+        // refusals this spelling used to collect.
+        if @judge_type_head_variant(e, kids, 3) {
+            // SILENT-OK: the door DECIDED -- it recorded the construction and
+            // its type, or refused the shape. Nothing is left for the method
+            // path to say about this node.
+            return
+        } else {
+            // Not a variant construction: an ordinary method call, judged below.
         }
         // ARGUMENTS FIRST -- the free-call rule of 2026-08-21, arriving here
         // with the typed method key (E2-b3 M1). The key of a call IS its
