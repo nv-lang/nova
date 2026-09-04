@@ -70,6 +70,7 @@ export type NamespaceId enum
     | NsLocals
     | NsProtocols /// protocol names: a CONTRACT is not a type, so it cannot share NsDefs
     | NsInterop /// C identifiers the linked shell carries: not names of the LANGUAGE, so no other space may hold them
+    | NsStrLits /// TEXTS of string literals, keyed to their slot in the emitted pool: the one place where a string IS the identity, because two literals spelled the same ARE the same constant
 
 /// The ONE str -> id door: O(1) map per namespace; every other novac table
 /// keys by integer id (linear name scans are guard-red).

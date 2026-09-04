@@ -274,8 +274,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // A string literal in value position (binding init, method
             // argument): registered like a println literal, referenced by
             // its C name — the oracle emits the same shape.
-            ro idx = @lits.len()
-            @lits.push(leaf_text(t))
+            ro idx = @pool.slot(leaf_text(t))
             @body.append("_novac_strlit_${idx}")
         } else {
             ice("emit_c: literal kind outside the subset")
@@ -693,8 +692,7 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
                 @body.append("    nova_print_str(${itmp});\n")
                 continue
             }
-            ro idx = @lits.len()
-            @lits.push(leaf_text(t))
+            ro idx = @pool.slot(leaf_text(t))
             @body.append("    nova_print_str(_novac_strlit_${idx});\n")
         } else if is_expr_kind(ck) {
             // Dispatch on the registry — the oracle prints each argument

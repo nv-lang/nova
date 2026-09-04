@@ -16,6 +16,14 @@
 #   чисто: глушишь проход 1 -- краснеет случай указателя, глушишь порядок --
 #   случай по значению, и каждый только свой.
 #
+#   2026-09-04 (строки и символы, работы владельца), 55/47 -> 56/48: носитель
+#     `examples/basics/char_non_ascii.nv` — char-литерал с НЕ-ASCII кодовой
+#     точкой рядом с ASCII-контролем. До правки такой файл ицал
+#     («str: slice splits a UTF-8 codepoint»), а оракул его собирал: судья
+#     char-литерала спрашивал `body[..1]` — срез СТРОКИ по байту, который для
+#     двухбайтовой буквы падает в середину символа. Реестр №892, класс «шаг по
+#     БАЙТАМ там, где нужен по СИМВОЛАМ», — и это первый его носитель.
+#
 #   2026-09-04 (274.6 В3-4б шаг 1), 54/46 -> 55/47: носитель
 #     `examples/basics/variant_qualified_ctor.nv` — вариант объявленной суммы
 #     во ВСЕХ трёх написаниях: `Sig.Off` (квалифицированное, без нагрузки),
@@ -323,5 +331,5 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 55
-behavior-match 47
+contract-match 56
+behavior-match 48

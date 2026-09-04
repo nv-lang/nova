@@ -24,6 +24,7 @@
 module novac.emit_c
 
 import ../lex.{is_ident_start, is_ident_byte, is_space}
+import ../sem.{LitPool}
 import ../sem.{unescape_dollar}
 import ../sem.{InteropTable}
 import ../diag.{ice}
@@ -95,7 +96,7 @@ type Emitter consume {
     src_name str /// The compiled file's base name, for contract panics (#874); "" on the test path.
     ctx Ctx /// type registry and def table — read only, built by sem
     out CheckOut /// THE checker's channel: every type question is a READ here, never a re-derivation (E2-b1)
-    lits []str /// string literals in registration order; the index is the C name suffix
+    mut pool LitPool /// string constants: each distinct text once, the slot is the C name suffix
     consume body StringBuilder /// the code slot of the shell, built in a single pass
     reach Reach /// WHICH callables are reached from a root (mono, E2-b2): the emitter
         /// asks, it does not decide

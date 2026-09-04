@@ -1,0 +1,6 @@
+module cyr_min
+
+fn main() {
+    ro c = 'у'
+    println(1)
+}

@@ -97,7 +97,7 @@ fn no_subst() -> []TyId => []TyId.new()
 /// the C backend evaluating arguments RIGHT-TO-LEFT despite the spec calling
 /// left-to-right normative (reported to the compiler window). One move, one
 /// result: no aliasing question and no order to depend on.
-fn Emitter consume @into_parts() -> ([]str, str) => (@lits, @body.into_str())
+fn Emitter consume @into_parts() -> ([]str, str) => (@pool.texts, @body.into_str())
 
 /// One instance of a generic callable, already decided and already typed:
 /// what mono chose, the body to walk, and the channel that body's types live
@@ -133,9 +133,16 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     for _ in 0..out.types.len() {
         lt.push("")
     }
-    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lits: []str.new(),
+    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0,
                           lit_tmp: lt, body: StringBuilder.new(),
-                          fres: FieldIndex.build(ctx.fields) }
+                          fres: FieldIndex.build(ctx.fields),
+                          // NAMED explicitly, and the reason is registry #901:
+                          // the ORACLE accepts a constructor that omits a field
+                          // and zero-fills it in silence, so a field forgotten
+                          // here would not be a compile error -- it would be an
+                          // empty pool found at runtime or never. Measured on
+                          // this very field the day the pool was added.
+                          pool: LitPool.new() }
     e.emit_type_decls()
     e.emit_instance_protos(insts)
     e.emit_file(file)

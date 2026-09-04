@@ -219,14 +219,25 @@ fn Checker mut @judge_char_lit(e Node) -> () {
     }
     ro txt = leaf_text(t)
     ro body = txt[1..txt.byte_len() - 1]
-    if body.byte_len() >= 2 && body[..1] == "\\" {
-        if body[1..2] == "u" {
+    // BYTES, and not one-byte STRING SLICES -- registry #892, carrier found
+    // 2026-09-04. This read used to ask `body[..1] == "\\"`, slicing a `str` at
+    // byte one; for a two-byte letter the length test passes and the slice
+    // lands INSIDE the character, so `ro c = <a Cyrillic letter>` died with
+    // "str: slice splits a UTF-8 codepoint" while the oracle compiled it.
+    // The same judge already did it right three lines down, through `.bytes()`
+    // -- both ways lived in one function and only the second half used the
+    // sound one.
+    ro bb = body.bytes()
+    if bb.len() >= 2 && bb[0] == BACKSLASH {
+        ro esc = bb[1]
+        if esc == ('u' as u8) {
             @report_first_leaf_of(kids, CHAR_UNICODE_MSG)
             return
         }
-        ro legal = body[1..2] == "n" || body[1..2] == "t" || body[1..2] == "r" ||
-                   body[1..2] == "0" || body[1..2] == "\\" || body[1..2] == "'" || body[1..2] == "\""
-        if body.byte_len() != 2 || !legal {
+        ro legal = esc == LOWER_N || esc == LOWER_T || esc == LOWER_R ||
+                   esc == ('0' as u8) || esc == BACKSLASH ||
+                   esc == ('\'' as u8) || esc == QUOTE
+        if bb.len() != 2 || !legal {
             @report_first_leaf_of(kids, if legal { CHAR_WIDTH_MSG } else { CHAR_ESCAPE_MSG })
         } else {
             // One defined escape: the mangle door spells its codepoint.
@@ -235,8 +246,8 @@ fn Checker mut @judge_char_lit(e Node) -> () {
     }
     // A bare body is ONE codepoint exactly when its byte length equals the
     // length its FIRST byte announces -- a second character, a stray
-    // continuation byte, or a truncated sequence all disagree.
-    ro bb = body.bytes()
+    // continuation byte, or a truncated sequence all disagree. The bytes were
+    // taken once above; asking twice would be the second door in miniature.
     ro head = bb[0]
     ro want = if head < 128 { 1 }
               else if head >= 240 { 4 }
