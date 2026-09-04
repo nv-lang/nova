@@ -2158,6 +2158,52 @@ fn check_module_impl(
     env.expr_types = type_check_ctx.expr_types_buf.take();
 
     perf.mark("tail passes (after fiber-safety .. end of check_module_impl)");
+
+    // Registry 822: НАЗВАТЬ СВОЙ ДЕФИЦИТ, а не винить исходник пользователя.
+    //
+    // Без этого `nova check` на дословном hello-world из нашего же quickstart,
+    // запущенный там, где стандартная библиотека не находится, отвечал
+    // `undefined identifier `println`` — при том что `println` существует
+    // (`std/src/prelude/runtime.nv`). Пользователь идёт искать ошибку в файле,
+    // где её нет. Соседний резолвер импортов на ТОТ ЖЕ дефицит отвечает громко
+    // (`cannot find module ... searched: <пути>`): один дефицит, две
+    // противоположные реакции.
+    //
+    // ПОЧЕМУ ЗДЕСЬ, А НЕ РАНЬШЕ. Две предыдущие редакции ставили ОТКАЗ выше по
+    // течению, и обе были неверны: в `compute_prelude_imports` он сломал шесть
+    // тестов, заявляющих, что резолв импортов работает без std (они передают
+    // каталог, буквально названный `no_stdlib`), а на границе `check_pipeline`
+    // — самотест, компилирующий программу, которой прелюд НЕ НУЖЕН. Дефицит
+    // становится ОШИБКОЙ ровно тогда, когда имя не разрешилось, и ни секундой
+    // раньше; здесь оба факта известны одновременно.
+    //
+    // ПОЧЕМУ ОДНО МЕСТО, А НЕ 43. Инвентарь диагностик класса «имя не
+    // разрешилось» дал 43 места в десяти файлах. Дописывать причину в каждое —
+    // гарантировать, что сорок четвёртое её не получит. Здесь спрашивается
+    // РЕЗУЛЬТАТ, а не каждый источник.
+    if let Some(deficit) = &module.prelude_missing {
+        let name_unresolved = errors.iter().any(|d| {
+            let m = &d.message;
+            m.starts_with("undefined identifier")
+                || m.starts_with("undefined module / name")
+                || m.starts_with("undefined name")
+        });
+        if name_unresolved {
+            errors.insert(
+                0,
+                Diagnostic::new(
+                    format!(
+                        "{}\n  \
+                         the errors below are consequences: every name the prelude \
+                         provides is unresolved without it",
+                        deficit
+                    ),
+                    module.span,
+                ),
+            );
+        }
+    }
+
     // Return env + errors unconditionally; Result-returning public wrappers
     // convert (Ok/Err), while the lenient IDE entry point keeps the env.
     (env, errors)
@@ -55495,6 +55541,7 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            prelude_missing: None,
         }
     }
 
@@ -55776,6 +55823,7 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            prelude_missing: None,
         };
         let arena = FnDeclArena::new();
         let sig = crate::sig_registry::SigRegistry::build_base(&m);

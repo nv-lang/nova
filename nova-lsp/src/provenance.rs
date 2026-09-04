@@ -265,6 +265,7 @@ fn empty_module() -> Module {
         // Plan 181 (D347): empty until `alpha_rename` runs — no rebind here.
         rebind_shadows: Default::default(),
         consume_reuse_spans: std::collections::HashSet::new(),
+        prelude_missing: None,
     }
 }
 
