@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Which OVERLOAD a receiver-mode pair picks, asked through the DOTTED form.
+module basics.p_mode_overload_dot
+
+type Counter { mut n int }
+
+fn Counter @tag() -> int => 1
+
+fn Counter mut @tag() -> int => 2
+
+fn main() {
+    mut c = Counter { n: 0 }
+    println("tag = ${c.tag()}")
+}

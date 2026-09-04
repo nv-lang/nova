@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// INVERSE PROBE for the mode-overload finding, one lever removed: the same
+// `ro`/`mut` overload pair, but the DOTTED receiver is a `ro` binding.
+module basics.p_ro_overload_dot
+
+type Counter { mut n int }
+
+fn Counter @tag() -> int => 1
+
+fn Counter mut @tag() -> int => 2
+
+fn main() {
+    ro c = Counter { n: 0 }
+    println("tag = ${c.tag()}")
+}

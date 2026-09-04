@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// The SAME `mut` parameter filled by the receiver written as bare `@`.
+module basics.p_argpos_at
+
+type Counter { mut n int }
+
+fn bump_it(mut c Counter) -> () {
+    c.n = c.n + 1
+}
+
+fn Counter mut @via() -> () {
+    bump_it(@)
+}
+
+fn main() {
+    mut c = Counter { n: 0 }
+    c.via()
+    println("n = ${c.n}")
+}
