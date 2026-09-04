@@ -73,10 +73,33 @@ if [ -n "$BADMARK" ]; then
 fi
 
 # хеш содержимого пробы: sha1sum есть в msys/coreutils, cksum — везде
-hash_of() {
-    if command -v sha1sum >/dev/null 2>&1; then sha1sum < "$1" | cut -d' ' -f1
-    else cksum < "$1" | tr -d ' '; fi
+# ОДИН ПРОЦЕСС НА КАТАЛОГ, а не на файл (Г2 «процесс на элемент запрещён»).
+# Было: `sha1sum` на каждую пробу — 274 процесса за прогон, и страж шёл 74с,
+# делая ярус loop дороже потолка (замер 2026-09-04). Стало: один вызов на
+# каталог проб. Печатает по строке-хешу на непустой файл, порядок не важен —
+# вызывающий считает РАЗЛИЧНЫЕ через `sort -u`.
+hashes_of_dir() {
+    if command -v sha1sum >/dev/null 2>&1; then
+        find "$1" -type f -size +0c -exec sha1sum {} + 2>/dev/null | awk '{print $1}'
+    else
+        find "$1" -type f -size +0c -exec cksum {} + 2>/dev/null | awk '{print $1"-"$2}'
+    fi
 }
+
+# ОДИН ПРОХОД ПО РЕЕСТРУ НА ВСЕ ТРИ ТРЕКА (было — по проходу на трек, то есть
+# три чтения файла в 3,4 МБ). Правило подсчёта не изменилось: строка-запись
+# реестра, метка НЕ в бэктиках (обёрнутая — цитата чужой записи).
+awk '
+    /^\| *[0-9]+ \|/ {
+        split("novac oracle guards", tr, " ")
+        for (i = 1; i <= 3; i++) {
+            line = $0
+            gsub("`НАЙДЕНО ОХОТНИКОМ [0-9-]+ \\(" tr[i] "\\)`", "", line)
+            if (line ~ ("НАЙДЕНО ОХОТНИКОМ [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] \\(" tr[i] "\\)")) n[tr[i]]++
+        }
+    }
+    END { split("novac oracle guards", tr, " "); for (i = 1; i <= 3; i++) print tr[i], n[tr[i]]+0 }
+' "$REG" > "$T/marks" 2>/dev/null
 
 SUMMARY=""
 for TRACK in novac oracle guards; do
@@ -89,13 +112,7 @@ for TRACK in novac oracle guards; do
 
     # числитель: СТРОКИ-ЗАПИСИ реестра «| N | … метка (трек)», где метка не
     # обёрнута в бэктики (обёрнутая — цитата соседней записи, не своя метка)
-    N_MARKS=$(awk -v track="$TRACK" '
-        /^\| *[0-9]+ \|/ {
-            line = $0
-            gsub("`НАЙДЕНО ОХОТНИКОМ [0-9-]+ \\(" track "\\)`", "", line)
-            if (line ~ ("НАЙДЕНО ОХОТНИКОМ [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] \\(" track "\\)")) n++
-        }
-        END { print n+0 }' "$REG" 2>/dev/null)
+    N_MARKS=$(awk -v t="$TRACK" '$1 == t { print $2 }' "$T/marks")
     N_MARKS=${N_MARKS:-0}
 
     N_FINDINGS=0
@@ -126,11 +143,12 @@ for TRACK in novac oracle guards; do
             echo "check-hunter-mark: FAIL — отчёт $TRACK/$base без каталога проб probes/$stem/ — отчёт без проб не свидетельство охоты" >&2
             rc=1
         else
-            : > "$T/hashes"
-            find "$pd" -type f -size +0c 2>/dev/null | sort | while IFS= read -r pf; do
-                hash_of "$pf" >> "$T/hashes"
-            done
+            hashes_of_dir "$pd" > "$T/hashes"
             NP=$(sort -u "$T/hashes" | grep -c . || true)
+            # Имена ПЕРВОГО уровня под probes/<стем>/, у которых есть хоть один
+            # непустой файл: именно это цитирует поле находки.
+            find "$pd" -type f -size +0c 2>/dev/null \
+                | sed "s|^$pd/||; s|/.*$||" | sort -u > "$T/probelist"
             NP=${NP:-0}
             if [ "$NP" -lt 3 ]; then
                 echo "check-hunter-mark: FAIL — в probes/$stem/ только $NP непустых РАЗЛИЧНЫХ проб(ы), нужно не меньше трёх — и пустой охоте тоже: покажи, что пробовал (пустые файлы и дубли не в счёт)" >&2
@@ -149,7 +167,10 @@ for TRACK in novac oracle guards; do
                         echo "check-hunter-mark: FAIL — находка $TRACK/$base:$ln цитирует «$cited»: проба называется простым именем внутри probes/$stem/, не путём" >&2
                         echo x >> "$T/bad" ;;
                     *)
-                        if [ -z "$(find "$pd/$cited" -type f -size +0c 2>/dev/null | head -1)" ]; then
+                        # СПИСОК НЕПУСТЫХ ПРОБ СНЯТ ОДИН РАЗ на отчёт (ниже, в
+                        # "$T/probelist"), а не `find`-ом на каждую находку: их
+                        # 87, то есть 87 процессов на ровном месте (Г2).
+                        if ! grep -qxF "$cited" "$T/probelist"; then
                             echo "check-hunter-mark: FAIL — находка $TRACK/$base:$ln цитирует пробу «$cited», которой нет в probes/$stem/ или она пуста" >&2
                             echo x >> "$T/bad"
                         fi ;;

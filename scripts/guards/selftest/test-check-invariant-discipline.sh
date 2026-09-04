@@ -9,8 +9,9 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-invariant-discipline.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
-bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
+CASES=0
+ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 echo "== селфтест check-invariant-discipline =="
 
@@ -103,7 +104,7 @@ fi
 rm -rf "$T"
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "селфтест check-invariant-discipline: 7/7 ok"
+    echo "селфтест check-invariant-discipline: $CASES/$CASES ok"
     exit 0
 fi
 echo "селфтест check-invariant-discipline: ЕСТЬ ПРОВАЛЫ" >&2
