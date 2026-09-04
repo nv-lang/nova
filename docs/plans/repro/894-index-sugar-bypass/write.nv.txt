@@ -1,0 +1,29 @@
+// Registry 894, DOOR 2 of four: the WRITE form `a[k] = v`.
+//
+// The read door (sugar.nv.txt) goes through f1_expr_inner's ExprKind::Index arm.
+// The write door goes somewhere else entirely -- check_target_readonly has its
+// OWN ExprKind::Index arm (types/mod.rs:25651) which checks ro/mut and pointer
+// writability and compares NEITHER the key nor the value against the declared
+// `mut @index(i FnRow, val str)` parameters.
+//
+// So this file asks a question the read probe cannot: is the write door open in
+// the same way, or does it happen to be closed by some other check on the path?
+module write
+
+type FnRow int
+type TyId int
+
+type Table priv { rows Vec[str] }
+fn Table.new() -> Table => { rows: Vec[str].of("a", "b") }
+
+fn Table @index(i FnRow) -> str => @rows[i as int]
+fn Table mut @index(i FnRow, val str) -> () {
+    @rows[i as int] = val
+}
+
+fn main() Io -> () {
+    mut t = Table.new()
+    ro k = 1 as TyId
+    t[k] = "z"
+    println(t[0 as FnRow])
+}
