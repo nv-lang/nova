@@ -11,7 +11,10 @@
 > model, the daily loop — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md)
 > (Russian). Project state, architecture, where to go next:
 > [docs/dev/read-project.md](docs/dev/read-project.md). The reasoning
-> behind every rule below, and what each of the 34 guards stops you doing:
+> behind every rule below, and what the guards stop you doing -- 99 of them are
+> named there file by file, out of 168 in `scripts/guards/` (counted 2026-09-04
+> as `check-*.{sh,py}`; not every guard needs its own page, which is why the two
+> numbers differ):
 > [docs/dev/rules-for-agents.md](docs/dev/rules-for-agents.md).
 
 ## Rules — what you may not do here
