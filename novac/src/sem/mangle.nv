@@ -746,28 +746,10 @@ const DOLLAR_BYTE u8 = 0x24     // $
 /// hunt (2026-09-02, its P1 contradiction) caught the pool claiming to be
 /// `the only place` while the prologue shipped the backslash through; one
 /// door ends that argument by construction.
-export fn unescape_dollar(s str) -> str {
-    ro b = s.bytes()
-    consume out = StringBuilder.new()
-    mut one = []u8.new()
-    one.push(0 as u8)
-    // A `while` and NOT `for`, on purpose: this cursor advances by ONE or by
-    // TWO (an escaped `$` consumes two bytes), so the step carries information
-    // and a range would lose it. The rule is "a cursor that always steps by one
-    // is a range" -- this one does not.
-    mut i = 0
-    while i < b.len() {
-        ro c = b[i]
-        ro next_is_dollar = i + 1 < b.len() && b[i + 1] == DOLLAR_BYTE
-        if c == BACKSLASH_BYTE && next_is_dollar {
-            one[0] = DOLLAR_BYTE
-            out.append(one)
-            i += 2
-        } else {
-            one[0] = c
-            out.append(one)
-            i += 1
-        }
-    }
-    out
-}
+export fn unescape_dollar(s str) -> str =>
+    // ONE CALL, not a cursor. The first version walked the bytes through a
+    // reusable one-byte buffer, and the owner asked the obvious question
+    // (2026-09-04): std already answers this. `@replace` takes every
+    // occurrence -- `@replacen` is the one that counts -- which is exactly
+    // the contract here: no `\$` may reach clang, not merely the first.
+    s.replace("\$", "$")

@@ -910,3 +910,58 @@ fn main() {
     }
     assert(hit)
 }
+
+test "destructuring: one door, both shapes, and `..` says the list is partial (V3-2, D411)" {
+    // D411 gives the language ONE pattern grammar, so novac has one door and
+    // the SHAPE picks the reading: round names components by position, brace
+    // names fields by name. Asserted on the C, because the refusal half and
+    // the emission half are different failures.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Point value {
+ x int
+ y int
+}
+fn main() -> () {
+ ro p = Point { x: 1, y: 2 }
+ ro { x, y } = p
+ println(x)
+ ro pair = (4, 5)
+ ro (m, n) = pair
+ println(m)
+}", std)
+    assert(d.len() == 0)
+    // By NAME the local reads the field; by POSITION it reads the mono
+    // struct's slot. Both spellings, one door.
+    assert(c.contains(" x = "))
+    assert(c.contains(".f0"))
+
+    // A PARTIAL list without `..` is refused, and the message NAMES the counts
+    // -- a reader must not have to go count the declaration's fields (D420).
+    ro (d2, _) = compile_to_c("type Point value {
+ x int
+ y int
+}
+fn main() -> () {
+ ro p = Point { x: 1, y: 2 }
+ ro { x } = p
+ println(x)
+}", std)
+    mut said = false
+    for g in d2 {
+        if g.message.contains("1 of 2") { said = true } else {}
+    }
+    assert(said)
+
+    // With `..` the same partial list is legal: the rule is about SAYING it,
+    // not about taking fewer fields.
+    ro (d3, _) = compile_to_c("type Point value {
+ x int
+ y int
+}
+fn main() -> () {
+ ro p = Point { x: 1, y: 2 }
+ ro { x, .. } = p
+ println(x)
+}", std)
+    assert(d3.len() == 0)
+}

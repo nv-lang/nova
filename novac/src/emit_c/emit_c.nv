@@ -134,7 +134,8 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
         lt.push("")
     }
     consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lits: []str.new(),
-                          lit_tmp: lt, body: StringBuilder.new() }
+                          lit_tmp: lt, body: StringBuilder.new(),
+                          fres: FieldIndex.build(ctx.fields) }
     e.emit_type_decls()
     e.emit_tuple_typedefs()
     e.emit_instance_protos(insts)
@@ -705,8 +706,8 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append("    (void)")
         @body.append(dropped)
         @body.append(";\n")
-    } else if k == NodeKind.TupleBind {
-        @emit_tuple_bind(st)
+    } else if k == NodeKind.DestructureBind {
+        @emit_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         @emit_if_let(st)
     } else {

@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_mir_build::thir::pattern` lowering of an irrefutable
+// `let` pattern -- the scrutinee goes into ONE temporary and every binding
+// reads out of it, which is exactly the shape C forces here too;
+// NOT taken: rustc's match-tree machinery for refutable patterns, because an
+// irrefutable binding has no arms to weigh and building one would be a
+// mechanism with no question to answer (K7).
+// Role: what a DESTRUCTURING BINDING becomes in C -- both shapes. `ro (a, b) =
+//   e` reads components by POSITION, `ro { x, y } = e` and `ro { x, .. } = e`
+//   read fields by NAME. One door, because the language has one pattern
+//   grammar; what differs is how a name finds its value, and that is two lines.
+// Used by: emit_c.nv -- the statement walk, on NodeKind.DestructureBind.
+// Guarded by: check-novac-differential.sh (corpus carrier
+//   destructure_record.nv -- both shapes, the `..` rule and the
+//   scrutinee-once property, byte-for-byte against the oracle),
+//   check-novac-second-door.py (this door and the checker ask ONE shape door
+//   in sem, not two copies) and the subset_test.nv holder.
+//
+// Split out of emit_tuple.nv on 2026-09-04, when the brace shape landed: the
+// door stopped being about tuples the moment it served records too, and the
+// file it sat in is about the D123 mono struct.
+
+module emit_c
+
+import ../sem.{Ctx, CheckOut, branch_children, leaf_kind, leaf_text}
+import ../sem.{c_type, is_value_record, brace_pattern}
+import ../types.{TyId}
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+
+/// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
+/// name becomes a plain C local read out of it.
+///
+/// ONCE is the whole contract, and it is the same one V3-1 proved for the
+/// constructor: `ro (a, b) = mk()` calls `mk` a single time, so a side effect
+/// in it prints once. A shape that re-read the scrutinee per name would be
+/// correct on pure values and silently wrong on effectful ones.
+///
+/// The two shapes differ in ONE question -- how a name finds its value. By
+/// POSITION it is the mono struct's `.fN`; by NAME it is the field itself,
+/// reached with `.` on an inline value and `->` on a GC pointer, exactly as
+/// every other field access is spelled.
+fn Emitter mut @emit_destructure_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[kids.len() - 1]
+    ro pt = @out.type_of(init.id_of())
+    ro tmp = match init.kind_of() {
+        TupleExpr => @emit_record_ctor(init, pt, true)
+        // Any other initializer is an ordinary expression of the pair's
+        // type (a call, a name): it prints into its own temporary.
+        _ => {
+            @hoist_array_lits(init)
+            ro u = "_novac_tmp_t${@fresh_uniq()}"
+            @body.append("    ${c_type(@ctx, pt)} ${u} = ")
+            @emit_expr(init)
+            @body.append(";\n")
+            u
+        }
+    }
+    ro by_name = brace_pattern(kids)
+    ro reach = if is_value_record(@ctx, pt) { "." } else { "->" }
+    mut i = 0
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // Keyword, braces, parens, commas, `..`: the pattern's trivia
+                // -- only the names become locals.
+                if leaf_kind(c) != TokenKind.Ident { continue } else {}
+                // THE SAME DOOR THE CHECKER ASKED, literally: `FieldIndex`
+                // built once and carried on the shell, the same call the
+                // binding judge makes. A leaf carries no channel identity in
+                // this tree, so the type cannot be recorded on it and the
+                // emitter has to ask again -- asking the SAME door is what
+                // keeps a second ask from becoming a second answer.
+                //
+                // The first version of this line called a scan of its own,
+                // written in sem; check-novac-resolve-discipline refused it
+                // (2026-09-04) and was right -- the comment above it already
+                // claimed this door while calling another one.
+                ro nt = if by_name {
+                    c_type(@ctx, @fres.field_type(@ctx.fields, pt, t.text))
+                } else {
+                    c_type(@ctx, @ctx.tys.arg(pt, i))
+                }
+                if by_name {
+                    @body.append("    ${nt} ${t.text} = ${tmp}${reach}${t.text};\n")
+                } else {
+                    @body.append("    ${nt} ${t.text} = ${tmp}.f${i};\n")
+                }
+                i += 1
+            }
+            Branch { .. } => {}
+        }
+    }
+}

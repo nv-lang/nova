@@ -74,39 +74,3 @@ fn Emitter mut @emit_tuple_typedefs() -> () {
         @body.append("#endif\n")
     }
 }
-
-/// A destructuring binding (B15 step 5): the pair lands in a temporary once,
-/// and each name is a plain C local initialized from its `.fN` -- the checker
-/// bound the names to the component types, this door only spells what was
-/// decided.
-fn Emitter mut @emit_tuple_bind(st Node) -> () {
-    ro kids = branch_children(st)
-    ro init = kids[kids.len() - 1]
-    ro pt = @out.type_of(init.id_of())
-    ro tmp = match init.kind_of() {
-        TupleExpr => @emit_record_ctor(init, pt, true)
-        // Any other initializer is an ordinary expression of the pair's
-        // type (a call, a name): it prints into its own temporary.
-        _ => {
-            @hoist_array_lits(init)
-            ro u = "_novac_tmp_t${@fresh_uniq()}"
-            @body.append("    ${c_type(@ctx, pt)} ${u} = ")
-            @emit_expr(init)
-            @body.append(";\n")
-            u
-        }
-    }
-    mut i = 0
-    for c in kids {
-        match c {
-            Leaf(t) => {
-                // Keyword, parens, commas: the pattern's trivia -- only the
-                // names become locals.
-                if leaf_kind(c) != TokenKind.Ident { continue }
-                @body.append("    ${c_type(@ctx, @ctx.tys.arg(pt, i))} ${t.text} = ${tmp}.f${i};\n")
-                i += 1
-            }
-            Branch { .. } => {}
-        }
-    }
-}

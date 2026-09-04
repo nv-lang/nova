@@ -1,0 +1,52 @@
+module basics.destructure_record
+
+// ONE pattern grammar, both shapes (D411). A round pattern reads components by
+// POSITION, a brace pattern reads fields by NAME, and `..` says out loud that
+// the pattern takes only some of them. Renaming (`{ x: a }`) is D411 too but
+// OUT of this wave by its own boundary -- one new door at a time.
+//
+// The scrutinee is evaluated ONCE, and that is the half a pure test cannot
+// see: `mk()` prints its marker, so a door that re-read the scrutinee per name
+// would print it twice and this carrier would say so.
+//
+// TWO types on purpose. A brace pattern binds a local named after the FIELD,
+// so two patterns over one type in one scope shadow each other -- and the
+// oracle emits invalid C for that (measured 2026-09-04, handed over). Putting
+// the cases in separate functions would have been the other way out, but a
+// statement call to a user function ices novac today, on the binary from
+// before this wave as well. The carrier is about destructuring, so it steps on
+// neither.
+
+type Point value {
+    x int
+    y int
+}
+
+type Box value {
+    w int
+    h int
+}
+
+fn mk() -> Point {
+    println(99)
+    ro p = Point { x: 1, y: 2 }
+    return p
+}
+
+fn main() -> () {
+    // WHOLE field list, and the scrutinee is a call: `99` prints once.
+    ro { x, y } = mk()
+    println(x)
+    println(y)
+
+    // PARTIAL list, said out loud with `..`.
+    ro b = Box { w: 7, h: 8 }
+    ro { w, .. } = b
+    println(w)
+
+    // The POSITIONAL shape, same door.
+    ro pair = (4, 5)
+    ro (m, n) = pair
+    println(m)
+    println(n)
+}

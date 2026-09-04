@@ -663,7 +663,38 @@ fn Cursor mut @stmt() -> Node {
             if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
             @push_expected(kids, TokenKind.Assign)
             kids.push(@expr())
-            return @node(NodeKind.TupleBind, kids)
+            return @node(NodeKind.DestructureBind, kids)
+        } else {
+            // Not the positional shape; the brace shape is read right below.
+        }
+        // THE BRACE SHAPE (D411): `ro { x, y } = e`, and `ro { x, .. } = e` when
+        // the pattern names only some of the fields. Read by the SAME branch
+        // family as the positional one and into the SAME node kind, because
+        // D411 gives the language one pattern grammar with "zero special
+        // cases" -- two node kinds here would be the second door before the
+        // checker even saw the form. What differs is the opening leaf, and the
+        // tree keeps it, so the checker can ask which shape was written.
+        //
+        // `..` is a REST marker, not an operator: it stands last and says "the
+        // pattern names fewer fields on purpose". Without it a partial list is
+        // refused, and that refusal is D411's own, not ours.
+        if @peek() == TokenKind.LBrace {
+            kids.push(@take())
+            @push_expected(kids, TokenKind.Ident)
+            while @peek() == TokenKind.Comma {
+                kids.push(@take())
+                if @peek() == TokenKind.DotDot {
+                    kids.push(@take())
+                } else {
+                    @push_expected(kids, TokenKind.Ident)
+                }
+            }
+            if @peek() == TokenKind.RBrace { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
+            @push_expected(kids, TokenKind.Assign)
+            kids.push(@expr())
+            return @node(NodeKind.DestructureBind, kids)
+        } else {
+            // Neither shape: an ordinary binding, read below.
         }
         @push_expected(kids, TokenKind.Ident)
         // A DECLARED type: `ro x int = 1`. It stands between the name and the

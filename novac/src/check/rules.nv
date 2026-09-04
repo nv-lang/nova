@@ -303,10 +303,6 @@ const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Optio
 /// vector -- an instance of arity one -- or the loop has no element type.
 const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"
 
-/// The destructuring judge's two answers (B15 step 5). The arity text names
-/// the norm's own diagnostic class (D123: E_TUPLE_DESTRUCTURE_ARITY).
-const DESTR_NOT_TUPLE_MSG = "a destructuring binding needs a TUPLE initializer -- this expression's type is not a tuple"
-
 /// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
 const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
 

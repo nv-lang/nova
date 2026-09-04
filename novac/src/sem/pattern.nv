@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `hir` pattern accessors -- the shape of a pattern is asked of
+// the node, not counted by the reader; NOT taken: a visitor, for the reason
+// slots.nv gives about its own doors.
+// Role: layer 3 -- the two questions a DESTRUCTURING PATTERN answers about
+//   ITSELF: which shape it was written in, and whether it carries `..`.
+//   Asked by BOTH the checker and the emitter, which is why they live here
+//   and not in either. A field's TYPE is deliberately NOT here: that is a
+//   question about the DECLARATION, and `resolve.FieldIndex` is its door --
+//   a scan written here lasted one afternoon before the resolve guard
+//   named it a second answer (2026-09-04).
+// Used by: check/destructure.nv (picks the reading), emit_c/emit_destructure.nv
+//   (picks the spelling).
+// Guarded by: check-novac-second-door.py -- these doors exist because the same
+//   question was written twice, once in each phase, and caught at a similarity
+//   of 1.00 (2026-09-04).
+//
+// Split out of slots.nv the same day: that file crossed a thousand lines, and
+// the seam is real -- these three answer about ONE form, the rest of slots.nv
+// answers about every node shape there is.
+
+module novac.sem
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+
+/// WHICH SHAPE a destructuring pattern was written in -- brace or round.
+///
+/// One door because the question has one answer and TWO readers: the checker
+/// picks the reading, the emitter picks the spelling. Written twice first
+/// (2026-09-04) and caught by check-novac-second-door at a similarity of 1.00
+/// -- which is the same class this compiler exists to remove, committed by the
+/// window removing it elsewhere the same day.
+export fn brace_pattern(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // Trivia is SKIPPED, and the `continue` is the other branch
+                // (P31 form 2, the shape `literal_elems` above already uses).
+                // Written as two ifs with empty elses first, which P21 read as
+                // a dispatcher over token kinds -- and it was right: the
+                // question is not "which kind is this" but "is this an
+                // opener", and one test says so.
+                ro opener = t.kind == TokenKind.LBrace || t.kind == TokenKind.LParen
+                if !opener { continue }
+                return t.kind == TokenKind.LBrace
+            }
+            Branch { .. } => {}
+        }
+    }
+    // No opener at all: a recovery shape, and the round reading is the one
+    // that existed before the brace form -- so it stays the default.
+    false
+}
+
+/// Does the pattern carry `..`? A partial field list is legal only with it
+/// (D411), and its absence is what the refusal names.
+export fn has_rest(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // Same shape as the door above: skip what is not the marker.
+                if t.kind != TokenKind.DotDot { continue }
+                return true
+            }
+            Branch { .. } => {}
+        }
+    }
+    false
+}

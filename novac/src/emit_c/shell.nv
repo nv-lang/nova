@@ -101,6 +101,10 @@ type Emitter consume {
         /// asks, it does not decide
     next_tmp int /// counter behind @fresh_uniq — the ONLY source of temporary names (F30)
     lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none
+    fres FieldIndex /// the SAME field index the checker asks: a destructuring
+        /// binding spells one C local per FIELD, and the field's type has to
+        /// come from the door that already answers it -- not from a second
+        /// lookup written here (2026-09-04, V3-2)
 }
 
 /// Splice string literals and the emitted body into the shell's two slots.
