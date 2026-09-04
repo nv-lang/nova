@@ -137,7 +137,6 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
                           lit_tmp: lt, body: StringBuilder.new(),
                           fres: FieldIndex.build(ctx.fields) }
     e.emit_type_decls()
-    e.emit_tuple_typedefs()
     e.emit_instance_protos(insts)
     e.emit_file(file)
     for inst in insts {

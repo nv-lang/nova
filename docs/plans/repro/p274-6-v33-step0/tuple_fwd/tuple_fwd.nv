@@ -1,0 +1,15 @@
+module tuple_fwd
+
+// V3-3 step 0: a TUPLE whose component type is a VALUE record declared BELOW
+// it in the file. A value component is EMBEDDED, so the pair's typedef needs
+// Inner's complete body -- pass 1's name alone will not do.
+
+fn main() {
+    ro i = Inner { v: 7 }
+    ro p = (i, 2)
+    println(p.1)
+}
+
+type Inner value {
+    ro v int
+}

@@ -20,9 +20,10 @@ module emit_c
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
-import ../types.{TyId, is_ty}
+import ../types.{TyId, is_ty, raw_ty}
 import ../sem.{decl_index_of_ty}
 import ../diag.{ice}
+import ../builtins.{TypeKind}
 
 /// The forward typedef of one record or sum -- `typedef struct X X;`, nothing
 /// more.
@@ -199,7 +200,76 @@ fn Emitter mut @emit_type_decls() -> () {
             ice("emit_c: a cycle of by-value fields -- a type of infinite size reached the emitter")
         }
     }
+    // PASS 3 -- the structural terms, which have no declaration of their own.
+    // Last, exactly where the retired door used to run: a term embeds only
+    // types the passes above have finished.
+    @emit_structural_typedefs()
 }
+
+/// The C typedef of every STRUCTURAL term the file interned -- the anonymous
+/// positional shape, which has no declaration to hang its body on and so
+/// cannot ride the two passes above.
+///
+/// It runs LAST inside the declaration pass, and that placement is the whole
+/// content of wave V3-3: until 2026-09-04 it was a door of its own, called
+/// from `emit_c.nv` right after `@emit_type_decls`. One door emits
+/// declarations now.
+///
+/// Order is by ascending term id, which is TOPOLOGICAL: a component interns
+/// before the term that holds it, so a nested pair's typedef lands first.
+/// The guard (`#ifndef NOVA_TUPLE_TYPEDEF_<name>`) is INTEROP, named as such:
+/// it is the shell's own idiom, so a pair `shell.tpl.c` already carries is not
+/// redefined. It goes the day novac emits the whole prelude.
+///
+/// MEASURED, and it retires a prediction this plan made: folding buys no
+/// behaviour today. A term whose component type is declared LOWER already
+/// worked (carrier `tuple_fwd`), because the term typedefs came after the
+/// whole declaration pass; and the shape that would break -- a DECLARED type
+/// embedding a structural term by value -- is refused by name, the subset does
+/// not compile a term as a field type. The gain is one door instead of two.
+fn Emitter mut @emit_structural_typedefs() -> () {
+    mut ids = []int.new()
+    for t in @out.types {
+        if !is_ty(t) { continue }
+        ro k = @ctx.tys.kind_of(t)
+        if k != TypeKind.TkTuple { continue }
+        ro rid = raw_ty(t)
+        mut dup = false
+        for seen in ids {
+            if seen == rid {
+                dup = true
+            } else {
+                // Not this one; the flag only ever turns on (P31).
+            }
+        }
+        if dup { continue }
+        // INSERTION into ascending order: the vector is as small as the
+        // file's distinct tuple types, and the order is the contract above.
+        mut at = ids.len()
+        for j in 0..ids.len() {
+            if ids[j] > rid && at == ids.len() {
+                at = j
+            } else {
+                // Either still below rid, or the slot is already found (P31).
+            }
+        }
+        ids.insert(at, rid)
+    }
+    for rid in ids {
+        ro t = TyId(rid)
+        ro name = c_struct(@ctx, t)
+        @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
+        @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
+        @body.append("typedef struct ${name} { ")
+        for i in 0..@ctx.tys.arg_count(t) {
+            @body.append(c_type(@ctx, @ctx.tys.arg(t, i)))
+            @body.append(" f${i}; ")
+        }
+        @body.append("} ${name};\n")
+        @body.append("#endif\n")
+    }
+}
+
 
 /// Are the bodies of every type this declaration embeds BY VALUE already out?
 ///
