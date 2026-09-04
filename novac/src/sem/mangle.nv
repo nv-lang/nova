@@ -435,10 +435,21 @@ fn instance_body(ctx Ctx, t TyId) -> str {
 
 /// How the oracle spells a type ARGUMENT inside an instance name: a primitive by
 /// its C name (`nova_int`), a value record as its struct (`NovaValue_P`), a
-/// heap record as its struct plus the pointer suffix (`Nova_P_p`), a nested
-/// instance recursively with the same suffix. The other kinds are not measured
-/// on the shell and are named rather than guessed -- and none is reachable
-/// today, for the same reason as the sum head above.
+/// heap record as its struct plus the pointer suffix (`Nova_P_p`), a SUM the
+/// same way as a heap record (`Nova_Sig_p` -- a sum is a GC pointer too; read
+/// off the oracle's C for `Vec[Sig]` on 2026-09-04: `Nova_Vec____Nova_Sig_p`,
+/// `Vec____Nova_Sig_p_method_len`), a nested instance recursively with the same
+/// suffix. The other kinds are not measured on the shell and are named rather
+/// than guessed.
+///
+/// The sum arm was an ice until 2026-09-04, and its doc said the shape was
+/// unreachable. novac's OWN sources reach it (`[]TokenKind` and kin), so the
+/// batch self-check iced -- and that one ice sent the self-distance runner into
+/// per-file mode, where a file cannot see its co-equal siblings and 72 of 73
+/// files read as rejected against 27 in the batch. A doc that calls a shape
+/// unreachable when nobody measured it is the same lie as a stale live line,
+/// only quieter. (No quotes around the word: the P24 scanner reads a quoted
+/// identifier-like string in an emitting module as a printed C name.)
 fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
     match ctx.tys.kind_of(a) {
         TkPrim => prim_c_name(ctx.tys.prim_ordinal_of(a))
@@ -447,7 +458,7 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
             if is_value_record(ctx, a) { "NovaValue_${nm}" } else { "Nova_${nm}_p" }
         }
         TkApp => "${instance_struct_name(ctx, a)}_p"
-        TkSum => ice("mangle: a SUM as an instance argument — its in-name spelling is not measured on the shell")
+        TkSum => "Nova_${decl_of_ty(ctx, a).name}_p"
         TkNewtype => ice("mangle: a NEWTYPE as an instance argument — its in-name spelling is not measured on the shell")
         TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
         TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")

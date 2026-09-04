@@ -1,0 +1,18 @@
+module arm_call
+
+// Top parser wall (115 sites in novac own sources): a match ARM whose body is
+// a call, a return, or a receiver call -- not a block, not a literal.
+type Sig enum Off | On(int)
+
+fn show(n int) -> int => n
+
+fn pick(s Sig) -> int {
+    match s {
+        Off => return 0
+        On(v) => show(v)
+    }
+}
+
+fn main() {
+    println(pick(On(7)))
+}

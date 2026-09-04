@@ -1,0 +1,7 @@
+module slice_open
+
+// An open-start byte slice `t[..2]`.
+fn main() {
+    ro t = "0x1f"
+    println(t[..2])
+}

@@ -1,0 +1,16 @@
+module else_tail
+
+// Second wall (51 sites): an if-EXPRESSION whose branches are blocks, closing
+// with `} else {` and used as a value.
+fn sign(n int) -> int {
+    ro s = if n < 0 {
+        0 - 1
+    } else {
+        1
+    }
+    s
+}
+
+fn main() {
+    println(sign(5))
+}

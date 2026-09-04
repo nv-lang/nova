@@ -1,0 +1,16 @@
+module bis_meth_noprint
+
+// A non-mut METHOD with NO println in its body, statement position.
+type Box {
+    ro k int
+}
+
+fn Box @noop() -> () {
+    ro x = @k
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    b.noop()
+    println(b.k)
+}

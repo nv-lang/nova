@@ -1,0 +1,9 @@
+module named_expr
+
+// A NAMED argument whose value is an EXPRESSION, free call.
+fn pick(a int, first bool = true) -> int => if first { a } else { 0 }
+
+fn main() {
+    ro i = 1
+    println(pick(7, first: i == 1))
+}

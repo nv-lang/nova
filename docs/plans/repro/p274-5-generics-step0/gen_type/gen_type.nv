@@ -1,0 +1,14 @@
+module gen_type
+
+// A generic TYPE declaration: refused by name today. This is the wall in
+// front of Option[T], Vec[T], HashMap[K, V] -- every generic sum or record std
+// declares.
+type Box[T] enum Empty | Full(T)
+
+fn main() {
+    ro b = Full[int](3)
+    match b {
+        Empty => println(0)
+        Full(v) => println(v)
+    }
+}

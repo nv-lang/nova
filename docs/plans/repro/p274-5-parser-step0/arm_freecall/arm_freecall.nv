@@ -1,0 +1,17 @@
+module arm_freecall
+
+// Arm body is a FREE call.
+type Sig enum Off | On(int)
+
+fn show(n int) -> int => n
+
+fn pick(s Sig) -> int {
+    match s {
+        Off => 0
+        On(v) => show(v)
+    }
+}
+
+fn main() {
+    println(pick(On(7)))
+}

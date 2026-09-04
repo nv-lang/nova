@@ -1,0 +1,7 @@
+module if_branches
+
+// Door 2: the two BRANCHES of an if-expression must agree.
+fn main() {
+    ro v = if true { 1 } else { "no" }
+    println(1)
+}

@@ -1,0 +1,15 @@
+module dotted_zero
+
+// DOTTED spelling, ZERO arguments, statement position.
+type Box {
+    ro k int
+}
+
+fn Box @show() -> () {
+    println(@k)
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    b.show()
+}

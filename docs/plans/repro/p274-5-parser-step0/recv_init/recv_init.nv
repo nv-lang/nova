@@ -1,0 +1,18 @@
+module recv_init
+
+// Receiver call as an INITIALIZER (not in an arm): is `@name(..)` an expression at all?
+type Box {
+    ro k int
+}
+
+fn Box @scale(n int) -> int => n * @k
+
+fn Box @twice(n int) -> int {
+    ro x = @scale(n)
+    x + x
+}
+
+fn main() {
+    ro b = Box { k: 2 }
+    println(b.twice(3))
+}

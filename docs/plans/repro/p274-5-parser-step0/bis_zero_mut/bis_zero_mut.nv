@@ -1,0 +1,15 @@
+module bis_zero_mut
+
+// dotted, ZERO args, body reads @k, receiver bound MUT
+type Box {
+    ro k int
+}
+
+fn Box @show() -> () {
+    println(@k)
+}
+
+fn main() {
+    mut b = Box { k: 4 }
+    b.show()
+}

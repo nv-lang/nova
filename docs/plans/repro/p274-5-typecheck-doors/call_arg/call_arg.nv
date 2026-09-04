@@ -1,0 +1,8 @@
+module call_arg
+
+// Door 4: a call ARGUMENT against the parameter type.
+fn take(n int) -> int => n
+
+fn main() {
+    println(take("no"))
+}

@@ -1,0 +1,13 @@
+module named_recv
+
+// A NAMED argument in a RECEIVER (`@`) call.
+type Box {
+    ro n int
+}
+
+fn Box @scaled(by int = 2) -> int => @n * by
+
+fn main() {
+    ro b = Box { n: 3 }
+    println(b.scaled(by: 5))
+}

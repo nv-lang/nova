@@ -62,3 +62,21 @@ export fn option_payload(ctx Ctx, t TyId) -> TyId {
 /// The ELEMENT a for-head vector carries: the single-argument door under its
 /// wave's name (B16) -- the head kind was already judged by the caller.
 export fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)
+
+/// Is this the UNIT type -- the `()` a callable declares when it returns
+/// nothing? Answered by IDENTITY with the seeded prim (`Prims.unit_id`, the
+/// same shape `int_id` and `char_id` take), not by a declaration's name: a
+/// primitive names no declaration -- its head is a universe ordinal -- and the
+/// first version of this door asked `decl_of_ty` and iced on every callable.
+///
+/// Asked by the emitter to decide whether a body has a TAIL VALUE. Until
+/// 2026-09-04 it decided that by "this is not main" -- a second rule beside
+/// the checker's `declares_a_value` -- and the two diverged on every unit
+/// callable whose last statement is an expression: `return println(1);` was
+/// emitted and the println call had no callee to name. One question, one
+/// door; the checker's tree-level rule and this type-level one read the same
+/// declaration.
+export fn is_unit_ty(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    t == ctx.prims.unit_id
+}

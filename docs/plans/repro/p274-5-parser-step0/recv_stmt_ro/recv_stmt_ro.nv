@@ -1,0 +1,20 @@
+module recv_stmt_ro
+
+// Statement-position receiver call, NON-mut method on a NON-mut receiver.
+type Box {
+    ro k int
+}
+
+fn Box @show() -> () {
+    println(@k)
+}
+
+fn Box @twice() -> () {
+    @show()
+    @show()
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    b.twice()
+}

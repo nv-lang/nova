@@ -1,0 +1,15 @@
+module bis_one_field
+
+// dotted, ONE arg, method body reads @k
+type Box {
+    ro k int
+}
+
+fn Box @show(n int) -> () {
+    println(@k + n)
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    b.show(1)
+}

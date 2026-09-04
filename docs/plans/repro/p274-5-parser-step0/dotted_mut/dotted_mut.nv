@@ -1,0 +1,16 @@
+module dotted_mut
+
+// The DOTTED spelling of a mut method on a mut receiver: does the mode resolve?
+type Box {
+    mut k int
+}
+
+fn Box mut @bump(n int) -> () {
+    @k = @k + n
+}
+
+fn main() {
+    mut b = Box { k: 0 }
+    b.bump(3)
+    println(b.k)
+}

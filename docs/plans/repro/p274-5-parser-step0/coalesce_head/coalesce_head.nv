@@ -1,0 +1,9 @@
+module coalesce_head
+
+// `??` inside an `if Some(..) =` head.
+fn mk(n int) -> Option[int] => Some(n)
+
+fn main() {
+    ro fallback = 9
+    if Some(v) = mk(fallback ?? 0) { println(v) }
+}

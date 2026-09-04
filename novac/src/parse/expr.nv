@@ -538,6 +538,38 @@ fn Cursor mut @atom() -> Node {
         }
         return @node(NodeKind.IfExpr, kids)
     }
+    // `@name(args)` -- a METHOD CALL on the implicit receiver, in expression
+    // position (an arm body, an initializer, an argument) and, through the
+    // statement reader, in statement position too. Until 2026-09-04 every
+    // `@ident` became a SelfField and the `(` after it led nowhere: "syntax
+    // error" in an arm, "unknown field" elsewhere -- while novac's own sources
+    // write this form by the hundred (82 of the 183 arm lines the batch
+    // self-check refused, plus every `@report_...(...)` statement).
+    //
+    // THE SAME NODE SHAPE AS `x.m(args)`: [receiver, mark, name, '(', args,
+    // ')'], so the readers that index a MethodCall's children by position --
+    // eight of them across check/ and emit_c/ -- work unchanged, and both
+    // spellings of one form arrive as one node. The receiver is a SelfExpr
+    // over a ZERO-WIDTH leaf at the `@`'s position (the shape recovery already
+    // uses via `@missing_of`); the real `@` token sits in the mark slot where
+    // the dot sits for the other spelling. No reader of SelfExpr looks at the
+    // leaf's text (measured: emit prints RECV_C_NAME, check binds by
+    // RECV_BINDING, type_of reads the channel), and the diagnostic position
+    // is the same `@`. The tree stays lossless: the `@` prints once.
+    //
+    // NOT taken: a door answering "receiver / name / first argument" by the
+    // children's KINDS instead of their positions. Righter in the limit (K6),
+    // but it touches all eight readers at once, and mixing that with a wave
+    // that changes what parses puts two risks in one merge.
+    if @peek() == TokenKind.At && @peek(skip: 1) == TokenKind.Ident &&
+       @peek(skip: 2) == TokenKind.LParen {
+        ro self_leaf = @missing_of(TokenKind.At)
+        mut kids = []Node.of(@node(NodeKind.SelfExpr, []Node.of(self_leaf)), @take())
+        kids.push(@take())
+        kids.push(@take())
+        @call_args(kids)
+        return @node(NodeKind.MethodCall, kids)
+    }
     // `@field` -- the receiver's own field inside a method body.
     if @peek() == TokenKind.At && @peek(skip: 1) == TokenKind.Ident {
         mut kids = []Node.of(@take())

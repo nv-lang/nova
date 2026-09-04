@@ -1,0 +1,15 @@
+module if_return_else
+
+// A one-line `if c { return }` followed by `} else {` of an OUTER if.
+fn f(a int, b int) -> int {
+    if a > 0 {
+        if b > 0 { return 1 }
+    } else {
+        return 2
+    }
+    3
+}
+
+fn main() {
+    println(f(1, 1))
+}

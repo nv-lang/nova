@@ -1,0 +1,10 @@
+module bis_free_println
+
+// A FREE function whose body is a println, called as a statement.
+fn show() -> () {
+    println(1)
+}
+
+fn main() {
+    show()
+}
