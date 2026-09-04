@@ -272,62 +272,117 @@ fn compute_prelude_imports(
             searched.push(prelude_path.clone());
             if crate::source_index::is_file(&prelude_path) {
                 prelude_imports.push(prelude_import(None));
-            } else {
-                // Registry 822 -- the SILENCE was the defect, and the irony is that
-                // the `#prelude(...)` branch twenty lines above already refuses
-                // loudly, naming the expected file and offering a hint. It is the
-                // DEFAULT branch -- the one every ordinary program takes -- that used
-                // to fall through without a word. The user then got `undefined
-                // identifier `println`` pointing at their own perfectly correct
-                // source: the compiler blaming the author for the absence of the
-                // compiler's own half.
-                //
-                // Measured against the loud neighbour on the SAME deficit: a missing
-                // `std.time.duration` is answered with `cannot find module ...
-                // searched: <paths>`. One deficit, two opposite reactions. They are
-                // the same reaction now, and deliberately in the same shape.
-                //
-                // The trigger is not exotic. Our own quickstart warns that without the
-                // leading dot in `. ./setup-env.ps1` the variables never get set, so
-                // this is the EXPECTED beginner mistake, met in the first five minutes.
-                let env_set = std::env::var_os("NOVA_STD_PATH").is_some();
-                // Absolute for display, and this is the whole point of the row: a
-                // relative `std\prelude.nv` with no stated base is the same kind of
-                // half-answer the silent fall-through was. Display only -- the
-                // resolution itself is untouched.
-                let abs = |p: &std::path::Path| -> String {
-                    if p.is_absolute() {
-                        p.display().to_string()
-                    } else {
-                        std::env::current_dir()
-                            .map(|c| c.join(p).display().to_string())
-                            .unwrap_or_else(|_| p.display().to_string())
-                    }
-                };
-                let searched_lines = searched
-                    .iter()
-                    .map(|p| format!("     {}", abs(p)))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                return Err(anyhow!(
-                    "cannot find the standard library prelude\n  \
-                     searched:\n{}\n  \
-                     std package root resolved to: {}\n  \
-                     env NOVA_STD_PATH is {}\n  \
-                     hint: the std root is taken from, highest first: (1) env \
-                     NOVA_STD_PATH, (2) `std = \"...\"` under [workspace] or [package] \
-                     in nova.toml, (3) <project root>/std\n  \
-                     without it every name the prelude provides (`println`, `Option`, \
-                     ...) resolves to nothing, and the error would land on your source \
-                     instead of here",
-                    searched_lines,
-                    abs(stdlib_dir),
-                    if env_set { "set" } else { "NOT set" },
-                ));
             }
+            // Registry 822: the absence is NOT refused here. See
+            // `prelude_deficit_message` below for why the refusal lives at the
+            // pipeline boundary instead, and what `searched` is for.
+            let _ = &searched;
         }
     }
     Ok(prelude_imports)
+}
+
+/// Registry 822: the ready diagnostic for "this module expects a prelude and
+/// none of the places it would come from exists" -- or `None` when there is no
+/// deficit.
+///
+/// WHY THIS IS NOT A REFUSAL INSIDE `compute_prelude_imports`, which is where I
+/// put it first and where it looked obviously right: import resolution is
+/// DESIGNED to work with no standard library at all. Six unit tests in this
+/// file pass a directory literally named `no_stdlib` and assert that resolution
+/// still succeeds -- that is a stated property, not an oversight, and making
+/// the resolver require a prelude broke all six at once. The tests are how the
+/// design announced itself; weakening them to fit the fix would have destroyed
+/// the evidence.
+///
+/// So the RULE stays here, in one place, and the REFUSAL happens at the
+/// pipeline boundary (`check_pipeline::prepare_module_for_check_with`), where a
+/// real compilation is under way and a missing prelude genuinely means the
+/// user's environment is incomplete rather than the caller's arrangement being
+/// deliberate.
+///
+/// What the message must contain is set by the defect it replaces: without it
+/// the user got `undefined identifier `println`` against their own perfectly
+/// correct source -- the compiler blaming the author for the absence of the
+/// compiler's own half -- while the import resolver, on the SAME deficit,
+/// answers `cannot find module ... searched: <paths>`. One deficit had two
+/// opposite reactions; the shape here is deliberately the loud one's.
+pub fn prelude_deficit_message(
+    module: &Module,
+    stdlib_dir: &Path,
+    entry_path: &Path,
+) -> Option<String> {
+    if crate::manifest::is_prelude_self_module(&module.name) {
+        return None;
+    }
+    if module
+        .attrs
+        .iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude))
+    {
+        return None;
+    }
+    // `#prelude(...)` refuses on its own, loudly and with the expected file --
+    // it never needed this and must not get a second, differently worded voice.
+    if module.attrs.iter().any(|a| {
+        matches!(a.kind, crate::ast::ModuleAttrKind::PartialPrelude(_))
+    }) {
+        return None;
+    }
+
+    let mut searched: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
+        if let Some(edition) = &manifest.edition {
+            let sanitized = crate::manifest::sanitize_edition(edition);
+            if !sanitized.is_empty() {
+                let pin_path = stdlib_dir
+                    .join("prelude")
+                    .join(format!("{}.nv", sanitized));
+                if crate::source_index::is_file(&pin_path) {
+                    return None;
+                }
+                searched.push(pin_path);
+            }
+        }
+    }
+    let prelude_path = stdlib_dir.join("prelude.nv");
+    if crate::source_index::is_file(&prelude_path) {
+        return None;
+    }
+    searched.push(prelude_path);
+
+    // Absolute for display, and this is half the point of the row: a relative
+    // `std/prelude.nv` with no stated base is the same kind of half-answer the
+    // silence was. Display only -- resolution itself is untouched.
+    let abs = |p: &std::path::Path| -> String {
+        if p.is_absolute() {
+            p.display().to_string()
+        } else {
+            std::env::current_dir()
+                .map(|c| c.join(p).display().to_string())
+                .unwrap_or_else(|_| p.display().to_string())
+        }
+    };
+    let searched_lines = searched
+        .iter()
+        .map(|p| format!("     {}", abs(p)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let env_set = std::env::var_os("NOVA_STD_PATH").is_some();
+    Some(format!(
+        "cannot find the standard library prelude\n  \
+         searched:\n{}\n  \
+         std package root resolved to: {}\n  \
+         env NOVA_STD_PATH is {}\n  \
+         hint: the std root is taken from, highest first: (1) env NOVA_STD_PATH, \
+         (2) `std = \"...\"` under [workspace] or [package] in nova.toml, \
+         (3) <project root>/std\n  \
+         without it every name the prelude provides (`println`, `Option`, ...) \
+         resolves to nothing, and the error would land on your source instead of here",
+        searched_lines,
+        abs(stdlib_dir),
+        if env_set { "set" } else { "NOT set" },
+    ))
 }
 
 /// Signature-only pre-pass over the full import graph.
