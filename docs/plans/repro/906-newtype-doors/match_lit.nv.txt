@@ -1,0 +1,13 @@
+// door: match FnRow against an int literal pattern (literal adapts, should be ok)
+module match_lit
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro s = match a { 1 => "one", _ => "other" }
+    println(s)
+}

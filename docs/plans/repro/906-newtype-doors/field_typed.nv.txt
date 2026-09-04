@@ -1,0 +1,11 @@
+// door: record literal field r int from ro s str (must be an error)
+module field_typed
+
+type FnRow int
+type TyId int
+type Rec { r int }
+fn main() Io -> () {
+    ro s str = "s"
+    ro rec = Rec { r: s }
+    println(rec.r)
+}

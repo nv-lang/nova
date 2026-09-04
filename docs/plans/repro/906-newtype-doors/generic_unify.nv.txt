@@ -1,0 +1,14 @@
+// door: generic fn same[T](x T, y T) called with (FnRow, TyId) (must be an error)
+module generic_unify
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn same[T](x T, y T) -> bool => true
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro t = 2 as TyId
+    println(same(a, t))
+}

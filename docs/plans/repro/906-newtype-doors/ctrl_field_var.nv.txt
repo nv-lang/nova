@@ -1,0 +1,11 @@
+// door: CONTROL: record field r int initialised with a str variable (must be an error)
+module ctrl_field_var
+
+type FnRow int
+type TyId int
+type Rec { r int }
+fn main() Io -> () {
+    ro s = "s"
+    ro rec = Rec { r: s }
+    println(rec.r)
+}

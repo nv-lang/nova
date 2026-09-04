@@ -1,0 +1,11 @@
+// door: CONTROL: assigning a str VARIABLE into an int variable (must be an error)
+module ctrl_assign_var
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    mut x int = 1
+    ro s = "s"
+    x = s
+    println(x)
+}

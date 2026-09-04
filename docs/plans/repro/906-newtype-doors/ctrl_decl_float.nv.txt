@@ -1,0 +1,10 @@
+// door: CONTROL: ro x int = <f64 variable> (must be an error)
+module ctrl_decl_float
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    ro f = 2.5
+    ro x int = f
+    println(x)
+}

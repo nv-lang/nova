@@ -1,0 +1,10 @@
+// door: Option[int] = Some(s) with ro s str (must be an error)
+module some_typed
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    ro s str = "s"
+    ro o Option[int] = Some(s)
+    println(o.is_some())
+}

@@ -1,0 +1,14 @@
+// door: if-expression with FnRow and TyId branches (must be an error)
+module if_branches
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro t = 2 as TyId
+    ro m = if a == a { a } else { t }
+    println(m as int)
+}

@@ -1,0 +1,10 @@
+// door: ro y FnRow = <TyId variable> (declaration with declared newtype; must be an error under (a))
+module decl_newtype
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    ro t = 1 as TyId
+    ro y FnRow = t
+    println(y as int)
+}

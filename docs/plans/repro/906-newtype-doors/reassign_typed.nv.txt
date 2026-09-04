@@ -1,0 +1,11 @@
+// door: re-assignment x = s with BOTH declared explicitly (mut x int, ro s str) — must be an error
+module reassign_typed
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    mut x int = 1
+    ro s str = "s"
+    x = s
+    println(x)
+}

@@ -1,0 +1,10 @@
+// door: CONTROL 2: assigning a str LITERAL into an int variable (is the literal the permissive part?)
+module ctrl_assign_lit
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    mut x int = 1
+    x = "s"
+    println(x)
+}

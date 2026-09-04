@@ -1,0 +1,14 @@
+// door: assignment of TyId into a FnRow variable (must be an error)
+module assign
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    mut x FnRow = 1 as FnRow
+    ro t = 2 as TyId
+    x = t
+    println(x as int)
+}

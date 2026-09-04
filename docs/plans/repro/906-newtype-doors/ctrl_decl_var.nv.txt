@@ -1,0 +1,10 @@
+// door: CONTROL: ro x int = <str variable> (declaration with declared type; must be an error)
+module ctrl_decl_var
+
+type FnRow int
+type TyId int
+fn main() Io -> () {
+    ro s = "s"
+    ro x int = s
+    println(x)
+}

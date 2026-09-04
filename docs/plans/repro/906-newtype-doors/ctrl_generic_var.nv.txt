@@ -1,0 +1,11 @@
+// door: CONTROL: same[T](int var, str var) (must be an error)
+module ctrl_generic_var
+
+type FnRow int
+type TyId int
+fn same[T](x T, y T) -> bool => true
+fn main() Io -> () {
+    ro n = 1
+    ro s = "s"
+    println(same(n, s))
+}

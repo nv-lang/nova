@@ -1,0 +1,13 @@
+// door: builtin []str indexed by a FnRow without as int (should it be allowed?)
+module slice_index
+
+type FnRow int
+type TyId int
+const N int = 5
+const ONE TyId = 1 as TyId
+
+fn main() Io -> () {
+    ro a = 0 as FnRow
+    ro v []str = ["x", "y"]
+    println(v[a])
+}
