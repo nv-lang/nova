@@ -1,0 +1,27 @@
+// Registry 894, DOOR 3 of four: the COMPOUND form `a[k] += v`.
+//
+// Reading the AST says this is not a door of its own: compound assignment is the
+// same Stmt::Assign node carrying a field `op`, so it should inherit both holes
+// at once -- the read on the way in and the write on the way out.
+//
+// "Should" is the word that makes this file necessary. If the compound path turns
+// out to refuse where the plain write passes, then the two are NOT one node in
+// practice, and the fix needs to know that before it is written rather than after.
+module compound
+
+type FnRow int
+type TyId int
+
+type Table(cells Vec[int])
+
+fn Table @index(i FnRow) -> int => self.cells[i as int]
+fn Table mut @index(i FnRow, val int) -> () {
+    self.cells[i as int] = val
+}
+
+fn main() Io -> () {
+    mut t = Table(Vec[int].of(10, 20))
+    ro k = 1 as TyId
+    t[k] += 5
+    println(t[1 as FnRow])
+}

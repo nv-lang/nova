@@ -1,0 +1,41 @@
+// Registry 894, DOOR 4 of four: an index as a TUPLE-ASSIGNMENT target,
+// `(a[k], other) = (v, w)`.
+//
+// This is the door the row did not know about, and by reading it is the worst of
+// the four: Stmt::TupleAssign (types/mod.rs:9739) calls f1_expr on each side and
+// nothing else -- not even check_target_readonly, which the ordinary write door
+// does reach. So on this door the ro/mut freeze is silent too, which is a
+// SEPARATE concern from this row and is named here because whoever fixes one will
+// be standing in front of the other.
+//
+// MEASURED 2026-09-04, AND THE MEASUREMENT CORRECTED THE READING. The first
+// version of this file also wrote through a `ro` binding on the same door, to
+// see whether the ro/mut freeze was absent there. It is NOT: the compiler
+// answered [E_TUPLE_ASSIGN_LHS_NOT_MUT] "lhs element 0 (`frozen`) is a local
+// binding not marked `mut`" (Plan 136 D236). So the door does have a mut check
+// of its own -- reading `Stmt::TupleAssign` and finding no call to
+// check_target_readonly was not enough to conclude the check was missing.
+// That half is dropped from this probe, which now asks ONE question: does a
+// wrong KEY TYPE pass through the tuple door?
+module tuple
+
+type FnRow int
+type TyId int
+
+type Table(rows Vec[str])
+
+fn Table @index(i FnRow) -> str => self.rows[i as int]
+fn Table mut @index(i FnRow, val str) -> () {
+    self.rows[i as int] = val
+}
+
+fn main() Io -> () {
+    mut t = Table(Vec[str].of("a", "b"))
+    mut other = 0
+
+    // wrong key type through the tuple door: TyId where FnRow is declared
+    ro k = 1 as TyId
+    (t[k], other) = ("z", 1)
+
+    println(t[0 as FnRow])
+}
