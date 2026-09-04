@@ -136,7 +136,8 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
             // this one passed `FnRow` straight to `[]bool`, and the oracle took
             // it silently -- the newtype and its carrier share a representation,
             // so C never noticed. The integrator's index-door fix (#894/#921)
-            // refuses it by name, which is the door working: a latent type
+            // refuses it by name (`E_NO_MATCHING_OVERLOAD` on `index(...)`, the
+            // checker's overload door), which is that door working: a latent type
             // error in novac, found by tightening the checker rather than by a
             // failing program.
             ro root_ix = raw_row(root)

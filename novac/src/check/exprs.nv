@@ -841,6 +841,10 @@ fn Checker mut @type_expr(e Node) -> () {
         // SILENT-OK: the position that knows the expected type records it; this
         // arm has nothing to decide about a constructor that carries no name.
         ro rk = branch_children(e)
+        // No `else` for the anonymous shape: P21 reads an `else` after a
+        // variant test as a branch that does work, and the SILENT-OK above is
+        // the whole decision -- an anonymous constructor has nothing to judge
+        // here, so the arm simply does not enter.
         if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
             ro ct = type_of(e, @ctx, @scope, @chan)
             if is_ty(ct) {
@@ -850,8 +854,6 @@ fn Checker mut @type_expr(e Node) -> () {
                 // No type: the constructor names something the registry does
                 // not know, and that was refused where the name was read.
             }
-        } else {
-            // Anonymous: see above.
         }
     } else if k == NodeKind.ArrayLit {
         // The literal DECIDES ITS OWN TYPE -- the bind path's rule, reused in
