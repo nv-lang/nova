@@ -104,12 +104,12 @@ test "arithmetic tokens: two-char operators split before one-char (E1 growth)" {
 }
 
 test "arithmetic file reserializes byte for byte" {
-    ro src = "fn factorial(n int) -> int {
-    if n <= 1 {
-        return 1
-    }
-    n * factorial(n - 1)
-}
+    ro src = "fn factorial(n int) -> int {\n\
+    if n <= 1 {\n\
+        return 1\n\
+    }\n\
+    n * factorial(n - 1)\n\
+}\n\
 "
     assert(reserialize(lex(src)) == src)
 }
@@ -193,7 +193,7 @@ test "`??` is one token; a lone `?` is not a subset lexeme (coalesce wave)" {
     ro toks = lex("ro v = o ?? 0")
     assert(toks[4].kind == TokenKind.Question2)
     assert(toks[4].text == "??")
-    ro src = "ro v = o ?? 0
+    ro src = "ro v = o ?? 0\n\
 ro w = a ?? b"
     assert(reserialize(lex(src)) == src)
 
@@ -211,4 +211,34 @@ test "F22: a non-ASCII run is ONE error token, not one per letter" {
         errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
     }
     assert(errors == 1, "one non-ASCII run must be one error token")
+}
+
+test "a line continuation splices the literal and adds no byte (D467 section 3)" {
+    // The canon for long text: `\` before the break. Plan 277 phase 2 retires
+    // the RAW newline inside `"..."`, and novac's own tests migrate to this
+    // form -- so novac has to read it, or the migration cannot be canonical in
+    // the tree novac itself reads.
+    //
+    // What is asserted is the CONTENT, not mere acceptance: the continuation
+    // must splice the source lines and contribute nothing of its own, so the
+    // spliced literal equals the same text written in one piece. A door that
+    // accepted the form but kept the newline would pass an "is it accepted"
+    // test and fail this one.
+    //
+    // Measured before the door was opened: the LEXER already survived the form
+    // (its escape branch takes both bytes before the end-of-line test), the
+    // emitter passes bytes through, and C splices backslash-newline in
+    // translation phase 2 -- so the whole change was one byte in the checker's
+    // escape set.
+    ro spliced = "abc\
+def"
+    ro whole = "abcdef"
+    assert(spliced.byte_len() == whole.byte_len())
+    assert(spliced == whole)
+
+    // The control: an explicit `\n` still means a newline, so the two forms
+    // are not the same string. Without it this test would also pass on a
+    // compiler that silently dropped every escape.
+    ro with_nl = "abc\ndef"
+    assert(with_nl.byte_len() == whole.byte_len() + 1)
 }
