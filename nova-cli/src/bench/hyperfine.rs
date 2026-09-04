@@ -42,7 +42,7 @@ impl HyperfineSpec {
         };
         let tokens: Vec<&str> = rest.split_whitespace().collect();
         if tokens.is_empty() {
-            bail!("hyperfine spec пустой: `{}`", s);
+            bail!("hyperfine spec empty: `{}`", s);
         }
         let binary = PathBuf::from(tokens[0]);
         let args: Vec<String> = tokens[1..].iter().map(|s| s.to_string()).collect();

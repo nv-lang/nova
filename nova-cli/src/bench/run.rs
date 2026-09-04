@@ -475,7 +475,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
     if files.is_empty() {
         bail!("no .nv files found in directory: {}", dir.display());
     }
-    eprintln!("nova bench: discovered {} .nv files в {}", files.len(), dir.display());
+    eprintln!("nova bench: discovered {} .nv files in {}", files.len(), dir.display());
 
     let mut total_benches = 0usize;
 

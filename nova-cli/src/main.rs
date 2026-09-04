@@ -2675,7 +2675,7 @@ fn cmd_lint(
     };
 
     if list_rules {
-        println!("Реестр конвенционных правил (план 185):");
+        println!("Registry of convention rules (Plan 185):");
         for r in nova_codegen::lints::CONV_RULES {
             println!("  {:28} {}", r.id, r.summary);
         }
@@ -3267,7 +3267,7 @@ fn cmd_doc_workspace(
         eprintln!("{}", w);
     }
     if modules.is_empty() && !files.is_empty() {
-        bail!("все файлы в `{}` содержат ошибки парсинга", dir.display());
+        bail!("all files in `{}` contain parse errors", dir.display());
     }
     let mut tree = nova_codegen::doc::build_workspace(&modules);
     // Plan 45 Ф.27.1: workspace handler matrix через per-module sources map.
@@ -4101,8 +4101,8 @@ fn insert_dependency(text: &str, name: &str, value: &str) -> Result<String> {
             if let Some((k, _)) = t.split_once('=') {
                 if k.trim() == name {
                     return Err(usage_err(format!(
-                        "зависимость `{}` уже объявлена в [dependencies] — \
-                         правьте nova.toml вручную либо используйте `nova update`",
+                        "dependency `{}` is already declared in [dependencies] -- \
+                         edit nova.toml by hand, or use `nova update`",
                         name,
                     )));
                 }
@@ -4139,14 +4139,14 @@ fn cmd_add(
     allow_external_path: bool,
 ) -> Result<()> {
     let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
-        usage_err("`nova add` запускается внутри Nova-пакета (нет nova.toml)")
+        usage_err("`nova add` runs inside a Nova package (no nova.toml here)")
     })?;
     let toml_path = pkg_dir.join("nova.toml");
     // Только пакет (с `[package]`), не голый workspace-манифест.
     if nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir).is_none() {
         return Err(usage_err(format!(
-            "{} не содержит секции [package] — `nova add` правит пакет, \
-             не workspace",
+            "{} has no [package] section -- `nova add` edits a package, \
+             not a workspace",
             toml_path.display(),
         )));
     }
@@ -4170,13 +4170,13 @@ fn cmd_add(
             };
             if !same_repo && !allow_external_path {
                 return Err(usage_err(format!(
-                    "--path `{}` выходит за границу текущего git-репозитория \
-                     — не clone-safe (`git clone` НЕ принесёт `{}`)\n  \
-                     hint: релизная форма — `nova add {} --git <URL> --version <x.y>`, \
-                     а `path` — dev-override в `nova.override.toml` (не коммитится):\n    \
+                    "--path `{}` leaves the current git repository \
+                     -- not clone-safe (`git clone` will NOT bring `{}`)\n  \
+                     hint: the release form is `nova add {} --git <URL> --version <x.y>`, \
+                     and `path` is a dev override in `nova.override.toml` (not committed):\n    \
                      [replace]\n    {} = {{ path = \"{}\" }}\n  \
-                     чтобы всё же записать голый внешний path в [dependencies] \
-                     (не рекомендуется) — повтори с --allow-external-path",
+                     to write a bare external path into [dependencies] anyway \
+                     (not recommended) -- repeat with --allow-external-path",
                     p, target_dir.display(), name, name, p,
                 )));
             }
@@ -4194,7 +4194,7 @@ fn cmd_add(
         }
         (None, None) => {
             return Err(usage_err(
-                "укажите источник зависимости: --path <DIR> либо --git <URL>",
+                "name the dependency source: --path <DIR> or --git <URL>",
             ))
         }
         (Some(_), Some(_)) => unreachable!("clap conflicts_with path/git"),
@@ -4203,7 +4203,7 @@ fn cmd_add(
     let text = read_file(&toml_path)?;
     let updated = insert_dependency(&text, name, &value)?;
     std::fs::write(&toml_path, &updated)
-        .map_err(|e| anyhow!("запись {}: {}", toml_path.display(), e))?;
+        .map_err(|e| anyhow!("writing {}: {}", toml_path.display(), e))?;
     println!(
         "{} `{}` → {}",
         green("added:"),
@@ -4213,8 +4213,8 @@ fn cmd_add(
 
     // Обновить nova.lock.toml (материализует git-зависимость, фиксирует commit).
     nova_codegen::lockfile::sync(&pkg_dir)
-        .map_err(|e| anyhow!("nova.lock.toml не обновлён: {}", e))?;
-    println!("{} nova.lock.toml обновлён", green("locked:"));
+        .map_err(|e| anyhow!("nova.lock.toml was not updated: {}", e))?;
+    println!("{} nova.lock.toml updated", green("locked:"));
     Ok(())
 }
 
@@ -4222,13 +4222,13 @@ fn cmd_add(
 /// `nova.lock.toml`.
 fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
     let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
-        usage_err("`nova update` запускается внутри Nova-пакета (нет nova.toml)")
+        usage_err("`nova update` runs inside a Nova package (no nova.toml here)")
     })?;
     let toml_path = pkg_dir.join("nova.toml");
     let manifest = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir)
         .ok_or_else(|| {
             usage_err(format!(
-                "{} не содержит секции [package]",
+                "{} has no [package] section",
                 toml_path.display(),
             ))
         })?;
@@ -4237,7 +4237,7 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
     if let Some(spec) = precise {
         let (pname, vstr) = spec.rsplit_once('@').ok_or_else(|| {
             usage_err(format!(
-                "--precise: ожидается формат NAME@VERSION, получено `{}`",
+                "--precise: expected the form NAME@VERSION, got `{}`",
                 spec,
             ))
         })?;
@@ -4249,7 +4249,7 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
             .find(|d| d.name == pname)
             .ok_or_else(|| {
                 usage_err(format!(
-                    "зависимость `{}` не объявлена в [dependencies]",
+                    "dependency `{}` is not declared in [dependencies]",
                     pname,
                 ))
             })?;
@@ -4257,15 +4257,15 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
             nova_codegen::manifest::DepSource::Git { url, .. } => url.clone(),
             _ => {
                 return Err(usage_err(format!(
-                    "--precise применим только к git-зависимости (`{}` — нет)",
+                    "--precise applies only to a git dependency (`{}` is not one)",
                     pname,
                 )))
             }
         };
         nova_codegen::lockfile::update_precise(&pkg_dir, pname, &url, &version)
-            .map_err(|e| anyhow!("обновление зависимостей: {}", e))?;
+            .map_err(|e| anyhow!("updating dependencies: {}", e))?;
         println!(
-            "{} `{}` зафиксирован на версии {}",
+            "{} `{}` pinned to version {}",
             green("updated:"),
             pname,
             version,
@@ -4278,15 +4278,15 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
         match manifest.dependencies.iter().find(|d| d.name == n) {
             None => {
                 return Err(usage_err(format!(
-                    "зависимость `{}` не объявлена в [dependencies]",
+                    "dependency `{}` is not declared in [dependencies]",
                     n,
                 )))
             }
             Some(d) => {
                 if !matches!(d.source, nova_codegen::manifest::DepSource::Git { .. }) {
                     return Err(usage_err(format!(
-                        "зависимость `{}` не git — у path-зависимостей нет \
-                         пина, обновлять нечего",
+                        "dependency `{}` is not a git one -- path dependencies have no \
+                         pin, so there is nothing to update",
                         n,
                     )));
                 }
@@ -4294,11 +4294,11 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
         }
     }
     let graph = nova_codegen::lockfile::update(&pkg_dir, name)
-        .map_err(|e| anyhow!("обновление зависимостей: {}", e))?;
+        .map_err(|e| anyhow!("updating dependencies: {}", e))?;
     match name {
-        Some(n) => println!("{} git-пин `{}` пере-резолвлен", green("updated:"), n),
+        Some(n) => println!("{} git pin `{}` re-resolved", green("updated:"), n),
         None => println!(
-            "{} git-пины пере-резолвлены ({} зависимост(и) в графе)",
+            "{} git pins re-resolved ({} dependencies in the graph)",
             green("updated:"),
             graph.len(),
         ),
@@ -4327,8 +4327,8 @@ fn info_surface(
         // Не путь → имя зависимости текущего пакета.
         let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
             usage_err(format!(
-                "`{}` — не путь и не внутри Nova-пакета (нет nova.toml для \
-                 поиска зависимости)",
+                "`{}` is neither a path nor inside a Nova package (no nova.toml to \
+                 look the dependency up in)",
                 target,
             ))
         })?;
@@ -4336,14 +4336,14 @@ fn info_surface(
             &pkg_dir.join("nova.toml"),
             &pkg_dir,
         )
-        .ok_or_else(|| usage_err("nova.toml без секции [package]"))?;
+        .ok_or_else(|| usage_err("nova.toml has no [package] section"))?;
         let dep = manifest
             .dependencies
             .iter()
             .find(|d| d.name == target)
             .ok_or_else(|| {
                 usage_err(format!(
-                    "`{}` — не путь и не объявленная зависимость",
+                    "`{}` is neither a path nor a declared dependency",
                     target,
                 ))
             })?;
@@ -4351,13 +4351,13 @@ fn info_surface(
             nova_codegen::manifest::DepSource::Path(rel) => pkg_dir.join(rel),
             nova_codegen::manifest::DepSource::Git { url, pin } => {
                 nova_codegen::git_cache::resolve_git_dep(url, pin, None)
-                    .map_err(|e| anyhow!("git-зависимость `{}`: {}", target, e))?
+                    .map_err(|e| anyhow!("git dependency `{}`: {}", target, e))?
                     .checkout
             }
             _ => {
                 return Err(usage_err(format!(
-                    "зависимость `{}` — registry-версия; `nova info` для \
-                     registry появится с Plan 03.3",
+                    "dependency `{}` is a registry version; `nova info` for the \
+                     registry arrives with Plan 03.3",
                     target,
                 )))
             }
@@ -4373,7 +4373,7 @@ fn info_surface(
         walk_nv_files(&pkg_root, &mut files)?;
     }
     if files.is_empty() {
-        bail!("в `{}` не найдено .nv-файлов", pkg_root.display());
+        bail!("no .nv files found in `{}`", pkg_root.display());
     }
     files.sort();
 
@@ -4426,25 +4426,25 @@ fn cmd_info(
             println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
             println!(
-                "{} {} (база: {})",
+                "{} {} (base: {})",
                 bold("Effect-diff:"),
                 pkg_name,
                 base_name,
             );
             if d.is_empty() {
-                println!("  без изменений — effect-surface идентична");
+                println!("  no change -- the effect-surface is identical");
             } else {
                 for e in &d.added {
-                    println!("  {} {}  — новый эффект", green("+"), e);
+                    println!("  {} {}  -- new effect", green("+"), e);
                 }
                 for e in &d.removed {
-                    println!("  {} {}  — убран", yellow("-"), e);
+                    println!("  {} {}  -- removed", yellow("-"), e);
                 }
             }
         }
         if fail_on_new && !d.added.is_empty() {
             return Err(anyhow!(
-                "effect-diff: появились новые эффекты ({}) — требуется ревью",
+                "effect-diff: new effects appeared ({}) -- review required",
                 d.added.join(", "),
             ));
         }
@@ -4469,15 +4469,15 @@ fn cmd_info(
     }
 
     // human
-    println!("{} {}", bold("Пакет:"), pkg_name);
+    println!("{} {}", bold("Package:"), pkg_name);
     println!(
-        "Публичный API: {} функц., {} с эффектами",
+        "Public API: {} functions, {} with effects",
         surface.total_public_fns, surface.effectful_fns,
     );
     println!();
     if surface.is_pure() {
         println!(
-            "{} ∅ — публичный API без эффектов (pure)",
+            "{} ∅ -- public API with no effects (pure)",
             bold("Effect-surface:"),
         );
     } else {
@@ -5024,11 +5024,11 @@ fn cmd_build(
         let skip_dep_lock = daemon_prime.as_ref().map(|p| p.skip_dep_lock).unwrap_or(false);
         if skip_dep_lock {
             nova_codegen::lockfile::load_pins(&pkg_dir)
-                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock.toml): {}", e))?;
+                .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {}", e))?;
             eprintln!("{} build daemon — dep-graph unchanged, skipping lock resolution", green("note:"));
         } else {
             nova_codegen::lockfile::sync(&pkg_dir)
-                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock.toml): {}", e))?;
+                .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {}", e))?;
             if let Some(hash) = daemon::dep_combined_hash(&pkg_dir) {
                 daemon::try_commit(&repo, &pkg_dir, &hash);
             }
@@ -6135,7 +6135,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 }
                 let mode = bench::profile::ProfileMode::parse(&prof_args[0])?;
                 let prof_out = PathBuf::from(&prof_args[1]);
-                eprintln!("profile: building separate bench-exe (no instrumentation overhead в measurement run)...");
+                eprintln!("profile: building separate bench-exe (no instrumentation overhead in the measurement run)...");
                 let exe = bench::run::compile_for_profile(&opts)?;
                 // Reduced samples для profile (don't need 100 — just enough trace).
                 let prof_opts = bench::profile::ProfileOpts {
@@ -6177,7 +6177,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             };
             print!("{}", regular);
             // Privacy warning (first-use; ignore returned status).
-            eprintln!("\nai: --explain sends diff + git context к external LLM API. \
+            eprintln!("\nai: --explain sends diff + git context to an external LLM API. \
                 Set NOVA_AI_NO_WARN=1 to suppress.");
             let cfg = bench::ai::AiConfig::load(ai_config.as_deref(), ai_max_tokens)?;
             // Resolve SHAs: CLI flag → JSON meta.
@@ -6312,9 +6312,9 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
-                println!("Anomaly scan на branch `{}`:", branch);
+                println!("Anomaly scan on branch `{}`:", branch);
                 if results.is_empty() {
-                    println!("(no significant changepoints — все benches stable)");
+                    println!("(no significant changepoints -- all benches stable)");
                 } else {
                     for (name, cps) in &results {
                         println!("\n{}: {} changepoint(s) detected:", name, cps.len());
@@ -6349,7 +6349,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 }
             } else if cfg!(target_os = "linux") {
                 println!("  Hint: try `sudo sysctl -w kernel.perf_event_paranoid=1`");
-                println!("        или grant `CAP_PERFMON` capability to nova binary.");
+                println!("        or grant the `CAP_PERFMON` capability to the nova binary.");
             } else {
                 println!("  Note: CPU instructions counter is Linux-only \
                           (uses perf_event_open syscall).");
@@ -6390,7 +6390,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 }
             } else if cfg!(target_os = "linux") {
                 println!("\n  Hint: try `sudo sysctl -w kernel.perf_event_paranoid=1`");
-                println!("        для uncore_imc events может потребоваться CAP_PERFMON.");
+                println!("        uncore_imc events may require CAP_PERFMON.");
             } else {
                 println!("\n  Note: memory bandwidth is Linux-only \
                           (perf_event_open + sysfs uncore_imc).");
@@ -6401,7 +6401,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             println!("Valgrind Callgrind cross-platform CPU instructions (Plan 57.H.3):");
             println!("  OS: {}", std::env::consts::OS);
             let avail = bench::callgrind::available();
-            println!("  valgrind в PATH: {}",
+            println!("  valgrind in PATH: {}",
                 if avail { "yes ✓" } else { "no ✗" });
             if avail {
                 if let Some(v) = bench::callgrind::version_string() {
@@ -6412,8 +6412,8 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             } else if cfg!(target_os = "macos") {
                 println!("  Install: brew install --HEAD valgrind");
             } else {
-                println!("  Note: Valgrind не supports Windows. Use perf_event_open path");
-                println!("        (Linux), или install WSL for valgrind на Windows.");
+                println!("  Note: Valgrind does not support Windows. Use the perf_event_open path");
+                println!("        (Linux), or install WSL for valgrind on Windows.");
             }
             Ok(())
         }
@@ -7146,14 +7146,14 @@ mod plan03_1_tests {
         let t = "[package]\nname = \"x\"\n[dependencies]\nfoo = { path = \"../foo\" }\n";
         let out = insert_dependency(t, "bar", "{ path = \"../bar\" }").unwrap();
         assert!(out.contains("bar = { path = \"../bar\" }"), "out: {}", out);
-        assert!(out.contains("foo = { path = \"../foo\" }"), "foo сохранён");
+        assert!(out.contains("foo = { path = \"../foo\" }"), "foo preserved");
     }
 
     #[test]
     fn create_section_when_absent() {
         let t = "[package]\nname = \"x\"\n";
         let out = insert_dependency(t, "bar", "{ git = \"u\", tag = \"v1\" }").unwrap();
-        assert!(out.contains("[dependencies]"), "секция создана: {}", out);
+        assert!(out.contains("[dependencies]"), "section created: {}", out);
         assert!(out.contains("bar = { git = \"u\", tag = \"v1\" }"));
     }
 

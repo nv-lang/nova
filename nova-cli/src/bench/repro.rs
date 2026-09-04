@@ -240,7 +240,7 @@ impl ReproMeta {
             if cnt > 1 && cnt == self.cpu_count {
                 w.push(("info".into(),
                     "no CPU affinity set — process can migrate across cores \
-                     (cache misses). Use `taskset -c N nova bench ...` для pinning.".into()));
+                     (cache misses). Use `taskset -c N nova bench ...` for pinning.".into()));
             }
         }
         w

@@ -61,7 +61,7 @@ pub fn add(opts: HistoryAddOpts) -> Result<i32> {
         .unwrap_or(0);
 
     let entry_name = format!("{}-{}.json", ts, head_sha);
-    eprintln!("history-add: will store as `{}` в branch `{}`",
+    eprintln!("history-add: will store as `{}` in branch `{}`",
         entry_name, opts.branch);
 
     if opts.dry_run {

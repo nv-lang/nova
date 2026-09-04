@@ -64,7 +64,7 @@ pub struct CallgrindOpts<'a> {
 /// Run binary under valgrind --tool=callgrind, parse retired instructions.
 pub fn measure(opts: CallgrindOpts) -> Result<CallgrindResult> {
     if !available() {
-        bail!("valgrind not found в PATH. Install:\n  \
+        bail!("valgrind not found in PATH. Install:\n  \
                Linux:  sudo apt-get install valgrind  / dnf install valgrind\n  \
                macOS:  brew install --HEAD valgrind\n  \
                Windows: not supported (use perf_event_open Linux).");

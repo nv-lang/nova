@@ -204,9 +204,9 @@ impl RemoteConfig {
         for a in self.ssh_base_args() { cmd.arg(a); }
         cmd.arg(&remote_cmd);
         let out = cmd.output()
-            .map_err(|e| anyhow!("spawn ssh для bench: {}", e))?;
+            .map_err(|e| anyhow!("spawn ssh for bench: {}", e))?;
         if !out.status.success() {
-            bail!("remote bench run failed на {}: {}", self.name,
+            bail!("remote bench run failed on {}: {}", self.name,
                 String::from_utf8_lossy(&out.stderr));
         }
 
@@ -419,7 +419,7 @@ ssh_port = "not-a-number"
         let f = RemotesFile::parse(input);
         // Remote still loaded (other fields valid), но parse_error reported.
         assert!(!f.parse_errors.is_empty(),
-            "expected parse_error для invalid ssh_port");
+            "expected parse_error for invalid ssh_port");
         let r = f.find("bad").unwrap();
         assert_eq!(r.ssh_port, None);  // не set из-за parse fail
     }

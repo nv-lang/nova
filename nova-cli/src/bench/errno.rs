@@ -25,24 +25,24 @@ pub fn perf_event_open_hint(err: &io::Error) -> Option<&'static str> {
         }
         2   /* ENOENT */ => {
             "ENOENT — event not recognized by kernel.\n\
-             Hint: requested PMU event не supported на CPU. Check:\n\
+             Hint: requested PMU event not supported on CPU. Check:\n\
                cat /sys/devices/cpu/format/event\n\
-             Common cause: uncore_imc/MBM event на older CPU."
+             Common cause: uncore_imc/MBM event on older CPU."
         }
         13  /* EACCES */ => {
             "EACCES — access denied.\n\
-             Hint: same root cause как EPERM — perf_event_paranoid > 1.\n\
+             Hint: same root cause as EPERM -- perf_event_paranoid > 1.\n\
                sudo sysctl -w kernel.perf_event_paranoid=1\n\
-             OR run с CAP_PERFMON capability (Linux ≥ 5.8)."
+             OR run with CAP_PERFMON capability (Linux ≥ 5.8)."
         }
         16  /* EBUSY */  => {
             "EBUSY — PMU counter busy.\n\
              Hint: another process holds the counter (e.g. perf record\n\
-             running). Stop competing process и retry."
+             running). Stop competing process and retry."
         }
         22  /* EINVAL */ => {
             "EINVAL — invalid attribute config.\n\
-             Hint: PMU event code malformed или incompatible с CPU.\n\
+             Hint: PMU event code malformed or incompatible with CPU.\n\
              For raw events check /sys/devices/<pmu>/format/event spec."
         }
         24  /* EMFILE */ => {
@@ -50,10 +50,10 @@ pub fn perf_event_open_hint(err: &io::Error) -> Option<&'static str> {
              Hint: raise limit `ulimit -n 4096` or close other fds."
         }
         38  /* ENOSYS */ => {
-            "ENOSYS — perf_event_open syscall не implemented.\n\
-             Hint: kernel built без CONFIG_PERF_EVENTS. На production\n\
-             distros (Debian/Ubuntu/Fedora) это almost never the case;\n\
-             likely running внутри a stripped container — try host."
+            "ENOSYS -- perf_event_open syscall not implemented.\n\
+             Hint: kernel built without CONFIG_PERF_EVENTS. On production\n\
+             distros (Debian/Ubuntu/Fedora) this is almost never the case;\n\
+             likely running inside a stripped container -- try host."
         }
         _ => return None,
     })
