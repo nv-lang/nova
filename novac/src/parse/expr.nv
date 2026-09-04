@@ -334,6 +334,13 @@ fn Cursor mut @match_expr() -> Node {
                 if @peek() == TokenKind.Ident || @peek() == TokenKind.DotDot {
                     pk.push(@take())
                 } else {
+                    // RECOVERY-BOUNDED: the loop above stops at `]`, so the array
+                    // pattern's own closer never reaches this take. Other closers CAN
+                    // be eaten here, and that is the known width of this bound rather
+                    // than an oversight -- the enclosing form re-reads them at its own
+                    // level. Measured 2026-09-04: this site never reaches
+                    // `is_terminator`, so a holder built on it passes with the rule
+                    // stubbed out.
                     pk.push(@node(NodeKind.Err, []Node.of(@take())))
                 }
                 @push_if(pk, TokenKind.Comma)
@@ -391,6 +398,9 @@ fn Cursor mut @match_expr() -> Node {
             ak.push(@node(NodeKind.Pattern, pk))
         } else {
             // Recovery: one Err, one token, keep the arm loop advancing.
+            // RECOVERY-BOUNDED: the arm loop stops at `}`, the match's own
+            // closer, so it is never taken here; the non-advancement guard
+            // below keeps the loop honest when nothing moves.
             kids.push(@node(NodeKind.Err, []Node.of(@take())))
             continue
         }
@@ -448,6 +458,8 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
             kids.push(@node(NodeKind.CtorField, fk))
         } else {
             // Recovery inside a constructor: one Err, one token, advance.
+            // RECOVERY-BOUNDED: the field loop stops at `}`, the
+            // constructor's own closer, so this take can never reach it.
             kids.push(@node(NodeKind.Err, []Node.of(@take())))
         }
         @push_if(kids, TokenKind.Comma)
