@@ -163,21 +163,6 @@ pub fn prepare_module_for_check_with(
     include_test_peers: bool,
     between_embed_and_rename: impl FnOnce(&mut Module),
 ) -> Result<PreparedModule, PrepareError> {
-    // Registry 822: a missing standard library must be reported as OUR deficit,
-    // before anything else. Without this the user got `undefined identifier
-    // `println`` pointing at their own correct source, and went looking for a
-    // mistake in a file that had none. It is checked HERE and not inside the
-    // import resolver on purpose -- resolution is designed to work with no
-    // stdlib at all (see `imports::prelude_deficit_message`), and this is the
-    // boundary where a real compilation begins and the absence really is wrong.
-    //
-    // First, and not last: when the prelude is gone every later error is a
-    // consequence, so reporting any of them ahead of the cause is what created
-    // the defect in the first place.
-    if let Some(msg) = crate::imports::prelude_deficit_message(module, stdlib_dir, entry_path) {
-        return Err(PrepareError::Import(anyhow::anyhow!(msg)));
-    }
-
     crate::imports::resolve_imports_inline_ex(
         entry_path, module, repo, stdlib_dir, include_test_peers,
     )
