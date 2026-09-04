@@ -1,0 +1,7 @@
+module novac.regs
+
+/// One row.
+export type FieldDef value {
+    name str /// spelling
+    owner int /// owning type id
+}

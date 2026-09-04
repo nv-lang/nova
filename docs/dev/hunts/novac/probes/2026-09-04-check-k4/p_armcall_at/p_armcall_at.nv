@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NARROWED twin: the SAME call in a MATCH ARM body through the `@` form.
+module basics.p_armcall_at
+
+type Counter { mut n int }
+
+fn Counter @tag() -> int => @n + 7
+
+fn Counter @via(k int) -> int => match k {
+    1 => @tag()
+    _ => 0
+}
+
+fn main() {
+    mut c = Counter { n: 1 }
+    println("arm = ${c.via(1)}")
+}

@@ -31,8 +31,8 @@ test "an unknown callee in TAIL position is a named refusal, not an ice (registr
     // class: one rule, several doors, written where each door's author
     // remembered it.
     ro std = std_decls()
-    ro (d902, _) = compile_to_c("fn mk(n int) -> int {
- nosuch(n)
+    ro (d902, _) = compile_to_c("fn mk(n int) -> int {\n\
+ nosuch(n)\n\
 }", std)
     assert(d902.len() > 0)
     assert(!d902[0].message.contains("internal compiler error"))
@@ -45,24 +45,71 @@ test "an unknown callee in TAIL position is a named refusal, not an ice (registr
     assert(d_arrow.len() > 0)
     assert(!d_arrow[0].message.contains("internal compiler error"))
 
-    ro (d_stmt, _) = compile_to_c("fn main() {
- nosuch(1)
+    ro (d_stmt, _) = compile_to_c("fn main() {\n\
+ nosuch(1)\n\
 }", std)
     assert(d_stmt.len() > 0)
     assert(!d_stmt[0].message.contains("internal compiler error"))
 
-    ro (d_bind, _) = compile_to_c("fn mk(n int) -> int {
- ro v = nosuch(n)
- v
+    ro (d_bind, _) = compile_to_c("fn mk(n int) -> int {\n\
+ ro v = nosuch(n)\n\
+ v\n\
 }", std)
     assert(d_bind.len() > 0)
     assert(!d_bind[0].message.contains("internal compiler error"))
 
     // AND THE TAIL STILL WORKS when the callee is known: the fix must stop the
     // second question after a refusal, not stop asking it at all.
-    ro (d_ok, _) = compile_to_c("fn known(x int) -> int => x
-fn mk(n int) -> int {
- known(n)
+    ro (d_ok, _) = compile_to_c("fn known(x int) -> int => x\n\
+fn mk(n int) -> int {\n\
+ known(n)\n\
 }", std)
+    assert(d_ok.len() == 0)
+}
+
+test "recovery does not swallow a closing token of the enclosing form (274.3/F15)" {
+    // The rule: a recovery site plants one Err and takes ONE token, but a
+    // CLOSING token belongs to the enclosing form -- eating it drags the rest
+    // of the file away. It is held by ONE call of `is_terminator` (the atom
+    // reader's fallback) and by nothing else: no guard in scripts/guards, and
+    // until this test no holder. `#809` pins the OTHER half -- that a MISSING
+    // closer is noticed -- which is a different rule.
+    //
+    // THE OBSERVABLE IS THE WIDTH OF THE REFUSAL, and it was found by measuring
+    // both directions rather than assumed. With the rule in force the junk run
+    // is reported up TO the closer, so the span covers several tokens; with the
+    // check stubbed the span is exactly one byte -- the closer itself, eaten and
+    // turned into the error node.
+    //
+    // MY FIRST VERSION OF THIS TEST PROVED NOTHING: it used a stray closer
+    // among constructor fields and among match arms, and those loops are
+    // bounded by their own `}` -- they never reach the predicate, so the test
+    // stayed green with the rule stubbed out. The forms below are the ones that
+    // do reach it: a closer in ARGUMENT position and in INITIALIZER position.
+    ro std = std_decls()
+
+    ro (d_arg, c_arg) = compile_to_c("fn main() {\n\
+ println(})\n\
+ println(1)\n\
+}", std)
+    assert(c_arg.byte_len() >= 0)
+    assert(d_arg.len() == 1)
+    assert(d_arg[0].hi - d_arg[0].lo > 1)
+
+    ro (d_init, c_init) = compile_to_c("fn main() {\n\
+ ro x = )\n\
+ println(1)\n\
+}", std)
+    assert(c_init.byte_len() >= 0)
+    assert(d_init.len() == 1)
+    assert(d_init[0].hi - d_init[0].lo > 1)
+
+    // THE CONTROL, and it is what keeps the two above from passing on a
+    // compiler that refuses everything: the same shapes without the stray
+    // closer are clean.
+    ro (d_ok, c_ok) = compile_to_c("fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(c_ok.byte_len() >= 0)
     assert(d_ok.len() == 0)
 }

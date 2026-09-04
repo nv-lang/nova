@@ -1,0 +1,7 @@
+module slice_open_end
+
+// The mirror of `t[..2]`: an open-END byte slice `t[2..]` (D144 both forms).
+fn main() {
+    ro t = "0x1f"
+    println(t[2..])
+}

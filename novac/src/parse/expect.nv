@@ -17,6 +17,11 @@
 // mandatory door, which is how a rename would blind it), plus the class tests
 // "an unclosed bracket is refused, not accepted in silence (#809)" and "a
 // token the grammar requires is refused when absent (#815)".
+// The THREE recovery rules of the parser -- the zero-width Err here, one Err
+// per unrecognised token in expr.nv, and the closing token left to the
+// enclosing form -- live together in docs/dev/novac-architecture.md section 5a,
+// with the consequence that matters when reading a log: the error stands where
+// recovery STOPPED, not where the form was misread. A pointer, not a copy.
 // novac/src/parse/expect.nv -- is this token optional here, or required.
 
 module novac.parse

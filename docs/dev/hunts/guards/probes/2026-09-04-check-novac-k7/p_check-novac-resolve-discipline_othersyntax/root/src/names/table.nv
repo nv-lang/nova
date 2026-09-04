@@ -1,0 +1,5 @@
+/// The one door of name -> id resolution (O(1) for callers).
+fn slot_of(t NameTable, name str) -> int {
+    for s in t.slots { if s.text == name { return s.id } }
+    return -1
+}

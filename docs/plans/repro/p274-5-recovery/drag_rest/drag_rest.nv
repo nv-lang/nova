@@ -1,0 +1,14 @@
+module drag_rest
+
+// The property F15 names: a stray closer must NOT drag the rest of the file
+// away. After the stray `}` there is a SECOND, independent refusal; if recovery
+// eats the closer, `main` never closes, `later` is swallowed, and that second
+// diagnostic disappears. The count is the observable.
+fn main() {
+    ro x = }
+    println(1)
+}
+
+fn later() -> int {
+    nosuch(1)
+}

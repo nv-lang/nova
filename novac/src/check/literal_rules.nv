@@ -19,6 +19,9 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
 import ../sem.{raw_frow, no_frow}
+import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
+import ../diag.{ice}
+import ../builtins.{BuiltinType}
 import ../types.{TyId, is_ty}
 
 /// The MAGNITUDE of an integer literal -- the question nobody asked until
@@ -57,14 +60,18 @@ fn Checker mut @report_if_int_too_large(kids []Node) -> () {
 fn int_text_fits(t str) -> bool {
     if t.byte_len() > 2 && t[..2] == "0x" {
         mut h = 2
-        while h + 1 < t.byte_len() && t[h..h + 1] == "0" { h += 1 }
+        while h + 1 < t.byte_len() && t[h..h + 1] == "0" {
+            h += 1
+        }
         ro hex = t[h..]
         if hex.byte_len() < 16 { return true }
         if hex.byte_len() > 16 { return false }
         return !(hex[..1] > "7")
     }
     mut i = 0
-    while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" {
+        i += 1
+    }
     // The upper bound is omitted: `t[i..]` says the same and the linter is
     // right that spelling it twice adds nothing.
     ro digits = t[i..]
@@ -72,6 +79,156 @@ fn int_text_fits(t str) -> bool {
     if digits.byte_len() > INT_MAX_TEXT.byte_len() { return false }
     !(digits > INT_MAX_TEXT)
 }
+
+/// The largest MAGNITUDE a decimal literal may carry for an integer row, as
+/// TEXT (compared by length, then lexicographically -- the precedent right
+/// above, and for the same reason: nothing is parsed into the type whose range
+/// is being judged). A signed row takes one more on the negative side (`-128`
+/// fits `i8`, `128` does not); the 64-bit signed bound is `int`'s own text.
+/// `int`/`uint` are address-sized (D129/D130) and 64 bits on every target
+/// novac emits for, so they share the 64-bit rows.
+fn int_max_text(bits int, signed bool, neg bool) -> str {
+    if bits == 8 {
+        if !signed { return "255" }
+        if neg { return "128" }
+        return "127"
+    }
+    if bits == 16 {
+        if !signed { return "65535" }
+        if neg { return "32768" }
+        return "32767"
+    }
+    if bits == 32 {
+        if !signed { return "4294967295" }
+        if neg { return "2147483648" }
+        return "2147483647"
+    }
+    if !signed { return "18446744073709551615" }
+    if neg { return "9223372036854775808" }
+    INT_MAX_TEXT
+}
+
+/// Does this integer literal's text fit the ROW it was adapted to (D227 rule
+/// 3)? Decimal: leading zeros stripped, text against `int_max_text`. Hex: at
+/// most `bits / 4` significant digits; at exactly that many a signed row wants
+/// the first digit under 8 -- except the one negative value with no positive
+/// twin (`-0x80` fits `i8`), which is an 8 followed by zeros. A negative
+/// literal never fits an unsigned row: `u8 = -1` is the spec's own example of
+/// E_LIT_OUT_OF_RANGE.
+fn int_text_fits_row(t str, r BuiltinType, neg bool) -> bool {
+    if neg && !r.signed { return false }
+    if t.byte_len() > 2 && t[..2] == "0x" {
+        mut h = 2
+        while h + 1 < t.byte_len() && t[h..h + 1] == "0" {
+            h += 1
+        }
+        ro hex = t[h..]
+        ro max_digits = r.bits / 4
+        if hex.byte_len() < max_digits { return true }
+        if hex.byte_len() > max_digits { return false }
+        if !r.signed { return true }
+        if !(hex[..1] > "7") { return true }
+        if !neg { return false }
+        if hex[..1] != "8" { return false }
+        for j in 1..hex.byte_len() {
+            if hex[j..j + 1] != "0" { return false }
+        }
+        return true
+    }
+    mut i = 0
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" {
+        i += 1
+    }
+    ro digits = t[i..]
+    ro bound = int_max_text(r.bits, r.signed, neg)
+    if digits.byte_len() < bound.byte_len() { return true }
+    if digits.byte_len() > bound.byte_len() { return false }
+    !(digits > bound)
+}
+
+/// A literal that took its position's type must FIT it (D227 rule 3: `ro b u8
+/// = 300` is `E_LIT_OUT_OF_RANGE`, a compile-time error -- measured 2026-09-04:
+/// the oracle refuses every out-of-range literal on every narrow width, and
+/// until this door novac refused the same files for the WRONG reason, "the
+/// argument's type is not the one the function declares"). Judged after the
+/// adaptation decided the type and before it is recorded, so a refused literal
+/// never reaches the emitter. A float target is not judged here (D227 rule 5's
+/// exponent-overflow rule is a named width of this wave). Returns whether it
+/// fits; a refusal is reported at the literal's own token.
+fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
+    // Spelled as a test and a `??` rather than a `match` with `return` in an
+    // arm: novac's own subset reads the former and not yet the latter, and
+    // this file is part of what novac compiles about itself (274.5).
+    ro row_opt = prim_row_of(@ctx.tys, t)
+    if row_opt.is_none() { return true }
+    ro r = row_opt ?? ice("check: a primitive row vanished between two reads of one Option")
+    ro is_int = match r.family {
+        PfInt => true
+        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+    }
+    if !is_int { return true }
+    ro lk_kids = branch_children(e)
+    ro tok = lk_kids[lk_kids.len() - 1]
+    if leaf_kind(tok) != TokenKind.IntLit { return true }
+    ro neg = lk_kids.len() > 1
+    if int_text_fits_row(leaf_text(tok), r, neg) { return true }
+    match tok {
+        Leaf(lt) => @refuse(lt, "this literal does not fit `${r.name}` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most ${int_max_text(r.bits, r.signed, neg)} on this side of zero")
+        Branch { .. } => {}
+    }
+    false
+}
+
+/// D227 rule 2 AT A CALL: once the binding is known, every bare numeric
+/// literal argument takes the type of the parameter it fills, and rule 3 judges
+/// its range against that type. The resolver only ADMITTED the literal
+/// (`lit_admits`, by family); the decision of WHICH type is this door's, made
+/// once per argument and recorded, so the lattice (`type_of` reads the channel
+/// first for a literal) and the emitter (the cast spells the row's C name) both
+/// see the parameter's type. Nothing to do when the call recorded no callable
+/// row -- a construction or a variant has its own rules -- or when the slot is
+/// filled by a default, or when the argument is not a bare literal.
+///
+/// `recv_rows`: how many leading rows of the call's key are the RECEIVER -- one
+/// for a method call (plan 273: the receiver is parameter zero, the written
+/// arguments start at row one -- the emitter's slot walk subtracts the same
+/// one), zero for a free call. A count rather than a flag because the subset
+/// novac reads about itself has no `if` in value position and no `mut` copy of
+/// a `ro` binding, and `at - recv_rows` needs neither. The first version of
+/// this door forgot the receiver row altogether and asked `call_arg_at` for an
+/// argument the call never wrote: an ice on every method call, caught by the
+/// K4 probes before it was committed.
+fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int) -> () {
+    if !@chan.has_callee(e.id_of()) { return }
+    // A construction or a variant has no callable row and its own rules; the
+    // `no_row()` answer says so in the subset's own forms (no `return` inside
+    // an arm, no `if` as a value -- novac reads this file about itself).
+    ro target = @chan.callee_of(e.id_of()).target
+    ro row = match target {
+        CalleeFn(r) => r
+        CalleeVariant(_) | CalleeCtor(_) => no_row()
+    }
+    if raw_row(row) < 0 { return }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro slots = @chan.callee_slots_of(e.id_of())
+    for s in 0..slots.len() {
+        ro at = slots[s].arg_row
+        if at < recv_rows { continue }
+        ro want = @ctx.fns.params[fd.param_off + s].type_id
+        ro a = call_arg_at(kids, from, at - recv_rows)
+        if !lit_admits(@ctx.tys, lit_arg_of(a), want) { continue }
+        if type_of(a, @ctx, @scope, @chan) == want { continue }
+        if !@lit_fits_or_refuse(a, want) { return }
+        @record(a, want)
+    }
+}
+
+/// D405: the two operands of an arithmetic or comparison operator must have the
+/// SAME concrete integer type -- different widths (`u8 + u16`) or signedness
+/// (`i8 + u8`) are a user error, and widening is explicit (`as`). A bare literal
+/// is not an operand of its own width: it takes the other side's (D405's own
+/// exception), so this text is reached only by two NAMED operands.
+const MIXED_WIDTH_MSG = "the operands differ in integer width or signedness (D405, E_MIXED_WIDTH_ARITH): convert one of them with `as`"
 
 /// A top-level name declared twice in one file (#811). The name leaf is the
 /// first identifier of the declaration; the table answers "seen already", and
@@ -216,6 +373,14 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
 /// checker is its stage. The third is legal Nova the subset does not take yet,
 /// so it carries the subset wording. The judge itself (`@judge_char_lit`)
 /// reads these from exprs.nv -- one module, co-equal files.
+/// Projection on a DECLARED positional tuple. The language allows it (the
+/// oracle accepts `p.0` on `type Pair(int, int)`), the subset does not compile
+/// it yet -- and cannot, since the parser does not read that declaration either.
+/// Named here so the day the declaration lands, this refusal is what points at
+/// the door to build: component types come from FIELD ROWS (f0..fN), not from
+/// the term's head as they do for the anonymous shape.
+const DECL_POSITIONAL_PROJ_MSG = "outside the subset: projection by position on a DECLARED positional record is not compiled yet (E2-b) -- its declaration is not read either"
+
 const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escape)"
 const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
 const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"

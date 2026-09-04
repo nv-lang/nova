@@ -1,0 +1,15 @@
+module bis_zero_plain
+
+// dotted, ZERO args, method body prints a LITERAL (no @field)
+type Box {
+    ro k int
+}
+
+fn Box @show() -> () {
+    println(1)
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    b.show()
+}

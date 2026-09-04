@@ -1,0 +1,4 @@
+fn emit_typedef(b StringBuilder) -> () {
+    @b.append("my_struct_t")
+    @b.append("legacy_row")
+}

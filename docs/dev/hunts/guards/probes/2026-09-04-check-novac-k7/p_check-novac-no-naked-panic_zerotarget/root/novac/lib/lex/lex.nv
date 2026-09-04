@@ -1,0 +1,5 @@
+module novac.lex
+
+export fn lex_it() -> int {
+    panic("token table is empty")
+}

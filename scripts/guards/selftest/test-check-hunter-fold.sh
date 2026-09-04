@@ -23,7 +23,7 @@ rm -f "$T.live"
 mk_root() {
     rm -rf "$T"
     mkdir -p "$T/docs/plans" "$T/docs/dev/hunts/novac/probes/2026-03-03-parse-k3" \
-             "$T/docs/dev/hunts/oracle"
+             "$T/docs/dev/hunts/oracle" "$T/docs/dev/hunts/guards"
     git -C "$T" init -q
     git -C "$T" config user.email selftest@example.com
     git -C "$T" config user.name selftest

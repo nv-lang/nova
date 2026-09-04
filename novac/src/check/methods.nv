@@ -24,7 +24,7 @@ import ../lex.{Token}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
 import ../resolve.{FnLookup}
-import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
+import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{c_instance_method, ty_source_name, decl_of_ty}
 import ../sem.{option_payload}
 
@@ -55,7 +55,7 @@ fn Checker @method_arity_key(kids []Node, recv_t TyId) -> []ArgSpec {
     // The receiver is parameter zero (plan 273) and carries a CLASS: `mut b`
     // then `b.m()` selects the `mut @m` overload, which is the precedent the
     // whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: arg_class(kids[0], @scope), name: "" })
+    out.push(ArgSpec { type_id: recv_t, cls: arg_class(kids[0], @scope), name: "", lit: LitArg.NotLit })
     out.append(unknown_args(kids, 3, @scope))
     out
 }

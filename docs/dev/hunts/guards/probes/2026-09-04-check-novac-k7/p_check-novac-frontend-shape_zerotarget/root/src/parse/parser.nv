@@ -1,0 +1,5 @@
+module novac.parse
+
+export fn parse(t TokenStream) -> (Tree, []Diagnostic) {
+    return (Tree.new(), []Diagnostic.new())
+}

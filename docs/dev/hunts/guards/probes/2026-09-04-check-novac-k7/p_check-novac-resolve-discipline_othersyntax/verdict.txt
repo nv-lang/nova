@@ -1,0 +1,2 @@
+rc=0
+check-novac-resolve-discipline ok: файлов .nv: 2, линейных сканов и тихих int-дефолтов: 0

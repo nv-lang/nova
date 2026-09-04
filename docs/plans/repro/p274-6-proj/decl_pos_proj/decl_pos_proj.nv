@@ -1,0 +1,13 @@
+module decl_pos_proj
+
+// A DECLARED positional tuple projected by position. The emitter's projection
+// door asks `is_tuple`, which answers true only for the ANONYMOUS structural
+// shape (TkTuple); this type is TkRecord with the PositionalTuple shape, so it
+// would fall to the record path -- and that path spells the member by the leaf's
+// text, which here is the digit `0`.
+type Pair(int, int)
+
+fn main() {
+    ro p = Pair(3, 4)
+    println(p.0)
+}

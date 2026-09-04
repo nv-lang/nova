@@ -20,9 +20,9 @@ test "a shadowing type carries the module in its C name; a primitive's name is c
     // print a second `struct Nova_<name>` beside the shell's and clang
     // refuses the unit (measured on ct.c).
     ro std = std_decls()
-    ro (d, _) = compile_to_c("type str { n int }
-fn main() {
- println(1)
+    ro (d, _) = compile_to_c("type str { n int }\n\
+fn main() {\n\
+ println(1)\n\
 }", std)
     assert(d.len() >= 1)
     for g in d {
@@ -33,13 +33,13 @@ fn main() {
     // oracle spells it (the mangle-fixed-point guard holds that): a foreign
     // Widget is handed in by the test, the file's own Widget wins (D125) and
     // its struct keeps the plain name.
-    ro shadow_decls = []str.of("export type Widget { q int }
+    ro shadow_decls = []str.of("export type Widget { q int }\n\
 ")
-    ro (d2, c2) = compile_to_c("module p
-type Widget { n int }
-fn main() {
- ro v = Widget { n: 7 }
- println(v.n)
+    ro (d2, c2) = compile_to_c("module p\n\
+type Widget { n int }\n\
+fn main() {\n\
+ ro v = Widget { n: 7 }\n\
+ println(v.n)\n\
 }", shadow_decls)
     assert(d2.len() == 0)
     assert(c2.contains("struct Nova_Widget"))
@@ -49,10 +49,10 @@ fn main() {
     // name. The fact comes from the interop table, which lifts the template's
     // own identifiers -- so the full surface is used here, not the tiny
     // std_decls.
-    ro (d2b, _) = compile_to_c_with("module p
-type Vec { n int }
-fn main() {
- println(1)
+    ro (d2b, _) = compile_to_c_with("module p\n\
+type Vec { n int }\n\
+fn main() {\n\
+ println(1)\n\
 }", []Node.new(), interop_surface())
     assert(d2b.len() >= 1)
     for g in d2b {
@@ -61,10 +61,10 @@ fn main() {
 
     // A name of one's own stays clean and unprefixed -- the mangle answers
     // the two owners, not every declaration.
-    ro (d3, c3) = compile_to_c("type Own { n int }
-fn main() {
- ro v = Own { n: 7 }
- println(v.n)
+    ro (d3, c3) = compile_to_c("type Own { n int }\n\
+fn main() {\n\
+ ro v = Own { n: 7 }\n\
+ println(v.n)\n\
 }", std)
     assert(d3.len() == 0)
     assert(c3.contains("struct Nova_Own"))
@@ -81,18 +81,18 @@ test "a field whose type is declared LOWER in the file compiles (#TBD-A, hunt se
     // Asserted on ORDER, not on presence: a `typedef` existing somewhere proves
     // nothing -- it has to stand before the body that reads the name.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("type Boxed { node Node }
-type Inline { at Point }
-type Node { n int }
-type Point value {
- x int
- y int
-}
-fn main() {
- ro b = Boxed { node: Node { n: 9 } }
- println(b.node.n)
- ro i = Inline { at: Point { x: 4, y: 7 } }
- println(i.at.x)
+    ro (d, c) = compile_to_c("type Boxed { node Node }\n\
+type Inline { at Point }\n\
+type Node { n int }\n\
+type Point value {\n\
+ x int\n\
+ y int\n\
+}\n\
+fn main() {\n\
+ ro b = Boxed { node: Node { n: 9 } }\n\
+ println(b.node.n)\n\
+ ro i = Inline { at: Point { x: 4, y: 7 } }\n\
+ println(i.at.x)\n\
 }", std)
     assert(d.len() == 0)
 

@@ -1,0 +1,9 @@
+fn key_of(owner int, name str) -> str {
+    return "${owner}.${name}"
+}
+
+#realtime nogc
+export fn NameTable @find(owner int, name str) -> int {
+    ro key = key_of(owner, name)
+    return @map.get(key)
+}

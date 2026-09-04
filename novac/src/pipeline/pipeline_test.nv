@@ -178,12 +178,12 @@ test "the UNIT return type is a type, not a tuple (E2-b3 wave 3g-2)" {
     // under a unit return) is accepted by BOTH, which is a shared typing hole
     // rather than a rule. Recorded in the plan; the pair lands when a negative
     // with an agreeing outcome exists.
-    ro src = "type Box { mut n int }
-fn Box mut @reset() -> () {
-    @n = 0
-}
-fn main() { mut b = Box { n: 5 }
- b.reset()
+    ro src = "type Box { mut n int }\n\
+fn Box mut @reset() -> () {\n\
+    @n = 0\n\
+}\n\
+fn main() { mut b = Box { n: 5 }\n\
+ b.reset()\n\
  println(\"n = \", b.n) }"
     ro (diags, c) = compile_to_c(src, std_decls())
     assert(diags.len() == 0)
@@ -292,10 +292,10 @@ test "`Self` in a declaration is the RECEIVER's type, not a missing one" {
     // asked `defs` dropped the WHOLE signature -- and the refusal at the use
     // site then said "no such method" about a method std declares. std spells
     // `Self` 264 times across 50 files (measured 2026-08-21).
-    ro decls = []str.of("fn Cel @twin() -> Self => 0
+    ro decls = []str.of("fn Cel @twin() -> Self => 0\n\
 ")
-    ro src = "type Cel { v f64 }
-fn main() { ro c = Cel { v: 1.0 }
+    ro src = "type Cel { v f64 }\n\
+fn main() { ro c = Cel { v: 1.0 }\n\
  println(c.twin().v) }"
     ro diags = compile(src, decls)
     assert(diags.len() == 1)
@@ -309,7 +309,7 @@ test "a BOUND is not a type parameter: the arity is ONE, not two" {
     // `pick[int](3)` was refused as "a different number of type arguments" -- a
     // lie about a legal program, and the only way to satisfy the count was to
     // write `pick[int, Compare]`.
-    ro src = "fn pick[T Compare](a T) -> T => a
+    ro src = "fn pick[T Compare](a T) -> T => a\n\
 fn main() { println(1) }"
     ro tree = parse(tokens_of(src))
     ro ctx = context(tree, parse_decls(std_decls()), InteropTable.new())
@@ -326,11 +326,11 @@ test "the two CONSTRAINTS of a generics entry get two different refusals" {
     // `[D156-strict-forget]` when the body does not consume -- while
     // `[T Compare]` constrains DISPATCH. novac has neither, and one message for
     // both would name a cause it never established.
-    ro lin = compile("fn take[T consume](consume a T) -> T => a
+    ro lin = compile("fn take[T consume](consume a T) -> T => a\n\
 fn main() { println(1) }", std_decls())
     assert(lin.len() == 1)
     assert(lin[0].message.contains("must-consume"))
-    ro proto = compile("fn take[T Compare](a T) -> int => 1
+    ro proto = compile("fn take[T Compare](a T) -> int => 1\n\
 fn main() { println(1) }", std_decls())
     assert(proto.len() == 1)
     assert(proto[0].message.contains("protocol"))
@@ -340,7 +340,7 @@ test "a bound is refused BY NAME, and once" {
     // novac neither dispatches a protocol nor verifies a constraint (both
     // arrive with E2-b3), and compiling the generic as if the bound were not
     // written would accept what the oracle rejects. One cause, one diagnostic.
-    ro diags = compile("fn pick[T Compare](a T) -> T => a
+    ro diags = compile("fn pick[T Compare](a T) -> T => a\n\
 fn main() { println(1) }", std_decls())
     assert(diags.len() == 1)
     assert(diags[0].message.contains("bound on a type parameter"))
@@ -401,8 +401,8 @@ test "a static method on a GENERIC type is refused by name, never iced" {
     // held by THIS test and by the gate step that runs it, not by anyone's
     // memory: revert the door and this file fails. That is a property of
     // novac alone -- exactly what a module test is for.
-    ro src = "type P[A] { fst A }
-fn P[A].mk(a A) -> int => 1
+    ro src = "type P[A] { fst A }\n\
+fn P[A].mk(a A) -> int => 1\n\
 fn main() { println(1) }"
     ro (diags, _) = compile_to_c(src, std_decls())
     // Named, and named ONCE: an ice would be `E_NOVAC_ICE`, and a cascade would
@@ -424,15 +424,15 @@ test "a handed-over type is KNOWN, and the file's own declaration of that name w
     // and if the foreign types were registered AFTER the file (the order this
     // wave corrected), `take(p Pair)` would be refused as a type novac does not
     // know. Either regression turns this test red.
-    ro handed = "module std.pairs
-export type Pair value { a int }
+    ro handed = "module std.pairs\n\
+export type Pair value { a int }\n\
 fn Pair @first() -> int => 1"
-    ro src = "module m.own
-type Pair { b int }
-fn take(p Pair) -> int => p.b
-fn main() {
- ro p = Pair { b: 7 }
- println(take(p))
+    ro src = "module m.own\n\
+type Pair { b int }\n\
+fn take(p Pair) -> int => p.b\n\
+fn main() {\n\
+ ro p = Pair { b: 7 }\n\
+ println(take(p))\n\
 }"
     ro (diags, c) = compile_to_c(src, []str.of(handed))
     assert(diags.len() == 0)
@@ -464,26 +464,26 @@ test "a parenthesised record CONSTRUCTS by call, with defaults, and names a miss
     // by the CARRIER `examples/basics/named_tuple.nv` through the byte-for-byte
     // smoke: with the arm stubbed novac prints a call to a C function that
     // exists nowhere and the build fails. Two sides, two holders.
-    ro (clean, _) = compile_to_c("module m.c
-type Pair(x int, y int)
-type Complex(re f64 = 0.0, im f64 = 0.0)
-fn main() {
- ro p = Pair(1, 2)
- println(p.x)
- ro c = Complex()
- println(c.re)
- ro d = Complex(re: 3.5)
- println(d.re)
+    ro (clean, _) = compile_to_c("module m.c\n\
+type Pair(x int, y int)\n\
+type Complex(re f64 = 0.0, im f64 = 0.0)\n\
+fn main() {\n\
+ ro p = Pair(1, 2)\n\
+ println(p.x)\n\
+ ro c = Complex()\n\
+ println(c.re)\n\
+ ro d = Complex(re: 3.5)\n\
+ println(d.re)\n\
 }", []str.new())
     assert(clean.len() == 0)
     // A SLOT WITH NO VALUE is named, and by the ordinary refuser: the oracle
     // says "expects exactly 2 arguments", we say WHICH parameter is missing --
     // the same cause, a more precise sentence, and neither is invented here.
-    ro (short, _) = compile_to_c("module m.s
-type Pair(x int, y int)
-fn main() {
- ro p = Pair(1)
- println(p.x)
+    ro (short, _) = compile_to_c("module m.s\n\
+type Pair(x int, y int)\n\
+fn main() {\n\
+ ro p = Pair(1)\n\
+ println(p.x)\n\
 }", []str.new())
     mut named_slot = false
     for d in short {
@@ -506,25 +506,25 @@ test "the parenthesised record form is READ, and its brace construction refused 
     // identifier 'Nova_Pair'`, measured 2026-09-03), so emitting a struct here
     // would invent a construction the fixed point does not have. The call form
     // `Pair(1, 2)` is the one that works, and it arrives with V2b.
-    ro (clean, _) = compile_to_c("module m.p
-type Pair(x int, y int)
+    ro (clean, _) = compile_to_c("module m.p\n\
+type Pair(x int, y int)\n\
 fn main() { println(1) }", []str.new())
     assert(clean.len() == 0)
     // The SHAPE is the registry's answer, asked through the door (P24: no
     // reading a C name back apart).
-    ro ctx = context(parse(tokens_of("module m.p
-type Pair(x int, y int)
+    ro ctx = context(parse(tokens_of("module m.p\n\
+type Pair(x int, y int)\n\
 fn main() { println(1) }")), parse_decls([]str.new()), InteropTable.new())
     assert(match shape_of(ctx, ctx.ty_of_name("Pair") ?? no_ty()) {
         NamedTuple => true
         Record | ValueRecord | PositionalTuple | AnonNamedTuple | AnonPositionalTuple => false
     })
     // And the brace form is refused by name, not accepted and emitted.
-    ro (braced, _) = compile_to_c("module m.b
-type Pair(x int, y int)
-fn main() {
- ro p = Pair { x: 1, y: 2 }
- println(p.x)
+    ro (braced, _) = compile_to_c("module m.b\n\
+type Pair(x int, y int)\n\
+fn main() {\n\
+ ro p = Pair { x: 1, y: 2 }\n\
+ println(p.x)\n\
 }", []str.new())
     mut named = false
     for d in braced {
@@ -544,11 +544,11 @@ test "a `value` record answers is_value_record -- the POSITIVE side of the shape
     // Judged through the DOOR, not the C text: P24 forbids reading a C name
     // back apart, and check-novac-mangling-one-way refuses Nova-prefixed
     // spellings in test asserts -- the door IS sem's answer about the type.
-    ro src = "module m.v
-type P value { n int }
-fn main() {
- ro p = P { n: 7 }
- println(p.n)
+    ro src = "module m.v\n\
+type P value { n int }\n\
+fn main() {\n\
+ ro p = P { n: 7 }\n\
+ println(p.n)\n\
 }"
     ro (diags, _) = compile_to_c(src, []str.new())
     assert(diags.len() == 0)
@@ -559,10 +559,10 @@ fn main() {
 test "a type nobody declared is still refused by name" {
     // The boundary of the same mechanism: registering handed-over types must not
     // turn every unknown name into a type. `Zork` is declared nowhere.
-    ro (diags, _) = compile_to_c("module m.z
-fn take(z Zork) -> int => 1
+    ro (diags, _) = compile_to_c("module m.z\n\
+fn take(z Zork) -> int => 1\n\
 fn main() { println(1) }",
-                                 []str.of("module std.pairs
+                                 []str.of("module std.pairs\n\
 export type Pair value { a int }"))
     assert(diags.len() == 1)
     assert(diags[0].message.contains("does not know this type yet"))
@@ -576,19 +576,19 @@ test "a handed-over GENERIC declaration is a HEAD: bare use refused by the TRUTH
     // registry KNOWS `Box`, what is missing is the arguments. The oracle
     // accepts the bare head (measured 2026-08-26, PASS with no call); the
     // strictness is deliberate and named in the plan.
-    ro handed = "module std.box
-export type Box[T] { v T }
+    ro handed = "module std.box\n\
+export type Box[T] { v T }\n\
 export type Meta { n int }"
-    ro (d1, _) = compile_to_c("module m.g
-fn take(b Box) -> int => 1
+    ro (d1, _) = compile_to_c("module m.g\n\
+fn take(b Box) -> int => 1\n\
 fn main() { println(1) }",
                               []str.of(handed))
     assert(d1.len() == 1)
     assert(d1[0].message.contains("write its type arguments"))
     // And the NON-generic neighbour from the same handed text IS visible: the
     // skip is a hole for generics, not a hole for the file that carries one.
-    ro (d2, _) = compile_to_c("module m.g2
-fn take(m Meta) -> int => 1
+    ro (d2, _) = compile_to_c("module m.g2\n\
+fn take(m Meta) -> int => 1\n\
 fn main() { println(1) }",
                               []str.of(handed))
     assert(d2.len() == 0)
@@ -663,14 +663,14 @@ test "an unclosed bracket is refused, not accepted in silence (#809)" {
     ro (d1, _) = compile_to_c("fn main() {", std)
     assert(d1.len() >= 1)
 
-    ro (d2, _) = compile_to_c("fn main() {
- println(1
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ println(1\n\
 }", std)
     assert(d2.len() >= 1)
 
-    ro (d3, _) = compile_to_c("fn main() {
- ro xs = [1, 2
- println(1)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = [1, 2\n\
+ println(1)\n\
 }", std)
     assert(d3.len() >= 1)
 
@@ -681,8 +681,8 @@ test "an unclosed bracket is refused, not accepted in silence (#809)" {
     // set, which `std_decls()` does not carry, so a CLOSED `[1, 2]` is
     // refused here for a reason of its own (measured 2026-08-30). Its clean
     // side is held by the corpus fixture `array_lit_positions.nv` instead.
-    ro (d4, _) = compile_to_c("fn main() {
- println(1)
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ println(1)\n\
 }", std)
     assert(d4.len() == 0)
 }
@@ -697,28 +697,28 @@ test "a record construction is judged against its declaration (#812)" {
     ro std = std_decls()
 
     // a declared field nobody named
-    ro (d1, _) = compile_to_c("type Pt { n int }
-fn main() {
- ro p = Pt { }
- println(p.n)
+    ro (d1, _) = compile_to_c("type Pt { n int }\n\
+fn main() {\n\
+ ro p = Pt { }\n\
+ println(p.n)\n\
 }", std)
     assert(d1.len() >= 1)
     assert(d1[0].message.contains("omits a declared field"))
 
     // a field the type does not declare
-    ro (d2, _) = compile_to_c("type Pt { n int }
-fn main() {
- ro p = Pt { n: 1, z: 2 }
- println(p.n)
+    ro (d2, _) = compile_to_c("type Pt { n int }\n\
+fn main() {\n\
+ ro p = Pt { n: 1, z: 2 }\n\
+ println(p.n)\n\
 }", std)
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("does not declare"))
 
     // one field named twice fills the count and leaves the record short
-    ro (d3, _) = compile_to_c("type Pt { n int }
-fn main() {
- ro p = Pt { n: 1, n: 2 }
- println(p.n)
+    ro (d3, _) = compile_to_c("type Pt { n int }\n\
+fn main() {\n\
+ ro p = Pt { n: 1, n: 2 }\n\
+ println(p.n)\n\
 }", std)
     assert(d3.len() >= 1)
 
@@ -727,10 +727,10 @@ fn main() {
     // not read a record whose fields are separated by a comma yet (2026-08-30:
     // the refusal lands on the comma itself), so a two-field record would
     // test the parser's gap and not this rule.
-    ro (d4, _) = compile_to_c("type Pt { n int }
-fn main() {
- ro p = Pt { n: 1 }
- println(p.n)
+    ro (d4, _) = compile_to_c("type Pt { n int }\n\
+fn main() {\n\
+ ro p = Pt { n: 1 }\n\
+ println(p.n)\n\
 }", std)
     assert(d4.len() == 0)
 }
@@ -748,27 +748,27 @@ test "a token the grammar requires is refused when absent (#815)" {
     ro std = std_decls()
 
     // a type with no name
-    ro (d1, _) = compile_to_c("type { n int }
+    ro (d1, _) = compile_to_c("type { n int }\n\
 fn main() { println(1) }", std)
     assert(d1.len() >= 1)
 
     // a binding with no name
-    ro (d2, _) = compile_to_c("fn main() {
- mut = 1
- println(1)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ mut = 1\n\
+ println(1)\n\
 }", std)
     assert(d2.len() >= 1)
 
     // a binding with no `=`
-    ro (d3, _) = compile_to_c("fn main() {
- mut b int
- println(1)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ mut b int\n\
+ println(1)\n\
 }", std)
     assert(d3.len() >= 1)
 
     // a signature with no `(`
-    ro (d4, _) = compile_to_c("fn main {
- println(1)
+    ro (d4, _) = compile_to_c("fn main {\n\
+ println(1)\n\
 }", std)
     assert(d4.len() >= 1)
 
@@ -788,10 +788,10 @@ fn main() { println(1) }", std)
     // The other direction of the lid: every form above, written whole, is
     // clean. Without this the rule could be wider than the grammar and no
     // test would notice.
-    ro (d6, _) = compile_to_c("type Pt { n int }
-fn main() {
- mut b = 1
- println(b)
+    ro (d6, _) = compile_to_c("type Pt { n int }\n\
+fn main() {\n\
+ mut b = 1\n\
+ println(b)\n\
 }", std)
     assert(d6.len() == 0)
 }
@@ -802,25 +802,25 @@ test "an application in TYPE position resolves -- Vec[int], and []T is its D239 
     // collection -- so a file whose parameters and return carry them checks
     // CLEAN, where before the wave the form rule refused the shape wholesale
     // (159 such refusals across novac's own files; 16 after).
-    ro handed = "module std.v
+    ro handed = "module std.v\n\
 export type Vec[T] { n int }"
-    ro (d1, _) = compile_to_c("module m.a
-fn take(xs Vec[int]) -> int => 1
-fn f(xs []int) -> []int => xs
+    ro (d1, _) = compile_to_c("module m.a\n\
+fn take(xs Vec[int]) -> int => 1\n\
+fn f(xs []int) -> []int => xs\n\
 fn main() { println(1) }",
                               []str.of(handed))
     assert(d1.len() == 0)
     // The rotten pair, both directions of the lid: a WRONG-ARITY application is
     // not a type (the head refusal names what to write), and the forms B2 did
     // NOT take -- a fn type here -- stay refused by name.
-    ro (d2, _) = compile_to_c("module m.b
-fn t(xs Vec[int, str]) -> int => 1
+    ro (d2, _) = compile_to_c("module m.b\n\
+fn t(xs Vec[int, str]) -> int => 1\n\
 fn main() { println(1) }",
                               []str.of(handed))
     assert(d2.len() == 1)
     assert(d2[0].message.contains("write its type arguments"))
-    ro (d3, _) = compile_to_c("module m.c
-fn t(f fn(int) -> int) -> int => 1
+    ro (d3, _) = compile_to_c("module m.c\n\
+fn t(f fn(int) -> int) -> int => 1\n\
 fn main() { println(1) }",
                               []str.of(handed))
     assert(d3.len() == 1)
@@ -838,7 +838,7 @@ test "an array literal is built from the SHELL's instance set, and refused by na
     // record head is handed beside it -- the same shape `harvest_types` builds
     // from the real std.
     mut std = std_decls()
-    std.push("module std.v
+    std.push("module std.v\n\
 export type Vec[T] { n int }")
     ro (d1, _) = compile_to_c("fn take(xs []int) -> int => 1\nfn main() {\n ro v = [7, 8]\n ro w = []int.of(4)\n println(take(v))\n println(take(w))\n}", std)
     assert(d1.len() == 0)
@@ -868,12 +868,12 @@ export type Vec[T] { n int }")
 
 test "an instance method of the shell: deduced on the receiver, named by the shell, refused where the shell has none" {
     mut std = std_decls()
-    std.push("module std.v
-export type Vec[T] { n int }
-export fn Vec[T] @len() -> int => @n
-export fn Vec[T] mut @push(v T) -> @ => @
-export type Opt[T] enum Got(T) | Nil
-export fn Vec[T] @get(i int) -> Opt[T] => Nil
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @push(v T) -> @ => @\n\
+export type Opt[T] enum Got(T) | Nil\n\
+export fn Vec[T] @get(i int) -> Opt[T] => Nil\n\
 export fn Vec[T] @nope() -> int => 0")
     ro (d1, c1) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.len())\n}", std)
     assert(d1.len() == 0)

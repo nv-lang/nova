@@ -1,0 +1,9 @@
+module reassign
+
+// Door 1: REASSIGNMENT. The oracle checks nothing here (#262); does novac?
+fn main() {
+    mut x = 1
+    ro s = "s"
+    x = s
+    println(x)
+}

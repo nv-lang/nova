@@ -38,10 +38,13 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name, c_shell_method, digit_index, is_tuple}
+import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload}
+import ../sem.{shape_of}
+import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
+import ../builtins.{BuiltinType}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -219,14 +222,25 @@ fn Checker mut @judge_char_lit(e Node) -> () {
     }
     ro txt = leaf_text(t)
     ro body = txt[1..txt.byte_len() - 1]
-    if body.byte_len() >= 2 && body[..1] == "\\" {
-        if body[1..2] == "u" {
+    // BYTES, and not one-byte STRING SLICES -- registry #892, carrier found
+    // 2026-09-04. This read used to ask `body[..1] == "\\"`, slicing a `str` at
+    // byte one; for a two-byte letter the length test passes and the slice
+    // lands INSIDE the character, so `ro c = <a Cyrillic letter>` died with
+    // "str: slice splits a UTF-8 codepoint" while the oracle compiled it.
+    // The same judge already did it right three lines down, through `.bytes()`
+    // -- both ways lived in one function and only the second half used the
+    // sound one.
+    ro bb = body.bytes()
+    if bb.len() >= 2 && bb[0] == BACKSLASH {
+        ro esc = bb[1]
+        if esc == ('u' as u8) {
             @report_first_leaf_of(kids, CHAR_UNICODE_MSG)
             return
         }
-        ro legal = body[1..2] == "n" || body[1..2] == "t" || body[1..2] == "r" ||
-                   body[1..2] == "0" || body[1..2] == "\\" || body[1..2] == "'" || body[1..2] == "\""
-        if body.byte_len() != 2 || !legal {
+        ro legal = esc == LOWER_N || esc == LOWER_T || esc == LOWER_R ||
+                   esc == ('0' as u8) || esc == BACKSLASH ||
+                   esc == ('\'' as u8) || esc == QUOTE
+        if bb.len() != 2 || !legal {
             @report_first_leaf_of(kids, if legal { CHAR_WIDTH_MSG } else { CHAR_ESCAPE_MSG })
         } else {
             // One defined escape: the mangle door spells its codepoint.
@@ -235,8 +249,8 @@ fn Checker mut @judge_char_lit(e Node) -> () {
     }
     // A bare body is ONE codepoint exactly when its byte length equals the
     // length its FIRST byte announces -- a second character, a stray
-    // continuation byte, or a truncated sequence all disagree.
-    ro bb = body.bytes()
+    // continuation byte, or a truncated sequence all disagree. The bytes were
+    // taken once above; asking twice would be the second door in miniature.
     ro head = bb[0]
     ro want = if head < 128 { 1 }
               else if head >= 240 { 4 }
@@ -463,11 +477,30 @@ fn Checker mut @type_expr(e Node) -> () {
             // The operand's type is unknown -- the refusal above named it, and a
             // hole is not something to record.
         }
-        // A TUPLE owner is judged before the record door: `has_field` asks
-        // the declaration registry, and a tuple has no declaration to ask
-        // (B15 step 4a). The index is judged against the ARITY, which is
-        // exactly what the term's head stores.
-        if is_tuple(@ctx, owner) {
+        // A POSITIONAL owner is judged before the record door, by its SHAPE.
+        // The anonymous term has no declaration for `has_field` to ask, and
+        // its arity is what the term's head stores (B15 step 4a). The
+        // DECLARED positional shape is refused by name below rather than
+        // routed here: its components live in field rows, not in the head, and
+        // its declaration is not read by the parser yet -- so the refusal is
+        // the pointer to what to build the day it is. Both used to hide behind
+        // `is_tuple`, whose name said "tuple" and meant "anonymous" (owner,
+        // 2026-09-04): the oracle ACCEPTS `p.0` on `type Pair(int, int)`, and
+        // this door would have sent it to the record path as field `0`.
+        ro shape = shape_of(@ctx, owner)
+        ro declared_positional = match shape {
+            PositionalTuple => true
+            Record | ValueRecord | NamedTuple | AnonNamedTuple | AnonPositionalTuple => false
+        }
+        if declared_positional {
+            @report_first_leaf_of(kids, DECL_POSITIONAL_PROJ_MSG)
+            return
+        }
+        ro anon_positional = match shape {
+            AnonPositionalTuple => true
+            Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
+        }
+        if anon_positional {
             match kids[2] {
                 Leaf(t) => {
                     ro idx = digit_index(t.text)
@@ -552,6 +585,9 @@ fn Checker mut @type_expr(e Node) -> () {
             // shape plan 196 exists to remove, and it is why the mangling door
             // had to be two doors. Same lookup door the diagnostics use.
             @record_method_callee(e, kids, recv_t)
+            // D227 rule 2: a bare literal argument now takes the type of the
+            // parameter the binding gave it (and rule 3 judges its range).
+            @adapt_literal_args(e, kids, 3, 1)
         } else {
             // The receiver or an argument was refused: the walk above already
             // spoke, and a key built over a refused child would resolve on a
@@ -654,6 +690,11 @@ fn Checker mut @type_expr(e Node) -> () {
             DefConst(_) => @report_first_leaf_of(kids,
                 "outside the subset: a constant is a value, and a value is not callable")
         }
+        // D227 rule 2: whichever path above recorded a callable, a bare
+        // literal argument now takes the type of the parameter the binding
+        // gave it (and rule 3 judges its range). Reads the channel, so the
+        // generic, turbofish and coercing paths need no hook of their own.
+        @adapt_literal_args(e, kids, 1, 0)
     } else if k == NodeKind.Cast {
         @type_cast(e)
     } else if k == NodeKind.TupleExpr {
@@ -822,11 +863,40 @@ fn Checker mut @type_expr(e Node) -> () {
 /// level down, and not a silently wrong primitive emission.
 /// Returns whether it refused.
 fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
-    ro lt = type_of(kids[0], @ctx, @scope, @chan)
-    ro rt = type_of(kids[2], @ctx, @scope, @chan)
+    ro lt0 = type_of(kids[0], @ctx, @scope, @chan)
+    ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
+    // D227/D405: a bare numeric literal takes the OTHER operand's type. The
+    // lattice's door decides (adapt_operand, one door for both readers); the
+    // walk RECORDS the decision here and judges the literal's range against
+    // its new type before anything else is asked about the pair.
+    ro lt = adapt_operand(kids[0], lt0, rt0, @ctx.tys)
+    ro rt = adapt_operand(kids[2], rt0, lt0, @ctx.tys)
+    if lt != lt0 {
+        if !@lit_fits_or_refuse(kids[0], lt) { return true }
+        @record(kids[0], lt)
+    } else {
+        // The left operand kept its own type: nothing was decided for it here.
+    }
+    if rt != rt0 {
+        if !@lit_fits_or_refuse(kids[2], rt) { return true }
+        @record(kids[2], rt)
+    } else {
+        // The right operand kept its own type: nothing was decided for it here.
+    }
     ro op = bin_op_of(leaf_kind(kids[1]))
-    ro numeric = @is_numeric(lt) && @is_numeric(rt)
-    ro ints = lt == @ctx.prims.int_id && rt == @ctx.prims.int_id
+    ro both_numeric = @is_numeric(lt) && @is_numeric(rt)
+    // D405: two NAMED numeric operands of different width or signedness are
+    // a USER error, not a subset limit and not protocol dispatch -- the only
+    // mixed pair the oracle takes is `int` with `f64` (measured; int_f64_mix).
+    if both_numeric && lt != rt && !int_f64_mix(@ctx, lt, rt) {
+        match kids[1] {
+            Leaf(t) => @refuse(t, MIXED_WIDTH_MSG)
+            Branch { .. } => {}
+        }
+        return true
+    }
+    ro numeric = both_numeric
+    ro ints = lt == rt && is_int_prim(@ctx.tys, lt)
     ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
     ro same_prim = lt == rt && @is_primitive(lt)
     // Each operator states WHICH operands the subset can emit for it. The
@@ -854,22 +924,37 @@ fn Checker @has_printer(t TyId) -> bool => @is_printable_carrier(carrier_of(@ctx
 
 /// The printer set, asked of the CARRIER: a newtype prints as what it holds
 /// (`println(Row(7))` prints 7, which is what the oracle does), so the peel
-/// happens once, here, and not at each of the four comparisons.
+/// happens once, here, and not at each comparison. Every NUMERIC primitive
+/// prints (the oracle prints each width with its own printer -- the emitter's
+/// table), plus `str` and `bool`; `char` is the char wave's.
 fn Checker @is_printable_carrier(t TyId) -> bool =>
-    t == @ctx.prims.int_id || t == @ctx.prims.str_id ||
-    t == @ctx.prims.bool_id || t == @ctx.prims.f64_id
+    is_numeric_prim(@ctx.tys, t) || t == @ctx.prims.str_id || t == @ctx.prims.bool_id
 
-/// The two types arithmetic and ordering accept in the subset.
-fn Checker @is_numeric(t TyId) -> bool =>
-    t == @ctx.prims.int_id || t == @ctx.prims.f64_id
+/// What arithmetic and ordering accept in the subset: every numeric primitive
+/// of the universe (D363: primitives dispatch built in), asked of the FAMILY
+/// door and not of two ids -- ten widths fell out of this rule while it named
+/// `int` and `f64` by id (#910).
+fn Checker @is_numeric(t TyId) -> bool => is_numeric_prim(@ctx.tys, t)
 
-/// Every primitive of novac's universe -- equality accepts any of them, as
-/// long as both sides are the SAME one (mixed-type equality is a conversion
-/// question the subset does not answer).
-fn Checker @is_primitive(t TyId) -> bool =>
-    t == @ctx.prims.int_id || t == @ctx.prims.f64_id ||
-    t == @ctx.prims.bool_id || t == @ctx.prims.str_id ||
-    t == @ctx.prims.char_id
+/// Every primitive of novac's universe but the unit -- equality accepts any of
+/// them, as long as both sides are the SAME one (mixed-type equality is a
+/// conversion question the subset does not answer).
+fn Checker @is_primitive(t TyId) -> bool {
+    match prim_row_of(@ctx.tys, t) {
+        Some(r) => family_has_values(r)
+        None => false
+    }
+}
+
+/// Every family but the unit has VALUES two of which can be equal; a nested
+/// `match` inside an arm is a form novac does not read about itself yet, so the
+/// inner question lives in its own function.
+fn family_has_values(r BuiltinType) -> bool {
+    match r.family {
+        PfUnit => false
+        PfInt | PfFloat | PfStr | PfBool | PfChar => true
+    }
+}
 
 /// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
 /// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
@@ -879,7 +964,7 @@ fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
     match un_op_of(leaf_kind(kids[0])) {
         Not => { if t == @ctx.prims.bool_id { return false } }
         Negate => { if @is_numeric(t) { return false } }
-        BitNot => { if t == @ctx.prims.int_id { return false } }
+        BitNot => { if is_int_prim(@ctx.tys, t) { return false } }
     }
     match kids[0] {
         Leaf(tk) => @refuse(tk, "outside the subset: this prefix operator on this operand dispatches through a protocol (D46: @neg / @bitnot), and protocol dispatch arrives with bounds")

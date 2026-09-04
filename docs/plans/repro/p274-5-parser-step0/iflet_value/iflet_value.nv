@@ -1,0 +1,9 @@
+module iflet_value
+
+// `if Some(x) = e { .. } else { .. }` used as a VALUE (initializer).
+fn mk(n int) -> Option[int] => Some(n)
+
+fn main() {
+    ro v = if Some(x) = mk(4) { x } else { 0 }
+    println(v)
+}

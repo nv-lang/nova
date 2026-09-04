@@ -1,0 +1,13 @@
+module drag_order
+
+// Distinguishes POISONING (a syntax error silences what follows) from a
+// swallowed structure: here the known refusal comes FIRST and the stray closer
+// SECOND. If `nosuch` is still reported, the suppression is positional.
+fn early() -> int {
+    nosuch(1)
+}
+
+fn main() {
+    ro x = }
+    println(1)
+}

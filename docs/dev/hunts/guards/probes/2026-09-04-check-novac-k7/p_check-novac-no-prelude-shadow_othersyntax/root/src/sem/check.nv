@@ -1,0 +1,10 @@
+export type Token {
+    kind int
+}
+export fn lex(src str) -> []Token {
+    return Vec[Token].of()
+}
+extern "nova" fn outcome() -> int
+fn park_me() -> () {
+    return ()
+}

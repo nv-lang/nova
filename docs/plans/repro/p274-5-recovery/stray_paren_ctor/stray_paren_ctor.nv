@@ -1,0 +1,13 @@
+module stray_paren_ctor
+
+// A stray `)` inside a record-constructor field list. The ctor loop is bounded
+// by `!= RBrace` only, so its Err branch may eat a closer that belongs to an
+// enclosing form.
+type P {
+    ro x int
+}
+
+fn main() {
+    ro p = P { x: 1, ) }
+    println(p.x)
+}

@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// A `mut` method reached through the DOTTED form on a `mut` binding.
+module basics.p_mut_recv_dot
+
+type Counter { mut n int }
+
+fn Counter mut @bump() -> () {
+    @n = @n + 1
+}
+
+fn main() {
+    mut c = Counter { n: 0 }
+    c.bump()
+    c.bump()
+    println("n = ${c.n}")
+}

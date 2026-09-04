@@ -1,0 +1,5 @@
+ro PRIMS = []BuiltinType.of(
+    BuiltinType { name: "int", c_name: "nova_int" },
+    BuiltinType { name: "i32", c_name: "int32_t" },
+    BuiltinType { name: "u64", c_name: "uint64_t" })
+export fn prim_c_name(ordinal int) -> str => PRIMS[ordinal].c_name

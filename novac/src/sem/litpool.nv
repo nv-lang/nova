@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/litpool.nv -- the POOL of string constants an emission builds:
+// each distinct text once, and the slot it was given.
+//
+// Donor: LLVM's constant pool / rustc `Allocation` interning -- a constant is
+// stored once and referenced by handle, and two occurrences of the same text
+// ARE the same constant; NOT taken: interning by content HASH with a
+// collision-resolving handle, which buys nothing at the sizes one file reaches.
+// Role: layer 3 -- the door that turns a literal's TEXT into its slot in the
+//   emitted pool, registering it the first time it is asked for.
+// Used by: emit_c (both the value position and the print path), which is the
+//   only phase that emits literals at all.
+// Guarded by: check-novac-second-door.py (the two emission sites used to
+//   register a literal each in its own three lines), check-novac-no-string-keys.py
+//   (a string-keyed table carries its NamespaceId, so `NameTable` and not a bare
+//   HashMap), check-novac-deps.py (this file is WHY the pool lives in `sem`:
+//   `emit_c -> names` is not an edge of the architecture, and the wave that
+//   needed `raw_decl` chose not to add one either).
+//
+// Deduplication is the owner's call (2026-09-04): before it, two identical
+// literals became two `static const uint8_t` buffers, because each site did
+// `idx = lits.len(); lits.push(text)` for itself.
+//
+// WHY A STRING IS THE KEY HERE, when the architecture keys tables by id: the
+// identity of a string constant IS its text. Two literals spelled the same are
+// the same constant, and there is no earlier stage that could have given them a
+// shared id. `NsStrLits` says exactly that, in its own namespace, so no other
+// space can be keyed by a literal's bytes by accident.
+
+module novac.sem
+
+import ../names.{NameTable, NamespaceId}
+
+/// The pool: texts in registration order, plus the index that answers whether
+/// one has been seen.
+export type LitPool {
+    mut texts []str /// registration order; the position IS the C name suffix
+    mut ix NameTable /// literal text -> its position in `texts`
+}
+
+/// An empty pool.
+export fn LitPool.new() -> LitPool =>
+    { texts: []str.new(), ix: NameTable.new(NamespaceId.NsStrLits) }
+
+/// THE slot of this text, registering it the first time and answering with the
+/// SAME slot afterwards.
+export fn LitPool mut @slot(text str) -> int {
+    ro seen = @ix.find(text)
+    if seen >= 0 { return seen }
+    ro idx = @texts.len()
+    @texts.push(text)
+    @ix.put(text, idx)
+    idx
+}

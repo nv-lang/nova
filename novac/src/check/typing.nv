@@ -30,19 +30,19 @@ import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
-import ../sem.{raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
+import ../sem.{LitArg, raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
-import ../sem.{is_tuple}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload, for_head_elem}
+import ../sem.{shape_of}
 
 // ---- the type channel: what the checker decided ---------------------------
 //
@@ -488,7 +488,7 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
             // are known before any typing happens. The NAME is known here too,
             // and it is what a defaulted parameter is reached by (D102).
             ro ax = arg_expr_of(c)
-            out.push(ArgSpec { type_id: no_ty(), cls: arg_class(ax, scope), name: arg_name_of(c) })
+            out.push(ArgSpec { type_id: no_ty(), cls: arg_class(ax, scope), name: arg_name_of(c), lit: LitArg.NotLit })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -606,7 +606,16 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // carries none, and the call-site ABI is unmeasured) -- refused by name
     // now that the type FORM reads (4b made `(int, int)` a real type in
     // signatures, so unreachability no longer holds this boundary).
-    if is_tuple(@ctx, pt) {
+    // THE ANONYMOUS TERM, asked by its shape: the boundary is about a
+    // structural term with no declaration (its call-site ABI is unmeasured),
+    // so the two anonymous shapes stand on one side and every declared one on
+    // the other. This used to ask `is_tuple`, whose name promised more than it
+    // answered (owner, 2026-09-04).
+    ro anon_term = match shape_of(@ctx, pt) {
+        AnonPositionalTuple | AnonNamedTuple => true
+        Record | ValueRecord | NamedTuple | PositionalTuple => false
+    }
+    if anon_term {
         @report_first_leaf_of(pk, TUPLE_PARAM_MSG)
         return false
     }

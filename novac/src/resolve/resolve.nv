@@ -40,7 +40,7 @@ import ../builtins.{ENTRY_FN}
 import ../types.{TyId, is_ty, Interner}
 import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
-import ../sem.{bind_slot_of, mode_admits, type_admits}
+import ../sem.{bind_slot_of, mode_admits, type_admits, lit_admits}
 import ../sem.{ty_source_name}
 
 /// How a callable lookup turned out. A sum, not an int code: "not found"
@@ -308,10 +308,16 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
         // Since sub-plan L2 (2026-08-26) the question is STRUCTURAL, through
         // `type_admits`: a receiver `Vec[T]` fits `Vec[int]`, a bare parameter
         // fits anything, and the untyped slot still admits everything.
-        if !type_admits(tys, p.type_id, args[at].type_id) {
+        // A BARE NUMERIC LITERAL is admitted by its position's FAMILY, not by
+        // the `int`/`f64` the lattice gives it when nobody asks (D227 rule 2;
+        // registry #910: `add_i8(1, 2)` fit nothing because `1` arrived as
+        // `int`). The literal's decided type and its range are the checker's
+        // business after the binding; here only admission is asked.
+        if !type_admits(tys, p.type_id, args[at].type_id) && !lit_admits(tys, args[at].lit, p.type_id) {
             return false
         } else {
-            // Either this position is not typed yet (no_ty()), or it matches.
+            // Either this position is not typed yet (no_ty()), it matches, or a
+            // literal takes the parameter's type.
         }
         // THE MODE, by rule P14. A parameter's mode is an axis of overloading,
         // not decoration: `tag(r)` and `tag(m)` carry the same TYPE and select

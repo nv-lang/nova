@@ -1,0 +1,16 @@
+module bis_meth_value
+
+// A METHOD whose body has a println, but used in VALUE position.
+type Box {
+    ro k int
+}
+
+fn Box @show() -> int {
+    println(1)
+    @k
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    println(b.show())
+}

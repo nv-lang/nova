@@ -1,0 +1,11 @@
+module record_field
+
+// Door 3: a record-literal FIELD against its declared type.
+type Pt {
+    ro x int
+}
+
+fn main() {
+    ro p = Pt { x: "no" }
+    println(p.x)
+}

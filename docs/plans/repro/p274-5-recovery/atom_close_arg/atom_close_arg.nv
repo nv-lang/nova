@@ -1,0 +1,5 @@
+module atom_close_arg
+fn main() {
+    println(})
+    println(1)
+}

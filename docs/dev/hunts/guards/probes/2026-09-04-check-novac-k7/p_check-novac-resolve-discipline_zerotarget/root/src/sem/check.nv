@@ -1,0 +1,9 @@
+fn type_of_name(ctx Ctx, t NameTable, n NameId) -> TyId {
+    ro id = t.lookup(n)
+    if !is_ty(id) { return ctx.prims.int_id }
+    return decls.type_of(id)
+}
+fn lit_type(ctx Ctx, e Expr) -> TyId {
+    if e.is_str_lit() { return ctx.prims.str_id }
+    ctx.prims.int_id
+}

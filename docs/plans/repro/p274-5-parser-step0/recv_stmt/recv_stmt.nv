@@ -1,0 +1,22 @@
+module recv_stmt
+
+// Receiver call as a STATEMENT inside a method: novac own sources do this
+// hundreds of times (`@report_first_leaf_of(kids, MSG)`).
+type Box {
+    mut k int
+}
+
+fn Box mut @bump(n int) -> () {
+    @k = @k + n
+}
+
+fn Box mut @twice(n int) -> () {
+    @bump(n)
+    @bump(n)
+}
+
+fn main() {
+    mut b = Box { k: 0 }
+    b.twice(3)
+    println(b.k)
+}

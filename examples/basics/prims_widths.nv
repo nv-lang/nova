@@ -1,0 +1,46 @@
+// prims_widths.nv -- the ten universe types novac once declared and never
+// reached (registry #910): every integer width, `uint`, `f32`. One function
+// per type takes literal arguments (D227 rule 2: the literal takes the
+// parameter's type), adds (the checked helper of that width), compares,
+// negates, mixes a literal with a named operand (D405's literal rule), and
+// prints -- each width through its own printer. The oracle's output is the
+// fixed point; novac must match it byte for byte (scripts/tools/novac-e1-smoke.sh).
+
+module basics.prims_widths
+
+fn add_i8(a i8, b i8) -> i8 => a + b
+fn add_i16(a i16, b i16) -> i16 => a + b
+fn add_i32(a i32, b i32) -> i32 => a + b
+fn add_i64(a i64, b i64) -> i64 => a + b
+fn add_u8(a u8, b u8) -> u8 => a + b
+fn add_u16(a u16, b u16) -> u16 => a + b
+fn add_u32(a u32, b u32) -> u32 => a + b
+fn add_u64(a u64, b u64) -> u64 => a + b
+fn add_uint(a uint, b uint) -> uint => a + b
+fn add_f32(a f32, b f32) -> f32 => a + b
+
+fn less_i16(a i16, b i16) -> bool => a < b
+fn same_u32(a u32, b u32) -> bool => a == b
+fn neg_i8(a i8) -> i8 => -a
+fn bump_i32(a i32) -> i32 => a + 1
+fn mask_u8(a u8) -> u8 => a & 0x0F
+fn half_f32(a f32) -> f32 => a / 2.0
+
+fn main() {
+    println("i8 ", add_i8(1, 2))
+    println("i16 ", add_i16(100, 200))
+    println("i32 ", add_i32(1000, 2000))
+    println("i64 ", add_i64(10000, 20000))
+    println("u8 ", add_u8(100, 100))
+    println("u16 ", add_u16(1000, 1000))
+    println("u32 ", add_u32(70000, 1))
+    println("u64 ", add_u64(5000000000, 1))
+    println("uint ", add_uint(7, 8))
+    println("f32 ", add_f32(1.5, 2.25))
+    println("less ", less_i16(3, 4))
+    println("same ", same_u32(9, 9))
+    println("neg ", neg_i8(5))
+    println("bump ", bump_i32(41))
+    println("mask ", mask_u8(0xAB))
+    println("half ", half_f32(5.0))
+}

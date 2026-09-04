@@ -118,11 +118,27 @@ export type ArgClass enum
     | ArgOwnedTemp /// an owned temporary: a call result, a literal, a constructor
     | ArgConsume /// a binding declared `consume` -- its form IS the promise
 
-/// One argument of a call: its type and its class.
+/// Is this argument a BARE NUMERIC LITERAL -- the one kind of expression whose
+/// type is decided by its POSITION rather than by itself (D227 rule 2: "in a
+/// position with an explicit numeric target the literal takes that type without
+/// a cast"). The lattice types `1` as `int` when nobody asks otherwise (D44),
+/// and a resolver comparing that `int` against an `i8` parameter refused every
+/// call of every narrow-width function (registry #910). The marker lets the
+/// resolver admit the literal into any parameter of its FAMILY; the range rule
+/// (D227 rule 3) and the recording of the decided type are the checker's, after
+/// the binding is known.
+export type LitArg enum
+    | NotLit /// any expression that is not a bare numeric literal, negated or not
+    | IntLitArg /// an integer literal (decimal or hex), optionally negated
+    | FloatLitArg /// a float literal, optionally negated
+
+/// One argument of a call: its type, its class, and whether it is a literal
+/// whose type its position decides.
 export type ArgSpec value {
     type_id TyId /// the argument's type, or `no_ty()` while the position is not typed
     cls ArgClass /// which class P14 filters this position by
     name str /// the parameter NAME it was passed under (`by: 2`); `""` = positional
+    lit LitArg /// a bare numeric literal takes the parameter's type within its family (D227)
 }
 
 /// Rule P14: may a parameter of this MODE take an argument of this CLASS?

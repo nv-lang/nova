@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/prims_test.nv -- the holders of the ten-widths wave
+// (registry #910, plan 274.5 section 3-pred59) and of the receiver-class fix
+// (hunt check x K4, 2026-09-04). Every case here encodes a MEASUREMENT against
+// the oracle, not an assumption (gate-guard conventions G10): the oracle's
+// emission of the same programs was read on 2026-09-04 and is quoted where a
+// spelling is asserted.
+//
+// Reverse probe (owner's rule, "prove it both ways"): with `lit_admits`
+// returning false for IntLitArg the first case reddens ("this argument's type
+// is not the one this function declares"); with `int_text_fits_row` returning
+// true the range cases redden. Both were run before this file was committed.
+
+module novac.pipeline
+
+import ../diag.{Diagnostic}
+
+/// Every diagnostic message joined -- a refusal is asserted by its words, not
+/// by its position in the list, because the order among several is the walk's.
+fn messages(d []Diagnostic) -> str {
+    mut all = ""
+    for x in d { all = "${all}${x.message}\n" }
+    all
+}
+
+test "a bare literal takes the parameter's width, and the width's checked helper is emitted (D227 rule 2, #910)" {
+    // The oracle: `nova_fn_..._add_i8(((int8_t)1), ((int8_t)2))` around
+    // `return nova_i8_checked_add(a, b);` -- ten such functions, one per width,
+    // all built and printed. Until this wave novac refused every one of them
+    // twice: the literal arrived as `int`, and `+` on an `i8` pair "dispatched
+    // through a protocol".
+    ro (d, c) = compile_to_c("fn f(a i8, b i8) -> i8 => a + b\nfn main() {\n println(f(1, 2))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_i8_checked_add"))
+    assert(c.contains("((int8_t)1LL)"))
+}
+
+test "an unsigned width takes the ULL suffix and the 64-bit unsigned printer (#910)" {
+    // The oracle prints `u64`/`uint` through `nova_print_uint` and the narrower
+    // unsigned widths through `nova_print_int`; `f32` has its own printer.
+    ro (d, c) = compile_to_c("fn g(a u64) -> u64 => a\nfn h(a f32) -> f32 => a\nfn k(a u16) -> u16 => a\nfn main() {\n println(g(5000000000))\n println(h(1.5))\n println(k(7))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_print_uint("))
+    assert(c.contains("nova_print_f32("))
+    assert(c.contains("nova_print_int("))
+    assert(c.contains("((uint64_t)5000000000ULL)"))
+}
+
+test "a literal outside the parameter's range is refused by the range rule, not by a type mismatch (D227 rule 3)" {
+    // Measured: the oracle refuses `add_u8(300, 1)` on every narrow width; novac
+    // refused the same file for the wrong reason before this wave.
+    ro (d, _) = compile_to_c("fn f(a u8) -> u8 => a\nfn main() {\n println(f(300))\n}", std_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("does not fit `u8`"))
+    assert(d[0].message.contains("255"))
+}
+
+test "the negative side of a signed width takes one more: -128 fits i8, 128 does not (D227 rule 3)" {
+    ro std = std_decls()
+    ro (ok, _) = compile_to_c("fn f(a i8) -> i8 => a\nfn main() {\n println(f(-128))\n}", std)
+    assert(ok.len() == 0, messages(ok))
+    ro (bad, _) = compile_to_c("fn f(a i8) -> i8 => a\nfn main() {\n println(f(128))\n}", std)
+    assert(bad.len() == 1, messages(bad))
+    assert(bad[0].message.contains("does not fit `i8`"))
+}
+
+test "a negative literal never fits an unsigned width -- the spec's own example (D227 rule 3)" {
+    ro (d, _) = compile_to_c("fn f(a u16) -> u16 => a\nfn main() {\n println(f(-1))\n}", std_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("does not fit `u16`"))
+}
+
+test "two NAMED operands of different integer widths are a user error, not protocol dispatch (D405)" {
+    ro (d, _) = compile_to_c("fn f(a i32, b i64) -> i64 => a + b\nfn main() {\n println(f(1, 2))\n}", std_decls())
+    assert(d.len() >= 1, messages(d))
+    assert(messages(d).contains("differ in integer width"))
+}
+
+test "a literal beside a named operand takes its width, hex included (D405's literal rule)" {
+    // `a & 0x0F` on a `u8`: the literal is a `u8`, the result is a `u8`, the
+    // cast spells the row's C name -- and the bitwise family no longer answers
+    // `int` without looking at its operands.
+    ro (d, c) = compile_to_c("fn f(a u8) -> u8 => a & 0x0F\nfn main() {\n println(f(0xAB))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_byte)0x0F"))
+}
+
+test "an integer literal is admitted into a float position -- measured against the oracle 2026-09-04" {
+    ro (d, _) = compile_to_c("fn f(x f64) -> f64 => x\nfn main() {\n println(f(1))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+}
+
+test "a `mut` method reached through `@` binds like the dotted form (hunt check x K4)" {
+    // The probe p_mut_recv_at: until 2026-09-04 the `@` receiver was classed
+    // an owned temporary by node shape, and `ModeMut` admits no temporary --
+    // 152 `mut` methods of novac's own source were unreachable through `@`.
+    ro (d, _) = compile_to_c("type Counter { mut n int }\nfn Counter mut @bump() -> () {\n @n = @n + 1\n}\nfn Counter mut @twice() -> () {\n @bump()\n @bump()\n}\nfn main() {\n mut c = Counter { n: 0 }\n c.twice()\n println(c.n)\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+}
+
+test "a `consume` method reached through `@` from a borrowing method is refused, as the oracle refuses it (hunt check x K4)" {
+    // The other side of the same root: the temporary class satisfied
+    // `ModeConsume`, and a borrowing method consumed its own receiver in
+    // silence while the oracle says E_BORROWING_METHOD_CONSUMES_SELF.
+    ro (d, _) = compile_to_c("type Counter { n int }\nfn Counter consume @eat() -> int => @n + 3\nfn Counter @via() -> int => @eat()\nfn main() {\n ro c = Counter { n: 10 }\n println(c.via())\n}", std_decls())
+    assert(d.len() >= 1, "consume through `@` from a `ro` receiver must be refused")
+}

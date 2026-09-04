@@ -1,0 +1,15 @@
+module bis_zero_mutmeth
+
+// Same as bis_zero_plain, but the METHOD is declared mut (like the passing dotted_mut).
+type Box {
+    mut k int
+}
+
+fn Box mut @show() -> () {
+    println(1)
+}
+
+fn main() {
+    mut b = Box { k: 4 }
+    b.show()
+}

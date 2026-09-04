@@ -1,0 +1,3 @@
+fn emit_req(b StringBuilder) -> () {
+    @b.append("nova_requires")
+}

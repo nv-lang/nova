@@ -31,8 +31,8 @@
 
 module novac.sem
 
-import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{TypeKind, OPTION_SUM}
+import ../types.{TyId, no_ty, is_ty, Interner}
+import ../builtins.{TypeKind, OPTION_SUM, BuiltinType, prim_row}
 
 /// The ONE type argument of an arity-one instance, or no type: the question
 /// both the for-head judge and the Option judge ask (the second-door guard
@@ -62,3 +62,98 @@ export fn option_payload(ctx Ctx, t TyId) -> TyId {
 /// The ELEMENT a for-head vector carries: the single-argument door under its
 /// wave's name (B16) -- the head kind was already judged by the caller.
 export fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)
+
+/// Is this the UNIT type -- the `()` a callable declares when it returns
+/// nothing? Answered by IDENTITY with the seeded prim (`Prims.unit_id`, the
+/// same shape `int_id` and `char_id` take), not by a declaration's name: a
+/// primitive names no declaration -- its head is a universe ordinal -- and the
+/// first version of this door asked `decl_of_ty` and iced on every callable.
+///
+/// Asked by the emitter to decide whether a body has a TAIL VALUE. Until
+/// 2026-09-04 it decided that by "this is not main" -- a second rule beside
+/// the checker's `declares_a_value` -- and the two diverged on every unit
+/// callable whose last statement is an expression: `return println(1);` was
+/// emitted and the println call had no callee to name. One question, one
+/// door; the checker's tree-level rule and this type-level one read the same
+/// declaration.
+export fn is_unit_ty(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    t == ctx.prims.unit_id
+}
+
+/// THE UNIVERSE ROW behind a type TERM -- family, width, signedness, both
+/// spellings -- or nothing when the term is not a primitive. The one door the
+/// family questions below share: a primitive's head is its universe ordinal
+/// (`Interner.prim`), and the ordinal indexes the ONE table in `builtins`.
+///
+/// Why a door over the ROW and not a set of ids in `Prims` (registry #910,
+/// 2026-09-04): until this door the checker asked "is this an integer" as
+/// `t == prims.int_id`, so ten of the sixteen primitives -- every integer width,
+/// `uint`, `f32` -- fell out of literal typing, arithmetic, comparison and
+/// printing at once, while the oracle compiled them all. A predicate that lists
+/// members by id is a copy of the table; a predicate that READS the table has
+/// nothing to drift. Takes the interner rather than `Ctx` because the resolver
+/// asks it too, and the resolver holds only the interner.
+export fn prim_row_of(tys Interner, t TyId) -> Option[BuiltinType] {
+    if !is_ty(t) { return None }
+    // One kind is asked about, so one comparison -- not an exhaustive match
+    // over eight kinds that would spell every other one here for no reason.
+    if tys.kind_of(t) != TypeKind.TkPrim { return None }
+    Some(prim_row(tys.prim_ordinal_of(t)))
+}
+
+/// Is this term an INTEGER primitive of any width or signedness (D405's "the
+/// same concrete integer type" is asked of two of these; D227's literal rule
+/// asks it of the target)?
+export fn is_int_prim(tys Interner, t TyId) -> bool {
+    match prim_row_of(tys, t) {
+        Some(r) => row_is_int(r)
+        None => false
+    }
+}
+
+/// Is this term a FLOAT primitive (`f32` or `f64`)?
+export fn is_float_prim(tys Interner, t TyId) -> bool {
+    match prim_row_of(tys, t) {
+        Some(r) => row_is_float(r)
+        None => false
+    }
+}
+
+/// The family questions asked of a ROW -- one `match` each, in their own
+/// functions, because a `match` nested inside an arm is a form novac does not
+/// read about itself yet (274.5), and this file is part of what it reads.
+fn row_is_int(r BuiltinType) -> bool {
+    match r.family {
+        PfInt => true
+        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+    }
+}
+
+/// Is this row a FLOAT family row (`f32`, `f64`)? The twin of `row_is_int`.
+fn row_is_float(r BuiltinType) -> bool {
+    match r.family {
+        PfFloat => true
+        PfInt | PfStr | PfBool | PfChar | PfUnit => false
+    }
+}
+
+/// Is this term a NUMERIC primitive -- what arithmetic and ordering accept
+/// (D363: primitives dispatch built in, no protocol call)?
+export fn is_numeric_prim(tys Interner, t TyId) -> bool =>
+    is_int_prim(tys, t) || is_float_prim(tys, t)
+
+/// May a BARE NUMERIC LITERAL stand in a position of this type (D227 rule 2)?
+/// An integer literal takes any integer width; a float literal any float width.
+/// Measured 2026-09-04: the oracle also lets an INTEGER literal stand in a
+/// `f64` position (`fn f(x f64)` + `f(1)` builds and prints `1`), so an integer
+/// literal admits a float target as well -- the rule's "numeric target" is read
+/// as written. The range rule (D227 rule 3) is not asked here: admission is the
+/// resolver's question, the range is the checker's, once the binding is known.
+export fn lit_admits(tys Interner, lit LitArg, want TyId) -> bool {
+    match lit {
+        NotLit => false
+        IntLitArg => is_numeric_prim(tys, want)
+        FloatLitArg => is_float_prim(tys, want)
+    }
+}

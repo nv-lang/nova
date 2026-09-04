@@ -1,0 +1,15 @@
+module arm_return
+
+// Arm body is a bare `return`.
+type Sig enum Off | On(int)
+
+fn pick(s Sig) -> int {
+    match s {
+        Off => return 0
+        On(v) => v
+    }
+}
+
+fn main() {
+    println(pick(On(7)))
+}

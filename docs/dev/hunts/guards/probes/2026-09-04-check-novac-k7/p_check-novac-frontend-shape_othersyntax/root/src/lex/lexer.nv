@@ -1,0 +1,5 @@
+module novac.lex
+
+export fn lex(src str) -> (TokenStream, []Diagnostic) {
+    return (TokenStream.new(), []Diagnostic.new())
+}

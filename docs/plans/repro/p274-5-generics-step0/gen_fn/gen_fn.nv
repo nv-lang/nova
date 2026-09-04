@@ -1,0 +1,13 @@
+module gen_fn
+
+// A generic FREE function: the subset admits this (E2-b2 mono over explicit
+// type arguments) -- the control for the generic TYPE probe next door.
+//
+// The body returns a computed int and not a parameter on purpose: returning a
+// `ro`-bound parameter of type T is refused by the ORACLE (E_READONLY_COERCE),
+// which was the first version's mistake and had nothing to do with generics.
+fn arity[T](a T, b T) -> int => 2
+
+fn main() {
+    println(arity[int](3, 4))
+}

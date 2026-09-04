@@ -1,0 +1,8 @@
+module return_type
+
+// Door 5: a RETURN value against the declared return type.
+fn f() -> int => "no"
+
+fn main() {
+    println(f())
+}

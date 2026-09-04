@@ -1,0 +1,8 @@
+module plus_assign
+
+// Compound assignment `i += 1` in a loop.
+fn main() {
+    mut i = 0
+    for _ in 0..3 { i += 1 }
+    println(i)
+}

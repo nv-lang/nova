@@ -1,0 +1,2 @@
+rc=0
+check-novac-no-naked-panic ok: голых panic( в novac/src нет (дверь — ice() в diag)

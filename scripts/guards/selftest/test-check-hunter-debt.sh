@@ -18,7 +18,8 @@ fi
 rm -f "$T.live"
 
 # Макет-репозиторий: поверхность novac + один отчёт охоты.
-mkdir -p "$T/repo/novac/src" "$T/repo/docs/dev/hunts/novac" "$T/repo/docs/dev/hunts/oracle"
+mkdir -p "$T/repo/novac/src" "$T/repo/docs/dev/hunts/novac" "$T/repo/docs/dev/hunts/oracle" \
+         "$T/repo/docs/dev/hunts/guards"
 git -C "$T/repo" init -q
 git -C "$T/repo" config user.email selftest@example.com
 git -C "$T/repo" config user.name selftest
@@ -29,7 +30,7 @@ printf 'KLETKA stub\n' > "$T/repo/docs/dev/hunts/novac/2026-01-01-parse-k1.md"
 git -C "$T/repo" add novac/src/a.nv docs/dev/hunts/novac/2026-01-01-parse-k1.md
 git -C "$T/repo" commit -qm "seed: surface and first hunt report"
 ANCHOR=$(git -C "$T/repo" rev-parse HEAD)
-printf 'budget_novac=5\nbudget_oracle=5\nanchor=%s\n' "$ANCHOR" > "$T/base"
+printf 'budget_novac=5\nbudget_oracle=5\nbudget_guards=5\nanchor=%s\n' "$ANCHOR" > "$T/base"
 
 # Здоровье: долг 0 при свежей охоте.
 if ! NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o0" 2>&1; then
@@ -67,7 +68,7 @@ if NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o3" 2>&1; then
 fi
 
 # ── подделка 3: якорь-мусор в базе ──────────────────────────────────────
-printf 'budget_novac=5\nbudget_oracle=5\nanchor=deadbeef\n' > "$T/base2"
+printf 'budget_novac=5\nbudget_oracle=5\nbudget_guards=5\nanchor=deadbeef\n' > "$T/base2"
 if NOVA_HUNTER_DEBT_BASELINE="$T/base2" sh "$GUARD" "$T/repo" >"$T.o4" 2>&1; then
     echo "FAIL: якорь-не-коммит прошёл — базу можно сломать молча" >&2
     rc=1

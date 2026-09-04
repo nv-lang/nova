@@ -1,0 +1,12 @@
+module named_proj
+
+// A NAMED tuple projected by NAME: the record path, and the field has a name.
+// (Projection by POSITION on a named tuple is refused by BOTH compilers --
+// oracle E_TUPLE_POSITIONAL_ACCESS_ON_NAMED, novac "unknown field" -- so it is
+// not in this file; that fixed point holds already.)
+type Pt(x int, y int)
+
+fn main() {
+    ro p = Pt(3, 4)
+    println(p.x)
+}

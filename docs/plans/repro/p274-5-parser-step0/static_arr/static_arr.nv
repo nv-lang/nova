@@ -1,0 +1,7 @@
+module static_arr
+
+// A static call on an array type: `[]int.of(..)`.
+fn main() {
+    ro xs = []int.of(1, 2, 3)
+    println(xs.len())
+}

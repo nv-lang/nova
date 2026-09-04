@@ -1,0 +1,12 @@
+module drag_control
+
+// CONTROL for drag_rest: the same file WITHOUT the stray closer. If the second
+// refusal is reported here and not there, the stray closer swallowed it.
+fn main() {
+    ro x = 1
+    println(1)
+}
+
+fn later() -> int {
+    nosuch(1)
+}

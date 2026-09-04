@@ -1,0 +1,14 @@
+module sum_arg
+
+// A SUM as a type ARGUMENT of a generic instance: `Vec[Sig]`. novac's mangler
+// ices on this shape ("a SUM as an instance argument -- its in-name spelling is
+// not measured on the shell") and its doc says the shape is unreachable -- yet
+// novac's own sources reach it (`[]TokenKind` and kin), and that single ice is
+// what pushes the self-distance runner into per-file mode. This probe exists to
+// MEASURE the oracle's spelling of the instance struct, read off its C.
+type Sig enum Off | On(int)
+
+fn main() {
+    ro xs = []Sig.of(Sig.Off, Sig.On(3))
+    println(xs.len())
+}

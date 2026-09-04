@@ -1,0 +1,534 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/collect.nv -- the PASS that fills the registry: seed the
+// universe, take the declarations novac was handed, then register the file's
+// own, in declaration order.
+//
+// Donor: Go `types2.collectObjects`/`packageObjects` -- a two-pass collect,
+// names first and bodies after, so a declaration may name one that appears
+// lower in the file; NOT taken: Go's object graph and its lazy resolution,
+// because this subset reads one file plus a handed-over prefix and has no
+// package graph to resolve.
+// Role: layer 3 -- WRITING the registry. `sem.nv` beside it owns the registry
+//   itself and the questions asked OF it (`Ctx`, `Prims`, `decl_of_ty`,
+//   `ty_of_name`); this file owns filling it. Two roles, not two halves of
+//   one: the registry answers, the pass populates.
+// Used by: pipeline (the whole compile), and the module tests of sem, resolve
+//   and mangle, which build a Ctx to ask their own questions.
+// Guarded by: check-novac-file-size.py (this file exists because sem.nv
+//   crossed a thousand lines on 2026-09-04), check-novac-ctx-tables.py (the
+//   set of Ctx tables is declared in plan 10.3b), the module tests.
+
+module novac.sem
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
+import ../diag.{ice}
+import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
+import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME}
+import ../types.{Interner, TyId, no_ty, is_ty}
+
+/// The type and declaration registry of ONE file (without methods:
+/// collect() brings those in from the signatures it read).
+export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new())
+
+/// The same registry, plus the declarations novac was HANDED.
+///
+/// Two doors and not one flag: a caller that has no foreign declarations (every
+/// module test builds a `Ctx` that way) says so by NOT passing them, and the
+/// wrapper above is the whole difference. The seam exists because the boundary
+/// between foreign and own rows is fixed INSIDE this function -- between the
+/// handed-over types and the file's own passes -- and a caller cannot place it.
+export fn collect_types_with(file Node, decls []Node) -> Ctx {
+    mut types = []TypeDef.new()
+    mut consts = ConstTable.new()
+    mut defs = DefTable.new()
+    mut tys = Interner.new()
+    // Pre-declared types come from the ONE builtins table (P5), in Prims
+    // order; the seed hands the ACTUAL ids back (CommonTypes model). The
+    // universe ordinal is the interner's head for a primitive.
+    mut seeded = []DeclId.new()
+    // The judge's copy of the universe's NAMES (see the Ctx field): filled by
+    // the same loop that seeds, so the two cannot drift.
+    mut builtin_names = NameTable.new(NamespaceId.NsDefs)
+    // TypeDef row per type-parameter INDEX, built on demand by the fn branch
+    // below and shared by every declaration (see the comment there).
+    mut param_rows = []TyId.new()
+    mut ordinal = 0
+    for bt in builtin_types() {
+        seeded.push(seed(types, defs, tys, bt.name, ordinal))
+        builtin_names.put(bt.name, ordinal)
+        ordinal += 1
+    }
+    // THE HANDED-OVER TYPES, right after the seed and before anything of this
+    // file: a signature of the file may name one of them, and the pass that
+    // reads signatures is below. The boundary is fixed immediately after, so the
+    // reader can let the file's own declaration shadow a foreign one of the same
+    // name.
+    harvest_types(decls, types, defs, tys)
+    defs.seal_foreign()
+    // The PRIMS are types, and a declaration's type comes from its row -- the
+    // seed hands back the declaration, the row hands back the term.
+    ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
+                       bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]),
+                       char_id: ty_of_row(types, seeded[14]),
+                       unit_id: ty_of_row(types, seeded[15]) }
+    mut fields = FieldTable.new()
+    mut protos = ProtoTable.new()
+    mut variant_rows = []VariantDef.new()
+    mut payload_types = []TyId.new()
+    mut fns = FnTable.new()
+    mut fn_decl_rows = []FnRow.new()
+    // The pairs THIS file declares (D429). std's are appended later by
+    // `harvest_methods`; both go into one table, because a pair is a pair
+    // whoever wrote it -- and until 2026-08-23 only std's were read, so a
+    // `#coerce` in the compiled file registered nothing at all.
+    mut coerces = []CoercePair.new()
+    // THE DECLARATIONS, through the door: an `export`ed declaration is inside a
+    // wrapper, and every walk below wants what the wrapper holds.
+    ro decls_of_file = file_decls(file)
+    ro coerce_marks = coerce_marked(decls_of_file)
+    // PASS 1 BUILDS THE ROW, not just the name -- and that is a fix, not a
+    // refactor. Until 2026-08-21 pass 1 handed out ids and pass 2 pushed rows,
+    // so the two could DISAGREE: an `alias` consumes a name but pushes no row,
+    // and every type declared after one had an id one greater than its row
+    // index. The guard `id != types.len()` then skipped it, and the type
+    // silently vanished. MEASURED: `type Count alias int` before
+    // `type Cel { v f64 }` made novac refuse `c.v` with "unknown field: this
+    // type has no field with this name" -- a lie about a field that exists, on a
+    // file the oracle accepts. Building the row HERE makes `DeclId ==` its row
+    // index true by CONSTRUCTION, so no guard is needed and no drift is
+    // possible.
+    //
+    // The SHAPE is read from the tree (`shape_of_decl`), never from the
+    // registry: pass 1 is where names are being registered, so a forward
+    // reference cannot be resolved yet -- and asking anyway is what made the
+    // shape depend on declaration order.
+    // MODULE-LEVEL CONSTANTS (274.5 wave B2), before the types: a constant is
+    // a NAME like any other, and the registry is one door for all of them. The
+    // TYPE is not resolved here -- an initializer's type is the checker's
+    // answer, and sem inventing one would be a second truth about it.
+    for c in decls_of_file {
+        ro ck = const_decl_of(c)
+        if !ck.is_some() { continue }
+        ro kids = branch_children(ck ?? c)
+        ro cname_at = const_name_at(kids)
+        if cname_at < 0 { continue }
+        ro cname = leaf_text(kids[cname_at])
+        if defs.declared_by_file(cname) { continue }
+        ro init_at = const_init_at(kids)
+        if init_at < 0 { continue }
+        defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(),
+                 []Node.of(kids[init_at]))))
+    }
+    for c in decls_of_file {
+        ro k = c.kind_of()
+        if k != NodeKind.TypeDecl && k != NodeKind.SumDecl { continue }
+        ro nk = branch_children(c)
+        if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
+        ro tname = leaf_text(nk[1])
+        // A DUPLICATE WITHIN THIS FILE registers nothing: the first declaration
+        // owns the DeclId, the second gets no row and no id, and judging the
+        // duplicate is check's job -- sem's job is to not build a second truth
+        // for one name. The question is asked of the FILE, not of the table:
+        // a name a handed-over declaration also uses is NOT a duplicate, and
+        // treating it as one compiled the file against the foreign type.
+        if defs.declared_by_file(tname) { continue }
+        if k == NodeKind.SumDecl {
+            ro d = DeclId(types.len())
+            defs.add(tname, DefTarget.DefType(d))
+            // A SUM's value-ness is DERIVED, not declared: `is_value_sum` reads
+            // it off the payloads (A4), so the row says nothing here.
+            types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
+                                 tparam_cnt: generic_names(nk).len(), ty_id: tys.sum(d), name: tname,
+                                 rows: TypeRows.NoRows })
+            continue
+        }
+        match shape_of_decl(c) {
+            // A PROTOCOL is not a type a value can have: it names a CONTRACT,
+            // and `types` holds types. Registering it there would let
+            // `ro x Sized = ...` through, which is a program the language does
+            // not have -- so it goes to its own table (P17 row in plan 10.3b).
+            //
+            // Pass 1 registers the NAME and the SIGNATURE COUNT; the signature
+            // types are resolved in pass 2, for the same reason fields are: a
+            // signature may name a type declared further down the file.
+            ShapeProtocol => {
+                mut cnt = 0
+                for m in branch_children(c) {
+                    if m.kind_of() != NodeKind.ProtoMethod { continue }
+                    cnt += 1
+                }
+                protos.add(tname, protos.sigs.len(), cnt)
+                for m in branch_children(c) {
+                    if m.kind_of() != NodeKind.ProtoMethod { continue }
+                    // A nameless signature keeps its ROW (the counts must stay
+                    // aligned with pass 1) and an empty name, which no candidate
+                    // can ever match -- and `check` refuses the declaration by
+                    // name, so the empty row is never the thing a reader sees.
+                    protos.sigs.push(ProtoSig { name: proto_method_name(m) ?? "",
+                                                ret_id: no_ty(), param_off: 0, param_cnt: 0 })
+                }
+            }
+            ShapeRecord => {
+                ro d = DeclId(types.len())
+                defs.add(tname, DefTarget.DefType(d))
+                types.push(TypeDef { kind: TypeKind.TkRecord,
+                                     tparam_cnt: generic_names(nk).len(), shape: shape_of_record_decl(c),
+                                     ty_id: tys.record(d), name: tname,
+                                     rows: TypeRows.NoRows })
+            }
+            ShapeNewtype => {
+                // The row exists now; its TERM waits for pass 2, because the
+                // representation is a type reference and may point forward.
+                ro d = DeclId(types.len())
+                defs.add(tname, DefTarget.DefType(d))
+                types.push(TypeDef { kind: TypeKind.TkNewtype, shape: RecordShape.Record,
+                                     tparam_cnt: 0, ty_id: no_ty(), name: tname,
+                                     rows: TypeRows.NoRows })
+            }
+            ShapeAlias => {
+                // AN ALIAS IS NOT A TYPE: no row, and no id of its own. Its name
+                // is registered in pass 2, pointing at the representation's
+                // DECLARATION -- so nothing downstream ever learns that a second
+                // name existed. A row would BE a distinct type, which is exactly
+                // what an alias must not be.
+            }
+        }
+    }
+    for c in decls_of_file {
+        ro k = c.kind_of()
+        if k == NodeKind.TypeDecl {
+            ro tkids = branch_children(c)
+            if tkids.len() < 2 { continue }
+            if tkids[1].kind_of() != NodeKind.LeafNode { continue }
+            ro tname = leaf_text(tkids[1])
+            // SENTINEL AND NOT `?`, and the reason is the language, not taste:
+            // `??` substitutes a VALUE, so `?? continue` is refused (D86, the
+            // 2026-07-23 retraction), and `?` needs a wrapper to return into --
+            // this walk answers `Ctx`. So "skip this declaration" is spelled the
+            // only way a loop can spell it. The policy that came out of this
+            // measurement is in section 9.1g.5: `Option` where the value IS the
+            // answer, a sentinel where the answer is to SKIP.
+            // A PROTOCOL IS FILLED BEFORE `defs` IS ASKED. A contract is not
+            // registered as a type by construction (it has no layout), so the
+            // owner lookup below answers "no declaration" and the loop would
+            // skip -- which is exactly what happened until 2026-08-23: the
+            // signatures stayed untyped and the refusal said "missing size()"
+            // instead of "missing size() -> int". The FILLING itself lives with
+            // the registry it fills (`protocols.nv`), not here.
+            if shape_of_decl(c) == DeclShape.ShapeProtocol {
+                fill_proto_sigs(protos, c, tname, types, defs, tys)
+                continue
+            } else {
+                // Not a protocol: the ordinary owner lookup below applies.
+            }
+            ro owner_id = defs.type_decl(tname) ?? no_decl()
+            if !is_decl(owner_id) { continue }
+            // The ROW already exists (pass 1 built it) -- pass 2 FILLS it. The
+            // old guard `id != types.len()` is gone with the drift it was
+            // guarding against: an id no longer has to agree with a length.
+            if raw_decl(owner_id) >= types.len() { continue }
+            // An ALIAS owns no row, so its name resolves to ANOTHER
+            // declaration; touching that declaration's row here would rewrite
+            // the representation's own fields.
+            ro mine = types[raw_decl(owner_id)]
+            if mine.name != tname { continue }
+            match shape_of_decl(c) {
+                // Handled ABOVE, before the owner lookup: a contract has no row
+                // in `types`, so it cannot be filled by a walk that starts from
+                // one. The arm is named rather than left to a `_` so that a new
+                // shape still stops the compiler here (P21).
+                ShapeProtocol => {}
+                ShapeRecord => {
+                    ro off = fields.rows.len()
+                    mut cnt = 0
+                    for f in branch_children(c) {
+                        if f.kind_of() != NodeKind.Field { continue }
+                        ro fk = branch_children(f)
+                        // BY DOOR, not by index: a field may carry a MODE
+                        // (`mut n int`), and index zero is then the mode. Read
+                        // positionally, the mode became the NAME and the field
+                        // vanished from the registry -- the refusal then said
+                        // "unknown field" about a field written right there.
+                        ro fnat = field_name_at(fk) ?? -1
+                        ro ftat = field_type_at(fk) ?? -1
+                        if fnat < 0 || ftat < 0 { continue }
+                        // THE TYPE THROUGH THE ONE REFERENCE DOOR (274.5 wave
+                        // B1), exactly as a parameter reads it: a plain name,
+                        // `Name[Args]`, or the `[]Elem` sugar. Reading the leaf
+                        // text instead saw only the first token, so a field of
+                        // a slice type was dropped from the registry -- the
+                        // parser had grown the form and this pass had not.
+                        ro ft = ty_of_type_ref(fk, ftat, no_ty(), []str.new(),
+                                               []TyId.new(), types, defs, tys)
+                        if !is_ty(ft) { continue }
+                        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft)
+                        cnt += 1
+                    }
+                    // THE LAYOUT SURVIVES THE REWRITE: this pass replaces the row
+                    // to attach the field range, and dropping `by_value` here
+                    // would lose the declaration's own word one pass after
+                    // reading it.
+                    types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
+                                                          shape: types[raw_decl(owner_id)].shape,
+                                                          tparam_cnt: types[raw_decl(owner_id)].tparam_cnt,
+                                                          ty_id: mine.ty_id,
+                                                          name: tname,
+                                                          rows: TypeRows.FieldRows(FieldRow(off), cnt) }
+                }
+                ShapeNewtype => {
+                    // The TERM is interned here and not in pass 1: the
+                    // representation is a type reference, so it may point at a
+                    // declaration further down the file.
+                    match repr_of_decl(c, defs) {
+                        None => {
+                            // A representation novac does not know: the row stays
+                            // without a term, and check refuses the declaration at
+                            // its own position rather than sem guessing one.
+                        }
+                        Some(spec) => {
+                            if raw_decl(spec.under_decl) < types.len() {
+                                types[raw_decl(owner_id)] = TypeDef {
+                                    kind: TypeKind.TkNewtype, shape: RecordShape.Record,
+                                    tparam_cnt: 0,
+                                    ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
+                                    name: tname, rows: TypeRows.NoRows }
+                            } else {
+                                // The representation names a declaration outside
+                                // the table -- nothing to intern, and check is
+                                // the judge.
+                            }
+                        }
+                    }
+                }
+                ShapeAlias => {
+                    // THE ONE PLACE that may say an alias is not a type: the
+                    // name resolves to the representation's DECLARATION, and
+                    // nothing downstream ever learns a second name existed.
+                    // Registered HERE and not in pass 1 because the
+                    // representation is a type reference: it may point forward,
+                    // and in pass 1 the forward name is not registered yet.
+                    match repr_of_decl(c, defs) {
+                        None => {
+                            // An alias to a type novac does not know: the name
+                            // stays unregistered, and the use site is refused by
+                            // name instead of resolving to a guess.
+                        }
+                        Some(spec) => defs.add(tname, DefTarget.DefType(spec.under_decl))
+                    }
+                }
+            }
+        } else if k == NodeKind.SumDecl {
+            ro skids = branch_children(c)
+            if skids.len() < 2 { continue }
+            if skids[1].kind_of() != NodeKind.LeafNode { continue }
+            ro sname = leaf_text(skids[1])
+            ro sum_decl = defs.type_decl(sname) ?? no_decl()
+            if !is_decl(sum_decl) { continue }
+            if raw_decl(sum_decl) >= types.len() { continue }
+            ro srow = types[raw_decl(sum_decl)]
+            if srow.name != sname { continue } // a duplicate name owns no row here
+            // The term came from pass 1, where the row was built: the variants
+            // carry it, and nobody re-interns it.
+            ro sum_ty = srow.ty_id
+            ro off = variant_rows.len()
+            mut vcnt = 0
+            for v in branch_children(c) {
+                // Only Variant children carry a row. The `enum` marker, the
+                // sum's own name leaf and the `|` separators share this list,
+                // and recovery debris is check's to report -- sem registers
+                // only what it understood (274.3/F-B4). A guard says that once;
+                // an `else` here would be a branch on a VARIANT test, which the
+                // no-default-branch rule reserves for `match`.
+                if v.kind_of() != NodeKind.Variant { continue }
+                ro vk = branch_children(v)
+                    // A variant with no name (recovery after a broken sum_id):
+                    // skipped — check is the judge, sem does not fail (274.3/F-B4).
+                    if vk.len() < 1 { continue }
+                    // The name is the FIRST identifier leaf, not a fixed index.
+                    // Both shapes exist: `| Red(int)` puts a pipe leaf ahead of
+                    // it, `type Color enum Red(int)` does not -- the first
+                    // variant of the inline form follows the marker directly.
+                    // A fixed index 1 read the payload's `(` there and the sum
+                    // came out with a nameless variant (2026-08-17).
+                    mut name_at = -1
+                    mut vi = 0
+                    for vn in vk {
+                        if name_at < 0 && vn.kind_of() == NodeKind.LeafNode
+                            && leaf_kind(vn) == TokenKind.Ident {
+                            name_at = vi
+                        }
+                        vi += 1
+                    }
+                    if name_at < 0 { continue }
+                    ro vname = leaf_text(vk[name_at])
+                    defs.add(vname, DefTarget.DefVariant(VariantRow(variant_rows.len())))
+                    ro poff = payload_types.len()
+                    mut pcnt = 0
+                    // payload type names sit between '(' and ')'
+                    for j in name_at + 1..vk.len() {
+                        // [LEGACY-#676] var-index-method: `vk[j].kind_of()`
+                        // with a VARIABLE index miscompiles in the oracle
+                        // (E_RECV_METHOD_MISMATCH: receiver resolves as Vec;
+                        // a constant index works). Found 2026-08-14; the
+                        // binding hop is the workaround.
+                        ro pj = vk[j]
+                        if pj.kind_of() != NodeKind.LeafNode { continue }
+                        if leaf_kind(pj) != TokenKind.Ident { continue }
+                        ro pdecl = defs.type_decl(leaf_text(pj)) ?? no_decl()
+                        if !is_decl(pdecl) { continue }
+                        ro pt = ty_of_row(types, pdecl)
+                        payload_types.push(pt)
+                        pcnt += 1
+                    }
+                variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt })
+                vcnt += 1
+            }
+            types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
+                                                  tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
+                                                  ty_id: sum_ty, name: sname,
+                                                  rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
+        } else if k == NodeKind.FnDecl {
+            ro fk = branch_children(c)
+            if fk.len() < 2 { continue }
+            if fk[1].kind_of() != NodeKind.LeafNode {
+                // A METHOD DECLARED IN THIS FILE (wave 3g). Until 2026-08-23
+                // this branch dropped it: a method puts a `Recv` BRANCH where a
+                // free function has its name leaf, the collector required a
+                // leaf, and so the row was never registered -- which is why
+                // `check` had to refuse the whole form ("novac does not declare
+                // methods yet").
+                //
+                // The reader is the SAME one std declarations go through
+                // (`harvest_fn`), because plan 273 says a method is a function
+                // whose first parameter is the receiver: one form, one reader.
+                // Two readers would be the very split that plan closed.
+                // NOT a receiver group -- recovery debris, or `fn[T] ...`
+                // with type parameters before the name, which `check` refuses
+                // by position. The TERMINATOR is the branch (P21).
+                if fk[1].kind_of() != NodeKind.Recv { continue }
+                if Some(mrow) = harvest_own_method(fk, types, defs, tys, fns) {
+                    ro mdid = c.id_of()
+                    while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
+                    fn_decl_rows[mdid] = mrow
+                    // A `#coerce` on it declares a PAIR, and the same reader
+                    // std's declarations go through decides whether the form is
+                    // the one D429 V1 admits.
+                    if is_coerce_marked(coerce_marks, c.id_of()) {
+                        harvest_coerce_pair(fns, coerces, mrow)
+                    } else {
+                        // An ordinary method: no pair.
+                    }
+                } else {
+                    // The signature was refused by the reader: no row, no map
+                    // entry, and `check` names it at the point of use.
+                }
+                continue
+            }
+            // THIS declaration's type parameters, and a TYPE for each slot it
+            // binds (E2-b2; donor: rustc `TyKind::Param`, a parameter is known
+            // by its INDEX in its owner's generics, not by its name). One row
+            // per index, shared by every declaration: a parameter means
+            // nothing outside a substitution, and the substitution belongs to
+            // the CALL. The row is added only for an index above those already
+            // built -- pushing an index twice would get a deduplicated term
+            // from the interner and break the ty_id == row invariant asserted
+            // at the end of this walk.
+            //
+            // WAVE B8 DELETED A FABRICATION HERE. Until 2026-08-21 this loop
+            // pushed a `TypeDef` row named `"#0"` per slot -- a DECLARATION row
+            // for something nobody declares -- purely so a type parameter could
+            // have an index in `Ctx.types`, because the index WAS the type id.
+            // Once the type id became the interner's term the fabrication had no
+            // purpose: `tys.param(slot)` IS the type, and a parameter has no
+            // declaration, exactly as in every donor.
+            ro tps = generic_names(fk)
+            // The range is evaluated ONCE, so pushing inside it is safe and
+            // the cursor cannot be forgotten (owner 2026-08-22).
+            for pslot in param_rows.len()..tps.len() {
+                param_rows.push(tys.param(pslot))
+            }
+            // no_ty() = no declared return. Legal ONLY for main (check
+            // refuses it elsewhere); backends ice on it as the second floor —
+            // never a silent int (#652 class).
+            ro ret = ret_ty_of_decl(fk, tps, param_rows, types, defs, tys)
+            // A file function is a callable with no receiver (plan 273):
+            // same row shape as a read method signature, same table.
+            ro fname = leaf_text(fk[1])
+            mut param_ids = []ParamDef.new()
+            for pn in fk {
+                if pn.kind_of() != NodeKind.Param { continue }
+                ro pk = branch_children(pn)
+                // The type by its DOOR, never by index one: `mut v int` puts
+                // the MODE at index zero, so a fixed index reads the NAME as
+                // the type -- and `int` then came back as "a type novac does
+                // not know" about a declaration that is perfectly well typed
+                // (measured 2026-08-21). The typing walk was moved onto these
+                // doors on 2026-08-18; this collector was not, and nothing
+                // noticed because nothing in the corpus declares a mode.
+                // The canon for a value fallback is `?? d` (D86), so the door's
+                // answer arrives that way and the ABSENT case is judged right
+                // below by the same `-1` this loop already stores.
+                ro tat = param_type_at(pk) ?? -1
+                if tat < 0 {
+                    // An unreadable parameter type (recovery debris, or a form
+                    // the E2 subset does not read) keeps the -1 sentinel: the
+                    // slot must still exist so param_off/param_cnt line up, and
+                    // backends ice on -1 rather than invent a type (#652).
+                    param_ids.push(ParamDef { name: param_name_of(pk), type_id: -1,
+                                              mode: ModeRo, default_expr: param_default_slot(pk) })
+                    continue
+                }
+                // The TYPE through the ONE reference door (step B2): a plain
+                // name, `Self` (not here -- no receiver), `Name[Args]` or the
+                // `[]Elem` sugar. An unknown or unreadable shape is STORED as
+                // no_ty() and said so: collection is tolerant, check judges.
+                ro pt = ty_of_type_ref(pk, tat, no_ty(), tps, param_rows, types, defs, tys)
+                // Type AND mode in one row: the mode is an axis of overloading
+                // (P14), so a collector that dropped it would make `f(x T)` and
+                // `f(mut x T)` one callable twice over.
+                param_ids.push(ParamDef { name: param_name_of(pk), type_id: pt,
+                                          mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
+            }
+            fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk))
+            ro frow = FnRow(fns.rows.len() - 1)
+            defs.add(fname, DefTarget.DefFn(frow))
+            // The DECLARATION's own row, keyed by its node. Asking `defs` by
+            // name gives the LAST row of that name (the table is
+            // last-write-wins), so two overloads used to answer with one row --
+            // and the emitter wrote two C functions with one name, carrying the
+            // other overload's parameter types (owner's review 2026-08-19).
+            ro did = c.id_of()
+            while fn_decl_rows.len() <= did { fn_decl_rows.push(no_row()) }
+            fn_decl_rows[did] = FnRow(frow)
+        } else {
+            // Every other top-level node -- the module declaration, imports,
+            // and recovery Err branches -- declares neither a type nor a
+            // callable, so the registry has nothing to record; naming the
+            // debris is check's job (274.3/F-B4).
+        }
+    }
+    // THE E2-b1 INVARIANT LIVED HERE AND IS GONE BY DESIGN, not by neglect.
+    // It asserted `types[i].ty_id == i` -- that the interner hands out ids in
+    // exactly the order declaration rows are pushed -- and its own comment said
+    // what it was for: "the two numbers part company the moment the first App is
+    // interned, and this assert is what turns that moment into a loud one
+    // instead of a silent skew".
+    //
+    // Wave B8 IS that moment, and it arrived by decision rather than by
+    // accident (sub-plan 9.1g.2, from the donors): the type id is the interner's
+    // TERM, the declaration index is `DeclId`, and they are two spaces that no
+    // longer have to agree. A type PARAMETER has a term and no declaration at
+    // all, so the invariant is not merely unnecessary now -- it is false.
+    //
+    // It did its job on the way out, and loudly, exactly as promised: the first
+    // corpus run after B8 died on it mid-batch, and that is how the batch hole
+    // below it was found too.
+    // The boundary is fixed HERE, by the same pass that filled the prefix:
+    // whatever `harvest_methods` adds next is a signature, not a body of ours.
+    // Setting it anywhere else would make the invariant depend on call order.
+    mut own = fns
+    own.own_cnt = own.rows.len()
+    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
+          module_c: module_path_c(file), builtin_names, coerces, protos, consts, interop: InteropTable.new() }
+}

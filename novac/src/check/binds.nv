@@ -69,9 +69,13 @@ fn Checker mut @type_bind(st Node) -> () {
     ro init = kids[kids.len() - 1]
     ro ik = init.kind_of()
     // A plain expression initializer is verified before it is typed. A match
-    // initializer is NOT: the emitter decides its type before the arms bind
-    // their binders, and that order is what makes "a match whose first arm
-    // uses its binders" a refusal of the subset rather than a silent success.
+    // initializer takes the arm door below instead (`@type_match`, the same
+    // decider the tail match uses) and is typed AFTER it -- see the order
+    // note at that door. This comment used to say the reverse order was
+    // deliberate, "what makes a match whose first arm uses its binders a
+    // refusal rather than a silent success"; the K4 hunt of 2026-09-04
+    // measured it as the one place of two with the order backwards, and the
+    // ice it caused (#918) is what the door below removes.
     if ik != NodeKind.MatchExpr && ik != NodeKind.RecordCtor && ik != NodeKind.ArrayLit && is_expr_kind(ik) {
         ro before = @out.len()
         @type_expr(init)
@@ -173,15 +177,31 @@ fn Checker mut @type_bind(st Node) -> () {
     } else {
         // Not an index: the lattice answers below.
     }
+    if ik == NodeKind.MatchExpr {
+        // THE DECIDER BEFORE THE READER (hunt check x K4, finding H5; registry
+        // #918). `@type_match` walks the arms and records what the lattice
+        // will need -- a method call in the first arm has no decision in the
+        // channel until it does -- so it goes first, exactly as the tail
+        // match does in typing.nv. Until 2026-09-04 this branch READ first
+        // and decided after: a `match` initializer whose first arm called a
+        // method iced ("method call reached type_of with no decision in the
+        // channel") while the same match as a body tail compiled -- one
+        // question, two orders. The same mark as the tail: a refused arm
+        // leaves a node the lattice cannot answer about, and asking anyway is
+        // the ice this fix removes.
+        ro mmark = @out.len()
+        @type_match(init)
+        if @out.len() > mmark { return }
+    } else {
+        // Not a match: nothing decides before the lattice is asked.
+    }
     ro vtype = type_of(init, @ctx, @scope, @chan)
     @record(init, vtype)
-    if ik == NodeKind.MatchExpr {
-        @type_match(init)
-    } else if ik == NodeKind.RecordCtor {
+    if ik == NodeKind.RecordCtor {
         @judge_record_ctor(init, vtype)
     } else {
-        // A plain expression initializer was walked above and its type is
-        // recorded; it has no sub-form left to visit.
+        // A plain expression initializer was walked above, a match by its
+        // arms just now; the type is recorded and no sub-form is left.
     }
     // The BINDING's own mode, read from the keyword the author wrote: `ro x`,
     // `mut x` and `consume x` are three different classes at every call site

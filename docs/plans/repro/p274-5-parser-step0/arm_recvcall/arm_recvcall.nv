@@ -1,0 +1,21 @@
+module arm_recvcall
+
+// Arm body is a RECEIVER (`@`) call inside a method.
+type Sig enum Off | On(int)
+type Box {
+    ro k int
+}
+
+fn Box @scale(n int) -> int => n * @k
+
+fn Box @pick(s Sig) -> int {
+    match s {
+        Off => 0
+        On(v) => @scale(v)
+    }
+}
+
+fn main() {
+    ro b = Box { k: 2 }
+    println(b.pick(On(7)))
+}

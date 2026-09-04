@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// The SAME wrong arity through the `@` form: the cause must be named the same.
+module basics.p_arity_at
+
+type Box { k int }
+
+fn Box @take(a int) -> int => @k + a
+
+fn Box @via() -> int => @take(1, 2)
+
+fn main() {
+    ro x = Box { k: 1 }
+    println("n = ${x.via()}")
+}

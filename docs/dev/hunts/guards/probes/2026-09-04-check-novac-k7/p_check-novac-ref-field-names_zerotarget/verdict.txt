@@ -1,0 +1,2 @@
+rc=0
+check-novac-ref-field-names ok: судить нечего (нет C:\Users\Евгений\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\bf14b5f5-2647-4396-bb4b-f779a1d0b23b\scratchpad\hunt-guards-k7\p_check-novac-ref-field-names_zerotarget\root\novac\src\sem)

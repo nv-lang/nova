@@ -1,0 +1,19 @@
+module basics.char_non_ascii
+
+// A char literal holding a NON-ASCII codepoint, beside an ASCII one.
+//
+// This carrier exists because the judge of char literals asked a `str` for its
+// first BYTE -- `body[..1]` -- and a two-byte letter made that slice land
+// inside the character. The oracle compiled such a file; novac died with
+// "str: slice splits a UTF-8 codepoint" (registry #892, the class of stepping
+// by bytes where characters are meant). The ASCII literal on the next line is
+// the control: that path was always sound, and a fix that broke it would be
+// trading one hole for another.
+
+fn width(c char) -> int => 1
+
+fn main() {
+    ro cyr = 'у'
+    ro lat = 'y'
+    println(width(cyr) + width(lat))
+}

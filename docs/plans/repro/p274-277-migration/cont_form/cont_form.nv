@@ -1,0 +1,12 @@
+module cont_form
+
+// The migration target for plan 277 phase 2: a multi-line program held in a
+// string, written with EXPLICIT `\n` plus a line continuation `\` before each
+// break (D467 section 3). The source keeps its layout; the literal carries no
+// raw newline.
+fn main() {
+    ro prog = "fn main() {\n\
+ println(1)\n\
+}"
+    println(prog.byte_len())
+}

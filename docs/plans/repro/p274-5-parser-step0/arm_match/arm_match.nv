@@ -1,0 +1,19 @@
+module arm_match
+
+// A match ARM whose body is itself a `match`.
+type Sig enum Off | On(int)
+type Lvl enum Lo | Hi
+
+fn grade(s Sig, l Lvl) -> int {
+    match s {
+        Off => 0
+        On(v) => match l {
+            Lo => v
+            Hi => v * 2
+        }
+    }
+}
+
+fn main() {
+    println(grade(On(3), Hi))
+}

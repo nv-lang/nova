@@ -49,23 +49,23 @@ test "shape: unexpected top-level token becomes an Err branch, then parsing cont
 }
 
 test "arithmetic grammar: full file reserializes and shapes parse" {
-    ro src = "module basics.a
-
-fn factorial(n int) -> int {
-    if n <= 1 {
-        return 1
-    }
-    n * factorial(n - 1)
-}
-
-fn main() {
-    println(\"5! = \", factorial(5))
-    mut sum = 0
-    for i in 0..11 {
-        sum += i
-    }
-    println(\"sum = \", sum)
-}
+    ro src = "module basics.a\n\
+\n\
+fn factorial(n int) -> int {\n\
+    if n <= 1 {\n\
+        return 1\n\
+    }\n\
+    n * factorial(n - 1)\n\
+}\n\
+\n\
+fn main() {\n\
+    println(\"5! = \", factorial(5))\n\
+    mut sum = 0\n\
+    for i in 0..11 {\n\
+        sum += i\n\
+    }\n\
+    println(\"sum = \", sum)\n\
+}\n\
 "
     assert(roundtrip(src))
     ro f = parse(lex(src))

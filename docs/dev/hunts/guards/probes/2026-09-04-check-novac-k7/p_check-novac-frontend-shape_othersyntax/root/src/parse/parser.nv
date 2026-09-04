@@ -1,0 +1,9 @@
+module novac.parse
+
+/// Errors as an alternative to the tree, one wrapper away.
+export type ParseOut value {
+    out Result[Tree, ParseError]
+}
+
+export fn parse(src str) -> ParseOut {
+}

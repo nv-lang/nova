@@ -54,8 +54,19 @@ fn Checker mut @report_if_bad_escape(kids []Node) -> () {
             // and the pipeline's own test says so; refusing it with the real
             // rubbish was the first version's mistake. C has no such escape,
             // so the emitter drops the backslash (emit_strlit_defs).
+            // LINE CONTINUATION (`\` before the break, D467 section 3): the
+            // canon for long text without newlines, and the form plan 277
+            // migrates novac's own tests to -- so novac has to read it, or the
+            // migration cannot be canonical in the tree that novac reads.
+            //
+            // Nothing else changes for it, and that was MEASURED: the lexer
+            // already survives the form (its escape branch consumes both bytes
+            // BEFORE the end-of-line test, so the literal continues -- the
+            // probe is refused by THIS door, not by lex), and the emitter
+            // passes the bytes through while C splices backslash-newline in
+            // translation phase 2. Same semantics, nothing to translate.
             ro known = e == QUOTE || e == BACKSLASH || e == LOWER_N ||
-                e == LOWER_T || e == LOWER_R || e == DOLLAR
+                e == LOWER_T || e == LOWER_R || e == DOLLAR || e == NEWLINE
             if !known {
                 @report_first_leaf_of(kids, ESCAPE_MSG)
                 return
@@ -74,6 +85,11 @@ const LOWER_N u8 = 0x6E    // n
 const LOWER_T u8 = 0x74    // t
 const LOWER_R u8 = 0x72    // r
 const DOLLAR u8 = 0x24     // $
+// NEWLINE and not `B_LF`: `lex.nv` already declares a const of that name, and
+// a reference from here resolved to the LEX one -- the emitted C called
+// `Nova_const_novac_lex_B_LF`, undeclared in this translation unit. The local
+// naming (`BACKSLASH`, `QUOTE`, `LOWER_N`) is what this file uses anyway.
+const NEWLINE u8 = 0x0A    // the newline a line continuation swallows
 
 /// One text for the rule above.
 const ESCAPE_MSG = "outside the subset: this string escape is not compiled yet (the subset knows only \\\" \\\\ \\n \\t \\r)"

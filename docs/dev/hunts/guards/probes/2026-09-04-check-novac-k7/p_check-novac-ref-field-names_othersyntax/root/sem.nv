@@ -1,0 +1,4 @@
+module novac.sem
+
+/// One row per field: owner is a bare type id.
+export type FieldDef value { name str, owner int, recv int }

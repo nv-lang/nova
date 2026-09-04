@@ -1,0 +1,2 @@
+rc=0
+check-novac-arch-invariants ok: счётчики на месте (2 строк счёта)

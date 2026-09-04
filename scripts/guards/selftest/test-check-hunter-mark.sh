@@ -23,7 +23,7 @@ mk_root() {
     mkdir -p "$T/docs/plans" "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/x" \
              "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/y" \
              "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/z" \
-             "$T/docs/dev/hunts/oracle"
+             "$T/docs/dev/hunts/oracle" "$T/docs/dev/hunts/guards"
     printf 'proba x\n' > "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/x/p.nv"
     printf 'proba y\n' > "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/y/p.nv"
     printf 'proba z\n' > "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/z/p.nv"

@@ -1,0 +1,11 @@
+module bis_println_notlast
+
+// Unit fn: println is NOT the last statement.
+fn show() -> () {
+    println(1)
+    ro x = 1
+}
+
+fn main() {
+    show()
+}

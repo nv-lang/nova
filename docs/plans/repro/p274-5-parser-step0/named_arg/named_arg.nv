@@ -1,0 +1,8 @@
+module named_arg
+
+// Third wall (14 sites): a NAMED argument at a call site.
+fn scale(x int, by int = 2) -> int => x * by
+
+fn main() {
+    println(scale(3, by: 5))
+}

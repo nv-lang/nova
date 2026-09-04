@@ -1,0 +1,7 @@
+module interp_call
+
+// A method call inside an interpolation slot.
+fn main() {
+    ro s = "abc"
+    println("len=${s.byte_len()}")
+}

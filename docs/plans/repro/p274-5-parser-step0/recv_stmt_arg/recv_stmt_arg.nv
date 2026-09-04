@@ -1,0 +1,20 @@
+module recv_stmt_arg
+
+// Statement-position receiver call WITH an argument, non-mut.
+type Box {
+    ro k int
+}
+
+fn Box @show(n int) -> () {
+    println(@k + n)
+}
+
+fn Box @twice() -> () {
+    @show(1)
+    @show(2)
+}
+
+fn main() {
+    ro b = Box { k: 4 }
+    b.twice()
+}
