@@ -1,0 +1,12 @@
+module stray_ok_control
+
+// CONTROL: the same shapes, well-formed. If these are clean and the two above
+// are refused BY NAME, recovery is doing its job.
+type P {
+    ro x int
+}
+
+fn main() {
+    ro p = P { x: 1 }
+    println(p.x)
+}

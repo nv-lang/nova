@@ -1,0 +1,16 @@
+module stray_brace_arm
+
+// A stray `)` inside a match ARM list: the arm loop is bounded by `!= RBrace`.
+type Sig enum Off | On(int)
+
+fn pick(s Sig) -> int {
+    match s {
+        Off => 0
+        ) 
+        On(v) => v
+    }
+}
+
+fn main() {
+    println(pick(Off))
+}

@@ -1,0 +1,5 @@
+module atom_close_init
+fn main() {
+    ro x = )
+    println(1)
+}
