@@ -1,0 +1,13 @@
+// Registry TBD, CONTROL: the same `TyId` handed to a `FnRow` parameter is refused — the
+// checker DOES know the two newtypes differ; operators are the door that skips the check.
+module call
+
+type FnRow int
+type TyId int
+
+fn f(r FnRow) -> int => r as int
+
+fn main() Io -> () {
+    ro t = 1 as TyId
+    println(f(t))
+}

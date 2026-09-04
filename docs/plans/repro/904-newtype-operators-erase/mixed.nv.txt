@@ -1,0 +1,18 @@
+// Registry TBD: arithmetic and comparison operators on numeric newtypes erase the newtype —
+// `FnRow == TyId`, `FnRow < TyId`, `FnRow + int` all type-check and run, while the same
+// mix as a call argument (`f(t)`) is refused with E7301. Two doors, opposite answers.
+module mixed
+
+type FnRow int
+type TyId int
+
+fn main() Io -> () {
+    ro a = 1 as FnRow
+    ro t = 1 as TyId
+    ro n = 1
+    println(a == t)          // newtype vs other newtype
+    println(a < t)
+    println((a + t) as int)
+    println(a == n)          // newtype vs bare int VARIABLE (not a literal)
+    println((a + n) as int)
+}
