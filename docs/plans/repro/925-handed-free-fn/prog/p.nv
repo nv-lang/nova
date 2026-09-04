@@ -1,0 +1,18 @@
+module p
+
+// THREE diagnostics from ONE cause: the call is refused as "not a callable
+// novac knows in an expression" (it IS one -- novac was handed its signature),
+// the binding therefore never binds, and both later uses of the name are
+// "unknown name". The second and third are echoes of the first.
+fn f(n int) -> int {
+    ro kids = helper(n)
+    if kids < 3 {
+        return 0
+    } else {
+    }
+    kids
+}
+
+fn main() {
+    println(f(5))
+}
