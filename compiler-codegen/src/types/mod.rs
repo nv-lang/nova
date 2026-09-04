@@ -9551,7 +9551,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
             Stmt::Const(_) => {}
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign { target, op, value, .. } => {
                 // №367 (window p375-ptr2): mark `target` as the top-level
                 // assignment place BEFORE walking it — consumed by the
                 // `ExprKind::Unary`/`ExprKind::Index` arms (see
@@ -9565,6 +9565,47 @@ impl<'a> TypeCheckCtx<'a> {
                 // D175/D176 (Plan 108): check that we're not assigning to a
                 // readonly field or through a readonly index.
                 self.check_target_readonly(target, scope, errors);
+                // Registry #894, WRITE door (plan 281 F.1). The read door is
+                // handled in `f1_expr_inner`'s `ExprKind::Index` arm and is
+                // deliberately skipped for an assignment target, because a write
+                // does not call the one-parameter reader -- it calls the setter
+                // `mut @index(key, val)`, whose SECOND argument only exists here.
+                // So the entry has to be installed per door; that is a cost the
+                // phase counts rather than a duplication.
+                //
+                // Measured before the fix, on one binary: `t[k] = "z"` with a key
+                // of the wrong newtype passed `nova check` and reached C, where
+                // clang refused with `assigning to 'Nova_Table' from incompatible
+                // type` -- an error from the wrong tool, about the wrong thing.
+                //
+                // `AssignOp::Assign` only, for now. A compound `a[k] += v` reads
+                // AND writes through the same node, so its setter argument is not
+                // `value` but `a[k] <op> value`; passing `value` here would type-
+                // check the wrong expression and could pass where it must fail.
+                // The compound and tuple-assign doors get their own entries with
+                // their own probes -- `compound.nv.txt` and `tuple.nv.txt` are
+                // already in `docs/plans/repro/894-index-sugar-bypass/` waiting.
+                if matches!(op, AssignOp::Assign) {
+                    if let ExprKind::Index { obj, index } = &target.kind {
+                        if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                            if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                                if self
+                                    .method_overloads(tname, "index")
+                                    .is_some_and(|v| !v.is_empty())
+                                {
+                                    let args = [
+                                        CallArg::Item((**index).clone()),
+                                        CallArg::Item(value.clone()),
+                                    ];
+                                    self.check_instance_overload(
+                                        obj, "index", &args, gs, scope, target.span,
+                                        errors, target.id,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 // **Plan 147 Ф.3 (D246, L1 binding):** reassigning the NAME
                 // (`x = v` where target is a plain Ident) requires a `mut`
                 // binding. A `ro`-bound local is fixed (L1) — even an explicit
@@ -12248,6 +12289,55 @@ impl<'a> TypeCheckCtx<'a> {
                                  byte-range slice `s[a..b]`.".to_string(),
                                 e.span,
                             ));
+                        }
+                        // Registry #894 (plan 281 F.1): the KEY of `a[k]` was compared
+                        // with NOTHING, while the explicit `a.index(k)` on the same type
+                        // and the same method IS checked. One operation, two doors,
+                        // opposite answers -- measured: the bracket form compiles AND
+                        // RUNS, returning a row from a table declared for a different
+                        // key type.
+                        //
+                        // The bracket form is routed into the SAME check the explicit
+                        // call uses rather than given a comparison of its own. A second
+                        // implementation of one rule beside the first is exactly the
+                        // disease this row was filed about ("one rule, several doors"),
+                        // and it would let the two forms drift into different diagnostics
+                        // again the next time either is touched.
+                        //
+                        // `check_instance_overload`, NOT `find_method_decl`, and that is
+                        // not a stylistic preference: the POISON 6453 audit
+                        // (docs/plans/172.1-tally-audit-2026-07-02.md) measured that
+                        // `find_method_decl` hands back `fns.first()` off a HashMap walk,
+                        // while `Vec` keeps THREE overloads under the key `index`
+                        // (`@index(i int) -> T`, `@index(r Range) -> Self`,
+                        // `mut @index(i, val)`) -- so the declared key type it yields is an
+                        // arbitrary pick. The shared check walks every overload by
+                        // applicability and carries the receiver's `subst`.
+                        //
+                        // Two forms deliberately NOT covered here, each because the key is
+                        // not the whole question at that door:
+                        //   * a Range index (`v[a..b]`) never reaches this point -- it is
+                        //     intercepted by `index_is_range` above and resolves against a
+                        //     different overload;
+                        //   * an assignment TARGET (`a[k] = v`, `a[k] += v`, and the
+                        //     tuple-assign form) calls the two-parameter setter, whose
+                        //     second argument does not exist at this node. Those doors get
+                        //     their own entry where key and value are both in hand; see
+                        //     plan 281 F.1, which counts that as part of the phase rather
+                        //     than a surprise.
+                        if !is_assign_target_top {
+                            if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                                if self
+                                    .method_overloads(tname, "index")
+                                    .is_some_and(|v| !v.is_empty())
+                                {
+                                    let args = [CallArg::Item((**index).clone())];
+                                    self.check_instance_overload(
+                                        obj, "index", &args, gs, scope, e.span, errors,
+                                        e.id,
+                                    );
+                                }
+                            }
                         }
                         // Plan 172.1 U.4.4 (element half): materialize the ELEMENT type of an
                         // `[]T`/`[N]T` index `arr[i]` into the checker channel — the convention
