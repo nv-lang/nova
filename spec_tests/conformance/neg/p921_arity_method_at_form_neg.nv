@@ -1,0 +1,39 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// Registry 921, form 1 of 4: `@take(1, 2)` -- the `@` self-call form, one argument
+// too many for `mut @take(n int)`. Before the fix this passed `nova check` and died
+// in C with "too many arguments to function call".
+//
+// WHY THE CODE IS `E_NO_MATCHING_OVERLOAD` AND NOT A NEW ONE. Arity is not a
+// separate rule here, it is the same rule the checker already applies to argument
+// TYPES: no overload of this method accepts what the call site offers. Giving the
+// count its own code would put two names on one question, which is the disease
+// row #894 was filed about. `E_FN_VALUE_CALL_ARITY` stays where it is, on the
+// fn-VALUE path, where its own fixture explains why that case is different: a
+// fn-value has no overload set at all, so there is nothing to resolve against.
+//
+// AND WHY THE CHECK IS NARROW ON PURPOSE. `p101_fn_value_call_arity_neg.nv` records
+// the reason ordinary call arity is deferred to the C compiler: arity PARTICIPATES
+// in overload resolution, so a blanket arity error would refuse legal programs. The
+// fix does not lift that -- it fires only where NO overload matches the count, which
+// is the case that has nothing left to resolve and therefore nothing to defer.
+//
+// One of FOUR fixtures, one per call form, plus a "too few" one and a positive
+// control: the row's acceptance is class-level, and four forms sharing one door is
+// the thing being tested.
+module neg.p921_arity_method_at_form_neg
+
+type Box priv { n int }
+fn Box.new() -> Box => { n: 0 }
+fn Box mut @take(n int) -> () { @n = n }
+
+fn Box mut @drive() -> () {
+    // nova:expect E_NO_MATCHING_OVERLOAD -- `@take` declares one parameter and the call offers two; the `@` form must meet the same door as `x.m(...)` (#921)
+    @take(1, 2)
+}
+
+fn main() Io -> () {
+    mut b = Box.new()
+    b.drive()
+    println(b.n)
+}

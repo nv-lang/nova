@@ -9789,6 +9789,51 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Registry #921: the tail of the `[E_NO_MATCHING_OVERLOAD]` message when the
+    /// candidate set was emptied by ARGUMENT COUNT rather than by argument type.
+    ///
+    /// D84 (`10-overloading.md`) makes arity the fourth axis of overloading and
+    /// FILTER 1 of call-site resolution — "отбрасываются кандидаты с числом
+    /// параметров, не совпадающим с числом аргументов на call-site". A call that
+    /// empties the set at Filter 1 is exactly as unresolvable as one emptied at
+    /// Filter 2 (types), which has always been reported; only the count case was
+    /// silent, and it reached the user as a C compiler error about generated code.
+    ///
+    /// Shared by all three call shapes that carry an overload set (instance method,
+    /// free function, static method) so the sentence a user reads does not depend on
+    /// which of the three they happened to write. The declared arities are listed
+    /// because with an overload set "expects 1" would be a lie.
+    ///
+    /// A variadic candidate is NOT summarised as a number — `bind_call_args` accepts
+    /// any count at or above its non-variadic prefix (D69), so it can never be the
+    /// reason a set is empty, and printing its parameter count would name a limit
+    /// that does not exist.
+    fn arity_mismatch_tail(declared: &[usize], any_variadic: bool, given: usize) -> String {
+        let mut uniq: Vec<usize> = declared.to_vec();
+        uniq.sort_unstable();
+        uniq.dedup();
+        let accepts = match uniq.as_slice() {
+            [] => "accepts no argument list".to_string(),
+            [n] => format!("accepts {}", Self::plural_args(*n)),
+            _ => {
+                let names: Vec<String> = uniq.iter().map(|n| n.to_string()).collect();
+                format!("accepts {} arguments", names.join(" or "))
+            }
+        };
+        format!(
+            "{}{}, but {} {} given",
+            accepts,
+            if any_variadic { " (plus a variadic form)" } else { "" },
+            given,
+            if given == 1 { "was" } else { "were" },
+        )
+    }
+
+    /// `1 argument` / `2 arguments` — used only by `arity_mismatch_tail`.
+    fn plural_args(n: usize) -> String {
+        format!("{} argument{}", n, if n == 1 { "" } else { "s" })
+    }
+
     /// Plan 152.1 Ф.1: strip `ro`/`mut`/`unsafe` wrappers and return the base
     /// `Named` type's last path segment (e.g. `"str"`, `"Range"`, `"CharsIter"`),
     /// or `None` for non-Named types.
@@ -16312,6 +16357,44 @@ impl<'a> TypeCheckCtx<'a> {
                 ),
                 span,
             ));
+        } else if !any_arity && !overloads.is_empty() {
+            // Registry #921. `overload_applicability` answers `None` when
+            // `bind_call_args` cannot bind the call to that candidate at all — the
+            // arity failure — and this function's own doc used to call that case
+            // someone else's: "a wrong-arity situation reported elsewhere
+            // (BoundCtx), NOT a no-matching-overload by type". Measured 2026-09-04:
+            // BoundCtx does not report it either. Its `resolve_instance_method`
+            // filters candidates BY ARITY before diagnosing (Attempt 2), so when no
+            // overload matches the count it returns `None`, `check_call_argbind`
+            // returns early, and `bind_call_args` — the very thing that would have
+            // produced the message — is never reached. The deferral pointed at a
+            // door that does not open, so `b.take(1, 2)` and `b.get()` both passed
+            // the checker and reached clang.
+            //
+            // Reported HERE, and not by lifting BoundCtx's filter, because this is
+            // the place that knows the whole overload set: D84's Filter 1 is about
+            // the set being emptied, and only the owner of the set can say that it
+            // was. Lifting the filter would instead make resolution pick a candidate
+            // whose arity does not match, which is a different and worse change.
+            //
+            // Same code as the type case above on purpose. "No overload matches" is
+            // one rule; giving the count its own code would put two names on one
+            // question — the shape row #894 was filed about, and the shape the fix
+            // for it removed.
+            let declared: Vec<usize> = overloads.iter().map(|f| f.params.len()).collect();
+            let any_variadic = overloads
+                .iter()
+                .any(|f| f.params.iter().any(|p| p.is_variadic));
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_NO_MATCHING_OVERLOAD] no overload of method `{}` on type `{}` \
+                     {}",
+                    method_name,
+                    type_name,
+                    Self::arity_mismatch_tail(&declared, any_variadic, args.len()),
+                ),
+                span,
+            ));
         }
         // Plan 172.2 [M-instance-method-arg-scalar-narrowing]: IMPLICIT NARROWING on a
         // method argument — the dispatch hole (single-overload scalar narrowing like
@@ -16713,6 +16796,58 @@ impl<'a> TypeCheckCtx<'a> {
                                 ),
                                 base.span,
                             ));
+                        } else if !any_arity && !multi.is_empty() && !scope.contains_key(n) {
+                            // The `!scope.contains_key(n)` guard is NOT defensive
+                            // habit — it was measured. Without it the corpus went
+                            // from 0 to 3 failures, all from one shape: this arm
+                            // reaches `self.sig.fn_decls.get(n)` without ever asking
+                            // whether `n` is a LOCAL binding shadowing a global of
+                            // the same name. In a compile unit where a fixture
+                            // declares `fn f(a int)` twice and std happens to call a
+                            // closure PARAMETER also called `f`, `f()` was matched
+                            // against the fixture's global overloads and refused for
+                            // taking no arguments. The call was legal; the lookup was
+                            // wrong.
+                            //
+                            // The pre-existing diagnostic below never hit this because
+                            // `any_arity` stayed false in exactly that case -- the
+                            // silence I am removing was accidentally covering for a
+                            // second defect. So the guard belongs to my branch, which
+                            // is new: widening it into the arm's own lookup would
+                            // change RESOLUTION, not just diagnosis, and that is a
+                            // different change with a different blast radius. The
+                            // arm's missing shadow check is noted here rather than
+                            // fixed here.
+                            //
+                            // Registry #921, the free-function shape of the same hole.
+                            // The comment four lines up deferred this to BoundCtx;
+                            // BoundCtx skips it for exactly this case --
+                            // `check_call_argbind` matches `[single]` and answers
+                            // `_ => return` as soon as a name carries two or more
+                            // FnDecls. So the deferral chain ended nowhere, and it was
+                            // measured rather than reasoned: a wrong-count call to an
+                            // overloaded free function reached C.
+                            //
+                            // Fixed alongside the method shape rather than after it.
+                            // Row #921 demands class-level acceptance, and "the same
+                            // rule with the same hole, three code sites" is the
+                            // definition of a class -- repairing one and leaving the
+                            // others is the carrier fix its caveat forbids.
+                            let declared: Vec<usize> =
+                                multi.iter().map(|f| f.params.len()).collect();
+                            let any_variadic = multi
+                                .iter()
+                                .any(|f| f.params.iter().any(|p| p.is_variadic));
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}` {}",
+                                    n,
+                                    Self::arity_mismatch_tail(
+                                        &declared, any_variadic, args.len()
+                                    ),
+                                ),
+                                base.span,
+                            ));
                         }
                         // Plan 172.1 U.3.1 §0 extension: record UNIQUE arity+type-compat
                         // overload in resolved_callees + resolved_types_buf. Mirrors the
@@ -16989,6 +17124,28 @@ impl<'a> TypeCheckCtx<'a> {
                                 Some(false) => any_arity = true,
                                 None => {}
                             }
+                        }
+                        if !any_arity && !multi.is_empty() {
+                            // Registry #921, the static-method shape. Third and last
+                            // site of one rule; see the instance-method site for why
+                            // the count case is reported here and not deferred.
+                            let declared: Vec<usize> =
+                                multi.iter().map(|f| f.params.len()).collect();
+                            let any_variadic = multi
+                                .iter()
+                                .any(|f| f.params.iter().any(|p| p.is_variadic));
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` {}",
+                                    parts[0],
+                                    parts[1],
+                                    Self::arity_mismatch_tail(
+                                        &declared, any_variadic, args.len()
+                                    ),
+                                ),
+                                base.span,
+                            ));
+                            return;
                         }
                         if any_arity && compat.is_empty() {
                             errors.push(Diagnostic::new(

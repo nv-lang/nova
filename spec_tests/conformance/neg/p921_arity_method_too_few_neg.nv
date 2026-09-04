@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// Registry 921, form 4 of 4: the OTHER DIRECTION -- too FEW arguments. `@get(i int)`
+// called as `b.get()`.
+//
+// Kept as a fixture of its own rather than folded into the "too many" ones, and the
+// row's acceptance demands it in those words. Two reasons, both concrete. A fix that
+// compares counts one way only -- say, refusing a surplus while treating a shortfall
+// as a defaulted parameter -- would pass every "too many" fixture and close the row
+// by carrier. And the two directions fail differently downstream: a surplus reaches
+// clang as "too many arguments", while a shortfall reads uninitialised stack, which
+// is not a compile error at all.
+//
+// That second half is why this one matters more than its siblings: the missing
+// argument is the case where the old behaviour was not merely a bad diagnostic but a
+// silent one.
+module neg.p921_arity_method_too_few_neg
+
+type Box priv { n int }
+fn Box.new() -> Box => { n: 7 }
+fn Box @get(i int) -> int => @n + i
+
+fn main() Io -> () {
+    ro b = Box.new()
+    // nova:expect E_NO_MATCHING_OVERLOAD -- `get` declares one parameter and the call offers none; the shortfall direction must refuse as loudly as the surplus (#921)
+    println(b.get())
+}

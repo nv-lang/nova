@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR no matching overload
+// EXPECT_COMPILE_ERROR accepts 1 or 2 arguments, but 0 were given
 //
 // [M-196-freefn-arity-overload-default-ret-mismatch] NEGATIVE guard: the
 // `pick_no_default_overload` fix (types/mod.rs) must NOT swallow a genuine
@@ -6,14 +6,24 @@
 // REQUIRED (non-default) param count binds against NEITHER candidate
 // (`bind_call_args` fails for both — `MissingRequired` on the shared
 // required `x`), so `overload_applicability` returns `None` for both and
-// the fix's tie-break is never reached. This still leaks to a codegen
-// "no matching overload" error (the checker's own `any_arity` stays
-// `false` — a pre-existing, out-of-scope gap: this class of wrong-arity
-// call is `[M-172.1-free-fn-multi-overload-ambiguous]`'s documented
-// "defer: that arity error is reported by BoundCtx, not here", but
-// BoundCtx does not fire here either) — pinned as a compile-error
-// regardless of exact diagnostic owner, so the fix above staying
-// correctly narrow (arity+type-compatible candidates only) is provable.
+// the fix's tie-break is never reached.
+//
+// THE GAP THIS FIXTURE DOCUMENTED IS CLOSED (registry #921, 2026-09-04), and
+// the expectation is TIGHTENED rather than merely repaired. Its previous
+// header described the state of the world exactly: the checker's own
+// `any_arity` stayed `false`, the code deferred the arity error to BoundCtx —
+// "reported by BoundCtx, not here" — "but BoundCtx does not fire here
+// either", so the call leaked all the way to a codegen "no matching overload"
+// and the fixture pinned it loosely, "regardless of exact diagnostic owner".
+//
+// That was an honest description of a hole, written by the window that hit it,
+// and it went unfixed for two months because a fixture pinning the leak stayed
+// green while the leak persisted. The checker now refuses the call itself, at
+// the call site, naming both the declared arities and the count supplied. So
+// the pattern moves from the loose codegen phrasing to the precise checker
+// one: the same program is still refused, by a better tool, with a message a
+// reader can act on. Loosening it back would restore the very silence #921 is
+// about.
 module neg.m196af_freefn_arity_default_ret_neg
 
 // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):

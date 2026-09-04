@@ -1,0 +1,37 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+//
+// Registry 921, form 2 of 4: `self.take(1, 2)` -- the DOTTED self-call, same arity
+// error as the `@` form beside it.
+//
+// This form has its own fixture for a documented reason. The hunter that found the
+// defect recorded it as "the receiver's class is decided by node shape" and reported
+// that the dotted form WAS refused; measuring on the integrator's binary showed it
+// was not. Two forms that were believed to differ turned out to behave identically,
+// so both are pinned -- a fix that repairs one and leaves the other would otherwise
+// look complete.
+//
+// Spec: D84 (`10-overloading.md`) governs this directly, and the first draft of this
+// header said the opposite -- "no D-block governs call arity" -- which was wrong.
+// D84 names arity as the FOURTH AXIS of overloading and as FILTER 1 of call-site
+// resolution: "отбрасываются кандидаты с числом параметров, не совпадающим с числом
+// аргументов на call-site". So a call that empties the candidate set by count is
+// unresolvable by the spec's own rule, exactly as one emptied by argument type
+// already is. The narrowing rationale from `p101_fn_value_call_arity_neg.nv` is
+// respected and is not in tension with that: it warns against a BLANKET arity error,
+// which is a different thing from enforcing Filter 1's consequence.
+module neg.p921_arity_method_self_form_neg
+
+type Box priv { n int }
+fn Box.new() -> Box => { n: 0 }
+fn Box mut @take(n int) -> () { @n = n }
+
+fn Box mut @drive() -> () {
+    // nova:expect E_NO_MATCHING_OVERLOAD -- the dotted self-call reaches the same overload resolution as `@take`, so it must refuse the same way (#921)
+    self.take(1, 2)
+}
+
+fn main() Io -> () {
+    mut b = Box.new()
+    b.drive()
+    println(b.n)
+}
