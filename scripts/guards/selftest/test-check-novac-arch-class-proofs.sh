@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-proofs-selftest.$$"
 mkdir -p "$T"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1. Законный: раздел есть, класс с тремя доказательствами — зелено.
 cat > "$T/good.md" <<'EOF'
@@ -127,7 +127,7 @@ python "$G" "$ROOT" "$T/good.md" "$S" >/dev/null 2>&1 && ok "без таблиц
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-arch-class-proofs ok: 12/12 (доказательства классов + дом двери, 274.4 шаг 5)"
+    echo "test-check-novac-arch-class-proofs ok: $CASES/$CASES (доказательства классов + дом двери, 274.4 шаг 5)"
     exit 0
 fi
 echo "test-check-novac-arch-class-proofs: FAIL ($fails)" >&2

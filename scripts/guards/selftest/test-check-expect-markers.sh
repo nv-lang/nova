@@ -6,8 +6,9 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-expect-markers.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
-bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
+CASES=0
+ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 echo "== селфтест check-expect-markers =="
 
@@ -83,7 +84,7 @@ fi
 rm -rf "$GDIR2"
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "селфтест check-expect-markers: 6/6 ok"
+    echo "селфтест check-expect-markers: $CASES/$CASES ok"
     exit 0
 fi
 echo "селфтест check-expect-markers: ЕСТЬ ПРОВАЛЫ" >&2

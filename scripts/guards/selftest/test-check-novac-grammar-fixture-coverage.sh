@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-grammar-cov-selftest.$$"
 mkdir -p "$T"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 mkfx() { # $1 = novac-dir, $2 = форма, $3... = имена файлов
     d="$1/fixtures/$2"; shift 2
@@ -54,7 +54,7 @@ sh "$G" "$ROOT" "$T/second" >/dev/null 2>&1 && bad "сломанная втор�
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-grammar-fixture-coverage ok: 7/7"
+    echo "test-check-novac-grammar-fixture-coverage ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-grammar-fixture-coverage: FAIL ($fails)" >&2

@@ -33,8 +33,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 GUARD_SRC="$REPO_ROOT/scripts/guards/arch-ratchet.sh"
 
 FAILED=0
-ok()  { echo "  ok: $1"; }
-bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
+CASES=0
+ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 echo "== селфтест arch-ratchet =="
 
@@ -146,7 +147,7 @@ else
 fi
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "селфтест arch-ratchet: 5/5 ok"
+    echo "селфтест arch-ratchet: $CASES/$CASES ok"
     exit 0
 fi
 echo "селфтест arch-ratchet: ЕСТЬ ПРОВАЛЫ" >&2

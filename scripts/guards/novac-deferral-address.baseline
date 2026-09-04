@@ -1,0 +1,38 @@
+# База стража check-novac-deferral-address.py — конвенции novac П6 «Никаких тихих
+# дыр» (docs/dev/novac-compiler-conventions.md), реестр 221.1 №921 оракула.
+#
+# ЧТО СЧИТАЕТ КЛЮЧ. unaddressed = сколько комментариев в novac/src/**/*.nv несут
+# ОТСЫЛКУ ответственности («reported by», «refuses it», «judged by», «checked by»,
+# «is the judge», «says that once», «the door refuses», «check is the judge»,
+# «сообщит», «проверит», «судит», «откажет») и при этом НЕ называют АДРЕСА в окне
+# из трёх строк (сама строка и соседние строки комментария). Адрес — `<файл>.nv:<N>`,
+# имя в обратных кавычках с `(`/`@`/`::`, либо имя стража `check-novac-*`.
+# Храповик ВНИЗ: рост над числом красный сразу, цель — 0.
+#
+# ЗАСЕВ 2026-09-04 (окно 274, страж заведён в тот же день, что и правило П6).
+# Замер на дереве nova-p274: файлов .nv — 76, отсылок ответственности — 41,
+# из них С адресом — 9, БЕЗ адреса — 32. Число ниже и есть фотография этого дня.
+#
+# ПЯТЬ ПРИМЕРОВ (из тех 32, где отсылка настоящая — «это сделает кто-то другой»):
+#   novac/src/lex/lex.nv:621        «the checker refuses its slots» — какой чекер, где;
+#   novac/src/parse/decls.nv:183    «read whole, judged by the subset walk»;
+#   novac/src/check/typing.nv:638   «the emitter refuses it at its own door»;
+#   novac/src/sem/collect.nv:509    «refuses it elsewhere» — «elsewhere» и есть класс;
+#   novac/src/sem/defs.nv:196       «check is the judge».
+#
+# ЧЕСТНО О ЛОЖНЫХ СРАБАТЫВАНИЯХ (оценка заводившего, а не замер машины).
+# Примерно 12–14 из 32 — ложные, то есть около 40%. Две их породы:
+#   1. ПРОЗА О ПРАВИЛЕ, не отсылка: `check/casts.nv:3` («a cast is judged by the
+#      PAIR»), `check/strings.nv:7` («a literal is judged by its BYTES»),
+#      `check/check.nv:388` и `:529` («A CONSTANT IS JUDGED BY ITS INITIALIZER»,
+#      «JUDGED BY ITS CONTENTS»), `check/check.nv:30` («already-reported by
+#      definition»), `pipeline/overload_test.nv:87` («What belongs here is the
+#      JUDGE»). Здесь «judged by» — оборот речи, никакой двери не подразумевается.
+#   2. РАССКАЗ ПРО ОРАКУЛА, а не отложенная проверка novac: `check/rules.nv:270`,
+#      `check/exprs.nv:235`, `check/binds.nv:52`, `pipeline/subset_test.nv:779`.
+#      Это описание ЧУЖОГО поведения, зафиксированное как факт; адрес там был бы
+#      уместен, но дыры в novac за ним нет.
+# Отделять эти породы машинно страж не умеет и не притворяется — поэтому мера
+# сделана храповиком вниз, а не абсолютным правилом: каждое место снимает человек,
+# либо дописав адрес, либо переписав фразу так, чтобы она не обещала чужой двери.
+unaddressed=32

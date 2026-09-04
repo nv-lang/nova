@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-globals-selftest.$$"
 mkdir -p "$T"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1. Законный: сканируемой директории нет — зелёный «судить нечего» со строкой ok: (№645).
 python "$G" "$ROOT" "$T/absent/src" 2>/dev/null | grep -q 'ok:' && ok "нет novac/src — зелено, строка ok:" || bad "нет novac/src — нет строки ok: (№645)"
@@ -74,7 +74,7 @@ python "$G" "$ROOT" "$T/g7/src" >/dev/null 2>&1 && bad "чужое имя при
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-no-global-state ok: 8/8"
+    echo "test-check-novac-no-global-state ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-no-global-state: FAIL ($fails)" >&2

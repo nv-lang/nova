@@ -6,8 +6,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-deps-selftest.$$"
 mkdir -p "$T/src/lex" "$T/src/parse" "$T/src/rogue"
 fails=0
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 cat > "$T/arch.md" <<'EOF'
 ## 3. Рёбра — с колонкой «что течёт»
@@ -73,7 +74,7 @@ python "$G" "$ROOT" "$T/absent" "$T/arch.md" >/dev/null 2>&1 && ok "отсутс
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-deps ok: 9/9"
+    echo "test-check-novac-deps ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-deps: FAIL ($fails)" >&2

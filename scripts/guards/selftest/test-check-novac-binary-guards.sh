@@ -11,9 +11,9 @@ T="${TMPDIR:-/tmp}/novac-binary-guards-selftest.$$"
 R="$T/root"
 mkdir -p "$R/novac/fixtures" "$R/nova-cli/target/release" "$T/bins"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { sh "$GD/check-novac-$1.sh" "$R" "$2" > "$T/out" 2> "$T/err"; }
 
 # --- фейковый корень: фикстуры и оракул ---
@@ -144,7 +144,7 @@ fi
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-binary-guards ok: 14/14"
+    echo "test-check-novac-binary-guards ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-binary-guards: FAIL ($fails)" >&2

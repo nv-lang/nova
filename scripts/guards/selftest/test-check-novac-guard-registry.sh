@@ -12,8 +12,9 @@ G="$(cd "$(dirname "$0")/.." && pwd)/check-novac-guard-registry.py"
 T="${TMPDIR:-/tmp}/novac-guard-registry-selftest.$$"
 mkdir -p "$T" || exit 1
 fails=0
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails + 1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails + 1)); }
 
 CLOCK=$(printf '\360\237\225\220')
 
@@ -151,7 +152,9 @@ run && bad "отсутствие плана прошло" || ok "отсутст�
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-guard-registry ok: 8 случаев (2 зелёных, 6 красных), 18/18 ассертов"
+    # Одно число, и его печатает счётчик: прежняя строка называла «8 случаев
+    # (2 зелёных, 6 красных)» при восемнадцати ассертах — две руки, обе неверные.
+    echo "test-check-novac-guard-registry ok: $CASES/$CASES (ассерты; зелёные и красные случаи вперемешку)"
     exit 0
 fi
 echo "test-check-novac-guard-registry: FAIL ($fails)" >&2

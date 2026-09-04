@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 T="${TMPDIR:-/tmp}/novac-file-size-selftest.$$"
 mkdir -p "$T/src"
 fails=0
-
-ok() { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
+CASES=0
+ok() { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 # 1. Законный: короткий .nv — зелено, и строка ok: на месте (№645).
 awk 'BEGIN{for(i=0;i<10;i++)print "line"}' > "$T/src/small.nv"
@@ -43,7 +43,7 @@ python "$G" "$ROOT" "$T/src" >/dev/null 2>&1 && bad "вложенный длин
 
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-file-size ok: 8/8"
+    echo "test-check-novac-file-size ok: $CASES/$CASES"
     exit 0
 fi
 echo "test-check-novac-file-size: FAIL ($fails)" >&2
