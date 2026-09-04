@@ -38,10 +38,11 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name, c_shell_method, digit_index, is_tuple}
+import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload}
+import ../sem.{shape_of}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -474,11 +475,30 @@ fn Checker mut @type_expr(e Node) -> () {
             // The operand's type is unknown -- the refusal above named it, and a
             // hole is not something to record.
         }
-        // A TUPLE owner is judged before the record door: `has_field` asks
-        // the declaration registry, and a tuple has no declaration to ask
-        // (B15 step 4a). The index is judged against the ARITY, which is
-        // exactly what the term's head stores.
-        if is_tuple(@ctx, owner) {
+        // A POSITIONAL owner is judged before the record door, by its SHAPE.
+        // The anonymous term has no declaration for `has_field` to ask, and
+        // its arity is what the term's head stores (B15 step 4a). The
+        // DECLARED positional shape is refused by name below rather than
+        // routed here: its components live in field rows, not in the head, and
+        // its declaration is not read by the parser yet -- so the refusal is
+        // the pointer to what to build the day it is. Both used to hide behind
+        // `is_tuple`, whose name said "tuple" and meant "anonymous" (owner,
+        // 2026-09-04): the oracle ACCEPTS `p.0` on `type Pair(int, int)`, and
+        // this door would have sent it to the record path as field `0`.
+        ro shape = shape_of(@ctx, owner)
+        ro declared_positional = match shape {
+            PositionalTuple => true
+            Record | ValueRecord | NamedTuple | AnonNamedTuple | AnonPositionalTuple => false
+        }
+        if declared_positional {
+            @report_first_leaf_of(kids, DECL_POSITIONAL_PROJ_MSG)
+            return
+        }
+        ro anon_positional = match shape {
+            AnonPositionalTuple => true
+            Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
+        }
+        if anon_positional {
             match kids[2] {
                 Leaf(t) => {
                     ro idx = digit_index(t.text)

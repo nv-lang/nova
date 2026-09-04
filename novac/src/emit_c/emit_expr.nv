@@ -27,7 +27,6 @@ import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, is_vrow, call_arg_
 import ../sem.{is_value_record}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
 import ../types.{TyId, is_ty}
-import ../sem.{is_tuple}
 
 
 /// The C form of a binary operator ON PRIMITIVE OPERANDS, chosen by the
@@ -383,10 +382,20 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // An ordinary field access: the shapes below own it.
         }
         ro kids = branch_children(e)
-        // A TUPLE projection prints `.fN` (D123 named-field codegen): the
-        // owner is a by-value mono struct, so the dot is not a choice here
-        // the way it is for records below.
-        if is_tuple(@ctx, @out.type_if_known(kids[0].id_of())) {
+        // A POSITIONAL projection prints `.fN` -- for BOTH positional shapes,
+        // and that is why the question is the shape and not `is_tuple` (owner,
+        // 2026-09-04: that name answered "anonymous" while saying "tuple"). The
+        // anonymous term is a D123 mono struct with fields f0..fN; the declared
+        // positional record carries f0..fN by the owner's ruling. Both live on
+        // the stack, so the dot is not a choice here the way it is for records
+        // below. (The declared shape is refused by the checker until its
+        // declaration is read; the arm is the truth about its spelling, not a
+        // claim that it arrives.)
+        ro positional = match shape_of(@ctx, @out.type_if_known(kids[0].id_of())) {
+            AnonPositionalTuple | PositionalTuple => true
+            Record | ValueRecord | NamedTuple | AnonNamedTuple => false
+        }
+        if positional {
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(".f")

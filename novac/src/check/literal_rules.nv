@@ -216,6 +216,14 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
 /// checker is its stage. The third is legal Nova the subset does not take yet,
 /// so it carries the subset wording. The judge itself (`@judge_char_lit`)
 /// reads these from exprs.nv -- one module, co-equal files.
+/// Projection on a DECLARED positional tuple. The language allows it (the
+/// oracle accepts `p.0` on `type Pair(int, int)`), the subset does not compile
+/// it yet -- and cannot, since the parser does not read that declaration either.
+/// Named here so the day the declaration lands, this refusal is what points at
+/// the door to build: component types come from FIELD ROWS (f0..fN), not from
+/// the term's head as they do for the anonymous shape.
+const DECL_POSITIONAL_PROJ_MSG = "outside the subset: projection by position on a DECLARED positional record is not compiled yet (E2-b) -- its declaration is not read either"
+
 const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escape)"
 const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
 const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"

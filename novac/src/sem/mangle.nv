@@ -219,18 +219,6 @@ export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
     }
 }
 
-/// Is this term a structural TUPLE? The one boolean door, exactly as
-/// `is_value_record` above: readers ask the question, never spell the kind
-/// comparison themselves -- a dispatcher on a closed set is a match, and the
-/// match lives HERE (P21).
-export fn is_tuple(ctx Ctx, t TyId) -> bool {
-    if !is_ty(t) { return false }
-    match ctx.tys.kind_of(t) {
-        TkTuple => true
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkNewtype => false
-    }
-}
-
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t TyId) -> str {
