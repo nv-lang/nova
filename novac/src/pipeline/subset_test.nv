@@ -28,20 +28,20 @@ test "a tuple value is read under its own kind, grouping parens untouched (B15 s
     // contract this test holds MOVED with it (2026-09-01): the literal now
     // COMPILES, and the kind still tells tuples from grouping parens.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn main() {
- ro a = 1
- ro t = (a, 2)
- println(t.0)
+    ro (d, c) = compile_to_c("fn main() {\n\
+ ro a = 1\n\
+ ro t = (a, 2)\n\
+ println(t.0)\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_NovaTuple_2_"))
 
     // Grouping parens must NOT be caught by the comma rule: `(a)` stays an
     // ordinary paren and the program stays clean of tuple machinery.
-    ro (d2, c2) = compile_to_c("fn main() {
- ro a = 1
- ro b = (a)
- println(b)
+    ro (d2, c2) = compile_to_c("fn main() {\n\
+ ro a = 1\n\
+ ro b = (a)\n\
+ println(b)\n\
 }", std)
     assert(d2.len() == 0)
     // The SHELL carries _NovaTuple typedefs (and its own .f0 writes) in
@@ -57,9 +57,9 @@ test "an `if` initializer binds through the same doors as the tail form (B14)" {
     // same child layout), which the first version of this arm learned from a
     // probe: the binding arm matched IfStmt and never fired.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn main() {
- ro x = if 1 == 1 { 10 } else { 20 }
- println(x)
+    ro (d, c) = compile_to_c("fn main() {\n\
+ ro x = if 1 == 1 { 10 } else { 20 }\n\
+ println(x)\n\
 }", std)
     assert(d.len() == 0)
     // The TEMPORARY again, not the keyword: only the value form declares one.
@@ -68,9 +68,9 @@ test "an `if` initializer binds through the same doors as the tail form (B14)" {
     // THE OTHER DIRECTION: without an `else` there is no value to bind, and
     // the refusal must come by name -- the parser leaves the else slot absent
     // exactly so check can see the absence.
-    ro (d2, _) = compile_to_c("fn main() {
- ro x = if 1 == 1 { 10 }
- println(x)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro x = if 1 == 1 { 10 }\n\
+ println(x)\n\
 }", std)
     assert(d2.len() >= 1)
 }
@@ -84,13 +84,13 @@ test "a tail `if` is the returned VALUE, and the branches must agree (wave B14)"
     // `fn pick(n int) -> int { if n == 0 { 1 } else { 2 } }` with `pick(0)`
     // prints 1 there.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn pick(n int) -> int {
- if n == 0 {
-  1
- } else {
-  2
- }
-}
+    ro (d, c) = compile_to_c("fn pick(n int) -> int {\n\
+ if n == 0 {\n\
+  1\n\
+ } else {\n\
+  2\n\
+ }\n\
+}\n\
 fn main() { println(pick(0)) }", std)
     assert(d.len() == 0)
     // THE TEMPORARY, not the word `if`: what this wave added is the value
@@ -103,13 +103,13 @@ fn main() { println(pick(0)) }", std)
     // branches that disagree have no type between them. A compiler that took
     // the first branch would declare a temporary of one type and write the
     // other into it -- valid C, wrong answer, no diagnostic.
-    ro (d2, _) = compile_to_c("fn pick(n int) -> int {
- if n == 0 {
-  1
- } else {
-  \"two\"
- }
-}
+    ro (d2, _) = compile_to_c("fn pick(n int) -> int {\n\
+ if n == 0 {\n\
+  1\n\
+ } else {\n\
+  \"two\"\n\
+ }\n\
+}\n\
 fn main() { println(pick(0)) }", std)
     assert(d2.len() >= 1)
 }
@@ -122,8 +122,8 @@ test "a record constructor stands in ARGUMENT position, hoisted (wave B13)" {
     // Behaviour checked against the oracle on the identical program before this
     // was written: it prints 7.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("type Pt { n int }
-fn grab(p Pt) -> int => p.n
+    ro (d, c) = compile_to_c("type Pt { n int }\n\
+fn grab(p Pt) -> int => p.n\n\
 fn main() { println(grab(Pt { n: 7 })) }", std)
     assert(d.len() == 0)
     // THE CALL SITE with the HOISTED TEMPORARY in it -- not the function name,
@@ -135,8 +135,8 @@ fn main() { println(grab(Pt { n: 7 })) }", std)
     // THE OTHER DIRECTION: a constructor whose fields do not match the
     // declaration is still refused, and by name -- widening the POSITION must
     // not widen what may stand there.
-    ro (d2, _) = compile_to_c("type Pt { n int }
-fn grab(p Pt) -> int => p.n
+    ro (d2, _) = compile_to_c("type Pt { n int }\n\
+fn grab(p Pt) -> int => p.n\n\
 fn main() { println(grab(Pt { nope: 7 })) }", std)
     assert(d2.len() >= 1)
 }
@@ -152,10 +152,10 @@ test "a call in statement position is compiled, not only println (wave B12)" {
     // followed by a semicolon -- no temporary, because nobody asked the call
     // for an answer.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn side(n int) -> int => n + 1
-fn main() {
- side(1)
- println(2)
+    ro (d, c) = compile_to_c("fn side(n int) -> int => n + 1\n\
+fn main() {\n\
+ side(1)\n\
+ println(2)\n\
 }", std)
     assert(d.len() == 0)
     // THE CALL SITE, not the name. The name alone is in the C anyway -- from
@@ -168,9 +168,9 @@ fn main() {
 
     // THE OTHER DIRECTION: what a statement call still cannot do is refused by
     // NAME, not accepted in silence -- an unresolved callee stays an error.
-    ro (d2, _) = compile_to_c("fn main() {
- nosuch(1)
- println(2)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ nosuch(1)\n\
+ println(2)\n\
 }", std)
     assert(d2.len() >= 1)
 }
@@ -182,10 +182,10 @@ test "an index on a BOUND name is refused BY NAME, not by a lie about the name" 
     // subset walk, which holds no scope (the word `@scope` does not occur in
     // check.nv once), so it asked an empty one.
     ro std = std_decls()
-    ro (d, _) = compile_to_c("fn take(xs []int) -> int {
- ro v = xs[0]
- v
-}
+    ro (d, _) = compile_to_c("fn take(xs []int) -> int {\n\
+ ro v = xs[0]\n\
+ v\n\
+}\n\
 fn main() { println(1) }", std)
     // WHAT CHANGED IS THE TRUTHFULNESS, not the outcome. The form is still
     // outside the subset -- the interop shell carries no `index` for this
@@ -202,10 +202,10 @@ fn main() { println(1) }", std)
     // Moving the arm out of the walk made this form pass in silence until the
     // module test caught it, because the binding path calls `type_of` directly
     // and never `@type_expr`.
-    ro (d2, _) = compile_to_c("fn f(i int) -> int {
- ro v = nosuch(i)[0]
- v
-}
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {\n\
+ ro v = nosuch(i)[0]\n\
+ v\n\
+}\n\
 fn main() { println(1) }", std)
     assert(d2.len() >= 1)
 }
@@ -222,11 +222,11 @@ test "an index UNDER something does not crash the compiler (#652 class)" {
     // holds is not "the form compiles" but "the answer is a REFUSAL, never a
     // crash" -- the form itself is still outside E1 and says so by name.
     ro std = std_decls()
-    ro (d, _) = compile_to_c("type R { xs []int }
-fn f(rs []R, i int) -> int {
- ro v = rs[i].xs[0]
- v
-}
+    ro (d, _) = compile_to_c("type R { xs []int }\n\
+fn f(rs []R, i int) -> int {\n\
+ ro v = rs[i].xs[0]\n\
+ v\n\
+}\n\
 fn main() { println(1) }", std)
     for g in d {
         assert(!g.message.contains("internal compiler error"))
@@ -238,10 +238,10 @@ fn main() { println(1) }", std)
     // `type_of` on a call whose name is not in the registry raises an ice. So
     // the refusal was correct and the crash came after it, which is why no
     // probe on a well-formed program could find this.
-    ro (d2, _) = compile_to_c("fn f(i int) -> int {
- ro v = nosuch(i)[0]
- v
-}
+    ro (d2, _) = compile_to_c("fn f(i int) -> int {\n\
+ ro v = nosuch(i)[0]\n\
+ v\n\
+}\n\
 fn main() { println(1) }", std)
     assert(d2.len() >= 1)
     for g in d2 {
@@ -261,20 +261,20 @@ test "a HEALTHY import is not refused -- the gap check judges only the gap" {
     // asks the other question, which is the one the compiler answers all day.
     ro std = std_decls()
 
-    ro (d1, _) = compile_to_c("import lex.{Token}
+    ro (d1, _) = compile_to_c("import lex.{Token}\n\
 fn main() { println(1) }", std)
     assert(d1.len() == 0)
 
     // A relative path with the slash and the two dots, which is how novac's own
     // files spell it -- and the spelling that made the parser swallow whole
     // files before 2026-08-23.
-    ro (d2, _) = compile_to_c("import ../lex.{Token, TokenKind}
+    ro (d2, _) = compile_to_c("import ../lex.{Token, TokenKind}\n\
 fn main() { println(1) }", std)
     assert(d2.len() == 0)
 
     // THE OTHER DIRECTION, so the fix cannot be "stop looking inside imports":
     // an import with no path at all is still refused (#815).
-    ro (d3, _) = compile_to_c("import
+    ro (d3, _) = compile_to_c("import\n\
 fn main() { println(1) }", std)
     assert(d3.len() >= 1)
 }
@@ -293,14 +293,14 @@ test "the gap NAMES the token it wanted, not merely that a form broke (#850)" {
     ro std = std_decls()
 
     // a type with no name -> the wanted kind is a NAME
-    ro (d1, _) = compile_to_c("type { n int }
+    ro (d1, _) = compile_to_c("type { n int }\n\
 fn main() { println(1) }", std)
     assert(d1.len() >= 1)
     assert(d1[0].message.contains("expected a name"))
 
     // a const with no `=` -> the wanted kind is PUNCTUATION, and it comes back
     // quoted, because the reader is meant to type it
-    ro (d2, _) = compile_to_c("const A int 1
+    ro (d2, _) = compile_to_c("const A int 1\n\
 fn main() { println(1) }", std)
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("expected `=`"))
@@ -309,8 +309,8 @@ fn main() { println(1) }", std)
     // what would mend it, and must NOT invent an expectation. Written whole,
     // the same shapes stay clean -- without this half the rule could name a
     // token at every refusal and no test would notice.
-    ro (d3, _) = compile_to_c("type Pt { n int }
-const A int = 1
+    ro (d3, _) = compile_to_c("type Pt { n int }\n\
+const A int = 1\n\
 fn main() { println(A) }", std)
     assert(d3.len() == 0)
 }
@@ -323,14 +323,14 @@ test "a `mut` parameter of a value record is refused by name (hunt H4)" {
     // class a named refusal exists to prevent -- the receiver case one floor
     // up said it first.
     ro std = std_decls()
-    ro (d, _) = compile_to_c("type Pt value { n int }
-fn bump(mut p Pt) -> () {
- p.n = p.n + 1
-}
-fn main() {
- mut a = Pt { n: 1 }
- bump(a)
- println(a.n)
+    ro (d, _) = compile_to_c("type Pt value { n int }\n\
+fn bump(mut p Pt) -> () {\n\
+ p.n = p.n + 1\n\
+}\n\
+fn main() {\n\
+ mut a = Pt { n: 1 }\n\
+ bump(a)\n\
+ println(a.n)\n\
 }", std)
     assert(d.len() >= 1)
     for g in d {
@@ -341,24 +341,24 @@ fn main() {
 
     // The heap record keeps the pointer path: the same program without
     // `value` is the control the hunt shipped (ctl_gcrec_mut_param).
-    ro (d2, _) = compile_to_c("type Pt { n int }
-fn bump(mut p Pt) -> () {
- p.n = p.n + 1
-}
-fn main() {
- mut a = Pt { n: 1 }
- bump(a)
- println(a.n)
+    ro (d2, _) = compile_to_c("type Pt { n int }\n\
+fn bump(mut p Pt) -> () {\n\
+ p.n = p.n + 1\n\
+}\n\
+fn main() {\n\
+ mut a = Pt { n: 1 }\n\
+ bump(a)\n\
+ println(a.n)\n\
 }", std)
     assert(d2.len() == 0)
 
     // `ro` reads the copy legally -- refusing it would shrink the subset
     // around no defect.
-    ro (d3, _) = compile_to_c("type Pt value { n int }
-fn peek(p Pt) -> int => p.n
-fn main() {
- mut a = Pt { n: 1 }
- println(peek(a))
+    ro (d3, _) = compile_to_c("type Pt value { n int }\n\
+fn peek(p Pt) -> int => p.n\n\
+fn main() {\n\
+ mut a = Pt { n: 1 }\n\
+ println(peek(a))\n\
 }", std)
     assert(d3.len() == 0)
 }
@@ -368,10 +368,10 @@ test "a tuple value compiles into the mono struct, projections are judged (B15 s
     // prints `.f0`. The C is asserted on the CALL SITE shapes (the mono name
     // and the projection), not on a definition existing -- the B12 lesson.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn main() {
- ro t = (1, 2)
- println(t.0)
- println(t.1)
+    ro (d, c) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ println(t.0)\n\
+ println(t.1)\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_NovaTuple_2_8_nova_int_8_nova_int"))
@@ -379,9 +379,9 @@ test "a tuple value compiles into the mono struct, projections are judged (B15 s
     assert(c.contains(".f0)"))
 
     // The projection is judged against the ARITY, by name.
-    ro (d2, _) = compile_to_c("fn main() {
- ro t = (1, 2)
- println(t.5)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ println(t.5)\n\
 }", std)
     assert(d2.len() >= 1)
     for g in d2 {
@@ -390,9 +390,9 @@ test "a tuple value compiles into the mono struct, projections are judged (B15 s
 
     // A NAMED field on a tuple is its own refusal -- a tuple has no
     // declaration for the record door to ask.
-    ro (d3, _) = compile_to_c("fn main() {
- ro t = (1, 2)
- println(t.x)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ println(t.x)\n\
 }", std)
     assert(d3.len() >= 1)
     for g in d3 {
@@ -407,12 +407,12 @@ test "a tuple RETURN type compiles: the signature spells the mono struct (B15 st
     // tail chain returns the built temporary. Asserted on the SIGNATURE and
     // the return -- the call site is covered by the corpus carrier.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn two() -> (int, int) {
- (1, 2)
-}
-fn main() {
- ro t = two()
- println(t.0)
+    ro (d, c) = compile_to_c("fn two() -> (int, int) {\n\
+ (1, 2)\n\
+}\n\
+fn main() {\n\
+ ro t = two()\n\
+ println(t.0)\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_NovaTuple_2_8_nova_int_8_nova_int novac_fn_two"))
@@ -421,11 +421,11 @@ fn main() {
     // A tuple PARAMETER stays outside the wave (B15 bounds): today the
     // parameter FORM rule refuses it upstream, and the bind judge holds the
     // same boundary for the day the form rule narrows.
-    ro (d2, _) = compile_to_c("fn f(p (int, int)) -> int {
- p.0
-}
-fn main() {
- println(f((1, 2)))
+    ro (d2, _) = compile_to_c("fn f(p (int, int)) -> int {\n\
+ p.0\n\
+}\n\
+fn main() {\n\
+ println(f((1, 2)))\n\
 }", std)
     assert(d2.len() >= 1)
 }
@@ -436,30 +436,30 @@ test "a destructuring binding splits the pair; both judges answer by name (B15 s
     // non-tuple initializer and an arity mismatch each refuse with their own
     // text (the arity one names D123's class).
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn two() -> (int, int) {
- (7, 9)
-}
-fn main() {
- ro (a, b) = two()
- println(a)
- println(b)
+    ro (d, c) = compile_to_c("fn two() -> (int, int) {\n\
+ (7, 9)\n\
+}\n\
+fn main() {\n\
+ ro (a, b) = two()\n\
+ println(a)\n\
+ println(b)\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains(".f0;"))
     assert(c.contains(".f1;"))
 
-    ro (d2, _) = compile_to_c("fn main() {
- ro (a, b, c) = (1, 2)
- println(a)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro (a, b, c) = (1, 2)\n\
+ println(a)\n\
 }", std)
     assert(d2.len() >= 1)
     for g in d2 {
         assert(g.message.contains("arity mismatch"))
     }
 
-    ro (d3, _) = compile_to_c("fn main() {
- ro (a, b) = 5
- println(a)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro (a, b) = 5\n\
+ println(a)\n\
 }", std)
     assert(d3.len() >= 1)
     // The FIRST diagnostic is the root cause (d0 everywhere in the smoke
@@ -477,16 +477,16 @@ test "a collection head walks the vector by len/get; a scalar head refuses (B16)
     // slice sugar cannot intern []int without it (the same hand-in the
     // literal tests above use).
     mut std = std_decls()
-    std.push("module std.v
+    std.push("module std.v\n\
 export type Vec[T] { n int }")
-    ro (d, c) = compile_to_c("fn mk() -> []int {
- ro v = []int.of(3, 5)
- v
-}
-fn main() {
- for x in mk() {
-  println(x)
- }
+    ro (d, c) = compile_to_c("fn mk() -> []int {\n\
+ ro v = []int.of(3, 5)\n\
+ v\n\
+}\n\
+fn main() {\n\
+ for x in mk() {\n\
+  println(x)\n\
+ }\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_method_len("))
@@ -494,23 +494,23 @@ fn main() {
     assert(c.contains(").value;"))
 
     // A NAME head takes the same door.
-    ro (d2, c2) = compile_to_c("fn main() {
- ro xs = []int.of(4)
- for x in xs {
-  println(x)
- }
+    ro (d2, c2) = compile_to_c("fn main() {\n\
+ ro xs = []int.of(4)\n\
+ for x in xs {\n\
+  println(x)\n\
+ }\n\
 }", std)
     assert(d2.len() == 0)
     assert(c2.contains("_method_get("))
 
     // A call that hands back a SCALAR has no element: refused by name.
-    ro (d3, _) = compile_to_c("fn one() -> int {
- 5
-}
-fn main() {
- for x in one() {
-  println(x)
- }
+    ro (d3, _) = compile_to_c("fn one() -> int {\n\
+ 5\n\
+}\n\
+fn main() {\n\
+ for x in one() {\n\
+  println(x)\n\
+ }\n\
 }", std)
     assert(d3.len() >= 1)
     assert(d3[0].message.contains("does not return a vector"))
@@ -522,16 +522,16 @@ test "if-let binds the payload behind the tag guard; both judges answer by name"
     // guards the block, and the binder is a local from `.value` -- the
     // shell's Option ABI, interop. Asserted on the C shapes.
     mut std = std_decls()
-    std.push("module std.v
-export type Vec[T] { n int }
-export fn Vec[T] @get(i int) -> Option[T] => None
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
 export type Option[T] enum Some(T) | None")
-    ro (d, c) = compile_to_c("module p
-fn main() {
- ro xs = [5, 9]
- if Some(v) = xs.get(1) {
-  println(v)
- }
+    ro (d, c) = compile_to_c("module p\n\
+fn main() {\n\
+ ro xs = [5, 9]\n\
+ if Some(v) = xs.get(1) {\n\
+  println(v)\n\
+ }\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("NovaOpt_nova_int"))
@@ -539,22 +539,22 @@ fn main() {
     assert(c.contains(".value;"))
 
     // A non-Option initializer refuses by name.
-    ro (d2, _) = compile_to_c("module p
-fn main() {
- if Some(v) = 5 {
-  println(v)
- }
+    ro (d2, _) = compile_to_c("module p\n\
+fn main() {\n\
+ if Some(v) = 5 {\n\
+  println(v)\n\
+ }\n\
 }", std)
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("must be an Option instance"))
 
     // A variant other than Some refuses by name.
-    ro (d3, _) = compile_to_c("module p
-fn main() {
- ro xs = [4]
- if Whatever(v) = xs.get(0) {
-  println(v)
- }
+    ro (d3, _) = compile_to_c("module p\n\
+fn main() {\n\
+ ro xs = [4]\n\
+ if Whatever(v) = xs.get(0) {\n\
+  println(v)\n\
+ }\n\
 }", std)
     assert(d3.len() >= 1)
     assert(d3[0].message.contains("takes only `Some(name)`"))
@@ -565,29 +565,29 @@ test "pattern alternatives OR their tag tests; a named binder refuses (disjuncti
     // shape; the alternative PATH is held by the corpus carrier, which sends
     // a value through the second head.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)
-fn f(s Tri) -> int {
- match s {
-  A(_) => 0
-  B(_) | C(_) => 1
- }
-}
-fn main() {
- println(f(C(7)))
+    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(_) => 0\n\
+  B(_) | C(_) => 1\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(C(7)))\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains(" || "))
 
     // A named binder inside a disjunction refuses by name: alternatives
     // would have to agree on the binder, and no carrier needs that.
-    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)
-fn f(s Tri) -> int {
- match s {
-  A(x) | B(x) => x
- }
-}
-fn main() {
- println(f(B(5)))
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(x) | B(x) => x\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(B(5)))\n\
 }", std)
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("takes `_` binders only"))
@@ -599,11 +599,11 @@ test "a requires clause guards the body through the shell's contract helper (req
     // full C line -- function name, display, empty file/line (the wave's
     // named boundary: no source-slice channel yet), and the message.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn half(n int) -> int requires n > 0, \"half wants a positive\" {
- n / 2
-}
-fn main() {
- println(half(8))
+    ro (d, c) = compile_to_c("fn half(n int) -> int requires n > 0, \"half wants a positive\" {\n\
+ n / 2\n\
+}\n\
+fn main() {\n\
+ println(half(8))\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("nova_contract_violation(NOVA_CONTRACT_PRE, \"half\", \"n > 0\", \"\", 1,"))
@@ -612,11 +612,11 @@ fn main() {
     // The message is optional in the language (the shell's own contracts
     // carry none): a clause that ends on its condition spells NULL -- the
     // oracle's own spelling of absence.
-    ro (d2, c2) = compile_to_c("fn third(n int) -> int requires n > 0 {
- n / 3
-}
-fn main() {
- println(third(9))
+    ro (d2, c2) = compile_to_c("fn third(n int) -> int requires n > 0 {\n\
+ n / 3\n\
+}\n\
+fn main() {\n\
+ println(third(9))\n\
 }", std)
     assert(d2.len() == 0)
     assert(c2.contains("\"\", 1, NULL);"))
@@ -627,29 +627,29 @@ test "hex literals lex as one IntLit and keep their spelling (hex wave)" {
     // refusal caught the pair; now the run is ONE token and its text goes
     // to C verbatim (C reads the same spelling, so nothing converts).
     ro std = std_decls()
-    ro (d, c) = compile_to_c("const MASK int = 0xFF
-fn main() {
- println(MASK)
+    ro (d, c) = compile_to_c("const MASK int = 0xFF\n\
+fn main() {\n\
+ println(MASK)\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("0xFF"))
 
     // The magnitude judge (#810) reads hex by its own bound (int is i64):
     // sixteen digits led by 8 overflow, led by 7 fit.
-    ro (d2, _) = compile_to_c("fn main() {
- println(0x8000000000000000)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ println(0x8000000000000000)\n\
 }", std)
     assert(d2.len() == 1)
     assert(d2[0].message.contains("does not fit in `int`"))
-    ro (d3, _) = compile_to_c("fn main() {
- println(0x7FFFFFFFFFFFFFFF)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ println(0x7FFFFFFFFFFFFFFF)\n\
 }", std)
     assert(d3.len() == 0)
 
     // A broken tail is one refusal, not a silent pair: the whole run is a
     // single ErrorTok (`0xZZ` never splits into `0` and `xZZ`).
-    ro (d4, _) = compile_to_c("fn main() {
- println(0xZZ)
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ println(0xZZ)\n\
 }", std)
     assert(d4.len() >= 1)
 }
@@ -659,29 +659,29 @@ test "a payload-less variant is a value and compiles to its maker (variant-value
     // does, and the emitter calls the maker the sum's declaration already
     // emits -- asserted on the C shape for the bare and the dotted head.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("type Kind enum Dot | Dash
-fn f(k Kind) -> int {
- match k {
-  Dot => 1
-  Dash => 2
- }
-}
-fn main() {
- println(f(Kind.Dot))
- println(f(Dash))
+    ro (d, c) = compile_to_c("type Kind enum Dot | Dash\n\
+fn f(k Kind) -> int {\n\
+ match k {\n\
+  Dot => 1\n\
+  Dash => 2\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Kind.Dot))\n\
+ println(f(Dash))\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("novac_make_Kind_Dot()"))
     assert(c.contains("novac_make_Kind_Dash()"))
 
     // A variant that CARRIES a payload is a constructor, not a value.
-    ro (d2, _) = compile_to_c("type Tri enum A(int) | B
-fn main() {
- ro s = A
- match s {
-  A(_) => println(1)
-  B => println(2)
- }
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B\n\
+fn main() {\n\
+ ro s = A\n\
+ match s {\n\
+  A(_) => println(1)\n\
+  B => println(2)\n\
+ }\n\
 }", std)
     assert(d2.len() >= 1)
     assert(d2[0].message.contains("carries a payload"))
@@ -693,15 +693,15 @@ test "a leading zero is decimal, not C octal -- the spelling door strips it (hun
     // rules. Asserted on the C spelling for both readers -- the value
     // emitter and the pattern emitter.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn tag(n int) -> int {
- match n {
-  010 => 1
-  _ => 0
- }
-}
-fn main() {
- println(0123)
- println(tag(10))
+    ro (d, c) = compile_to_c("fn tag(n int) -> int {\n\
+ match n {\n\
+  010 => 1\n\
+  _ => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(0123)\n\
+ println(tag(10))\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("((nova_int)123LL)"))
@@ -718,11 +718,11 @@ test "the contract display is escaped into its C literal; the message takes the 
     // std_decls() carries three unrelated methods, so this test hands its
     // own one-liner in.
     ro std = []str.of("fn str @equal(other str) -> bool => true")
-    ro (d, c) = compile_to_c("fn f(s str) -> int requires s != \"no\", \"cost \$5\" {
- 1
-}
-fn main() {
- println(f(\"yes\"))
+    ro (d, c) = compile_to_c("fn f(s str) -> int requires s != \"no\", \"cost \$5\" {\n\
+ 1\n\
+}\n\
+fn main() {\n\
+ println(f(\"yes\"))\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("s != \\\"no\\\""))
@@ -735,9 +735,9 @@ test "an unknown form in println's argument position refuses instead of falling 
     // neither walk's list, so it was filed under punctuation by BOTH the
     // checker and the emitter. A branch is never punctuation.
     ro std = std_decls()
-    ro (dpr, _) = compile_to_c("fn main() {
- ro v = []int.of(10, 20, 30)
- println(\"a\", v[1], \"b\")
+    ro (dpr, _) = compile_to_c("fn main() {\n\
+ ro v = []int.of(10, 20, 30)\n\
+ println(\"a\", v[1], \"b\")\n\
 }", std)
     // The shared decls are poor (no Vec), so the vector literal adds its
     // own honest refusal -- the judge's answer is sought by TEXT, not by
@@ -750,8 +750,8 @@ test "an unknown form in println's argument position refuses instead of falling 
 
     // The literal tuple falls in the same class (the second carrier the
     // hunt named); the refusal is the same door.
-    ro (d2, _) = compile_to_c("fn main() {
- println(\"a\", (1, 2), \"b\")
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ println(\"a\", (1, 2), \"b\")\n\
 }", std)
     assert(d2.len() == 1)
     assert(d2[0].message.contains("argument position"))
@@ -762,13 +762,13 @@ test "the contract note is the checker's: a source slice and a real line (#871/#
     // said `:0:` -- the checker is the one holder of the source, so the
     // display is the exact slice and the line is counted here, once.
     ro std = std_decls()
-    ro (dcn, c) = compile_to_c("fn f(n int) -> int
- requires n > -1
-{
- n
-}
-fn main() {
- println(f(3))
+    ro (dcn, c) = compile_to_c("fn f(n int) -> int\n\
+ requires n > -1\n\
+{\n\
+ n\n\
+}\n\
+fn main() {\n\
+ println(f(3))\n\
 }", std)
     assert(dcn.len() == 0)
     assert(c.contains("\"n > -1\", \"\", 2,"))
@@ -779,10 +779,10 @@ test "a binding that names a visible variant refuses as refutable (#875)" {
     // variant in silence -- the oracle refuses it as a one-variant pattern
     // (D411). A payload-carrying variant's bare name stays a binder.
     ro std = std_decls()
-    ro (dvs, _) = compile_to_c("type Kind enum Dot | Dash
-fn main() {
- ro Dot = 3
- println(Dot)
+    ro (dvs, _) = compile_to_c("type Kind enum Dot | Dash\n\
+fn main() {\n\
+ ro Dot = 3\n\
+ println(Dot)\n\
 }", std)
     // After the binding refuses, `println(Dot)` legally meets the
     // variant-value path and adds the printer refusal -- judged by TEXT.
@@ -792,10 +792,10 @@ fn main() {
     }
     assert(hit)
 
-    ro (dok, _) = compile_to_c("type Tri enum A(int) | B
-fn main() {
- ro A = 3
- println(A)
+    ro (dok, _) = compile_to_c("type Tri enum A(int) | B\n\
+fn main() {\n\
+ ro A = 3\n\
+ println(A)\n\
 }", std)
     assert(dok.len() == 0)
 }
@@ -807,11 +807,11 @@ test "an interpolated string builds its chain; slots are real expressions (waves
     // the ordinary expression paths. The asserts aim at OUR chain names --
     // the shell prelude carries the oracle's, and those are always there.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("fn twice(v int) -> int => v * 2
-fn main() {
- ro name = \"world\"
- ro n = 42
- println(\"hi \${name}, tw=\${twice(n)}!\")
+    ro (d, c) = compile_to_c("fn twice(v int) -> int => v * 2\n\
+fn main() {\n\
+ ro name = \"world\"\n\
+ ro n = 42\n\
+ println(\"hi \${name}, tw=\${twice(n)}!\")\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_novac_isb_t"))
@@ -820,9 +820,9 @@ fn main() {
     assert(c.contains("nova_print_str(_novac_istr_t"))
 
     // A slot type outside str|int refuses by name.
-    ro (d3, _) = compile_to_c("fn main() {
- ro f = true
- println(\"flag \${f}\")
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro f = true\n\
+ println(\"flag \${f}\")\n\
 }", std)
     assert(d3.len() >= 1)
     mut hit3 = false
@@ -834,9 +834,9 @@ fn main() {
     // A nested interpolation (a live slot inside a slot's string) refuses
     // by name -- the lexer splits one level, and the I1 judge that used to
     // ICE on the cut token is the backstop.
-    ro (d4, _) = compile_to_c("fn main() {
- ro s = \"a\"
- println(\"bad \${\"x \${s} y\"} tail\")
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ ro s = \"a\"\n\
+ println(\"bad \${\"x \${s} y\"} tail\")\n\
 }", std)
     assert(d4.len() >= 1)
     mut hit4 = false
@@ -851,32 +851,32 @@ test "a char literal types char, compares, and spells its codepoint (char wave)"
     // as the C scalar, and the codepoint spelled by the ONE mangle door --
     // `'x'` is 120, and the emitted C must carry OUR spelling of it.
     ro std = std_decls()
-    ro (dch, c) = compile_to_c("fn tag(c char) -> int {
- if c == 'x' { 1 } else { 2 }
-}
-fn main() {
- ro c = 'x'
- println(tag(c))
+    ro (dch, c) = compile_to_c("fn tag(c char) -> int {\n\
+ if c == 'x' { 1 } else { 2 }\n\
+}\n\
+fn main() {\n\
+ ro c = 'x'\n\
+ println(tag(c))\n\
 }", std)
     assert(dch.len() == 0)
     assert(c.contains("((nova_char)120U)"))
 
     // The judge's three refusals: width, unknown escape, deferred unicode.
-    ro (dw, _) = compile_to_c("fn main() {
- ro a = 'ab'
- println(1)
+    ro (dw, _) = compile_to_c("fn main() {\n\
+ ro a = 'ab'\n\
+ println(1)\n\
 }", std)
     assert(dw.len() == 1)
     assert(dw[0].message.contains("exactly one character"))
-    ro (dq, _) = compile_to_c("fn main() {
- ro q = '\\q'
- println(1)
+    ro (dq, _) = compile_to_c("fn main() {\n\
+ ro q = '\\q'\n\
+ println(1)\n\
 }", std)
     assert(dq.len() == 1)
     assert(dq[0].message.contains("not one the language defines"))
-    ro (du, _) = compile_to_c("fn main() {
- ro u = '\\u{41}'
- println(1)
+    ro (du, _) = compile_to_c("fn main() {\n\
+ ro u = '\\u{41}'\n\
+ println(1)\n\
 }", std)
     assert(du.len() == 1)
     assert(du[0].message.contains("unicode char escape"))
@@ -886,22 +886,22 @@ test "bare self is the receiver's value; outside a method it refuses (self wave)
     // `match @` in a sum method compiles: the scrutinee temporary reads the
     // receiver's C name. Outside a method body `@` names nothing.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("type Sev enum A | B
-fn Sev @tag_no() -> int {
- match @ {
-  A => 1
-  B => 2
- }
-}
-fn main() {
- ro s = Sev.A
- println(s.tag_no())
+    ro (d, c) = compile_to_c("type Sev enum A | B\n\
+fn Sev @tag_no() -> int {\n\
+ match @ {\n\
+  A => 1\n\
+  B => 2\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro s = Sev.A\n\
+ println(s.tag_no())\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("= _novac_self;"))
 
-    ro (d2, _) = compile_to_c("fn main() {
- println(@)
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ println(@)\n\
 }", std)
     assert(d2.len() >= 1)
     mut hit = false
@@ -917,17 +917,17 @@ test "destructuring: one door, both shapes, and `..` says the list is partial (V
     // names fields by name. Asserted on the C, because the refusal half and
     // the emission half are different failures.
     ro std = std_decls()
-    ro (d, c) = compile_to_c("type Point value {
- x int
- y int
-}
-fn main() -> () {
- ro p = Point { x: 1, y: 2 }
- ro { x, y } = p
- println(x)
- ro pair = (4, 5)
- ro (m, n) = pair
- println(m)
+    ro (d, c) = compile_to_c("type Point value {\n\
+ x int\n\
+ y int\n\
+}\n\
+fn main() -> () {\n\
+ ro p = Point { x: 1, y: 2 }\n\
+ ro { x, y } = p\n\
+ println(x)\n\
+ ro pair = (4, 5)\n\
+ ro (m, n) = pair\n\
+ println(m)\n\
 }", std)
     assert(d.len() == 0)
     // By NAME the local reads the field; by POSITION it reads the mono
@@ -937,14 +937,14 @@ fn main() -> () {
 
     // A PARTIAL list without `..` is refused, and the message NAMES the counts
     // -- a reader must not have to go count the declaration's fields (D420).
-    ro (d2, _) = compile_to_c("type Point value {
- x int
- y int
-}
-fn main() -> () {
- ro p = Point { x: 1, y: 2 }
- ro { x } = p
- println(x)
+    ro (d2, _) = compile_to_c("type Point value {\n\
+ x int\n\
+ y int\n\
+}\n\
+fn main() -> () {\n\
+ ro p = Point { x: 1, y: 2 }\n\
+ ro { x } = p\n\
+ println(x)\n\
 }", std)
     mut said = false
     for g in d2 {
@@ -954,14 +954,14 @@ fn main() -> () {
 
     // With `..` the same partial list is legal: the rule is about SAYING it,
     // not about taking fewer fields.
-    ro (d3, _) = compile_to_c("type Point value {
- x int
- y int
-}
-fn main() -> () {
- ro p = Point { x: 1, y: 2 }
- ro { x, .. } = p
- println(x)
+    ro (d3, _) = compile_to_c("type Point value {\n\
+ x int\n\
+ y int\n\
+}\n\
+fn main() -> () {\n\
+ ro p = Point { x: 1, y: 2 }\n\
+ ro { x, .. } = p\n\
+ println(x)\n\
 }", std)
     assert(d3.len() == 0)
 }

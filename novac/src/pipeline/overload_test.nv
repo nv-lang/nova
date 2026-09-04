@@ -20,15 +20,15 @@ test "a method overload is narrowed by the argument types (E2-b3 M1)" {
     // yet". The pick decides the SYMBOL: each call must name its OWN
     // overload's C spelling (our scheme carries the parameter types).
     ro std = std_decls()
-    ro (dpk, c) = compile_to_c("type Tally {
- n int
-}
-fn Tally @absorb(x int) -> int => @n + x
-fn Tally @absorb(s str) -> int => @n + 90
-fn main() {
- ro t = Tally { n: 10 }
- println(\"\${t.absorb(5)}\")
- println(\"\${t.absorb(\"abc\")}\")
+    ro (dpk, c) = compile_to_c("type Tally {\n\
+ n int\n\
+}\n\
+fn Tally @absorb(x int) -> int => @n + x\n\
+fn Tally @absorb(s str) -> int => @n + 90\n\
+fn main() {\n\
+ ro t = Tally { n: 10 }\n\
+ println(\"\${t.absorb(5)}\")\n\
+ println(\"\${t.absorb(\"abc\")}\")\n\
 }", std)
     assert(dpk.len() == 0)
     assert(c.contains("absorb__Tally__nova_int__to_nova_int(t,"))
@@ -42,11 +42,11 @@ test "the D84 tie text arrives at the FREE path too (E2-b3 M3)" {
     // the method arm (key_fully_typed), one rule for both call forms.
     // The oracle refuses the same class (E_OVERLOAD_AMBIGUOUS_MODE).
     ro std = std_decls()
-    ro (dft, _) = compile_to_c("fn take(consume a int, b int) -> int => a + b
-fn take(a int, mut b int) -> int => a - b
-fn main() {
- mut m = 2
- println(\"\${take(7, m)}\")
+    ro (dft, _) = compile_to_c("fn take(consume a int, b int) -> int => a + b\n\
+fn take(a int, mut b int) -> int => a - b\n\
+fn main() {\n\
+ mut m = 2\n\
+ println(\"\${take(7, m)}\")\n\
 }", std)
     mut ftie = false
     for g in dft {
@@ -62,15 +62,15 @@ test "a real D84 tie refuses by name, never chooses (E2-b3 M1)" {
     // is no silent choice". The oracle agrees on this axis
     // (E_OVERLOAD_AMBIGUOUS_MODE, probed 2026-09-02).
     ro std = std_decls()
-    ro (dtie, _) = compile_to_c("type Box {
- v int
-}
-fn Box @take(consume a int, b int) -> int => a + b
-fn Box @take(a int, mut b int) -> int => a - b
-fn main() {
- ro bx = Box { v: 1 }
- mut m = 2
- println(\"\${bx.take(7, m)}\")
+    ro (dtie, _) = compile_to_c("type Box {\n\
+ v int\n\
+}\n\
+fn Box @take(consume a int, b int) -> int => a + b\n\
+fn Box @take(a int, mut b int) -> int => a - b\n\
+fn main() {\n\
+ ro bx = Box { v: 1 }\n\
+ mut m = 2\n\
+ println(\"\${bx.take(7, m)}\")\n\
 }", std)
     mut tie = false
     for g in dtie {
@@ -89,10 +89,10 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
 
     // `?? return` is retracted (D86 amend): read by the parser, refused by
     // name here -- the oracle refuses it in its checker for the same reason.
-    ro (dr, _) = compile_to_c("fn main() {
- ro n = 1
- ro v = n ?? return 0
- println(v)
+    ro (dr, _) = compile_to_c("fn main() {\n\
+ ro n = 1\n\
+ ro v = n ?? return 0\n\
+ println(v)\n\
 }", std)
     mut ret_hit = false
     for g in dr {
@@ -101,9 +101,9 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
     assert(ret_hit)
 
     // A left side that is no Option has no payload to answer with.
-    ro (dn, _) = compile_to_c("fn main() {
- ro n = 1
- println(n ?? 0)
+    ro (dn, _) = compile_to_c("fn main() {\n\
+ ro n = 1\n\
+ println(n ?? 0)\n\
 }", std)
     mut non_opt = false
     for g in dn {

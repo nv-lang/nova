@@ -1,0 +1,8 @@
+module cont_plain
+
+// The canon form with no std method involved: the continuation alone.
+fn main() {
+    ro s = "abc\
+ def"
+    println(s)
+}
