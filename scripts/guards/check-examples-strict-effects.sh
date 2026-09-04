@@ -103,8 +103,13 @@ done < "$TMP/snippets"
 # Порядок вывода ДЕТЕРМИНИРОВАН: отказы пишутся отдельными файлами и читаются
 # отсортированными после `wait`. Страж, чей вывод зависит от того, кто первым
 # добежал, нельзя сравнить с прошлым прогоном — а сравнивают их постоянно.
+# Потолок 4, а не «сколько ядер». Замер 2026-09-04: при 6 параллельных сборках
+# и вторым гейтом на той же машине ЧЕТЫРЕ соседних примера упали разом, а
+# поодиночке собираются с rc=0 — их убил внутренний `timeout`, а не ошибка.
+# Ложный отказ стража дороже медленного шага: страж, который иногда врёт,
+# перестают читать. При 4 шаг всё равно втрое быстрее последовательного.
 JOBS=$(nproc 2>/dev/null || echo 4)
-[ "$JOBS" -gt 6 ] && JOBS=6
+[ "$JOBS" -gt 4 ] && JOBS=4
 [ "$JOBS" -lt 1 ] && JOBS=1
 mkdir -p "$TMP/res"
 N=0
@@ -116,8 +121,17 @@ while IFS= read -r rel; do
     slot=$(printf '%04d' "$N")
     printf '%s\n' "$rel" > "$TMP/res/rel_$slot"
     (
-        if ! timeout 180 "$NOVA" build "$EX_DIR/$rel" --strict-effects \
-                 -o "$TMP/res/bin_$slot" > "$TMP/res/log_$slot" 2>&1; then
+        # 300с, а не 180: под параллелью каждая сборка идёт дольше, а предел,
+        # срабатывающий от НАГРУЗКИ, превращает страж в генератор ложных
+        # отказов. Код 124 — это таймаут `timeout(1)`, и он записывается
+        # ОТДЕЛЬНО: «не успел» и «не собирается» — разные утверждения, и
+        # смешивать их значит врать о причине в самом громком месте гейта.
+        timeout 300 "$NOVA" build "$EX_DIR/$rel" --strict-effects \
+            -o "$TMP/res/bin_$slot" > "$TMP/res/log_$slot" 2>&1
+        _rc=$?
+        if [ "$_rc" -eq 124 ]; then
+            : > "$TMP/res/slow_$slot"
+        elif [ "$_rc" -ne 0 ]; then
             : > "$TMP/res/fail_$slot"
         fi
     ) &
@@ -136,6 +150,18 @@ for f in $(ls "$TMP/res" 2>/dev/null | grep '^fail_' | sort); do
     FAILED=$((FAILED + 1))
     echo "check-examples-strict-effects: FAIL - $rel: --strict-effects build failed:"
     grep -m2 -aE 'error' "$TMP/res/log_$slot" | cut -c1-140 | sed 's/^/    /' >&2
+    rc=1
+done
+# Таймаут — ТОЖЕ отказ (шаг ничего не доказал про этот пример), но названный
+# своим именем: читающий лог не должен искать ошибку компиляции там, где её нет.
+for f in $(ls "$TMP/res" 2>/dev/null | grep '^slow_' | sort); do
+    slot="${f#slow_}"
+    rel=$(cat "$TMP/res/rel_$slot")
+    FAILED=$((FAILED + 1))
+    echo "check-examples-strict-effects: FAIL - $rel: build TIMED OUT after 300s"
+    echo "    Это не ошибка компиляции: сборка не успела. Причина обычно" >&2
+    echo "    внешняя (вторая тяжёлая работа на машине) — перемерь на свободной," >&2
+    echo "    и только если повторится, ищи причину в самом примере." >&2
     rc=1
 done
 
