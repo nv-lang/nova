@@ -122,7 +122,12 @@
 #     Nothing to adopt: the contract grammar is unchanged, the second slot is
 #     still a string literal only. For novac this is strictly LESS work than
 #     the block asked for yesterday.
-#   spec-queue: 49
+#   * D310 AMEND (2026-09-04) -- a set-blanket method counts as declared on
+#     EVERY member of the set, conformance and bounds included. For novac this
+#     is a note, not work: the subset has no type-sets yet, and when it gets
+#     them the rule says conformance must ask the SAME method table as dispatch
+#     -- which is the shape novac already has, and the oracle does not (#896).
+#   spec-queue: 51
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
