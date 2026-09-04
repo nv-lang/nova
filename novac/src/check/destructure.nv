@@ -33,7 +33,8 @@ import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receive
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
-import ../sem.{shape_of, RecordShape}
+import ../sem.{shape_of}
+import ../sem.{pattern_binders, binder_text}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
@@ -118,16 +119,9 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
         // The names still BIND (to no type): a use downstream would otherwise
         // cascade "unknown name" over the one mistake already named here --
         // the no-cascade rule this walk holds everywhere else.
-        for c in kids {
-            match c {
-                Leaf(t) => {
-                    // Trivia of the pattern (keyword, parens, commas, gaps)
-                    // binds nothing; only the names do.
-                    if t.kind != TokenKind.Ident { continue }
-                    @scope.bind(t.text, no_ty(), bind_mode_at(kids))
-                }
-                Branch { .. } => {}
-            }
+        for b in pattern_binders(kids) {
+            @record(b, no_ty())
+            @scope.bind(binder_text(b), no_ty(), bind_mode_at(kids))
         }
         // SILENT-OK: the refusal above is the decision; the binds keep the
         // uses from cascading over the one mistake already named.
@@ -138,24 +132,20 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
     // the temporary, and the lattice answer above is not a record.
     @record(init, pt)
     mut bound = 0
-    for c in kids {
-        match c {
-            Leaf(t) => {
-                if t.kind == TokenKind.Ident {
-                    if bound < @ctx.tys.arg_count(pt) {
-                        @scope.bind(t.text, @ctx.tys.arg(pt, bound), bind_mode_at(kids))
-                    } else {
-                        // Past the tuple's arity: the count judge below names
-                        // it once, for the whole pattern.
-                    }
-                    bound += 1
-                } else {
-                    // The keyword, parens, commas and the recovery gaps: the
-                    // pattern's trivia, not names.
-                }
-            }
-            Branch { .. } => {}
+    for b in pattern_binders(kids) {
+        // RECORDED on the binder, and that record is the point of the wave:
+        // the emitter has no scope, so without it the component's type would
+        // be derived a second time in a second phase.
+        ro ct = if bound < @ctx.tys.arg_count(pt) {
+            @ctx.tys.arg(pt, bound)
+        } else {
+            // Past the tuple's arity: the count judge below names it once for
+            // the whole pattern, and the name binds to no type meanwhile.
+            no_ty()
         }
+        @record(b, ct)
+        @scope.bind(binder_text(b), ct, bind_mode_at(kids))
+        bound += 1
     }
     if bound != @ctx.tys.arg_count(pt) {
         @report_first_leaf_of(kids, DESTR_ARITY_MSG)
@@ -175,36 +165,28 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
 fn Checker mut @type_brace_destructure(kids []Node, pt TyId) -> () {
     mut named = 0
     mut bad = false
-    for c in kids {
-        match c {
-            Leaf(t) => {
-                // Braces, commas, `..` and the keyword are the pattern's
-                // trivia; only a name binds, and the `continue` is the other
-                // branch (P31 form 2).
-                if t.kind != TokenKind.Ident { continue }
-                if @fres.has_field(@ctx.fields, pt, t.text) {
-                    // NOT recorded on this leaf, and the reason is the tree's:
-                    // identity is handed out to BRANCHES only (`@node` is the
-                    // one place), so the channel knows nothing about a leaf and
-                    // asking it ices. The emitter therefore asks the same field
-                    // index this door asks -- one door, two readers, which is
-                    // the point; a second way to find a field's type would be
-                    // the duplication this compiler exists to stop.
-                    @scope.bind(t.text, @fres.field_type(@ctx.fields, pt, t.text),
-                                bind_mode_at(kids))
-                } else {
-                    if !bad {
-                        @report_first_leaf_of(kids, DESTR_NO_FIELD_MSG)
-                        bad = true
-                    } else {
-                        // One refusal for the pattern: the rest would cascade.
-                    }
-                    @scope.bind(t.text, no_ty(), bind_mode_at(kids))
-                }
-                named += 1
+    for b in pattern_binders(kids) {
+        ro nm = binder_text(b)
+        // THE FIELD'S TYPE IS DECIDED HERE AND RECORDED HERE. The matching
+        // door (`FieldIndex`) belongs to the checker by rule -- the emitter
+        // may not ask it, and asking it in `sem` would be a linear scan the
+        // resolve guard refuses. Both refusals point at the same construction:
+        // the binder is a NODE, so the decision fits in the channel and the
+        // emitter reads what was decided instead of deciding again.
+        ro ft = if @fres.has_field(@ctx.fields, pt, nm) {
+            @fres.field_type(@ctx.fields, pt, nm)
+        } else {
+            if !bad {
+                @report_first_leaf_of(kids, DESTR_NO_FIELD_MSG)
+                bad = true
+            } else {
+                // One refusal for the pattern: the rest would cascade.
             }
-            Branch { .. } => {}
+            no_ty()
         }
+        @record(b, ft)
+        @scope.bind(nm, ft, bind_mode_at(kids))
+        named += 1
     }
     // A NAME THAT IS NOT A FIELD was already refused once above, and the
     // `..` rule below would then count against a pattern the reader has

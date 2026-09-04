@@ -1,0 +1,9 @@
+module some_ctor
+
+// The narrowest form: a user-written `Some(...)` as an expression.
+// novac accepts `if Some(v) = xs.get(1)` (the corpus proves it), so the
+// question is the CONSTRUCTOR, not the pattern.
+fn main() {
+    ro o = Some(1)
+    if Some(v) = o { println(v) }
+}

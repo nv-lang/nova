@@ -68,3 +68,41 @@ export fn has_rest(kids []Node) -> bool {
     }
     false
 }
+
+/// THE BINDERS of a destructuring pattern, in written order.
+///
+/// A binder is a `Name` node -- the parser wraps every pattern name since
+/// 2026-09-04, so the checker can record its type and the emitter can read it
+/// instead of working the field out a second time.
+///
+/// The walk STOPS at `=`, and that stop is the whole point: the initializer of
+/// `ro (a, b) = p` is a `Name` node too, and a walk that merely collected
+/// branches would take the value being destructured for one of the names it
+/// binds.
+export fn pattern_binders(kids []Node) -> []Node {
+    mut out = []Node.new()
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // The pattern ends at `=`; everything after it is the value.
+                if t.kind == TokenKind.Assign { return out }
+            }
+            Branch { .. } => {
+                // SKIPPED, and the `continue` is the other branch (P31 form 2,
+                // the shape the two doors above already use). The only other
+                // branch a pattern holds is the Err node recovery leaves where
+                // a name was missing -- it binds nothing.
+                if c.kind_of() != NodeKind.Name { continue }
+                out.push(c)
+            }
+        }
+    }
+    out
+}
+
+/// The NAME a binder carries: its single identifier child.
+export fn binder_text(b Node) -> str {
+    ro kids = branch_children(b)
+    if kids.len() == 0 { return "" }
+    leaf_text(kids[0])
+}

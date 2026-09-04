@@ -26,6 +26,7 @@ import ../builtins.{TypeKind}
 import ../resolve.{FnLookup}
 import ../sem.{branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{c_instance_method, ty_source_name, decl_of_ty}
+import ../sem.{option_payload}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
 /// one slot per written argument, each carrying its TYPE (E2-b3 M1).

@@ -21,6 +21,7 @@
 module emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, c_instance_method, c_type}
+import ../sem.{for_head_elem}
 import ../tree.{Node, NodeKind}
 import ../types.{TyId}
 import ../builtins.{VEC_LEN_METHOD, VEC_GET_METHOD}
@@ -32,7 +33,16 @@ import ../builtins.{VEC_LEN_METHOD, VEC_GET_METHOD}
 fn Emitter mut @emit_for_call(kids []Node) -> () {
     ro head = kids[3]
     ro ht = @out.type_of(head.id_of())
-    ro elem_t = @ctx.tys.arg(ht, 0)
+    // THE DOOR THE CHECKER ASKED, not the interner underneath it. Until
+    // 2026-09-04 this line reached into the type interner directly and took
+    // the head's single argument -- the element type derived a SECOND time,
+    // in a second phase, while the doc comment below already claimed "the
+    // checker bound the loop variable, this door only spells what was
+    // decided". It did not: it decided again, and the two agreeing was a
+    // coincidence of both being spelled the same way on one line.
+    // (The old spelling is NOT quoted here on purpose: the wave's acceptance
+    // greps for it, and a citation in prose would answer that grep.)
+    ro elem_t = for_head_elem(@ctx, ht)
     ro vtmp = "_novac_tmp_t${@fresh_uniq()}"
     ro itmp = "_novac_i_t${@fresh_uniq()}"
     @hoist_array_lits(head)

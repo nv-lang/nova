@@ -23,7 +23,7 @@
 module emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_kind, leaf_text}
-import ../sem.{c_type, is_value_record, brace_pattern}
+import ../sem.{c_type, is_value_record, brace_pattern, pattern_binders, binder_text}
 import ../types.{TyId}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
@@ -60,36 +60,20 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
     ro by_name = brace_pattern(kids)
     ro reach = if is_value_record(@ctx, pt) { "." } else { "->" }
     mut i = 0
-    for c in kids {
-        match c {
-            Leaf(t) => {
-                // Keyword, braces, parens, commas, `..`: the pattern's trivia
-                // -- only the names become locals.
-                if leaf_kind(c) != TokenKind.Ident { continue } else {}
-                // THE SAME DOOR THE CHECKER ASKED, literally: `FieldIndex`
-                // built once and carried on the shell, the same call the
-                // binding judge makes. A leaf carries no channel identity in
-                // this tree, so the type cannot be recorded on it and the
-                // emitter has to ask again -- asking the SAME door is what
-                // keeps a second ask from becoming a second answer.
-                //
-                // The first version of this line called a scan of its own,
-                // written in sem; check-novac-resolve-discipline refused it
-                // (2026-09-04) and was right -- the comment above it already
-                // claimed this door while calling another one.
-                ro nt = if by_name {
-                    c_type(@ctx, @fres.field_type(@ctx.fields, pt, t.text))
-                } else {
-                    c_type(@ctx, @ctx.tys.arg(pt, i))
-                }
-                if by_name {
-                    @body.append("    ${nt} ${t.text} = ${tmp}${reach}${t.text};\n")
-                } else {
-                    @body.append("    ${nt} ${t.text} = ${tmp}.f${i};\n")
-                }
-                i += 1
-            }
-            Branch { .. } => {}
+    for b in pattern_binders(kids) {
+        // THE CHANNEL, and nothing else. The checker decided this binder's
+        // type -- which field it names, or which component -- and recorded it
+        // on the binder node; this door only spells the decision. Until
+        // 2026-09-04 it asked the field index itself, which the channel guard
+        // refuses by name and was right to: a second asker becomes a second
+        // answer the day the two spellings drift.
+        ro nm = binder_text(b)
+        ro nt = c_type(@ctx, @out.type_of(b.id_of()))
+        if by_name {
+            @body.append("    ${nt} ${nm} = ${tmp}${reach}${nm};\n")
+        } else {
+            @body.append("    ${nt} ${nm} = ${tmp}.f${i};\n")
         }
+        i += 1
     }
 }

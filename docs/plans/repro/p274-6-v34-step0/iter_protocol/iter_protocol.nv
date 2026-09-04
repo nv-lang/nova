@@ -1,0 +1,34 @@
+module iter_protocol
+
+// Step-0 probe for 274.6 V3-4: does `for` walk a USER iterator source?
+// D58: `for x in c` desugars through `c.iter()` and then `next()`, so a type
+// answering both must loop. Nothing here is a Vec.
+//
+// The iterator's field is `stop`, not `limit`, ON PURPOSE: with matching names
+// the oracle demands D52 shorthand (`@limit`), which novac's parser does not
+// read -- a different subset gap that would hide the question being asked.
+
+type Count {
+    ro limit int
+}
+
+type CountIter {
+    mut at int
+    ro stop int
+}
+
+fn Count @iter() -> CountIter => { at: 0, stop: @limit }
+
+fn CountIter mut @next() -> Option[int] {
+    if @at >= @stop { return None }
+    ro v = @at
+    @at = @at + 1
+    Some(v)
+}
+
+fn main() {
+    ro c = Count { limit: 3 }
+    for x in c {
+        print("${x}")
+    }
+}

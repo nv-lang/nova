@@ -41,6 +41,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, digit_index, is_tuple}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
+import ../sem.{option_payload}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.

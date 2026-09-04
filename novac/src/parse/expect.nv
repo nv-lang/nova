@@ -88,3 +88,26 @@ fn Cursor mut @push_expected(mut kids []Node, k TokenKind) -> () {
         kids.push(@error_node(k))
     }
 }
+
+/// A pattern's BINDER, pushed as a NODE and not as a bare token.
+///
+/// The shape is the same `Name` node `expr.nv` builds for a name in expression
+/// position -- nothing new in the tree, one wrapper. The REASON is the channel:
+/// identity is handed out to branches only, so a binder that stays a token can
+/// carry no recorded type, and both phases are then forced to work the field
+/// out for themselves. Two guards refuse exactly that from opposite sides
+/// (`channel-one-writer` bars a matching door in the emitter,
+/// `resolve-discipline` bars a linear name scan in sem), and the construction
+/// they leave is this one: the checker records the binder's type, the emitter
+/// reads it.
+///
+/// Recovery keeps its own shape: when the name is absent, `@push_expected`
+/// pushes its zero-width Err leaf, and wrapping THAT in a `Name` would tell
+/// every consumer a name is there.
+fn Cursor mut @push_binder(mut kids []Node) -> () {
+    if @peek() == TokenKind.Ident {
+        kids.push(@node(NodeKind.Name, []Node.of(@take())))
+    } else {
+        @push_expected(kids, TokenKind.Ident)
+    }
+}

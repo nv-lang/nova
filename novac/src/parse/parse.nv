@@ -655,10 +655,10 @@ fn Cursor mut @stmt() -> Node {
         // the refusal blamed a type nobody wrote.
         if @peek() == TokenKind.LParen {
             kids.push(@take())
-            @push_expected(kids, TokenKind.Ident)
+            @push_binder(kids)
             while @peek() == TokenKind.Comma {
                 kids.push(@take())
-                @push_expected(kids, TokenKind.Ident)
+                @push_binder(kids)
             }
             if @peek() == TokenKind.RParen { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
             @push_expected(kids, TokenKind.Assign)
@@ -680,13 +680,13 @@ fn Cursor mut @stmt() -> Node {
         // refused, and that refusal is D411's own, not ours.
         if @peek() == TokenKind.LBrace {
             kids.push(@take())
-            @push_expected(kids, TokenKind.Ident)
+            @push_binder(kids)
             while @peek() == TokenKind.Comma {
                 kids.push(@take())
                 if @peek() == TokenKind.DotDot {
                     kids.push(@take())
                 } else {
-                    @push_expected(kids, TokenKind.Ident)
+                    @push_binder(kids)
                 }
             }
             if @peek() == TokenKind.RBrace { kids.push(@take()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
