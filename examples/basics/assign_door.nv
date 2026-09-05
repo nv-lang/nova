@@ -1,0 +1,21 @@
+// assign_door.nv -- the corpus carrier of wave 274.7 B8 (the assignment door):
+// a bare literal takes the target's type (`x = 2` on an f64 stores 2.0), the
+// same named type flows, a call's result of the target's type flows.
+
+module basics.assign_door
+
+fn twice(n int) -> int => n * 2
+
+fn word() -> str => "w"
+
+fn main() {
+    mut x = 1.5
+    x = 2
+    println(x)
+    mut n = 1
+    n = twice(4)
+    println(n)
+    mut s = "a"
+    s = word()
+    println(s)
+}

@@ -344,8 +344,8 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 62
-behavior-match 54
+contract-match 63
+behavior-match 55
 # 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
 # через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
 # в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
@@ -379,3 +379,9 @@ behavior-match 54
 # инстанса пишется представлением, `Vec[Meters]` -> `Nova_Vec____nova_f64`, как у оракула).
 # Оболочка выросла той же волной: probe получил `Vec[f64]`, шаблон перегенерирован. Обратные
 # пробы по одной на дверь: носитель расходится по stdout (строки 1 и 3) либо падает; восстановлено.
+# 62/54 -> 63/55 (2026-09-05, волна 274.7 В8 — дверь присваивания). Новый файл корпуса
+# `examples/basics/assign_door.nv`: литерал берёт тип цели (`x = 2` на f64 — `((nova_f64)2LL)`),
+# тот же именованный тип и результат вызова текут; отказы — в фикстурах assign_target/neg_1
+# (именованный int в f64-цель, E7301) и assign_mismatch/neg_1 (str в int-цель, E7301; у оракула
+# это №967 — `check` ok, падает в Си). Обратная проба: дверь закрыта -> оба нега 0 диагностиков,
+# no-cascade красный, держатель красный; восстановлено.

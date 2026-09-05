@@ -1,0 +1,18 @@
+module assign_target.pos_1
+
+// The assignment door lets legal code through: a bare literal takes the
+// target's type (`x = 2` on an f64 stores 2.0), the same named type flows, a
+// call's result of the target's type flows.
+fn twice(n int) -> int => n * 2
+
+fn main() {
+    mut x = 1.5
+    x = 2
+    println(x)
+    mut n = 1
+    n = twice(4)
+    println(n)
+    mut s = "a"
+    s = "b"
+    println(s)
+}
