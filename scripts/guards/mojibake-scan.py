@@ -28,6 +28,7 @@ simplifications-closed.md`, куда AGENTS.md посылает агентов �
 import io
 import os
 import re
+import subprocess
 import sys
 
 # Буквы сербско-македонского ряда и одиночная нижняя кавычка перед кириллицей:
@@ -44,7 +45,17 @@ SIG = re.compile(u"[ЂЃђѓћќљњїѕ]"
 # об этом. Тот же приём, что в самотесте, где образцы задаются через python.
 SIG_FFFD = re.compile(u"\ufffd")
 
-EXTS = (".md", ".sh", ".py", ".awk", ".baseline", ".yml", ".yaml", ".toml", ".nv", ".rs")
+# Расширения. Список вырос 2026-09-05 (реестр №948: страж обещал «порча не
+# попадает в дерево», а смотрел десять расширений). Расширение стоило РОВНО
+# НОЛЬ: замер до правки дал 144/418, после — те же 144/418, потому что оба
+# найденных носителя (`.gitignore` и `docs/plans/wip/repro-614-*.nv.txt`)
+# починены тем же слиянием, а единственное оставшееся расхождение — журнал,
+# который хранит образцы порчи как данные и потому попал в SKIP_FILES.
+EXTS = (".md", ".sh", ".py", ".awk", ".baseline", ".yml", ".yaml", ".toml", ".nv", ".rs",
+        ".txt", ".c", ".h", ".json", ".cfg", ".ini", ".ps1", ".bat", ".sql",
+        ".css", ".js", ".html", ".vim", ".el", ".tmLanguage",
+        # без точки в начале имени `endswith` всё равно сработает по полному имени
+        ".gitignore", ".gitattributes")
 
 # Ремонтный инструмент ХРАНИТ образцы порчи как данные — краснеть на нём
 # значит учить обходить стража целиком.
@@ -61,8 +72,42 @@ SKIP_FILES = ("demojibake.py", "mojibake-scan.py",
               # русский текст, прошедший через оболочку в cp1251 —
               # без образца объяснение не объясняет. Тот же случай, что
               # с mojibake.baseline выше.
-              "guard-shell-nonascii.py")
-SKIP_DIRS = ("target", ".git", "node_modules", "vcpkg_installed", ".claude")
+              "guard-shell-nonascii.py",
+              # 2026-09-05 (№948): журнал проекта ОПИСЫВАЕТ происшествие с
+              # порчей и цитирует её образцы построчно («ё→ђ», «РќРёРєР°РєРёС…»,
+              # байты d0 b2 e2 80 9d). Он попал под стража, когда список
+              # расширений вырос до `.txt`, и это ровно тот же случай, что с
+              # mojibake.baseline: описание проверки неотличимо от нарушения.
+              "project-creation.txt")
+# `.claude` УБРАН из пропусков 2026-09-05 (№948): туда пишут те же окна и тем
+# же способом, а единственный файл там, который ХРАНИТ образцы, назван поимённо
+# выше (guard-shell-nonascii.py). Пропуск целого каталога прятал бы правило от
+# места, где его нарушают чаще всего.
+SKIP_DIRS = ("target", ".git", "node_modules", "vcpkg_installed")
+
+
+def tracked_files(root):
+    """Пути, которые git ОТСЛЕЖИВАЕТ, либо None — если корень не репозиторий.
+
+    Заведено 2026-09-05 (№948) и не для красоты: расширение охвата до `.c`
+    впервые завело стража на СГЕНЕРИРОВАННЫЕ файлы. В `spec_tests/` их 415, а
+    отслеживается git РОВНО ОДИН — остальные оставляет прогон корпуса (реестр
+    №927). Обход файловой системы дал бы 146 у меня и 144 на чистом клоне CI:
+    вердикт зависел бы от того, гонял ли кто-то тесты, а не от содержимого
+    репозитория. Страж, чьё число зависит от машины, не мерит ничего.
+
+    Возврат None (не репозиторий) — законный путь: по нему идёт САМОТЕСТ, он
+    работает во временном каталоге, и там обход файловой системы правилен.
+    """
+    try:
+        out = subprocess.run(["git", "-C", root, "ls-files", "-z"],
+                             capture_output=True)
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    names = out.stdout.decode("utf-8", "replace").split("\0")
+    return set(n for n in names if n)
 
 
 def main():
@@ -70,6 +115,7 @@ def main():
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
     root = args[0] if args else "."
     sig = SIG_FFFD if "--fffd" in flags else SIG
+    tracked = tracked_files(root)
     hits = []
     for base, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
@@ -77,13 +123,16 @@ def main():
             if not f.endswith(EXTS) or f in SKIP_FILES:
                 continue
             p = os.path.join(base, f)
+            rel = os.path.relpath(p, root).replace("\\", "/")
+            if tracked is not None and rel not in tracked:
+                continue
             try:
                 text = io.open(p, encoding="utf-8").read()
             except Exception:
                 continue
             for i, line in enumerate(text.split(u"\n"), 1):
                 if sig.search(line):
-                    hits.append(u"%s:%d" % (os.path.relpath(p, root).replace("\\", "/"), i))
+                    hits.append(u"%s:%d" % (rel, i))
     out = io.open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)
     for h in hits:
         out.write(h + u"\n")

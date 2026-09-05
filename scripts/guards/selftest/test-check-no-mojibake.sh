@@ -105,6 +105,36 @@ setup "$DIRTY" 0 5
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q "637"; then ok "cp1251-порча судится своей базой, а не базой замен"; else bad "метрики перепутаны (rc=$rc): $out"; fi
 
+# ===== РАСШИРЕННЫЙ ОХВАТ И ФИЛЬТР ПО GIT (№948) =====
+
+# 13. Порча в `.txt` — расширение, которого страж НЕ смотрел до 2026-09-05.
+setup "$DIRTY" 0 0
+mv "$TMP/docs/dev/probe.md" "$TMP/docs/dev/probe.txt"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "probe.txt"; then ok "ловит порчу в .txt (расширенный охват)"; else bad "не поймал в .txt (rc=$rc): $out"; fi
+
+# 14. Порча в `.gitignore` — файл БЕЗ расширения, реальный носитель 2026-09-05.
+setup "$DIRTY" 0 0
+mv "$TMP/docs/dev/probe.md" "$TMP/.gitignore"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "gitignore"; then ok "ловит порчу в .gitignore"; else bad "не поймал в .gitignore (rc=$rc): $out"; fi
+
+# 15/16. ФИЛЬТР ПО GIT в обе стороны. Внутри РЕПОЗИТОРИЯ судится только то, что
+#     git отслеживает: иначе число стража зависит от того, гонял ли кто-то
+#     тесты (415 сгенерированных `.c` в spec_tests, отслеживается ОДИН).
+if git --version >/dev/null 2>&1; then
+    setup "$DIRTY" 0 0
+    ( cd "$TMP" && git init -q . && git config user.email t@t && git config user.name t ) >/dev/null 2>&1
+    out=$(bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then ok "НЕотслеживаемый файл в репозитории не считается"; else bad "неотслеживаемый файл покраснел (rc=$rc): $out"; fi
+
+    ( cd "$TMP" && git add docs/dev/probe.md ) >/dev/null 2>&1
+    out=$(bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 1 ] && echo "$out" | grep -q "probe.md"; then ok "тот же файл ПОСЛЕ git add — считается"; else bad "отслеживаемый файл не пойман (rc=$rc): $out"; fi
+else
+    ok "git недоступен — проверка фильтра пропущена (и это НАЗВАНО)"
+fi
+
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-no-mojibake: все проверки ok"; exit 0; fi
 echo "селфтест check-no-mojibake: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
