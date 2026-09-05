@@ -498,7 +498,15 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         }
         TkApp => "${instance_struct_name(ctx, a)}_p"
         TkSum => "Nova_${decl_of_ty(ctx, a).name}_p"
-        TkNewtype => ice("mangle: a NEWTYPE as an instance argument — its in-name spelling is not measured on the shell")
+        // A NEWTYPE inside an instance name is its REPRESENTATION (274.7 B7,
+        // #940): `[Meters(1.0), Meters(2.0)]` with `type Meters f64` is
+        // `Nova_Vec____nova_f64` in the oracle's C (measured 2026-09-05, the
+        // kept artifact of the probe), and the SHELL's instances are keyed the
+        // same way -- so this is the spelling that LINKS. The same canon `c_type`
+        // takes for the type itself ("a newtype is a distinct type with the
+        // representation's layout"): one canon, one name (K3), where this arm
+        // used to be the second answer, an ice after a green check.
+        TkNewtype => instance_arg_spelling(ctx, representation_of(ctx, a))
         TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
         TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
         TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")

@@ -1,0 +1,22 @@
+// target_row.nv -- the corpus carrier of wave 274.7 B7 (registry #932, #934,
+// #940): the C representation is a function of the TARGET's row. A compound
+// assignment runs in the target's type, `~` keeps the row's width, a newtype
+// inside an instance name is its representation.
+
+module basics.target_row
+
+type Meters f64
+
+fn idu8(a u8) -> u8 => a
+
+fn main() {
+    mut x = 1.5
+    x += 2
+    println(x)
+    mut n = 1
+    n += 2
+    println(n)
+    println(~idu8(15))
+    ro v = [Meters(1.0), Meters(2.0)]
+    println(v.len())
+}

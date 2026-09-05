@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_binop_assign` -- a compound assignment is typed as the
+// binary operation on the TARGET's type, the literal adapting to it, a mismatch
+// refused at the operator; NOT taken: C's usual arithmetic conversions as a
+// typing rule (they are what this door exists to keep out of the emission).
+// Role: layer 7 (check) -- the ASSIGNMENT DOOR (274.7 B7, registry #932): the
+// type a compound assignment runs in. Set apart from typing.nv when that file
+// crossed 1000 lines with the wave; the cut is the rule, by meaning.
+// Used by: typing.nv (the AssignStmt arm records what this door answers).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+// crossed 1000 lines), check-novac-no-silent-skip.py, and the fixtures
+// compound_target/ through check-novac-no-cascade and the differential.
+// novac/src/check/assign_rules.nv -- the target's row decides.
+
+module novac.check
+
+import ../tree.{Node, assign_op_of}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{leaf_kind, carrier_of, is_numeric_prim}
+
+/// THE TYPE A COMPOUND ASSIGNMENT RUNS IN, or `no_ty()` when the operand was
+/// refused here (274.7 B7, #932). `a op= b` is `a = a op b`, so D405's operand
+/// rule applies as at every other numeric operator: a bare literal takes the
+/// TARGET's carrier type (`x += 2` on an `f64` is a float addition -- the int
+/// helper picked from the literal printed 3 where the oracle prints 3.5), and
+/// two NAMED numeric operands of different types are refused
+/// (spec/conversions.md names compound assignment; the oracle accepts -- its
+/// #926). A plain `=` keeps the operand's own type. What the caller RECORDS for
+/// the right operand is the answer here, and the emitter reads that and
+/// nothing else -- no second table of target types in emission.
+fn Checker mut @assigned_operand_type(kids []Node) -> TyId {
+    ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
+    match assign_op_of(leaf_kind(kids[1])) {
+        Set => rt0
+        Update(_) => {
+            ro tc = carrier_of(@ctx, type_of(kids[0], @ctx, @scope, @chan))
+            ro adapted = adapt_operand(kids[2], rt0, tc, @ctx.tys)
+            if adapted != rt0 {
+                if !@lit_fits_or_refuse(kids[2], adapted) { return no_ty() }
+            } else {
+                // Not a bare literal, or one already of the target's type.
+            }
+            if is_numeric_prim(@ctx.tys, adapted) && is_numeric_prim(@ctx.tys, tc) && adapted != tc {
+                match kids[1] {
+                    Leaf(t) => @refuse(t, MIXED_NUMERIC_MSG)
+                    Branch { .. } => {}
+                }
+                return no_ty()
+            } else {
+                // The same numeric type by name, or not numeric at all: the
+                // operator's own emission handles it.
+            }
+            adapted
+        }
+    }
+}

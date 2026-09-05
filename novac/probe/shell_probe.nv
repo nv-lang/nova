@@ -56,6 +56,10 @@ fn main() {
     ro nums = [1, 2, 3]
     ro ext = [0, ...nums, 4]
     println("len = ", ext.len())
+    // A Vec[f64] instance (274.7 B7, #940): a Vec of a NEWTYPE over f64 links as
+    // Vec[f64] -- its representation -- so the shell must carry that instance.
+    ro reals = [1.5, 2.5]
+    println("flen = ", reals.len())
     // `cap()` — ГЕТТЕР, и он здесь не ради красоты: амендмент D239 о вместимости
     // литерала (2026-08-27) сформулирован над НАБЛЮДАЕМЫМ (`[7, 8].cap() == 2`),
     // а оболочка несла только сеттер `cap(n)` (`..._method_cap__nova_int`), потому

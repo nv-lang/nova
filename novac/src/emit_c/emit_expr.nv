@@ -649,11 +649,30 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @emit_expr(kids[1])
             @body.append(")")
         } else {
+            // `!` on a bool and `-` on a float are plain C. `~` on an INTEGER
+            // row is cast back to the ROW's C type (274.7 B7, #934): C promotes
+            // a `u8` to `int`, and `~idu8(15)` printed -16 where the oracle
+            // prints 240 -- the width of the result is the row's, not the
+            // promotion's.
+            ro cast = match uk {
+                BitNot => is_int_prim(@ctx.tys, carrier)
+                Not | Negate => false
+            }
+            if cast {
+                @body.append("((${@arith_row(carrier).c_name})")
+            } else {
+                // No narrowing to undo: the C operator's type is the row's.
+            }
             @body.append("(")
             @body.append(c_unary_form(uk))
             @body.append("(")
             @emit_expr(kids[1])
             @body.append("))")
+            if cast {
+                @body.append(")")
+            } else {
+                // Nothing was opened above.
+            }
         }
     } else if k == NodeKind.Bin {
         ro kids = branch_children(e)

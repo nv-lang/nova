@@ -756,14 +756,27 @@ fn Checker mut @type_stmt(st Node) -> () {
         // only READ it. The MARK, not the file's count: a refusal in an
         // earlier declaration is not this assignment's business.
         if @out.len() > before { return }
-        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
         // THE TARGET IS AN EXPRESSION TOO, and the emitter writes it as one --
         // so it needs the same answers. `a.n = 1` on a VALUE record must be
         // `a.n`, not `a->n`, and the arrow is chosen from the OPERAND's recorded
         // type: without this the target kept the pointer form while the reads of
         // the same field used the dot (measured 2026-08-23, clang: "expression
-        // is not assignable").
+        // is not assignable"). Typed BEFORE the right operand is recorded, so
+        // the target's type can decide it (below).
         @type_expr(kids[0])
+        if @out.len() > before { return }
+        // THE TARGET'S ROW DECIDES A COMPOUND ASSIGNMENT (274.7 B7, #932): the
+        // door in assign_rules.nv answers the type the operation runs in, or
+        // `no_ty()` when it refused -- and a refusal is the decision.
+        ro rt = @assigned_operand_type(kids)
+        if !is_ty(rt) {
+            // SILENT-OK: the assignment door refused the operand (a literal that
+            // does not fit, or two named numeric types) at its own token.
+            return
+        } else {
+            // Decided: the type the emitter reads for the right operand.
+        }
+        @record(kids[2], rt)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         // A head this short was already refused by the subset walk; the same

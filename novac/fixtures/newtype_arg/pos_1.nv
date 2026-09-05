@@ -1,0 +1,11 @@
+module newtype_arg.pos_1
+
+// A newtype inside an instance name is its representation: `[Meters(1.0),
+// Meters(2.0)]` is a `Vec[f64]` in the C the shell links (registry #940 --
+// this iced after a green check until wave B7).
+type Meters f64
+
+fn main() {
+    ro v = [Meters(1.0), Meters(2.0)]
+    println(v.len())
+}
