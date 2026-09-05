@@ -854,6 +854,9 @@ fn Checker mut @type_expr(e Node) -> () {
                 // No type: the constructor names something the registry does
                 // not know, and that was refused where the name was read.
             }
+        } else {
+            // Anonymous: nothing to judge here (the SILENT-OK above is the
+            // decision); an empty else WITH its reason is what P31 asks for.
         }
     } else if k == NodeKind.ArrayLit {
         // The literal DECIDES ITS OWN TYPE -- the bind path's rule, reused in

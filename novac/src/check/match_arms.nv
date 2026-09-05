@@ -70,11 +70,7 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
         @type_expr(gk[1])
     }
     ro body = ak[arm_body_at(ak) ?? ice("check: a statement-position match arm with no body reached the checker")]
-    if body.kind_of() == NodeKind.Block {
-        @type_block(body)
-    } else {
-        @type_stmt(body)
-    }
+    @type_body(body)
     @scope.release(mark)
 }
 

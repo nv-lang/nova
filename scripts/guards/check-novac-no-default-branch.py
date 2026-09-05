@@ -56,6 +56,7 @@ def scan(rel, text, bad):
     marked = False
     cond_at, line_at, isvar_at = {}, {}, {}
     pending, look, cond = 0, 0, ""
+    else_ind = -1
 
     for i, raw in enumerate(text.split("\n"), 1):
         line = re.sub(r"//.*$", "", raw)
@@ -122,11 +123,37 @@ def scan(rel, text, bad):
         if re.search(r"\}[ \t]*else[ \t]*\{", line):
             eind = re.match(r"^[ \t]*", line).group(0)
             L = len(eind)
+            # ОДНОСТРОЧНАЯ ФОРМА `x = if C { a } else { b }`: условие стоит на
+            # ЭТОЙ строке, и судить надо его, а не последний `if` того же отступа
+            # выше (type_of.nv:457 был спарен с проверкой варианта за 20 строк,
+            # 2026-09-05). Условие на строке -- вариант ли оно, решается тут же.
+            # A same-line `x = if C { a } else { b }` is a PREDICATE choosing a
+            # value (tree.nv:353 `if t.kind == TokenKind.Ident { Some(t.text) }
+            # else { None }`), not a dispatcher over a closed set: its else IS
+            # the honest "no". P21 aims at the multi-line chain that hides the
+            # next variant; the inline form is left alone, and -- the actual
+            # fix -- no longer paired with an unrelated `if` above it.
+            if re.search(r"\bif[ \t]+.+?\{.*\}[ \t]*else[ \t]*\{", line):
+                continue
             if isvar_at.get(L) and i - line_at.get(L, 0) <= 60:
-                pending, look, cond = i, 12, cond_at.get(L, "")
+                pending, look, cond, else_ind = i, 12, cond_at.get(L, ""), L
             continue
 
         if pending > 0 and look > 0:
+            # ОКНО КОНЧАЕТСЯ ВМЕСТЕ С БЛОКОМ else: строка `}` с отступом самого
+            # `} else {` закрывает его, и что стоит дальше -- уже следующий арм.
+            # Без этого пустой else с одним комментарием (законная форма по П31)
+            # читался как «делает работу» строками соседнего арма -- ложняк,
+            # пойманный 2026-09-05 на exprs.nv (П21 велел убрать else, П31 --
+            # вернуть; спорили не правила, а окно этого стража).
+            if re.match(r"^[ \t]*\}[ \t]*$", line) and len(re.match(r"^[ \t]*", line).group(0)) == else_ind:
+                # Блок else кончился. Ни одной строки работы внутри (look не
+                # тронут) -- пустой else с комментарием, законен по П31. Были --
+                # вердикт ЗДЕСЬ: работа без отказа в ветке «всё остальное».
+                if look < 12:
+                    bad.append(f"  {rel}:{pending}: `else` за проверкой варианта (`{cond}`) делает работу, а не отказ")
+                pending = 0
+                continue
             if re.search(r"ice\(|@refuse\(|report|NodeKind\.Err", line):
                 pending = 0
             if not re.match(r"^[ \t]*//", raw):
