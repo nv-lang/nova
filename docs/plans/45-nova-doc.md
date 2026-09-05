@@ -2494,57 +2494,57 @@ issues, Reddit r/rust, Hacker News.
 
 ---
 
-## Sprint �.27 � Audit-closure (2026-05-16, post-�.26 audit)
+## Sprint Ф.27 — Audit-closure (2026-05-16, post-Ф.26 audit)
 
-����� �.26 �������� ������ audit ���� vs ���������� (2 parallel Explore agents:
-tech-debt + competitive analysis). Audit ��������� 3 P1/P2 issues �������
-�������� done � ����� �� ������� partial / deferred. Sprint �.27 ������ ��.
+После Ф.26 запустил свежий audit план vs реализация (2 parallel Explore agents:
+tech-debt + competitive analysis). Audit обнаружил 3 P1/P2 issues которые
+заявлены done в плане но реально partial / deferred. Sprint Ф.27 закрыл их.
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
-| �.27.1 | Workspace mode handler matrix ��� noop (deferred Plan 45.A � �����������) | P1 (Nova-unique feature broken ��� real workspace ����) | done � populate_handler_matrix_workspace API + 4 cross-file tests |
-| �.27.2 | render_expr placeholder ��� complex contract expressions | P2 (contracts incomplete) | done � branches ��� Index/If/SelfAccess/InterpolatedStr/TurboFish |
-| �.27.3 | Stale MVP markers � 5 docstrings | P3 | done � updated links/collector/doctree/render_md docstrings |
+| Ф.27.1 | Workspace mode handler matrix был noop (deferred Plan 45.A в комментарии) | P1 (Nova-unique feature broken для real workspace кода) | done — populate_handler_matrix_workspace API + 4 cross-file tests |
+| Ф.27.2 | render_expr placeholder для complex contract expressions | P2 (contracts incomplete) | done — branches для Index/If/SelfAccess/InterpolatedStr/TurboFish |
+| Ф.27.3 | Stale MVP markers в 5 docstrings | P3 | done — updated links/collector/doctree/render_md docstrings |
 
-## Sprint �.28 � Plan 45.A foundation (in-progress)
+## Sprint Ф.28 — Plan 45.A foundation (in-progress)
 
-| # | ��� | Scope | ����������� |
+| # | Что | Scope | Зависимости |
 |---|-----|-------|-------------|
-| �.28.1 | AST pretty-printer shared util � ast::pretty � ��������� render_expr 100% | ~300 LOC | Independent |
-| �.28.2 | Mutation testing real-exec � �������� text-heuristic �.25.4 �� real test_runner | ~400 LOC | �.25.4 |
-| �.28.3 | Schema v1.0.0-rc1 > v1.0.0 promote (soak closed) | ~30 LOC | �.24.5 |
+| Ф.28.1 | AST pretty-printer shared util в ast::pretty — закрывает render_expr 100% | ~300 LOC | Independent |
+| Ф.28.2 | Mutation testing real-exec — заменяет text-heuristic Ф.25.4 на real test_runner | ~400 LOC | Ф.25.4 |
+| Ф.28.3 | Schema v1.0.0-rc1 > v1.0.0 promote (soak closed) | ~30 LOC | Ф.24.5 |
 
-Out-of-scope ��� �.28 (Plan 45.A round 2/3, ��������� sprints):
+Out-of-scope для Ф.28 (Plan 45.A round 2/3, отдельные sprints):
 - HTML output + lunr search (~600 LOC)
 - Theme/dark-mode
 - External crate-doc linking
-- MCP server ��� AI/LLM queries
+- MCP server для AI/LLM queries
 - Stdlib full doc-pass (Plan 45.B)
-- Workspace handler matrix ����� FileRegistry (post Plan 42)
+- Workspace handler matrix через FileRegistry (post Plan 42)
 - #allow_transit parser-side support (Plan 16 follow-up)
 
 ---
 
-## Sprint �.29 � Cleanup sprint (in-progress, 2026-05-16)
+## Sprint Ф.29 — Cleanup sprint (in-progress, 2026-05-16)
 
-Closure smaller tech debt items ��������� � "��� ��������" ������ ����� �.28.
-Realistic �� ���� ������ (~4-6 �����). HTML output / MCP server / stdlib �
-multi-week scope, ��������� sprints (�.30+).
+Closure smaller tech debt items найденных в "что осталось" сводке после Ф.28.
+Realistic за одну сессию (~4-6 часов). HTML output / MCP server / stdlib —
+multi-week scope, отдельные sprints (Ф.30+).
 
-| # | ��� | Severity | Scope |
+| # | Что | Severity | Scope |
 |---|-----|----------|-------|
-| �.29.1 | Remove `collector::render_expr_legacy` dead code (�.28.1 soak finished) | L (cleanup) | ~50 LOC removal |
-| �.29.2 | Precedence-aware parens � `ast::pretty::print_expr` � ������ redundant `()` ��� same-precedence binary chains | L (cosmetic) | ~80 LOC + tests |
-| �.29.3 | Drop-ensures mutator � currently ������ `drop-requires` � �.25.4; add symmetric drop-ensures | M (mutation coverage) | ~30 LOC + tests |
-| �.29.4 | Workspace mutation testing real-exec � �.28.2 single-file only; extend to multi-module | M (consistency � �.27.1 workspace handler matrix) | ~150 LOC + tests |
+| Ф.29.1 | Remove `collector::render_expr_legacy` dead code (Ф.28.1 soak finished) | L (cleanup) | ~50 LOC removal |
+| Ф.29.2 | Precedence-aware parens в `ast::pretty::print_expr` — убрать redundant `()` для same-precedence binary chains | L (cosmetic) | ~80 LOC + tests |
+| Ф.29.3 | Drop-ensures mutator — currently только `drop-requires` в Ф.25.4; add symmetric drop-ensures | M (mutation coverage) | ~30 LOC + tests |
+| Ф.29.4 | Workspace mutation testing real-exec — Ф.28.2 single-file only; extend to multi-module | M (consistency с Ф.27.1 workspace handler matrix) | ~150 LOC + tests |
 
-## Future sprints (out-of-scope ��� �.29)
+## Future sprints (out-of-scope для Ф.29)
 
-| Sprint | ��� | ETA |
+| Sprint | Что | ETA |
 |--------|-----|-----|
-| �.30 | External crate-doc linking + incremental cache (Plan 45.A small wins) | 1 ������ |
-| �.31 | HTML output + lunr search (Plan 45.A round 2 � ������� adoption blocker) | 2-3 sessions |
-| �.32 | MCP server ��� AI/LLM real-time queries (Nova-unique, ��������� crate) | 2 sessions |
-| Plan 45.B | Stdlib full doc-pass (���� ��� std/) | 2-3 weeks �������� |
+| Ф.30 | External crate-doc linking + incremental cache (Plan 45.A small wins) | 1 сессия |
+| Ф.31 | HTML output + lunr search (Plan 45.A round 2 — главный adoption blocker) | 2-3 sessions |
+| Ф.32 | MCP server для AI/LLM real-time queries (Nova-unique, отдельный crate) | 2 sessions |
+| Plan 45.B | Stdlib full doc-pass (доку всю std/) | 2-3 weeks отдельно |
 | Plan 16 follow-up | Parser-side `#allow_transit` attribute | Plan 16 scope |
-| Plan 42 follow-up | Workspace handler matrix ����� FileRegistry (������ sources_by_module_path) | Plan 42 scope |
+| Plan 42 follow-up | Workspace handler matrix через FileRegistry (вместо sources_by_module_path) | Plan 42 scope |
