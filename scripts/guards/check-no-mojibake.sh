@@ -71,12 +71,17 @@ read_base() {   # $1 — ключ в базе; нет базы или ключа
     echo "${v:-0}"
 }
 
-OUT=$(python "$CORE" "$ROOT" 2>/dev/null)
+# ОДИН обход на обе подписи (`--both`), а не два вызова ядра. Замер 2026-09-05:
+# два вызова стоили 4538мс + 3949мс, из них `git ls-files` — 150мс; вся цена в
+# обходе и чтении 27 расширений, поэтому один проход снимает почти половину.
+BOTH=$(python "$CORE" "$ROOT" --both 2>/dev/null)
+
+OUT=$(printf '%s\n' "$BOTH" | sed -n 's/^sig://p')
 TOTAL=$(printf '%s\n' "$OUT" | grep -c . || true)
 TOTAL=${TOTAL:-0}
 BASE=$(read_base mojibake_lines)
 
-OUT_F=$(python "$CORE" "$ROOT" --fffd 2>/dev/null)
+OUT_F=$(printf '%s\n' "$BOTH" | sed -n 's/^fffd://p')
 TOTAL_F=$(printf '%s\n' "$OUT_F" | grep -c . || true)
 TOTAL_F=${TOTAL_F:-0}
 BASE_F=$(read_base fffd_lines)

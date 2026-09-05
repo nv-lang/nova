@@ -111,9 +111,21 @@ def tracked_files(root):
 
 
 def main():
+    """Флаги: без флага — cp1251-подпись; `--fffd` — символ-замена;
+    `--both` — ОБЕ за ОДИН обход, с префиксом подписи в каждой строке
+    (`sig:путь:номер` / `fffd:путь:номер`).
+
+    `--both` заведён 2026-09-05 по замеру: страж звал ядро ДВАЖДЫ, по разу на
+    подпись, и платил двумя полными обходами дерева — 4538мс + 3949мс при том,
+    что `git ls-files` из них всего 150мс. Вся цена — обход и чтение (27
+    расширений), поэтому один обход с двумя образцами снимает почти половину.
+    Прежние два режима оставлены: на них опирается самотест, и они читаются
+    глазами, когда надо посмотреть одну подпись.
+    """
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = [a for a in sys.argv[1:] if a.startswith("--")]
     root = args[0] if args else "."
+    both = "--both" in flags
     sig = SIG_FFFD if "--fffd" in flags else SIG
     tracked = tracked_files(root)
     hits = []
@@ -131,7 +143,12 @@ def main():
             except Exception:
                 continue
             for i, line in enumerate(text.split(u"\n"), 1):
-                if sig.search(line):
+                if both:
+                    if SIG.search(line):
+                        hits.append(u"sig:%s:%d" % (rel, i))
+                    if SIG_FFFD.search(line):
+                        hits.append(u"fffd:%s:%d" % (rel, i))
+                elif sig.search(line):
                     hits.append(u"%s:%d" % (rel, i))
     out = io.open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)
     for h in hits:
