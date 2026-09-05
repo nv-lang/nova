@@ -8,7 +8,7 @@
 196: два места начинают отвечать на один вопрос и расходятся молча.
 
 ПРОВЕРЯЕТ три вещи, и в этом порядке (порядок — часть вывода):
-  A. вызов писателя канала (`record_type`/`record_callee`/`record_subst`) вне
+  A. вызов писателя канала (`record_type`/`record_callee`/`record_subst`/`record_implicit`) вне
      `check/`;
   D. ПРЯМАЯ запись в таблицу канала мимо двери (`.types[...] =`, `.callees =`);
   B. вывод типа вне `check/` (`unify(`, `fresh_var(`, `infer_*(`, `type_of(`
@@ -38,7 +38,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 NAME = "check-novac-channel-one-writer"
 CF = "types|callees|substs|subst_args"
 
-RE_WRITER = re.compile(r"record_type\(|record_callee\(|record_subst\(")
+RE_WRITER = re.compile(r"record_type\(|record_callee\(|record_subst\(|record_implicit\(")
 RE_DIRECT_IDX = re.compile(r"\.(" + CF + r")\[[^]]*\][ \t]*=[^=]")
 RE_DIRECT = re.compile(r"\.(" + CF + r")[ \t]*=[^=]")
 RE_INFER = re.compile(r"unify\(|fresh_var\(|infer_[a-z_]*\(|[^.a-zA-Z_]type_of\(")

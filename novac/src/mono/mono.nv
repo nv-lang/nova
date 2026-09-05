@@ -17,6 +17,7 @@ module novac.mono
 
 import ../tree.{Node, NodeKind, is_node}
 import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, file_decls}
+import ../sem.{CalleeRef}
 import ../types.{TyId}
 import ../diag.{ice}
 
@@ -236,82 +237,109 @@ fn has_row_instance(inst []Instance, row FnRow) -> bool {
     false
 }
 
-/// Mark every callee of this subtree; answer whether anything was newly marked.
+/// Mark ONE resolved call -- explicit or implicit, the collector does not care
+/// which table it came from: a `display` the interpolation slot makes reaches
+/// `Pt.display` exactly as a written `p.display(f)` would, and a body reached
+/// by no explicit call is still a body the program runs (274.7 B1b-1; before
+/// the implicit table this function's caller saw one table and the linker saw
+/// the missing symbol). Answers whether anything was newly marked.
+fn mark_ref(cr CalleeRef, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
+            mut subst []TyId, mut ptypes []ParamDef) -> bool {
+    mut grew = false
+    // Every kind is NAMED: a call whose target is a variant constructor or
+    // a type is emitted by its own door, and the fn set says nothing about
+    // it. A `_` arm here would swallow whatever kind the registry grows
+    // next, and the collector would silently stop reaching it.
+    match cr.target {
+        CalleeFn(row) => {
+            // A generic row WITH a body of ours grows an instance; one
+            // without is an instance method the SHELL compiled (sub-plan
+            // L2) -- nothing to instantiate, and no declaration of it in
+            // this file for `decl_of_row` to look for.
+            if is_generic(ctx, row) && ctx.fns.compiles_body(row) {
+                // A GENERIC callee is reached per SUBSTITUTION: the element
+                // of the set is the instance, and the same call written
+                // twice adds nothing while two type arguments add two.
+                ro args = out.subst_of_ref(cr)
+                if instance_absent(inst, subst, row, args) {
+                    ro off = subst.len()
+                    subst.append(args)
+                    // The instance's types are REWRITTEN here, once, into
+                    // the pool: this is mono's own work, and doing it here
+                    // is what keeps every backend free of substitution.
+                    ro poff = ptypes.len()
+                    ro fd = ctx.fns.rows[raw_row(row)]
+                    for p in 0..fd.param_cnt {
+                        // The type is REWRITTEN, the mode is CARRIED: an
+                        // instance's parameter is as mutable as the
+                        // declaration wrote it, and the backend must read
+                        // both from one row.
+                        ro pd = ctx.fns.params[fd.param_off + p]
+                        ptypes.push(ParamDef { name: pd.name,
+                                               type_id: subst_type(ctx, pd.type_id, args),
+                                               mode: pd.mode, default_expr: pd.default_expr })
+                    }
+                    inst.push(Instance { row, subst_off: off, subst_cnt: args.len(),
+                                         ptype_off: poff, ptype_cnt: fd.param_cnt,
+                                         ret_id: subst_type(ctx, fd.ret_id, args) })
+                    grew = true
+                } else {
+                    // This exact instance is already in the set.
+                }
+            } else if raw_row(row) >= 0 && raw_row(row) < seen.len() && !seen[raw_row(row)] {
+                seen[raw_row(row)] = true
+                grew = true
+            } else {
+                // Already reached, or a row this file's table does not
+                // hold: reaching it twice is not news either way.
+            }
+        }
+        // Neither is a callable, so the fn set says nothing about either:
+        // one case, and it is NOT a wildcard -- a fourth kind of target
+        // would still have to come here and say what it does (P21).
+        CalleeVariant(_) | CalleeCtor(_) => {}
+    }
+    // AN INSERTED CONVERSION IS A CALL TOO (D429 R7, wave 5). A `#coerce`
+    // pair's method is reached by the call that needed it and by nothing
+    // else -- nobody wrote its name anywhere. Without this the emission
+    // named a symbol no body defined, and the LINKER is what said so
+    // (measured 2026-08-23: `undefined symbol:
+    // novac_fn_to_bytes__c_nova_str__to_Bytes`).
+    for sb in out.slots_of_ref(cr) {
+        if raw_row(sb.via_row) < 0 { continue }
+        if raw_row(sb.via_row) >= seen.len() { continue }
+        if seen[raw_row(sb.via_row)] { continue }
+        seen[raw_row(sb.via_row)] = true
+        grew = true
+    }
+    grew
+}
+
+/// Mark every callee of this subtree -- the calls written at its nodes AND the
+/// calls the language makes at their values -- and answer whether anything was
+/// newly marked.
 fn mark_callees(n Node, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Instance,
                 mut subst []TyId, mut ptypes []ParamDef) -> bool {
     mut grew = false
     ro id = n.id_of()
     if is_node(id) && out.has_callee(id) {
-        ro cr = out.callee_of(id)
-        // Every kind is NAMED: a call whose target is a variant constructor or
-        // a type is emitted by its own door, and the fn set says nothing about
-        // it. A `_` arm here would swallow whatever kind the registry grows
-        // next, and the collector would silently stop reaching it.
-        match cr.target {
-            CalleeFn(row) => {
-                // A generic row WITH a body of ours grows an instance; one
-                // without is an instance method the SHELL compiled (sub-plan
-                // L2) -- nothing to instantiate, and no declaration of it in
-                // this file for `decl_of_row` to look for.
-                if is_generic(ctx, row) && ctx.fns.compiles_body(row) {
-                    // A GENERIC callee is reached per SUBSTITUTION: the element
-                    // of the set is the instance, and the same call written
-                    // twice adds nothing while two type arguments add two.
-                    ro args = out.callee_subst_of(id)
-                    if instance_absent(inst, subst, row, args) {
-                        ro off = subst.len()
-                        subst.append(args)
-                        // The instance's types are REWRITTEN here, once, into
-                        // the pool: this is mono's own work, and doing it here
-                        // is what keeps every backend free of substitution.
-                        ro poff = ptypes.len()
-                        ro fd = ctx.fns.rows[raw_row(row)]
-                        for p in 0..fd.param_cnt {
-                            // The type is REWRITTEN, the mode is CARRIED: an
-                            // instance's parameter is as mutable as the
-                            // declaration wrote it, and the backend must read
-                            // both from one row.
-                            ro pd = ctx.fns.params[fd.param_off + p]
-                            ptypes.push(ParamDef { name: pd.name,
-                                                   type_id: subst_type(ctx, pd.type_id, args),
-                                                   mode: pd.mode, default_expr: pd.default_expr })
-                        }
-                        inst.push(Instance { row, subst_off: off, subst_cnt: args.len(),
-                                             ptype_off: poff, ptype_cnt: fd.param_cnt,
-                                             ret_id: subst_type(ctx, fd.ret_id, args) })
-                        grew = true
-                    } else {
-                        // This exact instance is already in the set.
-                    }
-                } else if raw_row(row) >= 0 && raw_row(row) < seen.len() && !seen[raw_row(row)] {
-                    seen[raw_row(row)] = true
-                    grew = true
-                } else {
-                    // Already reached, or a row this file's table does not
-                    // hold: reaching it twice is not news either way.
-                }
-            }
-            // Neither is a callable, so the fn set says nothing about either:
-            // one case, and it is NOT a wildcard -- a fourth kind of target
-            // would still have to come here and say what it does (P21).
-            CalleeVariant(_) | CalleeCtor(_) => {}
-        }
-        // AN INSERTED CONVERSION IS A CALL TOO (D429 R7, wave 5). A `#coerce`
-        // pair's method is reached by the call that needed it and by nothing
-        // else -- nobody wrote its name anywhere. Without this the emission
-        // named a symbol no body defined, and the LINKER is what said so
-        // (measured 2026-08-23: `undefined symbol:
-        // novac_fn_to_bytes__c_nova_str__to_Bytes`).
-        for sb in out.callee_slots_of(id) {
-            if raw_row(sb.via_row) < 0 { continue }
-            if raw_row(sb.via_row) >= seen.len() { continue }
-            if seen[raw_row(sb.via_row)] { continue }
-            seen[raw_row(sb.via_row)] = true
+        if mark_ref(out.callee_of(id), ctx, out, seen, inst, subst, ptypes) {
             grew = true
+        } else {
+            // Nothing new behind the written call.
         }
     } else {
         // Not a call, or a call check never resolved -- the refusal for the
         // second case is already in the diagnostics.
+    }
+    if is_node(id) && out.has_implicit(id) {
+        if mark_ref(out.implicit_of(id), ctx, out, seen, inst, subst, ptypes) {
+            grew = true
+        } else {
+            // Nothing new behind the implicit call.
+        }
+    } else {
+        // The language calls nothing at this node's value.
     }
     if n.kind_of() == NodeKind.LeafNode { return grew }
     for c in branch_children(n) {

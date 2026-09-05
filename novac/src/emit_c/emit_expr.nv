@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of, raw_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, c_method_symbol, arm_body_at, Ctx}
 import ../sem.{CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -518,7 +518,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // instance -- `Vec____nova_int_method_len`; the checker admitted
             // it against the lifted surface. Goes the day novac emits the
             // whole prelude.
-            @body.append(c_instance_method(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
+            @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
         }
         @body.append("(")
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the

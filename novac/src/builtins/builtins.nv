@@ -203,6 +203,23 @@ export const RECV_BINDING = "@"
 /// of the way of any user name the mangling might produce.
 export const RECV_C_NAME = "_novac_self"
 
+/// INTEROP, named as such (274.7 B1b-1, 2026-09-05): the prelude's `Fmt` protocol
+/// has ONE implementor, and the codegen synthesizes it by hand -- `FmtCtx`
+/// (std/prelude/protocols.nv says so beside the type). Until novac has real
+/// protocol dispatch, a value typed `Fmt` resolves its methods and its C
+/// spelling through that implementor: `f.write(b)` on `mut f Fmt` is
+/// `Nova_FmtCtx_method_write(f, b)`, the parameter is `Nova_FmtCtx* f`. Goes
+/// the day protocol dispatch is real -- then this pair is the second door.
+export const FMT_PROTO = "Fmt"
+export const FMT_IMPL = "FmtCtx"
+/// The method the `Display` protocol requires (D73/D422): `@display(mut f Fmt)`.
+export const DISPLAY_METHOD = "display"
+/// The runtime entry that builds a bare `Fmt` context over a builder -- what
+/// the codegen constructs at every user-type slot (measured on the oracle's
+/// emission 2026-09-05: `Nova_FmtCtx_static_bare(sb, 0, false)`). Interop.
+export const FMT_BARE_C = "Nova_FmtCtx_static_bare"
+
+
 /// The SOURCE spelling of the unit type: `()`.
 ///
 /// A name no identifier can be, so nothing in a program can shadow it, and the

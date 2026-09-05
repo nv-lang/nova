@@ -21,7 +21,9 @@ module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
 import ../sem.{unescape_dollar, is_expr_kind, prim_row_of}
-import ../builtins.{BuiltinType}
+import ../builtins.{BuiltinType, FMT_BARE_C}
+import ../sem.{c_callable}
+import ../types.{TyId}
 import ../tree.{Node, NodeKind, raw_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
@@ -64,11 +66,29 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
             // was cast to `nova_int` and sent to the int entry -- `${1.5}` came
             // out as `1`.
             ro slot_t = @out.type_of(c.id_of())
-            ro row = prim_row_of(@ctx.tys, slot_t) ?? ice("emit_c: an interpolation slot type is no primitive row")
-            ro call = display_call_of(row)
-            @body.append("    ${call.head}(${sb}, ${call.cast}(")
-            @emit_expr(c)
-            @body.append("), ${call.tail});\n")
+            match prim_row_of(@ctx.tys, slot_t) {
+                Some(row) => {
+                    ro call = display_call_of(row)
+                    @body.append("    ${call.head}(${sb}, ${call.cast}(")
+                    @emit_expr(c)
+                    @body.append("), ${call.tail});\n")
+                }
+                None => {
+                    // A DECLARED type with its own `@display` (274.7 B1b-1): the
+                    // checker recorded the call the slot MAKES in the channel's
+                    // implicit table (the slot's value may itself be a call, so
+                    // `callee_of` is the wrong door). The context is a bare one
+                    // over OUR builder, handed in as the `Write` sink -- the
+                    // runtime's `static_bare`. INTEROP, like the rest of this
+                    // file, gone when novac emits the prelude itself.
+                    ro row = @out.implicit_of(c.id_of()).callable_row()
+                    ro fc = "_novac_fmt_t${@fresh_uniq()}"
+                    @body.append("    Nova_FmtCtx* ${fc} = ${FMT_BARE_C}(${sb}, ((nova_int)0LL), false);\n")
+                    @body.append("    ${c_callable(@ctx, row, []TyId.new())}(")
+                    @emit_expr(c)
+                    @body.append(", ${fc});\n")
+                }
+            }
         } else {
             // Recovery leaves inside an Err branch: already refused.
         }

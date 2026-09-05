@@ -79,22 +79,24 @@ test "recovery at EOF: diagnostic lands at end of file, no panic (fuzzer 2026-08
     assert(n_diags("fn main() { mut i") == 1)
 }
 
-test "E2 strings surface: the shapes are in, a std method with no compiled body is refused" {
+test "E2 strings surface: a std method the shell carries is callable, one it lacks is refused by name" {
     // `byte_len`, `to_ascii_upper`, `starts_with` are declared in std, and their
-    // BODIES live in std's own Nova source -- which novac does not compile yet.
-    // Every C name is ours now (the oracle's spelling was removed on 2026-08-20
-    // with the `foreign` branch), so a call to a body novac does not emit would
-    // name a symbol that exists nowhere. The subset says that instead, and the
-    // corpus baseline was lowered 11/5 -> 10/4 in the same wave.
+    // BODIES live in the shell novac links against. Since 2026-09-05 (274.7
+    // B1b-1) a call to any of them is an interop call, checked against the
+    // shell's surface -- the very rule the generic instance path applied to
+    // `v.len()` all along. Until that day every plain std method was refused
+    // as "no body", which was true of novac and false of the program; this
+    // holder asserted THREE refusals, and the corpus baseline was lowered for
+    // them. Both move the other way now.
     ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
-    // THREE refusals, one per call (274.4 step 2): until the mark replaced
-    // the file-count guard in the MethodCall arm, every call after the first
-    // refusal was silently resolved by type_of's own lookup -- the second
-    // door -- and this line asserted 1. More refusals required, not fewer.
-    assert(n_diags(src) == 3)
-    // The SHAPES are still in the subset: the same `ro` and `while` without a
-    // std body are clean, so the refusal above is about the missing body and
-    // not about the form.
+    assert(n_diags(src) == 0)
+    // A method the shell does NOT carry is refused by NAME of the missing body:
+    // the declaration is handed, the symbol exists nowhere to link.
+    ro decls = []str.of("fn str @nowhere() -> int => 0\n")
+    ro d = compile("fn main() { ro s = \"ab\"\n println(s.nowhere()) }", decls)
+    assert(d.len() == 1)
+    assert(d[0].message.contains("has no body to emit"))
+    // The SHAPES are still in the subset: `ro` and `while` alone are clean.
     assert(n_diags("fn main() { mut i = 0\n while i < 1 { i += 1 }\n println(i) }") == 0)
 }
 
@@ -279,12 +281,12 @@ test "a receiver MODE is read AND judged: a consuming method needs a consuming p
     // refusal is about the call, not about a missing body.
     ro on_ro = compile("type Cel { v f64 }\nfn main() { ro c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
     assert(on_ro.len() == 1)
-    assert(!on_ro[0].message.contains("compiles no body"))
+    assert(!on_ro[0].message.contains("has no body to emit"))
     // A `consume` BINDING is the place it does take -- the signature IS found,
     // and what novac lacks is the method's body.
     ro on_consume = compile("type Cel { v f64 }\nfn main() { consume c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
     assert(on_consume.len() == 1)
-    assert(on_consume[0].message.contains("compiles no body"))
+    assert(on_consume[0].message.contains("has no body to emit"))
 }
 
 test "`Self` in a declaration is the RECEIVER's type, not a missing one" {
@@ -300,7 +302,7 @@ fn main() { ro c = Cel { v: 1.0 }\n\
     ro diags = compile(src, decls)
     assert(diags.len() == 1)
     // Read, and refused for the reason that is left: novac emits no method body.
-    assert(diags[0].message.contains("compiles no body"))
+    assert(diags[0].message.contains("has no body to emit"))
 }
 
 test "a BOUND is not a type parameter: the arity is ONE, not two" {
