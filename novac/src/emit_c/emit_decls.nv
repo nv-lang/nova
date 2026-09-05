@@ -15,7 +15,7 @@
 // emits the whole prelude. The tag CONSTANTS and the makers are ours
 // (NOVAC_TAG_*, novac_make_*, P24).
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}

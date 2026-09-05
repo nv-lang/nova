@@ -17,7 +17,7 @@
 // oracle's too: the literal bytes plus sixteen. Goes the day novac emits
 // the whole prelude.
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
 import ../sem.{unescape_dollar, is_expr_kind, prim_row_of}
