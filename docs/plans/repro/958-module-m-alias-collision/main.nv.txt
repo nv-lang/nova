@@ -1,0 +1,8 @@
+module probe760
+
+import ./m.{used}
+
+
+fn main() {
+    println(used())
+}

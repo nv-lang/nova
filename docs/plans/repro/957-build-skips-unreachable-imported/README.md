@@ -1,9 +1,13 @@
 # Проба: `nova build` не судит недостижимую функцию ИМПОРТИРОВАННОГО модуля
 
-Реестр 221.1, строка №TBD (заведена 2026-09-05 окном 274; номер даёт интегратор).
-Семья №669 (драйверы отвечают по-разному), рядом с №760 (форма `return t` у
+Реестр 221.1, строка №957 — заводит интегратор (окно nova-f6, его канал; решение
+2026-09-05: «строку напишу после вашего пуша, в неё войдёт таблица и обе двери»);
+проба — окна 274. Его же перемер уточнил границу: не «`build` против `check`», а
+«команды ОТ ENTRY (`build`, `check <файл>`) судят только достижимое; каталожные
+(`check <каталог>`, `test <каталог>`) — всё», и позже — что недостижимая функция не
+судится и в самом файле входа. Семья №669, рядом с №760 (форма `return t` у
 `ro`-связанного newtype — сама диагностика законна, здесь вопрос не о ней, а о том,
-КТО её ставит).
+КТО и ГДЕ её ставит).
 
 ## Что измерено (2026-09-05, `nova-cli/target/release/nova.exe` вершины `d380a8dcf`)
 
@@ -42,9 +46,9 @@
 
 ```sh
 P=target/probe760; mkdir -p $P/helper
-cp docs/plans/repro/TBD-build-skips-unreachable-imported/main.nv.txt $P/main.nv
-cp docs/plans/repro/TBD-build-skips-unreachable-imported/helper/helper.nv.txt $P/helper/helper.nv
-cp docs/plans/repro/TBD-build-skips-unreachable-imported/single.nv.txt $P/single.nv
+cp docs/plans/repro/957-build-skips-unreachable-imported/main.nv.txt $P/main.nv
+cp docs/plans/repro/957-build-skips-unreachable-imported/helper/helper.nv.txt $P/helper/helper.nv
+cp docs/plans/repro/957-build-skips-unreachable-imported/single.nv.txt $P/single.nv
 nova check $P/helper/helper.nv        # E_READONLY_COERCE
 nova build $P/main.nv -o $P/probe.exe # built -- ожидалось: тот же отказ
 nova build $P/single.nv -o $P/s.exe   # отказ (контроль: однофайловый случай судится)
