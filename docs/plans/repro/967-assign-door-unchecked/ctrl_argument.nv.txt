@@ -1,0 +1,4 @@
+// CONTROL, second door. The same mismatch as an ARGUMENT: also refused.
+// Three doors for one rule; only assignment-to-an-inferred-binding is silent.
+fn sink(n int) -> int => n
+fn main() Io -> () => println(sink("s"))

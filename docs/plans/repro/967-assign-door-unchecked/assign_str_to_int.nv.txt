@@ -1,0 +1,8 @@
+// The binding's type is INFERRED from its initializer, then a value of another
+// type is assigned to it. `nova check` says nothing; the C compiler refuses:
+//   error: assigning to 'nova_int' (aka 'long long') from incompatible type
+fn main() Io -> () => {
+    mut x = 1
+    x = "s"
+    println(x)
+}

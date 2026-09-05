@@ -1,0 +1,9 @@
+// CONTROL. The same value function WITHOUT the `else`, using a trailing tail:
+// builds, prints 7. So it is the `else` branch that turns the if-let into a
+// unit-typed expression in a value slot.
+fn g(n int) -> Option[int] => Some(n)
+fn pick(n int) -> int {
+    if Some(v) = g(n) { return v }
+    -1
+}
+fn main() Io -> () => println(pick(7))
