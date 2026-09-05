@@ -1,0 +1,24 @@
+module charmatrix
+fn take(c char) Io -> () => println(c)
+fn main() Io -> () {
+    ro a = 'A'
+    print("println(a)      = ")
+    println(a)
+    print("print(a)        = ")
+    print(a)
+    println("")
+    print("a.to_str()      = ")
+    println(a.to_str())
+    print("interp          = ")
+    println("${a}")
+    print("via fn param    = ")
+    take(a)
+    ro cy = 'я'
+    print("cyrillic interp = ")
+    println("${cy}")
+    print("cyrillic direct = ")
+    println(cy)
+    ro v = Vec[char].of('A', 'B')
+    print("in a vec interp = ")
+    println("${v}")
+}

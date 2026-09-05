@@ -1,0 +1,8 @@
+--- artefact check ---
+  present: spec/decisions/01-clean.md
+--- guard ---
+check-spec-retired-names: FAIL — в «spec/decisions/01-clean.md» упоминаний снятого имени стало 1, в базе 0.
+    spec/decisions/01-clean.md:3     export external fn StringBuilder.with_capacity(n int) -> Self
+    Снятое имя требуется как живое. Либо назови в строке, что оно снято (АМЕНДМЕНТ/СНЯТ/removed/ex-`), либо зачеркни её (~~), либо перепиши на живую форму.
+    Чем снято — сказано в spec-retired-names.list.
+RC=1

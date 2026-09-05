@@ -1,0 +1,18 @@
+--- artefact check ---
+  present: spec/decisions/01-clean.md
+  present: spec/effects.ru.md
+--- retired name in the tree ---
+<tree>/spec/effects.ru.md:3:    export external fn StringBuilder.with_capacity(n int) -> Self
+--- guard ---
+check-spec-retired-names ok: имён под надзором 1, упоминаний 0 при базе 0 — роста нет
+RC=0
+
+--- part 2: measurement on the REAL tree (read-only) ---
+mentions of the retired name in spec/ OUTSIDE spec/decisions/:
+19
+spec/open-questions.ru.md:904:    ro buf = []f32.with_capacity(1024)
+spec/open-questions.ru.md:2277:> static-конструкторы `new`/`with_capacity`/`filled`) и список
+spec/open-questions.ru.md:2286:> `[]T.new()` / `[]T.with_capacity(n)` подтверждены как canonical
+spec/open-questions.ru.md:2347:используются: `xs.len`, `xs.push(x)`, `[]T.with_capacity(n)`,
+spec/open-questions.ru.md:2364:- `[]T.with_capacity(n int) -> []T` — выделить с capacity n, len 0.
+spec/open-questions.ru.md:2428:### Q-array-api.4. `[]T.alloc(n)` vs `[]T.with_capacity(n)` — разница

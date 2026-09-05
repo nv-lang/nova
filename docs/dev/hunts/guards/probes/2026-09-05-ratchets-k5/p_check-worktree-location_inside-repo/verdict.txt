@@ -1,0 +1,11 @@
+warning: in the working copy of 'f.txt', LF will be replaced by CRLF the next time Git touches it
+--- git worktree list --porcelain ---
+<tmp>/nv-lang/maincopy
+<tmp>/nv-lang/maincopy/.claude/worktrees/inside
+--- guard ---
+check-worktree-location: рабочих деревьев 2, дозволенный корень <tmp>/nv-lang
+check-worktree-location: деревьев стало меньше (2 < 9) — опусти базу в <tmp>/wt.baseline
+check-worktree-location ok: все рабочие деревья в <tmp>/nv-lang
+RC=0
+--- artefact check ---
+target created: <repo>/.claude/worktrees/inside

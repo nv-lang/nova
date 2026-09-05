@@ -1,0 +1,13 @@
+created .claude/commands/flow.md
+created notes.txt
+created .claude/settings.json
+created editors/vscode/package.json
+--- artefact check ---
+  present: .claude/commands/flow.md
+  present: notes.txt
+  present: .claude/settings.json
+  present: editors/vscode/package.json
+--- guard ---
+check-no-mojibake: строк с подписью порчи 0 (база 0)
+check-no-mojibake ok: новой порчи текста нет (0 <= 0)
+RC=0

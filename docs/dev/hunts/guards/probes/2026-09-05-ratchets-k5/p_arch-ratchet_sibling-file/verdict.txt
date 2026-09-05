@@ -1,0 +1,24 @@
+--- artefact check ---
+  present: compiler-codegen/src/codegen/emit_c.rs
+  present: compiler-codegen/src/codegen/emit_c/new_channel.rs
+  present: scripts/guards/arch-ratchet.baseline
+--- real infer_expr_c_type calls in the fixture layer ---
+<fixture>/compiler-codegen/src/codegen/emit_c/new_channel.rs:1:pub fn t1(x: i64) -> i64 { infer_expr_c_type(x) }
+<fixture>/compiler-codegen/src/codegen/emit_c/new_channel.rs:2:pub fn t2(x: i64) -> i64 { infer_expr_c_type(x) }
+<fixture>/compiler-codegen/src/codegen/emit_c/new_channel.rs:3:pub fn t3(x: i64) -> i64 { infer_expr_c_type(x) }
+<fixture>/compiler-codegen/src/codegen/emit_c/new_channel.rs:4:pub fn t4(x: i64) -> i64 { infer_expr_c_type(x) }
+<fixture>/compiler-codegen/src/codegen/emit_c/new_channel.rs:5:pub fn t5(x: i64) -> i64 { infer_expr_c_type(x) }
+<fixture>/compiler-codegen/src/codegen/emit_c.rs:2:    infer_expr_c_type(x)
+--- baseline ---
+lines=3
+infer=1
+--- guard ---
+arch-ratchet ok: lines=3 <= 3
+arch-ratchet ok: infer=1 <= 1
+RC=0
+
+--- part 2: the same question on the REAL tree (read-only) ---
+calls counted by the guard (emit_c.rs only):
+243
+same metric on the sibling files of the same layer:
+  compiler-codegen/src/codegen/assoc_ro.rs  1

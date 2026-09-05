@@ -1,0 +1,11 @@
+--- artefact check: cwd is an empty dir, the target file is absent ---
+.
+..
+  confirmed: compiler-codegen/src/codegen/emit_c.rs is NOT under cwd
+--- guard (baseline read from its own directory: the real one) ---
+/d/Sources/nv-lang/nova/scripts/guards/arch-ratchet.sh: line 38: compiler-codegen/src/codegen/emit_c.rs: No such file or directory
+grep: compiler-codegen/src/codegen/emit_c.rs: No such file or directory
+/d/Sources/nv-lang/nova/scripts/guards/arch-ratchet.sh: line 52: [: : integer expected
+arch-ratchet ok: lines= <= 67606
+arch-ratchet ok: infer=0 <= 243
+RC=0

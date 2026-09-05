@@ -1,0 +1,8 @@
+--- artefact check ---
+  present: backlog-followups.md
+  present: 221.1-bug-sweep.md
+--- guard ---
+BUG-NUMBER-SYNC FAIL: новые маркеры БЕЗ № в 221.1-bug-sweep.md (правило владельца 2026-08-01, №217):
+  - M-probe-k5-no-number
+Заведи № в 221.1 (краткая строка + статус + ссылка на backlog) — или, если это НЕ дефект (решение/фича), добавь имя в bug-number-sync.baseline с обоснованием в коммите.
+RC=1

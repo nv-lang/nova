@@ -1,0 +1,22 @@
+--- artefact check ---
+  present: compiler-codegen/src/lib.rs
+  present: compiler-codegen/nova_rt/rt.c
+  present: nova-cli/src/main.rs
+  present: docs/flags.md
+--- flags that no one sets and nothing describes: NOVA_PROBE_C_ONLY, NOVA_PROBE_HELPER ---
+<tree>/compiler-codegen/nova_rt/rt.c:3:    return getenv("NOVA_PROBE_C_ONLY") != NULL;
+<tree>/nova-cli/src/main.rs:5:    env_path_override("NOVA_PROBE_HELPER")
+--- guard ---
+check-flag-has-caller: флагов без вызывающего 0 (база 0)
+check-flag-has-caller ok: роста безмолвных флагов нет (0 <= 0)
+RC=0
+
+--- part 2: measurement on the REAL tree (read-only) ---
+NOVA_* read by getenv in nova_rt: 29
+of them counted by the guard (also read via env::var in Rust): 0
+of them SILENT by the guard's own zone rule: 1
+  SILENT-IN-C NOVA_TRACE_BUSY_YIELD_SLEEP   compiler-codegen/nova_rt/fibers.h
+
+second syntax: env::var(<non-literal>) sites in Rust sources
+  compiler-codegen/src/pkg_proxy.rs:63  if let Ok(v) = std::env::var(name) {
+  nova-cli/src/main.rs:1269  std::env::var(var)

@@ -1,0 +1,6 @@
+ledger written
+--- artefact check ---
+  present: hunts/guards/LEDGER.md
+--- guard ---
+check-hunter-fold ok: guards: открыто 0/9, свёрнуто 1; куча ограничена, свёртка не теряет находок
+RC=0

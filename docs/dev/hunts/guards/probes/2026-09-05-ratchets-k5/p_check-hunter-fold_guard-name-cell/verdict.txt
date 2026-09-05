@@ -1,0 +1,13 @@
+ledger written
+--- artefact check ---
+  present: hunts/guards/LEDGER.md
+--- the folded line under test (bytes) ---
+0000000 320 241 320 222 320 201 320 240 320 235 320 243 320 242 320 236
+0000020       |       2   0   2   6   -   0   9   -   0   4   -   c   h
+0000040   e   c   k   -   n   o   v   a   c   -   k   7       |       c
+0000060   h   e   c   k   -   n   o   v   a   c       |     320 232   7
+--- the report really is in git history (rule 5) ---
+55abd5e199c04e349733c1aa48b94ac50bb84a2b
+--- guard ---
+check-hunter-fold: FAIL — строка леджера guards не разбирается по формату (№801): СВЁРНУТО | 2026-09-04-check-novac-k7 | check-novac | К7 | находок 0 | —
+RC=1
