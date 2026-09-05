@@ -1,0 +1,5 @@
+// The same #760 error in a PEER FILE of the entry's own module (folder-module,
+// co-equal files, no import at all). Here the check DOES fire.
+module p957
+type TyId int
+fn ro_bad(t TyId) -> TyId => t

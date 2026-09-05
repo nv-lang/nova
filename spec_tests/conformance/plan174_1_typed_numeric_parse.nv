@@ -9,11 +9,11 @@
 // Coverage: decimal happy-path, sign, empty/garbage/invalid-radix errors,
 // radix (hex/binary), full-width overflow (int/i64, u64), and — the
 // historical bug this closes — sub-width TRUNCATION: `u8.parse("999")`
-// (nee `i8.try_parse`) must be `Err(Overflow)`, not a silently-wrapped
+// (nee `i8.try_parse`) must be `Err(AboveMax)` (2026-09-05: was `Overflow`), not a silently-wrapped
 // narrow value (see Plan 174.1 §4). Part of the SINGLE conformance module
 // (spec_tests.conformance).
 //
-// NB matches below are FLAT (`Err(Overflow) => ..`, not `Err(e) => match e
+// NB matches below are FLAT (`Err(AboveMax) => ..`, not `Err(e) => match e
 // {..}`) — a nested match on the `Err` payload after a callee for-loop with
 // early `return Err(..)` was found (2026-07-08) to mis-resolve the bound
 // variant in this toolchain (pre-existing, separately-tracked; see
@@ -32,9 +32,9 @@ test "174.1: str.to_int — decimal, sign, boundary, overflow, empty, garbage" {
     assert("9223372036854775807".to_int() == Ok(9223372036854775807))   // i64::MAX
     assert("-9223372036854775807".to_int() == Ok(-9223372036854775807))
     match "99999999999999999999".to_int() {
-        Ok(_)         => assert(false, "expected Overflow for a 64-bit-busting literal")
-        Err(Overflow) => {}
-        Err(_)        => assert(false, "expected Overflow, got a different error")
+        Ok(_)         => assert(false, "expected AboveMax for a 64-bit-busting literal")
+        Err(AboveMax) => {}
+        Err(_)        => assert(false, "expected AboveMax, got a different error")
     }
     match "".to_int() {
         Ok(_)      => assert(false, "expected Empty for \"\"")
@@ -48,12 +48,12 @@ test "174.1: str.to_int — decimal, sign, boundary, overflow, empty, garbage" {
     }
     match "12x".to_int() {
         Ok(_)             => assert(false, "expected InvalidDigit for trailing garbage")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit, got a different error")
     }
     match " 42".to_int() {
         Ok(_)             => assert(false, "no-trim canon: leading space must not parse")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "no-trim canon: expected InvalidDigit")
     }
 }
@@ -78,7 +78,7 @@ test "174.1: str.to_i64 — same domain as int, Result[i64, ParseIntError]" {
     assert("-9223372036854775807".to_i64() == Ok(-9223372036854775807 as i64))
     match "bad".to_i64() {
         Ok(_)             => assert(false, "expected InvalidDigit")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit, got a different error")
     }
 }
@@ -89,7 +89,7 @@ test "174.1: str.to_u64 — full range, '-' is InvalidDigit (no negative uint)" 
     assert("18446744073709551615".to_u64() == Ok(18446744073709551615 as u64))  // u64::MAX
     match "-1".to_u64() {
         Ok(_)             => assert(false, "unsigned '-' must be InvalidDigit")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit, got a different error")
     }
     match "".to_u64() {
@@ -98,9 +98,9 @@ test "174.1: str.to_u64 — full range, '-' is InvalidDigit (no negative uint)" 
         Err(_)     => assert(false, "expected Empty, got a different error")
     }
     match "18446744073709551616".to_u64() {   // u64::MAX + 1
-        Ok(_)         => assert(false, "expected Overflow one past u64::MAX")
-        Err(Overflow) => {}
-        Err(_)        => assert(false, "expected Overflow, got a different error")
+        Ok(_)         => assert(false, "expected AboveMax one past u64::MAX")
+        Err(AboveMax) => {}
+        Err(_)        => assert(false, "expected AboveMax, got a different error")
     }
     assert("ff".to_u64(radix: 16) == Ok(255 as u64))
 }
@@ -110,13 +110,13 @@ test "174.1: str.to_u64 — full range, '-' is InvalidDigit (no negative uint)" 
 test "174.1: str.to_u32 — boundary Ok, one-past-boundary Overflow" {
     assert("4294967295".to_u32() == Ok(4294967295 as u32))    // u32::MAX
     match "4294967296".to_u32() {
-        Ok(_)         => assert(false, "expected Overflow one past u32::MAX")
-        Err(Overflow) => {}
-        Err(_)        => assert(false, "expected Overflow, got a different error")
+        Ok(_)         => assert(false, "expected AboveMax one past u32::MAX")
+        Err(AboveMax) => {}
+        Err(_)        => assert(false, "expected AboveMax, got a different error")
     }
     match "-1".to_u32() {
         Ok(_)             => assert(false, "unsigned '-' must be InvalidDigit")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit, got a different error")
     }
 }
@@ -126,18 +126,18 @@ test "174.1: str.to_u8 — the historical truncation bug, closed" {
     // Historically: raw C narrowing-cast silently wrapped "999" into some
     // in-range garbage byte instead of erroring. Must be a clean Overflow now.
     match "999".to_u8() {
-        Ok(_)         => assert(false, "\"999\" must be Err(Overflow), not a wrapped value")
-        Err(Overflow) => {}
-        Err(_)        => assert(false, "expected Overflow, got a different error")
+        Ok(_)         => assert(false, "\"999\" must be Err(AboveMax), not a wrapped value")
+        Err(AboveMax) => {}
+        Err(_)        => assert(false, "expected AboveMax, got a different error")
     }
     match "256".to_u8() {
-        Ok(_)         => assert(false, "expected Overflow one past u8::MAX")
-        Err(Overflow) => {}
-        Err(_)        => assert(false, "expected Overflow, got a different error")
+        Ok(_)         => assert(false, "expected AboveMax one past u8::MAX")
+        Err(AboveMax) => {}
+        Err(_)        => assert(false, "expected AboveMax, got a different error")
     }
     match "-1".to_u8() {
         Ok(_)             => assert(false, "unsigned '-' must be InvalidDigit")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit, got a different error")
     }
 }
@@ -156,8 +156,8 @@ test "174.1: str.to_f64 — happy path, empty, malformed (D85 channels)" {
         Err(_)     => assert(false, "expected Empty, got a different error")
     }
     match "not-a-number".to_f64() {
-        Ok(_)        => assert(false, "expected Invalid for garbage")
-        Err(Invalid) => {}
-        Err(_)       => assert(false, "expected Invalid, got a different error")
+        Ok(_)        => assert(false, "expected Malformed for garbage")
+        Err(Malformed { .. }) => {}
+        Err(_)       => assert(false, "expected Malformed, got a different error")
     }
 }

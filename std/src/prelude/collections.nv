@@ -161,9 +161,9 @@ import std.runtime.char
 // [M-partial-prelude-primitive-method-registry] backlog entry.
 import std.runtime.defaults
 
-// Same root cause, one hop deeper: `char.from`/`u8.try_from` (just
-// imported above) return `Result[_, CharFromError]` /
-// `Result[_, TryFromCharError]`, and `ReadBuffer`'s `@read_*` methods
+// Same root cause, one hop deeper: `int @to_char()`/`char @to_u8()` (just
+// imported above) return `Result[_, CharError]` /
+// `Result[_, RangeError]` (2026-09-05: `u8.try_from` retired for the receiver form), and `ReadBuffer`'s `@read_*` methods
 // (re-exported below, std/runtime/read_buffer.nv) return
 // `Result[_, ReadBufferError]` / construct `UnexpectedEnd{...}` — none of
 // these `#no_prelude` runtime files import their OWN error types either
@@ -175,7 +175,7 @@ import std.runtime.defaults
 // its body (`error: use of undeclared identifier 'CharFromError'` at
 // the zero-arg variant-constructor call site). Bring the error types this
 // facade's own re-exports depend on.
-import std.prelude.errors.{CharFromError, TryFromCharError, ReadBufferError, UnexpectedEnd}
+import std.prelude.errors.{CharError, RangeError, ReadBufferError, UnexpectedEnd}
 
 // StringBuilder — Nova-defined consume type in std/runtime/string_builder.nv.
 export import std.runtime.string_builder.{StringBuilder}

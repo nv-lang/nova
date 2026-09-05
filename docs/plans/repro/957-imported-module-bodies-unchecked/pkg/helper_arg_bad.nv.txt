@@ -1,0 +1,7 @@
+// CONTROL. The same imported module, but the error sits in ARGUMENT position.
+// That door reaches imported modules -- so "imports are not checked" is the
+// wrong summary; it is THIS check that does not reach them.
+module helper
+export fn used() -> int => 1
+fn sink(n int) -> int => n
+export fn bad() -> int => sink("not an int")

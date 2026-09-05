@@ -273,10 +273,10 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     Payloads — zero-copy static rodata (existing HexBlobLit arm,
 ///     emit_c.rs untouched).
 ///   - 19 = [M-numeric-try-narrowing] done (2026-07-20, D430): `RangeError`
-///     (unit-type, checked numeric-narrowing error) declared in
+///     (`enum AboveMax | BelowMin` since 2026-09-05 D430 R7; checked numeric-narrowing error) declared in
 ///     std/prelude/errors.nv + re-exported through this facade —
-///     `try_to_<T>` family (std/prelude/protocols.nv, `fn[S Ints] S
-///     @try_to_i8()`/.../`@try_to_uint()`) returns `Result[T, RangeError]`.
+///     `to_<T>` family (std/prelude/protocols.nv, `fn[S Ints] S
+///     @to_i8()`/.../`@to_uint()`) returns `Result[T, RangeError]`.
 ///   - 20 = Plan 265 Ф.3 / №553 done (2026-08-10, D454): `real_random()`
 ///     (`std/prelude/effects.nv`, same `real_*` family as `real_time`/
 ///     `real_os`/`real_fs`/`real_net`/`real_io`) declared as the

@@ -1,0 +1,27 @@
+// Registry TBD, CONTROL: the same program with variant names unique in the CU — correct.
+// Expected and measured: "e -> Invalid at 3", "big -> AboveMax".
+module unique
+
+type Flag enum Ok2 | FlagInvalid
+type Range2 enum RangeAbove | RangeBelow
+
+type ParseErr enum Empty | Invalid { at int } | AboveMax | BelowMin
+
+fn parse(s str) -> Result[int, ParseErr] {
+    if s == "" { return Err(ParseErr.Empty) }
+    if s == "big" { return Err(ParseErr.AboveMax) }
+    Err(ParseErr.Invalid { at: 3 })
+}
+
+fn main() Io -> () {
+    match parse("e") {
+        Err(ParseErr.Invalid { at }) => println("e -> Invalid at ${at}")
+        Err(_) => println("e -> other")
+        Ok(_) => println("e -> ok?")
+    }
+    match parse("big") {
+        Err(ParseErr.AboveMax) => println("big -> AboveMax")
+        Err(ParseErr.Invalid { at }) => println("big -> Invalid at ${at}")
+        _ => println("big -> other")
+    }
+}

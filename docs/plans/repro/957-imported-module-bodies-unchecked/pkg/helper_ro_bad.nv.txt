@@ -1,0 +1,8 @@
+// An IMPORTED module. `bad` carries the #760 ro-launder refusal: returning a
+// `ro`-bound newtype over a primitive. `mk` exists only so the entry can call
+// `bad` without needing `TyId` in its own scope.
+module helper
+type TyId int
+export fn used() -> int => 1
+export fn mk() -> TyId => TyId(1)
+export fn bad(t TyId) -> TyId => t

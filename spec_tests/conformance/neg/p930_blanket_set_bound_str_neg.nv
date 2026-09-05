@@ -3,7 +3,9 @@
 // Registry #930, the second receiver kind — and the one that shows what the missing
 // check actually cost.
 //
-// `"x".try_to_i16()` also passed the checker before 2026-09-05, then died in the C
+// `"x".try_to_i16()` (the family was `try_to_*` until D430 R7 renamed it `to_*` on
+// 2026-09-05; today `str @to_i16()` is the legitimate string PARSE, so this fixture
+// uses `checked_neg`, another `Ints` blanket) also passed the checker before 2026-09-05, then died in the C
 // compiler: `passing 'nova_int' to parameter of incompatible type 'nova_str'`. A
 // checker that accepts a program the backend cannot build is worse than one that
 // refuses it, because the error surfaces in generated code the author never wrote.
@@ -23,5 +25,5 @@ module neg.p930_blanket_set_bound_str_neg
 fn ask_a_string_for_an_integer_conversion() Io -> () {
     ro s = "x"
     // nova:expect E_TYPE_NOT_IN_SET -- `str` is not in `Ints`; before the fix this passed the checker and failed in the C compiler instead
-    println(s.try_to_i16().is_ok())
+    println(s.checked_neg().is_some())
 }

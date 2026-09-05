@@ -1,0 +1,4 @@
+// SILENT. 300 does not fit in a u8. The argument door refuses the very same
+// value with [E_IMPLICIT_NARROWING] (see ctrl_arg_narrowing). Here: prints 44.
+fn wrap(n int) -> u8 => n
+fn main() Io -> () => println(wrap(300))

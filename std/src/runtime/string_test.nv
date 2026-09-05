@@ -28,18 +28,18 @@ test "Числовой паритет-2: str.to_i8 — в диапазоне / o
         Err(_) => assert(false, "expected Ok(-100)")
     }
     match "200".to_i8() {
-        Ok(_)          => assert(false, "expected Err(Overflow) — 200 > i8.MAX(127)")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(AboveMax) — 200 > i8.MAX(127)")
+        Err(AboveMax)  => {}
+        Err(_)         => assert(false, "expected AboveMax variant")
     }
     match "-200".to_i8() {
-        Ok(_)          => assert(false, "expected Err(Overflow) — -200 < i8.MIN(-128)")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(BelowMin) — -200 < i8.MIN(-128)")
+        Err(BelowMin)  => {}
+        Err(_)         => assert(false, "expected BelowMin variant")
     }
     match "abc".to_i8() {
         Ok(_)             => assert(false, "expected Err(InvalidDigit)")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit variant")
     }
 }
@@ -50,13 +50,13 @@ test "Числовой паритет-2: str.to_i16 — в диапазоне / 
         Err(_) => assert(false, "expected Ok(30000)")
     }
     match "40000".to_i16() {
-        Ok(_)          => assert(false, "expected Err(Overflow) — 40000 > i16.MAX(32767)")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(AboveMax) — 40000 > i16.MAX(32767)")
+        Err(AboveMax)  => {}
+        Err(_)         => assert(false, "expected AboveMax variant")
     }
     match "xyz".to_i16() {
         Ok(_)             => assert(false, "expected Err(InvalidDigit)")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit variant")
     }
 }
@@ -67,13 +67,13 @@ test "Числовой паритет-2: str.to_i32 — в диапазоне / 
         Err(_) => assert(false, "expected Ok(2000000000)")
     }
     match "9999999999".to_i32() {
-        Ok(_)          => assert(false, "expected Err(Overflow) — > i32.MAX")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(AboveMax) — > i32.MAX")
+        Err(AboveMax)  => {}
+        Err(_)         => assert(false, "expected AboveMax variant")
     }
     match "!!".to_i32() {
         Ok(_)             => assert(false, "expected Err(InvalidDigit)")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit variant")
     }
     match "".to_i32() {
@@ -89,18 +89,18 @@ test "Числовой паритет-2: str.to_u16 — в диапазоне / 
         Err(_) => assert(false, "expected Ok(60000)")
     }
     match "70000".to_u16() {
-        Ok(_)          => assert(false, "expected Err(Overflow) — 70000 > u16.MAX(65535)")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(AboveMax) — 70000 > u16.MAX(65535)")
+        Err(AboveMax)  => {}
+        Err(_)         => assert(false, "expected AboveMax variant")
     }
     match "-1".to_u16() {
         Ok(_)             => assert(false, "expected Err(InvalidDigit) — unsigned engine, no negation")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit variant")
     }
     match "zz".to_u16() {
         Ok(_)             => assert(false, "expected Err(InvalidDigit)")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit variant")
     }
 }
@@ -116,7 +116,7 @@ test "Числовой паритет-2: str.to_uint — обычные знач
     }
     match "garbage".to_uint() {
         Ok(_)             => assert(false, "expected Err(InvalidDigit)")
-        Err(InvalidDigit) => {}
+        Err(InvalidDigit { .. }) => {}
         Err(_)            => assert(false, "expected InvalidDigit variant")
     }
     match "".to_uint() {
@@ -201,5 +201,83 @@ test "232.1 Т1: str.to_char — '' → Err(Empty), 'ab' → Err(TooManyChars)" 
         Ok(_)              => assert(false, "expected Err(TooManyChars)")
         Err(TooManyChars)  => {}
         Err(_)             => assert(false, "expected TooManyChars variant")
+    }
+}
+
+// ── plan 282 Ф.4 (2026-09-05): str.to_f64 — грамматика наша, округление — C ──
+
+test "282 Ф.4: str.to_f64 — строгая грамматика принимает формы литерала Rust/Go" {
+    assert("1.5".to_f64() == Ok(1.5))
+    assert("-3.25".to_f64() == Ok(-3.25))
+    assert("+2.5E-3".to_f64() == Ok(0.0025))
+    assert("1.".to_f64() == Ok(1.0))
+    assert(".5".to_f64() == Ok(0.5))
+    assert("1e3".to_f64() == Ok(1000.0))
+    assert("-0.0".to_f64() == Ok(-0.0))
+    assert("1e-999".to_f64() == Ok(0.0))            // underflow — не ошибка
+}
+
+test "282 Ф.4: str.to_f64 — что strtod принимал, а грамматика отвергает, с позицией" {
+    match " 1.5".to_f64() {
+        Err(Malformed { at }) => assert(at == 0, "leading space at 0")
+        _ => assert(false, "leading whitespace must be Invalid")
+    }
+    match "1,5".to_f64() {
+        Err(Malformed { at }) => assert(at == 1, "comma at 1")
+        _ => assert(false, "comma is not a decimal separator")
+    }
+    match "0x1p3".to_f64() {
+        Err(Malformed { at }) => assert(at == 1, "hex float breaks at x")
+        _ => assert(false, "hex float must be Invalid")
+    }
+    match "nan".to_f64() {
+        Err(Malformed { at }) => assert(at == 0, "nan is not a number literal")
+        _ => assert(false, "nan must be Invalid")
+    }
+    match "inf".to_f64() {
+        Err(Malformed { .. }) => {}
+        _ => assert(false, "inf must be Invalid")
+    }
+    match "1.2.3".to_f64() {
+        Err(Malformed { at }) => assert(at == 3, "second dot at 3")
+        _ => assert(false, "two dots must be Invalid")
+    }
+    match "1e".to_f64() {
+        Err(Malformed { at }) => assert(at == 2, "exponent without digits breaks at 2")
+        _ => assert(false, "bare exponent must be Invalid")
+    }
+    match ".".to_f64() {
+        Err(Malformed { .. }) => {}
+        _ => assert(false, "a lone dot has no digits")
+    }
+    match "1.5 ".to_f64() {
+        Err(Malformed { at }) => assert(at == 3, "trailing space at 3")
+        _ => assert(false, "trailing whitespace must be Invalid")
+    }
+}
+
+test "282 Ф.4: str.to_f64 — переполнение по направлению, не молчаливый inf (имена TooLarge/TooSmall — временные, до фикса №136)" {
+    match "1e999".to_f64() {
+        Err(TooLarge) => {}
+        _ => assert(false, "1e999 must be TooLarge")
+    }
+    match "-1e999".to_f64() {
+        Err(TooSmall) => {}
+        _ => assert(false, "-1e999 must be TooSmall")
+    }
+    match "".to_f64() {
+        Err(Empty) => {}
+        _ => assert(false, "empty must be Empty")
+    }
+}
+
+test "282 Ф.4: str.to_i8 — InvalidDigit несёт позицию" {
+    match "12x4".to_i8() {
+        Err(InvalidDigit { at }) => assert(at == 2, "x at 2")
+        _ => assert(false, "12x4 must be InvalidDigit")
+    }
+    match "-".to_int() {
+        Err(Empty) => {}
+        _ => assert(false, "a lone sign is Empty")
     }
 }

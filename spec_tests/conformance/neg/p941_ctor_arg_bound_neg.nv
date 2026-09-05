@@ -23,7 +23,7 @@
 // there is nothing to wonder about, because even the carrier is not a member.
 //
 // THE RECEIVER HALF OF #941 IS STILL OPEN, deliberately, and it is not this
-// fixture's business: `Meters(2.5).try_to_i16()` still builds. Its path goes
+// fixture's business: `Meters(2.5).to_i16()` still builds. Its path goes
 // through the receiver-resolution site whose result is written into
 // `resolved_callees` and therefore changes codegen — widening THAT one was tried
 // once and left `d326_value_record_fluent.nv` failing in the C compiler. The two

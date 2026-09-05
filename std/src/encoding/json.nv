@@ -43,6 +43,9 @@ import std.collections.hash_map.{HashMap}
 // `HashMap` above is — peer_files codegen prepass needs it registered in
 // `generic_type_templates` before `JsonObject`'s alias target resolves.
 import std.collections.index_map.{IndexMap}
+// 2026-09-05: the `\uXXXX` surrogate-pair arithmetic lives in ONE place (utf16.nv);
+// the code point becomes a `char` through the one door `n.to_char()`.
+import std.encoding.utf16.{decode_surrogate_pair}
 
 // [M-json-encode-record-field-order-nondeterministic] (реестр 221.1 №148):
 // `HashMap[str, JsonValue]` не хранит порядок вставки, а итерация хеш-таблицы
@@ -642,8 +645,8 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
         Some(b) if b == B_QUOTE     => Ok("\"")
         Some(b) if b == B_BACKSLASH => Ok("\\")
         Some(b) if b == B_SLASH     => Ok("/")
-        Some(b) if b == B_LOWER_B   => Ok(str.from_codepoint(0x08))  // \b → backspace
-        Some(b) if b == B_LOWER_F   => Ok(str.from_codepoint(0x0C))  // \f → form feed
+        Some(b) if b == B_LOWER_B   => Ok("\x08")  // \b → backspace (D467: \xNN is a code point)
+        Some(b) if b == B_LOWER_F   => Ok("\x0C")  // \f → form feed
         Some(b) if b == B_LOWER_N   => Ok("\n")
         Some(b) if b == B_LOWER_R   => Ok("\r")
         Some(b) if b == B_LOWER_T   => Ok("\t")
@@ -681,13 +684,19 @@ fn Lexer mut @read_unicode_escape() -> Result[str, ParseJsonError] {
         if low < 0xDC00 || low > 0xDFFF {
             return Err(InvalidUnicode { @line, @col, hex: @input[lo_start..lo_start+4] })
         }
-        ro codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
-        Ok(str.from_codepoint(codepoint))
+        // one arithmetic, one door: utf16.nv decodes the pair, to_char() validates
+        match decode_surrogate_pair(code, low).to_char() {
+            Ok(c)  => Ok(c.to_str())
+            Err(_) => Err(InvalidUnicode { @line, @col, hex: @input[hi_start..hi_start+4] })
+        }
     } else if code >= 0xDC00 && code <= 0xDFFF {
         // Lone low-surrogate — невалидно.
         Err(InvalidUnicode { @line, @col, hex: @input[hi_start..hi_start+4] })
     } else {
-        Ok(str.from_codepoint(code))
+        match code.to_char() {
+            Ok(c)  => Ok(c.to_str())
+            Err(_) => Err(InvalidUnicode { @line, @col, hex: @input[hi_start..hi_start+4] })
+        }
     }
 }
 

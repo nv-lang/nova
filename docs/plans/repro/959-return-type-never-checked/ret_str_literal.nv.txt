@@ -1,0 +1,5 @@
+// The declared return type is `int`; the body is a string literal.
+// `nova check` says ok. The C compiler is what refuses, in C:
+//   error: returning 'const nova_str' from a function with incompatible result
+fn f() -> int => "not an int"
+fn main() Io -> () => println(f())

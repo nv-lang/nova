@@ -3855,8 +3855,30 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                 let raw_detail = if !fail_lines.is_empty() {
                     fail_lines.join(" | ")
                 } else {
-                    let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
-                    last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                    // Реестр №953, вторая половина той же болезни. Когда харнесс не
+                    // напечатал НИ ОДНОЙ строки отказа, процесс умер сам — и вот тут
+                    // единственное, что о нём достоверно известно, это КОД ВОЗВРАТА.
+                    // Прежний запасной путь брал три последние строки вывода, а у
+                    // теста, умершего на старте, это «Running 1 tests...» — вывод,
+                    // который не говорит ничего. Именно так выглядит на CI
+                    // `presume_446_stress` (реестр №862/№855): отказ виден, причина
+                    // нет, и разбор упирается в необходимость воспроизвести у себя.
+                    //
+                    // Код возврата сам по себе диагностичен и часто достаточен:
+                    // 0xC0000005 — обращение к недоступной памяти, 0xC00000FD —
+                    // переполнение стека, 124/137 — снят по времени/сигналу. Печатаем
+                    // его ВСЕГДА в этой ветке, в обоих видах (десятичном и шестнадцати-
+                    // ричном: NT-статусы читаются только во втором), и берём шесть
+                    // последних строк вместо трёх — «Running N tests...» съедает первую
+                    // же, и три строки регулярно не долетают до содержательного вывода.
+                    let last_lines: Vec<&str> =
+                        stdout.lines().chain(stderr.lines()).rev().take(6).collect();
+                    let tail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                    if tail.trim().is_empty() {
+                        format!("процесс умер молча, exit={} (0x{:X}), вывода нет", exit, exit)
+                    } else {
+                        format!("exit={} (0x{:X}) | {}", exit, exit, tail)
+                    }
                 };
                 // Plan 221.1 №158: merged (folder-module) CU — a genuine crash
                 // (`fail_lines` empty: no harness "FAIL:"/"panic: " line was
@@ -3874,24 +3896,51 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                 // name (`attribute_merged_cu_crash`), or an EXPLICIT "не
                 // определён" + the full candidate list otherwise — never
                 // silence, never a guess dressed up as a fact.
+                // Реестр №953: ПРИЧИНА ИДЁТ ПЕРВОЙ, СПИСОК КАНДИДАТОВ — ПОСЛЕ НЕЁ И С
+                // ПОТОЛКОМ. Маркер merged-CU заведён по №158 и заведён верно: без него
+                // `RUN-FAIL a_q3_...` НЕДЕЛЯМИ читался как «сломан a_q3», пока настоящий
+                // виновник лежал тремя файлами дальше. Но он побеждал сам себя на
+                // большом модуле: `spec_tests/conformance` — это 1178 пиров, их имена
+                // съедали ВЕСЬ бюджет обрезки (1500 символов, поднятый как раз затем,
+                // чтобы обёртка перестала прятать суть), и `raw_detail` не доходил до
+                // вывода вовсе. Замер 2026-09-05: строка отказа оборвалась на 667
+                // символах, причина не видна ни в логе гейта, ни в файле прогона.
+                //
+                // Порядок теперь такой: маркер и виновник → ПРИЧИНА → кандидаты.
+                // Список урезан до MERGED_CU_NAMES_SHOWN имён плюс «и ещё N»; целиком
+                // он печатается по `NOVA_DEBUG_RUN_DUMP=1` — том же ключе, которым уже
+                // включается полный дамп прогона, чтобы не заводить второго.
+                const MERGED_CU_NAMES_SHOWN: usize = 12;
                 let detail = if peer_paths.len() > 1 && fail_lines.is_empty() {
                     let names: Vec<String> = peer_paths.iter()
                         .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_default())
                         .collect();
+                    let full_list =
+                        std::env::var("NOVA_DEBUG_RUN_DUMP").as_deref() == Ok("1");
+                    let shown = if full_list || names.len() <= MERGED_CU_NAMES_SHOWN {
+                        names.join(", ")
+                    } else {
+                        format!(
+                            "{}, … и ещё {} (полный список: NOVA_DEBUG_RUN_DUMP=1)",
+                            names[..MERGED_CU_NAMES_SHOWN].join(", "),
+                            names.len() - MERGED_CU_NAMES_SHOWN
+                        )
+                    };
                     match attribute_merged_cu_crash(&stderr, &peer_paths) {
                         Some(culprit) => format!(
-                            "[MERGED CU, {} файлов: {}] вероятный виновник: {} | {}",
-                            peer_paths.len(), names.join(", "),
+                            "[MERGED CU, {} файлов] вероятный виновник: {} | {} | кандидаты: {}",
+                            peer_paths.len(),
                             culprit.file_name().map(|n| n.to_string_lossy().into_owned())
                                 .unwrap_or_default(),
-                            raw_detail
+                            raw_detail,
+                            shown
                         ),
                         None => format!(
-                            "[MERGED CU, {} файлов: {}] файл-виновник НЕ определён (нет \
+                            "[MERGED CU, {} файлов] {} | файл-виновник НЕ определён (нет \
                              однозначного кадра в SEGV-стеке — нужен NOVA_DIAG_SEGV-\
-                             совместимый crash или уникальный `nova_fn_...` кадр) | {}",
-                            peer_paths.len(), names.join(", "), raw_detail
+                             совместимый crash или уникальный `nova_fn_...` кадр) | кандидаты: {}",
+                            peer_paths.len(), raw_detail, shown
                         ),
                     }
                 } else {

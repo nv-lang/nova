@@ -1,0 +1,8 @@
+// CONTROL, door 2 -- ANNOTATED BINDING. The same int 300 into a u8 binding:
+// refused, [E_IMPLICIT_NARROWING]. Two doors of three hold; the third is
+// this probe's subject.
+fn main() Io -> () => {
+    ro n int = 300
+    ro b u8 = n
+    println(b)
+}

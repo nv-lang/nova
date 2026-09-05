@@ -2,8 +2,8 @@
 //
 // [M-numeric-try-narrowing] (2026-07-20, D430, owner-approved
 // backlog-followups item) — тесты 10 `.nv`-бланкетов checked-сужения
-// (std/src/prelude/protocols.nv, `fn[S Ints] S @try_to_i8()`/
-// `@try_to_i16()`/.../`@try_to_uint()`) — `(300u32).try_to_u8() ->
+// (std/src/prelude/protocols.nv, `fn[S Ints] S @to_i8()`/
+// `@to_i16()`/.../`@to_uint()`) — `(300u32).to_u8() ->
 // Result[u8, RangeError]`, чейн-форма на исходном значении (НЕ Rust-style
 // static `u8::try_from`), тот же приёмник-конвенция что `str.to_i8`/
 // `checked_*`/`saturating_*`.
@@ -16,155 +16,155 @@
 // numeric/math-поверхностью, где обычный implicit-prelude работает.
 //
 // Все receiver'ы — типизированные локали (`ro a i32 = ...`), НЕ inline
-// conversion-call (`i32(10).try_to_u8()`) — тот же `[P67-LEGACY]`
+// conversion-call (`i32(10).to_u8()`) — тот же `[P67-LEGACY]`
 // "method call return type unknown" ICE для generic type-set-bound
 // бланкетов, что уже задокументирован в `overflow_policy_test.nv`.
 module math.try_narrowing_test
 
-test "try_to_i8 — signed→signed уже (i32→i8): границы MAX/MIN точно -> Ok, MAX+1/MIN-1 -> Err" {
+test "to_i8 — signed→signed уже (i32→i8): границы MAX/MIN точно -> Ok, MAX+1/MIN-1 -> Err" {
     ro a i32 = 127
     ro a8 i8 = 127
-    assert(a.try_to_i8() == Ok(a8))
+    assert(a.to_i8() == Ok(a8))
     ro b i32 = -128
     ro b8 i8 = -128
-    assert(b.try_to_i8() == Ok(b8))
+    assert(b.to_i8() == Ok(b8))
     ro c i32 = 128
-    assert(c.try_to_i8() == Err(RangeError))
+    assert(c.to_i8() == Err(AboveMax))
     ro d i32 = -129
-    assert(d.try_to_i8() == Err(RangeError))
+    assert(d.to_i8() == Err(BelowMin))
     ro zero i32 = 0
     ro zero8 i8 = 0
-    assert(zero.try_to_i8() == Ok(zero8))
+    assert(zero.to_i8() == Ok(zero8))
 }
 
-test "try_to_i8 — unsigned→signed уже (u32→i8): 0/MAX(i8) -> Ok, > MAX(i8) -> Err (нижней границы нет)" {
+test "to_i8 — unsigned→signed уже (u32→i8): 0/MAX(i8) -> Ok, > MAX(i8) -> Err (нижней границы нет)" {
     ro a u32 = 0
     ro a8 i8 = 0
-    assert(a.try_to_i8() == Ok(a8))
+    assert(a.to_i8() == Ok(a8))
     ro b u32 = 127
     ro b8 i8 = 127
-    assert(b.try_to_i8() == Ok(b8))
+    assert(b.to_i8() == Ok(b8))
     ro c u32 = 128
-    assert(c.try_to_i8() == Err(RangeError))
+    assert(c.to_i8() == Err(AboveMax))
     ro d u32 = 300
-    assert(d.try_to_i8() == Err(RangeError))
+    assert(d.to_i8() == Err(AboveMax))
 }
 
-test "try_to_u8 — signed→unsigned (i32→u8): отрицательное -> Err всегда, 0/255 -> Ok, 256 -> Err" {
+test "to_u8 — signed→unsigned (i32→u8): отрицательное -> Err всегда, 0/255 -> Ok, 256 -> Err" {
     ro a i32 = -1
-    assert(a.try_to_u8() == Err(RangeError))
+    assert(a.to_u8() == Err(BelowMin))
     ro b i32 = -100
-    assert(b.try_to_u8() == Err(RangeError))
+    assert(b.to_u8() == Err(BelowMin))
     ro c i32 = 0
     ro c8 u8 = 0
-    assert(c.try_to_u8() == Ok(c8))
+    assert(c.to_u8() == Ok(c8))
     ro d i32 = 255
     ro d8 u8 = 255
-    assert(d.try_to_u8() == Ok(d8))
+    assert(d.to_u8() == Ok(d8))
     ro e i32 = 256
-    assert(e.try_to_u8() == Err(RangeError))
+    assert(e.to_u8() == Err(AboveMax))
 }
 
-test "try_to_u8 — unsigned→unsigned уже (u32→u8): границы 0/255 точно -> Ok, 256 -> Err" {
+test "to_u8 — unsigned→unsigned уже (u32→u8): границы 0/255 точно -> Ok, 256 -> Err" {
     ro a u32 = 0
     ro a8 u8 = 0
-    assert(a.try_to_u8() == Ok(a8))
+    assert(a.to_u8() == Ok(a8))
     ro b u32 = 255
     ro b8 u8 = 255
-    assert(b.try_to_u8() == Ok(b8))
+    assert(b.to_u8() == Ok(b8))
     ro c u32 = 256
-    assert(c.try_to_u8() == Err(RangeError))
+    assert(c.to_u8() == Err(AboveMax))
     ro d u32 = 4_294_967_295
-    assert(d.try_to_u8() == Err(RangeError))
+    assert(d.to_u8() == Err(AboveMax))
 }
 
-test "try_to_i16/try_to_u16 — те же 4 направления на 16-битной цели" {
+test "to_i16/to_u16 — те же 4 направления на 16-битной цели" {
     ro a i32 = 32767
     ro a16 i16 = 32767
-    assert(a.try_to_i16() == Ok(a16))
+    assert(a.to_i16() == Ok(a16))
     ro b i32 = 32768
-    assert(b.try_to_i16() == Err(RangeError))
+    assert(b.to_i16() == Err(AboveMax))
     ro c i32 = -32768
     ro c16 i16 = -32768
-    assert(c.try_to_i16() == Ok(c16))
+    assert(c.to_i16() == Ok(c16))
     ro d i32 = -32769
-    assert(d.try_to_i16() == Err(RangeError))
+    assert(d.to_i16() == Err(BelowMin))
     ro e i32 = -1
-    assert(e.try_to_u16() == Err(RangeError))
+    assert(e.to_u16() == Err(BelowMin))
     ro f u32 = 65535
     ro f16 u16 = 65535
-    assert(f.try_to_u16() == Ok(f16))
+    assert(f.to_u16() == Ok(f16))
     ro g u32 = 65536
-    assert(g.try_to_u16() == Err(RangeError))
+    assert(g.to_u16() == Err(AboveMax))
 }
 
-test "try_to_i32/try_to_u32 — сужение из 64-битных источников (i64/u64/int/uint)" {
+test "to_i32/to_u32 — сужение из 64-битных источников (i64/u64/int/uint)" {
     ro a i64 = 2_147_483_647
     ro a32 i32 = 2_147_483_647
-    assert(a.try_to_i32() == Ok(a32))
+    assert(a.to_i32() == Ok(a32))
     ro b i64 = 2_147_483_648
-    assert(b.try_to_i32() == Err(RangeError))
+    assert(b.to_i32() == Err(AboveMax))
     ro c u64 = 4_294_967_295
     ro c32 u32 = 4_294_967_295
-    assert(c.try_to_u32() == Ok(c32))
+    assert(c.to_u32() == Ok(c32))
     ro d u64 = 4_294_967_296
-    assert(d.try_to_u32() == Err(RangeError))
+    assert(d.to_u32() == Err(AboveMax))
     ro e int = -1
-    assert(e.try_to_u32() == Err(RangeError))
+    assert(e.to_u32() == Err(BelowMin))
 }
 
-test "try_to_i64/try_to_u64 — платформенно-широкая цель: только «шире» источник (u64/uint) переполняет" {
+test "to_i64/to_u64 — платформенно-широкая цель: только «шире» источник (u64/uint) переполняет" {
     // i64 — самый широкий signed: НИКАКОЙ signed-источник не переполняет его.
     ro a i32 = -2_000_000_000
     ro a64 i64 = -2_000_000_000
-    assert(a.try_to_i64() == Ok(a64))
+    assert(a.to_i64() == Ok(a64))
     // u64 -> i64: переполняет только если > i64.MAX.
     ro b u64 = 9_223_372_036_854_775_807
     ro b64 i64 = 9_223_372_036_854_775_807
-    assert(b.try_to_i64() == Ok(b64))
+    assert(b.to_i64() == Ok(b64))
     // u64.MAX (18446744073709551615) > i64.MAX -> Err.
     ro c u64 = 18_446_744_073_709_551_615
-    assert(c.try_to_i64() == Err(RangeError))
+    assert(c.to_i64() == Err(AboveMax))
     // u64 -> u64: identity, всегда Ok (виден полный охват матрицы бланкетом).
     ro d u64 = 18_446_744_073_709_551_615
-    assert(d.try_to_u64() == Ok(d))
+    assert(d.to_u64() == Ok(d))
     // Любой отрицательный signed -> u64: Err (нижняя граница unsigned = 0).
     ro e i64 = -1
-    assert(e.try_to_u64() == Err(RangeError))
+    assert(e.to_u64() == Err(BelowMin))
 }
 
-test "try_to_int/try_to_uint — платформенные алиасы (D129: та же ширина, что i64/u64)" {
+test "to_int/to_uint — платформенные алиасы (D129: та же ширина, что i64/u64)" {
     ro a u64 = 18_446_744_073_709_551_615
-    assert(a.try_to_int() == Err(RangeError))
+    assert(a.to_int() == Err(AboveMax))
     ro b i32 = 42
     ro b_int int = 42
-    assert(b.try_to_int() == Ok(b_int))
+    assert(b.to_int() == Ok(b_int))
     ro c i64 = -1
-    assert(c.try_to_uint() == Err(RangeError))
+    assert(c.to_uint() == Err(BelowMin))
     ro d u32 = 42
     ro d_uint uint = 42
-    assert(d.try_to_uint() == Ok(d_uint))
+    assert(d.to_uint() == Ok(d_uint))
 }
 
-test "try_to_<T> — same-signedness расширение (widening) всегда Ok (полная матрица бланкета, не только сужения)" {
+test "to_<T> — same-signedness расширение (widening) всегда Ok (полная матрица бланкета, не только сужения)" {
     ro a i8 = -100
     ro a64 i64 = -100
-    assert(a.try_to_i64() == Ok(a64))
+    assert(a.to_i64() == Ok(a64))
     ro b u8 = 200
     ro b64 u64 = 200
-    assert(b.try_to_u64() == Ok(b64))
+    assert(b.to_u64() == Ok(b64))
     // identity (a->a) — тривиальный член полной матрицы, тоже всегда Ok.
     ro c i16 = -7
     ro c16 i16 = -7
-    assert(c.try_to_i16() == Ok(c16))
+    assert(c.to_i16() == Ok(c16))
 }
 
 // `Vec[T].of` источники границ ниже (НЕ `Vec[T].from`, конвенция
 // вариадик-конструктора) НАРОЧНО не итерируются `for v in ...` —
 // `for`-bound receiver для generic type-set-bound бланкета
-// (`fn[S Ints] S @try_to_u8()`) бьётся в pre-existing `[P67-LEGACY]`
+// (`fn[S Ints] S @to_u8()`) бьётся в pre-existing `[P67-LEGACY]`
 // "method call return type unknown" ICE (emit_c.rs) ДАЖЕ когда сам вызов
-// присвоен типизированной локали (`ro r = v.try_to_u8()` внутри `for`
+// присвоен типизированной локали (`ro r = v.to_u8()` внутри `for`
 // тела всё равно падает — receiver `v` из `for`-байндинга, не `ro x T =
 // ...`-локаль, недостаточно аннотирован для checker'а) — эмпирически
 // подтверждено при написании этого файла; тот же класс разрывов, что уже
@@ -174,45 +174,45 @@ test "try_to_<T> — same-signedness расширение (widening) всегд�
 // параллельной Duration-волной). Элементы ниже читаются по индексу в
 // типизированную локаль — тот же обход, что и everywhere в этом файле.
 
-test "try_to_u8 — Vec[T].of как источник границ (влезает/не влезает по обе стороны)" {
+test "to_u8 — Vec[T].of как источник границ (влезает/не влезает по обе стороны)" {
     ro fits = Vec[i32].of(0, 1, 127, 254, 255)
     ro f0 i32 = fits[0]
-    ro rf0 = f0.try_to_u8()
+    ro rf0 = f0.to_u8()
     assert(rf0.is_ok())
     ro f2 i32 = fits[2]
-    ro rf2 = f2.try_to_u8()
+    ro rf2 = f2.to_u8()
     assert(rf2.is_ok())
     ro f4 i32 = fits[4]
-    ro rf4 = f4.try_to_u8()
+    ro rf4 = f4.to_u8()
     assert(rf4.is_ok())
     ro overflow = Vec[i32].of(256, 300, -1, -100)
     ro o0 i32 = overflow[0]
-    ro ro0 = o0.try_to_u8()
+    ro ro0 = o0.to_u8()
     assert(ro0.is_err())
     ro o1 i32 = overflow[1]
-    ro ro1 = o1.try_to_u8()
+    ro ro1 = o1.to_u8()
     assert(ro1.is_err())
     ro o2 i32 = overflow[2]
-    ro ro2 = o2.try_to_u8()
+    ro ro2 = o2.to_u8()
     assert(ro2.is_err())
     ro o3 i32 = overflow[3]
-    ro ro3 = o3.try_to_u8()
+    ro ro3 = o3.to_u8()
     assert(ro3.is_err())
 }
 
-test "try_to_i8 — Vec[T].of как источник границ (signed, обе стороны)" {
+test "to_i8 — Vec[T].of как источник границ (signed, обе стороны)" {
     ro fits = Vec[i64].of(-128, -1, 0, 1, 127)
     ro f0 i64 = fits[0]
-    ro rf0 = f0.try_to_i8()
+    ro rf0 = f0.to_i8()
     assert(rf0.is_ok())
     ro f4 i64 = fits[4]
-    ro rf4 = f4.try_to_i8()
+    ro rf4 = f4.to_i8()
     assert(rf4.is_ok())
     ro overflow = Vec[i64].of(-129, -1000, 128, 1000)
     ro o0 i64 = overflow[0]
-    ro ro0 = o0.try_to_i8()
+    ro ro0 = o0.to_i8()
     assert(ro0.is_err())
     ro o2 i64 = overflow[2]
-    ro ro2 = o2.try_to_i8()
+    ro ro2 = o2.to_i8()
     assert(ro2.is_err())
 }

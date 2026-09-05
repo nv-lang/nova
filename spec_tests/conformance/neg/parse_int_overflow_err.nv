@@ -1,8 +1,8 @@
 module neg.parse_int_overflow_err
 import std.runtime.string.{ParseIntError}
 
-// NB: flat (single-level) match on `Err(Overflow)`/`Err(_)` — a NESTED match
-// (`Err(e) => match e { Overflow => {} _ => ... }`) after a preceding `for`
+// NB: flat (single-level) match on `Err(AboveMax)`/`Err(BelowMin)`/`Err(_)` (2026-09-05: `Overflow` split by direction) — a NESTED match
+// (`Err(e) => match e { AboveMax => {} _ => ... }`) after a preceding `for`
 // loop in the same function was found (2026-07-08, during this migration) to
 // mis-resolve the bound error variant in this toolchain — a pre-existing,
 // separately-tracked codegen/checker bug unrelated to parse_int naming
@@ -10,9 +10,10 @@ import std.runtime.string.{ParseIntError}
 // payload directly avoids it. See backlog-followups.md for the marker.
 fn assert_overflow(s str) {
     match s.to_int() {
-        Ok(_)          => assert(false, "expected Err(Overflow)")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(AboveMax)/Err(BelowMin)")
+        Err(AboveMax)  => {}
+        Err(BelowMin)  => {}
+        Err(_)         => assert(false, "expected AboveMax/BelowMin variant")
     }
 }
 
@@ -29,8 +30,8 @@ test "i64 max plus one" {
 test "negative overflow" {
     // -9223372036854775809 overflows
     match "-99999999999999999999".to_int() {
-        Ok(_)          => assert(false, "expected Err(Overflow)")
-        Err(Overflow)  => {}
-        Err(_)         => assert(false, "expected Overflow variant")
+        Ok(_)          => assert(false, "expected Err(BelowMin)")
+        Err(BelowMin)  => {}
+        Err(_)         => assert(false, "expected BelowMin variant")
     }
 }

@@ -48106,6 +48106,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match c_ty.as_str() {
             "nova_str"                                      => "nova_print_str",
             "nova_bool"                                     => "nova_print_bool",
+            // Реестр №944. Ветка добавлена; комментарий AD3 выше объявлял её
+            // отложенной («Полный UTF-8 print для char-var deferred»), и отсрочка
+            // стоила ровно того, что цена такой отсрочки обычно и есть: `ro a = 'A';
+            // println(a)` печатал `65`. Помощник `nova_print_char` существовал всё это
+            // время и уже брал `nova_int` с кодовой точкой — литерал через него и шёл
+            // (ветка `CharLit` выше), — так что не хватало ровно одной строки разбора.
+            //
+            // ЗАМЕР 2026-09-05, из-за которого это перестало быть отсрочкой: одно и то
+            // же значение печаталось ЧЕТЫРЬМЯ путями и расходилось. `a.to_str()` → `A`,
+            // `"${a}"` → `A`, `Vec[char]` в интерполяции → `Vec[A, B]`, а прямой
+            // `println(a)` → `65`. Три двери из четырёх согласны; расходилась самая
+            // частая — первая строка, которую человек пишет на новом языке.
+            "nova_char"                                     => "nova_print_char",
             // Plan 180: f32 prints via its OWN f32-precise formatter — lumping
             // it with f64 widened to double, which the now-faithful
             // nova_print_f64 would render with the f32→f64 mantissa tail

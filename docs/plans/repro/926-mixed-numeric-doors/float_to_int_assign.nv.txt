@@ -1,0 +1,15 @@
+// Added 2026-09-05 (integrator). The SAME rule as int_float, but at the
+// ASSIGNMENT door instead of an operator -- and in the other direction.
+//
+// `conversions.ru.md` line 60 is explicit: a value of type `int` next to a
+// value of type `f64` is still an error. Here a f64 VARIABLE initialises an
+// `int` binding: accepted, and the value is silently truncated to 3.
+//
+// The contrast that makes this a door and not a rule gap: float_lit_neg in
+// this same directory shows `ro n int = 1.5` refused with E7301. The LITERAL
+// is judged; the VARIABLE is not.
+fn main() Io -> () => {
+    ro x f64 = 3.9
+    ro i int = x
+    println(i)
+}
