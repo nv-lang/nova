@@ -1,0 +1,48 @@
+// EXPECT_STDOUT print=A to_str=A interp=A param=A cyr=я cyrdirect=я vec=Vec[A, B] println=A
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry #944 — a `char` displays as the character on EVERY path, not as its
+// codepoint on one of them.
+//
+// Until 2026-09-05 `println(c)` and `print(c)` on a `char`-typed value printed the
+// NUMBER: `ro a = 'A'; println(a)` gave `65`, and a Cyrillic letter gave `1103`. The
+// same value interpolated, or through `to_str()`, or inside a container, printed the
+// character. Three display paths of four agreed; the one that disagreed is the most
+// common one in the language and the first line anyone writes.
+//
+// WHY IT WAS NOT A MISSING FEATURE. `nova_print_char` already existed and already took
+// a codepoint — a char LITERAL went through it. What was missing was one arm in the
+// helper dispatch: a char-typed VARIABLE fell through to `nova_print_int`. The comment
+// above that dispatch had called the gap deferred in as many words ("Полный UTF-8 print
+// для char-var deferred"), so this fixture is here to make sure it is not deferred
+// twice.
+//
+// WHY EVERY PATH IS PINNED IN ONE LINE rather than one assertion per path: the defect
+// was not "char cannot display" but "the paths disagree", and a disagreement is only
+// visible when the answers stand side by side. A fixture that checked `println` alone
+// would have gone green the moment someone fixed `println` and broken interpolation.
+//
+// `param=` is the same value printed INSIDE a callee that takes a `char` — the shape
+// that hides a dispatch bug behind a function boundary. `cyrdirect=` is the non-ASCII
+// half: the fix must be UTF-8 encoding, not a cast to `int` that happens to look right
+// for ASCII.
+//
+// Probe and the full measurement: `docs/plans/repro/944-char-prints-as-codepoint/`.
+module standalone.p944_char_display_paths
+
+fn show(c char) -> str => c.to_str()
+
+fn main() Io -> () {
+    ro a = 'A'
+    ro cy = 'я'
+    ro v = Vec[char].of('A', 'B')
+    print("print=")
+    print(a)
+    print(" to_str=${a.to_str()} interp=${a} param=${show(a)} cyr=${cy} cyrdirect=")
+    print(cy)
+    print(" vec=${v} println=")
+    // `println` стоит ПОСЛЕДНИМ нарочно: его перевод строки разрезал бы
+    // ожидание надвое, а смысл фикстуры именно в том, чтобы все ответы
+    // стояли рядом и расхождение было видно глазом.
+    println(a)
+}
