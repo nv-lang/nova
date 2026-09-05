@@ -1592,6 +1592,22 @@ pub struct CEmitter {
     /// from the build driver (main.rs / test_runner.rs). Defaults to
     /// `"<unknown>"` when not set (e.g. internal/test emitters).
     source_file_name: String,
+    /// Реестр 221.1 №942(б): `file_id → путь` для КАЖДОГО пира folder-module,
+    /// построено в `emit_module` из `module.peer_files`. Нужно затем, что
+    /// `source_file_name` — ОДНО имя на весь compile unit, а у CU их столько,
+    /// сколько пиров: до этой карты рантайм-локация упавшего `assert` называла
+    /// entry-пир (`a_q3_println_debug_record.nv:2`) вместо файла, где утверждение
+    /// действительно стоит (`append_as_slice.nv:6`).
+    ///
+    /// Только пути: заполнение стоит один клон на пир и никакого ввода-вывода.
+    peer_paths_by_id: HashMap<crate::diag::FileId, std::path::PathBuf>,
+    /// Тексты пиров к той же карте — читаются ЛЕНИВО и по одному разу, при
+    /// первом обращении к локации в этом файле. Жадное чтение обошлось бы в
+    /// 1177 открытий файла на каждый эмит конформанса ради строк, которых в
+    /// обычном прогоне никто не увидит: локация нужна только когда утверждение
+    /// падает. `RefCell` — потому что `loc_for_span` берёт `&self`.
+    /// `None` в значении = файл прочитать не удалось; повторно не пытаемся.
+    peer_src_cache: std::cell::RefCell<HashMap<crate::diag::FileId, Option<String>>>,
     /// Plan 14 std-fix: контролирует только эмит SRC-комментариев. Source
     /// в `annotation_source` остаётся для line:col в ошибках.
     annotation_enabled: bool,
@@ -2765,6 +2781,8 @@ impl CEmitter {
             current_parfor_send: None,
             annotation_source: None,
             source_file_name: "<unknown>".to_string(),
+            peer_paths_by_id: HashMap::new(),
+            peer_src_cache: std::cell::RefCell::new(HashMap::new()),
             annotation_enabled: false,
             // Plan 14 Ф.1: NovaOpt_<T> lazy-decl. Pre-populated с T-ками,
             // которые `nova_rt/array.h` уже декларирует через NOVA_ARRAY_DECL.
@@ -3283,12 +3301,60 @@ impl CEmitter {
         Ok(None)
     }
 
-    fn loc_for_span(&self, span_start: usize) -> (String, usize) {
+    /// Реестр 221.1 №942(б). Принимает ВЕСЬ `Span`, а не только `.start`.
+    ///
+    /// Прежняя подпись брала `span_start: usize`, то есть выбрасывала `file_id`
+    /// на входе, и дальше выбора уже не было: имя бралось из единственного
+    /// `source_file_name`, а строка считалась по `annotation_source` — тексту
+    /// ENTRY-файла. Для folder-module CU это неверно дважды. Замер 2026-09-05:
+    /// упавшее `assert(a == [1, 2, 3])` в `append_as_slice.nv:6` печаталось как
+    /// `a_q3_println_debug_record.nv:2` — чужой файл и строка, вычисленная по
+    /// чужому тексту. Диагностики компилятора этим не страдают: их рендер ходит
+    /// через `SourceMap`, который `file_id` уважает (`diag.rs`,
+    /// `from_peer_files`). Рантайм-локации просто никогда туда не заглядывали.
+    ///
+    /// Своя карта, а не `SourceMap`: тот читает ВСЕ файлы сразу при постройке,
+    /// что оправдано при рендере одной диагностики и неоправданно на каждом
+    /// эмите. Здесь пути известны заранее, а текст нужен только того файла, где
+    /// действительно стоит утверждение.
+    fn loc_for_span(&self, span: crate::diag::Span) -> (String, usize) {
+        let (name, line) = self.loc_for_span_raw(span);
+        (Self::escape_c_str(&name), line)
+    }
+
+    /// То же, но БЕЗ экранирования для C-литерала: `intern_caller_loc` кладёт
+    /// имя в строковый интернер, который экранирует сам, и двойное экранирование
+    /// дало бы `\\` в пути на Windows.
+    ///
+    /// Существует затем, чтобы у `caller_loc` и у `assert`/контрактов был ОДИН
+    /// источник локации. До №942(б) `caller_loc` нёс свою копию тех же четырёх
+    /// строк — и, разумеется, ту же ошибку: `annotation_source` + единственное
+    /// `source_file_name`. Две копии одного правила расходятся; здесь они
+    /// разошлись бы ровно в тот день, когда одну из них поправят.
+    fn loc_for_span_raw(&self, span: crate::diag::Span) -> (String, usize) {
+        if let Some(path) = self.peer_paths_by_id.get(&span.file_id) {
+            let mut cache = self.peer_src_cache.borrow_mut();
+            let src = cache
+                .entry(span.file_id)
+                .or_insert_with(|| std::fs::read_to_string(path).ok());
+            if let Some(src) = src.as_deref() {
+                let line = crate::diag::byte_to_line_col(src, span.start).0;
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(self.source_file_name.as_str());
+                return (name.to_string(), line);
+            }
+        }
+        // Файл неизвестен или не прочитался — прежнее поведение слово в слово.
+        // Это НЕ мёртвая ветка: одиночный `.nv` мимо folder-module-обхода и
+        // внутренние эмиттеры (`source_file_name == "<unknown>"`) карту не
+        // заполняют вовсе.
         let line = match &self.annotation_source {
-            Some(src) => crate::diag::byte_to_line_col(src, span_start).0,
+            Some(src) => crate::diag::byte_to_line_col(src, span.start).0,
             None => 0,
         };
-        (Self::escape_c_str(&self.source_file_name), line)
+        (self.source_file_name.clone(), line)
     }
 
     /// [P67-LEGACY→honest-error] (окно p401b-p67-class, реестр 221.1 №401,
@@ -5449,6 +5515,18 @@ impl CEmitter {
         // alpha_rename-computed span set so `Stmt::Let` can look up its own
         // span below.
         self.consume_reuse_spans = module.consume_reuse_spans.clone();
+        // Реестр 221.1 №942(б): `file_id → путь` для каждого пира. Заполняется
+        // ЗДЕСЬ, потому что это единственное место, где эмиттер видит состав CU
+        // целиком; тексты не читаются — их берёт `loc_for_span` лениво и только
+        // для того файла, где реально стоит упавшее утверждение.
+        //
+        // Единственный пир (обычный `.nv`) карту тоже заполняет, и это не
+        // вхолостую: имя тогда берётся из ЕГО пути, а не из `source_file_name`,
+        // который драйверы задают по-разному, а внутренние эмиттеры не задают
+        // вовсе.
+        for pf in &module.peer_files {
+            self.peer_paths_by_id.insert(pf.file_id, pf.path.clone());
+        }
         // Plan 127 Ф.2/Ф.3: run value-record escape analysis upfront so
         // codegen знает which value-record locals must be heap-promoted
         // (AllocKind::ValueHeapPromoted). WITH the checker channel: shape-only
@@ -26799,7 +26877,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     let expr_c = self.emit_expr(&c.expr)?;
                     let expr_src = Self::expr_to_display(&c.expr);
-                    let (file_lit, line) = self.loc_for_span(c.span.start);
+                    let (file_lit, line) = self.loc_for_span(c.span);
                     self.emit_contract_check(
                         &expr_c, "NOVA_CONTRACT_PRE", &fn_decl.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
                     )?;
@@ -28608,7 +28686,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let expr_src = Self::expr_to_display(&c.expr);
                 // Plan 140.1 Ф.2 (D24 amend): location-first format
                 // `<file>:<line>: ensures failed: [<msg> (]<expr>[)]`.
-                let (file_lit, line) = self.loc_for_span(c.span.start);
+                let (file_lit, line) = self.loc_for_span(c.span);
                 // Plan 140.3: ensures supports interpolated messages too. The helper
                 // rewrites `result` → `_nova_result` in the emitted message build for
                 // POST (mirror of the condition's substitute_result_var above), so
@@ -29395,7 +29473,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // overflow (frame ~1KB debug × 1M limit > stack 1MB — никогда
             // не triggered, был latent bug). 10K — safe (stack ~10MB позволяет).
             // Plan 140.1 Ф.2 (D24 amend): location-first format; no user msg.
-            let (file_lit, line) = self.loc_for_span(f.span.start);
+            let (file_lit, line) = self.loc_for_span(f.span);
             self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"{}\", {}, NULL);",
                 var, f.name, file_lit, line));
             Some(var)
@@ -29429,7 +29507,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let expr_src = Self::expr_to_display(&c.expr);
                     // Plan 140.1 Ф.2 (D24 amend): location-first format
                     // `<file>:<line>: requires failed: [<msg> (]<expr>[)]`.
-                    let (file_lit, line) = self.loc_for_span(c.span.start);
+                    let (file_lit, line) = self.loc_for_span(c.span);
                     self.emit_contract_check(
                         &expr_c, "NOVA_CONTRACT_PRE", &f.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
                     )?;
@@ -34398,7 +34476,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 173 Ф.5 п.7 (Zig-парность, минимум): стемп throw-site —
                 // uncaught-abort ветки печатают `at file:line`. Error-path only.
                 {
-                    let (file_lit, line) = self.loc_for_span(span.start);
+                    let (file_lit, line) = self.loc_for_span(*span);
                     // Plan 280 E3-b (D468): the bare-`throw` door. Found by
                     // writing the fixture, not by reading the code -- three doors
                     // had looked like all of them, and the fixture printed no
@@ -34766,7 +34844,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let v = self.emit_expr(expr)?;
                     let src = Self::expr_to_display(expr);
                     // Plan 140.1 Ф.2 (D24 amend): location-first format; no msg.
-                    let (file_lit, line) = self.loc_for_span(span.start);
+                    let (file_lit, line) = self.loc_for_span(*span);
                     self.line(&format!(
                         "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"{}\", {}, NULL);",
                         v, Self::escape_c_str(&src), file_lit, line
@@ -34790,7 +34868,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let v = self.emit_expr(expr)?;
                     let src = Self::expr_to_display(expr);
                     // Plan 140.1 Ф.2 (D24 amend): location-first format; no msg.
-                    let (file_lit, line) = self.loc_for_span(span.start);
+                    let (file_lit, line) = self.loc_for_span(*span);
                     self.line(&format!(
                         "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"{}\", {}, NULL);",
                         v, Self::escape_c_str(&src), file_lit, line
@@ -37480,7 +37558,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // Plan 140.1 Ф.2 (D24 amend): location-first
                                 // format `<file>:<line>: invariant failed:
                                 // [<msg> (]<expr>[)]`.
-                                let (file_lit, line) = self.loc_for_span(span.start);
+                                let (file_lit, line) = self.loc_for_span(*span);
                                 // Plan 140.3: route through emit_contract_check so an
                                 // invariant message can interpolate (`${field}` reads
                                 // the shadow-locals bound just above). +1 indent to
@@ -37725,7 +37803,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // КАЖДОЙ `?`-точке проброса (обе ветки ниже) — ring-buffer
                     // rethrow-точек поверх throw-site минимума Ф.5 п.7.
                     // Только error-path (внутри Err-ветки), happy-path чист.
-                    let (trace_file, trace_line) = self.loc_for_span(expr.span.start);
+                    let (trace_file, trace_line) = self.loc_for_span(expr.span);
                     if in_fail_ctx {
                         // Fail-context: throw the Err value via Nova_Fail_fail /
                         // nova_throw_typed — same as ExprKind::Bang for Result.
@@ -37834,7 +37912,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // [M-173-error-return-trace]: None!!-throw = свежий
                     // origin (RuntimeNoneError рождается здесь) → полный
                     // стемп site_set (reset трассы) как у user-throw.
-                    let (bfile, bline) = self.loc_for_span(expr.span.start);
+                    let (bfile, bline) = self.loc_for_span(expr.span);
                     // Plan 280 E3-b: same door, the RuntimeNoneError origin.
                     let stamp = self.throw_stamp("nova_throw_site_set", &bfile, bline)?;
                     self.line(&format!(
@@ -37877,7 +37955,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // цепочки + site-mark БЕЗ сброса трассы (накопленные
                     // `?`-кадры переживают конверсию).
                     {
-                        let (bfile, bline) = self.loc_for_span(expr.span.start);
+                        let (bfile, bline) = self.loc_for_span(expr.span);
                         {
                             let push = self.throw_stamp(
                                 "nova_throw_trace_push", &bfile, bline)?;
@@ -40662,11 +40740,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // rule: callnorm clones the default INTO the call site before
             // codegen ever runs (D102; callnorm.rs:693/:818/:834).
             if name == "caller_loc" && args.is_empty() {
-                let line = match &self.annotation_source {
-                    Some(src) => crate::diag::byte_to_line_col(src, func.span.start).0,
-                    None => 0,
-                };
-                let file = self.source_file_name.clone();
+                // №942(б): один источник локации с assert и контрактами — раньше здесь лежала
+                // своя копия тех же четырёх строк с той же ошибкой.
+                let (file, line) = self.loc_for_span_raw(func.span);
                 let sym = self.intern_caller_loc(&file, line);
                 return Ok(format!("((Nova_CallerLoc*)&{})", sym));
             }
@@ -40680,7 +40756,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `<file>:<line>: assert failed: [<msg> (]<expr>[)]`.
                     // LOC auto-prefixed from the assert call's own source
                     // location (`func.span`) — the user never writes it.
-                    let (file_lit, line) = self.loc_for_span(func.span.start);
+                    let (file_lit, line) = self.loc_for_span(func.span);
                     // D84 2-arg form `assert(cond, "msg")`: the optional
                     // user message. Only a string literal is meaningful here
                     // (it is baked into the format string); a non-literal
@@ -40740,7 +40816,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         "(nova_throw_site_set_dominant_s({}->file, (int){}->line), nv_panic({}), (nova_int)0LL)",
                         p, p, msg_val));
                 }
-                let (file_lit, line) = self.loc_for_span(func.span.start);
+                let (file_lit, line) = self.loc_for_span(func.span);
                 return Ok(format!(
                     "(nova_throw_site_set_dominant(\"{}\", {}), nv_panic({}), (nova_int)0LL)",
                     file_lit, line, msg_val));
@@ -40763,7 +40839,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let reason_val = self.emit_expr(args[0].expr())?;
                 // Plan 173 Ф.5 п.7: throw-site стемп (см. panic выше).
-                let (file_lit, line) = self.loc_for_span(func.span.start);
+                let (file_lit, line) = self.loc_for_span(func.span);
                 return Ok(format!(
                     "(nova_throw_site_set_dominant(\"{}\", {}), nv_panic(nova_str_concat(nova_str_from_cstr(\"unreachable: \"), {})), (nova_int)0LL)",
                     file_lit, line, reason_val

@@ -1,0 +1,40 @@
+// Registry #942(b) — a peer's source location must name the PEER.
+//
+// Until 2026-09-05 it named the entry file. `CEmitter::loc_for_span` took a bare
+// `span_start: usize`, so the file id was discarded at the door and the name came
+// from a single `source_file_name` while the line was computed against the ENTRY
+// file's text — wrong file and a line measured in the wrong document. Measured on
+// this very corpus: a failing `assert` in `append_as_slice.nv:6` announced itself
+// as `a_q3_println_debug_record.nv:2`.
+//
+// That is not a cosmetic defect. A runtime location is what a person opens when
+// something breaks, and one that points confidently at an unrelated file sends
+// them to read code that has nothing to do with their failure.
+//
+// WHY THIS FIXTURE ASSERTS A LOCATION RATHER THAN PROVOKING A FAILURE: the honest
+// carrier is a FAILING assertion, and a fixture cannot fail on purpose and stay
+// green. `caller_loc()` (D468) hands the same machinery's answer to a passing
+// test — it goes through `loc_for_span_raw`, the identical resolver `assert` and
+// contract violations use, so pinning it here pins theirs.
+//
+// It lives as an ordinary peer of `spec_tests/conformance` on purpose: the defect
+// exists ONLY inside a multi-peer compile unit, and this CU has 1177 of them. A
+// standalone file could not reproduce it — it is its own entry, so the wrong
+// answer and the right one coincide.
+//
+// Spec: D468 (`caller_loc`), D29 (folder-module peers).
+module spec_tests.conformance
+
+fn p942_where_am_i() -> CallerLoc => caller_loc()
+
+test "942: a peer's caller_loc names the peer, not the entry file" {
+    ro loc = p942_where_am_i()
+    // The entry of this CU is `a_q3_println_debug_record.nv` (alphabetically
+    // first), which is exactly the name this used to report.
+    assert(loc.file == "p942_peer_caller_loc.nv")
+    // Line 28 is `fn p942_where_am_i()` above — `caller_loc()` written plainly in
+    // a body means HERE (D468), so it is the declaration's own line, not this
+    // call's. Pinned to a number so that a location computed against another
+    // file's text cannot pass by accident: it would have to land on 28 there too.
+    assert(loc.line == 28)
+}
