@@ -1,0 +1,8 @@
+module basics.bitnot_u8_stored
+
+fn idu8(a u8) -> u8 => a
+
+fn main() {
+    ro y = ~idu8(15)
+    println(y)
+}

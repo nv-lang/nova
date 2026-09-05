@@ -1,0 +1,7 @@
+module basics.compound_f64_intlit
+
+fn main() {
+    mut x = 1.5
+    x += 2
+    println(x)
+}

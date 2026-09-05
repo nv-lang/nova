@@ -1,0 +1,7 @@
+module basics.bitnot_u8_compare
+
+fn idu8(a u8) -> u8 => a
+
+fn main() {
+    println(~idu8(15) == idu8(240))
+}

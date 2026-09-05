@@ -1,0 +1,9 @@
+module basics.newtype_compound_intlit
+
+type Meters f64
+
+fn main() {
+    mut a = Meters(1.5)
+    a += 2
+    println(a)
+}
