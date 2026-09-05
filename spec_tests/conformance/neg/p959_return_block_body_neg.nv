@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #959, third form. And this one exists so nobody explains it
+// away as "an arrow-body shortcut": an explicit `return` inside a block body
+// was equally unchecked.
+module neg.p959_return_block_body_neg
+
+fn f() -> int {
+    // nova:expect E7301 -- #959: explicit `return` of a str from a function declared `-> int`
+    return "not an int"
+}
+
+test "should not compile" {
+    assert(f() == 0)
+}

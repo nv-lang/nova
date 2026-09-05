@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #959. Before the fix `nova check` said `ok` and the C
+// compiler was what refused, in C, with a coordinate inside the generated
+// `main.c`. A user reading that has no way back to their own source line.
+module neg.p959_return_str_for_int_neg
+
+// nova:expect E7301 -- #959: a str literal returned from a function declared `-> int`
+fn f() -> int => "not an int"
+
+test "should not compile" {
+    assert(f() == 0)
+}

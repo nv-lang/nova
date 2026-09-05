@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+//
+// Registry 221.1 #959. The body of a function was never checked against its
+// DECLARED RETURN TYPE. The same value at the two other doors is refused:
+// `sink(n)` with `sink(b u8)` and `ro b u8 = n` both give
+// E_IMPLICIT_NARROWING. Only the return door was silent -- and silence here
+// is not a missing diagnostic but a WRONG VALUE: before the fix this built
+// and printed 44, because 300 wraps modulo 256 in the generated C.
+module neg.p959_return_narrowing_neg
+
+// nova:expect E_IMPLICIT_NARROWING -- #959: int -> u8 in return position, the third door of D54
+fn wrap(n int) -> u8 => n
+
+test "should not compile" {
+    assert(wrap(300) == 44)
+}

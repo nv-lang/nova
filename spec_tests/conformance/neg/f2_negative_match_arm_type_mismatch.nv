@@ -4,9 +4,25 @@
 module neg.f2_negative_match_arm_type_mismatch
 
 
-// EXPECT_CC_ERROR initializing
+// EXPECT_COMPILE_ERROR E7301
+//
+// STRENGTHENED 2026-09-05 (registry #959). This fixture used to expect the C
+// COMPILER to catch the mismatch -- its marker matched the word "initializing"
+// in a C diagnostic, which is to say it documented that Nova did NOT catch a
+// match-arm type mismatch at all. Since the return position is checked (#959),
+// Nova refuses it itself, in the user's own file, with a name.
+//
+// A strengthening, not a weakening: D405's amendment of 2026-09-04, point 4,
+// says in as many words that leaning on the C compiler is NOT acceptance for
+// this class -- "checker, not C". Ten other fixtures still lean that way; they
+// are the same debt and not this wave's business.
+//
+// (The old marker's name is deliberately NOT spelled out above: the runner
+// reads markers out of the first lines, and a marker quoted in prose is a
+// marker as far as it is concerned.)
 fn bad(opt Option[int]) -> int {
     match opt {
+        // nova:expect E7301 -- #959: a str leaves through a match arm of a function declared `-> int`
         Some(v) => v
         None    => "not an int"     // type mismatch
     }

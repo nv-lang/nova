@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #959, fourth form -- not numeric width at all. Before the
+// fix this built and printed `true`: an int reached a `bool` return, and C
+// was happy to call any non-zero true.
+module neg.p959_return_int_for_bool_neg
+
+// nova:expect E7301 -- #959: an int returned from a function declared `-> bool`
+fn as_bool(n int) -> bool => n
+
+test "should not compile" {
+    assert(as_bool(5))
+}
