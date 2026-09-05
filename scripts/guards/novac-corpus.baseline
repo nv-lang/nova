@@ -344,8 +344,8 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 63
-behavior-match 55
+contract-match 64
+behavior-match 56
 # 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
 # через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
 # в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
@@ -385,3 +385,11 @@ behavior-match 55
 # (именованный int в f64-цель, E7301) и assign_mismatch/neg_1 (str в int-цель, E7301; у оракула
 # это №967 — `check` ok, падает в Си). Обратная проба: дверь закрыта -> оба нега 0 диагностиков,
 # no-cascade красный, держатель красный; восстановлено.
+# 63/55 -> 64/56 (2026-09-05, волна 274.7 W1 — if-let с `else` и выражением-инициализатором, ярус 0
+# самосборки). Новый файл корпуса `examples/basics/iflet_else.nv`: инициализатор — голое имя
+# (`if Some(v) = o {`, раньше читалось как record-конструктор `o { … }` — ложный отказ) и свободный
+# вызов (`= first(xs) {`, раньше syntax error); `else` после if-let (раньше не читался); then-ветвь
+# с `return`, else уходит в хвост. Форма «обе ветви return последним оператором fn со значением»
+# в корпус НЕ входит: оракул её не собирает (№969) — держатель `pipeline/iflet_test.nv`. Обратные
+# пробы по одной на дверь: инициализатор через `@expr()` — носитель красный ложным отказом; `else`
+# не читается — 4 syntax error; восстановлено.

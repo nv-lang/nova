@@ -894,6 +894,14 @@ fn Checker mut @type_if_let(st Node) -> () {
     @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
     @type_block(kids[7])
     @scope.release(mark)
+    // The ELSE branch (wave W1) is typed with the binder OUT of scope -- it is
+    // the None arm, and the payload's name means nothing there. A block or a
+    // chained if / if-let: the one door for "a body is a block or a statement".
+    if kids.len() > 9 {
+        @type_body(kids[9])
+    } else {
+        // No else branch was written.
+    }
 }
 
 /// A println statement: each argument carries its own printer, so each

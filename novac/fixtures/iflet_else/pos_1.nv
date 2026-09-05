@@ -1,0 +1,33 @@
+module iflet_else.pos_1
+
+// An if-let with an else branch; the initializer a bare NAME (`o`, a parameter)
+// and a free CALL (`first(xs)`) -- the two shapes the old door broke: the name
+// read as a record constructor `o { ... }` (a false refusal), the call a
+// syntax error. The then-branch returns while the else falls through to the
+// tail (wave W1, 274.7 tier 0). Options come from std's Vec: constructing
+// `Some(n)` is the next wave of the tier.
+fn first(xs Vec[int]) -> Option[int] => xs.get(0)
+
+fn show(o Option[int]) -> () {
+    if Some(v) = o {
+        println(v)
+    } else {
+        println(0)
+    }
+}
+
+fn pick(xs Vec[int]) -> int {
+    if Some(v) = first(xs) {
+        return v
+    } else {
+        println(-1)
+    }
+    0
+}
+
+fn main() {
+    ro xs = [5, 9]
+    show(xs.get(1))
+    show(xs.get(7))
+    println(pick(xs))
+}

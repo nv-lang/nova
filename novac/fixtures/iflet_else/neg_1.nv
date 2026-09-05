@@ -1,0 +1,14 @@
+module iflet_else.neg_1
+
+// ONE seeded cause: `else` after an if-let with neither a block nor a chained
+// `if` -- the tree carries the gap and the checker names it once.
+fn show(xs Vec[int], i int) -> () {
+    if Some(v) = xs.get(i) {
+        println(v)
+    } else 5
+}
+
+fn main() {
+    ro xs = [5]
+    show(xs, 0)
+}

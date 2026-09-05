@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `if let ... else` -- one statement node whose else branch is
+// a block or a chained if; NOT taken: `let else` (Nova has no such form).
+// Role: acceptance tests of wave W1 (274.7, tier 0): an if-let reads its
+// initializer as a HEAD expression (a call, a name -- never a constructor),
+// takes an `else` (block or chain), types the else with the binder out of
+// scope, emits it, and counts as terminating when both branches do.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures iflet_else/ through
+// check-novac-no-cascade and the differential.
+// novac/src/pipeline/iflet_test.nv -- if-let with else, as novac writes it.
+
+module novac.pipeline
+
+test "if-let: a call initializer, an else branch, a returning then-branch (W1)" {
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @get(i int) -> Option[T] => None\nexport type Option[T] enum Some(T) | None\n")
+    // POSITIVE FIRST: the forms novac's own sources write. The Option comes
+    // from a call (`xs.get(i)`): constructing `Some(n)` is the next wave.
+    // The initializer is a bare NAME (`o`) and a free CALL (`first(xs)`): the two
+    // shapes the old door broke -- the name read as a record constructor, the
+    // call a syntax error. A method call (`xs.get(i)`) parsed either way, which
+    // is why the reverse probe needs these two.
+    ro (d0, c0) = compile_to_c("fn first(xs Vec[int]) -> Option[int] => xs.get(0)\nfn show(o Option[int]) -> () {\n if Some(v) = o {\n  println(v)\n } else {\n  println(0)\n }\n}\nfn pick(xs Vec[int]) -> int {\n if Some(v) = first(xs) {\n  return v\n } else {\n  println(-1)\n }\n 0\n}\nfn main() {\n ro xs = [5, 9]\n show(xs.get(1))\n println(pick(xs))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // The else is in the C, and the binder is bound from the payload.
+    assert(c0.contains("    else {"), c0)
+    assert(c0.contains(".value;"), c0)
+    // BOTH branches returning: novac compiles it (the oracle's C does not -- its
+    // row; divergences.allow), and the tail rule knows the fn ends there.
+    ro (d1, c1) = compile_to_c("fn pick(xs Vec[int], i int) -> int {\n if Some(v) = xs.get(i) {\n  return v\n } else {\n  return -1\n }\n}\nfn main() {\n ro xs = [5, 9]\n println(pick(xs, 0))\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("return -1") || c1.contains("return (-1)") || c1.contains("checked_neg"), c1)
+    // A chained `else if` after an if-let goes through the statement door.
+    ro (d2, c2) = compile_to_c("fn show(xs Vec[int], i int, f bool) -> () {\n if Some(v) = xs.get(i) {\n  println(v)\n } else if f {\n  println(1)\n } else {\n  println(2)\n }\n}\nfn main() {\n ro xs = [5]\n show(xs, 3, true)\n}", std)
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("    else     if ("), c2)
+    // The binder is NOT in scope in the else branch.
+    ro (d3, _) = compile_to_c("fn show(xs Vec[int], i int) -> () {\n if Some(v) = xs.get(i) {\n  println(v)\n } else {\n  println(v)\n }\n}\nfn main() {\n ro xs = [5]\n show(xs, 0)\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains("unknown name"), messages(d3))
+    // `else` without a block: the gap is named once.
+    ro (d4, _) = compile_to_c("fn show(xs Vec[int], i int) -> () {\n if Some(v) = xs.get(i) {\n  println(v)\n } else 5\n}\nfn main() {\n ro xs = [5]\n show(xs, 0)\n}", std)
+    assert(d4.len() == 1, messages(d4))
+}

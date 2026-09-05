@@ -1053,3 +1053,35 @@ fn main() { println(kind_of("mut")) }
 про написание вовсе — на него отвечает `sem.mode_of_leaf` по токену.
 
 **Канал:** компилятор-фикс каналом 196; реестр 221.1, `№TBD`.
+
+## if-let с `else`, обе ветви `return`, последним оператором fn со значением — оракул эмитит unit-временную в тип возврата (О-1в, 2026-09-05)
+
+**Форма** (`novac/src/pipeline/iflet_test.nv`, d1; `docs/plans/repro/969-iflet-else-both-return/`):
+
+```nova
+fn pick(xs Vec[int], i int) -> int {
+    if Some(v) = xs.get(i) {
+        return v
+    } else {
+        return -1
+    }
+}
+```
+
+* оракул: `check` — **PASS**; `build` — **отказ clang**: `initializing 'nova_int' (aka 'long
+  long') with an expression of incompatible type 'nova_unit'` — строка `nova_int _nv_tmp_462 =
+  _nv_if_let_461;`. If-let как последний оператор со значением у обеих ветвей лоурится как
+  ВЫРАЖЕНИЕ типа unit и присваивается во временную типа возврата;
+* novac: компилирует (волна W1): `if (tmp.tag == Some) { … return v; } else { return -1; }` — форма
+  binds.nv и её соседей; держатель `pipeline/iflet_test.nv` (d1).
+
+**Границы класса** (четыре пробы оракулом): if-let с else в unit-функции (println в обеих ветвях)
+— собирается; if-let БЕЗ else с хвостом `-1` — собирается; с `else { return -1 }` — падает, и с
+параметром-Option вместо вызова — тоже. Родня записи «Вложенный `if Some(..) =` с `return`»
+выше (та же временная `_nv_if_let_N` и её область).
+
+**Учёт:** форма НЕ в фикстурах novac — дифференциал не умеет пропускать по `novac/divergences.allow`
+файл, который оракул не собирает (allow покрывает расхождение ВЕРДИКТОВ, а проверка поведения зовёт
+смоук и падает на сборке оракула — замечание к инструменту); держится держателем `iflet_test.nv` (d1)
+и пробой `target/repro969/pick_only.nv`. Расхождение в пользу Карины. **Канал:** компилятор-фикс каналом
+196; реестр 221.1 — №969 (интегратор, 2026-09-05).

@@ -33,6 +33,14 @@ import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit}
 fn stmt_terminates(st Node) -> bool {
     ro k = st.kind_of()
     if k == NodeKind.RetStmt { return true }
+    // An if-let ends the function when BOTH its branches do (wave W1): the
+    // then-block and the else. Without an else the None path falls through,
+    // exactly as an `if` without else.
+    if k == NodeKind.IfLet {
+        ro lk = branch_children(st)
+        if lk.len() <= 9 { return false }
+        return block_terminates(lk[7]) && block_terminates(lk[9])
+    }
     if k != NodeKind.IfStmt { return false }
     ro kids = branch_children(st)
     if kids.len() <= 4 { return false }
@@ -46,7 +54,7 @@ fn stmt_terminates(st Node) -> bool {
 /// through the same door.
 fn block_terminates(b Node) -> bool {
     ro k = b.kind_of()
-    if k == NodeKind.IfStmt { return stmt_terminates(b) }
+    if k == NodeKind.IfStmt || k == NodeKind.IfLet { return stmt_terminates(b) }
     if k != NodeKind.Block { return false }
     for s in branch_children(b) {
         if stmt_terminates(s) { return true }
