@@ -1,0 +1,9 @@
+// CONTROL. Identical shape, but the function's name is NOT carried by any
+// variant. This is what makes the two carriers a defect rather than a
+// limitation of sums: the collision is the whole cause.
+//   nova check -> ok
+//   nova build -> ok
+//   run        -> 42
+type Color enum Red | Green
+fn Crimson() -> int => 42
+fn main() Io -> () => println(Crimson())

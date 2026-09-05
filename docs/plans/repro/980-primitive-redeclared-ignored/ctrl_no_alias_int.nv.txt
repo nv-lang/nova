@@ -1,0 +1,7 @@
+// CONTROL for the second carrier: the same program with no alias at all.
+//   run -> 7   (identical). This is the control I was missing at first, and
+//   it is the one that decides the class: with and without the declaration
+//   the behaviour is the same, so the alias is accepted and DISCARDED --
+//   it is a missing diagnostic, not a silent change of semantics.
+fn whole() -> f64 => 7
+fn main() Io -> () => println(whole())

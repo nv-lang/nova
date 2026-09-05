@@ -1,0 +1,7 @@
+// CARRIER 2. The same collision with a CONST instead of a function, so the
+// defect is not about calls: any entity sharing a variant's name is enough.
+//   nova check -> ok
+//   nova build -> the same C error about NovaValue_Color
+type Color enum Red | Green
+const Red = 5
+fn main() Io -> () => println(Red)

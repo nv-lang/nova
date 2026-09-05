@@ -1,0 +1,12 @@
+// CARRIER. `f64` is a primitive, and D35 says primitives are CLOSED types:
+// only methods may be added, never a redeclaration of the name
+// (spec/decisions/03-syntax.md:1728-1730, the clause sits inside the D35
+// methods section rather than in a block of its own -- which is why a search
+// for the words "forbidden"/"may not" misses it).
+// The oracle accepts this redeclaration and then ignores it entirely.
+//   nova check -> ok
+//   nova build -> ok
+//   run        -> 1.5      <- exactly what it prints WITHOUT the alias
+type f64 alias int
+fn half() -> f64 => 1.5
+fn main() Io -> () => println(half())

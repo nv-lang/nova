@@ -1,0 +1,4 @@
+// CONTROL for the first carrier: the same program with no alias at all.
+//   run -> 1.5   (identical)
+fn half() -> f64 => 1.5
+fn main() Io -> () => println(half())
