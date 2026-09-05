@@ -1,0 +1,9 @@
+module probe760s
+
+type TyId int
+
+fn bad(t TyId) -> TyId => t
+
+fn main() {
+    println(1)
+}

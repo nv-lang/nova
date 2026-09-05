@@ -1,0 +1,7 @@
+module probe760b
+
+import ./helper.{used}
+
+fn main() {
+    println(used())
+}
