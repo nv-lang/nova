@@ -164,6 +164,54 @@ fn synth_exit_status(success: bool) -> ExitStatus {
     ExitStatus::from_raw(if success { 0 } else { 1 })
 }
 
+/// Имя сигнала, которым убит процесс, — или пустая строка, если он завершился
+/// сам (реестр 221.1 №975).
+///
+/// ЗАЧЕМ. `ExitStatus::code()` на Unix возвращает `None` РОВНО тогда, когда
+/// процесс завершён сигналом, а вызывающий сводит это к `-1`. В отчёте все
+/// сигналы становятся неотличимы: OOM-killer (`SIGKILL`), переполнение стека
+/// (`SIGSEGV`) и паника рантайма (`SIGABRT`) печатаются ОДНИМ И ТЕМ ЖЕ
+/// `exit=-1 (0xFFFFFFFF)`. Соседний комментарий ниже верно говорит, что код
+/// возврата диагностичен, и перечисляет NT-статусы — но это ВИНДОВЫЕ коды, а
+/// юниксовый эквивалент терялся. Из-за этого причина падения
+/// `presume_446_stress` на CI (реестр №968, №862, №855) не устанавливалась
+/// месяцами: три подозреваемых ведут к разной работе, а различает их ровно
+/// номер сигнала.
+///
+/// На Windows `code()` всегда `Some`, поэтому там возвращается пустая строка и
+/// вид сообщения не меняется.
+#[cfg(target_os = "windows")]
+fn signal_note(_status: &ExitStatus) -> String {
+    String::new()
+}
+#[cfg(not(target_os = "windows"))]
+fn signal_note(status: &ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match status.signal() {
+        None => String::new(),
+        Some(n) => {
+            // Только те, что реально встречаются у нас; остальные — числом.
+            let name = match n {
+                2 => "SIGINT",
+                4 => "SIGILL",
+                6 => "SIGABRT",
+                8 => "SIGFPE",
+                9 => "SIGKILL",
+                11 => "SIGSEGV",
+                13 => "SIGPIPE",
+                15 => "SIGTERM",
+                24 => "SIGXCPU",
+                _ => "",
+            };
+            if name.is_empty() {
+                format!(", убит сигналом {}", n)
+            } else {
+                format!(", убит сигналом {}({})", name, n)
+            }
+        }
+    }
+}
+
 /// Капчуренный output после run с timeout. Заменяет `Output` из
 /// `Command::output()` — там нет варианта «убит по таймауту».
 pub struct CapturedOutput {
@@ -3874,10 +3922,11 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                     let last_lines: Vec<&str> =
                         stdout.lines().chain(stderr.lines()).rev().take(6).collect();
                     let tail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                    let sig = signal_note(&run_status);
                     if tail.trim().is_empty() {
-                        format!("процесс умер молча, exit={} (0x{:X}), вывода нет", exit, exit)
+                        format!("процесс умер молча, exit={} (0x{:X}){}, вывода нет", exit, exit, sig)
                     } else {
-                        format!("exit={} (0x{:X}) | {}", exit, exit, tail)
+                        format!("exit={} (0x{:X}){} | {}", exit, exit, sig, tail)
                     }
                 };
                 // Plan 221.1 №158: merged (folder-module) CU — a genuine crash
