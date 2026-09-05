@@ -7919,6 +7919,26 @@ Amends [D423](#d423) (§R6 явно выносил div/neg за рамки — �
 
 **(R5) Компилятор НЕ менялся.** Реализация целиком в `.nv` (`std/prelude/protocols.nv` + `std/prelude/errors.nv` + facade `std/prelude.nv`) поверх уже принятых `SignedInts`/`UnsignedInts`/`Ints` type-set'ов (D310) и уже рабочего `@ as i64`/`@ as u64`-паттерна (D423/D427-семья, `duration/core.nv`). `compiler-codegen/src/{types/mod.rs, codegen/emit_c.rs, lints.rs}` не тронуты (заняты параллельной Duration-волной на момент реализации).
 
+> **АМЕНДМЕНТ 2026-09-04 — (R6) `try_to_<T>` для float (решение владельца; исследование
+> `docs/dev/research/2026-09-04-numeric-widening.md` §5.5, строка реестра «D54 отсылает к
+> `i16.try_from`»).** До этого дня проверяемой конверсии float → целое в языке не было вовсе:
+> D54 отсылал к `i16.try_from(f)`, которого не существовало (D77 ретрагирован 2026-07-06), а
+> blanket'ы R2 ограничены `Ints`. Заводится **вторая бланкет-семья того же имени**:
+> `fn[S Floats] S @try_to_<T>() -> Result[T, RangeError]` для каждого целого `<T>` из
+> `i8/i16/i32/i64/int/u8/u16/u32/u64/uint` (set `Floats` = `f32 | f64`, D310, объявлен тем же
+> днём). **Семантика — «влезло ли», как у целочисленных R2, а не «без потерь ли»:** дробная
+> часть усекается к нулю, затем проверяется диапазон цели: `(2.5).try_to_i16() == Ok(2)`,
+> `(-2.5).try_to_i16() == Ok(-2)`, `(70000.5).try_to_i16() == Err(RangeError)`,
+> `(-1.0).try_to_u16() == Err(RangeError)`, `NaN`/`±∞` → `Err(RangeError)`. Это зеркало `as`
+> (D54: усечение + насыщение) с `Err` вместо насыщения; доноры — Swift `Int16(f)` (усекает,
+> вне диапазона trap) и C# `checked((short)d)`; у Rust и Go проверяемой формы нет. Вариант
+> «точно представимо» (Swift `Int16(exactly:)`, `2.5 → Err`) НЕ принят под этим именем —
+> при нужде заводится отдельным именем. `RangeError` — тот же unit-тип (R1). Реализация —
+> в `.nv` (R5), рядом с целочисленными blanket'ами; тесты — границы `T.MAX ± 1`, `T.MIN ± 1`,
+> `x.5`, NaN, ±∞ для `f32` и `f64`. Пока семья не заведена, вызов `f.try_to_i16()` на float
+> ОБЯЗАН быть ошибкой чекера `E_TYPE_NOT_IN_SET` — сегодня он молча проходит (строка реестра
+> «set-bound blanket-метода не проверяется при вызове», К1).
+
 ### Границы
 
 **Известный, НЕ новый разрыв, задетый при написании тестов:** generic type-set-bound бланкет-метод (`fn[S Ints] S @try_to_<T>()`), вызванный на receiver'е, который сам — bound переменная `for`-цикла (`for v in vec { v.try_to_u8() }`), падает в pre-existing `[P67-LEGACY]` "method call return type unknown" (тот же класс, что уже задокументирован в заголовке `std/src/math/overflow_policy_test.nv` для inline-conversion-call receiver — здесь тот же checker-gap для другого receiver-shape, `for`-bound Ident, а не Call). НЕ specific для `try_to_*` (общий generic-blanket-dispatch разрыв, вне зоны этой волны) — обходится в тестах чтением элемента в типизированную `ro`-локаль перед вызовом (тот же обход, что весь остальной файл уже применяет). Followup НЕ заводился отдельно — покрыт существующим общим "generic-blanket receiver must be typed local" классом (`[P67-LEGACY]`, см. D423/D427 §«Известные разрывы»/§R4.3).

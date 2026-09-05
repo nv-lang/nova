@@ -501,6 +501,17 @@ f64.try_parse(s str) -> Option[f64]
 **Acronyms — PascalCase, not UPPERCASE.** `Db`, not `DB`. `Http`, not `HTTP`.
 `Json`, not `JSON`. `Url`, not `URL`. Rule: an acronym is an ordinary word.
 
+**Where a module name comes from — it is not arbitrary.** The source root is either
+the package itself or its `src` folder (`[lib] src` accepts only `"."` and `"src"`;
+a third value is rejected by the compiler). The word `src` never enters a module name.
+Module name = root name + the folders on the path from the root: in package `http` the
+file `src/server/router.nv` declares `module http.server`. Files lying directly in the
+root are ONE module named after the root, and see each other without imports. For an
+application without a library name the root is called after the folder that owns
+`src`: `examples/flagship/http_proxy_chain/src/*.nv` → `module http_proxy_chain`,
+`src/app/*.nv` → `module http_proxy_chain.app`. Details —
+[D78](decisions/07-modules.md) (rev-6).
+
 **Reserved method names** (operator overloading, [D46](decisions/03-syntax.md#d46)):
 `@plus`, `@minus`, `@times`, `@div`, `@rem`, `@neg`, `@bitand`, `@bitor`,
 `@bitxor`, `@bitnot`, `@shl`, `@shr`, `@equal`, `@compare`, `@index`.
@@ -756,6 +767,13 @@ the default for all fields (`type Job priv { ... }`) — a field is physically
 unavailable outside, the compiler checks it. The `_`-prefix as
 "privacy by contract" is not used in Nova — privacy
 only compile-time, via `priv`.
+
+**The visibility scale in full** ([D457](decisions/02-types.md#d457)), narrow to
+wide: `priv(file)` — this file only · `priv` / no modifier — the module, i.e. all peer
+files of the folder · **`priv(package)` — every module of its own package, nothing
+outside** · `export` — outside the module. The `priv(package)` step is what Rust calls
+`pub(crate)`; we say it from the other side, "private up to the package boundary", and
+stay in the `priv(<scope>)` family.
 
 **Canonical field access — same-name property methods via
 arity-based overloading** (D84 + D117):
@@ -1633,6 +1651,8 @@ fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](x
 
 If the pattern repeats — extracted into a named protocol (`type Ord
 protocol { ... }`).
+
+**A bound in overload selection is a filter, not a ranking** ([D464](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)). A candidate whose bound does not hold on the inferred substitution drops out; a single survivor is taken silently; more than one survivor without structural dominance (concrete over generic, D84) is an ambiguity error — "whose bound is narrower" is never compared; no survivor is a bound error (D72). Checked in the checker from the bound itself, before monomorphisation; codegen receives a settled decision.
 
 ### Type-set — a bound by membership, not by structure
 

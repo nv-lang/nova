@@ -100,6 +100,14 @@ error, not a modular wrap (`-200u8` does not become `56`); what you mean is writ
 |---|---|---|
 | `i64 → i32/i16/i8` | `as` | wraparound (modulo 2^N) |
 | `u64 → u32/u16/u8/byte` | `as` | wraparound |
+| `iN → uM`, **including `int → uint`** | `as` | bit-pattern (`(-1 as int) as uint == 2^64−1`; the D130 Q2 saturation special case was retired 2026-09-04 — one table for the whole family) |
+| `int ↔ i64`, `uint ↔ u64` | `as` | no-op on the 64-bit bootstrap, but **distinct types** (D129/D130): the cast is required |
+
+All integer → integer rows above are **one operation**: take the low M bits of the source and
+read them as the target type. "wraparound" and "bit-pattern" are the same thing seen from two
+sides, so `u64 as u8` and `i32 as u16` need no manual `& 0xFF` / `& 0xFFFF` — `as` is that mask
+(`0x1234 as u8 == 52`, `70000 as u16 == 4464`). Unary `~` keeps the operand's type (`~5u8 == 250`,
+`~5i32 == -6`) and is defined for integers and integer newtypes only (D46 amendment 2026-07-27).
 | `f64 → f32` | `as` | IEEE rounding (precision loss) |
 | **`f64/f32 → iN/uN`** | `as` | **saturation** + NaN→0 + ±∞→bounds |
 
@@ -124,6 +132,23 @@ ro ok = (100 as u32).try_to_u8()       // Ok(100 as u8)
 ro err = (300 as u32).try_to_u8()      // Err(RangeError) — не влезло
 ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — отрицательное → unsigned
 ```
+
+**FROM A FLOAT TOO, UNDER THE SAME NAME (D430 amendment R6, 2026-09-04).** A second
+blanket family, `fn[S Floats] S @try_to_<T>()`, covers `f32` and `f64`. The semantics
+are the integers' semantics, and that is the point of the amendment: the question is
+**"did it fit", not "was it exact"**. The fractional part truncates toward zero, then
+the target's range is checked; NaN and the infinities are `Err`.
+
+```nova
+ro ok  = (2.5).try_to_i16()            // Ok(2) — усечено к нулю, влезло
+ro neg = (-2.5).try_to_i16()           // Ok(-2) — к нулю, не вниз
+ro big = (70000.5).try_to_i16()        // Err(RangeError) — не влезло
+ro nan = (0.0 / 0.0).try_to_i16()      // Err(RangeError)
+```
+
+One name, one meaning across the whole family: a method whose promise shifts with the
+kind of its receiver reads as one thing and behaves as two. Donors: Swift's `Int16(f)`,
+C#'s `checked`.
 
 `RangeError` — a unit type ("didn't fit", no payload — the fact itself is
 exhaustive). `as` remains the fast truncating cast, unchanged — `try_to_*`
@@ -459,6 +484,15 @@ Plan 214.1, 2026-07-24).
 `as` does **not** engage `#coerce` (D429 R10) — `as` remains a closed,
 documented-in-spec set of conversions; `#coerce` is an open user registry;
 mixing the two would give a third door to one pair.
+
+**Amendment (#520, 2026-08-09):** the finalize lane — consumption EVERYWHERE, not
+only in an explicit call. `ro s str = sb` (an annotated `let`), `Rec { s: sb }` (a
+record-literal field), `h.accept(sb)` (a method argument) and `[sb]` under an
+annotated `let` discharge `sb`'s obligation exactly like an explicit
+`sb.into_str()` — using `sb` after ANY of these forms is caught by the same
+use-after-consume (D131), and a type with `@cleanup` gets no second automatic call
+on scope exit. Return and a free-function call argument already worked this way
+before the amendment; detail — [D429 amendment](decisions/02-types.md#d429).
 
 ---
 

@@ -1,0 +1,9 @@
+// Registry TBD: `fn[S Ints] S @try_to_i16()` is a blanket bounded by the Ints type-set;
+// f64 is not a member, yet the method call passes `nova check`.
+module method_f64
+
+fn main() Io -> () {
+    ro f f64 = 2.5
+    ro r = f.try_to_i16()
+    println(r.is_ok())
+}

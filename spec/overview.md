@@ -128,7 +128,14 @@ language explicitly optimized for the pair "LLM writes, human reviews".
    when a closure crosses the boundary as DATA (as a parameter/via a channel),
    not only on a direct syntactic capture. The same covers a precomputed
    handler (`ro h = |..| {..}` then `with X = h { … }`) and the transitive
-   installation of a handler by parameter (A-V10, D441 §5, 2026-07-31). A
+   installation of a handler by parameter (A-V10, D441 §5, 2026-07-31).
+   An explicit move into the child (`spawn`/`detach consume a, b { … }`, D415 §4)
+   hands ownership to the child's body as a whole: the auto-`@cleanup` fires on exit
+   from the child's body — and if the body consumed the binding EXPLICITLY
+   (`a.close()`, passing into a `consume` parameter) it does not fire at all
+   (amendment #456, 2026-08-08: the same disarm points and runtime drop flag as
+   [D432](decisions/02-types.md#d432) §4/§5; a second cleanup of a consumed value
+   would break exactly-once D131/D133). A
    separate axis is **`#thread_affine extern fn`** (A-V10, D441 §5): marks an
    M:N-unsafe C-side list (thread-local state), raised transitively along the
    call graph, gated at the `spawn`/`detach`/`parallel for` boundary.
