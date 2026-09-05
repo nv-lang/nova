@@ -6,8 +6,8 @@
 module neg.p959_return_int_for_bool_neg
 
 // nova:expect E7301 -- #959: an int returned from a function declared `-> bool`
-fn as_bool(n int) -> bool => n
+fn to_bool(n int) -> bool => n
 
 test "should not compile" {
-    assert(as_bool(5))
+    assert(to_bool(5))
 }

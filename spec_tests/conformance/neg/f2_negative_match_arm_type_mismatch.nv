@@ -21,6 +21,7 @@ module neg.f2_negative_match_arm_type_mismatch
 // reads markers out of the first lines, and a marker quoted in prose is a
 // marker as far as it is concerned.)
 fn bad(opt Option[int]) -> int {
+    // nova:allow W_MANUAL_COALESCE -- this shape IS the subject: the fixture exists to show that the two arms have INCOMPATIBLE types, and the canonical `X ?? D` would check the fallback at a different door and test a different thing. Right about ordinary code, wrong here.
     match opt {
         // nova:expect E7301 -- #959: a str leaves through a match arm of a function declared `-> int`
         Some(v) => v

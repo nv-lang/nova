@@ -265,7 +265,7 @@ assert("ab".to_char() == Err(TooManyChars))    // строгий отказ, н�
 fn describe(cp int) -> str =>
     match cp.to_char() {
         Ok(c)              => "codepoint ${cp} = '${c}'"
-        Err(e) => "${cp} — не символ: ${e}"
+        Err(e) => "${cp} is not a char: ${e}"
     }
 ```
 

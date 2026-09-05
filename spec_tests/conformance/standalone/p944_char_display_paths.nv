@@ -35,10 +35,18 @@ fn show(c char) -> str => c.to_str()
 fn main() Io -> () {
     ro a = 'A'
     ro cy = 'я'
-    ro v = Vec[char].of('A', 'B')
+    ro v = ['A', 'B']
     print("print=")
     print(a)
-    print(" to_str=${a.to_str()} interp=${a} param=${show(a)} cyr=${cy} cyrdirect=")
+    // `.to_str()` is printed DIRECTLY rather than through `${...}`: the interpolated
+    // form draws W_REDUNDANT_TO_STR_INTERP, and that lint is right about ordinary code
+    // (interpolation displays a `char` on its own). Here the call is not redundant --
+    // it IS one of the four display paths being pinned -- but the finding is reported
+    // at file level and cannot be suppressed on a line, so the path is kept and the
+    // interpolation is dropped. Same output, same coverage, no silenced lint.
+    print(" to_str=")
+    print(a.to_str())
+    print(" interp=${a} param=${show(a)} cyr=${cy} cyrdirect=")
     print(cy)
     print(" vec=${v} println=")
     // `println` стоит ПОСЛЕДНИМ нарочно: его перевод строки разрезал бы
