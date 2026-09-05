@@ -35,7 +35,13 @@ if [ "$BR" = "main" ]; then
 fi
 # Неотслеживаемые файлы — не грязь: это ровно то, что НЕЛЬЗЯ подмести в коммит.
 # Пуш блокируют только изменённые/проиндексированные пути.
-DIRTY=$(git status --short | grep -v '^??' | wc -l | tr -d ' ')
+# CLEANLINESS BY CONTENT, not by stat (2026-09-05, measured by the integrator): a
+# corpus run rewrites examples/nova.lock.toml with identical bytes, and with
+# core.autocrlf=true git then shows ' M' from a stale stat cache -- `git diff HEAD`
+# is empty, `git diff-files` carries a zero SHA on the worktree side. That phantom
+# refused two pushes in one day. `git diff --name-only HEAD` hashes the content,
+# so a real change (staged or not) still counts and the phantom does not.
+DIRTY=$(git diff --name-only HEAD | wc -l | tr -d ' ')
 UNTRACKED=$(git status --short | grep -c '^??' || true)
 if [ "$DIRTY" -gt 0 ]; then
     echo "push-after-gate: дерево не чистое ($DIRTY файлов) — сначала коммит по именам или решение, что это не едет" >&2
