@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/typeref_rules.nv -- the DECLAREDNESS of a written type name, in
+// every signature position: receiver, parameter, return, record field, newtype
+// representation, variant payload -- and inside them, generic arguments (any
+// depth), slice elements, tuple components.
+//
+// Donor: rustc's resolution of type paths (`Res::Err` -> E0412 "cannot find type
+//        `X` in this scope"): a written type name resolves to a declaration or
+//        the program is refused AT THE NAME, before any use of it. Go's
+//        `undefined: X` in typexpr.go is the same door. NOT taken: rustc's
+//        "did you mean" candidates (a spelling distance needs a walk over every
+//        declared name, which this subset does not own yet).
+// Role: check (layer 4) -- reads the tree and the registry, never resolves a
+//       type itself: sem's collector is TOLERANT (an unknown name answers
+//       `no_ty()`), and this file is the judge that tolerance was written for.
+// Used by: check.nv (the FnDecl and TypeDecl/SumDecl arms of the shape walk),
+//          params.nv (the parameter binder stays silent where this rule spoke).
+// Guarded by: check-novac-file-size.py, pipeline/typeref_test.nv (pins the KEY
+//             PHRASE `undeclared type name`, never a whole sentence), the
+//             fixtures undeclared_type/ through the differential (allow-listed:
+//             the oracle accepts every one of them -- registry #971).
+//
+// WHY THIS FILE EXISTS (registry #970, measured 2026-09-05). Collection answered
+// `no_ty()` for `-> Strng` and nobody judged the declaration: `fn make() ->
+// Strng => "x"` PASSED check while unused, and a call of it died as an ICE
+// ("call of a fn without a declared return type") -- a compiler-bug message
+// about the user's typo, at the wrong place, for the wrong reason. A record
+// field `v Nmbr`, a receiver `fn Bxo @get()`, a payload `Dot(Nmbr)`, a return
+// `-> []Nmbr` and `-> (int, Nmbr)` passed the same way. The PARAMETER position
+// did refuse, but named the subset ("does not know this type yet", or "write
+// its type arguments" about `Vec[Nmbr]`) where the truth was a misspelling: the
+// reader goes to fix the compiler's limits instead of one letter. One door now,
+// every position, one sentence.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../builtins.{SELF_TYPE, SUM_MARKER, ALIAS_MARKER, VALUE_MARKER, PROTOCOL_MARKER}
+import ../sem.{FnRow, raw_row}
+import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot, param_type_at, field_type_at}
+import ../sem.{param_name_at}
+
+/// The KEY PHRASE of the refusal. The holder pins this and nothing longer: a
+/// rewording of the rest of the sentence must not redden a test, or the next
+/// window weakens the pin instead of reading the message (the #959 lesson).
+const UNDECLARED_TYPE_PHRASE = "undeclared type name"
+
+/// The names the LANGUAGE spells as types and this subset's registry does not
+/// hold. For them "undeclared" would be a lie -- the word exists, novac has not
+/// compiled it -- so they keep the subset refusal of the position they stand in.
+fn is_language_type_word(name str) -> bool =>
+    name == "unit" || name == "never" || name == "any"
+
+/// The sentence, built around the name. `byte` gets its own: the language
+/// removed it (D367) and the canonical spelling is the whole fix.
+fn undeclared_type_msg(name str) -> str {
+    if name == "byte" {
+        return "${UNDECLARED_TYPE_PHRASE} `byte`: the language removed it (D367) -- write `u8`"
+    } else {
+        // Every other name: no declaration anywhere novac can see.
+    }
+    "${UNDECLARED_TYPE_PHRASE} `${name}`: no type of this name is declared in this file or in the declarations handed to novac -- a misspelling, or a type from a module this file does not import"
+}
+
+/// Is `name`, written in a type position of a declaration binding `tps`, a
+/// DECLARED type? A type parameter, `Self`, a registry declaration (generic head
+/// or not -- arity is another rule's question), a protocol (a bound in type
+/// position is another mistake, named by the protocol rules) and a language
+/// type word all count as declared HERE: only a name nobody declared is this
+/// door's business.
+fn Checker @type_name_is_declared(name str, tps []str) -> bool {
+    if name == SELF_TYPE { return true }
+    if tparam_slot(name, tps).is_some() { return true }
+    if @ctx.defs.type_decl(name).is_some() { return true }
+    if @ctx.protos.def_of(name).is_some() { return true }
+    is_language_type_word(name)
+}
+
+/// The FIRST undeclared type name inside the written reference `kids[at..]` --
+/// the head, a generic argument at any depth, a slice element, a tuple
+/// component -- or None. The walk stops at `=`: a parameter's default is an
+/// EXPRESSION, and its names are values, not types.
+///
+/// A predicate and not a refusal, because two askers want different things: the
+/// declaration rule refuses, the parameter binder only asks whether the
+/// declaration rule already spoke (and stays silent if so -- the cascade class).
+fn Checker @undeclared_in_type_ref(kids []Node, at int, tps []str) -> Option[Node] {
+    for i in at..kids.len() {
+        ro c = kids[i]
+        match c {
+            Leaf(t) => {
+                if t.kind == TokenKind.Assign { return None }
+                if t.kind == TokenKind.Ident && !@type_name_is_declared(t.text, tps) {
+                    return Some(c)
+                } else {
+                    // Punctuation, a mode word, `@`, or a declared name: not a finding.
+                }
+            }
+            Branch { kind, .. } => {
+                if kind == NodeKind.Generics {
+                    ro inner = @undeclared_in_type_ref(branch_children(c), 0, tps)
+                    if inner.is_some() { return inner }
+                } else {
+                    // Any other branch inside a type reference is not a name.
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Refuse the first undeclared name of the reference at `kids[at..]`, if any,
+/// and say whether one was refused. One name, one diagnostic: the SECOND
+/// undeclared name of the same reference is not reported -- fix the first and
+/// the next run names the next, exactly as the parameter binder works.
+fn Checker mut @report_if_type_ref_undeclared(kids []Node, at int, tps []str) -> bool {
+    match @undeclared_in_type_ref(kids, at, tps) {
+        None => false
+        Some(n) => {
+            @report_first_leaf_of([]Node.of(n), undeclared_type_msg(leaf_text(n)))
+            true
+        }
+    }
+}
+
+/// Is this parameter written `[mode] name type [= default]`? Counted by the
+/// identifier leaves that stand DIRECTLY in the parameter at paren depth zero
+/// and before any `=`: the name and the type's head make two (a generic
+/// argument lives inside its Generics branch, a component inside its parens,
+/// a mode is a keyword). A third one (`own v int`, `fn main junk here ()`) is
+/// a shape the parameter rules refuse on their own -- and the same door keeps
+/// the binder in params.nv silent for exactly the parameters this rule judges,
+/// so neither speaks twice and neither is silent alone.
+fn param_shape_is_plain(pk []Node) -> bool {
+    // The NAME slot must hold an identifier: `own v int` puts the word `own`
+    // there (a keyword the mode reader does not know), and the reader then
+    // calls `v` the type -- measured on param_mode/neg_1.
+    ro n = param_name_at(pk) ?? -1
+    if n < 0 { return false }
+    if leaf_kind(pk[n]) != TokenKind.Ident { return false }
+    mut idents = 0
+    mut depth = 0
+    for c in pk {
+        match c {
+            Leaf(t) => match t.kind {
+                Assign => { return idents <= 2 }
+                LParen => { depth += 1 }
+                RParen => { depth -= 1 }
+                Ident => {
+                    if depth == 0 {
+                        idents += 1
+                    } else {
+                        // A component name inside parens: part of the type.
+                    }
+                }
+                // Mode keywords, the slice sugar, brackets, commas: not names.
+                _ => {}
+            }
+            Branch { .. } => {}
+        }
+    }
+    idents <= 2
+}
+
+/// Does every parameter of the declaration have the plain shape AND a type
+/// slot? One malformed parameter makes the whole signature another rule's
+/// refusal (the missing-type rule, `@report_if_missing_type(`), and this
+/// door then judges none of it.
+fn params_well_formed(fk []Node) -> bool {
+    for c in fk {
+        if c.kind_of() != NodeKind.Param { continue }
+        ro ck = branch_children(c)
+        if !param_shape_is_plain(ck) { return false }
+        if (param_type_at(ck) ?? -1) < 0 { return false }
+    }
+    true
+}
+
+/// The words a type declaration writes between its name and its body or
+/// representation -- not type names, whatever the lexer made of them.
+fn is_decl_marker(word str) -> bool =>
+    word == SUM_MARKER || word == ALIAS_MARKER || word == VALUE_MARKER || word == PROTOCOL_MARKER
+
+/// Does the declaration carry a parse error anywhere in its signature -- a
+/// direct child, or inside its receiver, parameters, return, generics? (The
+/// body is not asked: a broken statement inside a fn says nothing about the
+/// names the signature wrote.)
+fn has_err_child(kids []Node) -> bool {
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { kind, .. } => {
+                if kind == NodeKind.Err { return true }
+                ro nested = kind == NodeKind.Recv || kind == NodeKind.Param ||
+                    kind == NodeKind.RetType || kind == NodeKind.Generics
+                if nested && has_err_child(branch_children(c)) { return true }
+            }
+        }
+    }
+    false
+}
+
+/// The type parameters a fn declaration binds -- its own (`fn box[T]`) and its
+/// receiver's (`fn Vec[T] @get`, `fn[T] []T @map`: the parser keeps the
+/// receiver's generics INSIDE the Recv node, so a top-level walk misses them).
+fn decl_type_params(fk []Node) -> []str {
+    mut out = generic_names(fk)
+    for c in fk {
+        if c.kind_of() != NodeKind.Recv { continue }
+        out.append(generic_names(branch_children(c)))
+    }
+    out
+}
+
+/// The type parameters of a callable ROW -- the same names `decl_type_params`
+/// read at collection, asked from the table by the binder, which has the row
+/// and not the declaration.
+fn Checker @row_type_params(row FnRow) -> []str {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    // A slice VIEW of the table (D262): the names are read, never copied.
+    @ctx.fns.tparams[fd.tparam_off..fd.tparam_off + fd.tparam_cnt]
+}
+
+/// Every type name a FN declaration writes -- receiver, parameters, return --
+/// must be declared. One diagnostic per position: each undeclared name is its
+/// own cause, and a reader fixing `Vecc` must not be told about `Strng` twice.
+fn Checker mut @report_if_decl_types_undeclared(kids []Node) -> () {
+    // A declaration the PARSE already refused (`fn main junk here () { }`) is
+    // recovery debris: the stray words land where types are read, and a second
+    // sentence about them is the cascade class. The Err node says it once.
+    if has_err_child(kids) { return }
+    // A SIGNATURE with a malformed parameter is refused by the parameter
+    // rules: `fn take(own v int)` splits into `own v` and a typeless `int`
+    // (measured on param_mode/neg_1), and "undeclared type name `v`" on the
+    // first half would be a second sentence about one word. Fix the shape,
+    // and the next run names the types.
+    if !params_well_formed(kids) { return }
+    ro tps = decl_type_params(kids)
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { kind, .. } => {
+                ro ck = branch_children(c)
+                if kind == NodeKind.Recv {
+                    // The receiver's type stands first in the group; its
+                    // generics are the declaration's own parameters, read above.
+                    if @report_if_type_ref_undeclared(ck, 0, tps) { continue }
+                } else if kind == NodeKind.Param {
+                    // The type by its DOOR, never by index: a mode word may
+                    // stand at index zero (`mut v int`). A parameter whose
+                    // shape is not `[mode] name type` (`own v int` -- a word
+                    // that is not a mode) is another rule's refusal, and its
+                    // stray word must not be called an undeclared type here.
+                    if !param_shape_is_plain(ck) { continue }
+                    ro at = param_type_at(ck) ?? -1
+                    if at < 0 { continue }
+                    if @report_if_type_ref_undeclared(ck, at, tps) { continue }
+                } else if kind == NodeKind.RetType {
+                    // `->` is index zero; the type starts at one.
+                    if @report_if_type_ref_undeclared(ck, 1, tps) { continue }
+                } else {
+                    // The name, the body, the generics: no type reference here.
+                }
+            }
+        }
+    }
+}
+
+/// Every type name a TYPE declaration writes -- a record's fields, a newtype's
+/// representation, a sum's variant payloads -- must be declared. The
+/// declaration's own type parameters count as declared (a GENERIC type is
+/// refused as a form by another rule, and this one must not speak twice about
+/// its `T`).
+fn Checker mut @report_if_type_body_undeclared(kids []Node) -> () {
+    if has_err_child(kids) { return }
+    ro tps = generic_names(kids)
+    // A SUM writes `enum` after its name, a VALUE RECORD `value`, a PROTOCOL
+    // `protocol`, an ALIAS `alias`, and the parser keeps all four as identifier
+    // leaves -- read as a newtype's representation each would be "undeclared"
+    // (measured on the first probes of the wave: `enum`, then `value` and
+    // `protocol` in the module tests, then `alias` in the newtype fixtures).
+    // The words are the declaration's own vocabulary (builtins' markers), and
+    // a representation is a direct leaf only where the declaration has NO
+    // body: no branch child but its generics.
+    mut has_body = false
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { kind, .. } => { if kind != NodeKind.Generics { has_body = true } else { } }
+        }
+    }
+    mut i = 0
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                // `type Meters f64`: the representation is an identifier leaf
+                // after the name (index 1). `value` is a keyword, not a name.
+                if !has_body && i > 1 && t.kind == TokenKind.Ident && !is_decl_marker(t.text) &&
+                    !@type_name_is_declared(t.text, tps) {
+                    @report_first_leaf_of([]Node.of(c), undeclared_type_msg(t.text))
+                } else {
+                    // The keyword, the name, punctuation, or a declared representation.
+                }
+            }
+            Branch { kind, .. } => {
+                ro ck = branch_children(c)
+                if kind == NodeKind.Field {
+                    ro at = field_type_at(ck) ?? -1
+                    if at < 0 { continue }
+                    // A field with no type slot skipped above: the missing-type
+                    // rule (`@report_if_missing_type(`, the Field arm) names it.
+                    if @report_if_type_ref_undeclared(ck, at, tps) { continue }
+                } else if kind == NodeKind.Variant {
+                    // The payload types stand after the variant's NAME, the
+                    // first identifier of the group (the collector's rule).
+                    mut name_at = -1
+                    mut j = 0
+                    for vn in ck {
+                        if name_at < 0 && vn.kind_of() == NodeKind.LeafNode && leaf_kind(vn) == TokenKind.Ident {
+                            name_at = j
+                        } else {
+                            // Before the name, or past it: the search is over.
+                        }
+                        j += 1
+                    }
+                    // A variant with no name is recovery debris the parse
+                    // already refused (`@report_err_branch(`).
+                    if name_at < 0 { continue }
+                    if @report_if_type_ref_undeclared(ck, name_at + 1, tps) { continue }
+                } else {
+                    // Generics, a block: no type reference of this rule's.
+                }
+            }
+        }
+        i += 1
+    }
+}

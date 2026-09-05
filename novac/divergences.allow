@@ -11,3 +11,7 @@
 #
 # Empty is the healthy state.
 examples/basics/vec_cap.nv
+novac/fixtures/undeclared_type/neg_1.nv
+novac/fixtures/undeclared_type/neg_2.nv
+novac/fixtures/undeclared_type/neg_3.nv
+novac/fixtures/undeclared_type/neg_4.nv

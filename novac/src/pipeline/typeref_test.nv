@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc E0412 ("cannot find type `X` in this scope") -- a written type
+// name resolves or the program is refused at the name; NOT taken: rustc's
+// spelling suggestions.
+// Role: acceptance tests of registry row #970 (274.7, tier 1 -- wrong answers):
+// an undeclared type name is refused in EVERY signature position -- receiver,
+// parameter, return, field, newtype representation, variant payload, and
+// inside them a generic argument, a slice element, a tuple component -- with
+// ONE sentence whose key phrase is `undeclared type name`. Before the door: a
+// return, a field, a receiver and a payload passed check in silence (and a call
+// of the fn was an ICE), a parameter was refused as a limit of the subset.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures undeclared_type/
+// through check-novac-no-cascade and the differential (allow-listed -- the
+// oracle accepts every undeclared name, its row #971).
+// novac/src/pipeline/typeref_test.nv -- type names must be declared.
+
+module novac.pipeline
+
+/// The phrase the door promises (typeref_rules.UNDECLARED_TYPE_PHRASE). Pinned
+/// HERE as a literal on purpose: a test that imported the constant would pass
+/// whatever the constant said.
+const UNDECLARED = "undeclared type name"
+
+test "type names: every declared position passes, every undeclared one is refused once (#970)" {
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\nexport type Option[T] enum Some(T) | None\n")
+    // POSITIVE FIRST: every position this door reads, written with declared
+    // names -- a file record, a newtype, a sum, a method on the record, a
+    // generic fn whose `T` stands inside a parameter's generic argument (not
+    // returned: `=> a` on a `ro` parameter is the oracle's E_READONLY_COERCE,
+    // another rule's business), std's `Vec` as a generic head, the slice
+    // sugar, a tuple return.
+    ro (d0, c0) = compile_to_c("type Box { v int }\ntype Meters f64\ntype Count alias int\ntype Pt value { n int }\ntype Shape enum Dot(int) | Empty\nfn Box @get() -> int => @v\nfn pick[T](a T, n int) -> int => n + 1\nfn count(xs Vec[int], ys []int) -> (int, int) {\n (xs.len(), ys.len())\n}\nfn main() {\n ro b = Box { v: 3 }\n println(b.get())\n println(pick[int](5, 1))\n ro (n, m) = count([1, 2], [3])\n println(n + m)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("pick"), c0)
+    // RETURN: the #970 carrier -- passed while unused, an ICE when called.
+    // Now one refusal at the name, and no ICE, whether the fn is called or not.
+    ro (d1, _) = compile_to_c("fn make() -> Strng => \"x\"\nfn main() {\n println(1)\n}", std)
+    assert(d1.len() == 1, messages(d1))
+    assert(messages(d1).contains(UNDECLARED), messages(d1))
+    assert(messages(d1).contains("`Strng`"), messages(d1))
+    ro (d2, _) = compile_to_c("fn make() -> Strng => \"x\"\nfn main() {\n println(make())\n}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains(UNDECLARED), messages(d2))
+    // PARAMETER: refused before too, but as a limit of the subset ("does not
+    // know this type yet"); the cause is a misspelling and the sentence says so.
+    ro (d3, _) = compile_to_c("fn takes(v Vecc[int]) -> int => 1\nfn main() {\n println(1)\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains(UNDECLARED), messages(d3))
+    assert(messages(d3).contains("`Vecc`"), messages(d3))
+    assert(!messages(d3).contains("does not know this type yet"), messages(d3))
+    // A GENERIC ARGUMENT: the old refusal said "write its type arguments" about
+    // arguments that were written; the undeclared one is named.
+    ro (d4, _) = compile_to_c("fn takes(v Vec[Nmbr]) -> int => 1\nfn main() {\n println(1)\n}", std)
+    assert(d4.len() == 1, messages(d4))
+    assert(messages(d4).contains(UNDECLARED) && messages(d4).contains("`Nmbr`"), messages(d4))
+    // SLICE ELEMENT, TUPLE COMPONENT (both in a return), FIELD, RECEIVER,
+    // NEWTYPE representation, VARIANT PAYLOAD: one refusal each.
+    ro (d5, _) = compile_to_c("fn make() -> []Nmbr => [1]\nfn main() {\n println(1)\n}", std)
+    assert(d5.len() == 1 && messages(d5).contains(UNDECLARED), messages(d5))
+    ro (d6, _) = compile_to_c("fn make() -> (int, Nmbr) => (1, 2)\nfn main() {\n println(1)\n}", std)
+    assert(d6.len() == 1 && messages(d6).contains(UNDECLARED), messages(d6))
+    ro (d7, _) = compile_to_c("type Box { v Nmbr }\nfn main() {\n println(1)\n}", std)
+    assert(d7.len() == 1 && messages(d7).contains(UNDECLARED), messages(d7))
+    ro (d8, _) = compile_to_c("type Box { v int }\nfn Bxo @get() -> int => 1\nfn main() {\n println(1)\n}", std)
+    assert(d8.len() == 1 && messages(d8).contains(UNDECLARED) && messages(d8).contains("`Bxo`"), messages(d8))
+    ro (d9, _) = compile_to_c("type Meters Nmbr\nfn main() {\n println(1)\n}", std)
+    assert(d9.len() == 1 && messages(d9).contains(UNDECLARED), messages(d9))
+    ro (d10, _) = compile_to_c("type Shape enum Dot(Nmbr) | Empty\nfn main() {\n println(1)\n}", std)
+    assert(d10.len() == 1 && messages(d10).contains(UNDECLARED) && messages(d10).contains("`Nmbr`"), messages(d10))
+    // `byte` is gone from the language (D367): the sentence names the canon.
+    ro (d11, _) = compile_to_c("fn takes(v byte) -> int => 1\nfn main() {\n println(1)\n}", std)
+    assert(d11.len() == 1 && messages(d11).contains(UNDECLARED) && messages(d11).contains("`u8`"), messages(d11))
+    // A LANGUAGE type word the subset has not compiled is NOT "undeclared": the
+    // word exists, and the refusal stays the subset's.
+    ro (d12, _) = compile_to_c("fn takes(v unit) -> int => 1\nfn main() {\n println(1)\n}", std)
+    assert(d12.len() == 1 && !messages(d12).contains(UNDECLARED), messages(d12))
+}

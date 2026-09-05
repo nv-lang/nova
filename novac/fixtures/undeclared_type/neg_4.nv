@@ -1,0 +1,12 @@
+module undeclared_type.neg_4
+
+// ONE seeded cause: an undeclared type name as a GENERIC ARGUMENT (`Vec[Nmbr]`).
+// Refused before #970 with the wrong cause ("this type is generic -- write its
+// type arguments", about arguments that were written); the oracle accepts it
+// (#971 -- novac/divergences.allow).
+
+fn takes(v Vec[Nmbr]) -> int => 1
+
+fn main() {
+    println(1)
+}

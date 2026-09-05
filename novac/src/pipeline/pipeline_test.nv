@@ -567,7 +567,10 @@ fn main() { println(1) }",
                                  []str.of("module std.pairs\n\
 export type Pair value { a int }"))
     assert(diags.len() == 1)
-    assert(diags[0].message.contains("does not know this type yet"))
+    // Since #970 the refusal names the CAUSE -- the name is declared nowhere --
+    // instead of the subset's limits ("does not know this type yet"), which sent
+    // the reader to fix the compiler when the fix was one letter.
+    assert(diags[0].message.contains("undeclared type name"), diags[0].message)
 }
 
 test "a handed-over GENERIC declaration is a HEAD: bare use refused by the TRUTH" {

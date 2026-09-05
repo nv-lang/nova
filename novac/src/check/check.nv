@@ -393,6 +393,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
+                    // Every type NAME the signature writes must be declared
+                    // (#970, typeref_rules): the collector answers no_ty() for
+                    // `-> Strng` and, until this line, nobody judged it -- the
+                    // fn passed while unused and its first call was an ICE.
+                    @report_if_decl_types_undeclared(children)
                 }
                 ConstDecl => {
                     // A CONSTANT IS JUDGED BY ITS INITIALIZER, and the walk
@@ -421,6 +426,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // first, so a misplaced form is named as misplaced.
                     @report_if_misplaced_generics(children)
                     @report_if_generic_form(children)
+                    // Fields, a newtype's representation, variant payloads:
+                    // every type NAME must be declared (#970, typeref_rules) --
+                    // `type Box { v Nmbr }` passed check in silence before.
+                    @report_if_type_body_undeclared(children)
                 }
                 ForStmt => {
                     @report_if_bad_for_head(children)

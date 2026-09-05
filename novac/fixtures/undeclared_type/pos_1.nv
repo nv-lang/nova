@@ -1,0 +1,33 @@
+module undeclared_type.pos_1
+
+// Every position the type-name door reads (#970), written with DECLARED names:
+// a record field, a newtype representation, a variant payload, a receiver, a
+// generic fn whose T is a parameter type (not returned: `=> a` on a ro param is
+// the oracle E_READONLY_COERCE, another rule), std Vec as a
+// generic head, the slice sugar, a tuple return. The door must refuse none.
+
+type Box { v int }
+
+type Meters f64
+
+type Count alias int
+
+type Pt value { n int }
+
+type Shape enum Dot(int) | Empty
+
+fn Box @get() -> int => @v
+
+fn pick[T](a T, n int) -> int => n + 1
+
+fn count(xs Vec[int], ys []int) -> (int, int) {
+    (xs.len(), ys.len())
+}
+
+fn main() {
+    ro b = Box { v: 3 }
+    println(b.get())
+    println(pick[int](5, 1))
+    ro (n, m) = count([1, 2], [3])
+    println(n + m)
+}
