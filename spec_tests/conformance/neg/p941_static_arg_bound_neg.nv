@@ -1,0 +1,45 @@
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+//
+// Registry #941, the STATIC-METHOD form in argument position — the second door the
+// row named as open, now closed.
+//
+// `only_ints(Box.new())` compiled clean while the same value through a binding was
+// refused. `Box.new()` parses as `Call { func: Path(["Box","new"]) }` — the parser
+// recognises a known type name and emits `Path`, not `Member` — so `call_return_ty`'s
+// `Ident` branch never saw it and the D310 membership check silently did not run.
+//
+// TWO FALSE POSITIVES ON THE WAY HERE, both caught by the corpus and both worth
+// naming, because each one narrowed the fix:
+//
+//   1. A constructor declared `-> Self` returned the literal `Self`, so the bound
+//      check asked whether `Self` satisfies `Src` and said no —
+//      `p176repro_result_valuerecord_err.nv:53` on perfectly legal code. `Self` on a
+//      static means the receiving type; it is substituted now, and a `Self` nested
+//      inside a compound return (`Result[Self, E]`) answers `None` rather than
+//      guessing.
+//   2. Substituting the bare name dropped the type's parameters: `BufWriter.new(...)`
+//      on `BufWriter[W]` produced `BufWriter`, and
+//      `std/src/io/wrapper_ctor_inference_test.nv:21` failed with
+//      `[E_RECV_SHAPE_MISMATCH] requires receiver shape `BufWriter[W]`, got
+//      `BufWriter``. Answering with a name minus its parameters trades one wrong
+//      answer for another, so the arm now takes NON-GENERIC types only — the same
+//      guard the constructor branch beside it already carried.
+//
+// STILL OPEN in #941, and this fixture does not touch it: the RECEIVER half
+// (`Meters(2.5).try_to_i16()` builds and prints `true`) and the generic-static form
+// (`only_ints(Vec[int].of(1))` is still accepted, measured). Both are named in the
+// row and in `scripts/guards/fixed-but-open.baseline`.
+//
+// Spec: D310 (`spec/decisions/02-types.md`, "Type-set bounds").
+module neg.p941_static_arg_bound_neg
+
+type P941Box priv { n int }
+
+fn P941Box.new() -> P941Box => { n: 1 }
+
+fn only_ints[T Ints](x T) -> int => 0
+
+fn pass_a_static_call_straight_into_a_bounded_parameter() Io -> () {
+    // nova:expect E_TYPE_NOT_IN_SET -- `P941Box` is not a member of `Ints`; the constructor spelling used to skip the check entirely
+    println(only_ints(P941Box.new()))
+}

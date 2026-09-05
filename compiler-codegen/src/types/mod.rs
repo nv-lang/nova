@@ -31472,6 +31472,85 @@ impl<'a> BoundCtx<'a> {
             return None;
         }
         let ExprKind::Call { func, .. } = &e.kind else { return None };
+        // Реестр №941, вторая названная форма: СТАТИЧЕСКИЙ МЕТОД в позиции
+        // аргумента. `Box.new()` парсится как `Call { func: Path(["Box","new"]) }`
+        // (парсер узнаёт имя типа и выдаёт `Path`, а не `Member` — то же
+        // наблюдение записано у арма `Atomic*.new` в `infer_arg_ty`), поэтому
+        // разбор `Ident` ниже до него не доходит и проверка членства D310 для
+        // такого аргумента молча не выполнялась: `only_ints(Box.new())` проходил.
+        //
+        // Отвечаем ОБЪЯВЛЕННЫМ возвратом статического метода, и только когда он
+        // однозначен: перегрузки с разными возвратами -> None (та же осторожность,
+        // что у ветки `fn_decls` ниже, и по той же причине — угадать нельзя).
+        // Генерические методы и генерический возврат исключены там же, ниже по
+        // общему пути.
+        if let ExprKind::Path(segs) = &func.kind {
+            // ТОЛЬКО НЕГЕНЕРИЧЕСКИЙ ТИП, и это второй урок от корпуса, а не
+            // осторожность. Первая редакция стерегла генерики МЕТОДА и не
+            // стерегла генерики ТИПА: `BufWriter.new(...)` при `BufWriter[W]`
+            // дал голый `BufWriter`, и `std/src/io/wrapper_ctor_inference_test.nv:21`
+            // упал с `[E_RECV_SHAPE_MISMATCH] requires receiver shape ``BufWriter[W]``,
+            // got ``BufWriter```. Ответить именем без параметров значит
+            // подменить один неверный ответ другим — тот же довод, по
+            // которому ветка конструктора выше тоже берёт только
+            // негенерические типы.
+            let type_is_plain = self
+                .type_decls
+                .get(segs.first().map(|x| x.as_str()).unwrap_or(""))
+                .is_some_and(|d| d.generics.is_empty());
+            if segs.len() == 2 && type_is_plain {
+                if let Some(overloads) = self
+                    .sig
+                    .method_table
+                    .get(segs[0].as_str())
+                    .and_then(|m| m.get(segs[1].as_str()))
+                {
+                    let statics: Vec<_> = overloads
+                        .iter()
+                        .filter(|f| {
+                            f.receiver
+                                .as_ref()
+                                .is_some_and(|r| matches!(r.kind, ReceiverKind::Static))
+                        })
+                        .collect();
+                    if let Some(first) = statics.first() {
+                        if first.generics.is_empty() {
+                            if let Some(ret) = first.return_type.as_ref() {
+                                let shape = format!("{:?}", ret);
+                                let all_same = statics.iter().all(|f| {
+                                    f.return_type.as_ref().map(|t| format!("{:?}", t))
+                                        == Some(shape.clone())
+                                });
+                                if all_same {
+                                    // `-> Self` у конструктора значит ИМЕННО тип-получатель,
+                                    // и вернуть его буквально нельзя: корпус ответил
+                                    // сразу — `MemSrc.new(...) -> Self` дал
+                                    // `[E_BOUND_NOT_SATISFIED] type ``Self`` does not satisfy
+                                    // ``Src``` на законном коде
+                                    // (`p176repro_result_valuerecord_err.nv:53`). Подставляем
+                                    // имя типа; если `Self` сидит ВНУТРИ составного
+                                    // возврата (`Result[Self, E]`), не угадываем — None.
+                                    if let TypeRef::Named { path: rp, generics: rg, span: rs } = ret {
+                                        if rg.is_empty() && rp.len() == 1 && rp[0] == "Self" {
+                                            return Some(TypeRef::Named {
+                                                path: vec![segs[0].clone()],
+                                                generics: Vec::new(),
+                                                span: *rs,
+                                            });
+                                        }
+                                    }
+                                    if shape.contains("\"Self\"") {
+                                        return None;
+                                    }
+                                    return Some(ret.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return None;
+        }
         let ExprKind::Ident(name) = &func.kind else { return None };
         // Реестр №941, аргументная половина. `Meters(2.5)` — это ВЫЗОВ по
         // синтаксису и КОНСТРУКТОР по смыслу: имя стоит в `type_decls`, а не в
