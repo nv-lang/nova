@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/basics/interp_display.nv -- the carrier of wave B1b-1 (plan 274.7): a
+// declared type in an interpolation slot displays through its OWN
+// `@display(mut f Fmt)` -- the spec's first route (D422). The context the slot
+// builds is the runtime's bare one over the chain's builder; the type's method
+// writes into it. Before the wave a user type in a slot was refused by name.
+module basics.interp_display
+
+type Pt { n int }
+
+fn Pt @display(mut f Fmt) -> () {
+    f.write("Pt".bytes())
+}
+
+fn main() {
+    ro p = Pt { n: 7 }
+    println("p ${p} end")
+    println("${p}${p}")
+}

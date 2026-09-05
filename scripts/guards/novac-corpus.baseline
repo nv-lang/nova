@@ -344,5 +344,19 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 58
-behavior-match 50
+contract-match 60
+behavior-match 52
+# 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
+# через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
+# в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
+# (носитель волны: запись `Pt` с `@display`, слот строит голый контекст рантайма
+# над нашим билдером и зовёт метод) и `examples/basics/strings.nv` — побочный
+# плод той же волны: поданный метод ПЛОСКОГО типа (`byte_len`, `to_ascii_upper`,
+# `starts_with`), тело которого несёт оболочка, теперь законный интероп-вызов
+# через одну дверь символа (`c_method_symbol`), а не отказ «compiles no body»;
+# держатель pipeline_test, утверждавший ТРИ отказа, переписан в обратную сторону.
+# Судья слота пишет вызов `display` в НОВЫЙ стол канала `implicit` (донор rustc
+# `adjustments`), mono обходит его тем же кодом, что явные вызовы. Обратная проба:
+# снята проверка ТИПА параметра у `display_row_of` -> держатель «display над
+# `Write` отвергается» краснеет, носитель зелёный; восстановлено. Замер прогона:
+# фикстур 16/16, корпус 109 файлов, поведенчески 52 из 54.

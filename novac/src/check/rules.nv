@@ -260,7 +260,7 @@ const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there
 /// `Into[str]` (D73 -- `Option[T]`, a record with `From[Self] for str`), and that
 /// is protocol dispatch, wave B1b of 274.7. Every primitive family is compiled
 /// since B1a (2026-09-05): before it the slot was held to `{str, int}` by id.
-const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type (Option, a record with Into[str]) is not compiled yet (274.7 B1b) -- every primitive family is"
+const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type without its own `display(mut f Fmt)` (Option, a record with Into[str], a generic instance) is not compiled yet (274.7 B1b) -- every primitive family and every plain type with `display` is"
 
 /// The one primitive the runtime cannot display: `std.runtime.string_builder`
 /// has no unsigned 64-bit `display_spec`, and the oracle prints `u64`/`uint`

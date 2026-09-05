@@ -269,10 +269,17 @@ fn harvest_fn(kids []Node, types []TypeDef, defs DefTable, mut tys Interner, mut
     // files. Same silent-drop class as the receiver mode two waves earlier: the
     // signature vanished, and the refusal at the use site said "no such method"
     // about a method std declares.
+    // A return may carry a MODE before its type -- `-> ro []u8` is how std spells
+    // `str @bytes` -- and the type starts after it. Until 2026-09-05 the reader
+    // began at index 1 regardless, met the `ro` leaf, resolved no type and DROPPED
+    // the signature: `"Pt".bytes()` was "no such method" (found on the B1b-1
+    // carrier). The mode itself is not kept here: a return mode is the caller's
+    // binding question, not the callable's identity.
+    ro ret_from = if ret_kids.len() > 1 && is_mode_leaf(ret_kids[1]) { 2 } else { 1 }
     ro ret_t = if ret_unit {
         ty_or_none(types, defs, UNIT_TYPE_NAME)
     } else {
-        ty_of_type_ref(ret_kids, 1, recv_t, tps, prow, types, defs, tys)
+        ty_of_type_ref(ret_kids, ret_from, recv_t, tps, prow, types, defs, tys)
     }
     if !is_ty(recv_t) || !is_ty(ret_t) { return }
     // A signature is valid only if ALL its types are known, including
@@ -368,4 +375,11 @@ fn recv_head_at(rk []Node, at int) -> int {
     ro prev = rk[at - 1]
     if prev.kind_of() == NodeKind.LeafNode && leaf_kind(prev) == TokenKind.EmptyBrackets { return at - 1 }
     at
+}
+
+/// Is this node a binding-mode keyword (`ro`/`mut`) standing before a type?
+/// Asked of the first node after `->`, where std writes `-> ro []u8`.
+fn is_mode_leaf(n Node) -> bool {
+    if n.kind_of() != NodeKind.LeafNode { return false }
+    leaf_kind(n) == TokenKind.KwRo || leaf_kind(n) == TokenKind.KwMut
 }

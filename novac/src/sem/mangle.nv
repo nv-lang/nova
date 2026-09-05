@@ -30,6 +30,7 @@ module novac.sem
 import ../diag.{ice}
 import ../names.{raw_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name, OPTION_FAMILY_C, OPTION_SUM}
+import ../builtins.{FMT_PROTO, FMT_IMPL}
 import ../builtins.{PAREN_RECORD_C_PREFIX}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 
@@ -238,12 +239,17 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // a pointer (shell.tpl.c, `NovaValue_CharsIter*`).
             // The shape decides both the prefix and whether a pointer is
             // written: only a plain record lives on the heap (see c_struct).
-            TkRecord => { return match shape_of(ctx, t) {
-                Record => "Nova_${decl_of_ty(ctx, t).name}*"
-                ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
-                NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
-                    "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
-            } }
+            TkRecord => {
+                // A PROTOCOL-typed value is laid out as its implementor (interop
+                // pair, `impl_of_proto`): `mut f Fmt` is `Nova_FmtCtx* f`.
+                ro it = impl_of_proto(ctx, t)
+                return match shape_of(ctx, it) {
+                    Record => "Nova_${decl_of_ty(ctx, it).name}*"
+                    ValueRecord => "NovaValue_${decl_of_ty(ctx, it).name}"
+                    NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
+                        "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, it).name}"
+                }
+            }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
                 if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
@@ -367,6 +373,39 @@ fn instance_struct_name(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)
 /// instance is the table's question (`Ctx.interop`), asked by check before
 /// anything is printed.
 export fn c_instance_ctor(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}_static_new"
+
+/// THE IMPLEMENTOR a protocol-typed value is compiled as -- or the type itself
+/// when it is no protocol with a bound implementor. One door for the one pair
+/// novac knows (FMT_PROTO -> FMT_IMPL, interop, see builtins): the checker's
+/// method key, the C type of a parameter and the method symbol all ask here,
+/// so the pair is written once and read three times.
+export fn impl_of_proto(ctx Ctx, t TyId) -> TyId {
+    // `same_ty`, not `t`, on every path that hands the parameter back:
+    // [LEGACY-#760-newtype-ro-launder] (the oracle's `nova check` reads a
+    // returned `ro` newtype as a launder; `subst_type` takes the same door).
+    if !is_ty(t) { return same_ty(t) }
+    if ctx.tys.kind_of(t) != TypeKind.TkRecord { return same_ty(t) }
+    if decl_of_ty(ctx, t).name != FMT_PROTO { return same_ty(t) }
+    match ctx.defs.type_decl(FMT_IMPL) {
+        None => same_ty(t)
+        Some(d) => ty_of_decl(ctx, d)
+    }
+}
+
+/// WHICH spelling a method of a handed type takes: a generic INSTANCE is
+/// `<body>_method_<name>` (no `Nova_` prefix), a PLAIN type is
+/// `Nova_<name>_method_<name>` -- the oracle spells the two differently, and
+/// until 2026-09-05 the checker's interop check and the emitter each chose the
+/// instance form for everything, so a plain std record's method could never
+/// pass (`Nova_FmtCtx_method_write` was asked for as `FmtCtx_____method_write`).
+/// One question, one door; a protocol receiver goes through its implementor.
+export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
+    ro it = impl_of_proto(ctx, t)
+    if ctx.tys.kind_of(it) == TypeKind.TkApp { return c_instance_method(ctx, it, name) }
+    c_shell_method(ctx, it, name)
+}
+
+
 
 /// An instance METHOD as the shell emits it: `<body>_method_<name>` -- note the
 /// missing `Nova_` prefix, which is how the oracle spells methods

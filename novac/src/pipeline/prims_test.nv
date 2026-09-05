@@ -73,7 +73,33 @@ test "a negative literal never fits an unsigned width -- the spec's own example 
 test "two NAMED operands of different integer widths are a user error, not protocol dispatch (D405)" {
     ro (d, _) = compile_to_c("fn f(a i32, b i64) -> i64 => a + b\nfn main() {\n println(f(1, 2))\n}", std_decls())
     assert(d.len() >= 1, messages(d))
-    assert(messages(d).contains("differ in integer width"))
+    assert(messages(d).contains("different numeric types"))
+}
+
+test "int beside f64, both NAMED, is an error by the spec -- the oracle's exemption is gone (274.7 B4)" {
+    // conversions.md: "A value of type `int` next to a value of type `f64` is
+    // still an error, literal or not". Until 2026-09-05 novac exempted the pair
+    // because the oracle accepts it (#926); the spec outranks the oracle.
+    ro (d, _) = compile_to_c("fn main() {\n ro a = 1\n ro b = 2.5\n println(a + b)\n}", std_decls())
+    assert(d.len() == 1, messages(d))
+    assert(messages(d).contains("different numeric types"))
+    // Either way round, and in a comparison too.
+    ro (d2, _) = compile_to_c("fn main() {\n ro a = 1\n ro b = 2.5\n println(b < a)\n}", std_decls())
+    assert(d2.len() == 1, messages(d2))
+    // The spec's relaxation stands: a bare literal beside a float is a float.
+    ro (d3, c3) = compile_to_c("fn main() {\n ro b = 2.5\n println(b + 1)\n}", std_decls())
+    assert(d3.len() == 0, messages(d3))
+    assert(c3.contains("2.5"), c3)
+}
+
+test "unary minus on an unsigned operand is an error by the spec; on signed ints and floats it stands (274.7 B4)" {
+    // The operand is a PARAMETER: a typed local (`ro u u8 = 200`) is outside
+    // novac's subset today (E2-b3) and would be the refusal instead.
+    ro (d, _) = compile_to_c("fn flip(u u8) -> u8 => -u\nfn main() {\n println(flip(200))\n}", std_decls())
+    assert(d.len() == 1, messages(d))
+    assert(messages(d).contains("signed types only"), messages(d))
+    ro (d2, _) = compile_to_c("fn ni(s i16) -> i16 => -s\nfn nf(f f64) -> f64 => -f\nfn main() {\n println(ni(200))\n println(nf(2.5))\n}", std_decls())
+    assert(d2.len() == 0, messages(d2))
 }
 
 test "a literal beside a named operand takes its width, hex included (D405's literal rule)" {

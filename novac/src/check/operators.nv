@@ -169,12 +169,14 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     }
     ro op = bin_op_of(leaf_kind(kids[1]))
     ro both_numeric = @is_numeric(lt) && @is_numeric(rt)
-    // D405: two NAMED numeric operands of different width or signedness are
-    // a USER error, not a subset limit and not protocol dispatch -- the only
-    // mixed pair the oracle takes is `int` with `f64` (measured; int_f64_mix).
-    if both_numeric && lt != rt && !int_f64_mix(@ctx, lt, rt) {
+    // D405 + spec/conversions.md: two NAMED numeric operands of different
+    // TYPES are a USER error, not a subset limit and not protocol dispatch.
+    // No pair is exempt: `int` beside `f64` was, on the oracle's measured
+    // behaviour, until 2026-09-05 -- the spec says otherwise, and the spec
+    // outranks the oracle (wave 274.7 B4; the oracle's side is #926).
+    if both_numeric && lt != rt {
         match kids[1] {
-            Leaf(t) => @refuse(t, MIXED_WIDTH_MSG)
+            Leaf(t) => @refuse(t, MIXED_NUMERIC_MSG)
             Branch { .. } => {}
         }
         return true
@@ -240,14 +242,31 @@ fn family_has_values(r BuiltinType) -> bool {
     }
 }
 
-/// The prefix operators the subset can emit: `!` on bool, `-` and `~` on int
-/// (and `-` on f64). Everything else is protocol dispatch (`@neg`, `@bitnot`)
-/// and is refused at the operator's own position. Returns whether it refused.
+/// The prefix operators the subset can emit: `!` on bool, `-` on SIGNED
+/// numbers (ints and floats), `~` on int. `-` on an unsigned integer is a
+/// USER error by the spec (conversions.md, wave 274.7 B4), refused with its
+/// own text before the protocol question is asked. Everything else is
+/// protocol dispatch (`@neg`, `@bitnot`) and is refused at the operator's own
+/// position. Returns whether it refused.
 fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
     ro t = type_of(kids[1], @ctx, @scope, @chan)
     match un_op_of(leaf_kind(kids[0])) {
         Not => { if t == @ctx.prims.bool_id { return false } }
-        Negate => { if @is_numeric(t) { return false } }
+        Negate => {
+            match prim_row_of(@ctx.tys, t) {
+                None => {}
+                Some(row) => {
+                    if row.family == PfInt && !row.signed {
+                        match kids[0] {
+                            Leaf(tk) => @refuse(tk, NEG_UNSIGNED_MSG)
+                            Branch { .. } => {}
+                        }
+                        return true
+                    }
+                    if @is_numeric(t) { return false }
+                }
+            }
+        }
         BitNot => { if is_int_prim(@ctx.tys, t) { return false } }
     }
     match kids[0] {

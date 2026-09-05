@@ -22,11 +22,12 @@ fn add_f32(a f32, b f32) -> f32 => a + b
 fn less_i16(a i16, b i16) -> bool => a < b
 fn same_u32(a u32, b u32) -> bool => a == b
 fn neg_i8(a i8) -> i8 => -a
-// NEGATION ON AN UNSIGNED WIDTH: no checked helper exists for it in the runtime
-// (signed only -- unsigned negation is well-defined two's-complement), so this
-// must come out as raw C. Without this line the corpus never negated an
-// unsigned and the wave shipped an undefined symbol; found by a recheck.
-fn neg_u8(a u8) -> u8 => -a
+// NO NEGATION ON AN UNSIGNED WIDTH: until 2026-09-05 this file carried
+// `fn neg_u8(a u8) -> u8 => -a` and matched the oracle's modular wrap. The spec
+// (conversions.md: "Unary minus is defined for signed types only ... a compile
+// error, not a modular wrap") forbids the form; the oracle accepting it is
+// registry #926, and a corpus program must be a SPEC-valid program, not an
+// oracle-valid one. The refusal lives in novac/fixtures/unsigned_neg/neg_1.nv.
 fn bump_i32(a i32) -> i32 => a + 1
 fn mask_u8(a u8) -> u8 => a & 0x0F
 fn half_f32(a f32) -> f32 => a / 2.0
@@ -52,7 +53,6 @@ fn main() {
     println("less ", less_i16(3, 4))
     println("same ", same_u32(9, 9))
     println("neg ", neg_i8(5))
-    println("negu ", neg_u8(5))
     println("bump ", bump_i32(41))
     println("mask ", mask_u8(0xAB))
     println("half ", half_f32(5.0))

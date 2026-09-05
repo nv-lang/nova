@@ -46,7 +46,8 @@ import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
-import ../builtins.{BuiltinType, PrimFamily}
+import ../builtins.{BuiltinType, PrimFamily, FMT_PROTO, DISPLAY_METHOD}
+import ../sem.{LitArg}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -101,6 +102,37 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
     @record(e, vd.sum_id)
     @chan.record_callee(e.id_of(),
         CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(arg_count(kids, arg_from)))
+}
+
+/// THE KEY a slot's display is looked up with: `(t ro, Fmt mut)` -- the
+/// receiver by value, the context as the mutable PLACE P14 admits to a `mut`
+/// parameter. Built here and not in the lookup door, because a door that asks
+/// a table builds nothing (P18). `no_ty()` in the Fmt slot means std handed no
+/// `Fmt` at all, and the door answers None before asking.
+fn Checker @display_key_of(t TyId) -> []ArgSpec {
+    ro fmt_t = match @ctx.defs.type_decl(FMT_PROTO) {
+        None => no_ty()
+        Some(d) => ty_of_decl(@ctx, d)
+    }
+    mut key = []ArgSpec.new()
+    key.push(ArgSpec { type_id: t, cls: ArgClass.ArgRo, name: "", lit: LitArg.NotLit })
+    key.push(ArgSpec { type_id: fmt_t, cls: ArgClass.ArgMut, name: "", lit: LitArg.NotLit })
+    key
+}
+
+/// The `display(mut f Fmt)` row of the key's receiver type (D422, the spec's
+/// first route; 274.7 B1b-1), or None. The lookup is TYPED, so the parameter's
+/// type is what matches and `display(mut w Write)` does not -- the oracle
+/// checks the parameter for the same reason (#634: seven types kept a display
+/// over `Write` through a migration and crashed). A door that asks the
+/// resolver and allocates nothing (P18).
+#realtime nogc
+fn Checker @display_row_of(key []ArgSpec) -> Option[FnRow] {
+    if !is_ty(key[1].type_id) { return None }
+    match @res.lookup(@ctx.fns, @ctx.tys, DISPLAY_METHOD, key, CallForm.MethodCall) {
+        FnFound(row) => Some(row)
+        FnUnknown | FnOverloaded(_) => None
+    }
 }
 
 /// Is this name a VARIANT of some declared sum? Asked by the method judge
@@ -314,8 +346,40 @@ fn Checker mut @type_expr(e Node) -> () {
             // instead of miscompiling. The one exception is spelled by name.
             match prim_row_of(@ctx.tys, st) {
                 None => {
-                    @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
-                    return
+                    // A DECLARED type displays through its own `@display(mut f
+                    // Fmt)` (D422; the spec's first route, 274.7 B1b-1). The
+                    // lookup is TYPED, so the parameter's type is what matches
+                    // and `display(mut w Write)` does not -- the oracle checks
+                    // the parameter for the same reason (#634: seven types kept a
+                    // display over `Write` through a migration and crashed).
+                    // A GENERIC instance (`Box[int]`) displays through an instance
+                    // method, whose type arguments the collector must reach and
+                    // whose spelling is the instance one -- the two facts
+                    // `record_instance_method` settles for a written call. Until
+                    // the slot judge goes through that door (274.7 B1b-2) it does
+                    // not claim the type: refusing is the honest answer, and
+                    // `c_callable` with an empty substitution would be a wrong
+                    // program.
+                    if @ctx.tys.kind_of(st) == TypeKind.TkApp {
+                        @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                        return
+                    }
+                    match @display_row_of(@display_key_of(st)) {
+                        None => {
+                            @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                            return
+                        }
+                        Some(row) => {
+                            @record(c, st)
+                            // The slot's own value may be a call (`${f()}`), so the
+                            // display it triggers goes to the channel's IMPLICIT
+                            // table, not to the node's `res` (which the bare-name
+                            // emitter reads for variant values -- the ICE the first
+                            // carrier hit).
+                            @chan.record_implicit(c.id_of(), CalleeTarget.CalleeFn(row),
+                                []TyId.new(), identity_slots(1))
+                        }
+                    }
                 }
                 Some(row) => {
                     if row.family == PrimFamily.PfInt && !row.signed && row.bits == 64 {

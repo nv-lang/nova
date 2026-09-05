@@ -25,7 +25,7 @@ import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
-import ../sem.{c_instance_method, ty_source_name, decl_of_ty}
+import ../sem.{c_method_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{option_payload}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
@@ -41,7 +41,10 @@ import ../sem.{option_payload}
 /// first now (the free-call order of 2026-08-21, exprs.nv), so the same door
 /// the generic method path already used answers for every method call.
 fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
-    typed_call_key(kids, 3, kids[0], recv_t, @ctx, @scope, @chan)
+    // A receiver typed by a PROTOCOL looks its methods up on the implementor
+    // (interop pair, 274.7 B1b-1): `f.write(b)` on `mut f Fmt` finds
+    // `FmtCtx.write`. The door is the same one the C spellings ask.
+    typed_call_key(kids, 3, kids[0], impl_of_proto(@ctx, recv_t), @ctx, @scope, @chan)
 }
 
 /// The same key with the argument TYPES removed — the diagnostic's tool, not
@@ -55,7 +58,8 @@ fn Checker @method_arity_key(kids []Node, recv_t TyId) -> []ArgSpec {
     // The receiver is parameter zero (plan 273) and carries a CLASS: `mut b`
     // then `b.m()` selects the `mut @m` overload, which is the precedent the
     // whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: arg_class(kids[0], @scope), name: "", lit: LitArg.NotLit })
+    ro recv_it = impl_of_proto(@ctx, recv_t)
+    out.push(ArgSpec { type_id: recv_it, cls: arg_class(kids[0], @scope), name: "", lit: LitArg.NotLit })
     out.append(unknown_args(kids, 3, @scope))
     out
 }
@@ -185,14 +189,29 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                     bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
             } else {
-                @refuse(t,
-                    "outside the subset: novac read this method's signature but compiles no body for it yet")
-                // A refusal is ALSO a decision (274.4 step 2): the row is
-                // known, so its declared return goes into the channel. The
-                // walk continues past a refusal (poisoning discipline), and
-                // the parent asking this node's type must read the checker's
-                // answer -- type_of re-resolving the name was the second door.
-                @chan.record_type(e.id_of(), @ctx.fns.rows[raw_row(row)].ret_id)
+                // A HANDED method of a PLAIN type (274.7 B1b-1, 2026-09-05): callable
+                // when the shell carries its symbol -- the very rule the generic
+                // instance path applied to `v.len()` all along, now through the one
+                // symbol door (`c_method_symbol`: plain vs instance spelling). Until
+                // this day every such call was refused as "no body", which was true
+                // of novac and false of the program: the shell links the body.
+                // INTEROP, with the same end condition as the instance path.
+                ro mfd = @ctx.fns.rows[raw_row(row)]
+                ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
+                if @ctx.interop.has(sym) {
+                    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
+                        bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
+                    @record(e, mfd.ret_id)
+                } else {
+                    @refuse(t,
+                        "outside the subset: the shell novac links into carries no `${t.text}` for ${ty_source_name(@ctx, key[0].type_id)} -- novac read the signature but has no body to emit")
+                    // A refusal is ALSO a decision (274.4 step 2): the row is
+                    // known, so its declared return goes into the channel. The
+                    // walk continues past a refusal (poisoning discipline), and
+                    // the parent asking this node's type must read the checker's
+                    // answer -- type_of re-resolving the name was the second door.
+                    @chan.record_type(e.id_of(), mfd.ret_id)
+                }
             }
         }
     }
@@ -219,7 +238,7 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         @refuse(t, "outside the subset: a generic method declared in this file -- mono instantiates functions, not methods, yet")
         return
     }
-    ro sym = c_instance_method(@ctx, key[0].type_id, t.text)
+    ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
     if !@ctx.interop.has(sym) {
         @refuse(t, "outside the subset: the shell novac links into carries no `${t.text}` for ${ty_source_name(@ctx, key[0].type_id)} -- the interop surface is the probe program (novac/probe/shell_probe.nv); the method arrives when the probe calls it")
         // Refused, but judged: the deduced return is this node's type

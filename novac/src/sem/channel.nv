@@ -207,6 +207,7 @@ export type CheckOut {
     entry FnRow /// THE entry row of this file; `no_row()` = the file declares none. One writer: check.
     types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
     res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, a contract note, or nothing.
+    implicit []Resolution /// NodeId -> the call the LANGUAGE makes at this node's value with none written (an interpolation slot's `display`, D422); `Unresolved`/`Callee` only. A second table, not a `res` arm: `${f()}` is an explicit call AND the operand of an implicit one, and `res` holds one answer per node by design. Donor: rustc `TypeckResults::adjustments`, keyed by the same expression id as `type_dependent_defs` and kept apart from it.
     contract_notes []ContractNote /// Flat pool of contract displays, addressed by the Contract arm's index.
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
     arg_slots []SlotBind /// Flat pool of argument BINDINGS: per parameter slot, WHICH argument fills it and through WHICH declared conversion (see SlotBind).
@@ -219,11 +220,13 @@ export type CheckOut {
 export fn CheckOut.new(node_count int) -> CheckOut {
     mut types = []TyId.new()
     mut res = []Resolution.new()
+    mut implicit = []Resolution.new()
     for _ in 0..node_count {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
+        implicit.push(Resolution.Unresolved)
     }
-    CheckOut { entry: no_row(), types, res, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
+    CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new() }
 }
 
@@ -417,6 +420,71 @@ export fn CheckOut @has_callee(id NodeId) -> bool
     }
 }
 
+/// Record the call the language makes AT this node's value with none written
+/// there (274.7 B1b-1): the interpolation slot's `display(mut f Fmt)` (D422) is
+/// the first; `Into[str]` and the other inserted calls of the spec are the
+/// rest. The SAME write discipline as `record_callee` -- one answer, the same
+/// answer twice is legal, a different one is the disease -- over the SECOND
+/// table, because the node itself may be a call (`${f()}`) and `res` is taken.
+/// One writer: check (the slot judge).
+export fn CheckOut mut @record_implicit(id NodeId, target CalleeTarget, subst []TyId,
+                                       slots []SlotBind) -> ()
+    requires is_node(id) && raw_node(id) < @implicit.len(), "sem: channel asked about an implicit call outside this file's id space"
+    requires target_present(target), "sem: channel implicit-callee write with no row -- absence is not a decision"
+{
+    match @implicit[raw_node(id)] {
+        Unresolved => {}
+        Callee(prev) => assert(same_target(prev.target, target),
+            "sem: an implicit call was resolved twice to different targets")
+        Subst(_) | Const(_) | Contract(_) => ice("sem: the implicit table holds calls only -- a non-call arm was written into it")
+    }
+    ro subst_off = @subst_args.len()
+    @subst_args.append(subst)
+    ro slot_off = @arg_slots.len()
+    @arg_slots.append(slots)
+    @implicit[raw_node(id)] = Resolution.Callee(CalleeRef { target, subst_off, subst_cnt: subst.len(),
+                                                           slot_off, slot_cnt: slots.len() })
+}
+
+/// The implicit call recorded at this node. TOTAL, like `callee_of`: ask
+/// `has_implicit` first.
+#realtime nogc
+export fn CheckOut @implicit_of(id NodeId) -> CalleeRef
+    requires is_node(id) && raw_node(id) < @implicit.len(), "sem: channel asked about an implicit call outside this file's id space"
+{
+    match @implicit[raw_node(id)] {
+        Callee(c) => c
+        Unresolved => ice("sem: implicit_of on a node with nothing recorded -- a hole in the channel")
+        Subst(_) | Const(_) | Contract(_) => ice("sem: the implicit table holds calls only -- a non-call arm was read from it")
+    }
+}
+
+/// Does the language call anything at this node's value? TOLERANT, for the
+/// reason `has_callee` is: the mono collector asks it of every node.
+#realtime nogc
+export fn CheckOut @has_implicit(id NodeId) -> bool
+    requires is_node(id) && raw_node(id) < @implicit.len(), "sem: has_implicit asked about a node outside this file's id space"
+{
+    match @implicit[raw_node(id)] {
+        Callee(_) => true
+        Unresolved | Subst(_) | Const(_) | Contract(_) => false
+    }
+}
+
+/// The binding of a call REFERENCE -- the view the id-keyed doors compose:
+/// `callee_slots_of` finds the reference in `res`, mono's collector holds one
+/// from either table, and both read the pool through this one door.
+#realtime nogc
+export fn CheckOut @slots_of_ref(cr CalleeRef) -> ro []SlotBind {
+    @arg_slots[cr.slot_off..cr.slot_off + cr.slot_cnt]
+}
+
+/// The substitution of a call REFERENCE; the view behind `callee_subst_of`.
+#realtime nogc
+export fn CheckOut @subst_of_ref(cr CalleeRef) -> ro []TyId {
+    @subst_args[cr.subst_off..cr.subst_off + cr.subst_cnt]
+}
+
 /// Whether a node carries a substitution — the only tolerant question in this
 /// module, and it is tolerant because "no substitution" is a legal ANSWER
 /// here, not a hole: most nodes instantiate nothing.
@@ -464,7 +532,7 @@ export fn CheckOut @callee_slots_of(id NodeId) -> ro []SlotBind
         Const(_) => ice("sem: callee_slots_of on a node recorded as a constant")
         Contract(_) => ice("sem: callee_slots_of on a node carrying a contract note")
     }
-    @arg_slots[cr.slot_off..cr.slot_off + cr.slot_cnt]
+    @slots_of_ref(cr)
 }
 
 /// The substitution a CALL was written with -- a VIEW into the pool, not a
@@ -484,7 +552,7 @@ export fn CheckOut @callee_subst_of(id NodeId) -> ro []TyId
         Const(_) => ice("sem: callee_subst_of on a node recorded as a constant")
         Contract(_) => ice("sem: callee_subst_of on a node carrying a contract note")
     }
-    @subst_args[cr.subst_off..cr.subst_off + cr.subst_cnt]
+    @subst_of_ref(cr)
 }
 
 /// The substitution of a node; asking about a node that has none is an ice

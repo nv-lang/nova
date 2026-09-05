@@ -1,0 +1,8 @@
+module probe760.m
+
+export type TyId int
+
+export fn used() -> int => 1
+
+/// The #760 form: a bare return of a ro-bound newtype parameter. Never called.
+export fn bad(t TyId) -> TyId => t

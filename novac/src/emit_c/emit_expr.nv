@@ -17,7 +17,7 @@ module novac.emit_c
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of, raw_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, arm_body_at, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, c_method_symbol, arm_body_at, Ctx}
 import ../sem.{CheckOut}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -518,7 +518,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // instance -- `Vec____nova_int_method_len`; the checker admitted
             // it against the lifted surface. Goes the day novac emits the
             // whole prelude.
-            @body.append(c_instance_method(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
+            @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
         }
         @body.append("(")
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the
@@ -627,18 +627,24 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // NEGATION IS CHECKED ONLY FOR SIGNED WIDTHS, and that is the RUNTIME's
         // own rule, not a preference: `nova_rt/effects.h` defines
         // `nova_<T>_checked_neg` under NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG for
-        // i8/i16/i32/i64 only -- "unsigned negation is well-defined
-        // two's-complement", says the header, so there is nothing to trap and no
-        // such symbol exists. Measured 2026-09-04 by a probe that LINKED: emitting
-        // `nova_u8_checked_neg` for `-a` on a `u8` produced an undefined symbol,
-        // while the same program built and printed 251 through the oracle. The
-        // first version of this wave had exactly that defect; it was found by a
-        // recheck, not by the corpus, because no carrier negated an unsigned.
-        ro neg_signed = match uk {
-            Negate => is_int_prim(@ctx.tys, carrier) && @arith_row(carrier).signed
+        // i8/i16/i32/i64 only -- there is no unsigned symbol. Measured 2026-09-04
+        // by a probe that LINKED: emitting `nova_u8_checked_neg` for `-a` on a
+        // `u8` produced an undefined symbol. Since wave 274.7 B4 (2026-09-05) an
+        // unsigned operand never reaches this door: the SPEC defines unary minus
+        // for signed types only (conversions.md), and the checker refuses it in
+        // `@report_if_unary_needs_protocol(kids)` (check/operators.nv, the
+        // NEG_UNSIGNED_MSG arm) -- the oracle's modular wrap (#926) is not a
+        // program novac emits. So the
+        // raw-C branch below is for `!`, `~` and float negation, and an unsigned
+        // integer here is a hole in the checker, said aloud rather than printed.
+        ro neg_int = match uk {
+            Negate => is_int_prim(@ctx.tys, carrier)
             Not | BitNot => false
         }
-        if neg_signed {
+        if neg_int && !@arith_row(carrier).signed {
+            ice("emit_c: unary minus on an unsigned operand passed the checker -- spec/conversions.md defines it for signed types only")
+        }
+        if neg_int {
             @body.append("nova_${@arith_row(carrier).name}_checked_neg(")
             @emit_expr(kids[1])
             @body.append(")")

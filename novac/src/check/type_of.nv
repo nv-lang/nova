@@ -170,14 +170,6 @@ fn adapt_operand(e Node, own TyId, other TyId, tys Interner) -> TyId {
     same_ty(other)
 }
 
-/// `int` beside `f64`, either way round -- the ONE mixed numeric pair the
-/// ORACLE accepts, measured 2026-09-04 (`1 + 2.5` and `int + f64` both build
-/// and print the double). D405's mixed-width rule is about INTEGER widths, so
-/// this pair is not refused; the result is `f64`, as the oracle prints it.
-#realtime nogc
-fn int_f64_mix(ctx Ctx, a TyId, b TyId) -> bool =>
-    (a == ctx.prims.int_id && b == ctx.prims.f64_id) || (a == ctx.prims.f64_id && b == ctx.prims.int_id)
-
 /// The TARGET type of a cast, resolved from the type written after `as`.
 ///
 /// The subset's cast targets are plain identifiers (`r as int`), so the last
@@ -408,7 +400,13 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // str/bool/records is not a silent int (#652 class), it is an
         // invariant break here.
         if lt == rt && is_numeric_prim(ctx.tys, lt) { return lt }
-        if int_f64_mix(ctx, lt, rt) { return ctx.prims.f64_id }
+        // Two numeric operands of DIFFERENT types: the operator judge refused
+        // this node (spec/conversions.md, wave B4), and a refusal is also a
+        // decision (274.4 step 2) -- the left operand's type is what the
+        // refused expression is typed as, so the walk past it stays alive.
+        // Until 2026-09-05 `int` beside `f64` answered `f64` here, on the
+        // oracle's measured behaviour and against the spec.
+        if is_numeric_prim(ctx.tys, lt) && is_numeric_prim(ctx.tys, rt) { return lt }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
         // has no operand typing yet, so today it reaches here.
         ice("check: binary arithmetic on non-numeric operands past check (#652 class)")

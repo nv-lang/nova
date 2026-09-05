@@ -223,12 +223,27 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
     }
 }
 
-/// D405: the two operands of an arithmetic or comparison operator must have the
-/// SAME concrete integer type -- different widths (`u8 + u16`) or signedness
-/// (`i8 + u8`) are a user error, and widening is explicit (`as`). A bare literal
-/// is not an operand of its own width: it takes the other side's (D405's own
-/// exception), so this text is reached only by two NAMED operands.
-const MIXED_WIDTH_MSG = "the operands differ in integer width or signedness (D405, E_MIXED_WIDTH_ARITH): convert one of them with `as`"
+/// D405 + spec/conversions.md (amendment 2026-09-04): the two operands of any
+/// numeric operator -- arithmetic, comparison, bitwise -- must be the SAME
+/// concrete type BY NAME. Different widths (`u8 + u16`), signedness (`i8 + u8`),
+/// an integer beside a float (`int + f64`, `i64 < f64`), two floats of different
+/// width (`f32 < f64`): every one is a user error, and the conversion is written
+/// with `as`. A bare literal is not an operand of its own type: it takes the
+/// other side's (the spec's one relaxation), so this text is reached only by two
+/// NAMED operands. Until 2026-09-05 novac exempted `int` beside `f64` because
+/// the oracle accepts it (measured 09-04) -- the spec of the same day says "A
+/// value of type `int` next to a value of type `f64` is still an error, literal
+/// or not", and the spec outranks the oracle (AGENTS.md, order of precedence;
+/// the oracle's side is registry #926). Wave 274.7 B4.
+const MIXED_NUMERIC_MSG = "the operands are different numeric types -- no implicit widening (D405, spec/conversions.md): `int` beside `f64`, `u8` beside `u16`, `f32` beside `f64` are all errors; convert one of them with `as` (a bare literal takes the other side's type)"
+
+/// spec/conversions.md (amendment 2026-09-04): "Unary minus is defined for
+/// signed types only. `-x` with an unsigned `x` is a compile error, not a
+/// modular wrap (`-200u8` does not become `56`); what you mean is written
+/// `-(x as i16)`." The emitter knew this (only signed rows take
+/// `checked_neg`); until 2026-09-05 the checker did not, and `-u` on a `u8`
+/// passed to the emitter as a plain numeric negation. Wave 274.7 B4.
+const NEG_UNSIGNED_MSG = "unary minus is defined for signed types only (spec/conversions.md): `-x` with an unsigned `x` is an error, not a modular wrap -- write `-(x as i16)` or a wider signed type"
 
 /// A top-level name declared twice in one file (#811). The name leaf is the
 /// first identifier of the declaration; the table answers "seen already", and
