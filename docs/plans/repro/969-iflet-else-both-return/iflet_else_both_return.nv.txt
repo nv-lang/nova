@@ -1,0 +1,11 @@
+// `if let` with an `else`, where BOTH branches `return`, as the last statement
+// of a value-returning function. `nova check` says ok; the C compiler refuses:
+//   error: initializing 'nova_int' (aka 'long long') with an expression of
+//          incompatible type -- nova_int _nv_tmp_458 = _nv_if_let_457;
+// The if-let is lowered as an EXPRESSION of unit type and then assigned into a
+// temporary of the function's return type.
+fn g(n int) -> Option[int] => Some(n)
+fn pick(n int) -> int {
+    if Some(v) = g(n) { return v } else { return -1 }
+}
+fn main() Io -> () => println(pick(7))

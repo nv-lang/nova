@@ -1,0 +1,6 @@
+// CONTROL. The same mismatch one door over: an ANNOTATED binding.
+// Refused by the checker with [E7301]. The rule exists and works here.
+fn main() Io -> () => {
+    ro x int = "s"
+    println(x)
+}

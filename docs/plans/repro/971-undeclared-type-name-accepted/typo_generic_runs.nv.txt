@@ -1,0 +1,10 @@
+// CARRIER 2 (SILENT, and the one a real user hits). `Vecc` is a TYPO of `Vec`.
+// A single doubled letter turns a checked annotation into an unchecked one:
+// `42` is passed where a collection was meant, and the program builds and runs.
+// Compare ctrl_declared_type.nv.txt, which is this file with the typo fixed --
+// there the very same call is refused with E7301.
+//   nova check -> PASS
+//   nova build -> exit 0
+//   run        -> 1
+fn takes(v Vecc[int]) -> int => 1
+fn main() Io -> () => println(takes(42))

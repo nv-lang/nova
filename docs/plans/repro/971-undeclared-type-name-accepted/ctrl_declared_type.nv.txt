@@ -1,0 +1,9 @@
+// CONTROL for CARRIER 2. Identical to typo_generic_runs.nv.txt with the typo
+// fixed -- `Vec`, not `Vecc`. The same call, the same argument, and now the
+// checker refuses it:
+//   nova check -> [E7301] cannot pass `int` as argument `x` of type `Vec[int]`
+// This is what makes the carrier a defect rather than a missing feature: the
+// rule exists and is enforced, and one doubled letter in the annotation makes
+// it vanish without a word.
+fn f(x Vec[int]) -> int => x.len()
+fn main() Io -> () => println(f(42))

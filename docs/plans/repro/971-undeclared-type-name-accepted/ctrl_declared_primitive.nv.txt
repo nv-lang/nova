@@ -1,0 +1,6 @@
+// CONTROL for CARRIER 1. The same argument door with a DECLARED type:
+//   nova check -> [E7301] cannot pass `str` as argument `x` of type `int`
+// Two controls, two shapes (primitive and generic), same verdict: the argument
+// door checks. It is the undeclared NAME that switches the checking off.
+fn takes(x int) -> int => 1
+fn main() Io -> () => println(takes("a string"))

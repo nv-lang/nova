@@ -1,0 +1,14 @@
+// CARRIER 4 (LOUD, and the likeliest name in practice). `float` is NOT a Nova
+// type: the resolver knows `f32` and `f64` only (types/mod.rs, the arm that
+// maps names to ResolvedType). It is nevertheless accepted in every annotation
+// position, and it is exactly what a newcomer writes -- the spec's own prose
+// says "int and float are different kinds" while the type is spelled f64.
+// It only becomes loud because codegen actually has to emit the field:
+//   nova check -> PASS
+//   nova build -> error: unknown type name 'Nova_float'; did you mean 'Nova_Slot'?
+// Replacing `float` with `f64` builds and prints 1.5; with `int`, prints 7.
+// So this is the same defect as the three silent carriers, differing only in
+// whether the undeclared type reaches the emitter.
+type Meters value { ro m float }
+fn Meters.new(m float) -> Meters => { m }
+fn main() Io -> () => println(Meters.new(1.5).m)

@@ -1,0 +1,15 @@
+// CONTROL. The scrutinee is a PARAMETER, not a call: fails identically. So the
+// defect does not depend on the scrutinee being a call expression, and any fix
+// aimed at call-result temporaries would miss it.
+// Written by window 274 (their target/t0/o/pick_param.nv), re-measured verbatim
+// by the integrator on main @ aeb4bcf0f before this row was filed.
+fn pick(o Option[int]) -> int {
+    if Some(v) = o {
+        return v
+    } else {
+        return -1
+    }
+}
+fn main() {
+    println(pick(Some(7)))
+}

@@ -1,0 +1,9 @@
+// CARRIER 3 (SILENT). The undeclared name in the RETURN position. An `int` is
+// returned from a function declared `-> Zzz`, and it builds and runs.
+// This door is doubly unguarded: #959's return check bails out on any
+// non-primitive return type, and the name itself is never resolved.
+//   nova check -> PASS
+//   nova build -> exit 0
+//   run        -> x
+fn f(n int) -> Zzz => n
+fn main() Io -> () => println("x")

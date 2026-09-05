@@ -1,0 +1,8 @@
+// CARRIER 1 (SILENT to a running binary). `Zzz` is declared nowhere. The
+// checker accepts it as a parameter type, an `int` is passed into it, and the
+// program BUILDS AND RUNS, printing 1. No diagnostic at any stage.
+//   nova check -> PASS
+//   nova build -> exit 0
+//   run        -> 1
+fn twice(x Zzz) -> int => 1
+fn main() Io -> () => println(twice(1))

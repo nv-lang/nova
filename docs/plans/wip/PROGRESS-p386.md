@@ -74,7 +74,7 @@ Worktree: `d:/Sources/nv-lang/nova-p386`, ветка `p386-bound-doors`.
    не влитая в `check_typeref_bounds`, потому что источник данных другой:
    `check_typeref_bounds` видит ЯВНО НАПИСАННЫЙ `TypeRef`; RecordLit без
    скобок никакого `TypeRef` с generic-аргументами в исходнике не содержит —
-   generic-арг ВЫВОДИТС� из типа поля-литерала (см. `TypeCheckCtx::f1_expr_inner`'s
+   generic-арг ВЫВОДИТСЯ из типа поля-литерала (см. `TypeCheckCtx::f1_expr_inner`'s
    `gen_args`-инференс, который я НЕ смог переиспользовать напрямую — он живёт
    в другом проходе и пишет в другой канал, `resolved_types_buf`). Пришлось
    переимплементировать ТУ ЖЕ логику инференса внутри `BoundCtx` (комментарий

@@ -14899,46 +14899,46 @@ mono-схему в `sum_schemas`. Fallback на `find_variant` при отсут
 
 ---
 
-## Plan 45 �.25 nova-tests � ��������� (2026-05-16)
+## Plan 45 Ф.25 nova-tests — упрощения (2026-05-16)
 
-### Indirect testing ��� doc-tooling features (�.25.1, �.25.3)
+### Indirect testing для doc-tooling features (Ф.25.1, Ф.25.3)
 
-**���:** 
+**Где:** 
 ova_tests/doc/f25_*_positive.nv
-**��� ��������:** Nova-tests ��������� ������ ��� ��� **������������� � runtime
-���������** ��� ������������� edge-case ���. ���� doc-warnings, source URLs,
-mutation reports � �� ����������� ����� nova test (��� level cargo integration
+**Что упрощено:** Nova-tests проверяют только что код **компилируется и runtime
+корректен** при использовании edge-case фич. Сами doc-warnings, source URLs,
+mutation reports — не проверяются через nova test (это level cargo integration
 tests).
-**������:** 
-ova test ��������� compiled binary � � ���� ��� access �
-DocTree.warnings ��� JSON output'�. ��� ������������ doc-tooling output
-����� ���� (a) cargo integration test (��� ���� � 53 PASS), ���� (b)
-spawn'���� 
-ova doc <file> --strict �� nova test � ��������� exit code �
-infrastructurally ������.
-**��� ������:** Plan 45.A � �������� 
+**Почему:** 
+ova test запускает compiled binary — у него нет access к
+DocTree.warnings или JSON output'у. Для тестирования doc-tooling output
+нужен либо (a) cargo integration test (уже есть — 53 PASS), либо (b)
+spawn'нуть 
+ova doc <file> --strict из nova test и проверить exit code —
+infrastructurally сложно.
+**Как чинить:** Plan 45.A — добавить 
 ova doc test <file> --expect-warnings N
-sub-command. Pragmatic ��� CI integration.
-**���������:** L � cargo tests ��� ��������� doc-output semantics; nova-tests
-��������� runtime semantics. ������� layer ����������.
+sub-command. Pragmatic для CI integration.
+**Приоритет:** L — cargo tests уже покрывают doc-output semantics; nova-tests
+покрывают runtime semantics. Двойной layer достаточен.
 
-### Boundary value tests ��� mutation (�.25.4)
+### Boundary value tests для mutation (Ф.25.4)
 
 **���:** \f25_mutation_contracts_positive.nv
-**��� ��������:** ����� �������� boundary values (strict_positive(1),
+**Что упрощено:** Тесты содержат boundary values (strict_positive(1),
 
 on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
-�� �� ����������� mutation analysis �� ���� ������ � nova test.
-**������:** 
-ova test �� ��������� --mutate-contracts. ����� verify ���
-����� ������������� kill mutants, ����� run mutation analysis ��������:
+но не запускается mutation analysis на этих файлах в nova test.
+**Почему:** 
+ova test не запускает --mutate-contracts. Чтобы verify что
+тесты действительно kill mutants, нужно run mutation analysis ОТДЕЛЬНО:
 
-ova doc <file> --mutate-contracts, parsed report ������ �������� killed > 0.
-**��� ������:** �������� � CI step: 
+ova doc <file> --mutate-contracts, parsed report должен показать killed > 0.
+**Как чинить:** добавить в CI step: 
 ova doc <file> --mutate-contracts --format json,
-parse � ��������� kill rate.
-**���������:** M � ��� ����� ��� �������������� guarantee ��� boundary tests
-actually catch mutants. Manual review ������������ �� scale issue.
+parse и проверить kill rate.
+**Приоритет:** M — без этого нет автоматической guarantee что boundary tests
+actually catch mutants. Manual review подтверждает но scale issue.
 ---
 
 ## Итоговый статус (2026-05-16 EOD — Plan 48 final)
@@ -15117,7 +15117,7 @@ Rust (нет stdlib merge).
 
 ### #pure annotations ������ �� �.26 tests
 
-**���:** 
+**Где:** 
 ova_tests/doc/f26_capabilities_positive.nv
 **��� ��������:** ���������� ����������� #pure attribute �� runtime fn,
 �� Plan 33.6 �.1.2 (E2401) hardening ������������ #pure ��� contracts �
@@ -15133,7 +15133,7 @@ goal (��� capabilities runtime-safe).
 
 ### #realtime ������ ��� export (D64 attr position)
 
-**���:** 
+**Где:** 
 ova_tests/doc/f26_capabilities_positive.nv rt-fn'�.
 **Что упрощено:** `#realtime fn ...` работает, `#realtime export fn ...` —
 parser error. Сделал rt-fn'ы без `export`, runtime tested через doc-tests.
@@ -15246,7 +15246,7 @@ verification (ensures ���� �� ���� boolean condition).
 **��� ������:** �������� 
 ender_block(b) ������� ���������� render'��
 last expression block'�. ~30 LOC. ������ ���������.
-**���������:** L.
+**Приоритет:** L.
 
 ### Match/closure/lambda/with/forbid/realtime � kind name fallback
 
@@ -15260,20 +15260,20 @@ duplicates AST pretty-printer (Plan 45.A roadmap'���).
 **���������:** L � contracts redko ���������� complex expressions; explicit
 <kind> placeholder �������� diagnose limitation.
 **���:** \f25_mutation_contracts_positive.nv
-**��� ��������:** ����� �������� boundary values (strict_positive(1),
+**Что упрощено:** Тесты содержат boundary values (strict_positive(1),
 
 on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
-�� �� ����������� mutation analysis �� ���� ������ � nova test.
-**������:** 
-ova test �� ��������� --mutate-contracts. ����� verify ���
-����� ������������� kill mutants, ����� run mutation analysis ��������:
+но не запускается mutation analysis на этих файлах в nova test.
+**Почему:** 
+ova test не запускает --mutate-contracts. Чтобы verify что
+тесты действительно kill mutants, нужно run mutation analysis ОТДЕЛЬНО:
 
-ova doc <file> --mutate-contracts, parsed report ������ �������� killed > 0.
-**��� ������:** �������� � CI step: 
+ova doc <file> --mutate-contracts, parsed report должен показать killed > 0.
+**Как чинить:** добавить в CI step: 
 ova doc <file> --mutate-contracts --format json,
-parse � ��������� kill rate.
-**���������:** M � ��� ����� ��� �������������� guarantee ��� boundary tests
-actually catch mutants. Manual review ������������ �� scale issue.
+parse и проверить kill rate.
+**Приоритет:** M — без этого нет автоматической guarantee что boundary tests
+actually catch mutants. Manual review подтверждает но scale issue.
 ---
 
 ## Итоговый статус (2026-05-16 EOD — Plan 48 final)
@@ -15562,7 +15562,7 @@ boundary cases.
 2 ��� �� fake breaking change. Schema title � ������������ ����� ��� promote
 visible.
 **��� ������:** �� ����� � ��� ���������� semver semantics.
-**���������:** none.
+**Приоритет:** none.
 
 ### Schema fixture � tests �� regen'�������
 
@@ -15624,9 +15624,9 @@ Plan 54 — codegen follow-ups от Plan 48/49 audit. Закрыто 5 из 8 it
 - Stdlib full doc-pass (Plan 45.B)
 - Parser-side #allow_transit (Plan 16)
 - Workspace handler matrix ����� FileRegistry (Plan 42)
-- MCP server ��� AI/LLM real-time queries
-- Mutation testing real exec ����� test_runner integration
-- AST pretty-printer shared util (��� render_expr completion)
+- MCP server для AI/LLM real-time queries
+- Mutation testing real exec через test_runner integration
+- AST pretty-printer shared util (для render_expr completion)
 ---
 
 ## Plan 54 final EOD — 7/8 closed + Ф.3 accepted-as-is (2026-05-16)
@@ -15679,12 +15679,12 @@ Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 ## Plan 45 �.30+�.31.1 simplifications (2026-05-16)
 
 ### HTML output single-page (no multi-page split)
-**���:** 
+**Где:** 
 ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
 **��� ������:** �.31.4 � file-per-module.
 
 ### HTML ��� JS / search index
-**���:** 
+**Где:** 
 ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
 **��� ������:** �.31.2 � generate search-index.json + lunr bundle.
 
@@ -15693,7 +15693,7 @@ ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
 **��� ������:** �.31.3 � CSS variables + prefers-color-scheme media query.
 
 ### Intra-doc link rewrite ����� text substitute
-**���:** 
+**Где:** 
 ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
 **��� ������:** CommonMark-aware parser (~300 LOC).
 
@@ -19165,46 +19165,46 @@ mono-схему в `sum_schemas`. Fallback на `find_variant` при отсут
 
 ---
 
-## Plan 45 �.25 nova-tests � ��������� (2026-05-16)
+## Plan 45 Ф.25 nova-tests — упрощения (2026-05-16)
 
-### Indirect testing ��� doc-tooling features (�.25.1, �.25.3)
+### Indirect testing для doc-tooling features (Ф.25.1, Ф.25.3)
 
-**���:** 
+**Где:** 
 ova_tests/doc/f25_*_positive.nv
-**��� ��������:** Nova-tests ��������� ������ ��� ��� **������������� � runtime
-���������** ��� ������������� edge-case ���. ���� doc-warnings, source URLs,
-mutation reports � �� ����������� ����� nova test (��� level cargo integration
+**Что упрощено:** Nova-tests проверяют только что код **компилируется и runtime
+корректен** при использовании edge-case фич. Сами doc-warnings, source URLs,
+mutation reports — не проверяются через nova test (это level cargo integration
 tests).
-**������:** 
-ova test ��������� compiled binary � � ���� ��� access �
-DocTree.warnings ��� JSON output'�. ��� ������������ doc-tooling output
-����� ���� (a) cargo integration test (��� ���� � 53 PASS), ���� (b)
-spawn'���� 
-ova doc <file> --strict �� nova test � ��������� exit code �
-infrastructurally ������.
-**��� ������:** Plan 45.A � �������� 
+**Почему:** 
+ova test запускает compiled binary — у него нет access к
+DocTree.warnings или JSON output'у. Для тестирования doc-tooling output
+нужен либо (a) cargo integration test (уже есть — 53 PASS), либо (b)
+spawn'нуть 
+ova doc <file> --strict из nova test и проверить exit code —
+infrastructurally сложно.
+**Как чинить:** Plan 45.A — добавить 
 ova doc test <file> --expect-warnings N
-sub-command. Pragmatic ��� CI integration.
-**���������:** L � cargo tests ��� ��������� doc-output semantics; nova-tests
-��������� runtime semantics. ������� layer ����������.
+sub-command. Pragmatic для CI integration.
+**Приоритет:** L — cargo tests уже покрывают doc-output semantics; nova-tests
+покрывают runtime semantics. Двойной layer достаточен.
 
-### Boundary value tests ��� mutation (�.25.4)
+### Boundary value tests для mutation (Ф.25.4)
 
 **���:** \f25_mutation_contracts_positive.nv
-**��� ��������:** ����� �������� boundary values (strict_positive(1),
+**Что упрощено:** Тесты содержат boundary values (strict_positive(1),
 
 on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
-�� �� ����������� mutation analysis �� ���� ������ � nova test.
-**������:** 
-ova test �� ��������� --mutate-contracts. ����� verify ���
-����� ������������� kill mutants, ����� run mutation analysis ��������:
+но не запускается mutation analysis на этих файлах в nova test.
+**Почему:** 
+ova test не запускает --mutate-contracts. Чтобы verify что
+тесты действительно kill mutants, нужно run mutation analysis ОТДЕЛЬНО:
 
-ova doc <file> --mutate-contracts, parsed report ������ �������� killed > 0.
-**��� ������:** �������� � CI step: 
+ova doc <file> --mutate-contracts, parsed report должен показать killed > 0.
+**Как чинить:** добавить в CI step: 
 ova doc <file> --mutate-contracts --format json,
-parse � ��������� kill rate.
-**���������:** M � ��� ����� ��� �������������� guarantee ��� boundary tests
-actually catch mutants. Manual review ������������ �� scale issue.
+parse и проверить kill rate.
+**Приоритет:** M — без этого нет автоматической guarantee что boundary tests
+actually catch mutants. Manual review подтверждает но scale issue.
 ---
 
 ## Итоговый статус (2026-05-16 EOD — Plan 48 final)
@@ -19383,7 +19383,7 @@ Rust (нет stdlib merge).
 
 ### #pure annotations ������ �� �.26 tests
 
-**���:** 
+**Где:** 
 ova_tests/doc/f26_capabilities_positive.nv
 **��� ��������:** ���������� ����������� #pure attribute �� runtime fn,
 �� Plan 33.6 �.1.2 (E2401) hardening ������������ #pure ��� contracts �
@@ -19399,7 +19399,7 @@ goal (��� capabilities runtime-safe).
 
 ### #realtime ������ ��� export (D64 attr position)
 
-**���:** 
+**Где:** 
 ova_tests/doc/f26_capabilities_positive.nv rt-fn'�.
 **Что упрощено:** `#realtime fn ...` работает, `#realtime export fn ...` —
 parser error. Сделал rt-fn'ы без `export`, runtime tested через doc-tests.
@@ -19512,7 +19512,7 @@ verification (ensures ���� �� ���� boolean condition).
 **��� ������:** �������� 
 ender_block(b) ������� ���������� render'��
 last expression block'�. ~30 LOC. ������ ���������.
-**���������:** L.
+**Приоритет:** L.
 
 ### Match/closure/lambda/with/forbid/realtime � kind name fallback
 
@@ -19526,20 +19526,20 @@ duplicates AST pretty-printer (Plan 45.A roadmap'���).
 **���������:** L � contracts redko ���������� complex expressions; explicit
 <kind> placeholder �������� diagnose limitation.
 **���:** \f25_mutation_contracts_positive.nv
-**��� ��������:** ����� �������� boundary values (strict_positive(1),
+**Что упрощено:** Тесты содержат boundary values (strict_positive(1),
 
 on_negative(0), \below_hundred(99)) ������� **����� ��** killing mutants,
-�� �� ����������� mutation analysis �� ���� ������ � nova test.
-**������:** 
-ova test �� ��������� --mutate-contracts. ����� verify ���
-����� ������������� kill mutants, ����� run mutation analysis ��������:
+но не запускается mutation analysis на этих файлах в nova test.
+**Почему:** 
+ova test не запускает --mutate-contracts. Чтобы verify что
+тесты действительно kill mutants, нужно run mutation analysis ОТДЕЛЬНО:
 
-ova doc <file> --mutate-contracts, parsed report ������ �������� killed > 0.
-**��� ������:** �������� � CI step: 
+ova doc <file> --mutate-contracts, parsed report должен показать killed > 0.
+**Как чинить:** добавить в CI step: 
 ova doc <file> --mutate-contracts --format json,
-parse � ��������� kill rate.
-**���������:** M � ��� ����� ��� �������������� guarantee ��� boundary tests
-actually catch mutants. Manual review ������������ �� scale issue.
+parse и проверить kill rate.
+**Приоритет:** M — без этого нет автоматической guarantee что boundary tests
+actually catch mutants. Manual review подтверждает но scale issue.
 ---
 
 ## Итоговый статус (2026-05-16 EOD — Plan 48 final)
@@ -19828,7 +19828,7 @@ boundary cases.
 2 ��� �� fake breaking change. Schema title � ������������ ����� ��� promote
 visible.
 **��� ������:** �� ����� � ��� ���������� semver semantics.
-**���������:** none.
+**Приоритет:** none.
 
 ### Schema fixture � tests �� regen'�������
 
@@ -19890,9 +19890,9 @@ Plan 54 — codegen follow-ups от Plan 48/49 audit. Закрыто 5 из 8 it
 - Stdlib full doc-pass (Plan 45.B)
 - Parser-side #allow_transit (Plan 16)
 - Workspace handler matrix ����� FileRegistry (Plan 42)
-- MCP server ��� AI/LLM real-time queries
-- Mutation testing real exec ����� test_runner integration
-- AST pretty-printer shared util (��� render_expr completion)
+- MCP server для AI/LLM real-time queries
+- Mutation testing real exec через test_runner integration
+- AST pretty-printer shared util (для render_expr completion)
 ---
 
 ## Plan 54 final EOD — 7/8 closed + Ф.3 accepted-as-is (2026-05-16)
@@ -19945,12 +19945,12 @@ Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 ## Plan 45 �.30+�.31.1 simplifications (2026-05-16)
 
 ### HTML output single-page (no multi-page split)
-**���:** 
+**Где:** 
 ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
 **��� ������:** �.31.4 � file-per-module.
 
 ### HTML ��� JS / search index
-**���:** 
+**Где:** 
 ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
 **��� ������:** �.31.2 � generate search-index.json + lunr bundle.
 
@@ -19959,7 +19959,7 @@ ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
 **��� ������:** �.31.3 � CSS variables + prefers-color-scheme media query.
 
 ### Intra-doc link rewrite ����� text substitute
-**���:** 
+**Где:** 
 ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
 **��� ������:** CommonMark-aware parser (~300 LOC).
 

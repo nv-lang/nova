@@ -1,0 +1,7 @@
+// CONTROL. The same if-let-with-else shape in a UNIT function: builds, prints 7.
+// So it is not the shape itself -- it is the shape in a value position.
+fn g(n int) -> Option[int] => Some(n)
+fn pick(n int) Io -> () {
+    if Some(v) = g(n) { println(v) } else { println(-1) }
+}
+fn main() Io -> () => pick(7)
