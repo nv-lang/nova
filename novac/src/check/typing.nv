@@ -212,6 +212,7 @@ fn Checker mut @type_fn(f Node) -> () {
         }
         Some(r) => r
     }
+    @ret_expect = @return_expectation(row)
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
     // `name != ENTRY_FN`, so the overload's parameters were never bound and its
@@ -283,13 +284,21 @@ fn Checker mut @type_fn(f Node) -> () {
         } else if ck == NodeKind.FnExprBody {
             ro ek = branch_children(c)
             ro e = ek[ek.len() - 1]
+            ro rmark = @out.len()
             if e.kind_of() == NodeKind.MatchExpr {
                 @type_match(e)
             } else if is_expr_kind(e.kind_of()) {
-                @type_expr(e)
+                @type_tail_value(e)
             } else {
                 // Not an expression tail: the subset walk already refused the
                 // form, so there is no answer for the channel to carry.
+            }
+            // THE RETURN DOOR, after the tail is typed and only if nothing was
+            // refused on the way (asking the lattice after a refusal is #902).
+            if @out.len() == rmark && is_expr_kind(e.kind_of()) {
+                @judge_return(e, @tail_type_of(e))
+            } else {
+                // A refused or non-expression tail: the walk already spoke.
             }
         } else {
             // Every other child (name, generics, params, return type) holds no
@@ -355,6 +364,7 @@ fn Checker mut @type_block(b Node) -> () {
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
+                        @judge_return(c, t)
                     } else {
                         // Resolved but untypeable: the walk already spoke.
                     }
@@ -381,6 +391,7 @@ fn Checker mut @type_block(b Node) -> () {
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
+                        @judge_return(c, t)
                     } else {
                         // Resolved but untypeable: the walk already spoke.
                     }
@@ -392,7 +403,29 @@ fn Checker mut @type_block(b Node) -> () {
                     // typed, they must AGREE, and the agreed type is recorded
                     // for the emitter -- which declares the result temporary
                     // with it, exactly as the tail match has done since B5.
+                    ro imark = @out.len()
                     @type_if_value(c)
+                    if @out.len() == imark {
+                        @judge_return(c, @chan.type_if_known(c.id_of()))
+                    } else {
+                        // The branches disagreed or one was refused: said already.
+                    }
+                    i += 1
+                    continue
+                }
+                if i == tail_at && is_expr_kind(c.kind_of()) {
+                    // ANY OTHER EXPRESSION TAIL of a value body (a name, a
+                    // literal, an operator, a field) is the returned value too
+                    // (274.7 B5): typed as a tail value -- a bare literal takes
+                    // the declared type -- and judged by the return door (`@judge_return(c, t)`). Until
+                    // this arm the statement walk typed it and nobody compared.
+                    ro emark = @out.len()
+                    @type_tail_value(c)
+                    if @out.len() == emark {
+                        @judge_return(c, @tail_type_of(c))
+                    } else {
+                        // Refused while typing: the walk already spoke.
+                    }
                     i += 1
                     continue
                 }
@@ -696,7 +729,15 @@ fn Checker mut @type_stmt(st Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: `return` must carry a value")
             return
         }
-        @type_expr(kids[1])
+        // A `return` is a tail by another spelling: the same literal rule and
+        // the same door (274.7 B5), asked only when typing refused nothing.
+        ro rmark = @out.len()
+        @type_tail_value(kids[1])
+        if @out.len() == rmark {
+            @judge_return(kids[1], @tail_type_of(kids[1]))
+        } else {
+            // The operand was refused: the walk already spoke.
+        }
     } else if k == NodeKind.BindStmt {
         @type_bind(st)
     } else if k == NodeKind.AssignStmt {

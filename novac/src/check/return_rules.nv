@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_return_expr` -- the value a body produces is checked
+// against the declared return AT THE EXPRESSION (E0308), the same check for a
+// tail and for `return`; NOT taken: coercion at that site (Nova has none
+// between named types, D405 amendment) and the `!` type (a `panic` tail has
+// no type here and the door says nothing).
+// Role: layer 7 (check) -- the RETURN DOOR (274.7 B5, registry #960): the
+// declared return a body must produce, the literal rule at a value tail, and
+// the one judge every exit of a value passes through (`=>` body, block tail,
+// `return e`). The typing walk in typing.nv calls it at each of those sites.
+// Used by: typing.nv (type_fn sets the expectation, the tail sites judge).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+// crossed 1000 lines with wave B5 -- the cut is the wave's block, by meaning),
+// check-novac-branch-complete.py, check-novac-no-silent-skip.py, and the
+// fixtures return_mismatch/ and return_narrowing/ through check-novac-no-cascade.
+// novac/src/check/return_rules.nv -- what a fn declares, its body returns.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../types.{TyId, no_ty, is_ty, Interner, same_ty}
+import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
+import ../builtins.{TypeKind}
+
+/// THE RETURN A BODY MUST PRODUCE, or `no_ty()` when nothing is judged: no
+/// declared value (unit, or none), or a type PARAMETER -- the instance types
+/// its own body under its substitution, and the generic shape answers "I do
+/// not judge" rather than guessing (the oracle's #959 fix takes the same
+/// stance). Concrete for an instance through the same door every other type
+/// of the body takes (`@concrete`).
+fn Checker @return_expectation(row FnRow) -> TyId {
+    ro rid = @ctx.fns.rows[raw_row(row)].ret_id
+    if !is_ty(rid) { return no_ty() }
+    if rid == @ctx.prims.unit_id { return no_ty() }
+    ro cr = @concrete(rid)
+    if @ctx.tys.kind_of(cr) == TypeKind.TkParam { return no_ty() }
+    cr
+}
+
+/// Type a value that flows OUT of the fn -- a tail expression or a `return`
+/// operand. A bare numeric literal takes the DECLARED return type (D227 rule 2,
+/// D55 at the return position: `fn f() -> f64 => 1`, `fn g() -> u8 => 200`),
+/// judged for fit before it is recorded -- the very rule the argument door
+/// applies, through the same two doors (`adapt_operand`, `lit_fits_or_refuse`).
+/// Anything else is typed as an expression and judged afterwards.
+fn Checker mut @type_tail_value(e Node) -> () {
+    if is_ty(@ret_expect) {
+        // Only a BARE LITERAL is asked about before it is typed: the lattice
+        // ices on a name the registry does not carry (#902), so an unknown
+        // callee in the tail must reach the expression walk's refusal first.
+        match lit_arg_of(e) {
+            NotLit => {}
+            IntLitArg | FloatLitArg => {
+                ro own = type_of(e, @ctx, @scope, @chan)
+                ro adapted = adapt_operand(e, own, @ret_expect, @ctx.tys)
+                if @lit_fits_or_refuse(e, adapted) {
+                    @record(e, adapted)
+                } else {
+                    // The literal does not fit the declared width: the fit
+                    // door refused it at its own token (E_LIT_OUT_OF_RANGE).
+                }
+                // SILENT-OK: the literal was recorded, or refused by the fit door
+                // just above -- a decision either way, and nothing else to type.
+                return
+            }
+        }
+    } else {
+        // Nothing to adapt to: the fn declares no value to judge against.
+    }
+    @type_expr(e)
+}
+
+/// The type of a value tail AFTER it was typed, for the return door: what the
+/// channel recorded when it recorded anything (a literal adapted to the return,
+/// a tail `if`/`match` folded to its agreed type), else the lattice's answer.
+/// Asked only when typing refused nothing (the caller's mark), for #902's reason.
+fn Checker @tail_type_of(e Node) -> TyId {
+    ro rec = @chan.type_if_known(e.id_of())
+    if is_ty(rec) { return same_ty(rec) }
+    // An ANONYMOUS constructor (`=> { n: 1 }` for `-> Bytes`) has no type of its
+    // own: the language types it by its expectation, and the lattice, asked
+    // about it, ices ("anonymous constructor without a spread"). Its type IS the
+    // declared return; the field door judges its fields against that record.
+    if e.kind_of() == NodeKind.RecordCtor {
+        ro ck = branch_children(e)
+        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name { return same_ty(@ret_expect) }
+        // A NAMED constructor (`Bytes { n: 1 }`) has its own type: the lattice answers.
+    } else {
+        // Any other expression: the lattice answers.
+    }
+    type_of(e, @ctx, @scope, @chan)
+}
+
+/// THE RETURN DOOR (274.7 B5, registry #960; the oracle's is #959): the value a
+/// body produces is the type the fn declares, BY NAME -- D405's amendment and
+/// spec/conversions.md admit no implicit conversion between named types, so
+/// `int` for `-> f64`, `f64` for `-> int`, `n int` for `-> u8`, a `str` for
+/// `-> int` and a newtype's representation for the newtype are all refused.
+/// Until 2026-09-05 neither compiler had this door: the argument and binding
+/// positions refused what the return position let through, and the C
+/// compiler or a silent truncation (`-> u8 => 300` printed 44) said the rest.
+///
+/// The type comes from the CALLER -- the one typing just computed or recorded
+/// (`tail_type_of`) -- and only when typing refused nothing; an untypeable
+/// tail (`no_ty()`: a `panic(...)` tail, the language's `never`, has no value
+/// to type) makes the door say nothing on top. Two names, matched to the oracle's `assignable`
+/// so the differential compares by NAME: an integer narrowing is
+/// E_IMPLICIT_NARROWING, everything else E7301.
+fn Checker mut @judge_return(e Node, t0 TyId) -> () {
+    if !is_ty(@ret_expect) { return }
+    if !is_ty(t0) { return }
+    // An instance's body may still name the PARAMETER (`x T` bound as written):
+    // the comparison is between concrete types, through the same door every
+    // type of the body takes; a parameter that stays a parameter is not judged.
+    ro t = @concrete(t0)
+    if @ctx.tys.kind_of(t) == TypeKind.TkParam { return }
+    if t == @ret_expect { return }
+    ro from = ty_source_name(@ctx, t)
+    ro to = ty_source_name(@ctx, @ret_expect)
+    ro msg = if int_narrows(@ctx.tys, t, @ret_expect) {
+        "cannot return value of type `${from}` from a function declared `-> ${to}` -- implicit int narrowing loses range; use an explicit `... as ${to}` cast (D54, E_IMPLICIT_NARROWING)"
+    } else {
+        "cannot return value of type `${from}` from a function declared `-> ${to}` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or fix the declaration"
+    }
+    @report_first_leaf_of([]Node.of(e), msg)
+}
+
+/// Is `to` a NARROWER integer than `from` -- fewer bits, or the same bits with the
+/// other signedness (D54's table: every such pair loses range)? Two integer rows
+/// only; any other pair is a plain mismatch.
+#realtime nogc
+fn int_narrows(tys Interner, from TyId, to TyId) -> bool {
+    ro fr = match prim_row_of(tys, from) {
+        None => return false
+        Some(r) => r
+    }
+    ro tr = match prim_row_of(tys, to) {
+        None => return false
+        Some(r) => r
+    }
+    ro from_int = match fr.family {
+        PfInt => true
+        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+    }
+    ro to_int = match tr.family {
+        PfInt => true
+        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+    }
+    if !from_int || !to_int { return false }
+    tr.bits < fr.bits || (tr.bits == fr.bits && tr.signed != fr.signed)
+}

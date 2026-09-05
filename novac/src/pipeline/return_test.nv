@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `check_return_expr` -- the body's value is coerced to the
+// declared return type and a mismatch is E0308 at the expression; NOT taken:
+// coercion (Nova has none between named types, D405), and the `!` type (a
+// `panic` tail records no type here and the door says nothing).
+// Role: acceptance tests of the RETURN DOOR (274.7 B5, registry #960): the
+// value a body produces is the declared return type by name; a bare literal
+// takes the declared type; narrowing and mismatch carry the oracle's names.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures return_mismatch/
+// and return_narrowing/ through check-novac-no-cascade and the differential.
+// novac/src/pipeline/return_test.nv -- what a fn declares, its body returns.
+
+module novac.pipeline
+
+test "the body's value must be the declared return type, by name (274.7 B5, #960)" {
+    ro std = std_decls()
+    // POSITIVE FIRST: a door that never existed is switched on over a corpus
+    // that never met it, and the first proof is that it lets legal code through.
+    // (`Meters(n)` -- a newtype built by its constructor in a tail -- is an
+    // existing novac ICE, registry row filed with this wave; not a form here.)
+    ro (d0, c0) = compile_to_c("fn one() -> f64 => 1\nfn byte() -> u8 => 200\nfn early(n int) -> int {\n if n > 0 { return n }\n 0\n}\nfn twice(n int) -> int => n * 2\nfn via(n int) -> int => twice(n)\nfn pick(n int) -> str {\n if n > 0 { \"pos\" } else { \"non-pos\" }\n}\nfn main() {\n println(one())\n println(byte())\n println(early(3))\n println(via(4))\n println(pick(1))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // The literal took the DECLARED type: `200` is a byte, `1` a double.
+    assert(c0.contains("nova_byte)200") || c0.contains("nova_byte)0xC8"), c0)
+    // A generic body is not judged in the generic shape: no false refusal.
+    ro (dg, _) = compile_to_c("fn same[T](x T) -> T => x\nfn main() {\n println(same(1))\n}", std)
+    assert(dg.len() == 0, messages(dg))
+
+    // MISMATCH by name: str for int, f64 for int, int for f64, int for a newtype.
+    ro (d1, _) = compile_to_c("fn f() -> int => \"s\"\nfn main() {\n println(f())\n}", std)
+    assert(d1.len() == 1, messages(d1))
+    assert(messages(d1).contains("cannot return value of type `str` from a function declared `-> int`") && messages(d1).contains("E7301"), messages(d1))
+    ro (d2, _) = compile_to_c("fn f(x f64) -> int => x\nfn main() {\n println(f(3.9))\n}", std)
+    assert(d2.len() == 1 && messages(d2).contains("E7301"), messages(d2))
+    ro (d3, _) = compile_to_c("fn f(n int) -> f64 => n\nfn main() {\n println(f(7))\n}", std)
+    assert(d3.len() == 1 && messages(d3).contains("E7301"), messages(d3))
+    ro (d4, _) = compile_to_c("type Meters int\nfn f(n int) -> Meters => n\nfn main() {\n println(f(9))\n}", std)
+    assert(d4.len() == 1 && messages(d4).contains("`-> Meters`"), messages(d4))
+
+    // NARROWING carries the argument door's name; a `return` is judged like a tail.
+    ro (d5, _) = compile_to_c("fn f(n int) -> u8 => n\nfn main() {\n println(f(300))\n}", std)
+    assert(d5.len() == 1 && messages(d5).contains("E_IMPLICIT_NARROWING"), messages(d5))
+    ro (d6, _) = compile_to_c("fn f(n int) -> u8 {\n if n > 0 { return n }\n 0\n}\nfn main() {\n println(f(300))\n}", std)
+    assert(d6.len() == 1 && messages(d6).contains("E_IMPLICIT_NARROWING"), messages(d6))
+    // A literal that does not fit the declared width is the literal's own refusal.
+    ro (d7, _) = compile_to_c("fn f() -> u8 => 300\nfn main() {\n println(f())\n}", std)
+    assert(d7.len() == 1 && messages(d7).contains("E_LIT_OUT_OF_RANGE"), messages(d7))
+}
