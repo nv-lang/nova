@@ -1,0 +1,4 @@
+// Not an arrow-body question either: an explicit `return` in a block body is
+// equally unchecked.
+fn f() -> int { return "not an int" }
+fn main() Io -> () => println(f())

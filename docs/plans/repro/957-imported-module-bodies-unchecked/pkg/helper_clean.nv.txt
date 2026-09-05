@@ -1,0 +1,3 @@
+// A clean imported module, for the cases whose error lives elsewhere.
+module helper
+export fn used() -> int => 1

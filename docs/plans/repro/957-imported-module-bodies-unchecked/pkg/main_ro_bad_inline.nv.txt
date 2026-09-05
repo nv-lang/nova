@@ -1,0 +1,6 @@
+// The SAME #760 error, but in the entry file itself, and never called.
+module p957
+import ./helper.{used}
+type TyId int
+fn ro_bad(t TyId) -> TyId => t
+fn main() Io -> () => println(used())

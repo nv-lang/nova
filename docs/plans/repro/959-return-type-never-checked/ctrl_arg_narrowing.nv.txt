@@ -1,0 +1,7 @@
+// CONTROL, door 1 -- ARGUMENT. The same int 300 into a u8 parameter:
+// refused, [E_IMPLICIT_NARROWING]. The rule exists and works here.
+fn sink(b u8) -> u8 => b
+fn main() Io -> () => {
+    ro n int = 300
+    println(sink(n))
+}

@@ -1,0 +1,4 @@
+// Not a literal-adaptation question: a str-typed VARIABLE returned as int is
+// accepted by the checker just the same.
+fn f(s str) -> int => s
+fn main() Io -> () => println(f("x"))

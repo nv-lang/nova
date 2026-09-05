@@ -1,0 +1,3 @@
+module p957
+import ./helper.{used}
+fn main() Io -> () => println(used())

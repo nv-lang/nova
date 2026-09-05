@@ -1,0 +1,3 @@
+module p957
+import ./helper.{used, mk, bad}
+fn main() Io -> () => println(used() + (bad(mk()) as int))

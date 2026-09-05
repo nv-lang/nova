@@ -1,0 +1,3 @@
+// SILENT. An int returned where a bool is declared: prints true.
+fn as_bool(n int) -> bool => n
+fn main() Io -> () => println(as_bool(5))
