@@ -31473,6 +31473,33 @@ impl<'a> BoundCtx<'a> {
         }
         let ExprKind::Call { func, .. } = &e.kind else { return None };
         let ExprKind::Ident(name) = &func.kind else { return None };
+        // Реестр №941, аргументная половина. `Meters(2.5)` — это ВЫЗОВ по
+        // синтаксису и КОНСТРУКТОР по смыслу: имя стоит в `type_decls`, а не в
+        // `fn_decls`, поэтому поиск ниже промахивался и вся проверка членства
+        // D310 для такого аргумента молча не выполнялась. Замер 2026-09-05:
+        // `only_ints(Meters(2.5))` при `fn only_ints[T Ints](x T)` проходил, а тот
+        // же `Meters` через связку — `ro m Meters = Meters(2.5); only_ints(m)` —
+        // отказ. Одно значение, два написания, два ответа.
+        //
+        // ПОРЯДОК ВАЖЕН: `fn_decls` спрашивается ПЕРВЫМ, ниже. Свободная функция,
+        // одноимённая типу, законна и должна побеждать — конструктор отвечает
+        // только там, где функции с таким именем нет вовсе.
+        //
+        // Только НЕгенерические типы: у генерического конструктора тип аргументов
+        // выводится из самого вызова, и отвечать `Box` вместо `Box[int]` значило бы
+        // подменить один неверный ответ другим. Тот же принцип, по которому
+        // существующая ветка ниже отказывается от генерического возврата.
+        if !self.sig.fn_decls.contains_key(name.as_str()) {
+            if let Some(decl) = self.type_decls.get(name.as_str()) {
+                if decl.generics.is_empty() {
+                    return Some(TypeRef::Named {
+                        path: vec![name.clone()],
+                        generics: Vec::new(),
+                        span: e.span,
+                    });
+                }
+            }
+        }
         let cands = self.sig.fn_decls.get(name.as_str())?;
         let first = cands.first()?;
         let ret = first.return_type.as_ref()?;
