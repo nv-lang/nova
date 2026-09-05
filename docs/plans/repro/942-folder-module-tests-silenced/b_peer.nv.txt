@@ -1,4 +1,4 @@
-module fm930
+module fm
 test "second peer: deliberately FALSE" {
     assert(1 == 2)
 }

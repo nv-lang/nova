@@ -1,0 +1,6 @@
+// Case B: a peer that defines `fn main`, carrying NO marker at all. A second,
+// independent silencer -- the CU runs this program instead of the test harness.
+// No carrier of this shape exists in `spec_tests/conformance/` today (measured:
+// zero files there match `^fn main`), so it is recorded, not counted.
+module fm
+fn main() Io -> () => println("hello942")

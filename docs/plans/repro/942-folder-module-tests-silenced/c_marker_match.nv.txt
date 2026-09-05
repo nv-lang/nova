@@ -1,0 +1,8 @@
+// EXPECT_STDOUT entry peer: true
+// Case D: the same marker, with a pattern that DOES appear in the harness output.
+// The false assertion in `b_peer` is unchanged and still fails -- and the run is
+// reported PASS, because the stdout match has replaced the harness verdict.
+module fm
+test "marked peer, no main" {
+    assert(1 == 1)
+}

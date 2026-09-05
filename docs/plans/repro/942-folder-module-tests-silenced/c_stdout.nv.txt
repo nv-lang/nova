@@ -1,3 +1,0 @@
-// EXPECT_STDOUT hello930
-module fm930
-fn main() Io -> () => println("hello930")
