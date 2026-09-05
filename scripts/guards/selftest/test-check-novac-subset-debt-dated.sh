@@ -39,6 +39,21 @@ D=$(mk dated2 "module a" \
 run "$D" "$T/zero.baseline" && ok "короткая форма этапа (E2) принимается" \
     || bad "короткая форма этапа отвергнута"
 
+# --- срок в форме ВОЛНЫ ПЛАНА 274.7 законен (решение владельца 2026-09-05) ----
+D=$(mk wave "module a" \
+    'const M = "outside the subset: an interpolation slot of a record is not compiled yet (274.7 B1b)"')
+run "$D" "$T/zero.baseline" && ok "срок в форме волны 274.7 принимается" \
+    || bad "срок в форме волны 274.7 отвергнут"
+
+# --- а голая ссылка на план без волны — НЕ срок --------------------------------
+D=$(mk bareplan "module a" \
+    'const M = "outside the subset: something is not compiled yet (274.7)"')
+if run "$D" "$T/zero.baseline"; then
+    bad "голая ссылка на план сошла за срок - форма расширилась до любой ссылки"
+else
+    ok "голая ссылка на план без волны отвергнута"
+fi
+
 # --- ровно по базе: не хуже, чем было --------------------------------------
 D=$(mk atbase "module a" \
     'const M = "outside the subset: string interpolation is not compiled yet"')
