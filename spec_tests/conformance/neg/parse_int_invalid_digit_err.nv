@@ -5,7 +5,7 @@ fn assert_invalid_digit(s str, radix int) {
     match s.to_int(radix: radix) {
         Ok(_) => assert(false, "expected Err(InvalidDigit)")
         Err(e) => match e {
-            InvalidDigit => {}
+            InvalidDigit { .. } => {}
             _ => assert(false, "expected InvalidDigit variant")
         }
     }

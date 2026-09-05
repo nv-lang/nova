@@ -32,8 +32,8 @@
 module standalone.p930_blanket_set_bound_pos
 
 fn main() Io -> () {
-    ro fits = (7 as i32).try_to_i16()
-    ro overflows = (300 as u32).try_to_u8()
+    ro fits = (7 as i32).to_i16()
+    ro overflows = (300 as u32).to_u8()
     ro f f64 = 0.0 - 3.5
     ro g f32 = 0.0 - 1.5
     ro i7 = (0 - 7).abs()

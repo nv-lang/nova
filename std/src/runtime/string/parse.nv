@@ -10,7 +10,13 @@ module runtime.string
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 
 /// Error variants for the integer parse engines. Exported so callers can match on them.
-export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
+// 2026-09-05 (owner decision, D178 amendment): `Overflow` split into `AboveMax` /
+// `BelowMin` — the same "did not fit" vocabulary as `RangeError` and `CharError`, so a
+// caller learns which way the value missed the target.
+// 2026-09-05 (owner decision, D178 amendment, plan 282 Ф.4): `InvalidDigit` carries `at` — the
+// byte index of the first byte that is not a digit of the radix. The input itself is not
+// carried (the caller has it); the position is the one datum the caller cannot recover.
+export type ParseIntError enum Empty | InvalidDigit { at int } | AboveMax | BelowMin | InvalidRadix
 
 // Conversions live as METHODS ON THE SOURCE (`s.to_int()`, mirroring
 // `s.to_str()`/`to_str_lossy()` elsewhere), not static constructors on the
@@ -22,15 +28,15 @@ export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
 
 /// Signed decimal/radix-N engine (`int`/i64 domain, two's-complement 64-bit
 /// range). `radix` valid range: 2..=36. Empty / `-`/`+` without digits →
-/// `Err(Empty)`. Invalid digit → `Err(InvalidDigit)`. i64 overflow →
-/// `Err(Overflow)`. radix out of range → `Err(InvalidRadix)`.
+/// `Err(Empty)`. Invalid digit → `Err(InvalidDigit { at })`. i64 overflow →
+/// `Err(AboveMax)`/`Err(BelowMin)`. radix out of range → `Err(InvalidRadix)`.
 /// PRIVATE — not part of the public surface; reused
 /// by `@to_int`/`@to_i64` below.
 fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
-    if radix < 2 || radix > 36 { return Err(InvalidRadix) }
+    if radix < 2 || radix > 36 { return Err(ParseIntError.InvalidRadix) }
     ro bytes = @bytes()
     ro n = @byte_len()
-    if n == 0 { return Err(Empty) }
+    if n == 0 { return Err(ParseIntError.Empty) }
     mut neg = false
     mut start = 0
     if bytes[0] == '-' {
@@ -38,7 +44,7 @@ fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
         start = 1
     }
     else if bytes[0] == '+' { start = 1 }
-    if start >= n { return Err(Empty) }
+    if start >= n { return Err(ParseIntError.Empty) }
     mut acc = 0
     for j in start..n {
         ro c = bytes[j] as int
@@ -46,8 +52,8 @@ fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
         if c >= '0' && c <= '9' { d = c - '0' }
         else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }
         else if c >= 'A' && c <= 'Z' { d = c - 'A' + 10 }
-        if d < 0 || d >= radix { return Err(InvalidDigit) }
-        if acc > (9223372036854775807 - d) / radix { return Err(Overflow) }
+        if d < 0 || d >= radix { return Err(ParseIntError.InvalidDigit { at: j }) }
+        if acc > (9223372036854775807 - d) / radix { return Err(if neg { ParseIntError.BelowMin } else { ParseIntError.AboveMax }) }
         acc = acc * radix + d
     }
     Ok(if neg { -acc } else { acc })
@@ -56,17 +62,17 @@ fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
 /// Unsigned decimal/radix-N engine (`uint`/u64 domain, full 64-bit unsigned
 /// range). Same contract as `@parse_int_core` except there is no sign: a
 /// leading `-` is not special-cased — it simply fails the digit scan at
-/// position 0 and falls out through the generic `Err(InvalidDigit)` path
+/// position 0 and falls out through the generic `Err(InvalidDigit { at })` path
 /// ("`-` ⇒ InvalidDigit"; no dedicated branch needed). PRIVATE —
 /// reused by `@to_u64`/`@to_u32`/`@to_u8` below.
 fn str @parse_uint_core(radix int) -> Result[uint, ParseIntError] {
-    if radix < 2 || radix > 36 { return Err(InvalidRadix) }
+    if radix < 2 || radix > 36 { return Err(ParseIntError.InvalidRadix) }
     ro bytes = @bytes()
     ro n = @byte_len()
-    if n == 0 { return Err(Empty) }
+    if n == 0 { return Err(ParseIntError.Empty) }
     mut start = 0
     if bytes[0] == '+' { start = 1 }
-    if start >= n { return Err(Empty) }
+    if start >= n { return Err(ParseIntError.Empty) }
     mut acc uint = 0
     ro uradix = radix as uint
     for j in start..n {
@@ -75,34 +81,17 @@ fn str @parse_uint_core(radix int) -> Result[uint, ParseIntError] {
         if c >= '0' && c <= '9' { d = c - '0' }
         else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }
         else if c >= 'A' && c <= 'Z' { d = c - 'A' + 10 }
-        if d < 0 || d >= radix { return Err(InvalidDigit) }
+        if d < 0 || d >= radix { return Err(ParseIntError.InvalidDigit { at: j }) }
         ro ud = d as uint
-        if acc > (uint.MAX - ud) / uradix { return Err(Overflow) }
+        if acc > (uint.MAX - ud) / uradix { return Err(ParseIntError.AboveMax) }
         acc = acc * uradix + ud
     }
     Ok(acc)
 }
 
-/// Error variants for `str.to_f64()`. Exported so callers can match on them.
-export type ParseFloatError enum Empty | Invalid
-
-// Plain FFI, no compiler name-knowledge: `str_parse_f64` is a
-// regular `extern "C" fn`, out-param convention (bool ok + `*out`
-// value). The compiler knows NOTHING about float parsing; it just lowers
-// an ordinary FFI call.
-extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
-
-/// Strict parse — delegates to `str_parse_f64` (conv.h, `strtod`-based;
-/// leading whitespace, `+`/`-`, decimal, exponent, `"nan"`/`"inf"` literals).
-/// Empty string → `Err(Empty)` (checked here so it's distinguishable from
-/// other malformed syntax, which `strtod` cannot tell apart on its own —
-/// reported as `Err(Invalid)`).
-#stable(since = "0.1")
-export fn str @to_f64() -> Result[f64, ParseFloatError] {
-    if @is_empty() { return Err(Empty) }
-    mut v = 0.0
-    if unsafe { str_parse_f64(@, &v) } { Ok(v) } else { Err(Invalid) }
-}
+// `str @to_f64()` and `ParseFloatError` live in `parse_float.nv` (same module) since
+// 2026-09-05 (plan 282 Ф.4): the grammar is Nova's, only the decimal→binary rounding is
+// delegated to C.
 
 // ── `str @to_bool()` ─
 //
@@ -117,7 +106,7 @@ export type ParseBoolError enum Empty | Invalid
 /// (mirrors `@to_f64`'s `Invalid` for "well-formed-but-not-this" garbage).
 #stable(since = "0.1")
 export fn str @to_bool() -> Result[bool, ParseBoolError] {
-    if @is_empty() { return Err(Empty) }
+    if @is_empty() { return Err(ParseIntError.Empty) }
     if @ == "true" { return Ok(true) }
     if @ == "false" { return Ok(false) }
     Err(Invalid)
@@ -181,11 +170,11 @@ export fn str @to_u64(radix int = 10) -> Result[u64, ParseIntError] =>
     @parse_uint_core(radix).map(|v| v as u64)
 
 /// Decimal (default) or radix-N parse into `u32`, range-checked (unsigned:
-/// a leading `-` is `Err(InvalidDigit)`, not negation).
+/// a leading `-` is `Err(InvalidDigit { at: 0 })`, not negation).
 #stable(since = "0.1")
 export fn str @to_u32(radix int = 10) -> Result[u32, ParseIntError] {
     ro v = @parse_uint_core(radix)?
-    if v > (u32.MAX as uint) { return Err(Overflow) }
+    if v > (u32.MAX as uint) { return Err(ParseIntError.AboveMax) }
     Ok(v as u32)
 }
 
@@ -193,7 +182,7 @@ export fn str @to_u32(radix int = 10) -> Result[u32, ParseIntError] {
 #stable(since = "0.1")
 export fn str @to_u8(radix int = 10) -> Result[u8, ParseIntError] {
     ro v = @parse_uint_core(radix)?
-    if v > (u8.MAX as uint) { return Err(Overflow) }
+    if v > (u8.MAX as uint) { return Err(ParseIntError.AboveMax) }
     Ok(v as u8)
 }
 
@@ -205,7 +194,8 @@ export fn str @to_u8(radix int = 10) -> Result[u8, ParseIntError] {
 #stable(since = "0.1")
 export fn str @to_i8(radix int = 10) -> Result[i8, ParseIntError] {
     ro v = @parse_int_core(radix)?
-    if v > (i8.MAX as int) || v < (i8.MIN as int) { return Err(Overflow) }
+    if v > (i8.MAX as int) { return Err(ParseIntError.AboveMax) }
+    if v < (i8.MIN as int) { return Err(ParseIntError.BelowMin) }
     Ok(v as i8)
 }
 
@@ -213,7 +203,8 @@ export fn str @to_i8(radix int = 10) -> Result[i8, ParseIntError] {
 #stable(since = "0.1")
 export fn str @to_i16(radix int = 10) -> Result[i16, ParseIntError] {
     ro v = @parse_int_core(radix)?
-    if v > (i16.MAX as int) || v < (i16.MIN as int) { return Err(Overflow) }
+    if v > (i16.MAX as int) { return Err(ParseIntError.AboveMax) }
+    if v < (i16.MIN as int) { return Err(ParseIntError.BelowMin) }
     Ok(v as i16)
 }
 
@@ -221,16 +212,17 @@ export fn str @to_i16(radix int = 10) -> Result[i16, ParseIntError] {
 #stable(since = "0.1")
 export fn str @to_i32(radix int = 10) -> Result[i32, ParseIntError] {
     ro v = @parse_int_core(radix)?
-    if v > (i32.MAX as int) || v < (i32.MIN as int) { return Err(Overflow) }
+    if v > (i32.MAX as int) { return Err(ParseIntError.AboveMax) }
+    if v < (i32.MIN as int) { return Err(ParseIntError.BelowMin) }
     Ok(v as i32)
 }
 
 /// Decimal (default) or radix-N parse into `u16`, range-checked (unsigned:
-/// a leading `-` is `Err(InvalidDigit)`, not negation).
+/// a leading `-` is `Err(InvalidDigit { at: 0 })`, not negation).
 #stable(since = "0.1")
 export fn str @to_u16(radix int = 10) -> Result[u16, ParseIntError] {
     ro v = @parse_uint_core(radix)?
-    if v > (u16.MAX as uint) { return Err(Overflow) }
+    if v > (u16.MAX as uint) { return Err(ParseIntError.AboveMax) }
     Ok(v as u16)
 }
 

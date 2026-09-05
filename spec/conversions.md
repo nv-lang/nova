@@ -15,7 +15,7 @@ D-decisions: [D54](decisions/03-syntax.md#d54) (`as`),
 [D325](decisions/04-effects.md#d325) (the unified fallible std contract),
 [D410](decisions/03-syntax.md#d410) (the `to_str`/`bytes` family),
 [D429](decisions/02-types.md#d429) (`#coerce` — zero-cost implicit),
-[D430](decisions/04-effects.md#d430) (checked narrowing `try_to_*`).
+[D430](decisions/04-effects.md#d430) (checked narrowing `to_*`).
 `From`/`Into`/`TryFrom`/`TryInto` as **protocols** were retracted
 2026-07-06 ([D73](decisions/08-runtime.md#d73)/[D77](decisions/08-runtime.md#d77)) —
 details in the "`from`/`try_from` naming" section below.
@@ -120,30 +120,30 @@ ro m = (-1.0) as u32           // saturates to 0
 ro nan = 0.0 / 0.0 as i16      // 0
 ```
 
-### Checked narrowing — `try_to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
+### Checked narrowing — `to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
 
 `as` between integer widths is always wraparound (silent loss of high bits).
 If you need a **check** instead of silent wrap — a bounded blanket
-`@try_to_<T>()` on any type from the `Ints` set, symmetric for all target
+`@to_<T>()` on any type from the `Ints` set, symmetric for all target
 widths (`i8`/`i16`/`i32`/`i64`/`int`/`u8`/`u16`/`u32`/`u64`/`uint`):
 
 ```nova
-ro ok = (100 as u32).try_to_u8()       // Ok(100 as u8)
-ro err = (300 as u32).try_to_u8()      // Err(RangeError) — не влезло
-ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — отрицательное → unsigned
+ro ok = (100 as u32).to_u8()       // Ok(100 as u8)
+ro err = (300 as u32).to_u8()      // Err(AboveMax) — не влезло
+ro neg = (-1 as i32).to_u8()       // Err(BelowMin) — отрицательное → unsigned
 ```
 
 **FROM A FLOAT TOO, UNDER THE SAME NAME (D430 amendment R6, 2026-09-04).** A second
-blanket family, `fn[S Floats] S @try_to_<T>()`, covers `f32` and `f64`. The semantics
+blanket family, `fn[S Floats] S @to_<T>()`, covers `f32` and `f64`. The semantics
 are the integers' semantics, and that is the point of the amendment: the question is
 **"did it fit", not "was it exact"**. The fractional part truncates toward zero, then
 the target's range is checked; NaN and the infinities are `Err`.
 
 ```nova
-ro ok  = (2.5).try_to_i16()            // Ok(2) — усечено к нулю, влезло
-ro neg = (-2.5).try_to_i16()           // Ok(-2) — к нулю, не вниз
-ro big = (70000.5).try_to_i16()        // Err(RangeError) — не влезло
-ro nan = (0.0 / 0.0).try_to_i16()      // Err(RangeError)
+ro ok  = (2.5).to_i16()            // Ok(2) — усечено к нулю, влезло
+ro neg = (-2.5).to_i16()           // Ok(-2) — к нулю, не вниз
+ro big = (70000.5).to_i16()        // Err(AboveMax) — не влезло
+ro nan = (0.0 / 0.0).to_i16()      // Err(BelowMin)
 ```
 
 One name, one meaning across the whole family: a method whose promise shifts with the
@@ -151,7 +151,7 @@ kind of its receiver reads as one thing and behaves as two. Donors: Swift's `Int
 C#'s `checked`.
 
 `RangeError` — a unit type ("didn't fit", no payload — the fact itself is
-exhaustive). `as` remains the fast truncating cast, unchanged — `try_to_*`
+exhaustive). `as` remains the fast truncating cast, unchanged — `to_*`
 does not replace it, but adds a checked alternative alongside.
 
 ---
@@ -184,7 +184,11 @@ fn parse_decimal_f64(s str) -> Result[f64, ParseFloatError] =>
 ```
 
 Errors — structural enums: `type ParseIntError enum Empty | InvalidDigit
-| Overflow | InvalidRadix` and `type ParseFloatError enum Empty | Invalid`
+| AboveMax | BelowMin | InvalidRadix` (2026-09-05: `Overflow` split by direction) and `type ParseFloatError enum Empty | Malformed { at int } | TooLarge | TooSmall` (interim names — registry #136; target vocabulary `Invalid`/`AboveMax`/`BelowMin`)
+
+**Float grammar is Nova's (plan 282 Ф.4, 2026-09-05).** `s.to_f64()` accepts exactly `[+-]?(digits[.digits?]|.digits)([eE][+-]?digits)?` — no whitespace, no `nan`/`inf`, no hex, no `_`, no locale separator; the first offending byte is reported in `Malformed { at }`; a finite literal outside `f64` is `TooLarge`/`TooSmall`, not a silent `inf`. Only the correctly-rounded decimal→binary step is delegated to C, and only for a string the grammar already accepted.
+
+**Comparing a result.** Until registry #136 is fixed, compare a `Result` whose error has a shared variant name (`AboveMax`/`BelowMin` live in `RangeError`, `CharError` and `ParseIntError`) with `match` or a qualified variant (`r == Err(ParseIntError.AboveMax)`); a bare `r == Err(AboveMax)` may silently pick another type's variant.
 (`std/runtime/string/parse.nv`).
 
 ### str → bool (parse, fallible)
@@ -258,7 +262,7 @@ assert("ab".to_char() == Err(TooManyChars))    // строгий отказ, н�
 ```
 
 `type ParseCharError enum Empty | TooManyChars` (`std/runtime/string/parse.nv`)
-— does **NOT** reuse `CharFromError` (see the "int → char" section below): that
+— does **NOT** reuse `CharError` (see the "int → char" section below): that
 domain is a codepoint outside the Unicode scalar value range/surrogates,
 unreachable for str→char (the bytes of a `str` are already valid UTF-8, R-UTF8).
 
@@ -270,13 +274,13 @@ principle as `str @to_int()`: `(32 + off).to_char()?`.
 
 | Via | Failure |
 |---|---|
-| `(cp int).to_char() -> Result[char, CharFromError]` | `cp < 0` / `cp > 0x10FFFF` / surrogate `[0xD800, 0xDFFF]` |
+| `(cp int).to_char() -> Result[char, CharError]` | `BelowMin` — `cp < 0` · `AboveMax` — `cp > 0x10FFFF` · `Invalid` — reserved block `[0xD800, 0xDFFF]` (2026-09-05: one door, one error; `CharError`/`InvalidCodepoint`/`str.try_from_codepoint` retired) |
 
 ```nova
 fn describe(cp int) -> str =>
     match cp.to_char() {
         Ok(c)              => "codepoint ${cp} = '${c}'"
-        Err(CharFromError) => "codepoint ${cp} вне диапазона"
+        Err(e) => "${cp} is not a char: ${e}"
     }
 ```
 
@@ -287,7 +291,7 @@ case where `try_` remained on the target type:
 
 | Via | Failure |
 |---|---|
-| `u8.try_from(c char) -> Result[u8, TryFromCharError]` | codepoint > 0xFF (not Latin-1) |
+| `c.to_u8() -> Result[u8, RangeError]` | codepoint > 0xFF (not Latin-1) — receiver form since 2026-09-05; `u8.try_from(c char)` retired (D54 amendment: a conversion between concrete types is a method on the source; a static on the target is for `Self`-constructors in protocols and `try_from` beside `from` only) |
 
 **Exception:** `'A' as byte`, `'A' as int`, `'A' as u8` — allowed
 for char literals (compile-time-known codepoint), see D54.
@@ -580,8 +584,8 @@ Implemented and stable:
 - ✅ `str @to_bool()`/`str @to_char()` — Plan 232.1 T1 (2026-07-26)
 - ✅ bare-`T @to_str()` blanket + specializations (`char`, `[]u8`) — Plan 174.2
 - ✅ `[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` — D325
-- ✅ `(cp int).to_char()`, `u8.try_from(c char)` — D54/D77-naming
-- ✅ Checked narrowing `@try_to_i8()`..`@try_to_uint()` — D430 (2026-07-20)
+- ✅ `(cp int).to_char()`, `c.to_u8()` — D54 canon (source-method; `u8.try_from` retired 2026-09-05)
+- ✅ Checked narrowing `@to_i8()`..`@to_uint()` — D430 (2026-07-20)
 - ✅ `#coerce` (view/finalize) — D429/214.1, three std pairs + generic patterns
 
 Retracted (do not resurrect without a new sign-off):
@@ -602,7 +606,7 @@ Retracted (do not resurrect without a new sign-off):
 - [02-types.md → D52](decisions/02-types.md#d52) — newtype/alias/sum declarations
 - [02-types.md → D406](decisions/02-types.md#d406) — the `enum` marker of a sum type
 - [02-types.md → D429](decisions/02-types.md#d429) — `#coerce` (zero-cost implicit view/finalize)
-- [04-effects.md → D430](decisions/04-effects.md#d430) — checked narrowing `try_to_*`
+- [04-effects.md → D430](decisions/04-effects.md#d430) — checked narrowing `to_*`
 - [04-effects.md → D325](decisions/04-effects.md#d325) — the unified fallible std contract (Result-everywhere)
 - [08-runtime.md → D73](decisions/08-runtime.md#d73) — `From`/`Into` (⛔ protocol retracted 2026-07-06)
 - [08-runtime.md → D77](decisions/08-runtime.md#d77) — `TryFrom`/`TryInto` (⛔ protocol retracted 2026-07-06)

@@ -6,7 +6,7 @@ D-decisions: [D54](decisions/03-syntax.md#d54) (`as`),
 [D325](decisions/04-effects.md#d325) (единый fallible-контракт std),
 [D410](decisions/03-syntax.md#d410) (`to_str`/`bytes`-семейство),
 [D429](decisions/02-types.md#d429) (`#coerce` — zero-cost implicit),
-[D430](decisions/04-effects.md#d430) (checked narrowing `try_to_*`).
+[D430](decisions/04-effects.md#d430) (checked narrowing `to_*`).
 `From`/`Into`/`TryFrom`/`TryInto` как **протоколы** ретрактированы
 2026-07-06 ([D73](decisions/08-runtime.md#d73)/[D77](decisions/08-runtime.md#d77)) —
 подробности в разделе «Именование `from`/`try_from`» ниже.
@@ -111,32 +111,32 @@ ro m = (-1.0) as u32           // saturates to 0
 ro nan = 0.0 / 0.0 as i16      // 0
 ```
 
-### Checked narrowing — `try_to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
+### Checked narrowing — `to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
 
 `as` между целочисленными ширинами всегда wraparound (тихая потеря
 старших бит). Если нужна **проверка**, а не тихий wrap — bounded-бланкет
-`@try_to_<T>()` на любом типе из `Ints`-набора, симметрично для всех
+`@to_<T>()` на любом типе из `Ints`-набора, симметрично для всех
 целевых ширин (`i8`/`i16`/`i32`/`i64`/`int`/`u8`/`u16`/`u32`/`u64`/`uint`):
 
 ```nova
-ro ok = (100 as u32).try_to_u8()       // Ok(100 as u8)
-ro err = (300 as u32).try_to_u8()      // Err(RangeError) — не влезло
-ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — отрицательное → unsigned
+ro ok = (100 as u32).to_u8()       // Ok(100 as u8)
+ro err = (300 as u32).to_u8()      // Err(AboveMax) — не влезло
+ro neg = (-1 as i32).to_u8()       // Err(BelowMin) — отрицательное → unsigned
 ```
 
-**ИЗ FLOAT — ТОЖЕ, С ТОГО ЖЕ ИМЕНИ (D430 амендмент R6, 2026-09-04).** Вторая бланкет-семья `fn[S Floats] S @try_to_<T>()` покрывает `f32`/`f64`. Семантика та же, что у целых, и это главное в амендменте: вопрос — **«влезло ли», а не «без потерь ли»**. Дробная часть усекается к нулю, затем проверяется диапазон цели; NaN и ±∞ — `Err`.
+**ИЗ FLOAT — ТОЖЕ, С ТОГО ЖЕ ИМЕНИ (D430 амендмент R6, 2026-09-04).** Вторая бланкет-семья `fn[S Floats] S @to_<T>()` покрывает `f32`/`f64`. Семантика та же, что у целых, и это главное в амендменте: вопрос — **«влезло ли», а не «без потерь ли»**. Дробная часть усекается к нулю, затем проверяется диапазон цели; NaN и ±∞ — `Err`.
 
 ```nova
-ro ok  = (2.5).try_to_i16()            // Ok(2) — усечено к нулю, влезло
-ro neg = (-2.5).try_to_i16()           // Ok(-2) — к нулю, не вниз
-ro big = (70000.5).try_to_i16()        // Err(RangeError) — не влезло
-ro nan = (0.0 / 0.0).try_to_i16()      // Err(RangeError)
+ro ok  = (2.5).to_i16()            // Ok(2) — усечено к нулю, влезло
+ro neg = (-2.5).to_i16()           // Ok(-2) — к нулю, не вниз
+ro big = (70000.5).to_i16()        // Err(AboveMax) — не влезло
+ro nan = (0.0 / 0.0).to_i16()      // Err(BelowMin)
 ```
 
 Одно имя — одно значение по всей семье: метод, чьё обещание меняется вместе с видом приёмника, читается как один, а ведёт себя как два. Доноры: Swift `Int16(f)`, C# `checked`.
 
 `RangeError` — unit-тип («не влезло», без payload — сам факт исчерпывающий).
-`as` остаётся быстрым обрезающим кастом без изменений — `try_to_*` не
+`as` остаётся быстрым обрезающим кастом без изменений — `to_*` не
 заменяет его, а добавляет проверяемую альтернативу рядом.
 
 ---
@@ -169,7 +169,11 @@ fn parse_decimal_f64(s str) -> Result[f64, ParseFloatError] =>
 ```
 
 Ошибки — структурные enum'ы: `type ParseIntError enum Empty | InvalidDigit
-| Overflow | InvalidRadix` и `type ParseFloatError enum Empty | Invalid`
+| AboveMax | BelowMin | InvalidRadix` (2026-09-05: `Overflow` разделён по направлению) и `type ParseFloatError enum Empty | Malformed { at int } | TooLarge | TooSmall` (временные имена — реестр №136; целевой словарь `Invalid`/`AboveMax`/`BelowMin`)
+
+**Грамматика float — наша (план 282 Ф.4, 2026-09-05).** `s.to_f64()` принимает ровно `[+-]?(digits[.digits?]|.digits)([eE][+-]?digits)?` — без пробелов, `nan`/`inf`, hex, `_` и локального разделителя; первый плохой байт — в `Malformed { at }`; конечный литерал вне `f64` — `TooLarge`/`TooSmall`, не молчаливый `inf`. C делегировано только правильное округление десятичной записи в двоичную, и только для строки, которую грамматика уже приняла.
+
+**Сравнение результата.** До починки строки реестра №136 результат с общим именем варианта ошибки (`AboveMax`/`BelowMin` есть у `RangeError`, `CharError` и `ParseIntError`) сравнивать через `match` или квалифицированно (`r == Err(ParseIntError.AboveMax)`); голое `r == Err(AboveMax)` может молча взять вариант другого типа.
 (`std/runtime/string/parse.nv`).
 
 ### str → bool (parse, fallible)
@@ -243,7 +247,7 @@ assert("ab".to_char() == Err(TooManyChars))    // строгий отказ, н�
 ```
 
 `type ParseCharError enum Empty | TooManyChars` (`std/runtime/string/parse.nv`)
-— **НЕ** переиспользует `CharFromError` (см. раздел «int → char» ниже): тот
+— **НЕ** переиспользует `CharError` (см. раздел «int → char» ниже): тот
 домен — codepoint вне диапазона Unicode scalar value/surrogate, недостижим
 для str→char (байты `str` уже валидный UTF-8, R-UTF8).
 
@@ -255,13 +259,13 @@ assert("ab".to_char() == Err(TooManyChars))    // строгий отказ, н�
 
 | Через | Failure |
 |---|---|
-| `(cp int).to_char() -> Result[char, CharFromError]` | `cp < 0` / `cp > 0x10FFFF` / surrogate `[0xD800, 0xDFFF]` |
+| `(cp int).to_char() -> Result[char, CharError]` | `BelowMin` — `cp < 0` · `AboveMax` — `cp > 0x10FFFF` · `Invalid` — зарезервированный блок `[0xD800, 0xDFFF]` (2026-09-05: одна дверь, одна ошибка; `CharError`/`InvalidCodepoint`/`str.try_from_codepoint` сняты) |
 
 ```nova
 fn describe(cp int) -> str =>
     match cp.to_char() {
         Ok(c)              => "codepoint ${cp} = '${c}'"
-        Err(CharFromError) => "codepoint ${cp} вне диапазона"
+        Err(e) => "${cp} — не символ: ${e}"
     }
 ```
 
@@ -272,7 +276,7 @@ fn describe(cp int) -> str =>
 
 | Через | Failure |
 |---|---|
-| `u8.try_from(c char) -> Result[u8, TryFromCharError]` | codepoint > 0xFF (не Latin-1) |
+| `c.to_u8() -> Result[u8, RangeError]` | codepoint > 0xFF (не Latin-1) — форма на источнике с 2026-09-05; `u8.try_from(c char)` снят (амендмент D54: конверсия между конкретными типами — метод на источнике; статика на цели — только для конструкторов `Self` в протоколах и `try_from` рядом с `from`) |
 
 **Исключение:** `'A' as byte`, `'A' as int`, `'A' as u8` — разрешены
 для char-литералов (compile-time-known codepoint), см. D54.
@@ -563,8 +567,8 @@ ro p = Port.try_from(8080)?
 - ✅ `str @to_bool()`/`str @to_char()` — Plan 232.1 Т1 (2026-07-26)
 - ✅ bare-`T @to_str()` blanket + специализации (`char`, `[]u8`) — Plan 174.2
 - ✅ `[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` — D325
-- ✅ `(cp int).to_char()`, `u8.try_from(c char)` — D54/D77-naming
-- ✅ Checked narrowing `@try_to_i8()`..`@try_to_uint()` — D430 (2026-07-20)
+- ✅ `(cp int).to_char()`, `c.to_u8()` — канон D54 (метод на источнике; `u8.try_from` снят 2026-09-05)
+- ✅ Checked narrowing `@to_i8()`..`@to_uint()` — D430 (2026-07-20)
 - ✅ `#coerce` (view/finalize) — D429/214.1, три std-пары + generic-образцы
 
 Ретрактировано (не воскрешать без нового sign-off):
@@ -585,7 +589,7 @@ ro p = Port.try_from(8080)?
 - [02-types.md → D52](decisions/02-types.md#d52) — newtype/alias/sum-декларации
 - [02-types.md → D406](decisions/02-types.md#d406) — `enum`-маркер sum-типа
 - [02-types.md → D429](decisions/02-types.md#d429) — `#coerce` (zero-cost implicit view/finalize)
-- [04-effects.md → D430](decisions/04-effects.md#d430) — checked narrowing `try_to_*`
+- [04-effects.md → D430](decisions/04-effects.md#d430) — checked narrowing `to_*`
 - [04-effects.md → D325](decisions/04-effects.md#d325) — единый fallible-контракт std (Result-everywhere)
 - [08-runtime.md → D73](decisions/08-runtime.md#d73) — `From`/`Into` (⛔ протокол ретрактирован 2026-07-06)
 - [08-runtime.md → D77](decisions/08-runtime.md#d77) — `TryFrom`/`TryInto` (⛔ протокол ретрактирован 2026-07-06)

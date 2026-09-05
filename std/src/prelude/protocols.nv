@@ -32,7 +32,7 @@ import std.runtime.fmt_buf.{Align, Sign, FmtKind}
 // engine. `string_builder.nv` is `#no_prelude` and does not import back.
 import std.runtime.string_builder.{StringBuilder, int_display_spec, f64_display_spec, f32_display_spec, bool_display_spec, char_display_spec, char_debug_display_spec, str_debug_display_spec}
 
-// `RangeError` — return type of the `try_to_<T>` checked-narrowing family
+// `RangeError` — return type of the `to_<T>` checked-narrowing family
 // further down. `std.prelude.errors` has ZERO imports (no cycle risk).
 import std.prelude.errors.{RangeError}
 
@@ -1024,7 +1024,7 @@ export fn[T Ints] T @wrapping_pow(exp u32) -> T {
 }
 
 // Checked narrowing число→число, CHAINED form.
-// `(300u32).try_to_u8() -> Result[u8, RangeError]` — method on source value.
+// `(300u32).to_u8() -> Result[u8, RangeError]` — method on source value.
 // `as` stays fast truncating cast. ONE blanket per target type `<T>` over
 // full `Ints` set.
 // Single `Ints`-wide body with sign-agnostic `if @ < 0 { .. } else { .. }`
@@ -1032,139 +1032,139 @@ export fn[T Ints] T @wrapping_pow(exp u32) -> T {
 // so no cast truncates. Full 10×10 matrix is deliberate (mirrors Rust
 // `TryFrom` coverage). `as` remains the zero-check fast path.
 
-/// `try_to_i8` — checked narrowing conversion into `i8` (range
-/// `[-128, 127]`). `Err(RangeError)` if `@` does not fit; `Ok(@ as i8)`
+/// `to_i8` — checked narrowing conversion into `i8` (range
+/// `[-128, 127]`). `Err(AboveMax)`/`Err(BelowMin)` if `@` does not fit; `Ok(@ as i8)`
 /// otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_i8() -> Result[i8, RangeError] {
+export fn[S Ints] S @to_i8() -> Result[i8, RangeError] {
     if @ < 0 {
         ro w = @ as i64
-        if w < (i8.MIN as i64) { Err(RangeError) } else { Ok(@ as i8) }
+        if w < (i8.MIN as i64) { Err(BelowMin) } else { Ok(@ as i8) }
     } else {
         ro w = @ as u64
-        if w > (i8.MAX as u64) { Err(RangeError) } else { Ok(@ as i8) }
+        if w > (i8.MAX as u64) { Err(AboveMax) } else { Ok(@ as i8) }
     }
 }
 
-/// `try_to_i16` — checked narrowing conversion into `i16` (range
-/// `[-32768, 32767]`). `Err(RangeError)` if `@` does not fit; `Ok(@ as
+/// `to_i16` — checked narrowing conversion into `i16` (range
+/// `[-32768, 32767]`). `Err(AboveMax)`/`Err(BelowMin)` if `@` does not fit; `Ok(@ as
 /// i16)` otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_i16() -> Result[i16, RangeError] {
+export fn[S Ints] S @to_i16() -> Result[i16, RangeError] {
     if @ < 0 {
         ro w = @ as i64
-        if w < (i16.MIN as i64) { Err(RangeError) } else { Ok(@ as i16) }
+        if w < (i16.MIN as i64) { Err(BelowMin) } else { Ok(@ as i16) }
     } else {
         ro w = @ as u64
-        if w > (i16.MAX as u64) { Err(RangeError) } else { Ok(@ as i16) }
+        if w > (i16.MAX as u64) { Err(AboveMax) } else { Ok(@ as i16) }
     }
 }
 
-/// `try_to_i32` — checked narrowing conversion into `i32`. `Err
+/// `to_i32` — checked narrowing conversion into `i32`. `Err
 /// (RangeError)` if `@` does not fit; `Ok(@ as i32)` otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_i32() -> Result[i32, RangeError] {
+export fn[S Ints] S @to_i32() -> Result[i32, RangeError] {
     if @ < 0 {
         ro w = @ as i64
-        if w < (i32.MIN as i64) { Err(RangeError) } else { Ok(@ as i32) }
+        if w < (i32.MIN as i64) { Err(BelowMin) } else { Ok(@ as i32) }
     } else {
         ro w = @ as u64
-        if w > (i32.MAX as u64) { Err(RangeError) } else { Ok(@ as i32) }
+        if w > (i32.MAX as u64) { Err(AboveMax) } else { Ok(@ as i32) }
     }
 }
 
-/// `try_to_i64` — checked narrowing conversion into `i64`. Only ever fails
+/// `to_i64` — checked narrowing conversion into `i64`. Only ever fails
 /// for a source WIDER than `i64` (`u64`/`uint` values above `i64.MAX`) —
 /// no signed source can overflow `i64`, it is the platform's widest
-/// signed type. `Err(RangeError)` if `@` does not fit; `Ok(@ as i64)`
+/// signed type. `Err(AboveMax)`/`Err(BelowMin)` if `@` does not fit; `Ok(@ as i64)`
 /// otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_i64() -> Result[i64, RangeError] {
+export fn[S Ints] S @to_i64() -> Result[i64, RangeError] {
     if @ < 0 {
         ro w = @ as i64
-        if w < (i64.MIN as i64) { Err(RangeError) } else { Ok(@ as i64) }
+        if w < (i64.MIN as i64) { Err(BelowMin) } else { Ok(@ as i64) }
     } else {
         ro w = @ as u64
-        if w > (i64.MAX as u64) { Err(RangeError) } else { Ok(@ as i64) }
+        if w > (i64.MAX as u64) { Err(AboveMax) } else { Ok(@ as i64) }
     }
 }
 
-/// `try_to_int` — checked narrowing conversion into `int` (same width as
-/// `i64` on this platform). Same contract as `@try_to_i64`, distinct
-/// C type. `Err(RangeError)` if `@` does not fit; `Ok(@ as int)` otherwise.
+/// `to_int` — checked narrowing conversion into `int` (same width as
+/// `i64` on this platform). Same contract as `@to_i64`, distinct
+/// C type. `Err(AboveMax)`/`Err(BelowMin)` if `@` does not fit; `Ok(@ as int)` otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_int() -> Result[int, RangeError] {
+export fn[S Ints] S @to_int() -> Result[int, RangeError] {
     if @ < 0 {
         ro w = @ as i64
-        if w < (int.MIN as i64) { Err(RangeError) } else { Ok(@ as int) }
+        if w < (int.MIN as i64) { Err(BelowMin) } else { Ok(@ as int) }
     } else {
         ro w = @ as u64
-        if w > (int.MAX as u64) { Err(RangeError) } else { Ok(@ as int) }
+        if w > (int.MAX as u64) { Err(AboveMax) } else { Ok(@ as int) }
     }
 }
 
-/// `try_to_u8` — checked narrowing conversion into `u8` (range
-/// `[0, 255]`). Negative sources always `Err(RangeError)`; otherwise `Err`
+/// `to_u8` — checked narrowing conversion into `u8` (range
+/// `[0, 255]`). Negative sources always `Err(AboveMax)`/`Err(BelowMin)`; otherwise `Err`
 /// if `@ > 255`, else `Ok(@ as u8)`.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_u8() -> Result[u8, RangeError] {
+export fn[S Ints] S @to_u8() -> Result[u8, RangeError] {
     if @ < 0 {
-        Err(RangeError)
+        Err(BelowMin)
     } else {
         ro w = @ as u64
-        if w > (u8.MAX as u64) { Err(RangeError) } else { Ok(@ as u8) }
+        if w > (u8.MAX as u64) { Err(AboveMax) } else { Ok(@ as u8) }
     }
 }
 
-/// `try_to_u16` — checked narrowing conversion into `u16` (range
-/// `[0, 65535]`). Negative sources always `Err(RangeError)`; otherwise
+/// `to_u16` — checked narrowing conversion into `u16` (range
+/// `[0, 65535]`). Negative sources always `Err(AboveMax)`/`Err(BelowMin)`; otherwise
 /// `Err` if `@ > 65535`, else `Ok(@ as u16)`.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_u16() -> Result[u16, RangeError] {
+export fn[S Ints] S @to_u16() -> Result[u16, RangeError] {
     if @ < 0 {
-        Err(RangeError)
+        Err(BelowMin)
     } else {
         ro w = @ as u64
-        if w > (u16.MAX as u64) { Err(RangeError) } else { Ok(@ as u16) }
+        if w > (u16.MAX as u64) { Err(AboveMax) } else { Ok(@ as u16) }
     }
 }
 
-/// `try_to_u32` — checked narrowing conversion into `u32`. Negative
-/// sources always `Err(RangeError)`; otherwise `Err` if `@ > u32.MAX`,
+/// `to_u32` — checked narrowing conversion into `u32`. Negative
+/// sources always `Err(AboveMax)`/`Err(BelowMin)`; otherwise `Err` if `@ > u32.MAX`,
 /// else `Ok(@ as u32)`.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_u32() -> Result[u32, RangeError] {
+export fn[S Ints] S @to_u32() -> Result[u32, RangeError] {
     if @ < 0 {
-        Err(RangeError)
+        Err(BelowMin)
     } else {
         ro w = @ as u64
-        if w > (u32.MAX as u64) { Err(RangeError) } else { Ok(@ as u32) }
+        if w > (u32.MAX as u64) { Err(AboveMax) } else { Ok(@ as u32) }
     }
 }
 
-/// `try_to_u64` — checked narrowing conversion into `u64`. Only ever fails
+/// `to_u64` — checked narrowing conversion into `u64`. Only ever fails
 /// for a negative signed source — `u64` is the platform's widest unsigned
-/// type, so no non-negative source can overflow it. `Err(RangeError)` if
+/// type, so no non-negative source can overflow it. `Err(AboveMax)`/`Err(BelowMin)` if
 /// `@ < 0`; `Ok(@ as u64)` otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_u64() -> Result[u64, RangeError] {
+export fn[S Ints] S @to_u64() -> Result[u64, RangeError] {
     if @ < 0 {
-        Err(RangeError)
+        Err(BelowMin)
     } else {
         ro w = @ as u64
-        if w > (u64.MAX as u64) { Err(RangeError) } else { Ok(@ as u64) }
+        if w > (u64.MAX as u64) { Err(AboveMax) } else { Ok(@ as u64) }
     }
 }
 
-/// `try_to_uint` — checked narrowing conversion into `uint` (same width as
-/// `u64` on this platform). Same contract as `@try_to_u64`, distinct C
-/// type. `Err(RangeError)` if `@ < 0`; `Ok(@ as uint)` otherwise.
+/// `to_uint` — checked narrowing conversion into `uint` (same width as
+/// `u64` on this platform). Same contract as `@to_u64`, distinct C
+/// type. `Err(AboveMax)`/`Err(BelowMin)` if `@ < 0`; `Ok(@ as uint)` otherwise.
 #stable(since = "0.1")
-export fn[S Ints] S @try_to_uint() -> Result[uint, RangeError] {
+export fn[S Ints] S @to_uint() -> Result[uint, RangeError] {
     if @ < 0 {
-        Err(RangeError)
+        Err(BelowMin)
     } else {
         ro w = @ as u64
-        if w > (uint.MAX as u64) { Err(RangeError) } else { Ok(@ as uint) }
+        if w > (uint.MAX as u64) { Err(AboveMax) } else { Ok(@ as uint) }
     }
 }

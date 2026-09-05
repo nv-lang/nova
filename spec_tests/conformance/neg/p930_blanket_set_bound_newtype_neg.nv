@@ -1,7 +1,7 @@
 // EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
 //
 // Registry #930, the DECLARED-TYPE receiver — named by the row's acceptance clause
-// alongside `f64` and `str`, and it is not a formality: `Meters(2.5).try_to_i16()`
+// alongside `f64` and `str`, and it is not a formality: `Meters(2.5).to_i16()`
 // was measured on 2026-09-05 to BUILD AND PRINT `true`, exactly the silent wrong
 // answer the primitive case gives. A newtype over `f64` reaching an `Ints` blanket is
 // the same defect wearing a user's type name.
@@ -35,5 +35,5 @@ type Meters f64
 fn ask_a_newtype_over_a_float_for_an_integer_conversion() Io -> () {
     ro m Meters = Meters(2.5)
     // nova:expect E_TYPE_NOT_IN_SET -- `Meters` is not a member of `Ints`; before the fix this built and printed `true`
-    println(m.try_to_i16().is_ok())
+    println(m.to_i16().is_ok())
 }

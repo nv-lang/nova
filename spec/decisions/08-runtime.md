@@ -4714,6 +4714,16 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 
 ```nova
 export type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
+// АМЕНДМЕНТ 2026-09-05 (решение владельца): `Overflow` → `AboveMax | BelowMin` — направление
+// промаха нужно вызывающему; тот же словарь, что `RangeError` (D430 R7) и `CharError` (D54).
+// Форма семьи с Plan 174.1 — `str @to_int(radix)`/`@to_i8`…`@to_uint`, не `try_parse_int`.
+// ТЕМ ЖЕ ДНЁМ (план 282 Ф.4): `InvalidDigit` несёт `{ at int }` — байтовую позицию первого
+// не-цифрового байта (единственные данные, которых нет у вызывающего; сама строка у него есть);
+// `str @to_f64()` получает грамматику на Nova (`parse_float.nv`), ту же строгость, что `to_int`:
+// без пробелов, `nan`/`inf`, hex, разделителей и локали; `ParseFloatError enum Empty | Malformed { at } | TooLarge |
+// TooSmall` (временные имена до фикса №136, целевой словарь — `Invalid`/`AboveMax`/`BelowMin`) — конечный литерал вне `f64` больше не `Ok(inf)`. Округление
+// десятичной записи в двоичную остаётся за `strtod`, которому подаётся ТОЛЬКО принятая
+// грамматикой строка; собственная реализация (Eisel-Lemire) — отдельный план.
 ```
 
 Это **sum type**, не record (design correction от Q-doc placeholder

@@ -315,66 +315,60 @@ export type MultiErrorTruncated {
 // Char conversion errors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Error of converting `int` → `char`. Thrown by `(cp int).to_char()`
-/// when the codepoint is outside [0, 0x10FFFF] or is a surrogate
-/// [0xD800, 0xDFFF].
+/// Error of `int @to_char()` — the integer is not a character (owner decision
+/// 2026-09-05, D54 amendment). A `char` is a Unicode scalar value: a number in
+/// `[0, 0x10FFFF]` that is not in the reserved block `[0xD800, 0xDFFF]`. Three
+/// reasons, same vocabulary as `RangeError`:
 ///
-/// Unit type — the bare fact "invalid codepoint", no payload needed.
+/// - `AboveMax` — greater than `0x10FFFF` (1 114 111), no such character;
+/// - `BelowMin` — negative;
+/// - `Invalid`  — inside the range but not a character: the 2048 numbers
+///   `0xD800..=0xDFFF` are reserved by Unicode (for UTF-16's two-unit form) and
+///   can never be encoded in UTF-8.
 ///
-/// Renamed from `CharTryFromError` — `char.try_from` renamed to
-/// `char.from` (was the only static char conversion without an infallible
-/// sibling).
+/// Replaces `CharFromError` (named after the retired constructor `char.from`) and
+/// `InvalidCodepoint` (`str.try_from_codepoint`, retired) — one fact, one type.
 ///
 /// # Examples
 ///
 /// ```nova
-/// match (-1).to_char() {
-///     Ok(c) => ...
-///     Err(CharFromError) => // codepoint out of range
+/// match n.to_char() {
+///     Ok(c)          => ...
+///     Err(AboveMax)  => // > 0x10FFFF
+///     Err(BelowMin)  => // negative
+///     Err(Invalid)   => // 0xD800..0xDFFF
 /// }
 /// ```
 #stable(since = "0.1")
-export type CharFromError
+export type CharError enum AboveMax | BelowMin | Invalid
 
-/// Error of converting `char` → `u8`. Thrown by `u8.try_from(c char)`
-/// when the codepoint > 0xFF (the character is not Latin-1).
-///
-/// Unit type — the bare fact "the character does not fit in u8".
-///
-/// # Examples
-///
-/// ```nova
-/// match u8.try_from('é') {
-///     Ok(b) => ...
-///     Err(TryFromCharError) => // codepoint > 0xFF
-/// }
-/// ```
-#stable(since = "0.1")
-export type TryFromCharError
 
 // ──────────────────────────────────────────────────────────────────────────
 // Numeric narrowing error
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Error of a checked narrowing numeric conversion (number→number).
-/// Returned by the `try_to_<T>` family (`std/prelude/protocols.nv`,
-/// `fn[S Ints] S @try_to_i8()`/`@try_to_u8()`/... — one blanket per target
+/// Returned by the `to_<T>` family (`std/prelude/protocols.nv`,
+/// `fn[S Ints] S @to_i8()`/`@to_u8()`/... — one blanket per target
 /// type `<T>`, covering the whole `Ints` source set) when the source value
 /// does not fit the target type `<T>` range (`as` stays the fast truncating
 /// cast — unchanged).
 ///
-/// Unit type — the bare fact "did not fit", no payload needed (same
-/// precedent as `CharFromError`/`TryFromCharError` above — "a fact without data").
+/// Two variants, no payload (owner decision 2026-09-05, D430 R7): `AboveMax` — the
+/// source is above the target's maximum; `BelowMin` — below its minimum (a negative
+/// value into an unsigned target is the `BelowMin` case). R4 criterion: more than one
+/// reason the caller may need → `Result` with the reason, not `Option`. No payload with
+/// the source type on purpose — it would make the error generic.
 ///
 /// # Examples
 ///
 /// ```nova
-/// match (300u32).try_to_u8() {
+/// match (300u32).to_u8() {
 ///     Ok(v) => ...                  // fits — value as u8
-///     Err(RangeError) => ...        // 300 > u8.MAX (255)
+///     Err(AboveMax) => ...          // 300 > u8.MAX (255)
 /// }
-/// ro n = (-1i32).try_to_u8()
-/// assert(n == Err(RangeError))      // negative → unsigned
+/// ro n = (-1i32).to_u8()
+/// assert(n == Err(BelowMin))        // negative → unsigned
 /// ```
 #stable(since = "0.1")
-export type RangeError
+export type RangeError enum AboveMax | BelowMin

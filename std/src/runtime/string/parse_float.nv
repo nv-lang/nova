@@ -1,0 +1,112 @@
+// Co-equal file of module `runtime.string` (folder = one module).
+// Role: `str @to_f64()` — the float parse surface, grammar owned by Nova.
+//
+// Why a separate file and why not `strtod` end to end (owner decision 2026-09-05,
+// plan 282 Ф.4, D178 amendment): the old `to_f64` copied the string into a buffer
+// and accepted whatever `strtod` accepted — leading whitespace, `nan`/`inf`, hex
+// floats `0x1p3`, `1e999` as a silent `inf`, and a decimal separator taken from
+// `LC_NUMERIC`. Two grammars for numbers in one module (`to_int` is strict), and
+// only two error causes because `strtod` reports no more. Parsing a number is two
+// jobs: the GRAMMAR (what is a number, where it broke, did it overflow) and the
+// correctly-rounded decimal→binary CONVERSION. The first is ~60 lines below and is
+// where every problem lived; the second is a known hard algorithm (Rust/Go/Zig carry
+// ~2k lines of Eisel-Lemire + bignum fallback) and stays delegated to C for now —
+// fed ONLY a string this grammar already accepted, so C syntax and locale cannot
+// leak out. Owning the conversion too is a separate plan (needed when Carina runs
+// without libc).
+//
+// `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
+// import cycle.
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+
+/// Error variants for `str @to_f64()`.
+///
+/// INTERIM NAMES (2026-09-05, registry #136 + its new carrier): the owner's decision is the
+/// shared vocabulary `Empty | Invalid { at } | AboveMax | BelowMin` (same as `ParseIntError`,
+/// `RangeError`, `CharError`). It cannot be used yet: a variant name that exists in more than
+/// one sum of the CU is lowered by its BARE name — even when written qualified
+/// (`ParseFloatError.Invalid { at }`) — and lands in another sum's tag; measured on this
+/// file: `Err(Invalid { at })` built a `ParseBoolError.Invalid` (unit) and every match
+/// missed, `AboveMax` printed as `Invalid`. `Malformed`/`TooLarge`/`TooSmall` are unique in
+/// the CU and are to be renamed back to the vocabulary the day #136 is fixed (probe:
+/// `docs/plans/repro/962-variant-name-collision/`).
+///
+/// - `Empty` — the string is empty;
+/// - `Malformed { at }` — the grammar broke at byte index `at` (first byte that does not
+///   continue a number: `"1.2.3"` → `at: 3`, `" 1.5"` → `at: 0`, `"1,5"` → `at: 1`,
+///   `"0x1p3"` → `at: 1`, `"nan"` → `at: 0`);
+/// - `TooLarge` / `TooSmall` — the literal is finite but its value is outside `f64`
+///   (`"1e999"`, `"-1e999"`); `strtod` would have returned `±inf` silently.
+/// Underflow (`"1e-999"`) is not an error — the result is `0.0` or a denormal, which is
+/// what the literal means at `f64` precision.
+export type ParseFloatError enum Empty | Malformed { at int } | TooLarge | TooSmall
+
+// Plain FFI, no compiler name-knowledge: `str_parse_f64` is a regular `extern "C" fn`,
+// out-param convention (bool ok + `*out` value). Called ONLY after the grammar below
+// accepted the whole string, so it sees `[+-]digits[.digits][e[+-]digits]` and nothing
+// else; its own leniency (whitespace, `nan`, hex, locale) is never reachable.
+// `*mut f64` in the signature makes it `unsafe fn` by inference (D424) — no keyword,
+// same as every pointer extern in `std/fs`, `std/net`, `std/io`; the call below MUST be
+// wrapped (`E_UNSAFE_CALL_REQUIRES_WRAP`), and an extra wrap would be `E_UNSAFE_UNUSED`.
+extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
+
+/// Strict float parse. Grammar (the same strictness as `@to_int`):
+///
+/// ```text
+/// float := [+-]? ( digits [ "." digits? ] | "." digits ) [ ("e"|"E") [+-]? digits ]
+/// ```
+///
+/// No leading/trailing whitespace, no `nan`/`inf`, no hex, no `_` separators, no locale:
+/// the decimal separator is `.` and only `.`. Accepts `"1."`, `".5"`, `"1e3"`, `"-0.0"`,
+/// `"+2.5E-3"` — the Rust/Go grammar for a float literal in a string.
+#stable(since = "0.1")
+export fn str @to_f64() -> Result[f64, ParseFloatError] {
+    ro bytes = @bytes()
+    ro n = @byte_len()
+    if n == 0 { return Err(ParseFloatError.Empty) }
+    mut i = 0
+    ro negative = bytes[0] == '-'
+    if bytes[0] == '-' || bytes[0] == '+' { i = 1 }
+    mut mantissa_digits = 0
+    while i < n {
+        ro c = bytes[i] as int
+        if c >= '0' && c <= '9' { i += 1; mantissa_digits += 1 } else { break }
+    }
+    if i < n && bytes[i] == '.' {
+        i += 1
+        while i < n {
+            ro c = bytes[i] as int
+            if c >= '0' && c <= '9' { i += 1; mantissa_digits += 1 } else { break }
+        }
+    }
+    if mantissa_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
+    if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
+        i += 1
+        if i < n && (bytes[i] == '-' || bytes[i] == '+') { i += 1 }
+        mut exponent_digits = 0
+        while i < n {
+            ro c = bytes[i] as int
+            if c >= '0' && c <= '9' { i += 1; exponent_digits += 1 } else { break }
+        }
+        if exponent_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
+    }
+    if i < n { return Err(ParseFloatError.Malformed { at: i }) }
+    // Grammar accepted the whole string; C only rounds.
+    // NB: variants are written qualified AND uniquely named — see the type's doc (#136).
+    mut v = 0.0
+    if !unsafe { str_parse_f64(@, &v) } {
+        // Unreachable for a string the grammar accepted; kept so a C-side surprise is
+        // an error, not a silent 0.0.
+        return Err(ParseFloatError.Malformed { at: 0 })
+    }
+    // A FINITE literal whose value does not fit f64: strtod says ±inf, we say which way.
+    if v > 1.7976931348623157e308 { return Err(ParseFloatError.TooLarge) }
+    if v < -1.7976931348623157e308 { return Err(ParseFloatError.TooSmall) }
+    // `negative` is only read above through `bytes[0]`; kept named for the reader.
+    ro _ = negative
+    Ok(v)
+}
