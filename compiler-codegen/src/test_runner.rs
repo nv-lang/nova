@@ -3855,8 +3855,30 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                 let raw_detail = if !fail_lines.is_empty() {
                     fail_lines.join(" | ")
                 } else {
-                    let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
-                    last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                    // Реестр №953, вторая половина той же болезни. Когда харнесс не
+                    // напечатал НИ ОДНОЙ строки отказа, процесс умер сам — и вот тут
+                    // единственное, что о нём достоверно известно, это КОД ВОЗВРАТА.
+                    // Прежний запасной путь брал три последние строки вывода, а у
+                    // теста, умершего на старте, это «Running 1 tests...» — вывод,
+                    // который не говорит ничего. Именно так выглядит на CI
+                    // `presume_446_stress` (реестр №862/№855): отказ виден, причина
+                    // нет, и разбор упирается в необходимость воспроизвести у себя.
+                    //
+                    // Код возврата сам по себе диагностичен и часто достаточен:
+                    // 0xC0000005 — обращение к недоступной памяти, 0xC00000FD —
+                    // переполнение стека, 124/137 — снят по времени/сигналу. Печатаем
+                    // его ВСЕГДА в этой ветке, в обоих видах (десятичном и шестнадцати-
+                    // ричном: NT-статусы читаются только во втором), и берём шесть
+                    // последних строк вместо трёх — «Running N tests...» съедает первую
+                    // же, и три строки регулярно не долетают до содержательного вывода.
+                    let last_lines: Vec<&str> =
+                        stdout.lines().chain(stderr.lines()).rev().take(6).collect();
+                    let tail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                    if tail.trim().is_empty() {
+                        format!("процесс умер молча, exit={} (0x{:X}), вывода нет", exit, exit)
+                    } else {
+                        format!("exit={} (0x{:X}) | {}", exit, exit, tail)
+                    }
                 };
                 // Plan 221.1 №158: merged (folder-module) CU — a genuine crash
                 // (`fail_lines` empty: no harness "FAIL:"/"panic: " line was
