@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+//
+// Registry 221.1 #959, method form. The acceptance of the row is a list of
+// return FORMS with a fixture on each, not one carrier: a free function and a
+// method reach the return position by different paths in the checker, and a
+// fix that only walks free functions would leave this one open.
+module neg.p959_return_method_neg
+
+type P959NegBox { mut n int }
+
+fn P959NegBox.new() -> P959NegBox => { n: 300 }
+
+// nova:expect E_IMPLICIT_NARROWING -- #959: int field returned from a method declared `-> u8`
+fn P959NegBox @narrow() -> u8 => @n
+
+test "should not compile" {
+    ro b = P959NegBox.new()
+    assert(b.narrow() == 44)
+}

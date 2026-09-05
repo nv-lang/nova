@@ -8909,8 +8909,16 @@ impl<'a> TypeCheckCtx<'a> {
                 // value coerces to the DECLARED return type — DEFINITE site. Fixes the
                 // tuple-return gap (`=> (0x80, 5) -> (uint, uint)` built `NovaTuple..int..`
                 // ≠ the declared `..uint..` → CC-FAIL) and subsumes the Some/Ok return
-                // coercions (the tactical codegen target-passing). No `assignable` runs here
-                // (return-type compat is checked elsewhere) — pure channel materialization.
+                // coercions (the tactical codegen target-passing).
+                //
+                // ПОПРАВКА 2026-09-05 (№959): здесь стояло «No `assignable` runs here
+                // (return-type compat is checked elsewhere) — pure channel
+                // materialization». Вторая половина верна, первая была неверна по
+                // смыслу: `assignable` действительно не запускался здесь, но и НИГДЕ
+                // больше — во всём чекере не было ни одного вызова против
+                // `fd.return_type`, и потому `-> u8 => n` при `n int = 300` молча
+                // печатал 44. Теперь вызов стоит строкой ниже; «elsewhere» — это
+                // здесь.
                 if let Some(ret) = &fd.return_type {
                     // [M-closure-trailing-scalar-coercion-no-typecheck] fix: reject a
                     // closure literal against a scalar return type BEFORE the literal
@@ -8921,16 +8929,33 @@ impl<'a> TypeCheckCtx<'a> {
                     // №717 дыра (2): через хвостовое семейство — хвост ветви
                     // if/match тоже есть возврат.
                     self.check_ro_launder_tail(e, ret, &scope, errors);
+                    // №959 (2026-09-05): тело против ОБЪЯВЛЕННОГО ВОЗВРАТА —
+                    // тем же `assignable`, каким судятся аргумент и биндинг.
+                    // Строкой выше в этом же файле стояло «return-type compat
+                    // is checked elsewhere»; никакого elsewhere не было.
+                    // `-> @` исключён: возврат приёмника синтезирует
+                    // `self_return_lower` уже ПОСЛЕ `check_module` — по той же
+                    // причине, по какой его исключает `E_MISSING_RETURN` ниже.
+                    if !fd.returns_receiver {
+                        self.check_return_compat_tail(e, ret, &gs, &scope, errors);
+                    }
                     self.materialize_literal_coercion(e, ret);
-                    // №658: return is a DEFINITE expected-type position, but the
-                    // return-compat path never runs `assignable` (see the doc
-                    // above) — fill the bare-variant-ctor channel here directly
-                    // (mirrors the materialize call one line up).
+                    // №658: return is a DEFINITE expected-type position — fill the
+                    // bare-variant-ctor channel here directly (mirrors the
+                    // materialize call one line up). До 2026-09-05 обоснование
+                    // читалось «потому что return-compat никогда не зовёт
+                    // `assignable`»; теперь зовёт (№959), а заполнение канала
+                    // всё равно нужно здесь: `assignable` СУДИТ, но канал не
+                    // наполняет.
                     self.record_bare_variant_ctor(e, ret, &scope);
                     // a block-arrow body `=> { …; return X }` can hold explicit returns.
                     self.materialize_returns_in_expr(e, ret);
                     self.check_closure_scalar_return_in_expr(e, ret, errors);
                     self.check_ro_launder_return_in_expr(e, ret, &scope, errors);
+                    // №959: explicit `return X` внутри arrow-тела-блока.
+                    if !fd.returns_receiver {
+                        self.check_return_compat_in_expr(e, ret, &gs, &scope, errors);
+                    }
                 }
             }
             FnBody::Block(b) => {
@@ -8944,6 +8969,11 @@ impl<'a> TypeCheckCtx<'a> {
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
                         // №717 дыра (2): см. `check_ro_launder_tail`.
                         self.check_ro_launder_tail(trailing, ret, &scope, errors);
+                        // №959: хвостовое выражение блочного тела — тот же
+                        // возврат, что и arrow-body.
+                        if !fd.returns_receiver {
+                            self.check_return_compat_tail(trailing, ret, &gs, &scope, errors);
+                        }
                         self.materialize_literal_coercion(trailing, ret);
                         // №658: implicit tail return — same fill as the
                         // arrow-body site above.
@@ -8992,6 +9022,10 @@ impl<'a> TypeCheckCtx<'a> {
                     self.materialize_returns_in_block(b, ret);
                     self.check_closure_scalar_return_in_block(b, ret, errors);
                     self.check_ro_launder_return_in_block(b, ret, &scope, errors);
+                    // №959: каждый explicit `return X` в блочном теле.
+                    if !fd.returns_receiver {
+                        self.check_return_compat_in_block(b, ret, &gs, &scope, errors);
+                    }
                 } else {
                     // [реестр 221.1 №493, K1] no annotation at all — D45's other
                     // half (see `check_missing_return_annotation`'s own doc):
@@ -20314,6 +20348,317 @@ impl<'a> TypeCheckCtx<'a> {
             | ExprKind::Loop { body, .. }
             | ExprKind::For { body, .. } => self.check_closure_scalar_return_in_block(body, ret, errors),
             ExprKind::Block(b) => self.check_closure_scalar_return_in_block(b, ret, errors),
+            _ => {}
+        }
+    }
+
+    /// Реестр 221.1 №959 (2026-09-05): ТЕЛО ФУНКЦИИ ПРОТИВ ОБЪЯВЛЕННОГО
+    /// ВОЗВРАТА. Этой проверки не было ВОВСЕ, и комментарий у arrow-body site
+    /// прямо утверждал обратное — «No `assignable` runs here (return-type
+    /// compat is checked elsewhere)». Никакого elsewhere не существовало: во
+    /// всём чекере не было ни одного вызова `assignable` против
+    /// `fd.return_type`. Такая запись хуже молчания — она отвечает на вопрос
+    /// «а проверено ли» раньше, чем его успеют задать.
+    ///
+    /// ЗАМЕР ДО ФИКСА (2026-09-05, проба `docs/plans/repro/959-return-type-
+    /// never-checked/`): `fn wrap(n int) -> u8 => n`, `wrap(300)` — `check`
+    /// `ok`, собрано, печатает `44`; `-> int => x` при `x f64 = 3.9` печатает
+    /// `3`; `-> bool => n` при `n int` печатает `true`; `-> int => "not an
+    /// int"` доезжает до СИШНОГО компилятора и падает уже там, координатами
+    /// сгенерированного `main.c`.
+    ///
+    /// ТА ЖЕ ДВЕРЬ, ЧТО У АРГУМЕНТА И БИНДИНГА, — `assignable`, а не своя
+    /// копия правила. Класс дефекта ровно в том, что одно правило имело три
+    /// двери и в третью никто не постучал; вторая копия правила разошлась бы
+    /// с первыми двумя на первой же правке.
+    ///
+    /// ВЫКЛЮЧАТЕЛЬ `NOVA_KILL_RETURN_COMPAT=1` возвращает дофиксное поведение
+    /// целиком: один бинарь умеет оба, и фикстура показывается красной без
+    /// правки исходника.
+    ///
+    /// # СУЖЕНИЕ ВЕТКИ `Bad` — ПО ДВУМ ЗАМЕРАМ, А НЕ ПО ОСТОРОЖНОСТИ
+    ///
+    /// ЗАЧЕМ, и это осторожность по числу. Первая
+    /// редакция проверки дала **178 ложных отказов** на `nova check std/src`,
+    /// и 176 из них — ОДНА форма: `Vec` найдено, `Vec[T]` объявлено. Вывод
+    /// оракула теряет аргументы типа (`export fn Vec[T] @plus(other Vec[T]) ->
+    /// Vec[T] => @concat(other)` — `@concat` выводится в голый `Vec`), и это
+    /// не ошибка пользователя, а неточность вывода.
+    ///
+    /// Оставшиеся 2 — НЕ ложные, и это стоит знать тому, кто будет снимать
+    /// это сужение. `std/src/collections/linkedlist.nv:173`, тело
+    /// `fn LinkedList[T] @map[U](...) -> LinkedList[U]`, ветвь `Empty => Empty`:
+    /// найдено `ParseBoolError`, объявлено `LinkedList[U]`. Имя `Empty` носят
+    /// ЧЕТЫРЕ суммы (`LinkedList`, `ParseIntError`, `ParseBoolError`,
+    /// `ParseCharError`), и голое имя разрешилось в чужую — это реестровая
+    /// строка **№962**, живым носителем в std. Сегодня безвредно, потому что
+    /// `Empty` в обеих суммах стоит нулевым вариантом и теги совпали случайно;
+    /// ровно эту случайность №962 и называет. То есть проверка возврата
+    /// РАБОТАЕТ детектором №962 — а сужение ниже этот детектор глушит. Когда
+    /// №962 починят, сужение стоит пересмотреть: возможно, из двух причин
+    /// останется только первая.
+    ///
+    /// Поэтому `Bad` сообщается ТОЛЬКО на заведомо конкретном возврате.
+    /// Граница названа вслух: настоящее несовпадение обобщённого возврата эта
+    /// проверка пропустит — так же, как `distinct_mono` (U.5.3) отвечает
+    /// «не сужу» на `Any`. Лучше пропустить, чем отвергнуть законное: у
+    /// проверки, которая ложнит на 176 живых местах, срок жизни — до первого
+    /// окна, которое её выключит.
+    ///
+    /// Ветки `Narrowing`/`OutOfRange` НЕ трогаются: на том же прогоне
+    /// `E_IMPLICIT_NARROWING` не сработал ни разу ложно, и глушить точную
+    /// проверку заодно с неточной — это ровно то, чего храповики не прощают.
+    fn check_return_compat(
+        &self,
+        value: &Expr,
+        ret: &TypeRef,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if return_compat_disabled() {
+            return;
+        }
+        // `-> ()` — значение тела не возвращается; о лишнем значении говорит
+        // `f4_check_value`, и говорить о нём вторым голосом незачем.
+        if matches!(ret, TypeRef::Unit(_)) {
+            return;
+        }
+        // Closure-литерал против скалярного возврата УЖЕ судит
+        // `check_closure_scalar_return` — со своим текстом, который называет
+        // частый настоящий триггер (ведущий `||`/`|x|` в continuation-строке).
+        // Без этого условия одна ошибка получила бы два голоса на одном span'е,
+        // и второй был бы хуже первого.
+        if is_closure_literal_expr(value) {
+            return;
+        }
+        match self.assignable(value, ret, gs, gs, scope) {
+            Compat::Bad { found } => {
+                // №959, вторая находка корпуса (2026-09-05): АНОНИМНЫЙ ЛИТЕРАЛ
+                // в позиции возврата — это D55-coercion, а не несовпадение.
+                // Таблица D55 «Позиции с явно ожидаемым типом» прямо называет
+                // `fn f() -> T => value` позицией, где coercion ПРИМЕНЯЕТСЯ;
+                // материализуется она строкой НИЖЕ по коду
+                // (`materialize_literal_coercion`), то есть на момент этой
+                // проверки литерал ещё не приведён. Замер: мега-CU лёг на
+                // `d326_fluent_value_argpos.nv:27`,
+                // `fn D326ArgposSink.new() -> D326ArgposSink => { 0 }` —
+                // позиционный record-литерал, а `assignable` отвечает по типу
+                // его единственного поля (`int`). Один упавший CU из-за
+                // законной формы — это весь conformance разом.
+                // №959, ВТОРАЯ РЕДАКЦИЯ СУЖЕНИЯ (2026-09-05, по второму замеру).
+                //
+                // Сперва здесь стоял пропуск анонимных литералов по `ExprKind`
+                // (`RecordLit`/`MapLit`/`ArrayLit`), и он НЕ СРАБОТАЛ — замер:
+                // `d326_fluent_value_argpos.nv:27`,
+                // `fn D326ArgposSink.new() -> D326ArgposSink => { 0 }`,
+                // каретка диагностики встала на `0`, а не на `{`. То есть
+                // `{ 0 }` разбирается БЛОКОМ, хвостовой обходчик спускается в
+                // него и судит `0` против типа записи. Проверять `ExprKind`
+                // тут бесполезно по построению: к моменту суждения литерала
+                // записи уже нет, есть его содержимое.
+                //
+                // Поэтому правило положительное, а не запретительное: `Bad`
+                // сообщается ТОЛЬКО когда объявленный возврат опускается в
+                // встроенный C-тип (`is_primitive_lowerable` — общий
+                // PRIMITIVE-шлюз проекта, Plan 172.1 U.4.4). Там, и только
+                // там, живут ВСЕ ТРИ измеренные тихие мискомпиляции
+                // (`-> u8` при 300, `-> int` при 3.9, `-> bool` при int), и
+                // там же не бывает D55-коэрсии: примитив анонимным литералом
+                // записи не конструируют.
+                //
+                // ЦЕНА, названная вслух: несовпадение возврата на ЗАПИСИ, СУММЕ
+                // и обобщённом типе эта проверка пропустит. Это осознанная
+                // граница, а не забывчивость — ровно как `distinct_mono`
+                // (U.5.3) отвечает «не сужу» на `Any`. Проверка, которая
+                // ложнит на живом коде, живёт до первого окна, которое её
+                // выключит; проверка, которая молчит на части форм, живёт и
+                // ловит своё.
+                if !ResolvedType::from_type_ref(ret).is_primitive_lowerable() {
+                    return;
+                }
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E7301] cannot return value of type `{}` from a function \
+                         declared `-> {}`",
+                        found,
+                        render_type_ref(ret),
+                    ),
+                    value.span,
+                ));
+            }
+            Compat::OutOfRange { msg } => {
+                errors.push(Diagnostic::new(
+                    format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                    value.span,
+                ));
+            }
+            Compat::Narrowing { from, to } => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPLICIT_NARROWING] cannot return value of type `{}` from a \
+                         function declared `-> {}` — implicit int narrowing loses range; \
+                         use an explicit `... as {}` cast (D54)",
+                        from, to, to,
+                    ),
+                    value.span,
+                ));
+            }
+            Compat::CoerceConflict { msg } => {
+                errors.push(Diagnostic::new(msg, value.span));
+            }
+            Compat::Ok | Compat::Unknown => {}
+        }
+    }
+
+    /// №959, ХВОСТ: значение уходит не только из вершины тела, но и из хвоста
+    /// КАЖДОЙ ветви `if`/`match`. У соседней проверки здесь была ровно эта
+    /// дыра (№717, дыра (2), 2026-08-21): она судила вершину и не заходила в
+    /// хвосты ветвей. Урок записан в этом же файле, и повторять его второй раз
+    /// незачем — форма ниже дословно повторяет `check_ro_launder_tail_at`.
+    ///
+    /// Контейнер САМ не судится: судятся только ЛИСТЬЯ хвоста. Иначе на
+    /// `if flag { "x" } else { 0 }` пришло бы два голоса — один за контейнер,
+    /// один за ветвь.
+    fn check_return_compat_tail(
+        &self,
+        e: &Expr,
+        ret: &TypeRef,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.check_return_compat_tail_block(then, ret, gs, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => {
+                            self.check_return_compat_tail_block(b, ret, gs, scope, errors)
+                        }
+                        ElseBranch::If(x) => {
+                            self.check_return_compat_tail(x, ret, gs, scope, errors)
+                        }
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => {
+                            self.check_return_compat_tail(x, ret, gs, scope, errors)
+                        }
+                        MatchArmBody::Block(b) => {
+                            self.check_return_compat_tail_block(b, ret, gs, scope, errors)
+                        }
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.check_return_compat_tail_block(b, ret, gs, scope, errors),
+            _ => self.check_return_compat(e, ret, gs, scope, errors),
+        }
+    }
+
+    fn check_return_compat_tail_block(
+        &self,
+        b: &Block,
+        ret: &TypeRef,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(t) = &b.trailing {
+            self.check_return_compat_tail(t, ret, gs, scope, errors);
+        }
+    }
+
+    /// №959: те же три обходчика, что у соседних проверок возврата — форма
+    /// заимствована у `check_closure_scalar_return_in_*` намеренно, чтобы
+    /// множество мест «что считается возвратом» было ОДНО на весь файл.
+    fn check_return_compat_in_block(
+        &self,
+        b: &Block,
+        ret: &TypeRef,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        for s in &b.stmts {
+            self.check_return_compat_in_stmt(s, ret, gs, scope, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_return_compat_in_expr(t, ret, gs, scope, errors);
+        }
+    }
+
+    fn check_return_compat_in_stmt(
+        &self,
+        s: &Stmt,
+        ret: &TypeRef,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => {
+                self.check_return_compat(e, ret, gs, scope, errors)
+            }
+            Stmt::Expr(e) => self.check_return_compat_in_expr(e, ret, gs, scope, errors),
+            Stmt::Let(d) => self.check_return_compat_in_expr(&d.value, ret, gs, scope, errors),
+            Stmt::Const(d) => self.check_return_compat_in_expr(&d.value, ret, gs, scope, errors),
+            Stmt::Defer { body, .. } => {
+                self.check_return_compat_in_expr(body, ret, gs, scope, errors)
+            }
+            Stmt::ConsumeScope { body, .. } => {
+                self.check_return_compat_in_block(body, ret, gs, scope, errors)
+            }
+            _ => {}
+        }
+    }
+
+    /// Ищет ВЛОЖЕННЫЕ explicit `return X` — сама `e` тут контейнер для поиска,
+    /// а не возвращаемое значение (зеркалит `materialize_returns_in_expr`).
+    fn check_return_compat_in_expr(
+        &self,
+        e: &Expr,
+        ret: &TypeRef,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.check_return_compat_in_block(then, ret, gs, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => {
+                            self.check_return_compat_in_block(b, ret, gs, scope, errors)
+                        }
+                        ElseBranch::If(x) => {
+                            self.check_return_compat_in_expr(x, ret, gs, scope, errors)
+                        }
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => {
+                            self.check_return_compat_in_expr(x, ret, gs, scope, errors)
+                        }
+                        MatchArmBody::Block(b) => {
+                            self.check_return_compat_in_block(b, ret, gs, scope, errors)
+                        }
+                    }
+                }
+            }
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => {
+                self.check_return_compat_in_block(body, ret, gs, scope, errors)
+            }
+            ExprKind::Block(b) => self.check_return_compat_in_block(b, ret, gs, scope, errors),
             _ => {}
         }
     }
@@ -41496,6 +41841,19 @@ fn provenance_disabled() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
     *OFF.get_or_init(|| {
         std::env::var("NOVA_KILL_PROVENANCE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
+/// Реестр 221.1 №959: выключатель проверки «тело против объявленного
+/// возврата». Дофиксное поведение — проверки нет вовсе, — возвращается
+/// целиком, чтобы обе стороны были видны на ОДНОМ бинаре.
+fn return_compat_disabled() -> bool {
+    use std::sync::OnceLock;
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| {
+        std::env::var("NOVA_KILL_RETURN_COMPAT")
             .map(|v| !v.is_empty() && v != "0")
             .unwrap_or(false)
     })

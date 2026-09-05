@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #959, branch-tail form. The ro-launder check next door had
+// exactly this hole once (#717 hole 2, 2026-08-21): it judged the top of the
+// return and never entered the tails of `if`/`match` branches, so a value
+// leaving through a branch went unjudged. The same question has to be asked of
+// the new check, and a fixture is the only way to ask it that stays asked.
+module neg.p959_return_branch_tail_neg
+
+fn pick(flag bool) -> int {
+    if flag {
+        // nova:expect E7301 -- #959: a str leaves through a branch tail of a function declared `-> int`
+        "not an int"
+    } else {
+        0
+    }
+}
+
+test "should not compile" {
+    assert(pick(true) == 0)
+}

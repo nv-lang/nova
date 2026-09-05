@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #959, second form. This one exists so nobody explains the
+// defect away as "untyped literal adaptation" (D55): the returned value here
+// is a VARIABLE with a declared type, and it was accepted just the same.
+module neg.p959_return_str_var_for_int_neg
+
+// nova:expect E7301 -- #959: a str-typed variable returned from a function declared `-> int`
+fn f(s str) -> int => s
+
+test "should not compile" {
+    assert(f("x") == 0)
+}

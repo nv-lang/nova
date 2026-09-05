@@ -1,0 +1,116 @@
+// Registry 221.1 #959, POSITIVE. The return-position compatibility check did
+// not exist until 2026-09-05, so on the day it was switched on NOT ONE line of
+// this corpus had ever been judged by it. That makes this file the load-bearing
+// half of the fix: the negatives prove the check can refuse, this one proves it
+// refuses only what it must.
+//
+// Every form below returns a value that IS legal and must keep compiling. They
+// are the forms the new check has to walk past: literal adaptation (D55), a
+// newtype constructor, a generic parameter (where the type is not known and the
+// answer must be "do not judge"), Option wrapping, a call's result, branch
+// tails, explicit `return` in a block, and `-> @` auto-return (D409), which the
+// check skips outright because the receiver return is synthesized after
+// check_module.
+//
+// Part of the single conformance folder-module (one CU), so every name here is
+// P959-prefixed.
+module spec_tests.conformance
+
+type P959Meters int
+
+type P959Box { mut n int }
+
+fn P959Box.new() -> P959Box => { n: 0 }
+
+// An in-range untyped int literal adapts to the declared sized type (D55).
+fn p959_u8_lit() -> u8 => 200
+
+// A float literal against a float return.
+fn p959_f64_lit() -> f64 => 1.5
+
+// A newtype constructor: the value IS a P959Meters, not a bare int.
+fn p959_mk(n int) -> P959Meters => P959Meters(n)
+
+// A generic parameter in the declared return: the check must answer "do not
+// judge" rather than guess.
+//
+// The obvious form here would be the identity `fn p959_id[T](x T) -> T => x`,
+// and it is NOT used, because it does not compile today for an unrelated
+// reason: returning a non-`mut` parameter is the ro-launder refusal
+// (E_READONLY_COERCE, the #760 family). Measured 2026-09-05 -- this fixture
+// carried that form for an hour and failed the corpus on it. Wrapping into a
+// fresh `Option` keeps the generic return and returns a value the callee owns.
+fn p959_id[T](x T) -> Option[T] => Some(x)
+
+// Wrapping into Option.
+fn p959_opt(x int) -> Option[int] => Some(x)
+
+fn p959_u8_of(n int) -> u8 => (n as u8)
+
+// Returning another function's result.
+fn p959_via_call(n int) -> u8 => p959_u8_of(n)
+
+// Branch tails: both arms of the `if` are returns of the declared type.
+fn p959_branches(n int) -> int {
+    if n > 0 {
+        n
+    } else {
+        0 - n
+    }
+}
+
+// Explicit `return` inside a block, plus a trailing expression.
+fn p959_explicit_return(n int) -> str {
+    if n == 0 {
+        return "zero"
+    }
+    "nonzero"
+}
+
+// Match arms as returns.
+fn p959_match(n int) -> str {
+    match n {
+        0 => "zero"
+        1 => "one"
+        _ => "many"
+    }
+}
+
+// `-> @` (D409): the receiver return is automatic and synthesized after the
+// checker runs, so the new check must not look at this body at all.
+fn P959Box mut @bump() -> @ {
+    @n += 1
+}
+
+test "p959: literal adaptation and float literal returns stay legal" {
+    assert(p959_u8_lit() == 200)
+    assert(p959_f64_lit() > 1.4)
+}
+
+test "p959: newtype constructor return stays legal" {
+    assert((p959_mk(3) as int) == 3)
+}
+
+test "p959: generic and Option returns stay legal" {
+    match p959_id(7) {
+        Some(v) => assert(v == 7)
+        None => assert(false)
+    }
+    match p959_opt(4) {
+        Some(v) => assert(v == 4)
+        None => assert(false)
+    }
+}
+
+test "p959: call result, branches, explicit return and match stay legal" {
+    assert(p959_via_call(9) == 9)
+    assert(p959_branches(0 - 5) == 5)
+    assert(p959_explicit_return(0) == "zero")
+    assert(p959_match(1) == "one")
+}
+
+test "p959: auto-return of the receiver is untouched by the return check" {
+    mut b = P959Box.new()
+    ro b2 = b.bump().bump()
+    assert(b2.n == 2)
+}
