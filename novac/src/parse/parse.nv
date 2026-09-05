@@ -591,8 +591,31 @@ fn Cursor mut @stmt() -> Node {
         // expression head cannot carry `=` there. Its own kind, the B14
         // discipline; which variants the subset takes is typing's question.
         mut kids = []Node.of(@take(), @take(), @take(), @take(), @take(), @take())
-        kids.push(@expr())
+        // The initializer is a HEAD expression (wave W1, 274.7): a `{` after it
+        // opens the then-block, never a record constructor -- `if Some(v) = o {`
+        // used to read `o { ... }` as a construction and the if-let vanished
+        // into a false "record constructor only as..." refusal; a call there
+        // (`= g(n) {`) was a syntax error.
+        kids.push(@head_expr())
         kids.push(@block())
+        // `else` after an if-let (wave W1): the same two shapes as after an
+        // `if`, hung off the same node -- [.. then-block, KwElse, <Block | IfStmt
+        // | IfLet>] -- so a reader that knows the first eight children keeps
+        // working unchanged. Eight of novac's own files write this form.
+        if @peek() == TokenKind.KwElse {
+            kids.push(@take())
+            if @peek() == TokenKind.KwIf {
+                kids.push(@stmt())
+            } else if @peek() == TokenKind.LBrace {
+                kids.push(@block())
+            } else {
+                // `else` with neither a block nor a chained `if`: incomplete,
+                // and the tree must SAY so or check finds nothing wrong.
+                kids.push(@error_node(TokenKind.ErrorTok))
+            }
+        } else {
+            // No else branch: the if-let is complete on its own.
+        }
         return @node(NodeKind.IfLet, kids)
     }
     if @peek() == TokenKind.KwIf {

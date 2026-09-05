@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `Res::Def(DefKind::Variant, id)` -- a variant is resolved as a
+// child of its enum's DefId, never as a bare global name; NOT taken: the
+// prelude glob that makes `Some`/`None` bare (novac has no prelude imports).
+// Role: acceptance tests of wave 274.7 B6 (registry #964): a variant is
+// addressed by the pair (sum, index); two sums sharing a name both match; a
+// bare shared name is refused as ambiguous; an arm of another sum is refused
+// at the arm, once.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures shared_variant/ and
+// wrong_sum_arm/ through check-novac-no-cascade and the differential.
+// novac/src/pipeline/variants_test.nv -- a variant belongs to its sum.
+
+module novac.pipeline
+
+test "a variant is addressed by its sum: two sums share `Red`, both match (274.7 B6, #964)" {
+    ro std = std_decls()
+    ro (d0, c0) = compile_to_c("type Color enum Red | Green\ntype Fruit enum Apple | Red\nfn name_c(c Color) -> str {\n match c {\n  Red => \"color-red\"\n  Green => \"green\"\n }\n}\nfn name_f(f Fruit) -> str {\n match f {\n  Apple => \"apple\"\n  Red => \"fruit-red\"\n }\n}\nfn main() {\n println(name_c(Color.Red))\n println(name_f(Fruit.Red))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // Both sums' makers are in the C: the emitter asked the same door.
+    assert(c0.contains("Color") && c0.contains("Fruit"), c0)
+    // A bare name ONE sum declares is still a value.
+    ro (d1, _) = compile_to_c("type Color enum Red | Green\nfn main() {\n ro g = Green\n println(1)\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    // A bare name TWO sums declare is ambiguous, refused by name, once.
+    ro (d2, _) = compile_to_c("type Color enum Red | Green\ntype Fruit enum Apple | Red\nfn main() {\n ro x = Red\n println(1)\n}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains("more than one sum"), messages(d2))
+    // An arm naming a variant of ANOTHER sum is refused at the arm -- and the
+    // exhaustiveness rule adds nothing (one cause, one diagnostic).
+    ro (d3, _) = compile_to_c("type Color enum Red | Green\ntype Fruit enum Apple | Red\nfn f(c Color) -> int {\n match c {\n  Apple => 1\n  Green => 2\n }\n}\nfn main() {\n println(f(Color.Green))\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains("different sum"), messages(d3))
+    // A binder head still covers everything.
+    ro (d4, _) = compile_to_c("type Color enum Red | Green\nfn f(c Color) -> int {\n match c {\n  Red => 1\n  other => 2\n }\n}\nfn main() {\n println(f(Color.Green))\n}", std)
+    assert(d4.len() == 0, messages(d4))
+}

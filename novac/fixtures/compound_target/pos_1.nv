@@ -1,0 +1,20 @@
+module compound_target.pos_1
+
+// The compound assignment runs in the TARGET's type: `x += 2` on an f64 is a
+// float addition (3.5, not the int helper's 3 -- registry #932), `n += 2` on an
+// int still takes the checked helper, `b += 1` on a u8 adapts the literal.
+fn keep(b u8) -> u8 {
+    mut c = b
+    c += 1
+    c
+}
+
+fn main() {
+    mut x = 1.5
+    x += 2
+    println(x)
+    mut n = 1
+    n += 2
+    println(n)
+    println(keep(41))
+}

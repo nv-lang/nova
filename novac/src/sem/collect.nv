@@ -31,7 +31,13 @@ import ../types.{Interner, TyId, no_ty, is_ty}
 /// collect() brings those in from the signatures it read).
 export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new())
 
-/// Register the VARIANTS of one sum declaration: a `DefVariant` row per variant
+/// The HEAD of a bare variant name's same-name chain, or -1 when the name is
+/// new: the one lookup the filler makes, kept as its own door because a
+/// lookup allocates nothing (P18) and the filler around it does.
+#realtime nogc
+fn chain_head(variant_names NameTable, vname str) -> int => variant_names.find(vname)
+
+/// Register the VARIANTS of one sum declaration: a `VariantDef` row per variant, chained by name (B6)
 /// (the name door), its payload types, and the sum's row rewritten to point at
 /// its variant range. THE ONE DOOR for both sides of the seam -- the compiled
 /// file's own sums and the sums novac was handed as declarations (274.5 wave
@@ -45,7 +51,8 @@ export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new
 /// the registry as it stands at the call: a payload naming a type not yet
 /// registered is skipped, as it always was.
 fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
-                         mut variant_rows []VariantDef, mut payload_types []TyId) -> () {
+                         mut variant_rows []VariantDef, mut payload_types []TyId,
+                         mut variant_names NameTable) -> () {
     ro skids = branch_children(c)
     if skids.len() < 2 { return }
     if skids[1].kind_of() != NodeKind.LeafNode { return }
@@ -88,7 +95,9 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
         }
         if name_at < 0 { continue }
         ro vname = leaf_text(vk[name_at])
-        defs.add(vname, DefTarget.DefVariant(VariantRow(variant_rows.len())))
+        // NOT registered in `defs` (wave B6, #964): a variant is a row of its
+        // sum, found by (sum, name) through `variant_in_sum`; the name table
+        // would keep only the LAST of two sums' `Red`.
         ro poff = payload_types.len()
         mut pcnt = 0
         // payload type names sit between '(' and ')'
@@ -106,7 +115,12 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
             payload_types.push(pt)
             pcnt += 1
         }
-        variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt })
+        // THE SAME-NAME CHAIN (B6, #964): the table holds the head, a new row of
+        // an already-seen name is prepended -- the reader walks the chain by id.
+        ro prev = chain_head(variant_names, vname)
+        variant_names.put(vname, variant_rows.len())
+        variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt,
+                                      next_same: if prev < 0 { no_vrow() } else { VariantRow(prev) } })
         vcnt += 1
     }
     types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
@@ -165,6 +179,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // reader can let the file's own declaration shadow a foreign one of the same
     // name.
     mut variant_rows = []VariantDef.new()
+    mut variant_names = NameTable.new(NamespaceId.NsVariants)
     mut payload_types = []TyId.new()
     harvest_types(decls, types, defs, tys)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
@@ -186,7 +201,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         for c in file_decls(d) {
             if c.kind_of() != NodeKind.SumDecl { continue }
             if handed_sum_is_generic(c, types, defs) { continue }
-            register_sum_variants(c, types, defs, variant_rows, payload_types)
+            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names)
         }
     }
     // THE TYPE BOUNDARY IS FIXED HERE, beside the name boundary, because the two
@@ -451,7 +466,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // ONE door for the file's own sums and the handed ones (the loop
             // after `harvest_types` above): the variants of a sum are
             // registered by `register_sum_variants`, whichever side declared it.
-            register_sum_variants(c, types, defs, variant_rows, payload_types)
+            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names)
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }
@@ -593,6 +608,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.own_cnt = own.rows.len()
-    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
+    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types,
+          fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, consts, interop: InteropTable.new() }
 }

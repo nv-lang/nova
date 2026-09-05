@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `check_binop_assign` -- a compound assignment is typed as the
+// binary operation on the target's type, the literal adapting to it; and
+// clang's own rule that the result of `~` on a narrow integer is the promoted
+// type unless cast (which is why the cast is ours). NOT taken: C's usual
+// arithmetic conversions as a typing rule.
+// Role: acceptance tests of wave 274.7 B7 (registry #932, #934, #940): the C
+// representation is a function of the TARGET's row -- the compound assignment
+// runs in the target's type, `~` is cast to the row, a newtype inside an
+// instance name is its representation.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures compound_target/,
+// bitnot_narrow/, newtype_arg/ through check-novac-no-cascade and the
+// differential.
+// novac/src/pipeline/target_row_test.nv -- the target's row decides.
+
+module novac.pipeline
+
+test "the target's row decides: compound assignment, bit-not width, newtype in an instance name (274.7 B7)" {
+    ro std = std_decls()
+    // #932: a literal added to an f64 target is a float addition -- no int helper.
+    ro (d1, c1) = compile_to_c("fn main() {\n mut x = 1.5\n x += 2\n println(x)\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    // The exact main-body line (the shell prelude has checked_add calls of its own
+    // on parameters named x, so a bare substring would not prove anything).
+    assert(c1.contains("x = ((x) + (((nova_f64)2LL)));"), c1)
+    assert(!c1.contains("x = nova_int_checked_add(x"), c1)
+    // ... and an int target still takes the checked helper.
+    ro (d2, c2) = compile_to_c("fn main() {\n mut n = 1\n n += 2\n println(n)\n}", std)
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("n = nova_int_checked_add(n, ((nova_int)2LL));"), c2)
+    // Two NAMED numeric types in a compound assignment are refused (D405 names it).
+    ro (d3, _) = compile_to_c("fn main() {\n mut x = 1.5\n ro y = 2\n x += y\n println(x)\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains("different numeric types"), messages(d3))
+    // #934: `~` on a u8 is cast back to the row's C type.
+    ro (d4, c4) = compile_to_c("fn idu8(a u8) -> u8 => a\nfn main() {\n println(~idu8(15))\n}", std)
+    assert(d4.len() == 0, messages(d4))
+    assert(c4.contains("(nova_byte)(~("), c4)
+    // #940: a Vec of a newtype is the representation's instance in the C. The
+    // harness hands `Vec` itself (the fake std has none), as the instance-method
+    // holder in pipeline_test.nv does.
+    mut vstd = std_decls()
+    vstd.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => @n\nexport fn Vec[T] mut @push(v T) -> @ => @\n")
+    ro (d5, c5) = compile_to_c("type Meters f64\nfn main() {\n ro v = [Meters(1.0), Meters(2.0)]\n println(v.len())\n}", vstd)
+    assert(d5.len() == 0, messages(d5))
+    assert(c5.contains("Vec____nova_f64"), c5)
+}
+
+test "the assignment door: a literal takes the target's type, a named mismatch is refused by name (274.7 B8)" {
+    ro std = std_decls()
+    // Legal: literal into f64 (stored as a double), same type through a call, str to str.
+    ro (d0, c0) = compile_to_c("fn twice(n int) -> int => n * 2\nfn main() {\n mut x = 1.5\n x = 2\n println(x)\n mut n = 1\n n = twice(4)\n println(n)\n mut s = \"a\"\n s = \"b\"\n println(s)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("x = ((nova_f64)2LL);"), c0)
+    // A NAMED int into an f64 target: refused as a named mismatch (E7301).
+    ro (d1, _) = compile_to_c("fn main() {\n mut x = 1.5\n ro y = 2\n x = y\n println(x)\n}", std)
+    assert(d1.len() == 1, messages(d1))
+    assert(messages(d1).contains("cannot assign value of type `int` to a target of type `f64`"), messages(d1))
+    assert(messages(d1).contains("E7301"), messages(d1))
+    // A str into an int target: E7301 too, at the operator, once.
+    ro (d2, _) = compile_to_c("fn main() {\n mut x = 1\n x = \"s\"\n println(x)\n}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains("E7301"), messages(d2))
+    // An int into a u8 target (through a parameter): the narrowing name.
+    ro (d3, _) = compile_to_c("fn f(n int, b u8) -> u8 {\n mut c = b\n c = n\n c\n}\nfn main() {\n println(f(300, 1))\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains("E_IMPLICIT_NARROWING"), messages(d3))
+}

@@ -1,0 +1,18 @@
+module wrong_sum_arm.neg_1
+
+// ONE seeded cause: an arm names a variant of ANOTHER sum than the matched
+// value. Until wave B6 the head fell through as a binder and the match was
+// refused as non-exhaustive -- the wrong cause named. Exactly one diagnostic.
+type Color enum Red | Green
+type Fruit enum Apple | Red
+
+fn name_c(c Color) -> str {
+    match c {
+        Apple => "apple"
+        Green => "green"
+    }
+}
+
+fn main() {
+    println(name_c(Color.Green))
+}

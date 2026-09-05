@@ -1,0 +1,12 @@
+module compound_target.neg_1
+
+// ONE seeded cause: two NAMED numeric operands of different types in a
+// compound assignment -- D405 names compound assignment, and the spec admits
+// no implicit widening (spec/conversions.md). The oracle accepts and prints
+// 3.5 (registry #926); novac refuses. Wave 274.7 B7.
+fn main() {
+    mut x = 1.5
+    ro y = 2
+    x += y
+    println(x)
+}

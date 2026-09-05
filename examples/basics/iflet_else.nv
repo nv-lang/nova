@@ -1,0 +1,31 @@
+// iflet_else.nv -- the corpus carrier of wave W1 (274.7, tier 0): an if-let
+// with an else branch, the initializer a bare name and a free call; the
+// then-branch returns, the else falls through to the tail.
+
+module basics.iflet_else
+
+fn first(xs Vec[int]) -> Option[int] => xs.get(0)
+
+fn show(o Option[int]) -> () {
+    if Some(v) = o {
+        println(v)
+    } else {
+        println(0)
+    }
+}
+
+fn pick(xs Vec[int]) -> int {
+    if Some(v) = first(xs) {
+        return v
+    } else {
+        println(-1)
+    }
+    0
+}
+
+fn main() {
+    ro xs = [5, 9]
+    show(xs.get(1))
+    show(xs.get(7))
+    println(pick(xs))
+}

@@ -1,0 +1,13 @@
+module bitnot_narrow.pos_1
+
+// `~` on a narrow unsigned row is the ROW's width: 240 for `~15` on a u8, not
+// the C promotion's -16 (registry #934). The signed narrow row and `int` too.
+fn idu8(a u8) -> u8 => a
+fn idi8(a i8) -> i8 => a
+fn idint(a int) -> int => a
+
+fn main() {
+    println(~idu8(15))
+    println(~idi8(15))
+    println(~idint(15))
+}

@@ -1,0 +1,11 @@
+module assign_target.neg_1
+
+// ONE seeded cause: a NAMED int assigned to an f64 target -- no implicit
+// conversion between named types (D405, spec/conversions.md). The oracle's
+// check says ok and the C converts silently; novac refuses. Wave 274.7 B8.
+fn main() {
+    mut x = 1.5
+    ro y = 2
+    x = y
+    println(x)
+}

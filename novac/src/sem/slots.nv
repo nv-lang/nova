@@ -618,6 +618,15 @@ export fn leaf_kind(n Node) -> TokenKind {
     }
 }
 
+/// The kinds a VALUE TAIL may have -- `is_expr_kind` plus the one positional
+/// record literal the tail chain returns since B15 step 4b. ONE door for the
+/// three askers that used to spell the disjunction each on their own (the tail
+/// rule, the `=>` body's typing, the emitter's body arm), and two of them had
+/// not: the body was never typed and never built, and iced after a green check
+/// (#974). NOT folded into `is_expr_kind` -- that list is read by many walks,
+/// and a kind put into it moves silently into every general arm (B13).
+export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
+
 /// Node kinds that stand as expressions (argument/operand positions).
 export fn is_expr_kind(k NodeKind) -> bool {
     // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading

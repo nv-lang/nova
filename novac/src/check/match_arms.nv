@@ -25,7 +25,7 @@ import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{disj_head_slots, pattern_has_disj}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
-import ../sem.{is_vrow, variant_range_of}
+import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A match in STATEMENT position (274.5 wave B5): the scrutinee is typed and
@@ -146,40 +146,19 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         if !pat[0].is_ident() { continue }
         // EVERY alternative head of a disjunction counts too (the
         // pattern-alternatives wave): heads stand right after each pipe.
+        // Heads are asked of the MATCHED SUM (wave B6, #964): a head that is
+        // no variant of it is a binder (covers everything -- done) or a
+        // variant of another sum, which `@bind_arm_pattern(ak, scr_t)` refused
+        // already; this rule says nothing on top (one cause, one diagnostic).
         for hi in disj_head_slots(pat) {
-            match @ctx.defs.def_of(leaf_text(pat[hi])) {
+            match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
                 None => {}
-                Some(hdef) => {
-                    match hdef.target {
-                        DefVariant(hrow) => {
-                            covered += if @ctx.variant_rows[raw_vrow(hrow)].sum_id == scr_t { 1 } else { 0 }
-                        }
-                        DefType(_) | DefFn(_) | DefConst(_) => {}
-                    }
-                }
+                Some(_) => { covered += 1 }
             }
         }
-        // The EXPLICIT form and not `?`: this function answers `()`, so there is
-        // no wrapper to propagate into -- which is exactly the case the refusal's
-        // hint reserves for a match (D86: `??` substitutes a value, an early
-        // return is control flow, and `?` needs somewhere to return TO).
-        //
-        // A name the registry never saw is `_` or a plain binder: it matches
-        // anything, so the match is exhaustive whatever the variants are.
-        match @ctx.defs.def_of(leaf_text(pat[0])) {
+        match variant_in_sum(@ctx, scr_t, leaf_text(pat[0])) {
             None => return
-            Some(def) => {
-                // The arm that means "a variant" is the arm that HOLDS the
-                // variant row; the other two mean this pattern head names no
-                // variant, and an exhaustiveness count learns nothing from them.
-                match def.target {
-                    DefVariant(vrow) => {
-                        covered += if @ctx.variant_rows[raw_vrow(vrow)].sum_id == scr_t { 1 } else { 0 }
-                    }
-                    // Not a variant: an exhaustiveness count learns nothing.
-                    DefType(_) | DefFn(_) | DefConst(_) => return
-                }
-            }
+            Some(_) => { covered += 1 }
         }
     }
     if covered >= vcnt { return }
@@ -266,14 +245,15 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
     // ONE question about the pattern head, asked once: which variant row does
     // it name? -1 answers "none" for every other shape (a plain binder, `_`,
     // a punctuation leaf), and both branches below read that one answer.
-    ro head_def = if is_ident { @ctx.defs.def_of(leaf_text(p0)) } else { None }
-    ro vrow = if Some(def) = head_def {
-        match def.target {
-            DefVariant(row) => row
-            DefType(_) | DefFn(_) | DefConst(_) => no_vrow()
-        }
+    // Asked of the MATCHED SUM (wave B6, #964). A head that names a variant of
+    // ANOTHER sum is refused here, at the arm -- until 2026-09-05 it fell
+    // through as a binder and the match was refused as non-exhaustive instead.
+    ro vrow = if is_ident { variant_in_sum(@ctx, scr_t, leaf_text(p0)) ?? no_vrow() } else { no_vrow() }
+    if is_ident && !is_vrow(vrow) && variants_named(@ctx, leaf_text(p0)).1 > 0 {
+        @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+        return false
     } else {
-        no_vrow()
+        // A variant of this sum, or a plain binder: both bind below.
     }
     if pattern_has_disj(pat) {
         // A disjunction binds NOTHING: two alternatives would have to agree
@@ -284,13 +264,7 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
             match c.ident_str() {
                 Some(nm) => {
                     if nm == "_" { continue }
-                    ro is_var = match @ctx.defs.def_of(nm) {
-                        None => false
-                        Some(d) => match d.target {
-                            DefVariant(_) => true
-                            DefType(_) | DefFn(_) | DefConst(_) => false
-                        }
-                    }
+                    ro is_var = is_vrow(variant_in_sum(@ctx, scr_t, nm) ?? no_vrow())
                     if !is_var {
                         @report_first_leaf_of(ak, DISJ_BINDER_MSG)
                         return false
@@ -393,3 +367,16 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     @scope.release(mark)
     body_t
 }
+
+/// Two or more sums in scope declare a variant of this name, and the position
+/// names no sum (a bare value, a bare call, a binder): the checker refuses
+/// rather than pick one (274.7 B6, #964; the oracle's #962 picks the last one
+/// read). The spec names no rule for the case -- an open question to the owner
+/// with this refusal as the default -- so the text asks for the qualified form.
+const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one sum in scope -- qualify it as `Type.Variant` so the sum is named (D406; registry #964)"
+
+/// A match arm's head names a variant of ANOTHER sum than the one matched on:
+/// until 2026-09-05 the head was looked up by bare name and the match was then
+/// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
+/// exhaustiveness rule then says nothing (one cause, one diagnostic).
+const WRONG_SUM_ARM_MSG = "this arm names a variant of a different sum than the value matched on (registry #964) -- write a variant of the matched sum, or a binder"

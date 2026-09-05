@@ -35,6 +35,7 @@ import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
+import ../sem.{is_value_tail_kind}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
@@ -212,6 +213,7 @@ fn Checker mut @type_fn(f Node) -> () {
         }
         Some(r) => r
     }
+    @ret_expect = @return_expectation(row)
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
     // `name != ENTRY_FN`, so the overload's parameters were never bound and its
@@ -283,13 +285,27 @@ fn Checker mut @type_fn(f Node) -> () {
         } else if ck == NodeKind.FnExprBody {
             ro ek = branch_children(c)
             ro e = ek[ek.len() - 1]
+            ro rmark = @out.len()
+            // A positional record literal as the body (`=> (xs.len(), ys.len())`)
+            // is typed like any other value tail -- `is_value_tail_kind`, the
+            // door the tail rule and the emitter's body arm read too. Until
+            // this door the body was never typed: its components' callees
+            // stayed unrecorded, check passed, and the emitter iced on the
+            // first one (#974, found 2026-09-05).
             if e.kind_of() == NodeKind.MatchExpr {
                 @type_match(e)
-            } else if is_expr_kind(e.kind_of()) {
-                @type_expr(e)
+            } else if is_value_tail_kind(e.kind_of()) {
+                @type_tail_value(e)
             } else {
                 // Not an expression tail: the subset walk already refused the
                 // form, so there is no answer for the channel to carry.
+            }
+            // THE RETURN DOOR, after the tail is typed and only if nothing was
+            // refused on the way (asking the lattice after a refusal is #902).
+            if @out.len() == rmark && is_value_tail_kind(e.kind_of()) {
+                @judge_return(e, @tail_type_of(e))
+            } else {
+                // A refused or non-expression tail: the walk already spoke.
             }
         } else {
             // Every other child (name, generics, params, return type) holds no
@@ -355,6 +371,7 @@ fn Checker mut @type_block(b Node) -> () {
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
+                        @judge_return(c, t)
                     } else {
                         // Resolved but untypeable: the walk already spoke.
                     }
@@ -381,6 +398,7 @@ fn Checker mut @type_block(b Node) -> () {
                     ro t = type_of(c, @ctx, @scope, @chan)
                     if is_ty(t) {
                         @record(c, t)
+                        @judge_return(c, t)
                     } else {
                         // Resolved but untypeable: the walk already spoke.
                     }
@@ -392,7 +410,29 @@ fn Checker mut @type_block(b Node) -> () {
                     // typed, they must AGREE, and the agreed type is recorded
                     // for the emitter -- which declares the result temporary
                     // with it, exactly as the tail match has done since B5.
+                    ro imark = @out.len()
                     @type_if_value(c)
+                    if @out.len() == imark {
+                        @judge_return(c, @chan.type_if_known(c.id_of()))
+                    } else {
+                        // The branches disagreed or one was refused: said already.
+                    }
+                    i += 1
+                    continue
+                }
+                if i == tail_at && is_expr_kind(c.kind_of()) {
+                    // ANY OTHER EXPRESSION TAIL of a value body (a name, a
+                    // literal, an operator, a field) is the returned value too
+                    // (274.7 B5): typed as a tail value -- a bare literal takes
+                    // the declared type -- and judged by the return door (`@judge_return(c, t)`). Until
+                    // this arm the statement walk typed it and nobody compared.
+                    ro emark = @out.len()
+                    @type_tail_value(c)
+                    if @out.len() == emark {
+                        @judge_return(c, @tail_type_of(c))
+                    } else {
+                        // Refused while typing: the walk already spoke.
+                    }
                     i += 1
                     continue
                 }
@@ -517,26 +557,6 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
 
 
 
-/// One parameter of a declaration: bind its name to its type in the scope.
-///
-/// Answers whether the walk may CONTINUE. A parameter this walk does not judge
-/// — no type declared, or a type that is not a plain identifier — is skipped
-/// with `true`; a type novac does not know is REFUSED, and then the whole
-/// declaration is done, which `false` says.
-///
-/// NAME and TYPE are located by the shared doors, never by index. `pk[0]`/
-/// `pk[1]` read the MODE as the name and the name as the type the moment a
-/// parameter is written `fn take(mut v int)`, and the failure wore a lie for a
-/// face: `int` refused as a type novac does not know.
-fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
-    match param_type_at(pk) {
-        // No type declared: a recovery shape the parse already refused, and
-        // there is nothing here to look up.
-        None => true
-        Some(tat) => @bind_typed_param(pk, tat, row, slot)
-    }
-}
-
 /// This type with the instance's substitution applied: a type PARAMETER becomes
 /// the concrete type standing in its slot, everything else is itself.
 ///
@@ -548,108 +568,6 @@ fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
 /// body at all: `type_fn` skips a generic declaration when there is nothing to
 /// substitute.
 fn Checker @concrete(t TyId) -> TyId => subst_type(@ctx, t, @substs)
-
-/// The same parameter, with the slot of its type already located.
-fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> bool {
-    // `param_type_at` locates the type AFTER the name, so a located type means
-    // the name was located too; its absence here is a broken invariant.
-    ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
-    // [LEGACY-#676] var-index-method (until:E3): a method called on `pk[tat]`
-    // with a VARIABLE index takes the CONTAINER as its receiver. Where the
-    // container happens to own a method of the same name the program simply
-    // returns the wrong number and says nothing -- measured 2026-08-18,
-    // `xs[i].len()` answering 1 for `["abc"]`. The intermediate binding is the
-    // whole workaround.
-    ro tnode = pk[tat]
-    ro nnode = pk[nat]
-    // THE ROW DECIDES, not the tree shape (step B2): `xs []int` carries an
-    // application term the collector interned, and a binder gated on "is the
-    // type node a plain identifier" skipped the binding -- the body then said
-    // "unknown name" about a parameter written right above (measured
-    // 2026-08-26, the first probe of the wave). The shapes B2 did NOT take
-    // (`*T`, fn types, tuples) keep today's path: the form rule already named
-    // them, and a second refusal here would be the cascade class.
-    ro slice_start = tnode.kind_of() == NodeKind.LeafNode &&
-        leaf_kind(tnode) == TokenKind.EmptyBrackets
-    if !tnode.is_ident() && !slice_start {
-        return true
-    } else {
-        // An identifier or the slice sugar: the row's type is resolvable.
-    }
-    // FIRST FLOOR for a type novac does not know (owner 2026-08-16, "not all
-    // builtin types are parsed -- does that make sense?"). Its universe is four
-    // primitives; the language has the integer family, f32, char and byte
-    // besides. A `u8` parameter used to pass the shape test, get silently
-    // dropped by the collector, and then die as an ICE -- a compiler-bug
-    // message on valid Nova the oracle accepts. A narrow subset is legitimate;
-    // a subset whose boundary is an ice is not.
-    // The TYPE comes from the ROW, and the substitution is applied to it. The
-    // name was resolved here a second time until 2026-08-20 -- the same second
-    // door the emitter had -- and it answered UNKNOWN for `x T`, refusing a
-    // parameter whose type the registry holds. Position is the mapping: plan
-    // 273 §4.4 fixes the slot.
-    ro fd = @ctx.fns.rows[raw_row(row)]
-    // A METHOD's slot zero is the RECEIVER (plan 273), and the tree has no
-    // `Param` node for it -- so the parameter at tree position `slot` is row
-    // slot `slot + 1`. Reading them one-to-one typed every parameter as its
-    // left neighbour, which is a wrong TYPE rather than a refusal.
-    ro rslot = if fd.has_recv { slot + 1 } else { slot }
-    ro pt = if rslot < fd.param_cnt { @concrete(@ctx.fns.params[fd.param_off + rslot].type_id) } else { no_ty() }
-    if !is_ty(pt) {
-        match tnode {
-            // TWO different mistakes, each named as itself (D420, step B1): a
-            // name the registry holds as a GENERIC HEAD wants arguments -- and
-            // "does not know this type" about `Vec` was a lie the moment the
-            // head registered. The oracle accepts the bare head (measured
-            // 2026-08-26); this refusal is deliberately stricter, and it says
-            // what to write.
-            Leaf(tt) => @refuse(tt, if generic_head_cnt(@ctx.types, @ctx.defs, tt.text) > 0 {
-                "outside the subset: this type is generic -- write its type arguments (for `Vec` the language spells the instance `[]int`)"
-            } else {
-                "outside the subset: novac does not know this type yet (its universe is int, str, bool, f64 and the types of this file)"
-            })
-            Branch { .. } => {}
-        }
-        return false
-    } else {
-        // A type the registry knows: the name can be bound to it.
-    }
-    // A `mut` PARAMETER of a value record, refused by the name the receiver
-    // case already carries: the fixed point lowers `mut x V` to `V*` (plan 184,
-    // P10 ABI) so the callee writes the CALLER'S record, and novac passes a
-    // value record by value -- the write lands in a copy and the program says
-    // nothing (hunt emit_c x K1, H4: the oracle prints 2, novac printed 1).
-    // A tuple PARAMETER is outside the wave (B15 bounds: novac itself
-    // carries none, and the call-site ABI is unmeasured) -- refused by name
-    // now that the type FORM reads (4b made `(int, int)` a real type in
-    // signatures, so unreachability no longer holds this boundary).
-    // THE ANONYMOUS TERM, asked by its shape: the boundary is about a
-    // structural term with no declaration (its call-site ABI is unmeasured),
-    // so the two anonymous shapes stand on one side and every declared one on
-    // the other. This used to ask `is_tuple`, whose name promised more than it
-    // answered (owner, 2026-09-04).
-    ro anon_term = match shape_of(@ctx, pt) {
-        AnonPositionalTuple | AnonNamedTuple => true
-        Record | ValueRecord | NamedTuple | PositionalTuple => false
-    }
-    if anon_term {
-        @report_first_leaf_of(pk, TUPLE_PARAM_MSG)
-        return false
-    }
-    ro mut_value = match param_mode_at(pk) {
-        ModeMut => is_value_record(@ctx, pt)
-        ModeRo | ModeConsume => false
-    }
-    if mut_value {
-        @report_first_leaf_of(pk, VALUE_MUT_PARAM_MSG)
-        return false
-    }
-    // The parameter's own MODE goes into the scope: inside the body `a` of
-    // `fn f(mut a Acc)` IS a mut place, and passing it on must select the mut
-    // overload (P14 rule 2).
-    @scope.bind(leaf_text(nnode), pt, param_mode_at(pk))
-    true
-}
 
 /// One statement. A kind the subset does not know is NOT typed and NOT iced:
 /// the emitter refuses it at its own door, and a second death here would only
@@ -696,7 +614,15 @@ fn Checker mut @type_stmt(st Node) -> () {
             @report_first_leaf_of(kids, "outside the subset: `return` must carry a value")
             return
         }
-        @type_expr(kids[1])
+        // A `return` is a tail by another spelling: the same literal rule and
+        // the same door (274.7 B5), asked only when typing refused nothing.
+        ro rmark = @out.len()
+        @type_tail_value(kids[1])
+        if @out.len() == rmark {
+            @judge_return(kids[1], @tail_type_of(kids[1]))
+        } else {
+            // The operand was refused: the walk already spoke.
+        }
     } else if k == NodeKind.BindStmt {
         @type_bind(st)
     } else if k == NodeKind.AssignStmt {
@@ -715,14 +641,27 @@ fn Checker mut @type_stmt(st Node) -> () {
         // only READ it. The MARK, not the file's count: a refusal in an
         // earlier declaration is not this assignment's business.
         if @out.len() > before { return }
-        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
         // THE TARGET IS AN EXPRESSION TOO, and the emitter writes it as one --
         // so it needs the same answers. `a.n = 1` on a VALUE record must be
         // `a.n`, not `a->n`, and the arrow is chosen from the OPERAND's recorded
         // type: without this the target kept the pointer form while the reads of
         // the same field used the dot (measured 2026-08-23, clang: "expression
-        // is not assignable").
+        // is not assignable"). Typed BEFORE the right operand is recorded, so
+        // the target's type can decide it (below).
         @type_expr(kids[0])
+        if @out.len() > before { return }
+        // THE TARGET'S ROW DECIDES A COMPOUND ASSIGNMENT (274.7 B7, #932): the
+        // door in assign_rules.nv answers the type the operation runs in, or
+        // `no_ty()` when it refused -- and a refusal is the decision.
+        ro rt = @assigned_operand_type(kids)
+        if !is_ty(rt) {
+            // SILENT-OK: the assignment door refused the operand (a literal that
+            // does not fit, or two named numeric types) at its own token.
+            return
+        } else {
+            // Decided: the type the emitter reads for the right operand.
+        }
+        @record(kids[2], rt)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         // A head this short was already refused by the subset walk; the same
@@ -840,6 +779,14 @@ fn Checker mut @type_if_let(st Node) -> () {
     @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
     @type_block(kids[7])
     @scope.release(mark)
+    // The ELSE branch (wave W1) is typed with the binder OUT of scope -- it is
+    // the None arm, and the payload's name means nothing there. A block or a
+    // chained if / if-let: the one door for "a body is a block or a statement".
+    if kids.len() > 9 {
+        @type_body(kids[9])
+    } else {
+        // No else branch was written.
+    }
 }
 
 /// A println statement: each argument carries its own printer, so each

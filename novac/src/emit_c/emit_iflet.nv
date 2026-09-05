@@ -17,6 +17,7 @@ module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, c_type}
 import ../tree.{Node, NodeKind}
+import ../diag.{ice}
 import ../types.{TyId}
 import ../builtins.{OPTION_SOME_TAG_C}
 
@@ -38,4 +39,24 @@ fn Emitter mut @emit_if_let(st Node) -> () {
     @body.append("    ${c_type(@ctx, payload)} ${leaf_text(kids[3])} = ${tmp}.value;\n")
     @emit_block_stmts_fn(kids[7], false)
     @body.append("    }\n")
+    // The ELSE branch (wave W1), written the way the if statement writes its
+    // own: a block, or a chained if / if-let through the statement door. Read
+    // by the parser and not written here would be the branch vanishing from
+    // the C in silence.
+    if kids.len() > 9 {
+        @body.append("    else ")
+        ro tail = kids[9]
+        ro tk = tail.kind_of()
+        if tk == NodeKind.Block {
+            @body.append("{\n")
+            @emit_block_stmts_fn(tail, false)
+            @body.append("    }\n")
+        } else if tk == NodeKind.IfStmt || tk == NodeKind.IfLet {
+            @emit_stmt(tail)
+        } else {
+            ice("emit: the else branch of an if-let is neither a block nor a chained if")
+        }
+    } else {
+        // No else branch was written.
+    }
 }

@@ -1,0 +1,11 @@
+module assign_mismatch.pos_1
+
+// A string target takes a string, an int target an int: the door is quiet on
+// the same named types, including through a call.
+fn word() -> str => "w"
+
+fn main() {
+    mut s = "a"
+    s = word()
+    println(s)
+}

@@ -1,0 +1,11 @@
+module undeclared_type.neg_3
+
+// ONE seeded cause: an undeclared type name as a record FIELD type (`Nmbr`).
+// Passed check in silence before #970; the oracle accepts it (#971 --
+// novac/divergences.allow).
+
+type Box { v Nmbr }
+
+fn main() {
+    println(1)
+}

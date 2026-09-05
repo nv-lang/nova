@@ -1,0 +1,11 @@
+module return_narrowing.neg_1
+
+// ONE seeded cause: an `int` value returned from a fn declared `-> u8`. The
+// argument and binding positions refuse this as E_IMPLICIT_NARROWING; the
+// return position let it through and `f(300)` printed 44 (registry #959 for
+// the oracle, #960 for novac). Same name at the return door since 2026-09-05.
+fn narrow(n int) -> u8 => n
+
+fn main() {
+    println(narrow(300))
+}

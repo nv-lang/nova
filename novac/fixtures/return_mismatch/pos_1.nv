@@ -1,0 +1,29 @@
+module return_mismatch.pos_1
+
+// The forms the door must let through: a bare literal takes the declared type
+// (D227 rule 2 / D55 -- `1` for `-> f64`, `200` for `-> u8`), a `return`
+// carries its own value, a call's result is its declared type, a tail `if`
+// agrees with itself. (A newtype built by its constructor, `Meters(n)`, is
+// NOT here: `type Meters int` + `fn m(n int) -> Meters => Meters(n)` is an
+// existing novac ICE -- "a type in call position with no construction
+// recorded" -- registry row filed with wave B5; the newtype MISMATCH is in the
+// holders, the constructor waits for its own wave.)
+fn one() -> f64 => 1
+fn byte() -> u8 => 200
+fn early(n int) -> int {
+    if n > 0 { return n }
+    0
+}
+fn twice(n int) -> int => n * 2
+fn via(n int) -> int => twice(n)
+fn pick(n int) -> str {
+    if n > 0 { "pos" } else { "non-pos" }
+}
+
+fn main() {
+    println(one())
+    println(byte())
+    println(early(3))
+    println(via(4))
+    println(pick(1))
+}

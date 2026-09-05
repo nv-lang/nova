@@ -30,7 +30,7 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD}
 import ../sem.{raw_crow}
-import ../sem.{variant_range_of, VariantRow}
+import ../sem.{variant_range_of, VariantRow, variants_named}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -139,15 +139,7 @@ fn Checker @display_row_of(key []ArgSpec) -> Option[FnRow] {
 /// above, which must not call a construction a missing method. The definition
 /// registry answers -- the same `def_of` every other variant question uses, so
 /// there is no second table to disagree with.
-fn Checker @is_known_variant(name str) -> bool {
-    match @ctx.defs.def_of(name) {
-        None => false
-        Some(d) => match d.target {
-            DefVariant(_) => true
-            DefType(_) | DefFn(_) | DefConst(_) => false
-        }
-    }
-}
+fn Checker @is_known_variant(name str) -> bool => variants_named(@ctx, name).1 >= 1
 
 /// `Sum.Variant` as a VALUE: a head that names a TYPE followed by the dot and
 /// one of ITS variants is the variant's value, not a field read -- and the head
@@ -176,7 +168,7 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
         None => {}
         Some(hd) => match hd.target {
             DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
-            DefVariant(_) | DefFn(_) | DefConst(_) => {}
+            DefFn(_) | DefConst(_) => {}
         }
     }
     if !is_ty(head_t) {
@@ -489,23 +481,25 @@ fn Checker mut @type_expr(e Node) -> () {
                     // same CalleeVariant a `C(7)` call writes -- with nothing
                     // to bind. A local binding shadows a variant: the scope
                     // was asked first, above.
-                    mut is_variant = false
-                    match @ctx.defs.def_of(t.text) {
-                        None => {}
-                        Some(d) => match d.target {
-                            DefVariant(vrow) => {
-                                is_variant = true
-                                ro vd = @ctx.variant_rows[raw_vrow(vrow)]
-                                if vd.payload_cnt == 0 {
-                                    @record(e, vd.sum_id)
-                                    @chan.record_callee(e.id_of(),
-                                        CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
-                                } else {
-                                    @refuse(t, VARIANT_VALUE_NEEDS_ARGS_MSG)
-                                }
-                            }
-                            DefType(_) | DefFn(_) | DefConst(_) => {}
+                    // The name is asked of the SUMS, not of the name table (wave
+                    // B6, #964): one sum declares it -> that variant; several ->
+                    // the bare name is ambiguous and refused by name; none -> an
+                    // unknown name.
+                    ro (vrow, vn) = variants_named(@ctx, t.text)
+                    ro is_variant = vn >= 1
+                    if vn > 1 {
+                        @refuse(t, AMBIGUOUS_VARIANT_MSG)
+                    } else if vn == 1 {
+                        ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+                        if vd.payload_cnt == 0 {
+                            @record(e, vd.sum_id)
+                            @chan.record_callee(e.id_of(),
+                                CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
+                        } else {
+                            @refuse(t, VARIANT_VALUE_NEEDS_ARGS_MSG)
                         }
+                    } else {
+                        // Not a variant: decided below as an unknown name.
                     }
                     if !is_variant {
                         @refuse(t, "unknown name: nothing with this name is bound at this point")
@@ -701,6 +695,30 @@ fn Checker mut @type_expr(e Node) -> () {
     } else if k == NodeKind.Call {
         ro kids = branch_children(e)
         ro cname = call_callee_text(kids)
+        // A VARIANT CONSTRUCTOR by bare name (`Red(7)`) is asked of the sums
+        // first (wave B6, #964): one sum -> that variant, its payload bound by
+        // position; several -> ambiguous, refused by name.
+        // A type, fn or const DECLARED IN THIS FILE outranks any variant of the
+        // name (`Pair(1, 2)` for the file's tuple type beside a std variant `Pair`).
+        ro (vfirst, vn) = if @ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(@ctx, cname) }
+        if vn > 1 {
+            @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
+            return
+        } else if vn == 1 {
+            ro vbefore = @out.len()
+            for c in kids {
+                if !is_expr_kind(c.kind_of()) { continue }
+                @type_expr(c)
+            }
+            if @out.len() > vbefore { return }
+            // A variant's payload is positional by construction -- no names to
+            // bind by, no defaults to omit -- so its binding is the identity.
+            @chan.record_callee(e.id_of(),
+                CalleeTarget.CalleeVariant(vfirst), []TyId.new(), identity_slots(arg_count(kids, 1)))
+            return
+        } else {
+            // Not a variant: a callable of the name table, below.
+        }
         ro found = @ctx.defs.def_of(cname)
         // FIRST FLOOR, found by probing the guards above (2026-08-16): a
         // trailing `1 +` or `!` swallows the NEXT statement as its operand,
@@ -739,10 +757,6 @@ fn Checker mut @type_expr(e Node) -> () {
         // past silently.
         ro def = found ?? ice("check: the callee row vanished between two reads of one Option")
         match def.target {
-            // A variant's payload is positional by construction -- no names to
-            // bind by, no defaults to omit -- so its binding is the identity.
-            DefVariant(vrow) => @chan.record_callee(e.id_of(),
-                CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(arg_count(kids, 1)))
             DefFn(_) => {
                 // NOT `def.payload`: `defs` is keyed by the bare name and lives
                 // by last-write-wins, so with two overloads it answers with the

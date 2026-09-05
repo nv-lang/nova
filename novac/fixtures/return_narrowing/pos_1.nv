@@ -1,0 +1,12 @@
+module return_narrowing.pos_1
+
+// The same widths, returned as themselves: no narrowing, no door.
+fn keep8(n u8) -> u8 => n
+fn keep(n int) -> int => n
+fn lit8() -> u8 => 255
+
+fn main() {
+    println(keep8(200))
+    println(keep(300))
+    println(lit8())
+}

@@ -1,0 +1,12 @@
+module undeclared_type.neg_1
+
+// ONE seeded cause: an undeclared type name in a RETURN annotation (`Strng`).
+// Before #970 this passed check while unused, and a call of `make` was an ICE
+// ("call of a fn without a declared return type"); the oracle accepts it and
+// compiles nothing for the name (its row #971 -- novac/divergences.allow).
+
+fn make() -> Strng => "x"
+
+fn main() {
+    println(1)
+}

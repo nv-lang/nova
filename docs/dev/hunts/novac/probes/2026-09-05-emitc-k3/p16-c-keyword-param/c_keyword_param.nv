@@ -1,7 +1,0 @@
-module basics.c_keyword_param
-
-fn twice(unsigned int) -> int => unsigned + unsigned
-
-fn main() {
-    println(twice(21))
-}

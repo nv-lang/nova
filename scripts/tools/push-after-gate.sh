@@ -19,6 +19,17 @@
 #      только с причиной в GATE_SKIP_REASON, и она печатается;
 #   4. пушит с таймаутом и одним повтором; печатает unpushed после.
 #
+# ИНТЕГРАТОРУ НА main (2026-09-05, по вопросу интегратора): отказ на ветке main ниже —
+# намеренный и без флага переопределения; скрипт — инструмент ОКНА. Та же последовательность
+# руками, в том же порядке, что ниже в п.3 (novac дешевле и падает первым):
+#   NOVAC_TIER=push scripts/gate-novac.sh        # если тронут novac/
+#   NOVA_GATE_TIER=push scripts/gate.sh          # основной ярус push
+# ЯРУС loop НЕ ПРИЁМКА: он сам печатает «изменено N файлов — линт, мега-CU и прогон живут
+# в push» (№770). Как дешёвая ПРЕДПРОВЕРКА он полезен (2026-09-05: три настоящих отказа за
+# три минуты), но пуш по его зелёному — ошибка; судит push.
+# ЧИСТОТА — ПО СОДЕРЖИМОМУ (`git diff --name-only HEAD`), не по stat: фантомная пометка
+# examples/nova.lock.toml после дифференциала (устаревший stat-кэш, замер интегратора) пуш
+# не отбивает; настоящая правка и неотслеживаемый файл — отбивают.
 # Использование: bash scripts/tools/push-after-gate.sh
 #   GATE=both — оба яруса; GATE=none GATE_SKIP_REASON="..." — без гейта (печатается).
 # Логи гейта — target/gate-push-<ярус>.log; вердикт печатается одной строкой.
@@ -35,7 +46,13 @@ if [ "$BR" = "main" ]; then
 fi
 # Неотслеживаемые файлы — не грязь: это ровно то, что НЕЛЬЗЯ подмести в коммит.
 # Пуш блокируют только изменённые/проиндексированные пути.
-DIRTY=$(git status --short | grep -v '^??' | wc -l | tr -d ' ')
+# CLEANLINESS BY CONTENT, not by stat (2026-09-05, measured by the integrator): a
+# corpus run rewrites examples/nova.lock.toml with identical bytes, and with
+# core.autocrlf=true git then shows ' M' from a stale stat cache -- `git diff HEAD`
+# is empty, `git diff-files` carries a zero SHA on the worktree side. That phantom
+# refused two pushes in one day. `git diff --name-only HEAD` hashes the content,
+# so a real change (staged or not) still counts and the phantom does not.
+DIRTY=$(git diff --name-only HEAD | wc -l | tr -d ' ')
 UNTRACKED=$(git status --short | grep -c '^??' || true)
 if [ "$DIRTY" -gt 0 ]; then
     echo "push-after-gate: дерево не чистое ($DIRTY файлов) — сначала коммит по именам или решение, что это не едет" >&2

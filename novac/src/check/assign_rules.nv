@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_binop_assign` -- a compound assignment is typed as the
+// binary operation on the TARGET's type, the literal adapting to it, a mismatch
+// refused at the operator; NOT taken: C's usual arithmetic conversions as a
+// typing rule (they are what this door exists to keep out of the emission).
+// Role: layer 7 (check) -- the ASSIGNMENT DOOR (274.7 B7, registry #932): the
+// type a compound assignment runs in. Set apart from typing.nv when that file
+// crossed 1000 lines with the wave; the cut is the rule, by meaning.
+// Used by: typing.nv (the AssignStmt arm records what this door answers).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+// crossed 1000 lines), check-novac-no-silent-skip.py, and the fixtures
+// compound_target/ through check-novac-no-cascade and the differential.
+// novac/src/check/assign_rules.nv -- the target's row decides.
+
+module novac.check
+
+import ../tree.{Node, assign_op_of}
+import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../builtins.{TypeKind}
+import ../sem.{leaf_kind, carrier_of, is_numeric_prim, ty_source_name}
+
+/// THE TYPE A COMPOUND ASSIGNMENT RUNS IN, or `no_ty()` when the operand was
+/// refused here (274.7 B7, #932). `a op= b` is `a = a op b`, so D405's operand
+/// rule applies as at every other numeric operator: a bare literal takes the
+/// TARGET's carrier type (`x += 2` on an `f64` is a float addition -- the int
+/// helper picked from the literal printed 3 where the oracle prints 3.5), and
+/// two NAMED numeric operands of different types are refused
+/// (spec/conversions.md names compound assignment; the oracle accepts -- its
+/// #926). A plain `=` keeps the operand's own type. What the caller RECORDS for
+/// the right operand is the answer here, and the emitter reads that and
+/// nothing else -- no second table of target types in emission.
+fn Checker mut @assigned_operand_type(kids []Node) -> TyId {
+    ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
+    match assign_op_of(leaf_kind(kids[1])) {
+        Set => @assigned_value_type(kids, rt0)
+        Update(_) => {
+            ro tc = carrier_of(@ctx, type_of(kids[0], @ctx, @scope, @chan))
+            ro adapted = adapt_operand(kids[2], rt0, tc, @ctx.tys)
+            if adapted != rt0 {
+                if !@lit_fits_or_refuse(kids[2], adapted) { return no_ty() }
+            } else {
+                // Not a bare literal, or one already of the target's type.
+            }
+            if is_numeric_prim(@ctx.tys, adapted) && is_numeric_prim(@ctx.tys, tc) && adapted != tc {
+                match kids[1] {
+                    Leaf(t) => @refuse(t, MIXED_NUMERIC_MSG)
+                    Branch { .. } => {}
+                }
+                return no_ty()
+            } else {
+                // The same numeric type by name, or not numeric at all: the
+                // operator's own emission handles it.
+            }
+            adapted
+        }
+    }
+}
+
+/// THE ASSIGNMENT DOOR (274.7 B8): the value written by `x = e` must be the
+/// target's type, BY NAME -- the third position of one rule after the argument
+/// (the call key) and the return (return_rules.nv). A bare numeric literal
+/// takes the TARGET's carrier type (D227 rule 2 / D55: `x = 2` on an f64 stores
+/// 2.0) and is judged for fit before it is recorded; anything else must match
+/// the target exactly. Until 2026-09-05 novac recorded whatever the right side
+/// was: `x = y` with `x f64`, `y int` compiled to a silent C conversion, and
+/// `x = "s"` on an int reached the C compiler (the oracle's `check` says ok on
+/// both -- its assignment door is #926 / a row of its own). The names are the
+/// oracle's for the same position: E_IMPLICIT_NARROWING for an integer
+/// narrowing, E7301 for every other mismatch. Answers `no_ty()` when it refused.
+fn Checker mut @assigned_value_type(kids []Node, rt0 TyId) -> TyId {
+    ro tt = type_of(kids[0], @ctx, @scope, @chan)
+    // `same_ty`, not the parameter itself, on every hand-back path:
+    // [LEGACY-#760-newtype-ro-launder] (the test CU of this module is compiled
+    // by the oracle, whose readonly analysis refuses a bare `return` of a ro-bound
+    // `TyId`).
+    if !is_ty(tt) || !is_ty(rt0) { return same_ty(rt0) }
+    ro adapted = adapt_operand(kids[2], rt0, carrier_of(@ctx, tt), @ctx.tys)
+    if adapted != rt0 {
+        if !@lit_fits_or_refuse(kids[2], adapted) { return no_ty() }
+    } else {
+        // Not a bare literal, or one already of the target's type.
+    }
+    ro t = @concrete(adapted)
+    ro want = @concrete(tt)
+    if @ctx.tys.kind_of(t) == TypeKind.TkParam || @ctx.tys.kind_of(want) == TypeKind.TkParam {
+        // A type parameter is not judged: the instance judges its own body.
+        return same_ty(adapted)
+    } else {
+        // Both concrete: compared by name below.
+    }
+    if t == want { return same_ty(adapted) }
+    ro from = ty_source_name(@ctx, t)
+    ro to = ty_source_name(@ctx, want)
+    ro msg = if int_narrows(@ctx.tys, t, want) {
+        "cannot assign value of type `${from}` to a target of type `${to}` -- implicit int narrowing loses range; use an explicit `... as ${to}` cast (D54, E_IMPLICIT_NARROWING)"
+    } else {
+        "cannot assign value of type `${from}` to a target of type `${to}` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or change the target"
+    }
+    match kids[1] {
+        Leaf(tk) => @refuse(tk, msg)
+        Branch { .. } => {}
+    }
+    no_ty()
+}

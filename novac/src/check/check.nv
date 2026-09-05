@@ -103,6 +103,14 @@ type Checker {
     /// by the FnDecl arm of each phase, read by the Block arm; there are no
     /// nested fns, so one slot is the whole state.
     tail_value_body NodeId
+    /// THE RETURN THE BODY BEING TYPED MUST PRODUCE (274.7 B5, registry #960):
+    /// the declared return type of the fn under `type_fn`, concrete for an
+    /// instance, `no_ty()` when there is nothing to judge -- no declaration, a
+    /// unit return, or a type parameter (an instance judges its own body;
+    /// "I do not judge" is the answer for the generic shape). Read by the
+    /// return door at every tail and every `return`. One slot, like
+    /// `tail_value_body`, for the same reason: there are no nested fns.
+    ret_expect TyId
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -143,6 +151,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
         seen_decls: NameTable.new(NamespaceId.NsDefs),
         tail_value_body: no_node(),
+        ret_expect: no_ty(),
         substs: []TyId.new(),
     }
     c.walk(file)
@@ -204,6 +213,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
         seen_decls: NameTable.new(NamespaceId.NsDefs),
         tail_value_body: no_node(),
+        ret_expect: no_ty(),
         substs,
     }
     c.type_fn(decl)
@@ -383,6 +393,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_generic_decl(children)
                     @report_if_tail_has_no_value(children)
                     @report_if_return_type_undeclared(children)
+                    // Every type NAME the signature writes must be declared
+                    // (#970, typeref_rules): the collector answers no_ty() for
+                    // `-> Strng` and, until this line, nobody judged it -- the
+                    // fn passed while unused and its first call was an ICE.
+                    @report_if_decl_types_undeclared(children)
                 }
                 ConstDecl => {
                     // A CONSTANT IS JUDGED BY ITS INITIALIZER, and the walk
@@ -411,6 +426,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // first, so a misplaced form is named as misplaced.
                     @report_if_misplaced_generics(children)
                     @report_if_generic_form(children)
+                    // Fields, a newtype's representation, variant payloads:
+                    // every type NAME must be declared (#970, typeref_rules) --
+                    // `type Box { v Nmbr }` passed check in silence before.
+                    @report_if_type_body_undeclared(children)
                 }
                 ForStmt => {
                     @report_if_bad_for_head(children)

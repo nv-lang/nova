@@ -1,0 +1,28 @@
+module shared_variant.pos_1
+
+// Two sums share a variant name, and both are matched and printed. Until
+// 2026-09-05 novac refused `name_c` as non-exhaustive: the bare `Red` resolved
+// to `Fruit.Red` through the name table (registry #964; the oracle's #962 is
+// the same cause with the opposite symptom). A variant is a row of its sum.
+type Color enum Red | Green
+type Fruit enum Apple | Red
+
+fn name_c(c Color) -> str {
+    match c {
+        Red => "color-red"
+        Green => "green"
+    }
+}
+
+fn name_f(f Fruit) -> str {
+    match f {
+        Apple => "apple"
+        Red => "fruit-red"
+    }
+}
+
+fn main() {
+    println(name_c(Color.Red))
+    println(name_f(Fruit.Red))
+    println(name_c(Color.Green))
+}

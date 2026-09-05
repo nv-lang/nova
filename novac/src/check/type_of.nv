@@ -19,6 +19,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
+import ../sem.{variants_named}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{LitArg}
 import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
@@ -443,8 +444,12 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro cname = call_callee_text(branch_children(e))
+        // A variant constructor is a call whose type is its SUM: asked of the
+        // sums (wave B6, #964); the checker refused an ambiguous name already,
+        // so the first row is the one when any is there.
+        ro (vfirst, vn) = if ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(ctx, cname) }
+        if vn >= 1 { return ctx.variant_rows[raw_vrow(vfirst)].sum_id }
         ro def = ctx.defs.def_of(cname) ?? ice("check: call target not in the registry (#652 class)")
-        if DefVariant(vrow) = def.target { return ctx.variant_rows[raw_vrow(vrow)].sum_id }
         if DefFn(decl_row) = def.target {
             // The ROW the checker resolved, when it recorded one: `defs` is
             // keyed by the bare name and lives by last-write-wins, so with two

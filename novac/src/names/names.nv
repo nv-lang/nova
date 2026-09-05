@@ -69,6 +69,7 @@ export type NamespaceId enum
     | NsCallables
     | NsLocals
     | NsProtocols /// protocol names: a CONTRACT is not a type, so it cannot share NsDefs
+    | NsVariants /// bare variant names -> the head of a same-name chain in `variant_rows` (274.7 B6, #964): a variant is a row of its sum, not a top-level name, so it cannot share NsDefs
     | NsInterop /// C identifiers the linked shell carries: not names of the LANGUAGE, so no other space may hold them
     | NsStrLits /// TEXTS of string literals, keyed to their slot in the emitted pool: the one place where a string IS the identity, because two literals spelled the same ARE the same constant
 

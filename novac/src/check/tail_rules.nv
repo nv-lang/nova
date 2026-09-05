@@ -17,7 +17,7 @@ module novac.check
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
-import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit}
+import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind}
 
 /// Does this statement END the function on every path?
 ///
@@ -33,6 +33,14 @@ import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit}
 fn stmt_terminates(st Node) -> bool {
     ro k = st.kind_of()
     if k == NodeKind.RetStmt { return true }
+    // An if-let ends the function when BOTH its branches do (wave W1): the
+    // then-block and the else. Without an else the None path falls through,
+    // exactly as an `if` without else.
+    if k == NodeKind.IfLet {
+        ro lk = branch_children(st)
+        if lk.len() <= 9 { return false }
+        return block_terminates(lk[7]) && block_terminates(lk[9])
+    }
     if k != NodeKind.IfStmt { return false }
     ro kids = branch_children(st)
     if kids.len() <= 4 { return false }
@@ -46,7 +54,7 @@ fn stmt_terminates(st Node) -> bool {
 /// through the same door.
 fn block_terminates(b Node) -> bool {
     ro k = b.kind_of()
-    if k == NodeKind.IfStmt { return stmt_terminates(b) }
+    if k == NodeKind.IfStmt || k == NodeKind.IfLet { return stmt_terminates(b) }
     if k != NodeKind.Block { return false }
     for s in branch_children(b) {
         if stmt_terminates(s) { return true }
@@ -147,12 +155,17 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // than added to `is_expr_kind`, because that list is read by many walks
         // and a kind put into it moves silently into every general arm (the
         // lesson wave B13 paid for three times over).
-        if k == NodeKind.RetStmt || is_expr_kind(k) || k == NodeKind.IfStmt { return }
-        // A tuple tail IS a value since step 4b: typing records the pair term
-        // (the statement walk types a TupleExpr by its named arm) and the
-        // emitter's tail chain returns the built temporary. Named here and
-        // not in is_expr_kind -- B13's lesson, same as IfStmt above.
-        if k == NodeKind.TupleExpr { return }
+        // `is_value_tail_kind` (sem) is `is_expr_kind` plus the one positional
+        // record literal the tail chain returns since step 4b -- ONE door for
+        // this rule, the `=>` body's typing and the emitter's body arm (#974).
+        if k == NodeKind.RetStmt || is_value_tail_kind(k) || k == NodeKind.IfStmt { return }
+        // An INDEX tail (`@heads[b]`) is a value too -- one novac does not compile
+        // yet, and that refusal belongs to the expression walk ("indexing is read
+        // but not compiled yet"). Until 2026-09-05 this door refused it first,
+        // as "ends without a value": eleven of novac's own files got the wrong
+        // cause named (274.7 B3 measurement). The tail is let through to the walk
+        // that owns the real answer.
+        if k == NodeKind.Index { return }
         @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }

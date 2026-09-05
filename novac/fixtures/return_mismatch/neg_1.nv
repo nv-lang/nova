@@ -1,0 +1,11 @@
+module return_mismatch.neg_1
+
+// ONE seeded cause: the body's value is a `str`, the fn declares `-> int`.
+// Neither compiler had a return door until 2026-09-05 -- the oracle let this
+// through to the C compiler (registry #959), novac emitted it (registry #960).
+// The name is the one the oracle's fix gives the same position: E7301.
+fn width() -> int => "not an int"
+
+fn main() {
+    println(width())
+}

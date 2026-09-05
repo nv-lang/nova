@@ -1,0 +1,12 @@
+module undeclared_type.neg_2
+
+// ONE seeded cause: an undeclared type name as a PARAMETER type (`Vecc`, one
+// letter from `Vec`). Refused before #970 too -- as a limit of the subset
+// ("does not know this type yet"); the sentence now names the misspelling.
+// The oracle accepts it (#971 -- novac/divergences.allow).
+
+fn takes(v Vecc[int]) -> int => 1
+
+fn main() {
+    println(1)
+}

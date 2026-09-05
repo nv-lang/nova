@@ -1,0 +1,10 @@
+module assign_mismatch.neg_1
+
+// ONE seeded cause: a `str` assigned to an int target. Until wave 274.7 B8
+// this reached the C compiler ("incompatible pointer to integer" from clang);
+// the oracle's `check` says ok. Refused by name at the operator: E7301.
+fn main() {
+    mut x = 1
+    x = "s"
+    println(x)
+}
