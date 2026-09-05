@@ -1,0 +1,28 @@
+// Plan 282 F.6 acceptance probe: exercises both parsers so the kept C contains
+// `to_f64`, `parse_int_core`, `to_int`, `to_i8`, `to_bool`. Count `nova_idx_chk` per body
+// (see README). Measured 2026-09-05 (before F.6): to_f64 11, parse_int_core 3, others 0.
+module bc2
+
+fn main() Io -> () {
+    ro s = "12.5e3"
+    match s.to_f64() {
+        Ok(v) => println("${v}")
+        Err(_) => println("err")
+    }
+    match "42".to_int() {
+        Ok(v) => println("${v}")
+        Err(_) => println("err")
+    }
+    match "-7".to_i8() {
+        Ok(v) => println("${v}")
+        Err(_) => println("err")
+    }
+    match "ff".to_int(radix: 16) {
+        Ok(v) => println("${v}")
+        Err(_) => println("err")
+    }
+    match "true".to_bool() {
+        Ok(v) => println("${v}")
+        Err(_) => println("err")
+    }
+}
