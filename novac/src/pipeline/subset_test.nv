@@ -819,17 +819,40 @@ fn main() {\n\
     assert(c.contains("int_display_spec(_novac_isb_t"))
     assert(c.contains("nova_print_str(_novac_istr_t"))
 
-    // A slot type outside str|int refuses by name.
-    ro (d3, _) = compile_to_c("fn main() {\n\
+    // EVERY PRIMITIVE FAMILY takes its own runtime entry (wave B1a, 274.7):
+    // the asserts pin the exact entry and the exact cast, because the wave
+    // exists to stop `${1.5}` from printing `1` through `(nova_int)`.
+    ro (d3, c3) = compile_to_c("fn idf32(x f32) -> f32 => x\n\
+fn main() {\n\
  ro f = true\n\
- println(\"flag \${f}\")\n\
+ ro h = 2.5\n\
+ ro ch = 'z'\n\
+ println(\"\${f} \${h} \${ch} \${idf32(1.5)}\")\n\
 }", std)
-    assert(d3.len() >= 1)
-    mut hit3 = false
-    for g in d3 {
-        if g.message.contains("slot of this type") { hit3 = true }
-    }
-    assert(hit3)
+    assert(d3.len() == 0, messages(d3))
+    assert(c3.contains("17bool_display_spec(_novac_isb_t"), c3)
+    assert(c3.contains("16f64_display_spec(_novac_isb_t") && c3.contains("(double)("), c3)
+    assert(c3.contains("17char_display_spec(_novac_isb_t"), c3)
+    assert(c3.contains("16f32_display_spec(_novac_isb_t"), c3)
+    // The shell prelude DEFINES int_display_spec, so the negative assert aims
+    // at our chain's CALL spelling, not at the bare name.
+    assert(!c3.contains("int_display_spec(_novac_isb_t"), "no slot here is an integer")
+
+    // A NON-primitive slot still refuses by name -- B1b's ground.
+    ro (d3b, _) = compile_to_c("type P { n int }\nfn main() {\n\
+ ro p = P { n: 1 }\n\
+ println(\"p \${p}\")\n\
+}", std)
+    assert(d3b.len() >= 1)
+    assert(messages(d3b).contains("non-primitive type"), messages(d3b))
+
+    // The one primitive the runtime cannot display refuses by NAME of the
+    // missing function, rather than truncating through the int entry.
+    ro (d3c, _) = compile_to_c("fn idu(x u64) -> u64 => x\nfn main() {\n\
+ println(\"u \${idu(7)}\")\n\
+}", std)
+    assert(d3c.len() >= 1)
+    assert(messages(d3c).contains("uint_display_spec"), messages(d3c))
 
     // A nested interpolation (a live slot inside a slot's string) refuses
     // by name -- the lexer splits one level, and the I1 judge that used to

@@ -46,7 +46,7 @@ import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
-import ../builtins.{BuiltinType}
+import ../builtins.{BuiltinType, PrimFamily}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -301,11 +301,29 @@ fn Checker mut @type_expr(e Node) -> () {
             @type_expr(c)
             if @out.len() > before { return }
             ro st = type_of(c, @ctx, @scope, @chan)
-            if st == @ctx.prims.str_id || st == @ctx.prims.int_id {
-                @record(c, st)
-            } else {
-                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
-                return
+            // EVERY PRIMITIVE FAMILY through its carrier (wave B1a, 274.7): the
+            // spec gives the slot `Into[str]`, which every universe row has --
+            // integers of any width, both floats, bool, char, str. NOT through
+            // the carrier: a newtype is a distinct type and the spec (D73) asks
+            // it for its own Display -- the oracle's checker refuses `${m}` on a
+            // newtype (E_INTERP_NO_DISPLAY), measured on the wave's own carrier
+            // before it was committed. That is B1b's ground. Until 2026-09-05
+            // this line held
+            // the slot to `{str, int}` by IDENTITY of two ids: the #910 class
+            // ("is it an integer?" asked of one id) surviving because it refused
+            // instead of miscompiling. The one exception is spelled by name.
+            match prim_row_of(@ctx.tys, st) {
+                None => {
+                    @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                    return
+                }
+                Some(row) => {
+                    if row.family == PrimFamily.PfInt && !row.signed && row.bits == 64 {
+                        @report_first_leaf_of(ikids, INTERP_U64_MSG)
+                        return
+                    }
+                    @record(c, st)
+                }
             }
         }
         @record(e, @ctx.prims.str_id)

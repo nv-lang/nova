@@ -20,7 +20,8 @@
 module emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
-import ../sem.{unescape_dollar, is_expr_kind, carrier_of}
+import ../sem.{unescape_dollar, is_expr_kind, prim_row_of}
+import ../builtins.{BuiltinType}
 import ../tree.{Node, NodeKind, raw_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
@@ -56,17 +57,18 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
                 // An empty fragment appends nothing.
             }
         } else if is_expr_kind(ck) {
-            ro st = carrier_of(@ctx, @out.type_of(c.id_of()))
-            if st == @ctx.prims.str_id {
-                @body.append("    nova_fn_7runtime14string_builder16str_display_spec(${sb}, (")
-                @emit_expr(c)
-                @body.append("), ((nova_int)0LL), false, ((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U));\n")
-            } else {
-                // The checker held the slot set to str|int; int remains.
-                @body.append("    nova_fn_7runtime14string_builder16int_display_spec(${sb}, (nova_int)(")
-                @emit_expr(c)
-                @body.append("), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U));\n")
-            }
+            // ONE DOOR PER SLOT, keyed by the universe row of the slot's carrier
+            // (wave B1a, 274.7): the runtime's `*_display_spec` family has an
+            // entry per primitive family, and the checker admitted only what
+            // that family covers. Until 2026-09-05 everything that was not `str`
+            // was cast to `nova_int` and sent to the int entry -- `${1.5}` came
+            // out as `1`.
+            ro slot_t = @out.type_of(c.id_of())
+            ro row = prim_row_of(@ctx.tys, slot_t) ?? ice("emit_c: an interpolation slot type is no primitive row")
+            ro call = display_call_of(row)
+            @body.append("    ${call.head}(${sb}, ${call.cast}(")
+            @emit_expr(c)
+            @body.append("), ${call.tail});\n")
         } else {
             // Recovery leaves inside an Err branch: already refused.
         }
@@ -74,6 +76,53 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
     ro tmp = "_novac_istr_t${@fresh_uniq()}"
     @body.append("    nova_str ${tmp} = Nova_StringBuilder_consume_into_str(${sb});\n")
     tmp
+}
+
+/// The three pieces of one runtime display call: the mangled entry, the C cast
+/// the value needs, and the trailing default arguments -- spelled per family.
+type DisplayCall value {
+    head str /// the runtime entry, in the shell's own spelling (interop)
+    cast str /// C cast applied to the value, `""` when the C type already matches
+    tail str /// the default formatting arguments after the value
+}
+
+/// WHICH runtime display entry a universe row takes, and how its value is
+/// handed over -- the one door of wave B1a (274.7). Every arm names a symbol
+/// the shell carries today (measured on shell.tpl.c 2026-09-05: the six entries
+/// int/f64/f32/bool/char/str all exist); the defaults are the oracle's default
+/// format (width 0, no precision, left align, space fill), which is interop
+/// with the runtime's signature, not a design copied. Unit has no display and
+/// the checker never admits it; an unsigned 64-bit row is refused there too,
+/// so reaching it here is a broken invariant.
+fn display_call_of(row BuiltinType) -> DisplayCall {
+    ro sb_ns = "nova_fn_7runtime14string_builder"
+    match row.family {
+        PfStr => DisplayCall { head: "${sb_ns}16str_display_spec", cast: "",
+                               tail: "((nova_int)0LL), false, ((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U)" }
+        PfBool => DisplayCall { head: "${sb_ns}17bool_display_spec", cast: "",
+                                tail: "((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U)" }
+        PfChar => DisplayCall { head: "${sb_ns}17char_display_spec", cast: "",
+                                tail: "((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U)" }
+        PfFloat => {
+            if row.bits == 32 {
+                return DisplayCall { head: "${sb_ns}16f32_display_spec", cast: "",
+                                     tail: "((nova_int)0LL), nova_make_Align_Left(), (nova_char)(32U)" }
+            }
+            DisplayCall { head: "${sb_ns}16f64_display_spec", cast: "(double)",
+                          tail: "((nova_int)0LL), false, ((nova_int)0LL), false, false, nova_make_Align_Left(), (nova_char)(32U)" }
+        }
+        PfInt => {
+            // Every signed width and the narrow unsigned ones widen into
+            // `nova_int` without loss; the unsigned 64-bit rows never get here
+            // (refused by name in the checker: the runtime has no entry).
+            if !row.signed && row.bits == 64 {
+                ice("emit_c: an unsigned 64-bit interpolation slot passed the checker -- the runtime has no display for it")
+            }
+            DisplayCall { head: "${sb_ns}16int_display_spec", cast: "(nova_int)",
+                          tail: "((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U)" }
+        }
+        PfUnit => ice("emit_c: a unit interpolation slot passed the checker")
+    }
 }
 
 /// A fragment's BODY: the first fragment sheds its opening quote, the last
