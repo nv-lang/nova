@@ -18,7 +18,7 @@
 // the tag is always Some and no language-level Option is involved. Goes the
 // day novac emits the whole prelude.
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, c_instance_method, c_type}
 import ../sem.{for_head_elem}

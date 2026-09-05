@@ -251,6 +251,31 @@ else
     ok "короткий комментарий объяснением не считается"
 fi
 echo "итог: FAIL $fails"
+
+# --- пустой else с комментарием ПЕРЕД следующим армом: законно по П31, окно
+# просмотра обязано закрыться на его скобке, а не читать соседний арм (2026-09-05)
+mkdir -p "$T/empty-else-comment"
+cat > "$T/empty-else-comment/a.nv" <<'NV'
+module p
+fn f(k NodeKind, rk []Node) -> int {
+    if k == NodeKind.RecordCtor {
+        if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
+            return 1
+        } else {
+            // Anonymous: nothing to judge here, by design.
+        }
+    } else if k == NodeKind.ArrayLit {
+        ro x = rk.len()
+        ro y = x + 1
+        ro z = y + 1
+        ro w = z + 1
+        return w
+    }
+    0
+}
+NV
+if python "$G" "$ROOT" "$T/empty-else-comment" >/dev/null 2>&1; then ok "пустой else с комментарием перед соседним армом — зелёный"; else bad "пустой else с комментарием покраснел от строк соседнего арма"; fi
+
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-no-default-branch ok: все случаи, включая живой дефект и оба вида не-диспетчера"
     exit 0

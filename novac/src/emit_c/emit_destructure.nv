@@ -20,7 +20,7 @@
 // door stopped being about tuples the moment it served records too, and the
 // file it sat in is about the D123 mono struct.
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_kind, leaf_text}
 import ../sem.{c_type, is_value_record, brace_pattern, pattern_binders, binder_text}

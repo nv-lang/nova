@@ -1,0 +1,8 @@
+module basics.vec_of_newtype
+
+type Meters f64
+
+fn main() {
+    ro v = [Meters(1.0), Meters(2.0)]
+    println(v.len())
+}

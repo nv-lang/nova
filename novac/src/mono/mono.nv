@@ -131,8 +131,18 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         // the emitter is asked anything.
         None => { return Reach { seen, inst, subst, ptypes } }
         Some(root) => {
-            if root < seen.len() {
-                seen[root] = true
+            // THE ROW IS UNWRAPPED BEFORE IT INDEXES, like every other site in
+            // this file (lines below use `raw_row(...)` too). Until 2026-09-05
+            // this one passed `FnRow` straight to `[]bool`, and the oracle took
+            // it silently -- the newtype and its carrier share a representation,
+            // so C never noticed. The integrator's index-door fix (#894/#921)
+            // refuses it by name (`E_NO_MATCHING_OVERLOAD` on `index(...)`, the
+            // checker's overload door), which is that door working: a latent type
+            // error in novac, found by tightening the checker rather than by a
+            // failing program.
+            ro root_ix = raw_row(root)
+            if root_ix < seen.len() {
+                seen[root_ix] = true
             } else {
                 // The registry knows the entry point but the flag vector is
                 // shorter than its row: a broken invariant, not a program

@@ -1,3 +1,6 @@
+# 2026-09-05 (окно 274): contract 57 -> 58, behavior 49 -> 50 — носитель волны В1а
+#   плана 274.7 `examples/basics/interp_families.nv` (слоты интерполяции всех
+#   примитивных семей): принят обоими и совпал байт-в-байт.
 # scripts/guards/novac-corpus.baseline — храповик НА ПРОГРЕСС (план 274 §10.4).
 #
 # Два монотонных числа; сверяет check-novac-differential.sh против машинной
@@ -341,5 +344,5 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 57
-behavior-match 49
+contract-match 58
+behavior-match 50

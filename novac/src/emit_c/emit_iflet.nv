@@ -13,7 +13,7 @@
 // and the guard constant is the shell's `NOVA_TAG_Option_Some`. Goes the day
 // novac emits the whole prelude.
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, c_type}
 import ../tree.{Node, NodeKind}

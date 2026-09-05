@@ -386,6 +386,7 @@ par_add "$ROOT/scripts/guards/check-novac-recovery-closer.py" "место вос
 par_add "$ROOT/scripts/guards/check-novac-prim-id-compare.py" "«это целое?» спрошено сравнением с одним id вместо двери семьи (№910): сравнений с prims.int_id/f64_id больше базы"
 par_add "$ROOT/scripts/guards/check-novac-table-one-filler.py" "у таблицы реестра появился ВТОРОЙ наполнитель: наполняющий и спрашивающий связаны только намерением автора (274.5 §3-пред62)"
 par_add "$ROOT/scripts/guards/check-novac-deferral-address.py" "комментарий отсылает ответственность («это проверит X»), не называя адреса: отсылка в дверь, которая не открывается (П6)"
+par_add "$ROOT/scripts/guards/check-novac-module-decl-uniform.py" "папка novac/src объявляет разные модули в своих файлах: расколотая папка — не folder-модуль, E_D78 через каталог (2026-09-05)"
 par_add "$ROOT/scripts/guards/check-novac-subset-debt-dated.py" "отказ «пока не компилируется» без этапа: долг без срока становится нормой"
 par_add "$ROOT/scripts/guards/check-novac-tyid-door.py" "идентификатор типа сравнивается с нулём вместо двери (П18)"
 par_add "$ROOT/scripts/guards/check-novac-file-decls-door.py" "объявления файла берутся мимо двери file_decls (П18)"

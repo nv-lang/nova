@@ -111,8 +111,10 @@ BLIND=""
 GROUPED=0
 NOSELF=""
 
+JUDGED=0
 for g in "$GUARDS"/check-novac-*.sh "$GUARDS"/check-novac-*.py; do
     [ -f "$g" ] || continue
+    JUDGED=$((JUDGED + 1))
     case "$g" in
         *.py) base=$(basename "$g" .py); stub='import sys
 sys.exit(0)' ;;
@@ -181,5 +183,13 @@ if [ -n "$NOSELF" ]; then
     exit 1
 fi
 
+# МИШЕНЬ УЕХАЛА, А НЕ «ВСЁ ДОКАЗАНО» (класс №911, страж check-guard-empty-root).
+# Каталог стражей есть, а стражей в нём ноль: печатать здесь «доказали: 0;
+# групповых: 0» значит выдавать пустоту за проверенное — ровно та болезнь,
+# ради которой этот страж и живёт, только этажом выше.
+if [ "$JUDGED" -eq 0 ] 2>/dev/null; then
+    echo "$NAME ok: судить нечего (0 стражей check-novac-* в $GUARDS)"
+    exit 0
+fi
 echo "$NAME ok: самотестов доказали красноту мутацией: $PROVED; групповых (без одноимённого стража): $GROUPED"
 exit 0

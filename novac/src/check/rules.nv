@@ -256,9 +256,18 @@ const NESTED_INTERP_MSG = "outside the subset: an interpolation nested inside an
 /// bound its receiver.
 const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
 
-/// The slot-type judge's answer: a slot's type must carry a builder insert
-/// the emitter spells today.
-const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of this type is not compiled yet (E2-b3) -- I1 spells str and int inserts"
+/// The slot-type judge's answer for a NON-PRIMITIVE slot: the spec admits any
+/// `Into[str]` (D73 -- `Option[T]`, a record with `From[Self] for str`), and that
+/// is protocol dispatch, wave B1b of 274.7. Every primitive family is compiled
+/// since B1a (2026-09-05): before it the slot was held to `{str, int}` by id.
+const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type (Option, a record with Into[str]) is not compiled yet (274.7 B1b) -- every primitive family is"
+
+/// The one primitive the runtime cannot display: `std.runtime.string_builder`
+/// has no unsigned 64-bit `display_spec`, and the oracle prints `u64`/`uint`
+/// through the int one, truncating -- the oracle's deviation from the spec,
+/// not a rule. novac refuses by name until std gains the function (274.7 B1,
+/// open question to the owner), rather than truncate in silence.
+const INTERP_U64_MSG = "outside the subset: an unsigned 64-bit interpolation slot is not compiled yet (274.7 B1c) -- the runtime has no uint_display_spec, and truncating through the int one is what the spec forbids"
 
 /// The constant-initializer boundary of I1: substitution happens at the use
 /// site, and the hoist never ran there.

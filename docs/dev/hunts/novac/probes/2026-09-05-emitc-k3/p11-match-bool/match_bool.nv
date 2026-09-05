@@ -1,0 +1,11 @@
+module basics.match_bool
+
+fn idb(a bool) -> bool => a
+
+fn main() {
+    ro r = match idb(false) {
+        true => 1
+        false => 2
+    }
+    println(r)
+}

@@ -20,7 +20,7 @@
 // the diff corpus sees no difference; a source-location channel is
 // inventoried in the plan (274.5, 3-pred38) as its own wave.
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{branch_children, unescape_dollar}
 import ../diag.{ice}

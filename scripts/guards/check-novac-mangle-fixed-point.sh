@@ -39,6 +39,21 @@ T="${TMPDIR:-/tmp}/novac-mangle.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' 0
 # there, not in the emission). One pass, then set difference per file.
 RT_HDRS=$(ls "$ROOT"/compiler-codegen/nova_rt/*.h "$ROOT"/compiler-codegen/*.h 2>/dev/null)
 cat "$SHELL_TPL" $RT_HDRS | grep -oE '\b(Nova|nova)_[A-Za-z0-9_]+' | sort -u > "$T/shell_syms"
+# ИМЕНА, ПОРОЖДЁННЫЕ МАКРОСОМ РАНТАЙМА, в тексте заголовков не встречаются:
+# `NOVA_DEFINE_CHECKED_OPS(i16, int16_t)` порождает nova_i16_checked_add/sub/mul,
+# а токена `nova_i16_checked_add` в файле нет — только `nova_##NAME##_checked_add`.
+# Первый прогон с носителем десяти ширин (examples/basics/prims_widths.nv,
+# 2026-09-05) назвал девять таких имён «нет в оболочке», хотя они — ABI рантайма
+# (plan 206 F.1b / D423). Раскрываем три семейства макросов по их инстанциациям.
+{
+  grep -hoE 'NOVA_DEFINE_CHECKED_OPS\([a-z0-9]+' $RT_HDRS 2>/dev/null | sed 's/.*(//' \
+    | while read -r w; do for op in add sub mul; do echo "nova_${w}_checked_${op}"; done; done
+  grep -hoE 'NOVA_DEFINE_CHECKED_SIGNED_DIVMODNEG\([a-z0-9]+' $RT_HDRS 2>/dev/null | sed 's/.*(//' \
+    | while read -r w; do for op in div rem neg; do echo "nova_${w}_checked_${op}"; done; done
+  grep -hoE 'NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD\([a-z0-9]+' $RT_HDRS 2>/dev/null | sed 's/.*(//' \
+    | while read -r w; do for op in div rem; do echo "nova_${w}_checked_${op}"; done; done
+} >> "$T/shell_syms"
+sort -u -o "$T/shell_syms" "$T/shell_syms"
 for f in "$ROOT"/examples/basics/*.nv; do
     rel=${f#"$ROOT"/}
     "$NOVAC" emit "$f" > "$T/out.c" 2>/dev/null || continue   # subset refusals are not this guard's matter

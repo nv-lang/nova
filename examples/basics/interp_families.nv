@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/basics/interp_families.nv -- the carrier of wave B1a (plan 274.7):
+// an interpolation slot takes every primitive family the spec's `Into[str]`
+// gives it -- integers of every width, both floats, bool, char, str -- not
+// just `str` and `int`. A newtype is NOT among them: the spec asks a distinct
+// type for its own Display (the oracle refuses `${m}` on one), which is wave
+// B1b. Before the wave the
+// checker held the slot to `{str, int}` by identity and the emitter cast every
+// non-str slot to `nova_int`: `${1.5}` would have printed `1`.
+module basics.interp_families
+
+fn idi8(x i8) -> i8 => x
+fn idu16(x u16) -> u16 => x
+fn idi64(x i64) -> i64 => x
+fn idf32(x f32) -> f32 => x
+
+fn main() {
+    ro n = 42
+    ro half = 2.5
+    ro yes = true
+    ro c = 'z'
+    ro s = "str"
+    println("int ${n} f64 ${half} bool ${yes} char ${c} str ${s}")
+    println("i8 ${idi8(-5)} u16 ${idu16(65000)} i64 ${idi64(1234567890123)} f32 ${idf32(1.25)}")
+    println("expr ${n + 1} neg ${-half}")
+}

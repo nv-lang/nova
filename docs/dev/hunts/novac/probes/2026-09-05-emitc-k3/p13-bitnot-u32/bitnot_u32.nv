@@ -1,0 +1,9 @@
+module basics.bitnot_u32
+
+fn idu16(a u16) -> u16 => a
+fn idu32(a u32) -> u32 => a
+
+fn main() {
+    println(~idu16(15))
+    println(~idu32(15))
+}

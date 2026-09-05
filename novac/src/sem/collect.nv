@@ -189,6 +189,13 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             register_sum_variants(c, types, defs, variant_rows, payload_types)
         }
     }
+    // THE TYPE BOUNDARY IS FIXED HERE, beside the name boundary, because the two
+    // are DIFFERENT numbers: `defs.foreign_cnt` counts name rows (types AND the
+    // handed variants registered just above), `foreign_types_cnt` counts type rows.
+    // The emitter used the former for the latter until 2026-09-05, and the
+    // variant rows pushed it past the file's own types -- which were then
+    // skipped as "declared by the shell" and vanished from the C.
+    ro foreign_types_cnt = types.len()
     defs.seal_foreign()
     // The PRIMS are types, and a declaration's type comes from its row -- the
     // seed hands back the declaration, the row hands back the term.
@@ -586,6 +593,6 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.own_cnt = own.rows.len()
-    Ctx { types, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
+    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, payload_types, fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, consts, interop: InteropTable.new() }
 }

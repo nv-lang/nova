@@ -1,0 +1,6 @@
+module basics.c_keyword_binding
+
+fn main() {
+    ro union = 7
+    println(union)
+}

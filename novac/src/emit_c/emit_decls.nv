@@ -15,7 +15,7 @@
 // emits the whole prelude. The tag CONSTANTS and the makers are ours
 // (NOVAC_TAG_*, novac_make_*, P24).
 
-module emit_c
+module novac.emit_c
 
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
@@ -151,7 +151,7 @@ fn Emitter mut @emit_type_decls() -> () {
     // declared LOWER in the file legal. The same skip of handed-over types
     // applies as below: the shell declares those.
     for t in 0..@ctx.types.len() {
-        if t < @ctx.defs.foreign_cnt { continue }
+        if t < @ctx.foreign_types_cnt { continue }
         // THROUGH THE SAME DOOR AS THE BODIES, with `fwd_only` telling which
         // half to write. A second exhaustive kind-match here would have been a
         // second dispatcher on one closed set (P18) -- and the word-rule guard
@@ -180,7 +180,7 @@ fn Emitter mut @emit_type_decls() -> () {
     for t in 0..@ctx.types.len() {
         // A handed-over type is declared by the shell (see pass 1's note), so
         // it counts as already done and never blocks anyone.
-        if t < @ctx.defs.foreign_cnt {
+        if t < @ctx.foreign_types_cnt {
             done[t] = true
         } else {
             left += 1

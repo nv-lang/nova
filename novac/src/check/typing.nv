@@ -298,6 +298,23 @@ fn Checker mut @type_fn(f Node) -> () {
     }
 }
 
+
+/// A BODY IS A BLOCK OR A SINGLE STATEMENT, and that question is asked in one
+/// place: a match arm's body and an `else` tail are the two forms that carry
+/// either. Before 2026-09-05 both sites spelled the same `if Block { type_block }
+/// else { type_stmt }` -- an `else` after a variant test that does work, which
+/// P21 reads as a branch hiding the next variant; here the then-branch returns
+/// and the statement path is what remains, so there is no `else` to hide in.
+fn Checker mut @type_body(b Node) -> () {
+    if b.kind_of() == NodeKind.Block {
+        @type_block(b)
+        // SILENT-OK: the block was typed by the call just above; this return
+        // only skips the single-statement path, it decides nothing itself.
+        return
+    }
+    @type_stmt(b)
+}
+
 /// Statements of a block, in order.
 fn Checker mut @type_block(b Node) -> () {
     ro mark = @scope.mark()
@@ -660,12 +677,9 @@ fn Checker mut @type_stmt(st Node) -> () {
         // compiler was built to stop repeating.
         if kids.len() > 4 {
             ro tail = kids[4]
-            if tail.kind_of() == NodeKind.Block {
-                @type_block(tail)
-            } else {
-                // `else if ...`: a nested if, typed by this same door.
-                @type_stmt(tail)
-            }
+            // `else if ...` is a nested if and a block is a block: one door for
+            // the shape "a body is a block or a single statement".
+            @type_body(tail)
         } else {
             // No else branch was written.
         }
