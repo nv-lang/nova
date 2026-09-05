@@ -1,0 +1,10 @@
+// Added 2026-09-05 (integrator). The same mismatch at the ARGUMENT door:
+// a f64 variable passed where an int parameter is declared. Accepted,
+// truncated, prints 3. That door refuses int -> u8 narrowing with
+// E_IMPLICIT_NARROWING, so it is not that the door is blind in general --
+// float-to-int simply is not part of what it judges.
+fn sink(i int) -> int => i
+fn main() Io -> () => {
+    ro x f64 = 3.9
+    println(sink(x))
+}
