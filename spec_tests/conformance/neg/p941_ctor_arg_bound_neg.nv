@@ -1,0 +1,42 @@
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+//
+// Registry #941, the ARGUMENT half — a constructor call written directly as an
+// argument must be judged by the same rule as the same value written through a
+// binding.
+//
+// Until 2026-09-05 it was not. `only_ints(Meters(2.5))` compiled clean while
+//
+//     ro m Meters = Meters(2.5)
+//     only_ints(m)
+//
+// was refused — one value, two spellings, two answers. The membership check
+// (D310) never ran for the first form because `call_return_ty` looked the callee
+// up in `fn_decls` only: `Meters` is a call by syntax and a CONSTRUCTOR by
+// meaning, so it lives in `type_decls` and the lookup missed. `None` then reads
+// as "not inferable — best-effort skip".
+//
+// WHY A NEWTYPE OVER `f64` AND NOT OVER `int`: the carrier has to be a type whose
+// exclusion from `Ints` is not arguable. D310 says membership is by explicit
+// member list — `~underlying`/repr is deferred to Plan 102 — so no newtype
+// belongs to its carrier's set. But a newtype over `int` invites the reader to
+// wonder whether the refusal is about the SET or about the newtype; over `f64`
+// there is nothing to wonder about, because even the carrier is not a member.
+//
+// THE RECEIVER HALF OF #941 IS STILL OPEN, deliberately, and it is not this
+// fixture's business: `Meters(2.5).try_to_i16()` still builds. Its path goes
+// through the receiver-resolution site whose result is written into
+// `resolved_callees` and therefore changes codegen — widening THAT one was tried
+// once and left `d326_value_record_fluent.nv` failing in the C compiler. The two
+// halves cost differently and close separately; the row says so.
+//
+// Spec: D310 (`spec/decisions/02-types.md`, "Type-set bounds").
+module neg.p941_ctor_arg_bound_neg
+
+type Meters f64
+
+fn only_ints[T Ints](x T) -> int => 0
+
+fn pass_a_constructor_call_straight_into_a_bounded_parameter() Io -> () {
+    // nova:expect E_TYPE_NOT_IN_SET -- `Meters` is not a member of `Ints`; the same value through a binding was already refused, this spelling was not
+    println(only_ints(Meters(2.5)))
+}

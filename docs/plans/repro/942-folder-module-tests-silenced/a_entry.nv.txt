@@ -1,0 +1,4 @@
+module fm
+test "entry peer: true" {
+    assert(1 == 1)
+}

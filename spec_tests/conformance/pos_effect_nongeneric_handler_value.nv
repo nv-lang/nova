@@ -6,7 +6,12 @@
 // handler dispatch, not just that the file builds (same methodology
 // precedent as реестр №577: "сверяет значение ... а не факт сборки").
 //
-// EXPECT_STDOUT 42
+// The `// EXPECT_STDOUT 42` marker that stood here is replaced by the
+// assertion below, which is strictly stronger (registry #942). A marker on a
+// folder-module peer becomes an expectation on the WHOLE compile unit, so
+// `42` was satisfied by any of 1168 peers printing those two characters --
+// and until #942 it also REPLACED the harness verdict instead of adding to
+// it. An `assert` says the same thing about this handler and only about it.
 
 module spec_tests.conformance
 
@@ -19,6 +24,8 @@ test "non-generic effect handler still dispatches and returns a value" {
         ask() -> int => 42
     }
     with Answer = h {
-        println(Answer.ask())
+        ro got = Answer.ask()
+        assert(got == 42)
+        println(got)
     }
 }

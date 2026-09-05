@@ -1,0 +1,9 @@
+// EXPECT_STDOUT hello942
+// Case C: a marker whose pattern is absent from the harness output. This is the
+// run that settles the mechanism -- the failure text quotes "Running 3 tests..."
+// and the individual results, so the test blocks plainly DID execute. What the
+// marker changes is which of the two verdicts is believed.
+module fm
+test "marked peer, no main" {
+    assert(1 == 1)
+}

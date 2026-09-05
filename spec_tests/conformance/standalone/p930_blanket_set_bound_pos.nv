@@ -1,0 +1,41 @@
+// EXPECT_STDOUT fits=true overflows=true f64abs=3.5 f32abs=1.5 intabs=7
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry #930, the POSITIVE half — and it carries more than a happy path, because
+// the danger with a membership check is not that it fails to fire but that it fires
+// where the language says the call is legal. The first version of the fix DID: it
+// reddened eight corpus files on `f64.abs()`, `std/src/encoding/json.nv:984` among
+// them. Every line below is a way this fix could have been wrong.
+//
+//   1. A real member of the set. `i32` and `u32` ARE in `Ints`, so the blanket applies
+//      and the answer is a value, not a diagnostic. `300` does not fit a `u8`, so the
+//      second line is the check being asked for, actually performed and actually
+//      failing — a `false` from `is_ok()` is the fixture's whole point there.
+//   2. ANOTHER CHANNEL OWNS THE NAME. `@abs` is a blanket over `SignedInts`, and `f64`
+//      is genuinely not in that set — but `f64` has its own `abs`, a primitive
+//      intrinsic, which outranks the blanket entirely. A set violation only matters
+//      when the name resolves NOWHERE else. This is the line that was red.
+//
+// IT LIVES IN `standalone/` AND NOT BESIDE ITS NEGATIVES, and the reason is a measured
+// one rather than a preference. Written first as a folder-module peer in
+// `conformance/` with three `test` blocks, it was PROVED INERT: with
+// `assert(c.abs() == 6)` — deliberately false — the mega-CU still reported
+// `PASS: 899  FAIL: 0`. The conformance CU takes its lane from the alphabetically
+// first file (`a_q3_println_debug_record.nv`, `EXPECT_STDOUT`), so the whole compile
+// unit is judged by that program's output and peer `test` blocks are compiled but
+// never run. A positive fixture that cannot fail proves nothing, so this one is a
+// standalone CU with a `main` and a pinned stdout, and its liveness was re-proved the
+// same way: perturbed, red; restored, green.
+//
+// Negative halves: `neg/p930_blanket_set_bound_{f64,str,newtype,freefn}_neg.nv`.
+// Spec: D310 (`spec/decisions/02-types.md`, "Type-set bounds").
+module standalone.p930_blanket_set_bound_pos
+
+fn main() Io -> () {
+    ro fits = (7 as i32).try_to_i16()
+    ro overflows = (300 as u32).try_to_u8()
+    ro f f64 = 0.0 - 3.5
+    ro g f32 = 0.0 - 1.5
+    ro i7 = (0 - 7).abs()
+    println("fits=${fits.is_ok()} overflows=${overflows.is_err()} f64abs=${f.abs()} f32abs=${g.abs()} intabs=${i7}")
+}

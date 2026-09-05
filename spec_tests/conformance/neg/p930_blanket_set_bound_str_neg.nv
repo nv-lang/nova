@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+//
+// Registry #930, the second receiver kind — and the one that shows what the missing
+// check actually cost.
+//
+// `"x".try_to_i16()` also passed the checker before 2026-09-05, then died in the C
+// compiler: `passing 'nova_int' to parameter of incompatible type 'nova_str'`. A
+// checker that accepts a program the backend cannot build is worse than one that
+// refuses it, because the error surfaces in generated code the author never wrote.
+//
+// `str` is carried as its own fixture rather than folded into the `f64` one because
+// the two travel different paths to the same site: `f64` is a numeric primitive with
+// intrinsics of its own sitting beside the blanket (which is why `f64.abs()` must stay
+// legal — see the positive), while `str` has none of that and reaches the check with
+// nothing else claiming the name. The narrowing predicate got `str` WRONG on the first
+// attempt: `str` has a `type str` declaration in the prelude, so "is this a declared
+// type?" re-admitted exactly this line. Measured, then fixed.
+//
+// Spec: D310 (`spec/decisions/02-types.md`). Positive half:
+// `spec_tests/conformance/p930_blanket_set_bound_pos.nv`.
+module neg.p930_blanket_set_bound_str_neg
+
+fn ask_a_string_for_an_integer_conversion() Io -> () {
+    ro s = "x"
+    // nova:expect E_TYPE_NOT_IN_SET -- `str` is not in `Ints`; before the fix this passed the checker and failed in the C compiler instead
+    println(s.try_to_i16().is_ok())
+}

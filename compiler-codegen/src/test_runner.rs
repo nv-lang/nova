@@ -257,7 +257,7 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<
 
 // ---------- D89 EXPECT-маркеры ----------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpectMarker {
     /// codegen error содержит pattern.
     CompileError(String),
@@ -2972,7 +2972,51 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // Plan 27 Б.3: capture stdout/stderr на PASS при --verbose.
     let verbose = matches!(opts.verbosity, Verbosity::Verbose);
 
-    let expect: Vec<ExpectMarker> = marker_srcs.iter().flat_map(|s| parse_expect(s)).collect();
+    // Реестр №942(а): МАРКЕРЫ СОДЕРЖИМОГО (`EXPECT_STDOUT`/`EXPECT_STDERR`) берутся
+    // ТОЛЬКО с entry-файла, все остальные — со всех пиров модуля, как и раньше.
+    //
+    // Расширение сбора на пиров (`collect_marker_sources`) сделано ради директив
+    // вроде `// ENV ...`, живущих на том пире, который объявляет тесты
+    // ([A-S1 mutclock-regress]), и это верно. Но вместе с ними поехали и маркеры
+    // содержимого — а они не директива, они ВЕРДИКТ: по D89 у теста с таким
+    // маркером «любой exit code OK», проверяется только вывод. Приехав с пира,
+    // такой маркер объявлял этим тестом ВЕСЬ compile unit, и провал любого
+    // `test`-блока переставал что-либо значить: харнесс печатал `FAIL:` и выходил
+    // ненулевым кодом, а прогон записывался PASS.
+    //
+    // ЗАМЕР 2026-09-05: в `spec_tests/conformance` шесть таких пиров, и они
+    // обесценивали 6207 `assert` в 1168 файлах. Носители: заведомо ложное
+    // утверждение в `append_as_slice.nv` и в фикстуре, написанной под это
+    // специально, — мега-CU в обоих случаях давал `PASS: 901 FAIL: 0`.
+    //
+    // ПОЧЕМУ НЕ «СУДИТЬ ПО КОДУ ВОЗВРАТА» — это была первая редакция фикса, и она
+    // ПРОТИВОРЕЧИЛА D89. Корпус ответил носителем сразу:
+    // `standalone/stderr_panic` паникует намеренно и пинит stderr — под тем
+    // правилом он стал RUN-FAIL. Правило D89 не про снисходительность: тест на
+    // ВЫВОД не обязан ничего знать про код возврата. Чинить надо было не строгость
+    // вердикта, а то, ЧЕЙ маркер его задаёт.
+    //
+    // Entry-файл — тот, чьё имя раннер печатает и чей маркер задаёт ЯРУС теста
+    // (`detect_test_type` читает ровно его). Маркер содержимого на пире не имеет
+    // смысла и до этой правки: stdout у CU с `test`-блоками — вывод харнесса, а не
+    // вывод пира.
+    let expect: Vec<ExpectMarker> = {
+        let entry_expect = parse_expect(&src);
+        let mut v: Vec<ExpectMarker> = Vec::new();
+        for (k, s_i) in marker_srcs.iter().enumerate() {
+            for m in parse_expect(s_i) {
+                let is_content = matches!(m, ExpectMarker::Stdout(_) | ExpectMarker::Stderr(_));
+                // k == 0 — entry (`collect_marker_sources` кладёт его первым);
+                // сверка по содержимому, а не только по индексу, чтобы правка
+                // порядка в том хелпере не сняла проверку молча.
+                if is_content && !(k == 0 || entry_expect.contains(&m)) {
+                    continue;
+                }
+                v.push(m);
+            }
+        }
+        v
+    };
     // Plan 262 Part Б (owner decision 2026-08-09): `// nova:expect E_CODE --
     // reason` line-pins compile-error matching (see full rationale on
     // `lints::parse_nova_expect_comments`). Scanned from the ENTRY file
@@ -3746,6 +3790,14 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             let stderr_pats = find_stderr();
             let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
+            // Реестр №942(а). Здесь НЕЛЬЗЯ судить по коду возврата, и это не
+            // осторожность, а норма: D89 (`docs/dev/test-conventions.md`, §4-5,
+            // «Exe запускается (любой exit code OK — тест на вывод, не на код)»)
+            // говорит это про ОБА content-маркера. Я попробовал `if exit != 0` и
+            // корпус ответил носителем: `standalone/stderr_panic` — программа,
+            // которая паникует НАМЕРЕННО и пинит свой stderr, — стала RUN-FAIL.
+            // Правка снята; настоящая причина №942 не здесь, а в том, ЧЕЙ маркер
+            // попадает в `expect` (см. `entry_expect` выше).
             if !has_content_marker && exit != 0 {
                 // Prefer lines that actually name the failure (a genuine "  FAIL: …"
                 // harness line, or a runtime panic banner); the in-binary harness

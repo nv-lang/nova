@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+//
+// Registry #930 — a blanket method's SET bound, at a METHOD call.
+//
+// `export fn[S Ints] S @try_to_i16()` (`std/src/prelude/protocols.nv`) is bounded to
+// the `Ints` type-set. `f64` is not one of its members. Until 2026-09-05 the bound was
+// enforced at a free-function call and NOWHERE else: measured to the end before the
+// fix, `(2.5 as f64).try_to_i16()` compiled, ran, and printed `true` — a lie returned
+// by the one call a user makes in order to be TOLD the truth about a conversion.
+//
+// Same skeleton as #894 and #921: one rule, one of its two entrances unguarded. The
+// control for that claim is not prose — it is `p930_blanket_set_bound_freefn_neg.nv`,
+// the same premise through the door that has always checked, which must keep giving
+// this same diagnostic.
+//
+// Scope is PRIMITIVE receivers, deliberately, because that is where the other door
+// stops too: `only_ints(Count(5))` for `type Count int` compiles clean there. Making
+// the method door stricter would rebuild the very asymmetry this row removes. Whether
+// a newtype belongs to its carrier's set is an owner question — D310 says
+// explicit-member-set only, the compiler already lets a `Count` flow into `int`
+// positions — and it is filed separately rather than settled here.
+//
+// Spec: D310 (`spec/decisions/02-types.md`, "Type-set bounds"), bound = membership
+// predicate. Positive half: `spec_tests/conformance/p930_blanket_set_bound_pos.nv`.
+module neg.p930_blanket_set_bound_f64_neg
+
+fn ask_a_float_for_an_integer_conversion() Io -> () {
+    ro f f64 = 2.5
+    // nova:expect E_TYPE_NOT_IN_SET -- `try_to_i16` is a blanket bounded to `Ints`, and `f64` is not a member; before the fix this line compiled and printed `true`
+    println(f.try_to_i16().is_ok())
+}

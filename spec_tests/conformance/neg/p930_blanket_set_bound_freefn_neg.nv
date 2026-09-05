@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+//
+// Registry #930, THE CONTROL — the door that has always checked.
+//
+// This fixture asserts nothing new about the fix. It pins the half of the claim that
+// the fix is measured against: "the bound IS enforced at a free-function call". If
+// that ever stops being true, the two method fixtures beside it would still be green
+// while the sentence they exist to prove — the two doors now answer alike — had
+// quietly become false. A parity claim needs both sides in the corpus, or it is a
+// parity claim about one side.
+//
+// It is a separate file rather than a second function in the `f64` fixture because a
+// negative fixture stops at its first diagnostic: folded together, whichever line came
+// first would be the only one ever exercised, and the other would prove nothing while
+// looking like it did.
+//
+// Spec: D310 (`spec/decisions/02-types.md`), bound = membership predicate.
+module neg.p930_blanket_set_bound_freefn_neg
+
+fn only_ints[T Ints](x T) -> int => 0
+
+fn pass_a_float_where_the_set_forbids_it() Io -> () {
+    ro f f64 = 2.5
+    // nova:expect E_TYPE_NOT_IN_SET -- the same premise as the method fixtures, through the entrance that never needed fixing
+    println(only_ints(f))
+}

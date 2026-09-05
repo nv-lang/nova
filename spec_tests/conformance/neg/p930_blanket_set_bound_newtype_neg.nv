@@ -1,0 +1,39 @@
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+//
+// Registry #930, the DECLARED-TYPE receiver — named by the row's acceptance clause
+// alongside `f64` and `str`, and it is not a formality: `Meters(2.5).try_to_i16()`
+// was measured on 2026-09-05 to BUILD AND PRINT `true`, exactly the silent wrong
+// answer the primitive case gives. A newtype over `f64` reaching an `Ints` blanket is
+// the same defect wearing a user's type name.
+//
+// This fixture also records a wrong turn, because the wrong turn is the instructive
+// part. The fix was first narrowed to primitives on the belief that the
+// free-function door "stops at declared types" — read off `only_ints(Meters(2.5))`,
+// which compiles clean there. It does not stop at declared types. Write the same
+// value through a binding and that door refuses it:
+//
+//     ro m Meters = Meters(2.5)
+//     only_ints(m)              // [E_TYPE_NOT_IN_SET]
+//
+// What the free-function door actually loses is a CALL EXPRESSION written directly as
+// the argument, and the receiver position loses it identically. That is a separate
+// defect on BOTH doors, filed as its own row — and the near miss is worth naming: a
+// parity claim measured on one spelling of the value would have shipped a fix that
+// under-guarded the very receiver the acceptance names.
+//
+// The binding is annotated (`ro m Meters = ...`) for exactly that reason: the
+// unannotated spelling routes into the other defect, and a fixture standing on a
+// second defect is green for the wrong reason the day that one is fixed.
+//
+// Spec: D310 (`spec/decisions/02-types.md`) — membership is by explicit member list;
+// `~underlying`/repr-based membership is deferred to Plan 102, so a newtype does NOT
+// inherit its carrier's set.
+module neg.p930_blanket_set_bound_newtype_neg
+
+type Meters f64
+
+fn ask_a_newtype_over_a_float_for_an_integer_conversion() Io -> () {
+    ro m Meters = Meters(2.5)
+    // nova:expect E_TYPE_NOT_IN_SET -- `Meters` is not a member of `Ints`; before the fix this built and printed `true`
+    println(m.try_to_i16().is_ok())
+}

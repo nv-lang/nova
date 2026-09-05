@@ -23,6 +23,18 @@ bad()  { FAIL=$((FAIL+1)); echo "  FAIL $1" >&2; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (ждал '$3', получил '$2')"; fi; }
 
 LIVE="$(git -C "$ROOT" rev-parse --short=11 HEAD)"
+# №942-сосед: хеш, живущий ТОЛЬКО на СОСЕДНЕЙ ветке (не main, не HEAD).
+# До 2026-09-05 такой считался мёртвым, хотя лежит в этой же репе:
+# реестр №894 ссылался на коммит окна 274, и гейт краснел за живой хеш.
+# Строится так: пустой коммит во ВРЕМЕННОЙ ветке реальной репы,
+# без переключения HEAD и без единой правки в рабочем дереве.
+SIDE_BRANCH="selftest/commit-refs-$$"
+SIDE="$(git -C "$ROOT" commit-tree "$(git -C "$ROOT" rev-parse HEAD^{tree})" -p HEAD -m "selftest side commit (commit-refs)" 2>/dev/null || true)"
+if [ -n "$SIDE" ]; then
+    git -C "$ROOT" branch -f "$SIDE_BRANCH" "$SIDE" >/dev/null 2>&1
+    SIDE="$(git -C "$ROOT" rev-parse --short=11 "$SIDE")"
+    trap 'git -C "$ROOT" branch -D "$SIDE_BRANCH" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+fi
 
 FIX="$TMP/fix"
 mkdir -p "$FIX/docs/plans"
@@ -34,6 +46,7 @@ cat > "$FIX/docs/plans/probe.md" <<EOF
 5 https://github.com/nv-lang/nova/commit/1234567890a «тема коммита такая», 2026-08-12
 6 см. https://gitverse.ru/nv-lang/nova/blob/main/README.md
 7 | GitVerse | https://gitverse.ru/nv-lang | mirror |
+8 хеш соседней ветки: \`$SIDE\`
 EOF
 
 OUT="$(python "$CORE" "$ROOT" "$FIX")"
@@ -49,6 +62,11 @@ check "живой хеш не трогает"                          "$(line R
 check "десятичное число не хеш"                       "$(line R2 3)" "0"
 check "ссылка на коммит с темой и датой проходит"     "$(line R1 5)" "0"
 check "строка про сами зеркала проходит"              "$(line R3 7)" "0"
+if [ -n "$SIDE" ]; then
+    check "хеш соседней ветки не мёртв (№942)" "$(line R2 8)" "0"
+else
+    echo "  SKIP хеш соседней ветки: commit-tree недоступен" >&2
+fi
 
 echo "== страж: база =="
 printf 'dead_hash_refs=0\ncommit_url_no_context=0\nmirror_links=0\n' > "$TMP/zero.baseline"
