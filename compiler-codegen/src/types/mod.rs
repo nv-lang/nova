@@ -15816,6 +15816,114 @@ impl<'a> TypeCheckCtx<'a> {
     /// primitive unknown-method rejection (a blanket method is a real method on the
     /// primitive, even though it is registered under the typevar receiver key, not the
     /// primitive's name). Return-type resolvability is irrelevant here — pure existence.
+    /// Registry #930: a blanket's SET bound, checked at a method call.
+    ///
+    /// `export fn[S Ints] S @try_to_i16()` is bounded to a type-set, and the bound
+    /// was enforced at a free-function call (`E_TYPE_NOT_IN_SET`) and nowhere else.
+    /// Measured: `(2.5 as f64).try_to_i16()` compiled and printed `true` -- a lie
+    /// from the one call a user makes in order to be told the truth -- and
+    /// `"x".try_to_i16()` passed the checker and died in C. 52 of the 72 blanket
+    /// methods in `std` carry a set bound, so the surface is the whole
+    /// `Ints`/`SignedInts`/`UnsignedInts` family.
+    ///
+    /// Returns the offended set's name when a blanket of this name exists and the
+    /// receiver satisfies NONE of the candidates.
+    ///
+    /// ANY candidate satisfying its bounds makes the call legal, and that is not
+    /// defensive coding -- D430's R6 amendment (2026-09-04) adds a SECOND family of
+    /// the same names over `Floats`, so `try_to_i16` will legitimately have two
+    /// blankets whose sets are disjoint. A first-mismatch-wins reading would refuse
+    /// `(2.5).try_to_i16()` the moment that family lands, which is exactly the call
+    /// R6 exists to allow.
+    ///
+    /// PROTOCOL bounds are deliberately NOT judged here. `prefix_generic_method_exists`
+    /// carries a narrow `Next`/`Iter` check of its own (registry #254), and whether a
+    /// `Vec` should satisfy `Next` by auto-bridging through `.iter()` is an open owner
+    /// decision recorded in that row. A set bound has no such question: `f64 in Ints`
+    /// is simply false, there is nothing to bridge. Judging protocols here would settle
+    /// the owner's question by implementation.
+    fn blanket_set_bound_violation(&self, peeled: &TypeRef, method: &str) -> Option<String> {
+        let concrete = match peeled {
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                path.last()?.as_str()
+            }
+            _ => return None,
+        };
+        // KNOWN CONCRETE TYPES ONLY, and this predicate is not chosen freely -- it is
+        // the one the free-function door already uses (`BoundCtx`, the `known_concrete`
+        // gate beside the other `E_TYPE_NOT_IN_SET`): a primitive, or a name with a
+        // declaration behind it. Anything else -- most importantly a bare type-parameter
+        // `T` inside a generic body, which is a Named node like any other -- is a
+        // passthrough, not a definitive non-member, and judging it would be a false
+        // positive on legal code.
+        //
+        // Copying the other door's predicate IS the point of this row. #930 is "one
+        // rule, two entrances, one of them unguarded"; a fix that guarded the second
+        // entrance with a DIFFERENT predicate would leave one rule with two answers,
+        // which is the same defect wearing the fix's clothes.
+        //
+        // Measured on the way to this line, and worth the warning: my first narrowing
+        // was `is_primitive_type_name` alone, chosen because `only_ints(Meters(2.5))`
+        // compiles clean at the free-function door and I read that as "the other door
+        // stops at declared types". It does not. `ro m Meters = Meters(2.5);
+        // only_ints(m)` is REFUSED there, and so is `only_ints[Meters](...)`. What the
+        // free-function door actually loses is a CALL EXPRESSION written directly as
+        // the argument -- `Meters(2.5)`, `Box.new()`, `Vec[int].of(1)` all pass -- and
+        // the receiver position has the same hole (`Meters(2.5).try_to_i16()` builds
+        // and prints `true`). That is a separate defect on BOTH doors, filed as its own
+        // row; it is not a reason to under-guard this one.
+        if !Self::is_primitive_type_name(concrete)
+            && !self.type_defining_modules.contains_key(concrete)
+        {
+            return None;
+        }
+        let mut offended: Option<String> = None;
+        for (recv_key, methods) in self.sig.method_table.iter() {
+            let Some(overloads) = methods.get(method) else { continue; };
+            for f in overloads {
+                let Some(recv) = f.receiver.as_ref() else { continue; };
+                if !matches!(recv.kind, ReceiverKind::Instance) {
+                    continue;
+                }
+                // Blanket shape: the receiver IS one of the fn's own generics.
+                let Some(recv_g) = f.generics.iter().find(|g| &g.name == recv_key)
+                else { continue; };
+                let mut saw_set_bound = false;
+                let mut all_sets_ok = true;
+                for b in &recv_g.bounds {
+                    let TypeRef::Named { path: bpath, generics: bg, span: b_span, .. } = b
+                    else { continue; };
+                    if !bg.is_empty() || bpath.len() != 1 {
+                        continue;
+                    }
+                    let Some(td) = self.types_get_for_file(&bpath[0], b_span.file_id)
+                    else { continue; };
+                    let TypeDeclKind::TypeSet(members) = &td.kind else { continue; };
+                    if members.is_empty() {
+                        continue;
+                    }
+                    saw_set_bound = true;
+                    let is_member = members.iter().any(|m| {
+                        matches!(m, TypeRef::Named { path: mp, generics: mg, .. }
+                            if mg.is_empty() && mp.len() == 1 && mp[0] == concrete)
+                    });
+                    if !is_member {
+                        all_sets_ok = false;
+                        if offended.is_none() {
+                            offended = Some(bpath[0].clone());
+                        }
+                    }
+                }
+                // A candidate whose set bounds all hold makes the call legal; say so
+                // by answering None even if an earlier candidate was offended.
+                if saw_set_bound && all_sets_ok {
+                    return None;
+                }
+            }
+        }
+        offended
+    }
+
     fn prefix_generic_method_exists(&self, peeled: &TypeRef, method: &str) -> bool {
         for (recv_key, methods) in self.sig.method_table.iter() {
             let Some(overloads) = methods.get(method) else { continue; };
@@ -16031,6 +16139,45 @@ impl<'a> TypeCheckCtx<'a> {
                 span,
             ));
             return;
+        }
+        // Registry #930: the blanket EXISTS for this name, so the branch above stayed
+        // quiet -- but its SET bound excludes this receiver. Reported here, with the
+        // same code the free-function call has always used, because the alternative was
+        // measured and is worse: making `prefix_generic_method_exists` answer "no such
+        // blanket" would route the call into `[E_UNKNOWN_METHOD] no method
+        // `try_to_i16` on primitive type `f64`` -- true in its letter and misleading in
+        // its substance, since the method is right there and the receiver is what does
+        // not fit. That is the "the refusal names the wrong cause" family (registry
+        // #780, #922, #923), and it is not worth trading one defect for another.
+        //
+        // GUARDED BY THE SAME TWO CHANNELS AS THE BRANCH ABOVE, and the corpus is what
+        // taught me to: the first version fired on `f64.abs()`. `@abs` IS a blanket over
+        // `SignedInts` and `f64` is genuinely not in that set -- but `f64` has its OWN
+        // `abs`, a primitive intrinsic, which outranks the blanket entirely. Eight
+        // corpus files went red, `std/src/encoding/json.nv:984` among them. A set
+        // violation only matters when the name resolves NOWHERE ELSE; if another channel
+        // provides it, there is no blanket call to judge.
+        if self.method_overloads(type_name, method_name).is_none()
+            && !crate::codegen::emit_c::CEmitter::primitive_instance_method_known(
+                type_name, method_name,
+            )
+        {
+            if let Some(set_name) = self.blanket_set_bound_violation(rt, method_name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_TYPE_NOT_IN_SET] type `{}` is not a member of type-set `{}` — \
+                         the method `{}` is a blanket bounded to that set \
+                         (`fn[T {}] T @{}`), so it exists but does not apply to this \
+                         receiver.\n  \
+                         fix: convert first (`{} as <a member of {}>`), or use a method \
+                         defined for `{}`.",
+                        type_name, set_name, method_name, set_name, method_name,
+                        type_name, set_name, type_name,
+                    ),
+                    span,
+                ));
+                return;
+            }
         }
         // Plan 177 Ф.3 [E_UNKNOWN_METHOD] (§0/§1/§6): a PRIMITIVE receiver whose method
         // resolves in NO channel — not a user/prelude method (`method_overloads`), not a

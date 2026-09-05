@@ -1,0 +1,4 @@
+module fm930
+test "entry peer: true" {
+    assert(1 == 1)
+}
