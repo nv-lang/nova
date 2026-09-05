@@ -133,9 +133,28 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkNewtype => decl_of_ty(ctx, t).name
         TkApp => instance_source_name(ctx, t)
         TkParam => "a type parameter"
-        TkTuple => "a tuple"
+        TkTuple => anon_record_source_name(ctx, t)
         TkInfer => "an inference variable"
     }
+}
+
+/// `(int, str)`: a tuple spelled as the source spells it. "a tuple" against
+/// "a tuple" told the reader of a return mismatch nothing (measured 2026-09-05
+/// on `fn pair() -> (int, str) => (1, 2)`, wave W3): the components ARE the
+/// difference, so they are what the sentence names.
+fn anon_record_source_name(ctx Ctx, t TyId) -> str {
+    consume s = StringBuilder.new(cap: 32)
+    s.append("(")
+    for i in 0..ctx.tys.arg_count(t) {
+        if i > 0 {
+            s.append(", ")
+        } else {
+            // The first component has nothing before it to separate from.
+        }
+        s.append(ty_source_name(ctx, ctx.tys.arg(t, i)))
+    }
+    s.append(")")
+    s
 }
 
 /// `Vec[int]`, `Opt[str]`: the head's declared name and its arguments as the

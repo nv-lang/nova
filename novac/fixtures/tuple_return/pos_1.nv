@@ -1,0 +1,30 @@
+module tuple_return.pos_1
+
+// A tuple literal in RETURN position, both spellings the language has: the
+// `=>` body and the `return` statement -- plus an interpolated string returned
+// the same way (each a multi-statement build the emitter hoists before the
+// `return` line; an array literal in return position is refused by check as a
+// subset boundary, so it is not here). Found 2026-09-05 by the positive fixture
+// of #970: check passed, `novac emit` iced (#974).
+
+fn pair(xs Vec[int], ys []int) -> (int, int) => (xs.len(), ys.len())
+
+fn swap(a int, b int) -> (int, int) {
+    if a > b {
+        return (b, a)
+    }
+    return (a, b)
+}
+
+fn label(n int) -> str {
+    return "n=${n}"
+}
+
+fn main() {
+    ro (n, m) = pair([1, 2], [3])
+    println(n + m)
+    ro (lo, hi) = swap(9, 4)
+    println(lo)
+    println(hi)
+    println(label(7))
+}

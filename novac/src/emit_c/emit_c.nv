@@ -70,6 +70,7 @@ import ../sem.{is_unit_ty}
 import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx}
 import ../sem.{carrier_of}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
+import ../sem.{is_value_tail_kind}
 import ../sem.{interp_slices}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
@@ -363,7 +364,17 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
                 // body IS the initializer -- so this arm has to be asked first.
                 ro rtmp = @emit_record_ctor(e, ret, false)
                 @body.append("    return ${rtmp};\n")
-            } else if is_expr_kind(e.kind_of()) {
+            } else if is_value_tail_kind(e.kind_of()) {
+                // The body may BE or CONTAIN a construction -- a positional
+                // record literal (`=> (xs.len(), ys.len())`), an array literal,
+                // an interpolated string -- and a construction is a
+                // multi-statement build: the hoist lays its chain BEFORE the
+                // `return` line, as a binding lays it before its initializer.
+                // Until this hoist a record-literal body fell through to the
+                // ICE below after a GREEN check (#974, found 2026-09-05 by the
+                // positive fixture of #970); `is_value_tail_kind` is the door
+                // the tail rule and the typing of this body read too.
+                @hoist_array_lits(e)
                 @body.append("    return ")
                 @emit_expr(e)
                 @body.append(";\n")
@@ -627,6 +638,19 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append("    }\n")
     } else if k == NodeKind.RetStmt {
         ro kids = branch_children(st)
+        if kids.len() > 1 {
+            // The returned expression may BE or CONTAIN a construction -- a
+            // tuple, an array literal, an interpolated string -- and a
+            // construction is a multi-statement build: the hoist lays its
+            // chain BEFORE the `return` line, exactly as a binding lays it
+            // before its initializer. Until this line `return (a, b)` reached
+            // the expression printer with no temporary and iced ("never
+            // hoisted") after a GREEN check (found 2026-09-05 by the positive
+            // fixture of #970).
+            @hoist_array_lits(kids[1])
+        } else {
+            // A bare `return`: nothing to build.
+        }
         @body.append("    return ")
         if kids.len() > 1 { @emit_expr(kids[1]) } else { @body.append("NOVA_UNIT") }
         @body.append(";\n")

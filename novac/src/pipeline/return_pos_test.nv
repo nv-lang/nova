@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR building of a tuple aggregate in return position -- the
+// aggregate is built into a temporary and the temporary is returned, whatever
+// syntactic position the tuple stands in; NOT taken: MIR itself (novac has
+// none; the hoist is the C statement chain).
+// Role: acceptance tests of registry row #974 (274.7, tier 1): a tuple literal
+// in RETURN position -- the `=>` body and the `return` statement -- is typed by
+// check (components' callees recorded, the return door judges it) and built by
+// the emitter into a temporary that the `return` line names. The block TAIL
+// form is the control: it worked before, and the row's cause is the pair
+// `=>`/`return` x tuple, not tuples in general.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixture tuple_return/pos_1
+// through the differential (byte-for-byte with the oracle).
+// novac/src/pipeline/return_pos_test.nv -- a pair returned, three spellings.
+
+module novac.pipeline
+
+test "a pair in return position: `=>` body and `return` build a temporary and return it (#974)" {
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
+    // CONTROL FIRST: the block tail, which compiled before the row.
+    ro (d0, c0) = compile_to_c("fn pair(xs Vec[int]) -> (int, int) {\n (xs.len(), 2)\n}\nfn main() {\n ro (a, b) = pair([1])\n println(a + b)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("return _novac_"), c0)
+    // THE `=>` BODY: iced twice before the fix -- the emitter's body arm knew
+    // no tuple, and once it did, the checker had never typed the body (the
+    // components' callees were unrecorded).
+    ro (d1, c1) = compile_to_c("fn pair(xs Vec[int]) -> (int, int) => (xs.len(), 2)\nfn main() {\n ro (a, b) = pair([1])\n println(a + b)\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("return _novac_"), c1)
+    // THE `return` STATEMENT: the construction is hoisted before the line.
+    ro (d2, c2) = compile_to_c("fn swap(a int, b int) -> (int, int) {\n if a > b {\n  return (b, a)\n }\n return (a, b)\n}\nfn main() {\n ro (lo, hi) = swap(9, 4)\n println(lo)\n}", std)
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("return _novac_"), c2)
+    // THE RETURN DOOR SEES THE TUPLE BODY: a component of the wrong type is
+    // refused, as it is for any other value tail (B5).
+    ro (d3, _) = compile_to_c("fn pair() -> (int, str) => (1, 2)\nfn main() {\n println(1)\n}", std)
+    assert(d3.len() == 1, messages(d3))
+}
