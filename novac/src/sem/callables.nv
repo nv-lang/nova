@@ -29,7 +29,7 @@ module novac.sem
 import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
-import ../builtins.{ENTRY_FN}
+import ../builtins.{ENTRY_FN, TypeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
 // WHY `VariantRow` LIVES IN THIS FILE and not beside `VariantDef`, where it
@@ -335,4 +335,69 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
     }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
                        tparam_off: toff, tparam_cnt: tparam_names.len() })
+}
+
+/// THE VARIANT a name denotes INSIDE ONE SUM (274.7 B6, registry #964), or None
+/// when that sum declares no such variant. A variant is addressed by the PAIR
+/// (sum, index): two sums may both declare `Red`, and a name-keyed table with
+/// last-write-wins -- `defs` held variants until 2026-09-05 -- answered with
+/// whichever was read last (the oracle's #962 picks a wrong sum silently; novac
+/// refused a correct `match` as non-exhaustive). ONE str -> id lookup
+/// (`variant_names`, the NameTable door the resolve discipline demands), then
+/// the same-name chain is walked BY ID and compared by `sum_id` -- no name is
+/// compared twice. Every reader that knows the sum -- a match arm against its
+/// scrutinee, `Type.Variant`, the emitter's tag test -- asks here; the emitter
+/// asks THIS door too, so the two passes cannot disagree on which row a head
+/// names.
+#realtime nogc
+export fn variant_in_sum(ctx Ctx, sum_t TyId, name str) -> Option[VariantRow] {
+    if !is_ty(sum_t) { return None }
+    mut r = ctx.variant_names.find(name)
+    while r >= 0 {
+        if ctx.variant_rows[r].sum_id == sum_t { return Some(VariantRow(r)) }
+        r = raw_vrow(ctx.variant_rows[r].next_same)
+    }
+    None
+}
+
+/// HOW MANY sums declare a variant of this NAME, and the first such row: the
+/// door of the UNQUALIFIED positions (a bare `Red` as a value, `Red(7)` as a
+/// call, a binder that shadows a variant). PROVENANCE decides first: a variant
+/// of a sum DECLARED IN THIS FILE outranks one HANDED from std -- `Pair(1, 2)`
+/// for the file's own type, `A(1)` for the file's own sum, both met std
+/// variants of the same bare name when this door counted every sum alike (the
+/// two corpus regressions of the wave's first cut); the old `defs` hid the
+/// same rule as last-write-wins. Among candidates of one provenance: one ->
+/// that variant; none -> not a variant at all; several -> ambiguous, refused
+/// by name (the spec names no rule for a bare name two sums share -- an open
+/// question to the owner, plan 274.7 s5, this refusal is the default).
+#realtime nogc
+export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
+    mut r = ctx.variant_names.find(name)
+    mut first_all = no_vrow()
+    mut n_all = 0
+    mut first_file = no_vrow()
+    mut n_file = 0
+    while r >= 0 {
+        ro v = ctx.variant_rows[r]
+        if !is_vrow(first_all) {
+            first_all = VariantRow(r)
+        } else {
+            // The head is the first of all; later rows only count.
+        }
+        n_all += 1
+        if ctx.defs.declared_by_file(decl_of_ty(ctx, v.sum_id).name) {
+            if !is_vrow(first_file) {
+                first_file = VariantRow(r)
+            } else {
+                // A later file-declared row only counts.
+            }
+            n_file += 1
+        } else {
+            // A handed sum's variant: counted among all, not among the file's.
+        }
+        r = raw_vrow(v.next_same)
+    }
+    if n_file > 0 { return (first_file, n_file) }
+    (first_all, n_all)
 }

@@ -196,6 +196,7 @@ export type VariantDef value {
     name str /// Variant spelling; backends derive maker names from it.
     payload_off int /// First payload row in Ctx.payload_types.
     payload_cnt int /// How many payload fields.
+    next_same VariantRow /// The NEXT variant of the same bare name in another sum, `no_vrow()` at the chain's end: `variant_names` holds the head, the chain is walked by id and compared by `sum_id`, never by name (274.7 B6, #964).
 }
 
 /// Type ids of the pre-seeded primitives — the rustc CommonTypes model
@@ -253,9 +254,10 @@ export type Ctx {
     foreign_types_cnt int /// How many leading rows of `types` came from OUTSIDE this file (primitives + handed declarations), fixed at `seal_foreign`. The emitter skips exactly these: the shell declares them. NOT `defs.foreign_cnt` -- that counts NAME rows, and handed variants are names without types (measured 2026-09-05: user records vanished from the emission once the variant rows pushed that count past them).
     tys Interner /// THE type interner (layer 4): every Ty of this file is a row here; identity is the id (E2-b1).
     prims Prims /// Type ids of the primitives (the CommonTypes model).
-    defs DefTable /// THE unified top-level name registry (types, variants, fns).
+    defs DefTable /// THE unified top-level name registry (types, fns, consts); variants are NOT here since B6 (#964) -- they are rows of their sum, `variant_rows`, addressed by (sum, index).
     fields FieldTable /// Record fields, addressed through the owner type.
-    variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.rows (the VariantRows arm)
+    variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.rows (the VariantRows arm); same-name rows across sums are chained through `next_same`.
+    variant_names NameTable /// THE str -> id door for variants (NsVariants): bare name -> head of its same-name chain in `variant_rows`. Filled by collect (`register_sum_variants`), read by `variant_in_sum` / `variants_named` (274.7 B6, #964).
     payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).

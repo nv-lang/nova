@@ -344,8 +344,8 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 60
-behavior-match 52
+contract-match 61
+behavior-match 53
 # 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
 # через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
 # в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
@@ -360,3 +360,15 @@ behavior-match 52
 # снята проверка ТИПА параметра у `display_row_of` -> держатель «display над
 # `Write` отвергается» краснеет, носитель зелёный; восстановлено. Замер прогона:
 # фикстур 16/16, корпус 109 файлов, поведенчески 52 из 54.
+# 60/52 -> 61/53 (2026-09-05, волна 274.7 В6 — варианты по паре, №964). Один новый файл корпуса,
+# `examples/basics/shared_variant.nv`: две суммы с общим вариантом `Red`, оба `match`
+# печатаются байт-в-байт с оракулом; до волны novac отвергал его как неполный match (голое
+# `Red` через `defs` уходило в `Fruit.Red`). Первый срез волны дал два РЕГРЕССА корпуса
+# (`named_tuple`, `match_disj_alternative_path`: поданные std-варианты `Pair`/`A` перебивали
+# объявления файла) — исправлены до коммита предпочтением объявленного в файле над поданным
+# (та же семантика, что скрывал last-write-wins в `defs`, теперь явная), база вниз не ходила.
+# Устройство: `Ctx.variant_names` (NameTable, NsVariants) + цепочка `VariantDef.next_same`;
+# двери `variant_in_sum`/`variants_named`; эмиттер спрашивает ту же дверь. Обратная проба:
+# дверь без суммы -> носитель расходится по stdout, держатель красный; восстановлено. Замер:
+# фикстуры 22/22, корпус 110 файлов, поведенчески 53 из 55; стена прогона 510 с — холодный
+# кэш только что пересобранного оракула (см. reference-gate-budget-cold-cache), не регресс цены.

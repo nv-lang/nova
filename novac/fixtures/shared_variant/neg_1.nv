@@ -1,0 +1,12 @@
+module shared_variant.neg_1
+
+// ONE seeded cause: a BARE variant name two sums share, in a position that
+// names no sum. The spec names no rule for this; novac refuses rather than
+// pick a sum (the oracle picks the last one read -- #962). Wave B6, #964.
+type Color enum Red | Green
+type Fruit enum Apple | Red
+
+fn main() {
+    ro x = Red
+    println(1)
+}

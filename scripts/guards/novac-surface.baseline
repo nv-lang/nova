@@ -651,7 +651,7 @@ resolve 15
 # (2026-09-03): a caller compares with the variant's own name, which the word
 # rule allows, so a wrapper would be a second door needing a periphrasis for a
 # name it may not spell. Net +1.
-sem 222
+sem 224
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -743,3 +743,8 @@ types 26
 # неявных вызовов канала (§10.3б-канал, донор rustc `adjustments`);
 # `slots_of_ref`/`subst_of_ref` — чтение пулов по ССЫЛКЕ вызова, чтобы
 # коллектор mono обходил явные и неявные вызовы одним кодом (`mark_ref`).
+# sem 222 -> 224 (2026-09-05, волна 274.7 В6 — варианты по паре, №964): `variant_in_sum`
+# (вариант ВНУТРИ суммы: `variant_names` + цепочка `next_same`, сравнение по `sum_id`) и
+# `variants_named` (сколько сумм несут голое имя; объявленные в файле старше поданных). Наружу
+# потому, что спрашивают их ЧЕТЫРЕ читателя двух слоёв — судья армов, судья выражений,
+# решётка `type_of` и ЭМИТТЕР (`emit_match`), у которого второго стола имён больше нет.
