@@ -14,8 +14,9 @@
 ЧТО СЧИТАЕТ: для каждой папки `novac/src/<m>` (без корня) — множество строк `module …`
 по всем её `.nv` (тесты включительно: они co-equal файлы того же модуля).
 ЧТО КРАСНИТ: (1) в папке больше одного объявления; (2) объявление не равно `novac.<m>`;
-(3) файл без строки `module` в первых 40 строках; (4) ноль папок или ноль файлов под
-судом — мишень потеряна, не «нарушений 0».
+(3) файл без строки `module` вовсе (ищется первая во всём файле -- заголовок novac
+бывает длиннее сорока строк, `lex.nv` и `emit_c.nv` так и попались первой редакции);
+(4) ноль папок или ноль файлов под судом — мишень потеряна, не «нарушений 0».
 
 Аргументы: $1 — корень репозитория; $2 — override каталога исходников (шов самотеста).
 Вход для гейта — main(): run-guards.py зовёт именно её.
@@ -30,7 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", newline="\n")
 
 NAME = "check-novac-module-decl-uniform"
-RE_MODULE = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$")
+RE_MODULE = re.compile(r"^module\s+([A-Za-z_][A-Za-z0-9_.]*)\s*$")
 
 
 def fail(msg):
@@ -39,10 +40,12 @@ def fail(msg):
 
 
 def module_of(path):
+    # The whole file, not a window: novac headers run past forty lines of prose
+    # before `module`, and the first edition of this guard called lex.nv and
+    # emit_c.nv "no module line" for exactly that -- a false red its own
+    # live-tree selftest case caught before the guard reached the gate.
     with io.open(path, encoding="utf-8", errors="replace") as f:
-        for i, line in enumerate(f):
-            if i >= 40:
-                break
+        for line in f:
             m = RE_MODULE.match(line)
             if m:
                 return m.group(1)
@@ -75,7 +78,7 @@ def main():
             mod = module_of(os.path.join(dp, fn))
             rel = "novac/src/%s/%s" % (d, fn)
             if mod is None:
-                bad.append("  %s — нет строки `module` в первых 40 строках" % rel)
+                bad.append("  %s — нет строки `module`" % rel)
                 continue
             seen.setdefault(mod, []).append(fn)
             if mod != want:
