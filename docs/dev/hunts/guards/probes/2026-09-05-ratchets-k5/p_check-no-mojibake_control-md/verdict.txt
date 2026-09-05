@@ -1,0 +1,15 @@
+created docs/x.md
+--- artefact check ---
+  present: docs/x.md
+--- guard ---
+check-no-mojibake: строк с подписью порчи 1 (база 0)
+check-no-mojibake: ВЫРОСЛО — 1 > базы 0
+    docs/x.md:1
+
+    Это «UTF-8 прочитан как CP1251»: текст записан через оболочку.
+    Пиши файл инструментом записи и запускай его; сообщения коммитов
+    передавай через -F <файл>. Починить уже испорченное:
+      python scripts/tools/demojibake.py <файл>
+    Реестр 221.1 №637.
+check-no-mojibake: FAIL
+RC=1

@@ -1,0 +1,14 @@
+--- artefact check ---
+  present: compiler-codegen/src/lib.rs
+  present: compiler-codegen/src/other.rs
+  present: docs/flags.md
+--- guard ---
+check-flag-has-caller: флагов без вызывающего 1 (база 0)
+check-flag-has-caller: ВЫРОСЛО — 1 > базы 0
+    NOVA_PROBE_C_ONLY
+    Флаг без вызывающего — не фича: снаружи он неотличим от
+    несделанной работы (реестр 221.1 №575). Либо взведи его там,
+    где он должен работать (гейт, CI, CLI), либо опиши в docs/,
+    либо удали вместе с кодом, который его читает.
+check-flag-has-caller: FAIL
+RC=1

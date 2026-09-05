@@ -1,0 +1,31 @@
+--- artefact check ---
+  present: backlog-followups.md
+  present: 221.1-bug-sweep.md
+--- 221.1 content (no numbered row anywhere) ---
+# registry
+Prose line, no row and no number here: see M-probe-k5-no-number for context.
+--- guard ---
+bug-number-sync ok: все новые маркеры нумерованы в 221.1
+RC=0
+
+--- part 2: measurement on the REAL tree (read-only) ---
+live markers judged by the guard: 131
+has a decimal-numbered row: 116
+only a Q-row (no decimal number): 8
+  Q-ONLY M-104.10-diag-pipeline-correctness  221.1:364 cell=Q5
+  Q-ONLY M-196-freefn-arity-overload-default-ret-mismatch  221.1:365 cell=Q6
+  Q-ONLY M-compress-checksum-cleanup  221.1:367 cell=Q8
+  Q-ONLY M-d78-dup-decl-type-cross-import-ambiguous  221.1:368 cell=Q9
+  Q-ONLY M-http-compress-errorkind-crosspkg-collision  221.1:360 cell=Q1
+  Q-ONLY M-match-arm-mixed-int-width-sentinel-coerce  221.1:362 cell=Q3
+  Q-ONLY M-protocol-embed-vtable-missing-method  221.1:361 cell=Q2
+  Q-ONLY M-vec-spelling-consume-chain-cap-collision  221.1:366 cell=Q7
+only a mention (continuation row / prose, NO entry of its own): 7
+  MENTION-ONLY M-175-time-ambient-retraction  221.1:1313
+  MENTION-ONLY M-175-time-typed-schema-scalar-bridge  221.1:1313
+  MENTION-ONLY M-217-spawn-closure-consume-cleanup-undefined  221.1:299
+  MENTION-ONLY M-boehm-large-buffer-retention-fiber-reuse  221.1:1461
+  MENTION-ONLY M-effect-handler-body-record-literal  221.1:1313
+  MENTION-ONLY M-emit-c-loc-for-span-wrong-file-merged-cu  221.1:1373
+  MENTION-ONLY M-mono-fn-decls-module-qualified-key  221.1:415
+absent entirely: 0

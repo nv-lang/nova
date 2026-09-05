@@ -1,0 +1,18 @@
+warning: in the working copy of 'f.txt', LF will be replaced by CRLF the next time Git touches it
+--- git worktree list --porcelain ---
+<tmp>/nv-lang/maincopy
+<tmp>/elsewhere/outside
+--- guard ---
+check-worktree-location: рабочих деревьев 2, дозволенный корень <tmp>/nv-lang
+check-worktree-location: НАРУШЕНИЕ — деревья вне дозволенного корня:
+    <tmp>/elsewhere/outside
+
+    Перенеси: git worktree move <путь> <tmp>/nv-lang/<имя>
+    либо сними: git worktree remove <путь>.
+    Причина не в порядке: диск C: уходит под ноль и ломает сборку
+    чужой ошибкой, а дерево ВНУТРИ репозитория попадает под грепы
+    стражей и краснит их на чужих снимках (реестр 221.1 №561).
+check-worktree-location: FAIL
+RC=1
+--- artefact check ---
+target created: <tmp>/elsewhere/outside
