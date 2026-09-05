@@ -1,7 +1,13 @@
 // Plan 150 / D248 — canonical range form `a <= b && b < c` works (the
 // replacement for the rejected `a <= b < c` chain).
 //
-// EXPECT_STDOUT: ok
+// The `// EXPECT_STDOUT: ok` marker that stood here is REMOVED, not relaxed
+// (registry #942). Written with a colon, it asked for the substring `: ok`,
+// which this file's own output (`ok`, on its own line) never contained. What
+// satisfied it was an unrelated test's NAME in another file -- the harness
+// line `PASS: ok-path ...` -- so the verdict of this fixture hung on a string
+// it does not own. The assertions below always carried the meaning, and since
+// #942 they are what the runner actually judges.
 
 module spec_tests.conformance
 

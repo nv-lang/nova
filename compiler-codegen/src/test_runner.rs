@@ -3746,7 +3746,38 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             let stderr_pats = find_stderr();
             let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
-            if !has_content_marker && exit != 0 {
+            // Registry #942: the condition here used to be
+            // `!has_content_marker && exit != 0` -- a non-zero exit was treated as a
+            // failure ONLY when no `EXPECT_STDOUT`/`EXPECT_STDERR` was present. With
+            // one present, the exit code was ignored entirely and the verdict came from
+            // the substring match alone.
+            //
+            // WHAT THAT COST. `collect_marker_sources` gathers header directives from
+            // the entry file AND every same-module peer (widened on purpose, so a
+            // `// ENV ...` on the peer that declares the tests reaches the run step --
+            // [A-S1 mutclock-regress]). An `EXPECT_STDOUT` living on ANY peer therefore
+            // set `has_content_marker` for the whole folder-module CU, and from then on
+            // the in-binary test harness could report `FAIL:` and exit non-zero while
+            // the run was recorded PASS. In `spec_tests/conformance` that is 6207
+            // `assert(...)` lines across 1168 peer files whose verdict was a substring
+            // -- and five of the six markers doing it are written `// EXPECT_STDOUT: ok`,
+            // the colon form AGENTS.md forbids, so the substring asked for is `: ok`.
+            //
+            // Measured both ways before and after: a deliberately false assertion in a
+            // peer was invisible (`PASS: 901 FAIL: 0` on the mega-CU, twice, once on a
+            // fixture of my own and once on `append_as_slice.nv`), and the four-case
+            // probe in `docs/plans/repro/942-folder-module-tests-silenced/` isolates it
+            // to this line.
+            //
+            // The legitimate non-zero exits are NOT reached by this branch: they have
+            // branches of their own above -- `EXPECT_EXIT`/`EXPECT_EXIT_CODE`
+            // (`find_exit_code`) and `EXPECT_RUNTIME_PANIC`. What is left here is the
+            // POSITIVE lane, where a program that exits non-zero has failed, whatever
+            // it printed on the way out. The content markers still have to match; they
+            // are now an ADDITIONAL requirement rather than a replacement for the exit
+            // code, which is the resolution the row's acceptance asks for ("either an
+            // error, or both must hold").
+            if exit != 0 {
                 // Prefer lines that actually name the failure (a genuine "  FAIL: …"
                 // harness line, or a runtime panic banner); the in-binary harness
                 // prints many PASS lines then a summary, so a blind "last 3 lines"
