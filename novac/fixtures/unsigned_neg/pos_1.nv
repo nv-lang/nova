@@ -1,0 +1,11 @@
+module unsigned_neg.pos_1
+
+// Unary minus on SIGNED operands, integer and float: the forms the spec
+// defines, unchanged by wave B4.
+fn neg_i(s i16) -> i16 => -s
+fn neg_f(f f64) -> f64 => -f
+
+fn main() {
+    println(neg_i(200))
+    println(neg_f(2.5))
+}

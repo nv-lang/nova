@@ -1,0 +1,13 @@
+module unsigned_neg.neg_1
+
+// ONE seeded cause: unary minus on an UNSIGNED operand -- the spec
+// (conversions.md: "Unary minus is defined for signed types only") makes it a
+// compile error, not a modular wrap. The oracle accepts this program and
+// prints 56 for `-200u8` (registry #926). Wave 274.7 B4. The operand is a
+// parameter because a typed local (`ro u u8 = 200`) is outside novac's subset
+// today (E2-b3) and would be the refusal instead of the seeded one.
+fn flip(u u8) -> u8 => -u
+
+fn main() {
+    println(flip(200))
+}

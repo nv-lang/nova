@@ -1,0 +1,12 @@
+module numeric_mix.pos_1
+
+// The spec's one relaxation, both halves: a bare literal beside a float takes
+// the float's type (`b + 1`), and a float literal stands in a float position
+// without `as`. Nothing here mixes two NAMED types. Wave 274.7 B4.
+fn main() {
+    ro b = 2.5
+    ro c = b + 1
+    ro d = 1.5 * b
+    println(c)
+    println(d)
+}

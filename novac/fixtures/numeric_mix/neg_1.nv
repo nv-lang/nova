@@ -1,0 +1,12 @@
+module numeric_mix.neg_1
+
+// ONE seeded cause: `a` is `int` and `b` is `f64`, both NAMED -- the spec
+// (conversions.md: "A value of type `int` next to a value of type `f64` is
+// still an error, literal or not"; D405) makes their sum an error, and novac
+// says so at the operator. The oracle accepts this program and prints 3.5
+// (registry #926); the spec outranks the oracle. Wave 274.7 B4.
+fn main() {
+    ro a = 1
+    ro b = 2.5
+    println(a + b)
+}
