@@ -308,6 +308,8 @@ fn Checker mut @type_fn(f Node) -> () {
 fn Checker mut @type_body(b Node) -> () {
     if b.kind_of() == NodeKind.Block {
         @type_block(b)
+        // SILENT-OK: the block was typed by the call just above; this return
+        // only skips the single-statement path, it decides nothing itself.
         return
     }
     @type_stmt(b)
