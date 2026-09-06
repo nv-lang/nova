@@ -2629,6 +2629,23 @@ const MULTI_TU_PART_THRESHOLD_BYTES: usize = 1536 * 1024;
 /// particular 3-byte sequence inside a literal/comment in practice) or
 /// slightly over/under vs. the true count; either way it only feeds a
 /// coarse "> 200" threshold decision, never correctness.
+/// Выключатель фикса №979 — `NOVA_KILL_VARIANT_SHADOW=1` возвращает ДОФИКСНОЕ
+/// поведение на ТОМ ЖЕ бинаре.
+///
+/// Зачем именно выключатель, а не две сборки: правило проекта — «проба на двух
+/// разных бинарях не проба». Две сборки различаются не только фиксом (кэш,
+/// инкрементальность, порядок мономорфизаций), и приписать разницу фиксу нельзя.
+/// Тот же приём, что `NOVA_KILL_RETURN_COMPAT` у №959 (`types/mod.rs`).
+fn variant_shadow_fix_disabled() -> bool {
+    use std::sync::OnceLock;
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| {
+        std::env::var("NOVA_KILL_VARIANT_SHADOW")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 fn exceeds_multi_tu_threshold(finalized: &str) -> bool {
     if finalized.len() > MULTI_TU_SIZE_THRESHOLD_BYTES {
         return true;
@@ -35625,6 +35642,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // [M-sync-crossmodule…] (D381): context-disambiguated for a variant
                 // shared across colliding sums (byte-identical for unique variants).
                 if let Some(sn) = expr.id.is_set().then(|| self.resolved_types.get(&expr.id)).flatten().and_then(|rt| match rt { crate::types::ResolvedType::Named { name: n, args, .. } if args.is_empty() => Some(n.clone()), _ => None }).filter(|n| n != "Option" && self.sum_schema_registry.lookup_sum_schema(n).map_or(false, |e| e.variants.iter().any(|v| v.variant_name == *name && v.field_c_types.is_empty()))) { return Ok(format!("nova_make_{}_{}()", sn, name)); } // №279-adjacent [M-178-variant-ctor-target-sum]: checker channel first
+                // №979 (2026-09-06), вторая площадка того же дефекта — ИМЯ, а не
+                // вызов: `type Color enum Red | Green` плюс `const Red = 5`, и
+                // `println(Red)` эмитился как `nova_make_Color_Red()`. Канал
+                // выше уже прочитан, но ТОЛЬКО чтобы ПОДТВЕРДИТЬ вариант; на
+                // вопрос «а это точно НЕ вариант?» не отвечал никто, и молчание
+                // читалось как «спроси имя».
+                //
+                // Правило симметрично: если у выражения ЕСТЬ запись в
+                // `resolved_types` и она ПРОТИВОРЕЧИТ варианту (не сумма с этим
+                // именем — например `Scalar` у константы), догадка по имени не
+                // запускается. Когда записи НЕТ (дыры канала), поведение
+                // прежнее — откат работает, и это важно: правило судит только
+                // то, о чём чекер высказался.
                 if let Some((type_name, fields)) = self.debt_find_variant_ctx(name, Some(0)) {
                     if fields.is_empty() {
                         // Plan 14 Ф.1: `None` — typed compound literal по
@@ -41236,9 +41266,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // consulted FIRST (`channel_variant_ctx` — the call-site
                 // expected-type truth); any miss falls back to the untouched
                 // name-based heuristics.
+                //
+                // №979 (2026-09-06): the channel could say "yes, a ctor" but
+                // nothing could say "NO, not a ctor" — and a MISS was read as
+                // "go ask the name". So `type Color enum Red | Green` plus
+                // `fn Red() -> int => 42` compiled the CALL `Red()` into
+                // `nova_make_Color_Red()`: the checker had resolved it to the
+                // FUNCTION and typed it `int`, codegen substituted the variant
+                // ctor, and the C compiler refused what the checker had passed.
+                //
+                // The counter-answer already existed and simply was not asked:
+                // `resolved_callees` carries the declaration the checker
+                // resolved this call to (types/mod.rs:17570 — "only .nv callees
+                // the checker resolves UNAMBIGUOUSLY … land here"). An entry
+                // means the call IS a function call, so the name-based variant
+                // heuristic must not run at all.
+                //
+                // NOTE the asymmetry, it is deliberate: the CHANNEL still wins
+                // when it fires. It is the checker's own expected-type truth,
+                // and suppressing it here would undo №658. Only the guess is
+                // suppressed. The precedence "a variant beats a same-named
+                // newtype" (see the newtype-identity intercept below) also
+                // stays: there the checker gives no answer either, so guessing
+                // remains the best available move.
+                let checker_resolved_a_callee =
+                    !variant_shadow_fix_disabled() && self.resolved_callees.contains_key(&call_id);
                 if let Some((type_name, _)) = self
                     .channel_variant_ctx(call_id, name, args.len())
-                    .or_else(|| self.debt_find_variant_ctx(name, Some(args.len())))
+                    .or_else(|| {
+                        if checker_resolved_a_callee {
+                            None
+                        } else {
+                            self.debt_find_variant_ctx(name, Some(args.len()))
+                        }
+                    })
                 {
                     // Plan 59 Ф.7.5 D3: legacy typed-Err early-return
                     // (`nova_make_Result_Err_typed` для non-str Err через

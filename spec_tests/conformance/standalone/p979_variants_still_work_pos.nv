@@ -1,0 +1,39 @@
+// EXPECT_STDOUT green|payload 7|unit
+//
+// 221.1 №979 — the POSITIVE side, and it is the half that decides whether the
+// fix is a fix or a regression.
+//
+// The #979 change suppresses the NAME-BASED variant guess when the checker has
+// already resolved the name to something else. It must not touch the cases the
+// guess exists for. Three of them, all in one file so a break shows at once:
+//
+//   1. a bare unit variant in a value position, no collision anywhere;
+//   2. a variant CONSTRUCTOR call with a payload;
+//   3. a bare unit variant of a DIFFERENT sum, reached through a match.
+//
+// If any of these regress, the fix suppressed too much — which is the exact
+// failure mode of "ask the checker first": the checker has channel gaps, and a
+// refusal must fire only where it actually SPOKE, never where it stayed quiet.
+module standalone.p979_variants_still_work_pos
+
+type Color enum Red | Green
+type Tag enum Unit | Payload { n int }
+
+fn pick() -> Color => Green
+
+fn describe(t Tag) -> str => match t {
+    Payload { n } => "payload ${n}"
+    Unit => "unit"
+}
+
+fn main() Io -> () {
+    ro c = pick()
+    match c {
+        Green => print("green")
+        Red => print("red")
+    }
+    print("|")
+    print(describe(Payload { n: 7 }))
+    print("|")
+    println(describe(Unit))
+}
