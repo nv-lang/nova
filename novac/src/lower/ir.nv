@@ -338,6 +338,10 @@ export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Node, has_else bool) ->
 export fn FnBuilder mut @end_if(c IfCtx) -> () {
     if @cur_id != c.join {
         @close(Terminator.Goto(c.join), c.join)
+    } else {
+        // The join is already current: the else branch was an `else if`
+        // chain whose inner `end_if` closed onto this very join, so the
+        // branch is sealed and there is nothing left to jump from.
     }
 }
 
