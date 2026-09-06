@@ -1,0 +1,9 @@
+module option_ctor.neg_1
+
+// ONE seeded cause: a bare `None` with nothing around it to say which Option it is
+// (a binding without a declared type). Refused by its cause, not typed by a guess.
+
+fn main() {
+    ro x = None
+    println(1)
+}

@@ -41,7 +41,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload, for_head_elem}
 import ../sem.{shape_of}
 
@@ -292,8 +292,17 @@ fn Checker mut @type_fn(f Node) -> () {
             // this door the body was never typed: its components' callees
             // stayed unrecorded, check passed, and the emitter iced on the
             // first one (#974, found 2026-09-05).
+            // An IF-EXPRESSION body (`=> if f { Some(1) } else { None }`) is
+            // typed by the B14 door the binding initializer uses; until W4 the
+            // subset walk let the form through and this arm typed NOTHING --
+            // check passed, the emitter iced (found by the W4 carrier).
+            ro if_body = e.kind_of() == NodeKind.IfExpr
             if e.kind_of() == NodeKind.MatchExpr {
                 @type_match(e)
+            } else if if_body {
+                @value_expect = same_ty(@ret_expect)
+                @type_if_value(e)
+                @value_expect = no_ty()
             } else if is_value_tail_kind(e.kind_of()) {
                 @type_tail_value(e)
             } else {
@@ -302,7 +311,7 @@ fn Checker mut @type_fn(f Node) -> () {
             }
             // THE RETURN DOOR, after the tail is typed and only if nothing was
             // refused on the way (asking the lattice after a refusal is #902).
-            if @out.len() == rmark && is_value_tail_kind(e.kind_of()) {
+            if @out.len() == rmark && (is_value_tail_kind(e.kind_of()) || if_body) {
                 @judge_return(e, @tail_type_of(e))
             } else {
                 // A refused or non-expression tail: the walk already spoke.
@@ -503,8 +512,20 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
             Branch { .. } => {
                 if i == last {
                     if is_expr_kind(c.kind_of()) {
+                        // THE LATTICE IS ASKED ONLY WHEN NOTHING WAS REFUSED
+                        // (#902's rule): a refused tail -- an unknown callee,
+                        // a construction the registry has no row for -- has
+                        // no type, and asking iced ("call target not in the
+                        // registry") instead of letting the refusal stand
+                        // (found by W4's reverse probe, 2026-09-06).
+                        ro before = @out.len()
                         @type_expr(c)
-                        out_t = type_of(c, @ctx, @scope, @chan)
+                        if @out.len() == before {
+                            out_t = type_of(c, @ctx, @scope, @chan)
+                        } else {
+                            // Refused inside: no type, and the refusal is the
+                            // diagnostic -- `no_ty()` says so to the caller.
+                        }
                     } else {
                         @report_first_leaf_of([]Node.of(c), "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
                     }

@@ -1,0 +1,47 @@
+module option_ctor.pos_1
+
+// Constructing a variant of the handed GENERIC sum Option (wave W4, 274.7 tier 0):
+// `Some(x)` names the instance its payload fixes, a bare `None` names the instance
+// the position expects (a tail, a `return` operand, an arm of a tail if). Int and
+// str payloads use the shell's tagged shape; the Box payload (a heap record of
+// this file) uses the tagless pointer shape, whose typedef novac emits itself.
+
+type Box { v int }
+
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn name(f bool) -> Option[str] => if f { Some("yes") } else { None }
+
+fn boxed(f bool) -> Option[Box] {
+    if f {
+        ro b = Box { v: 4 }
+        return Some(b)
+    }
+    None
+}
+
+fn main() {
+    if Some(v) = pick(true) {
+        println(v)
+    } else {
+        println(0)
+    }
+    println(pick(false) ?? -1)
+    println(name(true) ?? "none")
+    println(name(false) ?? "none")
+    if Some(b) = boxed(true) {
+        println(b.v)
+    } else {
+        println(0)
+    }
+    if Some(c) = boxed(false) {
+        println(c.v)
+    } else {
+        println(-2)
+    }
+}

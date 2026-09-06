@@ -344,8 +344,8 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 64
-behavior-match 56
+contract-match 65
+behavior-match 57
 # 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
 # через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
 # в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
@@ -393,3 +393,9 @@ behavior-match 56
 # в корпус НЕ входит: оракул её не собирает (№969) — держатель `pipeline/iflet_test.nv`. Обратные
 # пробы по одной на дверь: инициализатор через `@expr()` — носитель красный ложным отказом; `else`
 # не читается — 4 syntax error; восстановлено.
+# 64/56 -> 65/57 (2026-09-06, волна 274.7 W4 — конструирование `Some(x)`/`None` поданной обобщённой
+# суммы, ярус 0). Новый файл корпуса `examples/basics/option_ctor.nv`: `return Some(3)`, хвостовое `None`,
+# тело `=> if f { Some("yes") } else { None }`, `Some(b)` с payload-указателем (запись файла; typedef
+# `NovaOpt_Nova_Box_p` эмитит novac), потребление через if-let и `??`. Обратные пробы по двери:
+# регистрация обобщённых вариантов снята -> отказ/ICE на `Some(3)`, держатель красный; литерал заменён
+# мейкером -> C не собирается; восстановлено.

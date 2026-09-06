@@ -72,4 +72,37 @@ fn main() {
         None => "none"
     }
     println("get = ", text)
+
+    // Wave W4 (274.7): novac CONSTRUCTS `Some(x)` / `None` as the shell's
+    // compound literals, so every Option instance over a primitive that a
+    // carrier may build must exist in the shell -- the typedef is the shell's
+    // for primitives and handed types (novac emits it only for the file's own
+    // types). Each fn below is USED, or the oracle's DCE drops its instance.
+    println("os = ", opt_str(total > 100) ?? "none")
+    println("of = ", opt_f64(total > 100) ?? 0.5)
+    println("ob = ", opt_bool(total < 100) ?? false)
+}
+
+/// An Option[str] instance for the shell (W4).
+fn opt_str(f bool) -> Option[str] {
+    if f {
+        return Some("yes")
+    }
+    None
+}
+
+/// An Option[f64] instance for the shell (W4).
+fn opt_f64(f bool) -> Option[f64] {
+    if f {
+        return Some(1.5)
+    }
+    None
+}
+
+/// An Option[bool] instance for the shell (W4).
+fn opt_bool(f bool) -> Option[bool] {
+    if f {
+        return Some(true)
+    }
+    None
 }

@@ -400,7 +400,17 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     // wave): the checker resolved the bare name to its
                     // variant row; the maker is the oracle's own spelling.
                     match @out.callee_of(e.id_of()).target {
-                        CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}()")
+                        CalleeVariant(v) => {
+                            // An Option instance (`None`, wave W4) is the
+                            // shell's compound literal; a file sum's variant
+                            // is its maker.
+                            ro nt = @out.type_if_known(e.id_of())
+                            if @is_option_inst(nt) {
+                                @emit_option_none(nt)
+                            } else {
+                                @body.append("${c_maker(@ctx, v)}()")
+                            }
+                        }
                         CalleeFn(_) | CalleeCtor(_) => ice("emit: a bare name resolved to a non-variant callee")
                     }
                 } else {
@@ -442,7 +452,12 @@ fn Emitter mut @emit_expr(e Node) -> () {
         if @out.has_callee(e.id_of()) {
             match @out.callee_of(e.id_of()).target {
                 CalleeVariant(v) => {
-                    @body.append("${c_maker(@ctx, v)}()")
+                    ro nt = @out.type_if_known(e.id_of())
+                    if @is_option_inst(nt) {
+                        @emit_option_none(nt)
+                    } else {
+                        @body.append("${c_maker(@ctx, v)}()")
+                    }
                     return
                 }
                 CalleeFn(_) | CalleeCtor(_) => ice("emit: a field access resolved to a non-variant callee")
@@ -498,6 +513,14 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // emission (2026-09-04, wave V3-4b).
         match cr.target {
             CalleeVariant(v) => {
+                // `Option.Some(x)`: the shell's compound literal (wave W4).
+                ro nt = @out.type_if_known(e.id_of())
+                if @is_option_inst(nt) {
+                    @emit_option_some(nt, call_arg_at(kids, 3, 0))
+                    return
+                } else {
+                    // A file sum's variant: its maker, below.
+                }
                 @body.append("${c_maker(@ctx, v)}(")
                 @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr))
                 @body.append(")")
@@ -542,7 +565,20 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // "why is `target_row` not `FnRow`": because it was three spaces in one
         // int, and the answer is a sum, not a wrapper).
         match cr.target {
-            CalleeVariant(v) => @body.append("${c_maker(@ctx, v)}(")
+            CalleeVariant(v) => {
+                // `Some(x)` of an Option INSTANCE (wave W4): the shell's
+                // compound literal, one expression, nothing to hoist here --
+                // the payload prints through the general door.
+                ro nt = @out.type_if_known(e.id_of())
+                if @is_option_inst(nt) {
+                    @emit_option_some(nt, call_arg_at(kids, 1, 0))
+                    return
+                } else {
+                    // A file sum's variant: its maker opens here, the
+                    // arguments follow below.
+                }
+                @body.append("${c_maker(@ctx, v)}(")
+            }
             // A CONSTRUCTOR is a function whose return type is a
             // parenthesised record and whose body novac does not emit -- so
             // the call site prints the ORACLE's own construction, a compound

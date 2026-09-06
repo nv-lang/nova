@@ -67,7 +67,13 @@ fn Checker mut @type_tail_value(e Node) -> () {
     } else {
         // Nothing to adapt to: the fn declares no value to judge against.
     }
+    // THE EXPECTATION FLOWS INTO THE VALUE (wave W4): a bare `None` in the tail
+    // -- or in an arm of a tail match/if -- is an instance of the declared
+    // return; a call CLEARS it around its arguments (option_rules), so
+    // `f(None)` in the tail is not typed as the fn's own return.
+    @value_expect = same_ty(@ret_expect)
     @type_expr(e)
+    @value_expect = no_ty()
 }
 
 /// The type of a value tail AFTER it was typed, for the return door: what the

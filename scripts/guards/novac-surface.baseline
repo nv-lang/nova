@@ -187,7 +187,7 @@
 # its own emission. An ABI name lives in this registry by P5 (written once, as
 # data) and the mangling door is its one reader; the alternative was the same
 # string spelled at two sites in the mangler.
-builtins 39
+builtins 40
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -753,3 +753,6 @@ types 26
 # читают все обходы). Наружу потому, что спрашивают её ТРИ читателя двух слоёв — правило хвоста и типизация
 # тела `=>` в check, арм тела `=>` в emit_c, — и до двери каждый писал дизъюнкцию сам, а двое из трёх не написали
 # (ICE после зелёного check).
+# builtins 39 -> 40 (2026-09-06, волна 274.7 W4 — конструирование `Some(x)`/`None`): `OPTION_NONE_TAG_C` —
+# тег отсутствующего Option в оболочке (`NOVA_TAG_Option_None`, прочитан с shell.tpl.c). Наружу потому, что
+# имена ЯЗЫКА и оболочки живут строковыми литералами только в builtins (P5), а читает его emit_c.

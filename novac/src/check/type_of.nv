@@ -448,7 +448,16 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // sums (wave B6, #964); the checker refused an ambiguous name already,
         // so the first row is the one when any is there.
         ro (vfirst, vn) = if ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(ctx, cname) }
-        if vn >= 1 { return ctx.variant_rows[raw_vrow(vfirst)].sum_id }
+        if vn >= 1 {
+            ro sid = ctx.variant_rows[raw_vrow(vfirst)].sum_id
+            // A GENERIC sum's constructor names an INSTANCE (`Some(3)` is an
+            // `Option[int]`), decided by the walk from the payload and RECORDED
+            // (wave W4, option_rules): the family term is not a type a value
+            // has, so the lattice reads the decision instead of re-deriving it.
+            if decl_of_ty(ctx, sid).tparam_cnt > 0 { return chan.type_of(e.id_of()) }
+            // `same_ty`, not `sid`: [LEGACY-#760-newtype-ro-launder].
+            return same_ty(sid)
+        }
         ro def = ctx.defs.def_of(cname) ?? ice("check: call target not in the registry (#652 class)")
         if DefFn(decl_row) = def.target {
             // The ROW the checker resolved, when it recorded one: `defs` is

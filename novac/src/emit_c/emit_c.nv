@@ -364,6 +364,14 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
                 // body IS the initializer -- so this arm has to be asked first.
                 ro rtmp = @emit_record_ctor(e, ret, false)
                 @body.append("    return ${rtmp};\n")
+            } else if e.kind_of() == NodeKind.IfExpr {
+                // An IF-EXPRESSION body: the same pair the tail `if` of a
+                // block returns (wave B14) -- laid into its temporary, then
+                // returned by name. Until W4 this arm did not exist and the
+                // form, accepted by check, iced here.
+                ro u = @fresh_uniq()
+                @emit_if_value(e, u, ret)
+                @body.append("    return _novac_if_t${u};\n")
             } else if is_value_tail_kind(e.kind_of()) {
                 // The body may BE or CONTAIN a construction -- a positional
                 // record literal (`=> (xs.len(), ys.len())`), an array literal,
@@ -533,7 +541,8 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     @emit_expr(qk[0])
     @body.append(";\n")
     @body.append("    ${c_type(@ctx, res_t)} ${res} = (${c_type(@ctx, res_t)}){0};\n")
-    @body.append("    if (${opt}.tag == ${OPTION_SOME_TAG_C}) {\n")
+    // The Some-test through the ONE Option door (emit_option, wave W4).
+    @body.append("    if (${@option_some_test(ot, opt)}) {\n")
     @body.append("        ${res} = ${opt}.value;\n")
     @body.append("    } else {\n")
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
