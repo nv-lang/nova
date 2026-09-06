@@ -1,0 +1,114 @@
+// std/runtime/parse_float_corpus_slow.nv — plan 283 Ф.5: the external float-parsing
+// corpus (github.com/nigeltao/parse-number-fxx-test-data, ~5.3 million lines) against
+// Nova's own conversion, bit for bit. Slow lane (`_slow`, D376): skipped by `nova test`
+// by default, run with `--slow-only` / `--include-slow`.
+//
+// Where the corpus comes from: `scripts/tools/fetch-parse-float-corpus.sh` clones it at a
+// pinned commit into `nova_tests/.cache/parse-number-fxx/` (gitignored) or into
+// `$NOVA_PARSE_FLOAT_CORPUS`. The data is NOT in the repository (plan 283, «Не делаем»):
+// millions of lines live outside, here are the runner and the hash.
+//
+// Corpus line = four space-separated fields: f16 bits, f32 bits, f64 bits (hex) and the
+// string, e.g. `3C00 3F800000 3FF0000000000000 1`. Only the f64 field is judged.
+//
+// Skip-never-fail: no corpus directory -> zero checks and a green test (the same policy as
+// the Unicode conformance lane). A string Nova's grammar rejects (`inf`, `nan`, hex
+// floats, whitespace: the corpus has a few) is COUNTED as skipped, not failed. A mismatch
+// anywhere is a FAIL that names the first offending line.
+//
+// A sibling module of `runtime.string`, not a co-equal file: it needs `std.fs` / `std.os`
+// (real handlers), which the `#no_prelude` string module cannot import.
+module runtime.parse_float_corpus_slow
+
+import std.fs.{real_fs, read_text, read_dir}
+import std.os.{real_os, env}
+import std.runtime.numeric
+
+const CORPUS_DEFAULT_DIR str = "nova_tests/.cache/parse-number-fxx"
+const F64_POS_INF_BITS u64 = 0x7FF0000000000000
+const F64_NEG_INF_BITS u64 = 0xFFF0000000000000
+
+// One corpus line -> (expected f64 bits, the string), or None when the line has not got
+// the four-field shape (blank lines, comments).
+fn split_corpus_line(line str) -> Option[(u64, str)] {
+    ro (_f16, rest1) = line.split_once(" ")?
+    ro (_f32, rest2) = rest1.split_once(" ")?
+    ro (f64_hex, literal) = rest2.split_once(" ")?
+    match f64_hex.to_u64(radix: 16) {
+        Ok(bits) => Some((bits, literal))
+        Err(_) => None
+    }
+}
+
+test "283 Ф.5: parse-number-fxx corpus — every f64 field equals to_f64_native bit for bit (zero checks when the corpus is absent)" {
+    ro dir = with Os = real_os() {
+        match env("NOVA_PARSE_FLOAT_CORPUS") {
+            Some(d) => d
+            None => CORPUS_DEFAULT_DIR
+        }
+    }
+    with Fs = real_fs() {
+        supervised {
+            spawn {
+                ro data_dir = "${dir}/data".to_path()
+                match read_dir(data_dir) {
+                    Err(_) => {
+                        // corpus absent: nothing to judge (run scripts/tools/fetch-parse-float-corpus.sh)
+                        assert(true)
+                    }
+                    Ok(entries) => {
+                        mut ok = 0
+                        mut mismatch = 0
+                        mut skipped = 0
+                        mut files = 0
+                        mut first_bad = ""
+                        for e in entries {
+                            if e.is_file() {
+                                if Some(name) = e.name_str() {
+                                    match read_text(data_dir.join(name)) {
+                                        Err(_) => {}
+                                        Ok(text) => {
+                                            files += 1
+                                            for line in text.lines() {
+                                                if Some(parsed) = split_corpus_line(line) {
+                                                    ro (expected, literal) = parsed
+                                                    match literal.to_f64_native() {
+                                                        Ok(v) => {
+                                                            if v.to_bits() == expected {
+                                                                ok += 1
+                                                            } else {
+                                                                mismatch += 1
+                                                                if first_bad.is_empty() { first_bad = "${name}: ${line} -> got ${v.to_bits()}" }
+                                                            }
+                                                        }
+                                                        Err(TooLarge) => {
+                                                            if expected == F64_POS_INF_BITS { ok += 1 } else {
+                                                                mismatch += 1
+                                                                if first_bad.is_empty() { first_bad = "${name}: ${line} -> TooLarge" }
+                                                            }
+                                                        }
+                                                        Err(TooSmall) => {
+                                                            if expected == F64_NEG_INF_BITS { ok += 1 } else {
+                                                                mismatch += 1
+                                                                if first_bad.is_empty() { first_bad = "${name}: ${line} -> TooSmall" }
+                                                            }
+                                                        }
+                                                        Err(_) => { skipped += 1 }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // The counts travel in the assertion text (tests here do not print); the
+                        // plan's status line records them from the acceptance run.
+                        assert(mismatch == 0, "283 corpus: files=${files} ok=${ok} mismatch=${mismatch} skipped=${skipped}; first: ${first_bad}")
+                        assert(files == 0 || ok > 0, "283 corpus: ${files} files read but nothing judged")
+                    }
+                }
+            }
+        }
+    }
+}
