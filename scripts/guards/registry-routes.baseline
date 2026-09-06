@@ -316,7 +316,25 @@ no_caveat=26
 # 2026-08-21, No.740 -- 50 -> 49. NOT a closure: the ratchet was set one too
 #   high on the day it was written. Measured with the guard's own core against
 #   the registry AS OF THAT COMMIT -- `registry-routes-scan.py` printed
-#   blockers=49 there, and prints 49 today; the 50 was a hand count that no
+#   #
+# 2026-09-06: 49 -> 51. РОСТ, и он законный, но это НЕ новые дефекты — это
+# счёт, который занижал расстояние до тега. №238 и №239 (два дефекта кодогена)
+# лежали ОТКРЫТЫМИ без поля «блокирует тег» вообще: строки старые и тонкие,
+# по 203 и 280 символов, с маршрутом «нет плана».
+#
+# Между тем именно они держат graceful shutdown в polaris, то есть пункт
+# релиза A-V9, а он блокер тега словом владельца 2026-07-30. Вывод сделан ИЗ
+# УЖЕ ПРИНЯТОГО решения, а не принят заново: если A-V9 не закрыть до тега, а
+# A-V9 не закрывается без этих двух, — они блокируют по построению.
+#
+# Источник — не пересказ: баннер `nova-polaris/src/net/serve.nv:431+`, где
+# попытка 2026-08-01 описана вместе с МИНИМАЛЬНЫМИ пробами на одной std.
+# Обе пробы перенесены в строки, чтобы чинящему не пришлось идти в пакет.
+#
+# Что это говорит о самой мере: число «открытых блокеров» верно ровно
+# настолько, насколько верна разметка строк, а разметку ставит человек. Две
+# строки без поля молчали месяц и вычитались из расстояния до тега.
+blockers=51 there, and prints 49 today; the 50 was a hand count that no
 #   scanner ever produced. A baseline nobody re-measures is a number that
 #   drifts from the thing it guards, which is the failure this file exists to
 #   record rather than repeat.
