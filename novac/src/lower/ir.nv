@@ -34,12 +34,29 @@ export type BlockId int
 /// The index behind a `BlockId` -- for the printer and for tests.
 export fn raw_block(b BlockId) -> int => b as int
 
-/// What a local is: its interned type, and its source name when it has one.
-/// A temporary carries the empty string; the printer names it by index.
+/// What ROLE a local plays -- the printer spells each differently: the return
+/// place is `return <v>;`, a binding is declared where it is first assigned
+/// (`T name = <v>;`), a temporary is declared by whoever created it and only
+/// assigned here (`name = <v>;`).
+export type LocalKind enum
+    | Return // local 0, the value the body returns (rustc `_0`)
+    | Binding // a source binding: declared at its first assignment
+    | Temp // a temporary of the lowering: declared by its creator
+
+/// What a local is: its type, its role, and its name. A binding's name is the
+/// source name; a temporary's name is the label its creator chose (wave M1
+/// keeps the emitter's legacy spellings such as `_novac_if_t7` so the C stays
+/// byte-identical; M2 makes the printer name temporaries by index and the
+/// label goes).
 export type LocalDecl value {
     ty TyId /// the local's type, as the checker's channel recorded it
-    name str /// the binding's source name; "" for a temporary
+    kind LocalKind /// return place, binding or temporary -- see LocalKind
+    name str /// the binding's source name, or the temporary's label; "" = unnamed
 }
+
+/// The local that is not one: the statement-position match hands it to arms
+/// that assign nothing (the same shape as `no_ty()` and `no_node()`).
+export fn no_local() -> Local => Local(-1)
 
 /// An operand: a read of a local, or -- until wave M2 -- a tree expression the
 /// emitter still prints by itself. `Tree` is the bridge the waves of 274.8
@@ -94,29 +111,53 @@ export type FnBuilder {
 /// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`).
 export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut locals = []LocalDecl.new()
-    locals.push(LocalDecl { ty: ret_ty, name: "" })
+    locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "" })
     FnBuilder { locals, blocks: []Block.new(), cur: []Stmt.new() }
 }
 
 /// The return place of the body under construction.
 export fn FnBuilder @ret_place() -> Local => Local(0)
 
-/// A fresh temporary of type `ty`.
-export fn FnBuilder mut @temp(ty TyId) -> Local => @local(ty, "")
+/// A fresh temporary of type `ty`. `label` is the spelling its creator wants
+/// the printer to use ("" = unnamed, spelled by index) -- see LocalDecl.
+export fn FnBuilder mut @temp(ty TyId, label str) -> Local => @local(ty, LocalKind.Temp, label)
 
 /// A local for the source binding `name` of type `ty`.
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {
     if name.bytes().len() == 0 {
         ice("lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
-    @local(ty, name)
+    @local(ty, LocalKind.Binding, name)
 }
 
 /// Appends a local and returns its index -- the one place locals are created.
-fn FnBuilder mut @local(ty TyId, name str) -> Local {
+fn FnBuilder mut @local(ty TyId, kind LocalKind, name str) -> Local {
     ro id = Local(@locals.len())
-    @locals.push(LocalDecl { ty, name })
+    @locals.push(LocalDecl { ty, kind, name })
     id
+}
+
+/// The declaration behind a local; an index the body never created is a
+/// compiler bug, named as such.
+export fn FnBuilder @decl_of(l Local) -> LocalDecl {
+    ro i = raw_local(l)
+    if i < 0 || i >= @locals.len() {
+        ice("lower: asking the declaration of a local the body never created")
+    }
+    @locals[i]
+}
+
+/// The assignment `place` recorded last -- the streaming bridge of wave M1:
+/// the emitter prints each statement as it is lowered, until M2 prints sealed
+/// blocks. Asking with nothing placed, or after an evaluation, is a bug.
+export fn FnBuilder @last_assign() -> AssignStmt {
+    if @cur.len() == 0 {
+        ice("lower: last_assign asked before any statement was placed")
+    }
+    match @cur[@cur.len() - 1] {
+        Assign(a) => a
+        Eval(_) => ice("lower: the statement placed last is an evaluation, not an assignment")
+    }
 }
 
 /// Reserves the next block id. The block stays empty and `Unreached` until

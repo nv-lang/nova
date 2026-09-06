@@ -28,6 +28,18 @@ import ../types.{TyId}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 
+/// An initializer that is not a construction lands in a fresh binding of the
+/// pair's type through the one door (274.8 M1); its name is what the unpacking
+/// reads. The value's constructions were already hoisted by `build_value`, so
+/// the line is printed with nothing left to build.
+fn Emitter mut @bind_pair_temp(init Node, pt TyId) -> str {
+    ro u = "_novac_tmp_t${@fresh_uniq()}"
+    ro l = @ir.named(pt, u)
+    @ir.place(init, l)
+    @emit_assign_built(@ir.decl_of(l), None, init)
+    u
+}
+
 /// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
 /// name becomes a plain C local read out of it.
 ///
@@ -44,19 +56,11 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
     ro kids = branch_children(st)
     ro init = kids[kids.len() - 1]
     ro pt = @out.type_of(init.id_of())
-    ro tmp = match init.kind_of() {
-        TupleExpr => @emit_record_ctor(init, pt, true)
-        // Any other initializer is an ordinary expression of the pair's
-        // type (a call, a name): it prints into its own temporary.
-        _ => {
-            @hoist_array_lits(init)
-            ro u = "_novac_tmp_t${@fresh_uniq()}"
-            @body.append("    ${c_type(@ctx, pt)} ${u} = ")
-            @emit_expr(init)
-            @body.append(";\n")
-            u
-        }
-    }
+    // The value's form is the printer's ONE dispatch (274.8 M1, emit_place.nv):
+    // a construction builds into a temporary of its own and that temporary IS
+    // the source; any other initializer lands in a fresh binding of the pair's
+    // type through the one door -- and only then, `??` short-circuits (D86).
+    ro tmp = @build_value(init, pt) ?? @bind_pair_temp(init, pt)
     ro by_name = brace_pattern(kids)
     ro reach = if is_value_record(@ctx, pt) { "." } else { "->" }
     mut i = 0

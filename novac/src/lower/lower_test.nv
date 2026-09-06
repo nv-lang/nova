@@ -23,9 +23,11 @@ test "a body starts with its return place as local 0 (rustc _0) and one sealed b
 
 test "the placement door records dest = Expr(e) in the block sealed next" {
     mut b = FnBuilder.new(TyId(3))
-    ro t = b.temp(TyId(3))
+    ro t = b.temp(TyId(3), "")
     ro blk = b.reserve()
     b.place(stand_in_expr(), t)
+    ro last = b.last_assign()
+    assert(last.dest == t)
     b.seal(blk, Terminator.Return)
     ro f = b.finish()
     assert(f.locals.len() == 2)
@@ -58,11 +60,32 @@ test "blocks are reserved before they are sealed, so a Goto names a block filled
 test "a named local keeps its source name; a temporary carries the empty name" {
     mut b = FnBuilder.new(TyId(3))
     ro n = b.named(TyId(5), "count")
-    ro t = b.temp(TyId(5))
+    ro t = b.temp(TyId(5), "_novac_if_t9")
     ro blk = b.reserve()
     b.seal(blk, Terminator.Return)
     ro f = b.finish()
     assert(f.locals[raw_local(n)].name == "count")
-    assert(f.locals[raw_local(t)].name == "")
+    assert(f.locals[raw_local(t)].name == "_novac_if_t9")
     assert(f.locals[raw_local(n)].ty == TyId(5))
+}
+
+test "each local carries its role: the return place, a binding, a temporary" {
+    mut b = FnBuilder.new(TyId(3))
+    ro n = b.named(TyId(5), "count")
+    ro t = b.temp(TyId(5), "")
+    match b.decl_of(b.ret_place()).kind {
+        Return => { } // the expected role of local 0
+        Binding => assert(false)
+        Temp => assert(false)
+    }
+    match b.decl_of(n).kind {
+        Binding => { } // the expected role of a named local
+        Return => assert(false)
+        Temp => assert(false)
+    }
+    match b.decl_of(t).kind {
+        Temp => { } // the expected role of a temporary
+        Return => assert(false)
+        Binding => assert(false)
+    }
 }

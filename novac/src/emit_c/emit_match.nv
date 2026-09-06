@@ -23,6 +23,7 @@ import ../sem.{disj_head_slots, pattern_has_disj}
 import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, variant_in_sum}
 import ../builtins.{bool_c_literal}
 import ../types.{TyId}
+import ../lower.{Local, no_local}
 
 /// the tag and unpacks payload fields in order. uniq must be unique per
 /// function body: the binding name or the fn name.
@@ -48,9 +49,12 @@ fn Emitter mut @emit_match(m Node, uniq int, res_t TyId) -> () {
     @body.append(c_type(@ctx, res_t))
     @body.append("){0};\n")
     @body.append("    int _novac_matched_t${uniq} = 0;\n")
+    // The result temporary is a LOCAL of the lowered body (274.8 M1): declared
+    // just above by this printer, assigned in each arm through the one door.
+    ro t = @ir.temp(res_t, "_novac_match_t${uniq}")
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
-        @emit_arm(c, uniq, scr_t)
+        @emit_arm(c, uniq, scr_t, t)
     }
 }
 
@@ -58,11 +62,11 @@ fn Emitter mut @emit_match(m Node, uniq int, res_t TyId) -> () {
 /// run for effect in statement position (274.5 wave B5). A statement arm's
 /// body may be a block (`{}` included) or a single statement, and both go
 /// through the doors that already print those shapes.
-fn Emitter mut @emit_arm_value(arm_e Node, uniq int, as_stmt bool) -> () {
+fn Emitter mut @emit_arm_value(arm_e Node, t Local, as_stmt bool) -> () {
     if !as_stmt {
-        @body.append("        _novac_match_t${uniq} = ")
-        @emit_expr(arm_e)
-        @body.append(";\n")
+        // The arm's value lands in the match temporary through the one door
+        // (274.8 M1); `t` is the local `emit_match` declared for it.
+        @lower_place(arm_e, t)
         return
     } else {
         // Statement position: the body runs, and nothing holds its answer.
@@ -93,7 +97,7 @@ fn Emitter mut @emit_match_stmt(m Node, uniq int) -> () {
     @body.append("    int _novac_matched_t${uniq} = 0;\n")
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
-        @emit_arm(c, uniq, scr_t, as_stmt: true)
+        @emit_arm(c, uniq, scr_t, no_local(), as_stmt: true)
     }
 }
 
@@ -111,7 +115,7 @@ fn Emitter mut @emit_tag_test(uniq int, vrow VariantRow, scr_t TyId) -> () {
 /// arm runs its body for effect instead of assigning it to a result temporary.
 /// One door with a parameter rather than two copies -- the pattern walk below
 /// is sixty lines, and a second copy of it would drift on the first fix.
-fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, as_stmt bool = false) -> () {
+fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, t Local, as_stmt bool = false) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
@@ -206,10 +210,10 @@ fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, as_stmt bool = false) -
             @emit_expr(branch_children(g)[1])
             @body.append(") {\n")
         }
-        @emit_arm_value(arm_e, uniq, as_stmt)
+        @emit_arm_value(arm_e, t, as_stmt)
         @body.append("            _novac_matched_t${uniq} = 1;\n        }\n")
     } else {
-        @emit_arm_value(arm_e, uniq, as_stmt)
+        @emit_arm_value(arm_e, t, as_stmt)
         @body.append("        _novac_matched_t${uniq} = 1;\n")
     }
     @body.append("    }\n")
