@@ -1,0 +1,53 @@
+// string_literals.nv — how strings are WRITTEN in Nova (D467).
+//
+// Its neighbour `strings.nv` shows what you can DO with a string — byte_len,
+// to_ascii_upper, starts_with. This file shows the literal forms themselves,
+// which until now no example covered at all: a reader learning Nova from
+// examples had no way to discover that multi-line strings exist.
+//
+// It doubles as the sample for the eyes-only acceptance of plan 277 Ph.6:
+// open it in an editor and every form the phase touched is on one screen.
+module basics.string_literals
+
+// A tag for a tagged backtick literal: the name in front of the backticks is
+// an ORDINARY function, called with the literal's pieces and its `${}` values.
+fn tag(parts []str, args []str) -> str {
+    consume sb = StringBuilder.new()
+    for p in parts {
+        sb.append(p)
+    }
+    sb
+}
+
+fn main() {
+    ro name = "Nova"
+
+    // 1. A double-quoted string, with `${}` substituting a value.
+    println("hello ${name}")
+
+    // 2. A long line can be broken with a trailing backslash. The line break
+    //    is NOT part of the value — the two pieces are simply joined.
+    println("one long line, written \
+across two source lines")
+
+    // 3. Genuinely multi-line text goes in backticks, and there the line
+    //    breaks ARE part of the value.
+    println(`first
+second
+third`)
+
+    // 4. Backticks can carry a TAG — the function above receives the pieces.
+    println(tag`a tagged literal`)
+
+    // 5. A lone `$` not followed by `{` is ordinary text, in both forms.
+    println("cost: $ and more")
+    println(`shell: $HOME plain`)
+
+    // 6. Inside backticks a backslash is TEXT, not the start of an escape,
+    //    so a Windows path needs no doubling.
+    println(`C:\new\table`)
+
+    // 7. Backticks have exactly three escapes: the backtick itself, the
+    //    backslash, and `$` — the last one to suppress a substitution.
+    println(`tick \` slash \\ dollar \${name}`)
+}
