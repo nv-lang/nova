@@ -191,7 +191,8 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
 /// the receiver AND the return are already known to the registry —
 /// otherwise the method does not enter the subset and gets an
 /// honest rejection at the point of use.
-fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, mut tys Interner, mut fns FnTable) -> () {
+fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, mut tys Interner,
+              mut fns FnTable) -> () {
     mut recv_name = ""
     mut recv_kids = []Node.new()
     mut recv_at = -1
