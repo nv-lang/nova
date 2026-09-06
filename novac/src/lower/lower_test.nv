@@ -5,7 +5,7 @@
 // files: a stand-in tree node is enough, the form does not look inside it.
 
 module novac.lower
-import ../tree.{Node, NodeKind, NodeId, branch}
+import ../tree.{Node, NodeKind, NodeId, AssignOp, branch}
 import ../types.{TyId}
 
 fn stand_in_expr() -> Node => branch(NodeId(0), NodeKind.Lit, []Node.new())
@@ -26,8 +26,11 @@ test "the placement door records dest = Expr(e) in the block sealed next" {
     ro t = b.temp(TyId(3), "")
     ro blk = b.reserve()
     b.place(stand_in_expr(), t)
-    ro last = b.last_assign()
-    assert(last.dest == t)
+    match b.last_stmt() {
+        Assign(a) => assert(a.dest == t)
+        Eval(_) => assert(false)
+        Store(_) => assert(false)
+    }
     b.seal(blk, Terminator.Return)
     ro f = b.finish()
     assert(f.locals.len() == 2)
@@ -36,7 +39,26 @@ test "the placement door records dest = Expr(e) in the block sealed next" {
     match f.blocks[0].stmts[0] {
         Assign(a) => assert(a.dest == t)
         Eval(_) => assert(false)
+        Store(_) => assert(false)
     }
+}
+
+test "a store keeps the tree's target and operator; an evaluation keeps only the expression" {
+    mut b = FnBuilder.new(TyId(3))
+    ro blk = b.reserve()
+    b.store(stand_in_expr(), AssignOp.Set, stand_in_expr())
+    match b.last_stmt() {
+        Store(st) => match st.op {
+            Set => { } // the operator recorded is the one handed in
+            Update(_) => assert(false)
+        }
+        Assign(_) => assert(false)
+        Eval(_) => assert(false)
+    }
+    b.eval(stand_in_expr())
+    b.seal(blk, Terminator.Return)
+    ro f = b.finish()
+    assert(f.blocks[0].stmts.len() == 2)
 }
 
 test "blocks are reserved before they are sealed, so a Goto names a block filled later" {

@@ -17,7 +17,7 @@
 
 module novac.lower
 
-import ../tree.{Node}
+import ../tree.{Node, AssignOp}
 import ../types.{TyId}
 import ../diag.{ice}
 
@@ -75,8 +75,23 @@ export type AssignStmt value {
     src Rvalue /// what is computed
 }
 
-/// A statement: an assignment, or an expression evaluated for its effects.
-export type Stmt enum Assign(AssignStmt) | Eval(Rvalue)
+/// A store into a place the TREE still names -- `target = src` or
+/// `target op= src` (wave M2a). The target stays a tree node (a name, a
+/// `@field`) until M3 lowers places; the operator is the tree's own: a compound
+/// store IS its binary operator plus a store, and the printer spells it from
+/// the one form table.
+export type StoreStmt value {
+    target Node /// the place written, as the source spelled it
+    op AssignOp /// `Set`, or `Update(op)` for a compound store
+    src Node /// the value stored (the M1 bridge: printed from the tree until M3)
+}
+
+/// A statement: an assignment into a local, an expression evaluated for its
+/// effects, or a store into a place the tree names.
+export type Stmt enum
+    | Assign(AssignStmt) // `local = value` -- through the placement door
+    | Eval(Rvalue) // an expression in statement position, value dropped
+    | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
 
 /// How a block ends. `Unreached` is the state of a block that was reserved
 /// but not yet sealed; `finish` refuses a body that still carries one.
@@ -147,17 +162,14 @@ export fn FnBuilder @decl_of(l Local) -> LocalDecl {
     @locals[i]
 }
 
-/// The assignment `place` recorded last -- the streaming bridge of wave M1:
-/// the emitter prints each statement as it is lowered, until M2 prints sealed
-/// blocks. Asking with nothing placed, or after an evaluation, is a bug.
-export fn FnBuilder @last_assign() -> AssignStmt {
+/// The statement recorded last -- the streaming bridge of waves M1/M2a: the
+/// emitter prints each statement as it is lowered, until M2b prints sealed
+/// blocks. Asking with nothing recorded is a bug.
+export fn FnBuilder @last_stmt() -> Stmt {
     if @cur.len() == 0 {
-        ice("lower: last_assign asked before any statement was placed")
+        ice("lower: last_stmt asked before any statement was recorded")
     }
-    match @cur[@cur.len() - 1] {
-        Assign(a) => a
-        Eval(_) => ice("lower: the statement placed last is an evaluation, not an assignment")
-    }
+    @cur[@cur.len() - 1]
 }
 
 /// Reserves the next block id. The block stays empty and `Unreached` until
@@ -180,6 +192,12 @@ export fn FnBuilder mut @place(e Node, dest Local) -> () {
 /// A statement expression: evaluated, its value dropped.
 export fn FnBuilder mut @eval(e Node) -> () {
     @cur.push(Stmt.Eval(Rvalue.Expr(e)))
+}
+
+/// A store into a place the tree names: `target = src`, or `target op= src`
+/// when `op` is `Update`.
+export fn FnBuilder mut @store(target Node, op AssignOp, src Node) -> () {
+    @cur.push(Stmt.Store(StoreStmt { target, op, src }))
 }
 
 /// Seals block `b` with the statements accumulated since the last seal and

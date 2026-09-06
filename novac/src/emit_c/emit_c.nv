@@ -79,6 +79,7 @@ import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
 import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 import ../types.{no_ty}
+import ../sem.{is_value_tail_kind}
 import ../lower.{FnBuilder, Local}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
@@ -546,7 +547,9 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         // is the shape this compiler keeps refusing elsewhere.
         @emit_match_stmt(st, @fresh_uniq())
     } else if k == NodeKind.Call {
-        @emit_call_stmt(st)
+        // A call in statement position is an EVALUATION of the lowered body
+        // (274.8 M2a); its printer keeps the arguments and their hoists.
+        @lower_eval(st)
     } else if k == NodeKind.IfStmt {
         ro kids = branch_children(st)
         @body.append("    if (")
@@ -601,62 +604,12 @@ fn Emitter mut @emit_stmt(st Node) -> () {
     } else if k == NodeKind.BindStmt {
         @emit_bind(st)
     } else if k == NodeKind.AssignStmt {
+        // A store into a place the tree names (274.8 M2a): the target, the
+        // operator and the value are recorded, the one printer spells them --
+        // a compound store from the one form table, the target as an
+        // expression (a name and `@field` on one path).
         ro kids = branch_children(st)
-        @body.append("    ")
-        // THE TARGET IS WRITTEN THE WAY IT IS READ. `expr_leaf_name` answers a
-        // NAME, and `@n` is not one -- it emitted the bare receiver mark, so
-        // `@n = @n + 1` became `@ = ...` and clang said "expected expression"
-        // (measured 2026-08-23, wave 3g write path). Emitting the target as an
-        // EXPRESSION covers a plain name and `@field` with one path, so the two
-        // sides of an assignment cannot drift apart again.
-        @emit_expr(kids[0])
-        @body.append(" = ")
-        // A compound assignment IS its binary operator plus a store, so it
-        // reuses the ONE form table rather than repeating it (`a += b` is
-        // `a = a + b`, which is also how the protocol path will read on user
-        // types: `a = a.@plus(b)`, D46).
-        match assign_op_of(leaf_kind(kids[1])) {
-            Set => @emit_expr(kids[2])
-            Update(op) => {
-                // The operand TYPE decides the form, and it is READ from the
-                // channel -- assuming int here is what made `f += 0.25` emit
-                // an integer helper on doubles.
-                //
-                // THE CARRIER OF THE TARGET, on two measurements (hunt
-                // emit_c x K1, H5). Declared type: `a += Meters(2.25)` read
-                // Meters, not f64, and the int helper came back -- 3 instead
-                // of 3.75, silently. Right operand: its type is not always in
-                // the channel (a constructor argument recorded no entry), and
-                // an absent type is not f64 either -- same wrong form by a
-                // different road. The TARGET is a binding; the walk recorded
-                // its type when it bound the name, and its carrier is what the
-                // arithmetic runs in. A newtype computes as what it holds.
-                ro row = @arith_row(@out.type_of(kids[2].id_of()))
-                ro is_float = is_float_row(row)
-                ro form = c_binary_form(op, row)
-                // The target appears on the RIGHT of a compound assignment
-                // too (`a += b` is `a = a + b`), and it is written the same
-                // way there: as an EXPRESSION, so `@n += 1` works for the same
-                // reason `@n = @n + 1` does.
-                if !is_call_form(op, is_float) {
-                    @body.append("((")
-                    @emit_expr(kids[0])
-                    @body.append(") ")
-                    @body.append(form)
-                    @body.append(" (")
-                    @emit_expr(kids[2])
-                    @body.append("))")
-                } else {
-                    @body.append(form)
-                    @body.append("(")
-                    @emit_expr(kids[0])
-                    @body.append(", ")
-                    @emit_expr(kids[2])
-                    @body.append(")")
-                }
-            }
-        }
-        @body.append(";\n")
+        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), kids[2])
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         ro v = leaf_text(kids[1])
@@ -677,20 +630,11 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append("; ${v}++) {\n")
         @emit_block_stmts_fn(kids[4], false)
         @body.append("    }\n")
-    } else if is_expr_kind(k) {
-        @body.append("    (void)(")
-        @emit_expr(st)
-        @body.append(");\n")
-    } else if k == NodeKind.TupleExpr {
-        // A tuple in STATEMENT position: the oracle accepts it and discards
-        // the value, the component effects run in written order -- so the
-        // build IS the emission and the temporary is simply not read (B15
-        // step 4a; found by the tail probe, where check passed the form and
-        // this door iced).
-        ro dropped = @emit_record_ctor(st, @out.type_of(st.id_of()), true)
-        @body.append("    (void)")
-        @body.append(dropped)
-        @body.append(";\n")
+    } else if is_value_tail_kind(k) {
+        // An expression in statement position -- a positional record
+        // included -- is an EVALUATION of the lowered body (274.8 M2a): built
+        // where it needs building, dropped, the effects in written order.
+        @lower_eval(st)
     } else if k == NodeKind.DestructureBind {
         @emit_destructure_bind(st)
     } else if k == NodeKind.IfLet {
