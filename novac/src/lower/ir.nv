@@ -66,8 +66,13 @@ export type Operand enum Place(Local) | Tree(Node)
 
 /// The right side of an assignment: `Use` reads an operand; `Expr` is the same
 /// bridge as `Operand.Tree` for a whole value expression -- the one shape every
-/// value position of the language lowers to at M1.
-export type Rvalue enum Use(Operand) | Expr(Node)
+/// value position of the language lowers to at M1; `SomePayload` reads the
+/// value inside the Option a local holds -- the binder of an `if let` (wave
+/// M2b-1b), the first rvalue that is not a tree.
+export type Rvalue enum
+    | Use(Operand) // a read of an operand
+    | Expr(Node) // a tree expression, printed by the emitter (the M1 bridge)
+    | SomePayload(Local) // the payload of the Some the local holds (if-let binder)
 
 /// `dest = src` -- the ONE way a value reaches a place in the lowered body.
 export type AssignStmt value {
@@ -93,13 +98,21 @@ export type Stmt enum
     | Eval(Rvalue) // an expression in statement position, value dropped
     | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
 
+/// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
+/// it (the M1 bridge until M3), or "the Option held by this local carries a
+/// value" -- the test an `if let` runs, which the printer spells through the
+/// one Option door (`option_some_test`) from the local's type and name.
+export type Cond enum
+    | Expr(Node) // a boolean expression, printed from the tree
+    | IsSome(Local) // the Option in the local is Some
+
 /// The blocks of one `if` (wave M2b-1): the branch entered on a true
 /// condition, the branch entered otherwise -- the join itself when the source
 /// wrote no `else` -- and the block both branches reach. An `else if` chain is
 /// an `els` block with no statements whose own terminator is another `If`
 /// with the SAME join (see `begin_else_if`).
 export type IfTerm value {
-    cond Node /// the condition, as the tree spells it (the M1 bridge until M3)
+    cond Cond /// what the branch tests -- see Cond
     then BlockId /// entered when `cond` holds
     els BlockId /// entered otherwise; equals `join` when there is no else
     join BlockId /// where both branches continue
@@ -255,6 +268,13 @@ export fn FnBuilder mut @place(e Node, dest Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Expr(e) }))
 }
 
+/// The binder of an `if let` (wave M2b-1b): `dest = payload of opt`, recorded
+/// in the current block -- the then-branch the Some-test just opened, where
+/// the read is safe by construction.
+export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.SomePayload(opt) }))
+}
+
 /// A statement expression: evaluated, its value dropped.
 export fn FnBuilder mut @eval(e Node) -> () {
     @cur.push(Stmt.Eval(Rvalue.Expr(e)))
@@ -296,7 +316,7 @@ fn FnBuilder mut @close(term Terminator, next BlockId) -> () {
 /// `If`, and what is placed next belongs to the `then` branch. `has_else`
 /// decides whether the else branch is a block of its own or the join itself
 /// -- the source knows, the builder does not guess.
-export fn FnBuilder mut @begin_if(cond Node, has_else bool) -> IfCtx {
+export fn FnBuilder mut @begin_if(cond Cond, has_else bool) -> IfCtx {
     ro join = @reserve()
     @begin_chained_if(cond, has_else, join)
 }
@@ -306,7 +326,7 @@ export fn FnBuilder mut @begin_if(cond Node, has_else bool) -> IfCtx {
 /// comes here; `begin_else_if` comes here with the outer join, so a chain
 /// shares one. The emitter calls it directly when it has to print the
 /// condition after `begin_else` and before the branch opens.
-export fn FnBuilder mut @begin_chained_if(cond Node, has_else bool, join BlockId) -> IfCtx {
+export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId) -> IfCtx {
     ro then = @reserve()
     ro els = if has_else { @reserve() } else { join }
     @close(Terminator.If(IfTerm { cond, then, els, join }), then)
@@ -327,7 +347,7 @@ export fn FnBuilder mut @begin_else(c IfCtx) -> () {
 /// terminator is a second `If` sharing the outer join. Hands back the inner
 /// context; its `end_if` closes onto the shared join, after which the outer
 /// `end_if` finds the join current and has nothing to seal.
-export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Node, has_else bool) -> IfCtx {
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool) -> IfCtx {
     @begin_else(outer)
     @begin_chained_if(cond, has_else, outer.join)
 }

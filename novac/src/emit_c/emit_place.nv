@@ -55,39 +55,53 @@ fn Emitter mut @emit_last_stmt() -> () {
 }
 
 /// The tree expression behind an rvalue -- the M1 bridge; an operand rvalue
-/// does not exist before M2 lowers one.
+/// does not exist before M2 lowers one, and a payload read is printed by the
+/// assignment printer alone (it is never evaluated for effect).
 fn Emitter @expr_of(rv Rvalue) -> Node {
     match rv {
         Expr(n) => n
         Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
+        SomePayload(_) => ice("emit_c: a payload read reached expr_of -- only an assignment prints it")
     }
 }
 
-/// Prints one assignment of the lowered body: the value's form is built by
-/// `build_value` (the ONE dispatch), the line is spelled by the local's role.
+/// Prints one assignment of the lowered body: a tree value is built by
+/// `build_value` (the ONE dispatch on the form of a value) and printed
+/// inline or by the temporary it was built into; a payload read (wave
+/// M2b-1b, the if-let binder) is the local's `.value` -- the shell's Option
+/// ABI, INTEROP named in emit_option.nv. The line itself is spelled by the
+/// local's role (`emit_assign_head`).
 fn Emitter mut @emit_assign(a AssignStmt) -> () {
     ro d = @ir.decl_of(a.dest)
-    ro e = @expr_of(a.src)
-    ro built = @build_value(e, d.ty)
-    @emit_assign_built(d, built, e)
+    match a.src {
+        Expr(e) => {
+            // Built FIRST: a construction lays its statements down before the
+            // line that reads the temporary.
+            ro built = @build_value(e, d.ty)
+            @emit_assign_head(d)
+            match built {
+                Some(t) => @body.append(t)
+                None => @emit_expr(e)
+            }
+            @body.append(";\n")
+        }
+        SomePayload(opt) => {
+            @emit_assign_head(d)
+            @body.append("${@ir.decl_of(opt).name}.value;\n")
+        }
+        Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
+    }
 }
 
-/// The line itself: `return <v>;` for the return place, `T name = <v>;` for a
-/// binding (declared where it is first assigned), `name = <v>;` for a
-/// temporary its creator declared. `built` is the temporary a construction
-/// was built into -- then that name is the value; `None` means the
-/// expression prints inline.
-fn Emitter mut @emit_assign_built(d LocalDecl, built Option[str], e Node) -> () {
+/// The head of the line: `return ` for the return place, `T name = ` for a
+/// binding (declared where it is first assigned), `        name = ` for a
+/// temporary its creator declared.
+fn Emitter mut @emit_assign_head(d LocalDecl) -> () {
     match d.kind {
         Return => @body.append("    return ")
         Binding => @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = ")
         Temp => @body.append("        ${d.name} = ")
     }
-    match built {
-        Some(t) => @body.append(t)
-        None => @emit_expr(e)
-    }
-    @body.append(";\n")
 }
 
 /// An expression in STATEMENT position: a call keeps its own printer (the

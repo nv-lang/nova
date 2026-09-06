@@ -30,7 +30,7 @@ module novac.emit_c
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../sem.{branch_children, leaf_text}
-import ../lower.{IfCtx, LoopHead, RangeHead}
+import ../lower.{IfCtx, LoopHead, RangeHead, Cond}
 
 /// One `if` statement with its `else` / `else if` chain. `outer` is the
 /// enclosing `if` when this one IS its else branch: then the else branch is
@@ -46,8 +46,8 @@ fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     @emit_expr(kids[1])
     @body.append(") {\n")
     ro c = match outer {
-        None => @ir.begin_if(kids[1], has_else)
-        Some(o) => @ir.begin_chained_if(kids[1], has_else, o.join)
+        None => @ir.begin_if(Cond.Expr(kids[1]), has_else)
+        Some(o) => @ir.begin_chained_if(Cond.Expr(kids[1]), has_else, o.join)
     }
     @emit_block_stmts_fn(kids[2], false)
     @body.append("    }\n")
@@ -57,24 +57,86 @@ fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
         // been worse than not reading it -- the branch would vanish from the
         // C in silence, which is the class this compiler keeps finding in
         // others.
-        @body.append("    else ")
-        ro tail = kids[4]
-        ro tk = tail.kind_of()
-        // Two shapes are legal after `else` and BOTH are named: a block, and
-        // a nested if for the `else if` chain. Anything else is an invariant
-        // break, and it says so -- an `else` standing for "every other node
-        // kind" is what P21 refuses, because the next kind added to the tree
-        // would quietly land in it.
-        if tk == NodeKind.Block {
-            @ir.begin_else(c)
-            @body.append("{\n")
-            @emit_block_stmts_fn(tail, false)
-            @body.append("    }\n")
-        } else if tk == NodeKind.IfStmt {
-            @lower_if(tail, Some(c))
-        } else {
-            ice("emit: the else branch is neither a block nor an else-if")
-        }
+        @lower_else_tail(c, kids[4])
+    } else {
+        // No else branch was written: the else block IS the join.
+    }
+    @ir.end_if(c)
+}
+
+/// What follows `else` -- ONE door for the `if` and the `if let` (until
+/// M2b-1b each printed its own copy of this and the two had drifted: the `if`
+/// iced on an `else if let` tail the `if let` accepted). Three shapes are
+/// legal and ALL are named: a block, a chained `if`, a chained `if let`.
+/// Anything else is an invariant break, and it says so -- an `else` standing
+/// for "every other node kind" is what P21 refuses, because the next kind
+/// added to the tree would quietly land in it.
+fn Emitter mut @lower_else_tail(c IfCtx, tail Node) -> () {
+    @body.append("    else ")
+    ro tk = tail.kind_of()
+    if tk == NodeKind.Block {
+        @ir.begin_else(c)
+        @body.append("{\n")
+        @emit_block_stmts_fn(tail, false)
+        @body.append("    }\n")
+    } else if tk == NodeKind.IfStmt {
+        @lower_if(tail, Some(c))
+    } else if tk == NodeKind.IfLet {
+        // C has no `else <declaration>`: the chained if-let's FIRST line is
+        // the declaration of its Option temporary, and printed bare after
+        // `else` it is not a statement -- clang refuses the unit. Found by
+        // the M2b-1b probe (2026-09-06): the two copies of this tail had
+        // accepted the form and printed it unbraced since the else branch
+        // was added, and no corpus file carried it (registry #991: one
+        // concept, two implementations, the copy not knowing a fact the
+        // original knew). The braces give the temporary a block of its own;
+        // the IR already had that block -- the outer else.
+        @body.append("{\n")
+        @lower_if_let(tail, Some(c))
+        @body.append("    }\n")
+    } else {
+        ice("emit: the else branch is neither a block nor a chained if / if-let")
+    }
+}
+
+/// One `if Some(v) = expr { ... }` (wave M2b-1b, from emit_iflet.nv): the
+/// Option lands in its own binding through the placement door, the branch
+/// tests `IsSome` of that local, and the binder is a binding local assigned
+/// the payload -- three IR statements where the printer used to spell three
+/// lines by hand. The C is the same: `T tmp = <init>;`, the Some-test
+/// through the ONE Option door (emit_option.nv, wave W4), `P v = tmp.value;`.
+/// INTEROP, named as such: `.tag`/`.value` are the shell's Option ABI
+/// (`NovaOpt_X{.tag,.value}`, read off shell.tpl.c); goes the day novac emits
+/// the whole prelude.
+fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[6]
+    ro ot = @out.type_of(init.id_of())
+    ro payload = @ctx.tys.arg(ot, 0)
+    ro has_else = kids.len() > 9
+    // The else branch is opened FIRST when this if-let is one: the temporary
+    // and the test belong to that branch's block, not to the branch before.
+    match outer {
+        None => {}
+        Some(o) => @ir.begin_else(o)
+    }
+    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
+    ro lo = @ir.named(ot, tmp)
+    @lower_place(init, lo)
+    @body.append("    if (${@option_some_test(ot, tmp)}) {\n")
+    ro c = match outer {
+        None => @ir.begin_if(Cond.IsSome(lo), has_else)
+        Some(o) => @ir.begin_chained_if(Cond.IsSome(lo), has_else, o.join)
+    }
+    // The binder: the checker bound it to the payload type, this door spells
+    // what was decided.
+    ro bv = @ir.named(payload, leaf_text(kids[3]))
+    @ir.take_payload(bv, lo)
+    @emit_last_stmt()
+    @emit_block_stmts_fn(kids[7], false)
+    @body.append("    }\n")
+    if has_else {
+        @lower_else_tail(c, kids[9])
     } else {
         // No else branch was written: the else block IS the join.
     }

@@ -80,7 +80,7 @@ import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 import ../types.{no_ty}
 import ../sem.{is_value_tail_kind}
-import ../lower.{FnBuilder, Local}
+import ../lower.{FnBuilder, Local, Cond}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
 /// so the day substitutions arrive there is one place to stop passing it.
@@ -471,7 +471,7 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
     // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
     // if-value always has an else, so `has_else` is a fact, not a guess.
-    ro c = @ir.begin_if(kids[1], true)
+    ro c = @ir.begin_if(Cond.Expr(kids[1]), true)
     @emit_block_value(kids[2], t)
     @ir.begin_else(c)
     @body.append("    } else {\n")
@@ -605,7 +605,9 @@ fn Emitter mut @emit_stmt(st Node) -> () {
     } else if k == NodeKind.DestructureBind {
         @emit_destructure_bind(st)
     } else if k == NodeKind.IfLet {
-        @emit_if_let(st)
+        // An if-let is a branch of the lowered body testing `IsSome` of the
+        // local its Option landed in (274.8 M2b-1b, emit_flow.nv).
+        @lower_if_let(st, None)
     } else {
         ice("emit: statement kind outside the subset")
     }

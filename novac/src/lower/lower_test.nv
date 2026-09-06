@@ -135,7 +135,7 @@ test "each local carries its role: the return place, a binding, a temporary" {
 
 test "an if without else: the else branch IS the join, and end_if seals the branch onto it" {
     mut b = FnBuilder.new(TyId(3))
-    ro c = b.begin_if(stand_in_expr(), false)
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false)
     assert(c.els == c.join)
     assert(b.current() == c.then)
     b.eval(stand_in_expr())
@@ -162,7 +162,7 @@ test "an if without else: the else branch IS the join, and end_if seals the bran
 
 test "an if with else: three blocks of its own, both branches jump to the one join" {
     mut b = FnBuilder.new(TyId(3))
-    ro c = b.begin_if(stand_in_expr(), true)
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), true)
     assert(c.els != c.join)
     b.eval(stand_in_expr())
     b.begin_else(c)
@@ -182,9 +182,9 @@ test "an if with else: three blocks of its own, both branches jump to the one jo
 
 test "an else-if chain: the else block carries no statement, its If shares the outer join" {
     mut b = FnBuilder.new(TyId(3))
-    ro outer = b.begin_if(stand_in_expr(), true)
+    ro outer = b.begin_if(Cond.Expr(stand_in_expr()), true)
     b.eval(stand_in_expr())
-    ro inner = b.begin_else_if(outer, stand_in_expr(), false)
+    ro inner = b.begin_else_if(outer, Cond.Expr(stand_in_expr()), false)
     assert(inner.join == outer.join)
     assert(inner.els == outer.join)
     b.eval(stand_in_expr())
@@ -264,9 +264,45 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
     }
 }
 
+test "an if-let: the Option lands in a binding, the If tests IsSome of it, the binder reads its payload" {
+    mut b = FnBuilder.new(TyId(3))
+    ro o = b.named(TyId(9), "_novac_tmp_t1")
+    b.place(stand_in_expr(), o)
+    ro c = b.begin_if(Cond.IsSome(o), false)
+    ro v = b.named(TyId(3), "v")
+    b.take_payload(v, o)
+    match b.last_stmt() {
+        Assign(a) => {
+            assert(a.dest == v)
+            match a.src {
+                SomePayload(l) => assert(l == o)
+                Expr(_) => assert(false)
+                Use(_) => assert(false)
+            }
+        }
+        Eval(_) => assert(false)
+        Store(_) => assert(false)
+    }
+    b.end_if(c)
+    b.end_body()
+    ro f = b.finish()
+    match f.blocks[0].term {
+        If(t) => match t.cond {
+            IsSome(l) => assert(l == o)
+            Expr(_) => assert(false)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        Loop(_) => assert(false)
+        Unreached => assert(false)
+    }
+    assert(f.blocks[0].stmts.len() == 1)
+    assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
+}
+
 test "a return inside a branch ends the block; what follows lands in a fresh block the end_if seals" {
     mut b = FnBuilder.new(TyId(3))
-    ro c = b.begin_if(stand_in_expr(), false)
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false)
     b.place(stand_in_expr(), b.ret_place())
     b.ret()
     ro dead = b.current()
