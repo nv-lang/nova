@@ -1,0 +1,14 @@
+module handed_free_fn.neg_1
+
+// A free function of a handed std module whose symbol the SHELL does not carry:
+// the declaration is read, the call resolves, and the refusal names the true
+// reason -- novac compiles no std body into this unit, and the shell it links
+// into has no `adler32_init` (the probe never uses it). The oracle compiles
+// std and prints 1; the difference is an honest subset boundary (E2-b2), not a
+// wrong answer, and it is allow-listed with that story.
+
+import std.checksums.adler32.{adler32_init}
+
+fn main() {
+    println(adler32_init())
+}

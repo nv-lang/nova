@@ -25,6 +25,8 @@
 
 module novac.check
 
+import ../sem.{c_free_symbol}
+
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
@@ -520,7 +522,28 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
 /// error — the exact class P12 forbids (measured by the step-1 probe,
 /// 2026-08-19).
 fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec) -> () {
-    ro want = @ctx.fns.rows[raw_row(row)].tparam_cnt
+    // A HANDED free function (wave W6): its body is std's, so the call is emitted
+    // as the shell's symbol -- and the shell has to carry it, or the refusal
+    // names the true reason (the row exists now; "not a callable" was the wrong
+    // one, #925). A generic handed free function has an instance name the shell
+    // would spell by substitution; not this wave.
+    ro hfd = @ctx.fns.rows[raw_row(row)]
+    if hfd.handed_from.bytes().len() > 0 {
+        if hfd.tparam_cnt > 0 {
+            @report_first_leaf_of(kids,
+                "outside the subset: a generic free function of a handed module is not compiled into this unit yet (E2-b2 multi-file)")
+            return
+        }
+        ro sym = c_free_symbol(@ctx, row)
+        if !@ctx.interop.has(sym) {
+            @report_first_leaf_of(kids,
+                "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
+            return
+        }
+    } else {
+        // The file's own callable, or a constructor row: nothing to ask the shell.
+    }
+    ro want = hfd.tparam_cnt
     ro given = generic_names(kids)
     if want == 0 {
         if given.len() > 0 {

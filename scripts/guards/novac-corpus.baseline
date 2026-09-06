@@ -344,8 +344,8 @@
 # compound literal `((NovaTuple_Pair){...})`, read off its C. Reverse: the
 # emitter's constructor arm stubbed -> novac prints a call to a C function that
 # exists nowhere and the carrier fails to build.
-contract-match 65
-behavior-match 57
+contract-match 66
+behavior-match 58
 # 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
 # через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
 # в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
@@ -399,3 +399,10 @@ behavior-match 57
 # `NovaOpt_Nova_Box_p` эмитит novac), потребление через if-let и `??`. Обратные пробы по двери:
 # регистрация обобщённых вариантов снята -> отказ/ICE на `Some(3)`, держатель красный; литерал заменён
 # мейкером -> C не собирается; восстановлено.
+# RATCHET-UP contract-match 65 -> 66, behavior-match 57 -> 58 (2026-09-06, план 274.7 W6, №925):
+#   `novac/fixtures/handed_free_fn/pos_1.nv` + `examples/basics/handed_free_fn.nv` — СВОБОДНЫЕ функции
+#   поданного std-модуля (`encoding.utf16`: is_high_surrogate, is_low_surrogate, decode_surrogate_pair),
+#   вызванные по имени. До W6 жатва читала только методы, и вызов отвергался «this name is not a
+#   callable» — неверная причина; теперь подпись в таблице, вызов типизирован как любой свободный,
+#   печатается символом оболочки по D134 (`nova_fn_8encoding5utf1617is_high_surrogate`), probe вырос.
+#   neg_1 (adler32_init — символа в оболочке нет) — в divergences.allow с историей, честная граница E2-b2.

@@ -652,7 +652,7 @@ resolve 15
 # (2026-09-03): a caller compares with the variant's own name, which the word
 # rule allows, so a wrapper would be a second door needing a periphrasis for a
 # name it may not spell. Net +1.
-sem 225
+sem 228
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -774,3 +774,9 @@ types 26
 # `StoreStmt` (запись в место, которое пока называет дерево: цель, оператор, значение) и
 # `FnBuilder.store`; `last_assign` уступил место `last_stmt` (принтер читает ПОСЛЕДНИЙ оператор
 # любого вида и диспетчеризует по нему — Assign / Eval / Store). Все спрашивает `emit_c`.
+# sem 225 -> 228 (2026-09-06, план 274.7 W6 — свободные функции поданных модулей, №925):
+# `module_segments` / `module_dotted` (file_shape: путь модуля файла сегментами и как в
+# исходнике — один читатель ModuleDecl, `module_path_c` теперь через него) и `c_free_symbol`
+# (mangle: символ оболочки свободной поданной функции по оракульскому правилу D134 —
+# `nova_fn_` + сегменты и имя с префиксом длины). Наружу — потому что их спрашивают check
+# (интероп-проверка вызова) и emit_c (печать вызова); дом у каждой один.

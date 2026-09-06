@@ -1,0 +1,14 @@
+module handed_free_fn.neg_2
+
+// Arity against a handed free function: the row is known now (wave W6), so the
+// refusal is about the ARGUMENTS, not about the name -- the binding names the
+// parameter left without a value ("this call omits `u`, a parameter with no
+// default value"), exactly as for a function of this file. Both compilers
+// refuse; the fixture pins that the harvested signature is judged like the
+// file's own.
+
+import std.encoding.utf16.{is_high_surrogate}
+
+fn main() {
+    println(is_high_surrogate())
+}

@@ -14,6 +14,8 @@
 
 module novac.emit_c
 
+import ../sem.{c_free_symbol}
+
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, assign_op_of, raw_node}
 import ../diag.{ice}
@@ -604,7 +606,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 } else {
                     // An ordinary callable: its C name opens below.
                 }
-                @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
+                // NAMED BY WHOEVER HAS THE BODY (wave W6): a free function of a
+                // handed module is std's, the shell carries it under the oracle's
+                // spelling, and the checker admitted the call against the lifted
+                // surface; our own spelling is for the rows we compile.
+                if @ctx.fns.rows[raw_row(row)].handed_from.bytes().len() > 0 {
+                    @body.append("${c_free_symbol(@ctx, row)}(")
+                } else {
+                    @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
+                }
             }
             // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
             // its representation at runtime -- zero cost, D-newtype. So the
