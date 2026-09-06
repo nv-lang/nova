@@ -1,0 +1,99 @@
+// Peer test for `runtime.numeric` (beside-module convention; `char_test.nv` and
+// `sync_test.nv` precedent). Covers the `u64` bit-level helpers that the float
+// parser (`runtime.string`, plan 283) and `math.int128` share, plus the IEEE 754
+// bit-casts that had no test of their own.
+//
+// Reference values are computed INDEPENDENTLY (Python arbitrary-precision
+// integers and `struct.pack('<d', x)`), not derived from this implementation.
+module runtime.numeric_test
+
+import std.runtime.numeric
+
+// ── u64 @widening_mul ──────────────────────────────────────────────────────
+
+test "widening_mul: boundary maximum, MAX x MAX = (2^64-2, 1)" {
+    // The one product where every partial term carries; the plain `+` in the body
+    // is proven not to overflow exactly here.
+    ro max = 0xFFFFFFFFFFFFFFFF as u64
+    ro (hi, lo) = max.widening_mul(max)
+    assert(hi == 0xFFFFFFFFFFFFFFFE as u64)
+    assert(lo == 1)
+}
+
+test "widening_mul: zero annihilates, one is the identity" {
+    ro max = 0xFFFFFFFFFFFFFFFF as u64
+    ro (h0, l0) = (0 as u64).widening_mul(max)
+    assert(h0 == 0)
+    assert(l0 == 0)
+    ro (h1, l1) = (1 as u64).widening_mul(max)
+    assert(h1 == 0)
+    assert(l1 == max)
+}
+
+test "widening_mul: 2^32 x 2^32 and 2^63 x 2 land exactly on the half boundary" {
+    ro two32 = (1 as u64) << 32
+    ro (hi, lo) = two32.widening_mul(two32)
+    assert(hi == 1)
+    assert(lo == 0)
+    ro two63 = (1 as u64) << 63
+    ro (h2, l2) = two63.widening_mul(2)
+    assert(h2 == 1)
+    assert(l2 == 0)
+}
+
+test "widening_mul: cross terms carry into the upper half" {
+    // MAX x (2^32-1): the middle sum overflows 32 bits and must carry.
+    ro max = 0xFFFFFFFFFFFFFFFF as u64
+    ro (hi, lo) = max.widening_mul(0xFFFFFFFF as u64)
+    assert(hi == 0x00000000FFFFFFFE as u64)
+    assert(lo == 0xFFFFFFFF00000001 as u64)
+    ro a = 0xDEADBEEFCAFEBABE as u64
+    ro b = 0x0123456789ABCDEF as u64
+    ro (h2, l2) = a.widening_mul(b)
+    assert(h2 == 0x00FD5BDEEEB2A01D as u64)
+    assert(l2 == 0x7EB689F4EA447D62 as u64)
+}
+
+test "widening_mul is commutative" {
+    ro a = 0xDEADBEEFCAFEBABE as u64
+    ro b = 0x0123456789ABCDEF as u64
+    ro (h1, l1) = a.widening_mul(b)
+    ro (h2, l2) = b.widening_mul(a)
+    assert(h1 == h2)
+    assert(l1 == l2)
+}
+
+// ── u64 @leading_zeros ─────────────────────────────────────────────────────
+
+test "leading_zeros: zero is 64, one is 63, a set top bit is 0" {
+    assert((0 as u64).leading_zeros() == 64)
+    assert((1 as u64).leading_zeros() == 63)
+    assert((2 as u64).leading_zeros() == 62)
+    ro two63 = (1 as u64) << 63
+    assert(two63.leading_zeros() == 0)
+    assert((0xFFFFFFFFFFFFFFFF as u64).leading_zeros() == 0)
+}
+
+test "leading_zeros: every step of the binary search, from both sides" {
+    // 32 / 16 / 8 / 4 / 2 / 1 boundaries.
+    ro two32 = (1 as u64) << 32
+    assert(two32.leading_zeros() == 31)
+    assert((0xFFFFFFFF as u64).leading_zeros() == 32)
+    assert((0x0000000000010000 as u64).leading_zeros() == 47)
+    assert((0x00FF000000000000 as u64).leading_zeros() == 8)
+    assert((0xFF as u64).leading_zeros() == 56)
+}
+
+// ── f64 bit-casts ──────────────────────────────────────────────────────────
+
+test "f64 to_bits / from_bits: known patterns and a round trip" {
+    ro one = 1.0
+    assert(one.to_bits() == 0x3FF0000000000000 as u64)
+    ro two_and_half = 2.5
+    assert(two_and_half.to_bits() == 0x4004000000000000 as u64)
+    ro neg_zero = -0.0
+    assert(neg_zero.to_bits() == 0x8000000000000000 as u64)
+    assert(f64.from_bits(0x4004000000000000 as u64) == 2.5)
+    ro x = 3.25
+    assert(f64.from_bits(x.to_bits()) == x)
+}

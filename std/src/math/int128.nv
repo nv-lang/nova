@@ -38,6 +38,10 @@
 
 module math.int128
 
+// `u64 @widening_mul` — общий дом в `runtime.numeric` (план 283 Ф.0): раньше здесь
+// лежала приватная `mul_wide`, теперь то же умножение делит с нами парсер float.
+import std.runtime.numeric
+
 // ──────────────────────────────────────────────────────────────────────────
 // Тип и константы
 // ──────────────────────────────────────────────────────────────────────────
@@ -164,28 +168,6 @@ fn u_ge(ah u64, al u64, bh u64, bl u64) -> bool =>
 fn u_shl1(ah u64, al u64) -> (u64, u64) =>
     ((ah << 1) | (al >> 63), al << 1)
 
-/// Full product `u64 × u64 → (upper 64, lower 64)`.
-///
-/// No hardware 128-bit intermediate exists, hence the classic decomposition into
-/// 32-bit halves. `u64` overflow here is IMPOSSIBLE (proven at the
-/// boundary maximum: `0xFFFF…FF × 0xFFFF…FF` → `(2^64-2, 1)`), so the
-/// plain `+` trap-default acts as an assertion of the decomposition's correctness.
-fn mul_wide(a u64, b u64) -> (u64, u64) {
-    ro mask = 0xFFFFFFFF as u64
-    ro al = a & mask
-    ro ah = a >> 32
-    ro bl = b & mask
-    ro bh = b >> 32
-    ro p0 = al * bl
-    ro p1 = al * bh
-    ro p2 = ah * bl
-    ro p3 = ah * bh
-    ro mid = (p0 >> 32) + (p1 & mask) + (p2 & mask)
-    ro lo = (p0 & mask) | (mid << 32)
-    ro hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32)
-    (hi, lo)
-}
-
 // Беззнаковое деление с остатком: сдвиг-вычитание, 128 итераций.
 // Возвращает (q_hi, q_lo, r_hi, r_lo).
 fn u_divmod(nh u64, nl u64, dh u64, dl u64) -> (u64, u64, u64, u64) {
@@ -285,7 +267,7 @@ export fn i128 @wrapping_sub(other i128) -> i128 {
 /// Multiplication modulo 2^128 (lower 128 bits of the product).
 #stable(since = "0.1")
 export fn i128 @wrapping_mul(other i128) -> i128 {
-    ro (ph, pl) = mul_wide(@lo, other.lo)
+    ro (ph, pl) = @lo.widening_mul(other.lo)
     // Перекрёстные члены дают только старшую половину; всё, что выше 2^128,
     // отбрасывается по определению модульного умножения.
     ro cross = (@hi as u64).wrapping_mul(other.lo)
