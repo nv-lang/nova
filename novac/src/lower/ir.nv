@@ -139,7 +139,7 @@ export fn FnBuilder mut @temp(ty TyId, label str) -> Local => @local(ty, LocalKi
 
 /// A local for the source binding `name` of type `ty`.
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {
-    if name.bytes().len() == 0 {
+    if name == "" {
         ice("lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
     @local(ty, LocalKind.Binding, name)

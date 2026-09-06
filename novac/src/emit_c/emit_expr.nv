@@ -610,7 +610,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 // handed module is std's, the shell carries it under the oracle's
                 // spelling, and the checker admitted the call against the lifted
                 // surface; our own spelling is for the rows we compile.
-                if @ctx.fns.rows[raw_row(row)].handed_from.bytes().len() > 0 {
+                if @ctx.fns.rows[raw_row(row)].handed_from != "" {
                     @body.append("${c_free_symbol(@ctx, row)}(")
                 } else {
                     @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
