@@ -1,0 +1,17 @@
+// D: the destructuring happens inside a METHOD, as it does in the original
+// (`-@scale - k + bits_lost` in nova-bignum/src/bigfloat/core.nv:479).
+type AmtD value { ro n int }
+type BoxD value { ro scale int }
+
+fn split(x int, prec int) -> ro (AmtD, int) {
+    ro b = x - prec
+    if b <= 0 { return (AmtD { n: x }, 0) }
+    (AmtD { n: x - b }, b)
+}
+
+fn BoxD @use(x int) -> int {
+    ro (rounded, bits_lost) = split(x, 4)
+    -@scale + rounded.n + bits_lost
+}
+
+fn main() Io -> () => println(BoxD { scale: 1 }.use(10))

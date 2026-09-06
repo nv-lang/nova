@@ -1,0 +1,21 @@
+// #903 -- CANDIDATE H: F plus the one difference most often cited about the
+// original, and the one not_a_trigger_7 tested on the WRONG kind of type.
+// BigInt is `export type BigInt(sign Sign, limbs []u32)` -- a NAMED TUPLE whose
+// field is a VECTOR. Probe 7 put a vector in a value RECORD; F used a named
+// tuple with a scalar. H is both at once.
+module standalone.p903_cand_h
+
+type Amt(sign int, limbs []u32)
+
+fn split_h(a Amt, prec int) -> ro (Amt, int) {
+    ro b = a.limbs.len() - prec
+    if b <= 0 { return (a, 0) }
+    (Amt(a.sign, a.limbs), b)
+}
+
+fn use_h(x int) -> int {
+    ro (rounded, bits_lost) = split_h(Amt(1, Vec[u32].of(7)), 4)
+    rounded.limbs.len() + bits_lost
+}
+
+fn main() Io -> () => println(use_h(10))

@@ -1,0 +1,15 @@
+// E: the first tuple element carries a VECTOR, as BigInt carries limbs.
+type AmtE value { ro limbs Vec[int] }
+
+fn split(x int, prec int) -> ro (AmtE, int) {
+    ro b = x - prec
+    if b <= 0 { return (AmtE { limbs: Vec[int].of(x) }, 0) }
+    (AmtE { limbs: Vec[int].of(x - b) }, b)
+}
+
+fn use_it(x int) -> int {
+    ro (rounded, bits_lost) = split(x, 4)
+    rounded.limbs.len() + bits_lost
+}
+
+fn main() Io -> () => println(use_it(10))
