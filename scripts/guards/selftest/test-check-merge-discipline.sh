@@ -248,6 +248,43 @@ else
     bad "ложный отказ на уровне full (код $rc): $out"
 fi
 
+# --- №996: ПУТЬ ХУКА — MERGE_HEAD НЕТ, есть GITHEAD_<sha>, индекс = результат -----
+# Именно так выглядит чистое автослияние изнутри pre-merge-commit (замерено
+# пробующим хуком 2026-09-06). Случаи 10–13 выше строили состояние через
+# `merge --no-commit`, который MERGE_HEAD ПИШЕТ, — и потому не замечали, что в хуке
+# проверка мертва (класс №989: проба на форме, которой в реальном пути нет).
+$GC checkout -q main 2>/dev/null
+$GC checkout -q -b hookbr main 2>/dev/null
+mkdir -p "$TMP/novac/src"
+echo 'fn x() {}' > "$TMP/novac/src/h.rs"
+$GC add novac/src/h.rs >/dev/null 2>&1; $GC commit -q -m "hook-path novac change" >/dev/null 2>&1
+HOOK_SHA=$($GC rev-parse HEAD 2>/dev/null)
+$GC checkout -q main 2>/dev/null
+# Индекс = результат слияния, но БЕЗ MERGE_HEAD: читаем дерево ветки в индекс напрямую.
+$GC read-tree -m -u HEAD hookbr >/dev/null 2>&1
+[ -f "$TMP/.git/MERGE_HEAD" ] && rm -f "$TMP/.git/MERGE_HEAD"
+HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+echo "RC=0 SEC=2412 TIER=main:push HASH=$HEAD_SHA" > "$V"
+
+# 19. ХУК-ПУТЬ, вердикта novac нет — ОТКАЗ. До №996 здесь было «ручной вызов, не проверялась» и пропуск.
+rm -f "$NV"
+out=$(env "GITHEAD_$HOOK_SHA=hookbr" GIT_REFLOG_ACTION="merge hookbr" NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "яруса novac"; then
+    ok "путь хука (без MERGE_HEAD): novac-слияние без вердикта отвергнуто"
+else
+    bad "путь хука: novac-слияние прошло без вердикта (код $rc): $out"
+fi
+
+# 20. ХУК-ПУТЬ, вердикт novac есть, хеш = GITHEAD-вершина — ПРОПУСК.
+echo "RC=0 SEC=900 TIER=novac:push HASH=$HOOK_SHA" > "$NV"
+out=$(env "GITHEAD_$HOOK_SHA=hookbr" GIT_REFLOG_ACTION="merge hookbr" NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q "GITHEAD"; then
+    ok "путь хука: вливаемое опознано из GITHEAD_*, два вердикта открывают слияние"
+else
+    bad "путь хука: ложный отказ или источник не назван (код $rc): $out"
+fi
+$GC checkout -q -f main 2>/dev/null
+
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-merge-discipline: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
