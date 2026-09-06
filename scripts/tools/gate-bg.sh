@@ -69,9 +69,19 @@ date +%s > "$STAMP"
 # так профиль появляется у всех шагов разом, включая будущие, и никому не надо
 # помнить про вызов таймера. `fflush` обязателен — без него awk буферизует, и
 # лог перестаёт обновляться в реальном времени, ломая режим `-c`.
+# ВЕРДИКТ НАЗЫВАЕТ СЕБЯ (реестр 221.1 №988). До 2026-09-06 он был строкой
+# `RC=<код> SEC=<секунды>` — без яруса, без хеша судимого дерева, без ветки.
+# `check-merge-discipline.sh` читает именно этот файл, поэтому зелёный ОСНОВНОЙ
+# гейт открывал слияние ветки, чьи файлы судит ярус novac (87 стражей
+# `check-novac-*`, которых `gate.sh` не зовёт ни разу), и страж говорил
+# «слияние законно», потому что возражать ему было НЕЧЕМ. Замерено на себе:
+# 7994d75ce и 7e6e6ad82 влиты в main без вердикта яруса novac.
+# Хеш снимается ЗДЕСЬ, до запуска, — это дерево, которое гейт и будет судить.
+GATE_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+GATE_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 nohup bash -c "cd '$ROOT' && bash scripts/gate.sh 2>&1 \
     | awk -v t0=\$(date +%s) '{ printf \"[%5ds] %s\n\", systime()-t0, \$0; fflush() }' > '$LOG'; \
-    echo \"RC=\${PIPESTATUS[0]} SEC=\$SECONDS\" > '$DONE'" \
+    echo \"RC=\${PIPESTATUS[0]} SEC=\$SECONDS TIER=main HASH=$GATE_HASH BRANCH=$GATE_BRANCH\" > '$DONE'" \
     > /dev/null 2>&1 &
 
 cat <<'EOF'

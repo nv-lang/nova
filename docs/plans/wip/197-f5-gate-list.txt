@@ -17,6 +17,7 @@ BUILD examples/basics/hello.nv
 BUILD examples/basics/match_demo.nv
 BUILD examples/basics/records.nv
 BUILD examples/basics/strings.nv
+BUILD examples/basics/string_literals.nv
 BUILD examples/effects/effects.nv
 BUILD examples/effects/effects_d61.nv
 BUILD examples/effects/spawn_demo.nv

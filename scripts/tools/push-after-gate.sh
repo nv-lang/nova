@@ -80,7 +80,9 @@ fi
 
 # 3. ярус по путям
 CHANGED=$(git diff --name-only "$UP"..HEAD)
-TOUCH_NOVAC=$(printf '%s\n' "$CHANGED" | grep -c -E '^(novac/|scripts/gate-novac\.sh|scripts/guards/check-novac-|scripts/guards/novac-)' || true)
+# Правило «какие пути принадлежат ярусу novac» — ОДИН дом, №988.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-tier-paths.sh"
+TOUCH_NOVAC=$(printf '%s\n' "$CHANGED" | novac_paths_count)
 # №770 (2026-08-27, на себе): ярус loop основного гейта НЕ судит корпус — линт,
 # мега-CU и прогон живут в ярусе push. Если в непушенном диапазоне изменены
 # исходники вне novac (.nv/.rs/.c/.h — spec_tests, std, компилятор, рантайм; в

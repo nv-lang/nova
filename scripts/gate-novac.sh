@@ -74,6 +74,40 @@ case "$NOVAC_TIER" in
     *) echo "NOVAC_TIER: loop | push | full (дано: $NOVAC_TIER)" >&2; exit 2 ;;
 esac
 
+# ── ВЕРДИКТ ЯРУСА, НАЗЫВАЮЩИЙ СЕБЯ (реестр 221.1 №988) ────────────────────
+# ЗАЧЕМ. `check-merge-discipline.sh` пускает слияние в `main` по вердикту
+# гейта. До 2026-09-06 вердикт был ОДИН — `/tmp/gate_full.done` от основного
+# яруса, и он не говорил, КАКОЙ ярус его выдал. А ярусы судят РАЗНОЕ: этот
+# файл зовёт 87 уникальных стражей `check-novac-*`, `scripts/gate.sh` — ни
+# одного. Значит зелёный основной гейт открывал слияние ветки `novac/**`,
+# которого ни один из этих 87 не видел; интегратор так и влил 7994d75ce и
+# 7e6e6ad82, и механизм не возразил, потому что возражать было нечем.
+#
+# ПОЧЕМУ ХЕШ СНИМАЕТСЯ ЗДЕСЬ, ДО ПРОВЕРОК: это дерево, которое ярус и будет
+# судить. Хеш, снятый в конце, назвал бы дерево, изменившееся по ходу.
+#
+# ПОЧЕМУ СТАРЫЙ ВЕРДИКТ УДАЛЯЕТСЯ В НАЧАЛЕ: пока прогон идёт, прежний файл
+# описывает ДРУГОЕ дерево. Оставить его значит разрешить слияние по вердикту
+# позапрошлого прогона ровно в ту минуту, когда идёт нынешний.
+#
+# ПОЧЕМУ ВЫБОРКА ПОЛУЧАЕТ ДРУГОЙ ЯРУС (`novac-sample`): прогон со швом НЕ
+# полный, он и слово `final` не печатает. Страж слияния требует ровно
+# `TIER=novac`, поэтому выборка его не откроет — и при этом скажет о себе,
+# а не промолчит (класс №519: молчание читается как отсутствие проблемы).
+NOVAC_DONE="${NOVA_NOVAC_VERDICT:-/tmp/gate_novac.done}"
+NOVAC_VERDICT_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
+NOVAC_VERDICT_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+rm -f "$NOVAC_DONE"
+_novac_write_verdict() {
+    _rc=$?
+    _tier=novac
+    [ -n "${SEAMS:-}" ] && _tier=novac-sample
+    echo "RC=$_rc SEC=$(( $(date +%s) - GATE_T0 )) TIER=$_tier HASH=$NOVAC_VERDICT_HASH BRANCH=$NOVAC_VERDICT_BRANCH" \
+        > "$NOVAC_DONE"
+    return $_rc
+}
+trap _novac_write_verdict EXIT
+
 SEAMS=""
 [ "${NOVAC_CORPUS:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_CORPUS=0"
 [ "${NOVAC_COST:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_COST=0"
