@@ -12,5 +12,5 @@ module neg.neg_str_from_retracted
 
 test "str.from(5) does not compile — use 5.to_str()" {
     ro s = str.from(5)
-    assert(s.byte_len() > 0)
+    assert(s != "")
 }

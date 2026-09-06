@@ -30,7 +30,9 @@
 # пересоберись/дождись слияния рантайма» — вывод, который иначе делают руками.
 #
 # ═══ ШВЫ (переменные окружения) — ДЛЯ ДЕШЁВОЙ ВЫБОРКИ В ОКНЕ, НЕ ДЛЯ ГЕЙТА ═══
-#   NOVAC_CORPUS=0         пропустить корпусный прогон (дорогой)
+#   NOVAC_CORPUS=0         пропустить корпусный храповик (examples/, дорогой)
+#   NOVAC_SMOKE=0          пропустить поведенческий смоук фикстур (компиляцию C и запуск; №992)
+#   NOVAC_EMISSION=0       пропустить страж объёма эмиссии (check-novac-emission-size)
 #   NOVAC_COST=0           пропустить храповик цены итерации
 #   NOVAC_PROVE=0          пропустить мутационную проверку самотестов
 #   NOVAC_PROVE_DEADLINE   секунд на один самотест под заглушкой (умолчание 150)
@@ -112,6 +114,8 @@ SEAMS=""
 [ "${NOVAC_CORPUS:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_CORPUS=0"
 [ "${NOVAC_COST:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_COST=0"
 [ "${NOVAC_PROVE:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_PROVE=0"
+[ "${NOVAC_SMOKE:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_SMOKE=0"
+[ "${NOVAC_EMISSION:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_EMISSION=0"
 
 # КАЛИБРОВКА МАШИНЫ: во сколько раз она сейчас медленнее эталонной.
 # Замеряется ОДИН раз на прогон -- сама проба стоит секунды, и повторять её
@@ -392,6 +396,8 @@ par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя раз�
 par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
 par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
 par_add "$ROOT/scripts/guards/check-novac-lowering-one-door.py" "форма значения понижена в эмиттере, а не в lower (274.8)"
+par_add "$ROOT/scripts/guards/check-novac-seams-listed.py" "шов яруса novac читается стражем, но не стоит в SEAMS gate-novac.sh (или стоит без читателя): метка novac-sample честна ровно настолько, насколько полон список (№992)"
+par_add "$ROOT/scripts/guards/check-novac-empty-str-door.py" "пустота строки спрошена длиной представления, а не сравнением с пустой строкой (П37)"
 par_add "$ROOT/scripts/guards/check-novac-one-door-export.py" "одна операция из двух модулей (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 без «что течёт» (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"

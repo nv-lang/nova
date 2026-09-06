@@ -11,6 +11,7 @@ fn d249_ends_with(s str, suffix str) -> bool => s.ends_with(suffix)
 
 test "str.byte_len() is O(1) length in bytes (D249)" {
     assert("hello".byte_len() == 5)
+    // nova:allow W_STR_EMPTY_BY_LEN -- the byte lens of the empty literal is what D249 pins here
     assert("".byte_len() == 0)
     assert("ab".byte_len() == 2)
 }

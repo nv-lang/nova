@@ -834,7 +834,7 @@ export fn proto_method_name(m Node) -> Option[str] {
 /// judge it against the tuple's arity. Plain unsigned decimal -- anything
 /// else answers -1 rather than guessing (B15 step 4a).
 export fn digit_index(text str) -> int {
-    if text.byte_len() == 0 { return -1 }
+    if text == "" { return -1 }
     mut v = 0
     for b in text.bytes() {
         if b < ('0' as u8) || b > ('9' as u8) { return -1 }

@@ -92,7 +92,7 @@ test "recovery does not swallow a closing token of the enclosing form (274.3/F15
  println(})\n\
  println(1)\n\
 }", std)
-    assert(c_arg.byte_len() >= 0)
+    assert(c_arg == "") // refused: the contract hands back no C at all
     assert(d_arg.len() == 1)
     assert(d_arg[0].hi - d_arg[0].lo > 1)
 
@@ -100,7 +100,7 @@ test "recovery does not swallow a closing token of the enclosing form (274.3/F15
  ro x = )\n\
  println(1)\n\
 }", std)
-    assert(c_init.byte_len() >= 0)
+    assert(c_init == "") // refused: the contract hands back no C at all
     assert(d_init.len() == 1)
     assert(d_init[0].hi - d_init[0].lo > 1)
 
@@ -110,6 +110,6 @@ test "recovery does not swallow a closing token of the enclosing form (274.3/F15
     ro (d_ok, c_ok) = compile_to_c("fn main() {\n\
  println(1)\n\
 }", std)
-    assert(c_ok.byte_len() >= 0)
+    assert(c_ok != "") // accepted: the C is there
     assert(d_ok.len() == 0)
 }

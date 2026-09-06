@@ -1,0 +1,34 @@
+module iflet_else.pos_2
+
+// An `else if Some(..) = ..` chain -- the form the subset accepted and the
+// emitter printed as `else <declaration>;` (the Option temporary's
+// declaration bare after `else`, not a statement in C), found by the M2b-1b
+// probe of 2026-09-06 and fixed in the same wave (registry #991): the chained
+// if-let gets a C block of its own. No corpus file carried the form until this one; the
+// differential's fixture part judges it against the oracle by outcome and
+// by output. Arguments are pre-bound because two call arguments in one call
+// are still outside the subset (F65).
+
+fn some(v int) -> Option[int] => Some(v)
+fn none() -> Option[int] => None
+
+fn pick(a Option[int], b Option[int]) -> int {
+    mut k = 0
+    if Some(x) = a {
+        k = x
+    } else if Some(y) = b {
+        k = y
+    } else {
+        k = -1
+    }
+    k
+}
+
+fn main() {
+    ro s1 = some(1)
+    ro s2 = some(2)
+    ro n = none()
+    println(pick(s1, n))
+    println(pick(n, s2))
+    println(pick(n, n))
+}

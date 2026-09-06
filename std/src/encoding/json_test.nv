@@ -88,7 +88,7 @@ test "parse: unicode escape" {
 test "parse: surrogate pair (emoji)" {
     ro v = Json.parse("\"\\uD83D\\uDE00\"")!!   // 😀 (U+1F600)
     match v.str() {
-        Some(s) => assert(s.byte_len() > 0)
+        Some(s) => assert(s != "")
         None    => assert(false)
     }
 }

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // novac/src/lower -- tests beside the module. The lowered form is a pure data
 // structure (wave M0 of sub-plan 274.8), so what is judged is its SHAPE: the
-// return place, the one placement door, reserve-before-seal. No pipeline, no
-// files: a stand-in tree node is enough, the form does not look inside it.
+// return place, the one placement door, reserve-before-seal, and -- from wave
+// M2b-1 -- the structured events that open and close an `if` and a loop. No
+// pipeline, no files: a stand-in tree node is enough, the form does not look
+// inside it.
 
 module novac.lower
 import ../tree.{Node, NodeKind, NodeId, AssignOp, branch}
@@ -10,28 +12,51 @@ import ../types.{TyId}
 
 fn stand_in_expr() -> Node => branch(NodeId(0), NodeKind.Lit, []Node.new())
 
-test "a body starts with its return place as local 0 (rustc _0) and one sealed block" {
+/// True when `t` is a jump to `to` -- the whole enum is named, so a variant
+/// added later has to answer here too.
+fn goes_to(t Terminator, to BlockId) -> bool {
+    match t {
+        Goto(b) => b == to
+        Return => false
+        If(_) => false
+        Loop(_) => false
+        Unreached => false
+    }
+}
+
+/// True when `t` leaves the body.
+fn returns(t Terminator) -> bool {
+    match t {
+        Return => true
+        Goto(_) => false
+        If(_) => false
+        Loop(_) => false
+        Unreached => false
+    }
+}
+
+test "a body starts with its return place as local 0 (rustc _0) and its entry block current" {
     mut b = FnBuilder.new(TyId(3))
-    ro blk = b.reserve()
-    b.seal(blk, Terminator.Return)
+    assert(b.current() == BlockId(0))
+    b.end_body()
     ro f = b.finish()
     assert(f.locals.len() == 1)
     assert(b.ret_place() == Local(0))
     assert(f.blocks.len() == 1)
     assert(f.blocks[0].stmts.len() == 0)
+    assert(returns(f.blocks[0].term))
 }
 
-test "the placement door records dest = Expr(e) in the block sealed next" {
+test "the placement door records dest = Expr(e) in the current block" {
     mut b = FnBuilder.new(TyId(3))
     ro t = b.temp(TyId(3), "")
-    ro blk = b.reserve()
     b.place(stand_in_expr(), t)
     match b.last_stmt() {
         Assign(a) => assert(a.dest == t)
         Eval(_) => assert(false)
         Store(_) => assert(false)
     }
-    b.seal(blk, Terminator.Return)
+    b.end_body()
     ro f = b.finish()
     assert(f.locals.len() == 2)
     assert(t == Local(1))
@@ -45,7 +70,6 @@ test "the placement door records dest = Expr(e) in the block sealed next" {
 
 test "a store keeps the tree's target and operator; an evaluation keeps only the expression" {
     mut b = FnBuilder.new(TyId(3))
-    ro blk = b.reserve()
     b.store(stand_in_expr(), AssignOp.Set, stand_in_expr())
     match b.last_stmt() {
         Store(st) => match st.op {
@@ -56,14 +80,14 @@ test "a store keeps the tree's target and operator; an evaluation keeps only the
         Eval(_) => assert(false)
     }
     b.eval(stand_in_expr())
-    b.seal(blk, Terminator.Return)
+    b.end_body()
     ro f = b.finish()
     assert(f.blocks[0].stmts.len() == 2)
 }
 
 test "blocks are reserved before they are sealed, so a Goto names a block filled later" {
     mut b = FnBuilder.new(TyId(3))
-    ro first = b.reserve()
+    ro first = b.current()
     ro second = b.reserve()
     b.seal(first, Terminator.Goto(second))
     b.eval(stand_in_expr())
@@ -72,19 +96,14 @@ test "blocks are reserved before they are sealed, so a Goto names a block filled
     assert(f.blocks.len() == 2)
     assert(f.blocks[0].stmts.len() == 0)
     assert(f.blocks[1].stmts.len() == 1)
-    match f.blocks[0].term {
-        Goto(to) => assert(to == second)
-        Return => assert(false)
-        Unreached => assert(false)
-    }
+    assert(goes_to(f.blocks[0].term, second))
 }
 
 test "a named local keeps its source name; a temporary carries the empty name" {
     mut b = FnBuilder.new(TyId(3))
     ro n = b.named(TyId(5), "count")
     ro t = b.temp(TyId(5), "_novac_if_t9")
-    ro blk = b.reserve()
-    b.seal(blk, Terminator.Return)
+    b.end_body()
     ro f = b.finish()
     assert(f.locals[raw_local(n)].name == "count")
     assert(f.locals[raw_local(t)].name == "_novac_if_t9")
@@ -110,4 +129,191 @@ test "each local carries its role: the return place, a binding, a temporary" {
         Return => assert(false)
         Binding => assert(false)
     }
+}
+
+// ---- wave M2b-1: structured terminators ------------------------------------
+
+test "an if without else: the else branch IS the join, and end_if seals the branch onto it" {
+    mut b = FnBuilder.new(TyId(3))
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false)
+    assert(c.els == c.join)
+    assert(b.current() == c.then)
+    b.eval(stand_in_expr())
+    b.end_if(c)
+    assert(b.current() == c.join)
+    b.end_body()
+    ro f = b.finish()
+    assert(f.blocks.len() == 3)
+    match f.blocks[0].term {
+        If(t) => {
+            assert(t.then == c.then)
+            assert(t.els == c.join)
+            assert(t.join == c.join)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        Loop(_) => assert(false)
+        Unreached => assert(false)
+    }
+    assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
+    assert(goes_to(f.blocks[raw_block(c.then)].term, c.join))
+    assert(returns(f.blocks[raw_block(c.join)].term))
+}
+
+test "an if with else: three blocks of its own, both branches jump to the one join" {
+    mut b = FnBuilder.new(TyId(3))
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), true)
+    assert(c.els != c.join)
+    b.eval(stand_in_expr())
+    b.begin_else(c)
+    assert(b.current() == c.els)
+    b.eval(stand_in_expr())
+    b.eval(stand_in_expr())
+    b.end_if(c)
+    b.end_body()
+    ro f = b.finish()
+    assert(f.blocks.len() == 4)
+    assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
+    assert(f.blocks[raw_block(c.els)].stmts.len() == 2)
+    assert(goes_to(f.blocks[raw_block(c.then)].term, c.join))
+    assert(goes_to(f.blocks[raw_block(c.els)].term, c.join))
+    assert(returns(f.blocks[raw_block(c.join)].term))
+}
+
+test "an else-if chain: the else block carries no statement, its If shares the outer join" {
+    mut b = FnBuilder.new(TyId(3))
+    ro outer = b.begin_if(Cond.Expr(stand_in_expr()), true)
+    b.eval(stand_in_expr())
+    ro inner = b.begin_else_if(outer, Cond.Expr(stand_in_expr()), false)
+    assert(inner.join == outer.join)
+    assert(inner.els == outer.join)
+    b.eval(stand_in_expr())
+    b.end_if(inner)
+    assert(b.current() == outer.join)
+    b.end_if(outer) // the join is already current: nothing to seal, no ice
+    assert(b.current() == outer.join)
+    b.end_body()
+    ro f = b.finish()
+    // entry, then-outer, join, els-outer (the inner If), then-inner
+    assert(f.blocks.len() == 5)
+    assert(f.blocks[raw_block(outer.els)].stmts.len() == 0)
+    match f.blocks[raw_block(outer.els)].term {
+        If(t) => {
+            assert(t.then == inner.then)
+            assert(t.join == outer.join)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        Loop(_) => assert(false)
+        Unreached => assert(false)
+    }
+    assert(goes_to(f.blocks[raw_block(inner.then)].term, outer.join))
+}
+
+test "a while loop: the header is its own empty block, the body jumps back to it, the exit continues" {
+    mut b = FnBuilder.new(TyId(3))
+    b.eval(stand_in_expr()) // before the loop: stays in the entry block
+    ro c = b.begin_loop(LoopHead.While(stand_in_expr()))
+    assert(b.current() == c.body)
+    b.eval(stand_in_expr())
+    b.end_loop(c)
+    assert(b.current() == c.exit)
+    b.end_body()
+    ro f = b.finish()
+    assert(f.blocks.len() == 4)
+    assert(f.blocks[0].stmts.len() == 1)
+    assert(goes_to(f.blocks[0].term, c.head))
+    assert(f.blocks[raw_block(c.head)].stmts.len() == 0)
+    match f.blocks[raw_block(c.head)].term {
+        Loop(t) => {
+            assert(t.body == c.body)
+            assert(t.exit == c.exit)
+            match t.head {
+                While(_) => { } // the head handed in
+                Range(_) => assert(false)
+            }
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        If(_) => assert(false)
+        Unreached => assert(false)
+    }
+    assert(goes_to(f.blocks[raw_block(c.body)].term, c.head))
+    assert(returns(f.blocks[raw_block(c.exit)].term))
+}
+
+test "a range loop keeps its variable -- a binding local -- and its bounds in the header" {
+    mut b = FnBuilder.new(TyId(3))
+    ro i = b.named(TyId(3), "i")
+    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: stand_in_expr() }))
+    b.end_loop(c)
+    b.end_body()
+    ro f = b.finish()
+    match f.blocks[raw_block(c.head)].term {
+        Loop(t) => match t.head {
+            Range(r) => {
+                assert(r.var == i)
+                assert(f.locals[raw_local(r.var)].name == "i")
+            }
+            While(_) => assert(false)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        If(_) => assert(false)
+        Unreached => assert(false)
+    }
+}
+
+test "an if-let: the Option lands in a binding, the If tests IsSome of it, the binder reads its payload" {
+    mut b = FnBuilder.new(TyId(3))
+    ro o = b.named(TyId(9), "_novac_tmp_t1")
+    b.place(stand_in_expr(), o)
+    ro c = b.begin_if(Cond.IsSome(o), false)
+    ro v = b.named(TyId(3), "v")
+    b.take_payload(v, o)
+    match b.last_stmt() {
+        Assign(a) => {
+            assert(a.dest == v)
+            match a.src {
+                SomePayload(l) => assert(l == o)
+                Expr(_) => assert(false)
+                Use(_) => assert(false)
+            }
+        }
+        Eval(_) => assert(false)
+        Store(_) => assert(false)
+    }
+    b.end_if(c)
+    b.end_body()
+    ro f = b.finish()
+    match f.blocks[0].term {
+        If(t) => match t.cond {
+            IsSome(l) => assert(l == o)
+            Expr(_) => assert(false)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        Loop(_) => assert(false)
+        Unreached => assert(false)
+    }
+    assert(f.blocks[0].stmts.len() == 1)
+    assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
+}
+
+test "a return inside a branch ends the block; what follows lands in a fresh block the end_if seals" {
+    mut b = FnBuilder.new(TyId(3))
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false)
+    b.place(stand_in_expr(), b.ret_place())
+    b.ret()
+    ro dead = b.current()
+    assert(dead != c.then)
+    b.eval(stand_in_expr()) // unreachable in the source, still a statement of a block
+    b.end_if(c)
+    b.end_body()
+    ro f = b.finish()
+    assert(f.blocks.len() == 4)
+    assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
+    assert(returns(f.blocks[raw_block(c.then)].term))
+    assert(f.blocks[raw_block(dead)].stmts.len() == 1)
+    assert(goes_to(f.blocks[raw_block(dead)].term, c.join))
 }

@@ -29,6 +29,7 @@ export fn str @byte_len() -> int => @len
 // (O(1), bounds-checked). Bare `s.char_len()` / `s.byte_at(i)` → E_STR_NO_LEN.
 
 // True если строка пустая. O(1) через @byte_len (байты).
+// nova:allow W_STR_EMPTY_BY_LEN -- the definition of emptiness itself: the one place that may ask the length (P37)
 export fn str @is_empty() -> bool => @byte_len() == 0
 
 // Канонический дефолт. Возвращает пустую строку.

@@ -8,7 +8,7 @@
 // Role: backend A (layer 11) -- renders the checker's decision (the recorded
 //       INSTANCE type and the variant row); decides nothing.
 // Used by: emit_expr.nv (the variant-construction arms of Name, FieldAccess,
-//          Call and MethodCall), emit_iflet.nv and emit_c.nv's `??` (the
+//          Call and MethodCall), emit_flow.nv (the if-let) and emit_c.nv's `??` (the
 //          Some-test).
 // Guarded by: check-novac-differential.sh (fixtures option_ctor/ and the
 //             corpus carrier examples/basics/option_ctor.nv, byte-for-byte

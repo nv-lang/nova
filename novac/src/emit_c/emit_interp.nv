@@ -51,7 +51,7 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
                 continue
             }
             ro piece = frag_body(leaf_text(c), fi == 0, fi == kids.len() - 1)
-            if piece.byte_len() > 0 {
+            if piece != "" {
                 @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\"")
                 @body.append(unescape_dollar(piece))
                 @body.append("\", .len=${escaped_byte_len(piece)}});\n")

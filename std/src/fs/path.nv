@@ -389,7 +389,7 @@ export fn Path @with_extension(ext str) -> Path {
         Some(i) => slice_to(name, i)
         None    => name
     }
-    if ext.byte_len() > 0 {
+    if ext != "" {
         base.push(B_DOT)
         base.append(ext.bytes())
     }

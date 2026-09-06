@@ -108,7 +108,7 @@ export fn Markdown.to_html(md str) -> str {
         }
 
         // Empty line — paragraph break
-        if line.trim_ascii().byte_len() == 0 {
+        if line.trim_ascii() == "" {
             flush_paragraph(buf, paragraph)
             consume paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
@@ -117,7 +117,7 @@ export fn Markdown.to_html(md str) -> str {
         }
 
         // Regular paragraph line
-        if paragraph.byte_len() > 0 { paragraph.append(' ') }
+        if !paragraph.is_empty() { paragraph.append(' ') }
         paragraph.append(line)
         i += 1
     }
@@ -133,7 +133,7 @@ export fn Markdown.to_html(md str) -> str {
 fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> () {
     ro text = paragraph.into_str()
     ro trimmed = text.trim_ascii()
-    if trimmed.byte_len() > 0 {
+    if trimmed != "" {
         buf.append("<p>")
         buf.append(render_inline(trimmed))
         buf.append("</p>\n")
