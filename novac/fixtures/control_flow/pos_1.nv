@@ -1,0 +1,74 @@
+module control_flow.pos_1
+
+// The control-flow forms of the subset in ONE carrier, so the byte-identity
+// check of sub-plan 274.8 (wave M2b-1a) has something to bite on. The wave's
+// reverse probe found the gap (2026-09-06): breaking the printer's `if`
+// spelling moved 6 emitted corpus files, breaking its `else` spelling moved
+// NONE -- among the 92 files novac emits there was no `else` on a plain `if`
+// statement, no `else if` chain at all, one `while`, one range `for`. A form
+// the wave moves must have a carrier under the proof, or the proof proves
+// nothing about it -- this file is that carrier: an if / else-if / else
+// chain in statement position, a `return` inside a branch followed by more
+// statements, `while`, a range `for` with an `if` inside, an if-value, and an
+// if/else in `main`. (A tail `if` whose branches `return` is refused by the
+// subset as "a branch of a tail if ends without a value" -- so the chain here
+// assigns and the function answers the binding after it.)
+
+fn classify(n int) -> int {
+    mut k = 2
+    if n < 0 {
+        k = -1
+    } else if n == 0 {
+        k = 0
+    } else if n < 10 {
+        k = 1
+    } else {
+        k = 2
+    }
+    k
+}
+
+fn sum_to(n int) -> int {
+    if n <= 0 {
+        return 0
+    }
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        acc += i
+        i += 1
+    }
+    acc
+}
+
+fn count_even(n int) -> int {
+    mut c = 0
+    for i in 0..n {
+        if i % 2 == 0 {
+            c += 1
+        }
+    }
+    c
+}
+
+fn sign(n int) -> int {
+    ro s = if n < 0 { -1 } else { 1 }
+    s
+}
+
+fn main() {
+    println(classify(-5))
+    println(classify(0))
+    println(classify(7))
+    println(classify(42))
+    println(sum_to(-1))
+    println(sum_to(10))
+    println(count_even(9))
+    println(sign(-3))
+    println(sign(3))
+    if sum_to(3) == 3 {
+        println(1)
+    } else {
+        println(0)
+    }
+}

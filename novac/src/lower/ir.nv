@@ -93,12 +93,69 @@ export type Stmt enum
     | Eval(Rvalue) // an expression in statement position, value dropped
     | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
 
+/// The blocks of one `if` (wave M2b-1): the branch entered on a true
+/// condition, the branch entered otherwise -- the join itself when the source
+/// wrote no `else` -- and the block both branches reach. An `else if` chain is
+/// an `els` block with no statements whose own terminator is another `If`
+/// with the SAME join (see `begin_else_if`).
+export type IfTerm value {
+    cond Node /// the condition, as the tree spells it (the M1 bridge until M3)
+    then BlockId /// entered when `cond` holds
+    els BlockId /// entered otherwise; equals `join` when there is no else
+    join BlockId /// where both branches continue
+}
+
+/// `for v in lo..hi`: the loop variable -- a binding of the body, created
+/// through `named` like any other -- and its bounds, as the tree spells them.
+export type RangeHead value {
+    var Local /// the loop variable, a `Binding` local of the body
+    lo Node /// the lower bound, inclusive
+    hi Node /// the upper bound, exclusive
+}
+
+/// How a loop's header reads (wave M2b-1). The header CARRIES its source form
+/// because the C printer spells `while (c)` and `for (nova_int v = lo; v < hi;
+/// v++)` with different words, and the wave's criterion is byte-identical C.
+/// The loop over a collection (`emit_for.nv`) arrives with its own sub-slice.
+export type LoopHead enum
+    | While(Node) // `while cond`
+    | Range(RangeHead) // `for v in lo..hi`
+
+/// A loop (wave M2b-1). The block carrying this terminator IS the header: it
+/// holds no statements, tests the head, enters `body` or `exit`; the body's
+/// last block jumps back to the header (`Goto(head)` -- the back edge is a
+/// real edge of the graph, sealed by `end_loop`). Carina's tree has no
+/// `break`/`continue` (measured 2026-09-06), so `exit` has one reader, the
+/// printer, until those forms arrive.
+export type LoopTerm value {
+    head LoopHead /// the header's source form
+    body BlockId /// entered while the head's test holds
+    exit BlockId /// entered when it fails
+}
+
 /// How a block ends. `Unreached` is the state of a block that was reserved
 /// but not yet sealed; `finish` refuses a body that still carries one.
 export type Terminator enum
     | Return // control leaves the body; the value is in local 0
     | Goto(BlockId) // control continues in the named block
+    | If(IfTerm) // two-way branch with a named join (M2b-1)
+    | Loop(LoopTerm) // header of a loop with a named exit (M2b-1)
     | Unreached // reserved, not yet sealed -- never survives `finish`
+
+/// What `begin_if` hands back and `begin_else` / `end_if` take: the three
+/// blocks of one `if`, so the caller never names a block id itself.
+export type IfCtx value {
+    then BlockId /// entered when the condition holds
+    els BlockId /// the else branch, or the join when there is none
+    join BlockId /// where the branches continue
+}
+
+/// What `begin_loop` hands back and `end_loop` takes.
+export type LoopCtx value {
+    head BlockId /// the block whose terminator is the `Loop`
+    body BlockId /// the first block of the body
+    exit BlockId /// where control continues after the loop
+}
 
 /// A basic block: statements in order, then exactly one terminator.
 export type Block {
@@ -116,19 +173,28 @@ export type Fn {
 /// Builds one `Fn` in program order. A block is RESERVED (gets its id) before
 /// it is SEALED (gets its statements and terminator), so a `Goto` can name a
 /// block that is filled later. Statements accumulate in `cur` and belong to
-/// whichever block is sealed next.
+/// the CURRENT block `cur_id` -- the one the structured events below seal
+/// when control leaves it (wave M2b-1; until then they belonged to whichever
+/// block was sealed next, and no block ever was).
 export type FnBuilder {
     locals []LocalDecl /// locals so far; index 0 is the return place
     blocks []Block /// reserved blocks, `Unreached` until sealed
     cur []Stmt /// statements placed since the last seal
+    cur_id BlockId /// the reserved block the statements in `cur` belong to
 }
 
-/// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`).
+/// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`)
+/// and whose entry block is reserved and current (rustc `START_BLOCK`).
 export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut locals = []LocalDecl.new()
     locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "" })
-    FnBuilder { locals, blocks: []Block.new(), cur: []Stmt.new() }
+    mut blocks = []Block.new()
+    blocks.push(Block { stmts: []Stmt.new(), term: Terminator.Unreached })
+    FnBuilder { locals, blocks, cur: []Stmt.new(), cur_id: BlockId(0) }
 }
+
+/// The block the next statement lands in.
+export fn FnBuilder @current() -> BlockId => @cur_id
 
 /// The return place of the body under construction.
 export fn FnBuilder @ret_place() -> Local => Local(0)
@@ -212,9 +278,99 @@ export fn FnBuilder mut @seal(b BlockId, term Terminator) -> () {
         Unreached => { } // the only legal state to seal from
         Return => ice("lower: a block sealed twice (it already returns)")
         Goto(_) => ice("lower: a block sealed twice (it already jumps)")
+        If(_) => ice("lower: a block sealed twice (it already branches)")
+        Loop(_) => ice("lower: a block sealed twice (it already loops)")
     }
     @blocks[i] = Block { stmts: @cur, term }
     @cur = []Stmt.new()
+}
+
+/// Seals the CURRENT block with `term` and makes `next` current: the one
+/// primitive every structured event below is built from.
+fn FnBuilder mut @close(term Terminator, next BlockId) -> () {
+    @seal(@cur_id, term)
+    @cur_id = next
+}
+
+/// Opens an `if`: the statements placed so far end the current block with
+/// `If`, and what is placed next belongs to the `then` branch. `has_else`
+/// decides whether the else branch is a block of its own or the join itself
+/// -- the source knows, the builder does not guess.
+export fn FnBuilder mut @begin_if(cond Node, has_else bool) -> IfCtx {
+    ro join = @reserve()
+    @begin_chained_if(cond, has_else, join)
+}
+
+/// Opens an `if` whose join ALREADY exists: the current block ends with `If`
+/// and the `then` branch becomes current. `begin_if` reserves the join and
+/// comes here; `begin_else_if` comes here with the outer join, so a chain
+/// shares one. The emitter calls it directly when it has to print the
+/// condition after `begin_else` and before the branch opens.
+export fn FnBuilder mut @begin_chained_if(cond Node, has_else bool, join BlockId) -> IfCtx {
+    ro then = @reserve()
+    ro els = if has_else { @reserve() } else { join }
+    @close(Terminator.If(IfTerm { cond, then, els, join }), then)
+    IfCtx { then, els, join }
+}
+
+/// Moves from the `then` branch to the `else` branch: the branch ends with a
+/// jump to the join, and what is placed next belongs to `els`. Asking it of
+/// an `if` opened without an else branch is a compiler bug, named as such.
+export fn FnBuilder mut @begin_else(c IfCtx) -> () {
+    if c.els == c.join {
+        ice("lower: begin_else on an if that was opened without an else branch")
+    }
+    @close(Terminator.Goto(c.join), c.els)
+}
+
+/// `else if`: the else branch of `outer` is a block with no statements whose
+/// terminator is a second `If` sharing the outer join. Hands back the inner
+/// context; its `end_if` closes onto the shared join, after which the outer
+/// `end_if` finds the join current and has nothing to seal.
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Node, has_else bool) -> IfCtx {
+    @begin_else(outer)
+    @begin_chained_if(cond, has_else, outer.join)
+}
+
+/// Closes an `if`: the open branch jumps to the join, and what is placed next
+/// belongs to the join. When the join is ALREADY current -- the else branch
+/// was an `else if` chain that closed onto it -- there is nothing to seal.
+export fn FnBuilder mut @end_if(c IfCtx) -> () {
+    if @cur_id != c.join {
+        @close(Terminator.Goto(c.join), c.join)
+    }
+}
+
+/// Opens a loop: the current block jumps to a fresh header block, the header
+/// carries the `Loop` terminator, and what is placed next belongs to the body.
+export fn FnBuilder mut @begin_loop(head LoopHead) -> LoopCtx {
+    ro h = @reserve()
+    ro body = @reserve()
+    ro exit = @reserve()
+    @close(Terminator.Goto(h), h)
+    @close(Terminator.Loop(LoopTerm { head, body, exit }), body)
+    LoopCtx { head: h, body, exit }
+}
+
+/// Closes a loop: the body's last block jumps back to the header (the back
+/// edge), and what is placed next belongs to the exit.
+export fn FnBuilder mut @end_loop(c LoopCtx) -> () {
+    @close(Terminator.Goto(c.head), c.exit)
+}
+
+/// A `return` in the middle of the body: the current block ends with
+/// `Return`, and whatever the source wrote after it -- nothing, usually --
+/// lands in a fresh block that the enclosing `end_if` / `end_loop` /
+/// `end_body` seals (rustc does the same: statements after a return are
+/// unreachable but still have a block).
+export fn FnBuilder mut @ret() -> () {
+    ro next = @reserve()
+    @close(Terminator.Return, next)
+}
+
+/// The end of the body: the current block returns. After this `finish` holds.
+export fn FnBuilder mut @end_body() -> () {
+    @seal(@cur_id, Terminator.Return)
 }
 
 /// The finished body. Statements placed after the last seal, or a block that
@@ -228,6 +384,8 @@ export fn FnBuilder @finish() -> Fn {
             Unreached => ice("lower: a reserved block was never sealed")
             Return => { } // sealed
             Goto(_) => { } // sealed
+            If(_) => { } // sealed
+            Loop(_) => { } // sealed
         }
     }
     Fn { @locals, @blocks }

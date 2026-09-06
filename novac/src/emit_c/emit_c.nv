@@ -362,6 +362,15 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
             // type -- is read above by position, never by walking this loop.
         }
     }
+    // The body is a FINISHED graph (274.8 M2b-1): its last block returns, and
+    // `finish` refuses a block that was opened and never closed -- an `if` or
+    // a loop whose event pair is broken is a compiler bug named at build time,
+    // not a C file that happens to compile.
+    @ir.end_body()
+    ro lowered = @ir.finish()
+    if lowered.blocks.len() == 0 {
+        ice("emit: a finished body without its entry block")
+    }
     if @ctx.fns.is_entry_row(row) {
         @body.append("    return NOVA_UNIT;\n}\n")
     } else {
@@ -460,10 +469,15 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     // The temporary is a LOCAL of the lowered body (274.8 M1): declared just
     // above by this printer, assigned in each branch through the one door.
     ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
+    // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
+    // if-value always has an else, so `has_else` is a fact, not a guess.
+    ro c = @ir.begin_if(kids[1], true)
     @emit_block_value(kids[2], t)
+    @ir.begin_else(c)
     @body.append("    } else {\n")
     @emit_block_value(kids[4], t)
     @body.append("    }\n")
+    @ir.end_if(c)
 }
 
 /// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
@@ -551,56 +565,15 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         // (274.8 M2a); its printer keeps the arguments and their hoists.
         @lower_eval(st)
     } else if k == NodeKind.IfStmt {
-        ro kids = branch_children(st)
-        @body.append("    if (")
-        @emit_expr(kids[1])
-        @body.append(") {\n")
-        @emit_block_stmts_fn(kids[2], false)
-        @body.append("    }\n")
-        // The ELSE branch, since 2026-08-18. Before that the parser did not
-        // read `else` at all; reading it without writing it here would have
-        // been worse than not reading it -- the branch would vanish from the
-        // C in silence, which is the class this compiler keeps finding in
-        // others.
-        if kids.len() > 4 {
-            @body.append("    else ")
-            ro tail = kids[4]
-            ro tk = tail.kind_of()
-            // Two shapes are legal after `else` and BOTH are named: a block,
-            // and a nested if for the `else if` chain. Anything else is an
-            // invariant break, and it says so -- an `else` standing for "every
-            // other node kind" is what P21 refuses, because the next kind
-            // added to the tree would quietly land in it.
-            if tk == NodeKind.Block {
-                @body.append("{\n")
-                @emit_block_stmts_fn(tail, false)
-                @body.append("    }\n")
-            } else if tk == NodeKind.IfStmt {
-                @emit_stmt(tail)
-            } else {
-                ice("emit: the else branch is neither a block nor an else-if")
-            }
-        } else {
-            // No else branch was written.
-        }
+        // A branch of the lowered body (274.8 M2b-1): opened, filled and
+        // joined through the builder's events, printed at the same events
+        // (emit_flow.nv). `None`: this `if` is a statement of its block, not
+        // the else branch of another.
+        @lower_if(st, None)
     } else if k == NodeKind.WhileStmt {
-        ro kids = branch_children(st)
-        @body.append("    while (")
-        @emit_expr(kids[1])
-        @body.append(") {\n")
-        @emit_block_stmts_fn(kids[2], false)
-        @body.append("    }\n")
+        @lower_while(st)
     } else if k == NodeKind.RetStmt {
-        ro kids = branch_children(st)
-        if kids.len() > 1 {
-            // `return <expr>`: the value lands in the return place through the
-            // one door (274.8 M1); the hoist of a construction inside it is
-            // the printer's, as for every other value position.
-            @lower_place(kids[1], @ir.ret_place())
-        } else {
-            // A bare `return`: nothing to build, the unit is spelled here.
-            @body.append("    return NOVA_UNIT;\n")
-        }
+        @lower_return(st)
     } else if k == NodeKind.BindStmt {
         @emit_bind(st)
     } else if k == NodeKind.AssignStmt {
@@ -612,7 +585,6 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), kids[2])
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
-        ro v = leaf_text(kids[1])
         if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
            kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
             // A COLLECTION head (wave B16) walks a vector; its own co-equal
@@ -622,14 +594,9 @@ fn Emitter mut @emit_stmt(st Node) -> () {
             @emit_for_call(kids)
             return
         }
-        ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
-        @body.append("    for (nova_int ${v} = ")
-        @emit_expr(range[0])
-        @body.append("; ${v} < ")
-        @emit_expr(range[2])
-        @body.append("; ${v}++) {\n")
-        @emit_block_stmts_fn(kids[4], false)
-        @body.append("    }\n")
+        // A RANGE head: a loop of the lowered body with the range as its
+        // header form (274.8 M2b-1, emit_flow.nv).
+        @lower_for_range(kids)
     } else if is_value_tail_kind(k) {
         // An expression in statement position -- a positional record
         // included -- is an EVALUATION of the lowered body (274.8 M2a): built

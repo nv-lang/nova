@@ -1,0 +1,125 @@
+// The control-flow statements as STRUCTURED TERMINATORS of the lowered body
+// (sub-plan 274.8, wave M2b-1): `if` / `else if` / `else`, `while`, the range
+// `for` and `return` open and close blocks through the builder's events, and
+// the C is printed AT THE SAME EVENTS -- the streaming bridge of M1/M2a moved
+// from statements to terminators, so the C stays byte-identical while the
+// body becomes a real graph (entry, branches, join, header, body, exit).
+//
+// Donor: rustc MIR building (`rustc_mir_build::build::expr::into` for `if`,
+// `build::scope` for loops): a fresh block per branch, one join, a loop
+// header with its own block. The FORM of the terminators is WebAssembly's
+// structured control flow (`if`/`loop`/`block` with named exits), because
+// the printer targets structural C and must not rediscover the structure
+// from a flat graph (plan 274.8 section 2a).
+// Role: layer emit_c -- the lowering AND the printing of control flow. The
+//   dispatcher `emit_stmt` routes here; nothing here dispatches on node kind
+//   beyond the shape of the statement it was handed.
+// Used by: emit_c.nv (`emit_stmt`), nothing else.
+// Guarded by: check-novac-differential.sh, the corpus C diff of the wave,
+//   lower_test.nv (the graph shapes), check-novac-lowering-one-door.py.
+//
+// ORDER OF PRINT AND EVENT, and why it is this way: a condition is PRINTED
+// before the branch it guards is opened, so that whatever its printing still
+// lowers at print time (a `??` inside it, until M2b-2 lowers nested value
+// positions ahead of print) is recorded in the block the test runs in, not
+// in the branch taken. For an `else if` the else branch is opened FIRST, then
+// the condition printed, then the chained `if` opened -- same reason.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+import ../sem.{branch_children, leaf_text}
+import ../lower.{IfCtx, LoopHead, RangeHead}
+
+/// One `if` statement with its `else` / `else if` chain. `outer` is the
+/// enclosing `if` when this one IS its else branch: then the else branch is
+/// opened first and the chained `if` shares the outer join.
+fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
+    ro kids = branch_children(st)
+    ro has_else = kids.len() > 4
+    match outer {
+        None => {}
+        Some(o) => @ir.begin_else(o)
+    }
+    @body.append("    if (")
+    @emit_expr(kids[1])
+    @body.append(") {\n")
+    ro c = match outer {
+        None => @ir.begin_if(kids[1], has_else)
+        Some(o) => @ir.begin_chained_if(kids[1], has_else, o.join)
+    }
+    @emit_block_stmts_fn(kids[2], false)
+    @body.append("    }\n")
+    if has_else {
+        // The ELSE branch, since 2026-08-18. Before that the parser did not
+        // read `else` at all; reading it without writing it here would have
+        // been worse than not reading it -- the branch would vanish from the
+        // C in silence, which is the class this compiler keeps finding in
+        // others.
+        @body.append("    else ")
+        ro tail = kids[4]
+        ro tk = tail.kind_of()
+        // Two shapes are legal after `else` and BOTH are named: a block, and
+        // a nested if for the `else if` chain. Anything else is an invariant
+        // break, and it says so -- an `else` standing for "every other node
+        // kind" is what P21 refuses, because the next kind added to the tree
+        // would quietly land in it.
+        if tk == NodeKind.Block {
+            @ir.begin_else(c)
+            @body.append("{\n")
+            @emit_block_stmts_fn(tail, false)
+            @body.append("    }\n")
+        } else if tk == NodeKind.IfStmt {
+            @lower_if(tail, Some(c))
+        } else {
+            ice("emit: the else branch is neither a block nor an else-if")
+        }
+    } else {
+        // No else branch was written: the else block IS the join.
+    }
+    @ir.end_if(c)
+}
+
+/// One `while`: the header block carries the loop, the body jumps back.
+fn Emitter mut @lower_while(st Node) -> () {
+    ro kids = branch_children(st)
+    @body.append("    while (")
+    @emit_expr(kids[1])
+    @body.append(") {\n")
+    ro c = @ir.begin_loop(LoopHead.While(kids[1]))
+    @emit_block_stmts_fn(kids[2], false)
+    @body.append("    }\n")
+    @ir.end_loop(c)
+}
+
+/// One `for v in lo..hi`: the loop variable is a binding local of the body,
+/// the bounds stay tree expressions (the M1 bridge), the header carries the
+/// range form so the printer spells C's `for` and not a `while`.
+fn Emitter mut @lower_for_range(kids []Node) -> () {
+    ro v = leaf_text(kids[1])
+    ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
+    @body.append("    for (nova_int ${v} = ")
+    @emit_expr(range[0])
+    @body.append("; ${v} < ")
+    @emit_expr(range[2])
+    @body.append("; ${v}++) {\n")
+    ro lv = @ir.named(@ctx.prims.int_id, v)
+    ro c = @ir.begin_loop(LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] }))
+    @emit_block_stmts_fn(kids[4], false)
+    @body.append("    }\n")
+    @ir.end_loop(c)
+}
+
+/// One `return`: the value lands in the return place through the one door
+/// (274.8 M1) -- a bare `return` spells the unit itself -- and the block ends
+/// with `Return`; what the source wrote after it lands in a fresh block.
+fn Emitter mut @lower_return(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() > 1 {
+        @lower_place(kids[1], @ir.ret_place())
+    } else {
+        @body.append("    return NOVA_UNIT;\n")
+    }
+    @ir.ret()
+}
