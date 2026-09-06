@@ -14,8 +14,11 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-merge-discipline.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
-bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
+# Число случаев в итоге печатает СЧЁТЧИК, а не рука: рукописное расходится с телом
+# на первом же добавленном случае и не краснеет никогда (check-selftest-honest-count).
+CASES=0
+ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 GC="git -C $TMP -c user.name=selftest -c user.email=selftest@example.com -c commit.gpgsign=false"
@@ -43,9 +46,11 @@ else
     bad "не отказал на красном (код $rc): $out"
 fi
 
-# 3. Вердикт зелёный и свежий — пропуск. Это направление важнее первых двух:
-#    страж, отказывающий всегда, будет обойдён и правило умрёт.
-echo "RC=0 SEC=2412" > "$V"
+# 3. Вердикт зелёный, свежий и НАЗЫВАЮЩИЙ СВОЙ ЯРУС — пропуск. Это направление
+#    важнее первых двух: страж, отказывающий всегда, будет обойдён и правило
+#    умрёт. HASH здесь намеренно НЕ указан — вердикт без хеша законен (старый
+#    формат ещё может лежать на машине), проверяется он только когда назван.
+echo "RC=0 SEC=2412 TIER=main" > "$V"
 out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
     ok "пропускает при зелёном и свежем гейте"
@@ -84,6 +89,109 @@ else
     bad "правило сработало вне главной ветки (код $rc): $out"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: 6/6 ok"; exit 0; fi
+$GC checkout -q main 2>/dev/null   # случай 6 уводит с main — возвращаемся ЯВНО
+
+# ── №988: вердикт обязан называть ярус, а ярус novac — судить свои пути ────
+# Проба, записанная в приёмке строки №988 дословно: «вердикт яруса main
+# подсовывается на слияние novac-ветки — страж ОБЯЗАН покраснеть».
+
+# 7. Вердикт БЕЗ яруса — отказ. До 2026-09-06 это был единственный формат, и
+#    именно поэтому слияние novac-ветки проходило по вердикту, который её файлов
+#    не видел.
+echo "RC=0 SEC=2412" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'не называет ЯРУС'; then
+    ok "отказ на безымянном вердикте (старый формат)"
+else
+    bad "безымянный вердикт принят (код $rc): $out"
+fi
+
+# 8. Вердикт ЧУЖОГО яруса подан как основной — отказ. Ярусы судят разное и не
+#    заменяют друг друга.
+echo "RC=0 SEC=900 TIER=novac" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "яруса 'novac' подан как основной"; then
+    ok "отказ, когда вердикт novac подсунут вместо основного"
+else
+    bad "чужой ярус принят за основной (код $rc): $out"
+fi
+
+# 9. Хеш назван и НЕ совпадает с HEAD — отказ. Свежесть по времени этого не
+#    ловит: гейт мог идти на другой ветке в ту же минуту.
+echo "RC=0 SEC=2412 TIER=main HASH=deadbeef" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'ДРУГОЕ дерево'; then
+    ok "отказ, когда вердикт судил другое дерево"
+else
+    bad "вердикт чужого дерева принят (код $rc): $out"
+fi
+
+# ── Слияние в ходу: MERGE_HEAD есть, и по нему видно, ЧТО оно приносит ──────
+$GC checkout -q -b nvbr main 2>/dev/null
+mkdir -p "$TMP/novac/src"
+echo 'fn main() {}' > "$TMP/novac/src/a.rs"
+$GC add novac/src/a.rs >/dev/null 2>&1; $GC commit -q -m "novac change" >/dev/null 2>&1
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff nvbr >/dev/null 2>&1
+HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+NV="$TMP/novac-verdict"
+
+if ! git -C "$TMP" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    bad "не удалось создать состояние слияния (MERGE_HEAD нет) — случаи 10-12 не проверены"
+else
+    # 10. Слияние приносит novac-пути, вердикта яруса novac нет — ОТКАЗ.
+    #     Это и есть дыра №988 в чистом виде.
+    echo "RC=0 SEC=2412 TIER=main HASH=$HEAD_SHA" > "$V"
+    rm -f "$NV"
+    out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'яруса novac'; then
+        ok "отказ: слияние несёт novac-пути, а вердикта его яруса нет"
+    else
+        bad "novac-слияние прошло по одному основному вердикту (код $rc): $out"
+    fi
+
+    # 11. Тот же случай, но вердикт яруса novac есть, зелёный и свежий —
+    #     ПРОПУСК. Направление «не мешает работать» обязательно: страж,
+    #     запрещающий novac-слияния вовсе, будет обойдён в первый же день.
+    echo "RC=0 SEC=900 TIER=novac HASH=$HEAD_SHA" > "$NV"
+    out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
+        ok "пропускает novac-слияние, когда есть вердикты ОБОИХ ярусов"
+    else
+        bad "ложный отказ при двух зелёных вердиктах (код $rc): $out"
+    fi
+
+    # 12. Вердикт яруса novac КРАСНЫЙ — отказ.
+    echo "RC=1 SEC=900 TIER=novac HASH=$HEAD_SHA" > "$NV"
+    out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'novac КРАСНЫЙ'; then
+        ok "отказ на красном гейте novac"
+    else
+        bad "красный novac пропущен (код $rc): $out"
+    fi
+
+    $GC merge --abort >/dev/null 2>&1
+fi
+
+# 13. Слияние БЕЗ novac-путей проходит по одному основному вердикту — ложного
+#     отказа быть не должно, иначе правило умрёт от неудобства.
+$GC checkout -q -b plainbr main 2>/dev/null
+echo change > "$TMP/f.txt"
+$GC add f.txt >/dev/null 2>&1; $GC commit -q -m "plain change" >/dev/null 2>&1
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff plainbr >/dev/null 2>&1
+HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+echo "RC=0 SEC=2412 TIER=main HASH=$HEAD_SHA" > "$V"
+rm -f "$NV"
+out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
+    ok "обычное слияние не требует вердикта яруса novac"
+else
+    bad "ложный отказ на слиянии без novac-путей (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+$GC checkout -q main 2>/dev/null
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-merge-discipline: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

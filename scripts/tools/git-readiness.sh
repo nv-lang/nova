@@ -86,7 +86,7 @@ else
             echo "PUSH: НЕВОЗМОЖЕН: среди $N непушенных коммитов чужой автор: $BAD (ожидается '$WANT')"
         else
             CHANGED=$(git diff --name-only "$UP"..HEAD)
-            TN=$(printf '%s\n' "$CHANGED" | grep -c -E '^(novac/|scripts/gate-novac\.sh|scripts/guards/check-novac-|scripts/guards/novac-)' || true)
+            TN=$(printf '%s\n' "$CHANGED" | novac_paths_count)
             LANG=$(printf '%s\n' "$CHANGED" | grep -c -E '^(compiler-codegen/src/|std/src/)' || true)
             SPEC=$(printf '%s\n' "$CHANGED" | grep -c -E '^spec/decisions/' || true)
             TIER=main; [ "${TN:-0}" -gt 0 ] && TIER="novac push + main loop"
