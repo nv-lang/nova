@@ -18,11 +18,10 @@
 // comments that justify each rounding decision are kept from the donor; naming follows
 // `docs/dev/nv-coding-style.md`. Each ported function names its donor file.
 //
-// State of the port (plan 283): phases 2 and 3 -- fast path, Lemire and the slow path are
-// live behind the TEMPORARY door `str @to_f64_native()`; `strtod` is no longer called
-// below `parse_number`. Phase 4 makes `@to_f64()` call this code and retires the door;
-// the `extern "C" str_parse_f64` then moves from `parse_float.nv` into the tests, where
-// the C library stays the reference. NOT ported, by decision: `fpu.rs` (x87 precision control for
+// State of the port (plan 283): DONE -- `str @to_f64()` calls `convert_number` below and
+// nothing else; the temporary doors are gone, and the `extern "C" str_parse_f64` now lives
+// in the tests, where the C library is the reference rather than a dependency.
+// NOT ported, by decision: `fpu.rs` (x87 precision control for
 // 32-bit x86 without SSE2 -- Nova's C backend targets x86-64, where the fast path's one
 // multiplication is already rounded once) and `parse_inf_nan` (our grammar rejects
 // `inf`/`nan`, plan 282).
@@ -353,31 +352,4 @@ fn convert_number(n Number, s str) -> f64 {
     ro word = fp.m | ((fp.p as u64) << F64_SIG_BITS)
     ro v = f64.from_bits(word)
     if n.negative { -v } else { v }
-}
-
-/// `str` to `f64` on Nova's own conversion (exact fast path, Eisel-Lemire, then an exact
-/// big-decimal slow path for the near-half-way cases), with exactly the grammar and the
-/// errors of `@to_f64()`. A stepping stone while the new conversion is measured against
-/// the C library: `@to_f64()` takes it over next, and this name goes away.
-export fn str @to_f64_native() -> Result[f64, ParseFloatError] {
-    ro n = parse_number(@)?
-    ro v = convert_number(n, @)
-    // A FINITE literal whose value does not fit f64: infinity is an error, and we say which way.
-    if v > 1.7976931348623157e308 { return Err(ParseFloatError.TooLarge) }
-    if v < -1.7976931348623157e308 { return Err(ParseFloatError.TooSmall) }
-    Ok(v)
-}
-
-/// Does the 128-bit arithmetic settle this string by itself -- the exact fast path or
-/// Eisel-Lemire gives an unambiguous answer? `false` for a string the grammar rejects and
-/// for the rare near-half-way cases that go to the exact big-decimal slow path. A
-/// measurement door: the slow path is correct but slow, and its share must stay small.
-export fn str @f64_decided_natively() -> bool {
-    match parse_number(@) {
-        Err(_) => false
-        Ok(n) => match fast_or_lemire(n) {
-            Some(_) => true
-            None => false
-        }
-    }
 }

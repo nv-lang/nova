@@ -4,7 +4,7 @@ module runtime.string
 // Co-equal test of the float conversion (plan 283 Ф.2 / Ф.3): calls the private pieces
 // directly -- `parse_number`, `try_fast_path`, `compute_float`, `fast_or_lemire`,
 // `parse_long_mantissa` -- so each layer is judged ON ITS OWN, and the slow path can be
-// forced on any string (through `@to_f64_native()` it only sees what Lemire declines).
+// forced on any string (through `@to_f64()` it only sees what Lemire declines).
 // Reference bits come from two independent oracles: the C library (`str_parse_f64`, the
 // extern this module already declares) for the curated set, and Python `float()`
 // (correctly rounded) for the long half-way strings, computed once and pasted as hex.
@@ -20,6 +20,12 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.numeric
+
+// The C library is the REFERENCE of these tests, not a dependency of the library: since
+// plan 283 Ф.4 `str @to_f64()` rounds on its own, and this declaration is the only thing
+// left that names `strtod`. `*mut f64` makes it `unsafe fn` by inference (D424), so every
+// call below is wrapped.
+extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 
 const ALL_ONES u64 = 0xFFFFFFFFFFFFFFFF
 const SIGN_MASK_OFF u64 = 0x7FFFFFFFFFFFFFFF
@@ -50,7 +56,7 @@ fn lemire_magnitude_bits(s str) -> u64 {
 }
 
 fn native_bits(s str) -> u64 {
-    match s.to_f64_native() {
+    match s.to_f64() {
         Ok(v) => v.to_bits()
         Err(_) => ALL_ONES
     }
@@ -343,15 +349,15 @@ test "native: TRAP 1 -- more than 19 digits: Lemire must decline when the droppe
 }
 
 test "native: TRAP 4 -- overflow is an error by direction, underflow is zero" {
-    match "1e309".to_f64_native() {
+    match "1e309".to_f64() {
         Err(TooLarge) => {}
         _ => assert(false, "1e309 must be TooLarge")
     }
-    match "-1e309".to_f64_native() {
+    match "-1e309".to_f64() {
         Err(TooSmall) => {}
         _ => assert(false, "-1e309 must be TooSmall")
     }
-    match "1.7976931348623159e308".to_f64_native() {
+    match "1.7976931348623159e308".to_f64() {
         Err(TooLarge) => {}
         _ => assert(false, "just past MAX rounds to infinity, which is TooLarge")
     }
@@ -374,7 +380,7 @@ test "native: TRAP 6 -- the sign of zero survives every spelling" {
     // only the slow path can settle.
     ro neg_slow = "-9007199254740993.0000000000000000001"
     assert(native_bits(neg_slow) == 0xC340000000000001 as u64, "negative through the slow path keeps its sign")
-    assert(!neg_slow.f64_decided_natively(), "that value is indeed left to the slow path")
+    assert(lemire_magnitude_bits(neg_slow) == ALL_ONES, "that value is indeed left to the slow path")
 }
 
 test "native: the curated set matches the C library bit for bit, sign included" {
@@ -382,7 +388,7 @@ test "native: the curated set matches the C library bit for bit, sign included" 
         mut v = 0.0
         ro ok = unsafe { str_parse_f64(s, &v) }
         assert(ok, s)
-        match s.to_f64_native() {
+        match s.to_f64() {
             Ok(x) => assert(x.to_bits() == v.to_bits(), s)
             Err(_) => assert(v > 1.7976931348623157e308 || v < -1.7976931348623157e308, s)
         }

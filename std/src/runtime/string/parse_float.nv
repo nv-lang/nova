@@ -1,20 +1,18 @@
 // Co-equal file of module `runtime.string` (folder = one module).
 // Role: `str @to_f64()` — the float parse surface, grammar owned by Nova.
 //
-// Why a separate file and why not `strtod` end to end (owner decision 2026-09-05,
-// plan 282 Ф.4, D178 amendment): the old `to_f64` copied the string into a buffer
-// and accepted whatever `strtod` accepted — leading whitespace, `nan`/`inf`, hex
-// floats `0x1p3`, `1e999` as a silent `inf`, and a decimal separator taken from
-// `LC_NUMERIC`. Two grammars for numbers in one module (`to_int` is strict), and
-// only two error causes because `strtod` reports no more. Parsing a number is two
+// Why a separate file (owner decision 2026-09-05, plan 282 Ф.4, D178 amendment): the
+// old `to_f64` copied the string into a buffer and accepted whatever `strtod`
+// accepted — leading whitespace, `nan`/`inf`, hex floats `0x1p3`, `1e999` as a silent
+// `inf`, and a decimal separator taken from `LC_NUMERIC`. Parsing a number is two
 // jobs: the GRAMMAR (what is a number, where it broke, did it overflow) and the
-// correctly-rounded decimal→binary CONVERSION. The first is `parse_number` below and
-// is where every problem lived; the second is a known hard algorithm (Rust/Go/Zig
-// carry ~2k lines of Eisel-Lemire + bignum fallback) and is being ported into the
-// peer `float_convert.nv` (plan 283; the grammar walk below also assembles the
-// `Number` that port consumes). Until the port takes over `@to_f64()` (plan 283
-// Ф.4), the conversion stays delegated to C — fed ONLY a string this grammar already
-// accepted, so C syntax and locale cannot leak out.
+// correctly-rounded decimal→binary CONVERSION. The first is `parse_number` below,
+// which also assembles the `Number` the second job consumes. The second used to be
+// delegated to C; as of plan 283 Ф.4 it is a Nova port of Rust's `core::num::dec2flt`
+// living in the peer `float_convert.nv` — a Clinger fast path, Eisel-Lemire, and a
+// `DigitBuf` big-decimal slow path (`pow5_table.nv` carries the powers of five,
+// `digit_buf.nv` the slow path itself). `str @to_f64()` no longer touches C at all;
+// `strtod` remains only as the oracle of the differential tests.
 //
 // `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
 // import cycle.
@@ -45,15 +43,6 @@ import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 /// Underflow (`"1e-999"`) is not an error — the result is `0.0` or a denormal, which is
 /// what the literal means at `f64` precision.
 export type ParseFloatError enum Empty | Malformed { at int } | TooLarge | TooSmall
-
-// Plain FFI, no compiler name-knowledge: `str_parse_f64` is a regular `extern "C" fn`,
-// out-param convention (bool ok + `*out` value). Called ONLY after the grammar below
-// accepted the whole string, so it sees `[+-]digits[.digits][e[+-]digits]` and nothing
-// else; its own leniency (whitespace, `nan`, hex, locale) is never reachable.
-// `*mut f64` in the signature makes it `unsafe fn` by inference (D424) — no keyword,
-// same as every pointer extern in `std/fs`, `std/net`, `std/io`; the call below MUST be
-// wrapped (`E_UNSAFE_CALL_REQUIRES_WRAP`), and an extra wrap would be `E_UNSAFE_UNUSED`.
-extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 
 // parse.rs `MIN_19DIGIT_INT`: 10^18 — a significand at or above it already carries 19
 // digits, the most a u64 holds without overflow for any next digit.
@@ -177,18 +166,13 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
 /// `"+2.5E-3"` — the Rust/Go grammar for a float literal in a string.
 #stable(since = "0.1")
 export fn str @to_f64() -> Result[f64, ParseFloatError] {
-    // The grammar decides; the assembled `Number` is not consumed here until plan 283
-    // Ф.4 switches the conversion to `float_convert.nv` (today: `@to_f64_native()`).
-    ro _n = parse_number(@)?
-    // Grammar accepted the whole string; C only rounds.
+    // Grammar first, then Nova's own rounding (`float_convert.nv`): the exact fast path,
+    // Eisel-Lemire, and the big-decimal slow path for the near-half-way cases.
     // NB: variants are written qualified AND uniquely named — see the type's doc (#136).
-    mut v = 0.0
-    if !unsafe { str_parse_f64(@, &v) } {
-        // Unreachable for a string the grammar accepted; kept so a C-side surprise is
-        // an error, not a silent 0.0.
-        return Err(ParseFloatError.Malformed { at: 0 })
-    }
-    // A FINITE literal whose value does not fit f64: strtod says ±inf, we say which way.
+    ro n = parse_number(@)?
+    ro v = convert_number(n, @)
+    // A FINITE literal whose value does not fit f64: the conversion yields infinity, and
+    // we say which way rather than returning it.
     if v > 1.7976931348623157e308 { return Err(ParseFloatError.TooLarge) }
     if v < -1.7976931348623157e308 { return Err(ParseFloatError.TooSmall) }
     Ok(v)

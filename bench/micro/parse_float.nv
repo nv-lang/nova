@@ -1,13 +1,12 @@
-// Plan 283 F.6: the cost of `str -> f64`, C library against the native port, on ONE
-// commit and ONE binary: `to_f64()` still rounds through `strtod` (the "before" half),
-// `to_f64_native()` is the port (fast path, Eisel-Lemire, big-decimal slow path). Three
-// sets per the plan: short literals, JSON-typical 17-digit values, long (100+ digit)
-// significands that force the slow path. `bench.elements` = strings per iteration.
+// Plan 283 F.6: the cost of `str -> f64` on Nova's own conversion (fast path,
+// Eisel-Lemire, big-decimal slow path). Three sets per the plan: short literals,
+// JSON-typical 17-digit values, and long (100+ digit) significands that force the slow
+// path. `bench.elements` = strings per iteration.
 //
-// Run:   nova bench run bench/micro/parse_float.nv
-// After F.4 (`to_f64` becomes the port) the "strtod" benches lose their meaning; the
-// plan's F.6 table is filled from a run BEFORE that switch, and the native benches
-// stay as the regression line.
+// Run: nova bench run bench/micro/parse_float.nv
+// The "before" half (the same sets against the C library) was measured on the commit
+// where `to_f64()` still called `strtod`; those numbers live in the plan's F.6 table,
+// because after Ф.4 there is no door left to call the C library through.
 module micro.parse_float
 
 fn short_set() -> []str {
@@ -34,7 +33,7 @@ fn long_set() -> []str {
      "12345678901234567890.12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890"]
 }
 
-bench "to_f64 (strtod): short literals x16" {
+bench "to_f64: short literals x16" {
     ro set = short_set()
     measure {
         for s in set { ro _ = bench.opaque(s.to_f64()) }
@@ -42,15 +41,7 @@ bench "to_f64 (strtod): short literals x16" {
     }
 }
 
-bench "to_f64_native: short literals x16" {
-    ro set = short_set()
-    measure {
-        for s in set { ro _ = bench.opaque(s.to_f64_native()) }
-        bench.elements(16)
-    }
-}
-
-bench "to_f64 (strtod): JSON-typical 17 digits x16" {
+bench "to_f64: JSON-typical 17 digits x16" {
     ro set = json_set()
     measure {
         for s in set { ro _ = bench.opaque(s.to_f64()) }
@@ -58,26 +49,10 @@ bench "to_f64 (strtod): JSON-typical 17 digits x16" {
     }
 }
 
-bench "to_f64_native: JSON-typical 17 digits x16" {
-    ro set = json_set()
-    measure {
-        for s in set { ro _ = bench.opaque(s.to_f64_native()) }
-        bench.elements(16)
-    }
-}
-
-bench "to_f64 (strtod): long significands 100+ digits x8" {
+bench "to_f64: long significands 100+ digits x8" {
     ro set = long_set()
     measure {
         for s in set { ro _ = bench.opaque(s.to_f64()) }
-        bench.elements(8)
-    }
-}
-
-bench "to_f64_native: long significands 100+ digits x8" {
-    ro set = long_set()
-    measure {
-        for s in set { ro _ = bench.opaque(s.to_f64_native()) }
         bench.elements(8)
     }
 }
