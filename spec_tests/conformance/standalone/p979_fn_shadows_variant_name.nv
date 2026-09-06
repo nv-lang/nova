@@ -1,0 +1,25 @@
+// EXPECT_STDOUT 42
+//
+// 221.1 №979. A sum variant and a free function share the name `Red`.
+//
+// The checker resolves the CALL `Red()` to the function and types it `int`
+// (it records the callee in `resolved_callees`, types/mod.rs:17570). Codegen
+// used to ignore that and substitute the variant constructor, emitting
+// `nova_print_int(nova_make_Color_Red())` — so the C compiler refused a program
+// the checker had passed. Fixed by asking the checker's answer before falling
+// back to the name-based variant heuristic.
+//
+// The spec is SILENT on whether a variant name may be shadowed this way
+// (searched 2026-09-06: prohibition wording, property wording, and D-block
+// headings about sums — nothing). So this fixture pins the CHECKER's rule, and
+// the point it really pins is narrower and firmer: codegen must not contradict
+// the checker. If the language later reserves variant names, the refusal
+// belongs in the checker and this fixture becomes a negative — but codegen
+// following the checker stays right either way.
+module standalone.p979_fn_shadows_variant_name
+
+type Color enum Red | Green
+
+fn Red() -> int => 42
+
+fn main() Io -> () => println(Red())
