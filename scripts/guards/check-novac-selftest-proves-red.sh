@@ -144,7 +144,7 @@ exit 0' ;;
         echo "$NAME: FAIL — не удалось подменить $base заглушкой (файл занят?): доказательство не получено" >&2
         exit 1
     fi
-    ( NOVAC_CORPUS=0 NOVAC_COST=0 NOVAC_PROVE=0 timeout "$DEADLINE" sh "$st" ) > "$T/out" 2>&1
+    ( NOVAC_CORPUS=0 NOVAC_SMOKE=0 NOVAC_EMISSION=0 NOVAC_COST=0 NOVAC_PROVE=0 timeout "$DEADLINE" sh "$st" ) > "$T/out" 2>&1
     rc=$?
     mv "$g.proving-backup" "$g"
     cksum < "$g" > "$T/after.$base"

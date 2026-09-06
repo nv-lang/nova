@@ -60,8 +60,12 @@ mkoracle 'exit 1'; mkbin 'exit 1'; mksmoke 'exit 1'
 check "оба отвергли — смоук не запускается, зелёный" "$(run)" "0"
 
 mkoracle 'exit 0'; mkbin 'exit 0'; mksmoke 'exit 1'
+NOVAC_SMOKE=0 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/seam.out" 2>&1
+check "NOVAC_SMOKE=0 — шаг поведения пропущен осознанно (красный смоук не виден)" "$?" "0"
+grep -q 'NOVAC_SMOKE=0' "$TMP/seam.out"
+check "NOVAC_SMOKE=0 — пропуск НАЗВАН в выводе стадией, а не молчит (№992)" "$?" "0"
 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" >/dev/null 2>&1
-check "NOVAC_CORPUS=0 — шаг поведения пропущен осознанно" "$?" "0"
+check "NOVAC_CORPUS=0 один — смоук ВКЛЮЧЁН, красный смоук красит (швы разделены, №992)" "$?" "1"
 
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
