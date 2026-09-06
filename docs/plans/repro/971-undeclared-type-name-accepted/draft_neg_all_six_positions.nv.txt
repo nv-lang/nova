@@ -1,0 +1,42 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Реестр 221.1 №971. Необъявленное имя типа принималось в позициях АННОТАЦИЙ
+// и молча выключало проверку в этой позиции: `fn takes(v Vecc[int]) -> int`
+// пропускал `takes(42)`.
+//
+// Тот же класс план 173 Ф.5 уже закрыл для ЛИТЕРАЛА ЗАПИСИ; в аннотациях он
+// оставался, потому что в `walk_typeref` стоял молчаливый `return` с
+// комментарием «Неизвестное имя — не наша забота (name-resolution)».
+//
+// Позиции взяты НЕ наугад: это площадки, с которых `walk_typeref` реально
+// зовётся (параметр, возврат, поле записи, локальная аннотация, алиас,
+// аргумент дженерика). По одной функции на позицию, у каждой свой пин.
+module neg.p971_unknown_type_name_neg
+
+// nova:expect E_UNKNOWN_TYPE -- parameter position
+fn p971_param(v Vecc[int]) -> int => 1
+
+// nova:expect E_UNKNOWN_TYPE -- return position
+fn p971_ret() -> Vecc[int] => Vecc[int].of(1)
+
+type P971Rec value {
+    // nova:expect E_UNKNOWN_TYPE -- record field position
+    ro f Vecc[int]
+}
+
+fn p971_local() -> int {
+    // nova:expect E_UNKNOWN_TYPE -- local annotation position
+    ro x Vecc[int] = Vecc[int].of(1)
+    1
+}
+
+// nova:expect E_UNKNOWN_TYPE -- alias position
+type P971Alias = Vecc[int]
+
+fn p971_generic_arg() -> int {
+    // nova:expect E_UNKNOWN_TYPE -- generic-argument position
+    ro m Vec[Vecc[int]] = Vec[Vecc[int]].new()
+    1
+}
+
+fn main() Io -> () => println(p971_param(Vec[int].of(1)))

@@ -1,0 +1,35 @@
+// #971 cause 2 -- is the checking really switched off in an `extern "nova"`
+// signature that names an UNIMPORTED type?
+//
+// Found in std itself, not invented: std/src/runtime/sync.nv has NO imports at
+// all and names `Duration` in six extern signatures (:1659, :1771, :1801,
+// :1893, :2274, :2380). `Duration` is declared in
+// std/src/time/duration/core.nv:72 and is NOT in the prelude -- the only
+// prelude mention is a comment saying they take `int` milliseconds THERE
+// precisely to avoid a cross-module import.
+//
+// So the type in that position resolves to nothing, and the question this
+// probe answers is what the checker then does with a CALL: if the argument
+// type is not checked, an unimported type name in a signature silently
+// disables checking for every caller -- which is #971's whole claim, on a real
+// carrier inside std.
+//
+// Run: nova build <this file renamed to .nv>
+//   accepted  -> the position is unchecked; cause 2 is a genuine carrier, not a
+//                false positive, and it deserves its own registry row.
+//   rejected  -> the name resolves by some path this probe does not model, and
+//                the 24 hits ARE false positives of my condition.
+module standalone.p971_extern_sig
+
+type P971Holder value { ro n int }
+
+// `P971Missing` is declared NOWHERE in this file and imported from nowhere --
+// the same situation `Duration` is in inside sync.nv.
+extern "nova" fn P971Holder @takes_missing(t P971Missing) -> bool
+
+fn main() Io -> () {
+    ro h = P971Holder { n: 1 }
+    // A blatantly wrong argument: if the parameter's type resolved to nothing,
+    // there is nothing left to disagree with.
+    println(h.takes_missing(42))
+}
