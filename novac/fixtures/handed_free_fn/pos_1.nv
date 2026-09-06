@@ -1,0 +1,18 @@
+module handed_free_fn.pos_1
+
+// A FREE function of a handed std module, called by name (wave W6 of plan
+// 274.7, registry #925): until this wave the harvest read only METHODS out of
+// the declarations novac was handed, so `is_high_surrogate(0xD800)` was refused
+// as "this name is not a callable novac knows" -- the wrong reason about a
+// function std declares. The call is typed like any free call and emitted as
+// the SHELL's own symbol (the oracle's length-prefixed spelling), because the
+// body is std's and the shell carries it.
+
+import std.encoding.utf16.{is_high_surrogate, is_low_surrogate, decode_surrogate_pair}
+
+fn main() {
+    println(is_high_surrogate(0xD800))
+    println(is_low_surrogate(0xD800))
+    println(is_low_surrogate(0xDC00))
+    println(decode_surrogate_pair(0xD83D, 0xDE00))
+}

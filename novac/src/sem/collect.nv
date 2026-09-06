@@ -52,9 +52,21 @@ fn chain_head(variant_names NameTable, vname str) -> int => variant_names.find(v
 /// registered is skipped, as it always was.
 fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                          mut variant_rows []VariantDef, mut payload_types []TyId,
-                         mut variant_names NameTable) -> () {
+                         mut variant_names NameTable, mut tys Interner) -> () {
     ro skids = branch_children(c)
     if skids.len() < 2 { return }
+    // THE SUM'S OWN TYPE PARAMETERS (wave W4, 274.7): a payload written `T`
+    // in `Option[T] enum Some(T) | None` is the parameter TERM of slot 0,
+    // exactly as a parameter `x T` of a generic fn is -- the same door
+    // (`ty_of_type_name`), the same interned term (`tys.param(slot)`). Until
+    // W4 generic handed sums were skipped wholesale, and `Some(3)` was refused
+    // as "not a callable" -- the wrong cause, on the form novac's own source
+    // writes 264 times.
+    ro tps = generic_names(skids)
+    mut prow = []TyId.new()
+    for i in 0..tps.len() {
+        prow.push(tys.param(i))
+    }
     if skids[1].kind_of() != NodeKind.LeafNode { return }
     ro sname = leaf_text(skids[1])
     ro sum_decl = defs.type_decl(sname) ?? no_decl()
@@ -109,9 +121,11 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
             ro pj = vk[j]
             if pj.kind_of() != NodeKind.LeafNode { continue }
             if leaf_kind(pj) != TokenKind.Ident { continue }
-            ro pdecl = defs.type_decl(leaf_text(pj)) ?? no_decl()
-            if !is_decl(pdecl) { continue }
-            ro pt = ty_of_row(types, pdecl)
+            // A payload names a declared type OR one of the sum's own type
+            // parameters; a name that is neither is skipped -- collection is
+            // tolerant, and the use site names the refusal.
+            ro pt = ty_of_type_name(leaf_text(pj), tps, prow, types, defs)
+            if !is_ty(pt) { continue }
             payload_types.push(pt)
             pcnt += 1
         }
@@ -127,22 +141,6 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                                           tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
                                           ty_id: sum_ty, name: sname,
                                           rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
-}
-
-/// Does this handed sum declaration bind type parameters? Read off the row
-/// `harvest_types` built for it (its `tparam_cnt`), not off the syntax again --
-/// one reader of the declaration's head, and the row is it. A declaration that
-/// owns no row (a duplicate name) answers "generic" so that the caller skips
-/// it: registering variants against a row that is not this sum's would be the
-/// silent mix-up the duplicate test in `register_sum_variants` also refuses.
-fn handed_sum_is_generic(c Node, types []TypeDef, defs DefTable) -> bool {
-    ro skids = branch_children(c)
-    if skids.len() < 2 { return true }
-    if skids[1].kind_of() != NodeKind.LeafNode { return true }
-    ro d = defs.type_decl(leaf_text(skids[1])) ?? no_decl()
-    if !is_decl(d) { return true }
-    if raw_decl(d) >= types.len() { return true }
-    types[raw_decl(d)].tparam_cnt > 0
 }
 
 /// The same registry, plus the declarations novac was HANDED.
@@ -191,17 +189,16 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // from other modules 249 times, each refused as "not one of its variants".
     // Foreign rows go in BEFORE the seal, so a variant the compiled file also
     // declares is overwritten by the file's own (last put wins = shadowing).
-    // GENERIC handed sums stay as they were -- a named width, not an oversight:
-    // `Option[T]` arrives from the prelude, and its `Some`/`None` are compiled
-    // by the if-let wave's own door (builtins OPTION_*); registering them here
-    // with an unresolved `T` payload would send `Some(3)` down the general
-    // variant path with an uninstantiated sum. The day the two doors are one,
-    // this test goes.
+    // GENERIC handed sums too, since wave W4 (274.7): `Option[T]` arrives from
+    // the prelude, and its `Some(T)`/`None` register with the payload as the
+    // sum's parameter TERM -- the call site infers the instance from the
+    // argument, the bare `None` takes the position's expected type. Until W4
+    // they were skipped ("the two doors are one" was the condition, and W4 is
+    // that day): `Some(3)` was refused as "not a callable".
     for d in decls {
         for c in file_decls(d) {
             if c.kind_of() != NodeKind.SumDecl { continue }
-            if handed_sum_is_generic(c, types, defs) { continue }
-            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names)
+            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names, tys)
         }
     }
     // THE TYPE BOUNDARY IS FIXED HERE, beside the name boundary, because the two
@@ -466,7 +463,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // ONE door for the file's own sums and the handed ones (the loop
             // after `harvest_types` above): the variants of a sum are
             // registered by `register_sum_variants`, whichever side declared it.
-            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names)
+            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names, tys)
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }

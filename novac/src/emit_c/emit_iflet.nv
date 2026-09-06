@@ -35,7 +35,9 @@ fn Emitter mut @emit_if_let(st Node) -> () {
     @body.append("    ${c_type(@ctx, ot)} ${tmp} = ")
     @emit_expr(init)
     @body.append(";\n")
-    @body.append("    if (${tmp}.tag == ${OPTION_SOME_TAG_C}) {\n")
+    // The Some-test through the ONE Option door (emit_option, wave W4): a
+    // tagged instance asks `.tag`, a pointer-payload instance asks `.value`.
+    @body.append("    if (${@option_some_test(ot, tmp)}) {\n")
     @body.append("    ${c_type(@ctx, payload)} ${leaf_text(kids[3])} = ${tmp}.value;\n")
     @emit_block_stmts_fn(kids[7], false)
     @body.append("    }\n")

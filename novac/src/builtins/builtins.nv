@@ -72,6 +72,9 @@ export const PAREN_RECORD_C_PREFIX = "NovaTuple_"
 export const OPTION_SUM = "Option"
 export const OPTION_FAMILY_C = "NovaOpt_"
 export const OPTION_SOME_TAG_C = "NOVA_TAG_Option_Some"
+/// The shell's tag of an absent Option (read off shell.tpl.c, wave W4): the
+/// emitter builds `None` as a compound literal carrying it.
+export const OPTION_NONE_TAG_C = "NOVA_TAG_Option_None"
 export const OPTION_SOME_VARIANT = "Some"
 
 /// The vector methods the for-over-a-call emission walks with (B16 wave,

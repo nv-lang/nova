@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's inference of an enum's type arguments at a variant
+// construction (`Some(3)` : `Option<i32>` from the payload, a bare `None` from
+// the expected type); NOT taken: inference variables flowing across statements.
+// Role: acceptance tests of wave W4 (274.7, tier 0): `Some(x)` and `None` of the
+// handed GENERIC sum Option are constructed -- the payload fixes the instance,
+// the position's expectation fixes a bare `None`, the emitter builds the shell's
+// compound literals in both shapes (tagged value payload, tagless pointer
+// payload), and a `None` with nothing to take its type from is refused by its
+// cause. Before W4: `Some(3)` was "this name is not a callable", `None` an
+// unknown name.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures option_ctor/ through
+// check-novac-no-cascade and the differential.
+// novac/src/pipeline/option_test.nv -- constructing Option.
+
+module novac.pipeline
+
+test "Option construction: Some(x) from the payload, None from the expectation, both shell shapes (W4)" {
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\n")
+    // POSITIVE FIRST: the forms novac's own source writes -- `return Some(x)`,
+    // a tail `None`, `=> Some(..)`, an if-expression body with both.
+    ro (d0, c0) = compile_to_c("fn pick(f bool) -> Option[int] {\n if f {\n  return Some(3)\n }\n None\n}\nfn name(f bool) -> Option[str] => if f { Some(\"yes\") } else { None }\nfn main() {\n if Some(v) = pick(true) {\n  println(v)\n }\n println(name(false) ?? \"none\")\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // The tagged shape of the shell, and both instances spelled by the one door.
+    // (The payload prints through the general door -- `((nova_int)3LL)` for a
+    // literal -- so the pin is the SHAPE around it, not the literal's spelling.)
+    assert(c0.contains("((NovaOpt_nova_int){.tag = NOVA_TAG_Option_Some, .value = ("), c0)
+    assert(c0.contains("((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})"), c0)
+    assert(c0.contains("NovaOpt_nova_str"), c0)
+    // A HEAP-RECORD payload: the tagless pointer shape, its typedef emitted by
+    // novac (the shell knows nothing of the file's types), the if-let testing
+    // `.value` and not a tag it does not have.
+    ro (d1, c1) = compile_to_c("type Box { v int }\nfn boxed(f bool) -> Option[Box] {\n if f {\n  ro b = Box { v: 4 }\n  return Some(b)\n }\n None\n}\nfn main() {\n if Some(b) = boxed(true) {\n  println(b.v)\n }\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("typedef struct NovaOpt_Nova_Box_p { Nova_Box* value; } NovaOpt_Nova_Box_p;"), c1)
+    assert(c1.contains("((NovaOpt_Nova_Box_p){.value = (b)})"), c1)
+    assert(c1.contains("((NovaOpt_Nova_Box_p){.value = NULL})"), c1)
+    assert(c1.contains(".value != NULL"), c1)
+    // A bare `None` with nothing to take its type from: refused by its cause.
+    ro (d2, _) = compile_to_c("fn main() {\n ro x = None\n println(1)\n}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains("bare `None`"), messages(d2))
+    // A bare `None` as a call ARGUMENT in a tail is not the fn's own return:
+    // the expectation stops at the call, and the argument is refused by its cause.
+    ro (d3, _) = compile_to_c("fn take(o Option[int]) -> Option[int] => o\nfn f() -> Option[int] => take(None)\nfn main() {\n println(1)\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains("bare `None`"), messages(d3))
+    // The payload fixes the instance, and the return door judges it against
+    // the declaration -- `Option[int]` is not `Option[str]`.
+    ro (d4, _) = compile_to_c("fn bad() -> Option[str] => Some(1)\nfn main() {\n println(1)\n}", std)
+    assert(d4.len() == 1, messages(d4))
+    assert(messages(d4).contains("Option[int]") && messages(d4).contains("Option[str]"), messages(d4))
+}

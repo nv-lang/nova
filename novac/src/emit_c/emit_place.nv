@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR codegen (`rustc_codegen_ssa::mir::codegen_assign`,
+// `codegen_statement`): ONE place prints `dest = rvalue`, and the rvalue's form
+// is dispatched once there, not at each position that produces a value; a
+// statement is printed by its IR kind, not by walking the tree again. Not
+// taken: LLVM values -- the target is C text, so "print" here is appending to
+// the shell's body.
+// Role: layer emit_c, the ONE printer of the lowered body's statements
+//   (sub-plan 274.8, waves M1/M2a): every value position of the language --
+//   block tail, `=>` body, `return`, binding, `??`, if-branch tail, match arm,
+//   destructuring -- records `dest = Expr(e)` through `lower`'s door; every
+//   statement expression records an evaluation, every assignment a store; all
+//   are printed here from the recorded statement.
+// Used by: emit_c.nv, emit_match.nv, emit_destructure.nv -- the positions.
+// Guarded by: check-novac-lowering-one-door.py (the positions hold no kind
+//   dispatch of their own, so the count only shrinks),
+//   check-novac-differential.sh (behaviour does not move by one file).
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind, AssignOp}
+import ../diag.{ice}
+import ../sem.{is_value_tail_kind, c_type}
+import ../types.{TyId, is_ty}
+import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue}
+
+/// Records `dest = e` in the lowered body and prints it at once -- the
+/// streaming bridge of waves M1/M2a: statements are lowered and printed one
+/// by one until M2b prints sealed blocks.
+fn Emitter mut @lower_place(e Node, dest Local) -> () {
+    @ir.place(e, dest)
+    @emit_last_stmt()
+}
+
+/// Records an expression evaluated for its effects and prints it at once.
+fn Emitter mut @lower_eval(e Node) -> () {
+    @ir.eval(e)
+    @emit_last_stmt()
+}
+
+/// Records a store into a place the tree names and prints it at once.
+fn Emitter mut @lower_store(target Node, op AssignOp, src Node) -> () {
+    @ir.store(target, op, src)
+    @emit_last_stmt()
+}
+
+/// Prints the statement recorded last, by its IR kind -- the one dispatch on
+/// statement kind the printer has.
+fn Emitter mut @emit_last_stmt() -> () {
+    match @ir.last_stmt() {
+        Assign(a) => @emit_assign(a)
+        Eval(rv) => @emit_eval(rv)
+        Store(st) => @emit_store(st)
+    }
+}
+
+/// The tree expression behind an rvalue -- the M1 bridge; an operand rvalue
+/// does not exist before M2 lowers one.
+fn Emitter @expr_of(rv Rvalue) -> Node {
+    match rv {
+        Expr(n) => n
+        Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
+    }
+}
+
+/// Prints one assignment of the lowered body: the value's form is built by
+/// `build_value` (the ONE dispatch), the line is spelled by the local's role.
+fn Emitter mut @emit_assign(a AssignStmt) -> () {
+    ro d = @ir.decl_of(a.dest)
+    ro e = @expr_of(a.src)
+    ro built = @build_value(e, d.ty)
+    @emit_assign_built(d, built, e)
+}
+
+/// The line itself: `return <v>;` for the return place, `T name = <v>;` for a
+/// binding (declared where it is first assigned), `name = <v>;` for a
+/// temporary its creator declared. `built` is the temporary a construction
+/// was built into -- then that name is the value; `None` means the
+/// expression prints inline.
+fn Emitter mut @emit_assign_built(d LocalDecl, built Option[str], e Node) -> () {
+    match d.kind {
+        Return => @body.append("    return ")
+        Binding => @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = ")
+        Temp => @body.append("        ${d.name} = ")
+    }
+    match built {
+        Some(t) => @body.append(t)
+        None => @emit_expr(e)
+    }
+    @body.append(";\n")
+}
+
+/// An expression in STATEMENT position: a call keeps its own printer (the
+/// arguments, their hoists, the receiver); a positional record is built and
+/// dropped -- the effects of its components run in written order (B15 step
+/// 4a); anything else is `(void)(e);`.
+fn Emitter mut @emit_eval(rv Rvalue) -> () {
+    ro e = @expr_of(rv)
+    ro k = e.kind_of()
+    if k == NodeKind.Call {
+        @emit_call_stmt(e)
+        return
+    }
+    if k == NodeKind.TupleExpr {
+        ro dropped = @emit_record_ctor(e, @out.type_of(e.id_of()), true)
+        @body.append("    (void)${dropped};\n")
+        return
+    }
+    @body.append("    (void)(")
+    @emit_expr(e)
+    @body.append(");\n")
+}
+
+/// A store: THE TARGET IS WRITTEN THE WAY IT IS READ -- as an expression, so a
+/// plain name and `@field` take one path (measured 2026-08-23: `@n = @n + 1`
+/// once became `@ = ...`). A compound store is its binary operator plus a
+/// store, spelled from the ONE form table (`a += b` is `a = a + b`, which is
+/// also how the protocol path reads on user types, D46). The operand's carrier
+/// decides the form and is READ from the channel: assuming int here is what
+/// once made `f += 0.25` call an integer helper on doubles (hunt emit_c x K1,
+/// H5).
+fn Emitter mut @emit_store(st StoreStmt) -> () {
+    @body.append("    ")
+    @emit_expr(st.target)
+    @body.append(" = ")
+    match st.op {
+        Set => @emit_expr(st.src)
+        Update(op) => {
+            ro row = @arith_row(@out.type_of(st.src.id_of()))
+            ro is_float = is_float_row(row)
+            ro form = c_binary_form(op, row)
+            if !is_call_form(op, is_float) {
+                @body.append("((")
+                @emit_expr(st.target)
+                @body.append(") ")
+                @body.append(form)
+                @body.append(" (")
+                @emit_expr(st.src)
+                @body.append("))")
+            } else {
+                @body.append(form)
+                @body.append("(")
+                @emit_expr(st.target)
+                @body.append(", ")
+                @emit_expr(st.src)
+                @body.append(")")
+            }
+        }
+    }
+    @body.append(";\n")
+}
+
+/// THE ONE DISPATCH on the form of a value. Forms that need statements of
+/// their own -- a match, an if-value, a record or positional-record
+/// constructor, an array literal -- are built here into a temporary, and its
+/// name is the value. Any other expression is hoisted (its constructions laid
+/// down first) and printed inline by `emit_expr`. Until M1 this dispatch
+/// stood in eight positions with four to six arms each (274.8 section 0).
+fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
+    ro k = e.kind_of()
+    if k == NodeKind.MatchExpr {
+        ro u = @fresh_uniq()
+        @emit_match(e, u, ty)
+        return Some("_novac_match_t${u}")
+    }
+    if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
+        // A tail `if` and an if-expression lay down the same pair (wave B14).
+        ro u = @fresh_uniq()
+        @emit_if_value(e, u, ty)
+        return Some("_novac_if_t${u}")
+    }
+    if k == NodeKind.RecordCtor {
+        return Some(@emit_record_ctor(e, ty, false))
+    }
+    if k == NodeKind.TupleExpr {
+        return Some(@emit_record_ctor(e, ty, true))
+    }
+    if k == NodeKind.ArrayLit {
+        return Some(@emit_array_lit(e, ty))
+    }
+    @hoist_array_lits(e)
+    None
+}
+
+/// Whether a block's last statement is its VALUE: an expression, a positional
+/// record, a tail `if`, or a match the checker typed (an untyped tail match is
+/// a statement whose arms leave through `return`, 274.5 wave B9).
+fn Emitter @tail_places_value(c Node) -> bool {
+    ro k = c.kind_of()
+    is_value_tail_kind(k) || k == NodeKind.IfStmt ||
+        (k == NodeKind.MatchExpr && is_ty(@out.type_if_known(c.id_of())))
+}

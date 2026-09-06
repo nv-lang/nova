@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `extern crate` items -- a function declared elsewhere is
+// resolved and type-checked like a local one and linked by its mangled symbol;
+// NOT taken: cross-crate monomorphisation (a generic handed function is refused
+// here until the multi-file unit arrives).
+// Role: acceptance tests of wave W6 (274.7, tier 0): a FREE function of a
+// handed std module is harvested into the callable table, a call to it is
+// typed like any free call, the emitter spells the SHELL's symbol (the oracle's
+// length-prefixed name), the checker asks the lifted surface for it, and the
+// refusal names the true reason when the shell has no such symbol. Before W6:
+// "this name is not a callable novac knows" (#925).
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures handed_free_fn/
+// through check-novac-no-cascade and the differential.
+// novac/src/pipeline/handed_free_test.nv -- free functions of handed modules.
+
+module novac.pipeline
+import ../sem.{InteropTable}
+
+test "a handed free function: resolved, judged like the file's own, spelled as the shell's symbol (W6)" {
+    mut std = std_decls()
+    std.push("module encoding.utf16\nexport fn is_high_surrogate(u int) -> bool => u >= 0xD800 && u <= 0xDBFF\n")
+    ro decls = parse_decls(std)
+    ro sym = "nova_fn_8encoding5utf1617is_high_surrogate"
+    mut shell = InteropTable.new()
+    shell.add(sym)
+    ro prog = "import std.encoding.utf16.{is_high_surrogate}\nfn main() {\n println(is_high_surrogate(0xD800))\n}"
+    // POSITIVE: the shell carries the symbol -- the call is emitted under it.
+    ro (d0, c0) = compile_to_c_with(prog, decls, shell)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("${sym}("), c0)
+    // The shell WITHOUT the symbol: refused by the true reason, naming the module and the symbol.
+    ro (d1, _) = compile_to_c_with(prog, decls, InteropTable.new())
+    assert(d1.len() == 1, messages(d1))
+    assert(messages(d1).contains("declared in module `encoding.utf16`"), messages(d1))
+    assert(messages(d1).contains("carries no `${sym}`"), messages(d1))
+    // ARITY against the harvested signature: judged like the file's own function
+    // -- the binding refusal names the parameter left without a value (wave 4:
+    // binding before arity), exactly as it would for a function of this file.
+    ro (d2, _) = compile_to_c_with("import std.encoding.utf16.{is_high_surrogate}\nfn main() {\n println(is_high_surrogate())\n}", decls, shell)
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains("omits `u`"), messages(d2))
+    // The file's OWN function of the same name shadows the handed one (D125):
+    // compiled here, spelled by our own mangle, the shell never asked.
+    // (The shell TEMPLATE inside the C carries std's symbol regardless, so the
+    // pin is the call site: OUR mangled name is what the body calls.)
+    ro (d3, c3) = compile_to_c_with("fn is_high_surrogate(u int) -> bool => u > 0\nfn main() {\n println(is_high_surrogate(1))\n}", decls, InteropTable.new())
+    assert(d3.len() == 0, messages(d3))
+    assert(c3.contains("novac_fn_is_high_surrogate__"), c3)
+}

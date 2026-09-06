@@ -195,6 +195,7 @@ export type FnDef value {
     has_recv bool /// the first parameter IS the receiver — the ONE datum here (see below)
     tparam_off int /// start of this callable's type parameters in FnTable.tparams
     tparam_cnt int /// how many type parameters it declares; 0 = not generic
+    handed_from str /// "" for the file's own rows and for constructor rows; the module path of the handed file (`encoding.utf16`) for a signature read from a handed declaration -- the datum its shell symbol is spelled from (W6)
 }
 
 /// IS THIS ROW THE PROGRAM'S ENTRY POINT? Asked of the ROW, never of the
@@ -320,7 +321,7 @@ export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
 /// order (§4.4 fixes the position, so the caller has no other place to put
 /// it, and no way to name a second one).
 export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []ParamDef,
-                          tparam_names []str, tparam_bounds []str) -> () {
+                          tparam_names []str, tparam_bounds []str, handed_from str = "") -> () {
     ro off = @params.len()
     // Whole slice at once: std does the copy (nv-coding-style section 18a --
     // a counted push loop is the red flag it names).
@@ -334,7 +335,7 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
         @tbounds.push(if i < tparam_bounds.len() { tparam_bounds[i] } else { "" })
     }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
-                       tparam_off: toff, tparam_cnt: tparam_names.len() })
+                       tparam_off: toff, tparam_cnt: tparam_names.len(), handed_from })
 }
 
 /// THE VARIANT a name denotes INSIDE ONE SUM (274.7 B6, registry #964), or None

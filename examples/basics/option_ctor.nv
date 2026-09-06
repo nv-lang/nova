@@ -1,0 +1,45 @@
+// option_ctor.nv -- the corpus carrier of wave W4 (274.7, tier 0): Some(x) and
+// None constructed directly, consumed through if-let and ??; int, str and a
+// heap-record payload.
+
+module basics.option_ctor
+
+type Box { v int }
+
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn name(f bool) -> Option[str] => if f { Some("yes") } else { None }
+
+fn boxed(f bool) -> Option[Box] {
+    if f {
+        ro b = Box { v: 4 }
+        return Some(b)
+    }
+    None
+}
+
+fn main() {
+    if Some(v) = pick(true) {
+        println(v)
+    } else {
+        println(0)
+    }
+    println(pick(false) ?? -1)
+    println(name(true) ?? "none")
+    println(name(false) ?? "none")
+    if Some(b) = boxed(true) {
+        println(b.v)
+    } else {
+        println(0)
+    }
+    if Some(c) = boxed(false) {
+        println(c.v)
+    } else {
+        println(-2)
+    }
+}

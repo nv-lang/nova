@@ -70,7 +70,6 @@ import ../sem.{is_unit_ty}
 import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, arm_body_at, Ctx}
 import ../sem.{carrier_of}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
-import ../sem.{is_value_tail_kind}
 import ../sem.{interp_slices}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
@@ -79,6 +78,9 @@ import ../sem.{decl_index_of_ty}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
 import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
+import ../types.{no_ty}
+import ../sem.{is_value_tail_kind}
+import ../lower.{FnBuilder, Local}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
 /// so the day substitutions arrive there is one place to stop passing it.
@@ -135,7 +137,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     for _ in 0..out.types.len() {
         lt.push("")
     }
-    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0,
+    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, ir: FnBuilder.new(no_ty()),
                           lit_tmp: lt, body: StringBuilder.new(),
                           fres: FieldIndex.build(ctx.fields),
                           // NAMED explicitly, and the reason is registry #901:
@@ -326,6 +328,10 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     ro kids = branch_children(f)
     @emit_signature(f, name, row, subst, ptypes, ret)
     @body.append(" {\n")
+    // The lowered body of THIS callable (274.8 M1): its locals are the return
+    // place, the bindings and the temporaries; every value position records
+    // its placement here through the one door and prints it (emit_place.nv).
+    @ir = FnBuilder.new(ret)
     @emit_requires_prologue(kids, name)
     mut has_expr_body = false
     for c in kids {
@@ -345,42 +351,12 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
             has_expr_body = true
             ro ek = branch_children(c)
             ro e = ek[ek.len() - 1]
-            if e.kind_of() == NodeKind.MatchExpr {
-                ro u = @fresh_uniq()
-                @emit_match(e, u, ret)
-                @body.append("    return _novac_match_t${u};\n")
-            } else if e.kind_of() == NodeKind.RecordCtor {
-                // F34: the body position IS an initializer position -- that
-                // is exactly why the oracle asks for bare braces here -- so
-                // the constructor is emitted like any other, through the
-                // shared door.
-                //
-                // ASKED BEFORE THE GENERAL EXPRESSION BRANCH, and the order is
-                // the fix rather than a preference (wave B13). While a
-                // constructor was not an expression KIND it reached this arm by
-                // falling past the one above; making it an expression sent it
-                // into the general path, which prints the hoisted temporary and
-                // ices when there is none. Nothing hoists here, because the
-                // body IS the initializer -- so this arm has to be asked first.
-                ro rtmp = @emit_record_ctor(e, ret, false)
-                @body.append("    return ${rtmp};\n")
-            } else if is_value_tail_kind(e.kind_of()) {
-                // The body may BE or CONTAIN a construction -- a positional
-                // record literal (`=> (xs.len(), ys.len())`), an array literal,
-                // an interpolated string -- and a construction is a
-                // multi-statement build: the hoist lays its chain BEFORE the
-                // `return` line, as a binding lays it before its initializer.
-                // Until this hoist a record-literal body fell through to the
-                // ICE below after a GREEN check (#974, found 2026-09-05 by the
-                // positive fixture of #970); `is_value_tail_kind` is the door
-                // the tail rule and the typing of this body read too.
-                @hoist_array_lits(e)
-                @body.append("    return ")
-                @emit_expr(e)
-                @body.append(";\n")
-            } else {
-                ice("emit_c: fn expression body is neither a match nor an expression")
-            }
+            // ONE DOOR (274.8 M1): the body is a value that lands in the return
+            // place. Which form it has -- match, if-expression, constructor,
+            // plain expression -- is the printer's ONE dispatch (`build_value`
+            // in emit_place.nv), not this position's. Until M1 this arm held
+            // four arms of its own and iced on the fifth form.
+            @lower_place(e, @ir.ret_place())
         } else {
             // Any other child -- the name leaf, the parameter list, the return
             // type -- is read above by position, never by walking this loop.
@@ -448,38 +424,13 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     // is the honest emission: no result temporary, no `return`
                     // of a value nobody produced.
                     @emit_match_stmt(c, @fresh_uniq())
-                } else if tail && j == last_branch && c.kind_of() == NodeKind.MatchExpr {
-                    // The TAIL match is the returned value (274.5 wave B5):
-                    // the same pair the `=>` body has always emitted -- lay
-                    // the match down into its temporary, then return it. Its
-                    // result type is the checker's answer, read from the
-                    // channel like every other type here.
-                    ro u = @fresh_uniq()
-                    @emit_match(c, u, @out.type_of(c.id_of()))
-                    @body.append("    return _novac_match_t${u};\n")
-                } else if tail && j == last_branch && c.kind_of() == NodeKind.IfStmt {
-                    // THE TAIL `if` IS THE RETURNED VALUE (wave B14), and it is
-                    // asked BEFORE the general expression arm on purpose: an
-                    // `if` is not an expression kind here, and making it one
-                    // would move it into every other general arm too (the
-                    // lesson wave B13 paid for).
-                    ro u = @fresh_uniq()
-                    @emit_if_value(c, u, @out.type_of(c.id_of()))
-                    @body.append("    return _novac_if_t${u};\n")
-                } else if tail && j == last_branch && c.kind_of() == NodeKind.TupleExpr {
-                    // THE TAIL TUPLE IS THE RETURNED VALUE (B15 step 4b),
-                    // asked before the general arm for B14's reason: the kind
-                    // is not in is_expr_kind (B13's lesson), and without this
-                    // arm the 4a statement arm would BUILD AND DROP the pair
-                    // while the function falls off its end.
-                    ro ttmp = @emit_record_ctor(c, @out.type_of(c.id_of()), true)
-                    @body.append("    return ")
-                    @body.append(ttmp)
-                    @body.append(";\n")
-                } else if tail && j == last_branch && is_expr_kind(c.kind_of()) {
-                    @body.append("    return ")
-                    @emit_expr(c)
-                    @body.append(";\n")
+                } else if tail && j == last_branch && @tail_places_value(c) {
+                    // THE TAIL IS THE RETURNED VALUE -- one door (274.8 M1).
+                    // Until M1 four arms stood here (match, if, positional
+                    // record, general expression), each spelling `return`
+                    // itself; the form of the value is now the printer's one
+                    // dispatch (`build_value` in emit_place.nv).
+                    @lower_place(c, @ir.ret_place())
                 } else {
                     @emit_stmt(c)
                 }
@@ -506,9 +457,12 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     @body.append("){0};\n    if (")
     @emit_expr(kids[1])
     @body.append(") {\n")
-    @emit_block_value(kids[2], uniq)
+    // The temporary is a LOCAL of the lowered body (274.8 M1): declared just
+    // above by this printer, assigned in each branch through the one door.
+    ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
+    @emit_block_value(kids[2], t)
     @body.append("    } else {\n")
-    @emit_block_value(kids[4], uniq)
+    @emit_block_value(kids[4], t)
     @body.append("    }\n")
 }
 
@@ -528,20 +482,20 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     ro u = @fresh_uniq()
     ro opt = "_novac_tmp_t${u}"
     ro res = "_novac_qq_t${u}"
-    @hoist_array_lits(qk[0])
-    @body.append("    ${c_type(@ctx, ot)} ${opt} = ")
-    @emit_expr(qk[0])
-    @body.append(";\n")
+    // The Option lands in its own binding through the one door (274.8 M1):
+    // the hoist of a construction inside it is the printer's.
+    ro lo = @ir.named(ot, opt)
+    @lower_place(qk[0], lo)
     @body.append("    ${c_type(@ctx, res_t)} ${res} = (${c_type(@ctx, res_t)}){0};\n")
-    @body.append("    if (${opt}.tag == ${OPTION_SOME_TAG_C}) {\n")
+    // The Some-test through the ONE Option door (emit_option, wave W4).
+    @body.append("    if (${@option_some_test(ot, opt)}) {\n")
     @body.append("        ${res} = ${opt}.value;\n")
     @body.append("    } else {\n")
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.
-    @hoist_array_lits(qk[2])
-    @body.append("        ${res} = ")
-    @emit_expr(qk[2])
-    @body.append(";\n    }\n")
+    ro lr = @ir.temp(res_t, res)
+    @lower_place(qk[2], lr)
+    @body.append("    }\n")
     res
 }
 
@@ -553,7 +507,7 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
 /// `@emit_arm_value` writes `t = <expr>;` in one line. An `if` BRANCH is a
 /// block, and its value is whatever its last statement produces -- so the
 /// block has to be walked, and only its tail turned into an assignment.
-fn Emitter mut @emit_block_value(b Node, uniq int) -> () {
+fn Emitter mut @emit_block_value(b Node, t Local) -> () {
     ro kids = branch_children(b)
     mut last_branch = -1
     mut j = 0
@@ -570,9 +524,7 @@ fn Emitter mut @emit_block_value(b Node, uniq int) -> () {
             Leaf(_) => {} // the block's braces are trivia, not statements
             Branch { .. } => {
                 if j == last_branch && is_expr_kind(c.kind_of()) {
-                    @body.append("        _novac_if_t${uniq} = ")
-                    @emit_expr(c)
-                    @body.append(";\n")
+                    @lower_place(c, t)
                 } else {
                     // Everything before the tail runs for effect, and a tail
                     // that is not an expression is refused in `check` -- it
@@ -595,7 +547,9 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         // is the shape this compiler keeps refusing elsewhere.
         @emit_match_stmt(st, @fresh_uniq())
     } else if k == NodeKind.Call {
-        @emit_call_stmt(st)
+        // A call in statement position is an EVALUATION of the lowered body
+        // (274.8 M2a); its printer keeps the arguments and their hoists.
+        @lower_eval(st)
     } else if k == NodeKind.IfStmt {
         ro kids = branch_children(st)
         @body.append("    if (")
@@ -639,80 +593,23 @@ fn Emitter mut @emit_stmt(st Node) -> () {
     } else if k == NodeKind.RetStmt {
         ro kids = branch_children(st)
         if kids.len() > 1 {
-            // The returned expression may BE or CONTAIN a construction -- a
-            // tuple, an array literal, an interpolated string -- and a
-            // construction is a multi-statement build: the hoist lays its
-            // chain BEFORE the `return` line, exactly as a binding lays it
-            // before its initializer. Until this line `return (a, b)` reached
-            // the expression printer with no temporary and iced ("never
-            // hoisted") after a GREEN check (found 2026-09-05 by the positive
-            // fixture of #970).
-            @hoist_array_lits(kids[1])
+            // `return <expr>`: the value lands in the return place through the
+            // one door (274.8 M1); the hoist of a construction inside it is
+            // the printer's, as for every other value position.
+            @lower_place(kids[1], @ir.ret_place())
         } else {
-            // A bare `return`: nothing to build.
+            // A bare `return`: nothing to build, the unit is spelled here.
+            @body.append("    return NOVA_UNIT;\n")
         }
-        @body.append("    return ")
-        if kids.len() > 1 { @emit_expr(kids[1]) } else { @body.append("NOVA_UNIT") }
-        @body.append(";\n")
     } else if k == NodeKind.BindStmt {
         @emit_bind(st)
     } else if k == NodeKind.AssignStmt {
+        // A store into a place the tree names (274.8 M2a): the target, the
+        // operator and the value are recorded, the one printer spells them --
+        // a compound store from the one form table, the target as an
+        // expression (a name and `@field` on one path).
         ro kids = branch_children(st)
-        @body.append("    ")
-        // THE TARGET IS WRITTEN THE WAY IT IS READ. `expr_leaf_name` answers a
-        // NAME, and `@n` is not one -- it emitted the bare receiver mark, so
-        // `@n = @n + 1` became `@ = ...` and clang said "expected expression"
-        // (measured 2026-08-23, wave 3g write path). Emitting the target as an
-        // EXPRESSION covers a plain name and `@field` with one path, so the two
-        // sides of an assignment cannot drift apart again.
-        @emit_expr(kids[0])
-        @body.append(" = ")
-        // A compound assignment IS its binary operator plus a store, so it
-        // reuses the ONE form table rather than repeating it (`a += b` is
-        // `a = a + b`, which is also how the protocol path will read on user
-        // types: `a = a.@plus(b)`, D46).
-        match assign_op_of(leaf_kind(kids[1])) {
-            Set => @emit_expr(kids[2])
-            Update(op) => {
-                // The operand TYPE decides the form, and it is READ from the
-                // channel -- assuming int here is what made `f += 0.25` emit
-                // an integer helper on doubles.
-                //
-                // THE CARRIER OF THE TARGET, on two measurements (hunt
-                // emit_c x K1, H5). Declared type: `a += Meters(2.25)` read
-                // Meters, not f64, and the int helper came back -- 3 instead
-                // of 3.75, silently. Right operand: its type is not always in
-                // the channel (a constructor argument recorded no entry), and
-                // an absent type is not f64 either -- same wrong form by a
-                // different road. The TARGET is a binding; the walk recorded
-                // its type when it bound the name, and its carrier is what the
-                // arithmetic runs in. A newtype computes as what it holds.
-                ro row = @arith_row(@out.type_of(kids[2].id_of()))
-                ro is_float = is_float_row(row)
-                ro form = c_binary_form(op, row)
-                // The target appears on the RIGHT of a compound assignment
-                // too (`a += b` is `a = a + b`), and it is written the same
-                // way there: as an EXPRESSION, so `@n += 1` works for the same
-                // reason `@n = @n + 1` does.
-                if !is_call_form(op, is_float) {
-                    @body.append("((")
-                    @emit_expr(kids[0])
-                    @body.append(") ")
-                    @body.append(form)
-                    @body.append(" (")
-                    @emit_expr(kids[2])
-                    @body.append("))")
-                } else {
-                    @body.append(form)
-                    @body.append("(")
-                    @emit_expr(kids[0])
-                    @body.append(", ")
-                    @emit_expr(kids[2])
-                    @body.append(")")
-                }
-            }
-        }
-        @body.append(";\n")
+        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), kids[2])
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         ro v = leaf_text(kids[1])
@@ -733,20 +630,11 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         @body.append("; ${v}++) {\n")
         @emit_block_stmts_fn(kids[4], false)
         @body.append("    }\n")
-    } else if is_expr_kind(k) {
-        @body.append("    (void)(")
-        @emit_expr(st)
-        @body.append(");\n")
-    } else if k == NodeKind.TupleExpr {
-        // A tuple in STATEMENT position: the oracle accepts it and discards
-        // the value, the component effects run in written order -- so the
-        // build IS the emission and the temporary is simply not read (B15
-        // step 4a; found by the tail probe, where check passed the form and
-        // this door iced).
-        ro dropped = @emit_record_ctor(st, @out.type_of(st.id_of()), true)
-        @body.append("    (void)")
-        @body.append(dropped)
-        @body.append(";\n")
+    } else if is_value_tail_kind(k) {
+        // An expression in statement position -- a positional record
+        // included -- is an EVALUATION of the lowered body (274.8 M2a): built
+        // where it needs building, dropped, the effects in written order.
+        @lower_eval(st)
     } else if k == NodeKind.DestructureBind {
         @emit_destructure_bind(st)
     } else if k == NodeKind.IfLet {
@@ -930,60 +818,10 @@ fn Emitter mut @emit_bind(st Node) -> () {
     ro vname = leaf_text(kids[1])
     ro init = kids[kids.len() - 1]
     ro vtype = @out.type_of(init.id_of())
-    if init.kind_of() == NodeKind.MatchExpr {
-        ro u = @fresh_uniq()
-        @emit_match(init, u, vtype)
-        @body.append("    ")
-        @body.append(c_type(@ctx, vtype))
-        @body.append(" ${vname} = _novac_match_t${u};\n")
-        return
-    }
-    if init.kind_of() == NodeKind.IfExpr {
-        // The initializer `if` lays down exactly like the tail one (wave B14):
-        // the value temporary, then the binding reads it -- the same pair the
-        // match above has always emitted.
-        ro u = @fresh_uniq()
-        @emit_if_value(init, u, vtype)
-        @body.append("    ")
-        @body.append(c_type(@ctx, vtype))
-        @body.append(" ${vname} = _novac_if_t${u};\n")
-        return
-    }
-    // A literal is built into a temporary first; the `return` IS the other
-    // branch (P31 form 2), and the shapes below are for every other initializer.
-    if init.kind_of() == NodeKind.ArrayLit {
-        ro tmp = @emit_array_lit(init, vtype)
-        @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
-        return
-    }
-    if init.kind_of() == NodeKind.TupleExpr {
-        // The same contract as the record constructor below: built into a
-        // temporary, the binding reads the temporary's name (B15 step 4a).
-        ro ttmp = @emit_record_ctor(init, vtype, true)
-        @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${ttmp};\n")
-        return
-    }
-    if init.kind_of() == NodeKind.RecordCtor {
-        // THE C TYPE COMES FROM THE ONE DOOR, not from the struct name plus a
-        // star: a VALUE record is not a pointer, and this line was the last
-        // place that assumed every record is. Measured 2026-08-23 -- the C read
-        // `NovaValue_Pt* a = _novac_tmp_t1;`, initializing a pointer with a
-        // struct, and clang is what said so.
-        ro tmp = @emit_record_ctor(init, vtype, false)
-        @body.append("    ${c_type(@ctx, vtype)} ${vname} = ${tmp};\n")
-    } else if is_expr_kind(init.kind_of()) {
-        // The initializer may CONTAIN a construction (an interpolated
-        // literal, I1): the hoist lays its chain before the binding's line,
-        // exactly as the argument path does.
-        @hoist_array_lits(init)
-        @body.append("    ")
-        @body.append(c_type(@ctx, vtype))
-        @body.append(" ")
-        @body.append(vname)
-        @body.append(" = ")
-        @emit_expr(init)
-        @body.append(";\n")
-    } else {
-        ice("emit_c: binding initializer is neither a match, a ctor nor an expression")
-    }
+    // ONE DOOR (274.8 M1): the binding is a local of the lowered body, and its
+    // initializer lands in it through `place`. Until M1 six arms stood here --
+    // match, if-expression, array literal, positional record, constructor,
+    // general expression -- each spelling the declaration line itself.
+    ro l = @ir.named(vtype, vname)
+    @lower_place(init, l)
 }

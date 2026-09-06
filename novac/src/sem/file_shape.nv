@@ -39,26 +39,52 @@ import ../lex.{TokenKind}
 /// The dot becomes `_` and nothing else is transformed: a module path is made of
 /// identifiers, which are already C-safe, and inventing an escape for a
 /// character the language cannot put there would be a rule with no case.
-export fn module_path_c(file Node) -> str {
+export fn module_path_c(file Node) -> str => module_joined(file, "_")
+
+/// The module path with `sep` between segments -- the one joiner behind the C
+/// spelling (`_`) and the source spelling (`.`).
+fn module_joined(file Node, sep str) -> str {
     consume s = StringBuilder.new(cap: 32)
+    mut first = true
+    for seg in module_segments(file) {
+        if !first {
+            s.append(sep)
+        } else {
+            // The first segment carries no separator before it.
+        }
+        s.append(seg)
+        first = false
+    }
+    s
+}
+
+/// The module path of a file as its SEGMENTS (`module encoding.utf16` ->
+/// ["encoding", "utf16"]) -- the one reader of the declaration; `module_path_c`
+/// joins them for the C name, `module_dotted` for the source spelling, and the
+/// shell symbol of a handed free function (wave W6) length-prefixes each.
+export fn module_segments(file Node) -> []str {
+    mut segs = []str.new()
     for c in branch_children(file) {
         if c.kind_of() != NodeKind.ModuleDecl { continue }
         for m in branch_children(c) {
             if m.kind_of() != NodeKind.LeafNode { continue }
-            // A TABLE, so it is written as one (P21): two token kinds carry the
+            // A TABLE, so it is written as one (P21): one token kind carries the
             // path and everything else in a module declaration does not.
             match leaf_kind(m) {
-                Ident => s.append(leaf_text(m))
-                Dot => s.append("_")
-                // The `module` keyword itself, or recovery debris after a broken
-                // path: neither is part of the name, and saying so here is what
-                // keeps the residual arm from being a silent default.
+                Ident => segs.push(leaf_text(m))
+                // The `module` keyword, the dots between segments, or recovery
+                // debris after a broken path: none is a segment, and saying so
+                // here is what keeps the residual arm from being a silent default.
                 _ => {}
             }
         }
     }
-    s
+    segs
 }
+
+/// The module path as the source spells it (`encoding.utf16`); "" for a file
+/// with no module declaration.
+export fn module_dotted(file Node) -> str => module_joined(file, ".")
 
 /// THE DECLARATIONS OF A FILE, with the visibility wrapper opened.
 ///

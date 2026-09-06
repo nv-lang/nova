@@ -187,7 +187,7 @@
 # its own emission. An ABI name lives in this registry by P5 (written once, as
 # data) and the mangling door is its one reader; the alternative was the same
 # string spelled at two sites in the mangler.
-builtins 39
+builtins 40
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -223,6 +223,7 @@ emit_c 3
 # тело от forward-typedef по этой форме). Правило пробелов ОДНО — копия в
 # emit_c дрейфовала бы от лексерной при первом же новом пробельном байте.
 lex 11
+lower 28
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -651,7 +652,7 @@ resolve 15
 # (2026-09-03): a caller compares with the variant's own name, which the word
 # rule allows, so a wrapper would be a second door needing a periphrasis for a
 # name it may not spell. Net +1.
-sem 225
+sem 228
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -753,3 +754,29 @@ types 26
 # читают все обходы). Наружу потому, что спрашивают её ТРИ читателя двух слоёв — правило хвоста и типизация
 # тела `=>` в check, арм тела `=>` в emit_c, — и до двери каждый писал дизъюнкцию сам, а двое из трёх не написали
 # (ICE после зелёного check).
+# builtins 39 -> 40 (2026-09-06, волна 274.7 W4 — конструирование `Some(x)`/`None`): `OPTION_NONE_TAG_C` —
+# тег отсутствующего Option в оболочке (`NOVA_TAG_Option_None`, прочитан с shell.tpl.c). Наружу потому, что
+# имена ЯЗЫКА и оболочки живут строковыми литералами только в builtins (P5), а читает его emit_c.
+# lower 0 -> 22 (2026-09-06, подплан 274.8 M0 — форма MIR заведена): новый модуль
+# `novac/src/lower/ir.nv`. Наружу — типы формы (`Fn`, `Block`, `Stmt`, `Rvalue`, `Operand`,
+# `Terminator`, `LocalDecl`, `AssignStmt`, обёртки `Local`/`BlockId` с `raw_*`), строитель
+# `FnBuilder` с дверью размещения `place` и шагами `new`/`ret_place`/`temp`/`named`/`reserve`/
+# `eval`/`seal`/`finish`. Нужны наружу потому, что форму ЧИТАЕТ другой модуль (emit_c с M1,
+# mono с M3) и ДЕРЖИТ держатель `lower_test.nv`; приватный остаётся только `@local`.
+# lower 22 -> 26 (2026-09-06, подплан 274.8 M1 — позиции размещения эмиттера идут через дверь):
+# `LocalKind` (роль локала: место возврата / связывание / временная — по ней принтер
+# выбирает форму строки), `no_local` (сентинель для армов match в позиции оператора,
+# как `no_ty`/`no_node`), `FnBuilder.decl_of` (объявление локала — принтер читает тип и
+# роль) и `FnBuilder.last_assign` (мост M1: эмиттер печатает оператор сразу после
+# понижения; уходит на M2, когда печатаются запечатанные блоки). Все четыре спрашивает
+# `emit_c` — модуль вне `lower`, иначе остались бы приватными.
+# lower 26 -> 28 (2026-09-06, подплан 274.8 M2a — операторы без потока управления через дверь):
+# `StoreStmt` (запись в место, которое пока называет дерево: цель, оператор, значение) и
+# `FnBuilder.store`; `last_assign` уступил место `last_stmt` (принтер читает ПОСЛЕДНИЙ оператор
+# любого вида и диспетчеризует по нему — Assign / Eval / Store). Все спрашивает `emit_c`.
+# sem 225 -> 228 (2026-09-06, план 274.7 W6 — свободные функции поданных модулей, №925):
+# `module_segments` / `module_dotted` (file_shape: путь модуля файла сегментами и как в
+# исходнике — один читатель ModuleDecl, `module_path_c` теперь через него) и `c_free_symbol`
+# (mangle: символ оболочки свободной поданной функции по оракульскому правилу D134 —
+# `nova_fn_` + сегменты и имя с префиксом длины). Наружу — потому что их спрашивают check
+# (интероп-проверка вызова) и emit_c (печать вызова); дом у каждой один.

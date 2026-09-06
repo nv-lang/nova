@@ -42,7 +42,7 @@ import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, 
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
@@ -421,6 +421,12 @@ fn Checker mut @type_expr(e Node) -> () {
         } else {
             // An Option: its payload is this expression's type.
         }
+        // THE LEFT OPERAND'S TYPE IS RECORDED, not left to the lattice: the
+        // emitter declares the Option temporary from the channel, and a FREE
+        // call there (`name(true) ?? "none"`) had no record -- a method call
+        // records its own, so the hole showed only with W4's first free
+        // Option-returning fn (channel.nv "no type recorded for this node").
+        @record(qk[0], lt)
         if qk.len() > 2 {
             @type_expr(qk[2])
             if @out.len() > before { return }
@@ -490,14 +496,10 @@ fn Checker mut @type_expr(e Node) -> () {
                     if vn > 1 {
                         @refuse(t, AMBIGUOUS_VARIANT_MSG)
                     } else if vn == 1 {
-                        ro vd = @ctx.variant_rows[raw_vrow(vrow)]
-                        if vd.payload_cnt == 0 {
-                            @record(e, vd.sum_id)
-                            @chan.record_callee(e.id_of(),
-                                CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
-                        } else {
-                            @refuse(t, VARIANT_VALUE_NEEDS_ARGS_MSG)
-                        }
+                        // The value door (option_rules, wave W4): a file sum's
+                        // value, or a generic sum's instance from the position's
+                        // expectation (`None` at a tail).
+                        @type_bare_variant_value(e, t, vrow)
                     } else {
                         // Not a variant: decided below as an unknown name.
                     }
@@ -705,16 +707,9 @@ fn Checker mut @type_expr(e Node) -> () {
             @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
             return
         } else if vn == 1 {
-            ro vbefore = @out.len()
-            for c in kids {
-                if !is_expr_kind(c.kind_of()) { continue }
-                @type_expr(c)
-            }
-            if @out.len() > vbefore { return }
-            // A variant's payload is positional by construction -- no names to
-            // bind by, no defaults to omit -- so its binding is the identity.
-            @chan.record_callee(e.id_of(),
-                CalleeTarget.CalleeVariant(vfirst), []TyId.new(), identity_slots(arg_count(kids, 1)))
+            // The construction door (option_rules, wave W4): a file sum's row,
+            // or a generic sum's INSTANCE inferred from the payload.
+            @type_variant_call(e, kids, vfirst)
             return
         } else {
             // Not a variant: a callable of the name table, below.
@@ -744,10 +739,16 @@ fn Checker mut @type_expr(e Node) -> () {
         // whose miss is an ice until #700. So a refusal inside an argument stops
         // the resolution: the type it would answer with is not trustworthy.
         ro before = @out.len()
+        // An argument is not the tail: the expectation stays outside the call
+        // (a bare `None` argument is refused by its cause, not typed as the
+        // fn's return -- option_rules, wave W4).
+        ro saved_expect = same_ty(@value_expect)
+        @value_expect = no_ty()
         for c in kids {
             if !is_expr_kind(c.kind_of()) { continue }
             @type_expr(c)
         }
+        @value_expect = saved_expect
         if @out.len() > before { return }
         // The `is_none()` guard above returned, so the row is there. It is read
         // from the SAME Option rather than looked up a second time: `def_of`

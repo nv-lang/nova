@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/emit_c/emit_option.nv -- the Option ABI of the shell, in ONE door:
+// how `Some(x)` and `None` are built, and how "is it Some" is asked.
+//
+// Donor: none for the shape -- the compound literals are the C the fixed
+//        point itself runs on every Option (read off shell.tpl.c 2026-09-06);
+//        the constants come from builtins (P5).
+// Role: backend A (layer 11) -- renders the checker's decision (the recorded
+//       INSTANCE type and the variant row); decides nothing.
+// Used by: emit_expr.nv (the variant-construction arms of Name, FieldAccess,
+//          Call and MethodCall), emit_iflet.nv and emit_c.nv's `??` (the
+//          Some-test).
+// Guarded by: check-novac-differential.sh (fixtures option_ctor/ and the
+//             corpus carrier examples/basics/option_ctor.nv, byte-for-byte
+//             against the oracle), novac/src/pipeline/option_test.nv (both
+//             shapes pinned in the C), check-novac-shell-freshness.sh (the
+//             constants are the shell's).
+//
+// INTEROP, NAMED AS SUCH (goes the day novac emits the whole prelude): the
+// shell spells `Option[T]` TWO ways, and both are measured, not assumed --
+//   * a VALUE payload: `NovaOpt_<c> { int tag; <c> value; }`, built
+//     `((NovaOpt_<c>){.tag = NOVA_TAG_Option_Some, .value = (x)})` and
+//     `((NovaOpt_<c>){.tag = NOVA_TAG_Option_None})`, tested by `.tag`;
+//   * a POINTER payload (a heap record): `NovaOpt_<T>_p { T* value; }` with
+//     NO tag -- built `{.value = (p)}` / `{.value = NULL}`, tested by
+//     `.value != NULL`.
+// Before this door the if-let and `??` emissions tested `.tag` alone, which
+// the pointer shape does not have; the construction did not exist at all.
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../types.{TyId, is_ty}
+import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_TAG_C, OPTION_NONE_TAG_C}
+import ../sem.{c_type, decl_of_ty}
+
+/// Is this type an INSTANCE of the language's Option -- the shell's
+/// `NovaOpt_` family? A primitive or a record answers no without asking the
+/// declaration table (a primitive has no declaration to ask).
+fn Emitter @is_option_inst(t TyId) -> bool {
+    if !is_ty(t) { return false }
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return false }
+    decl_of_ty(@ctx, t).name == OPTION_SUM
+}
+
+/// Does this Option instance carry a POINTER payload -- the shell's tagless
+/// `_p` shape? Read off the payload's C spelling: a heap record is `Nova_X*`.
+fn Emitter @option_payload_is_pointer(inst TyId) -> bool =>
+    c_type(@ctx, @ctx.tys.arg(inst, 0)).ends_with("*")
+
+/// `Some(x)` as the shell's compound literal for the instance `inst`; `payload`
+/// is the one argument expression, printed by the general expression door.
+fn Emitter mut @emit_option_some(inst TyId, payload Node) -> () {
+    ro ct = c_type(@ctx, inst)
+    if @option_payload_is_pointer(inst) {
+        @body.append("((${ct}){.value = (")
+    } else {
+        @body.append("((${ct}){.tag = ${OPTION_SOME_TAG_C}, .value = (")
+    }
+    @emit_expr(payload)
+    @body.append(")})")
+}
+
+/// `None` as the shell's compound literal for the instance `inst`.
+fn Emitter mut @emit_option_none(inst TyId) -> () {
+    ro ct = c_type(@ctx, inst)
+    if @option_payload_is_pointer(inst) {
+        @body.append("((${ct}){.value = NULL})")
+    } else {
+        @body.append("((${ct}){.tag = ${OPTION_NONE_TAG_C}})")
+    }
+}
+
+/// The C condition "this Option temporary holds a value", for both shapes.
+fn Emitter @option_some_test(inst TyId, tmp str) -> str {
+    if @option_payload_is_pointer(inst) {
+        "${tmp}.value != NULL"
+    } else {
+        "${tmp}.tag == ${OPTION_SOME_TAG_C}"
+    }
+}

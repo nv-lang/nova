@@ -1,0 +1,234 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR (`rustc_middle::mir::Body`) -- one lowered body per
+// declaration: typed locals, basic blocks of statements that end in exactly
+// one terminator, local `_0` as the return place; an instance is a pair
+// `(DeclId, Substs)` and the substitution is applied when the body is printed,
+// not when it is built. Not taken: the levels rustc stacks above it (HIR,
+// THIR) -- Carina lowers the green tree once (architecture section 12).
+// Role: layer `lower` of the map -- the backend-agnostic form the emitter
+//   prints. Sub-plan 274.8, wave M0: the form itself and its one placement
+//   door; waves M1-M3 move the emitter's value positions onto it.
+// Used by: emit_c (prints it, from M1 on); mono (walks it for call sites, from
+//   M3 on); lower_test (the holder that keeps the form compiling from M0 on).
+// Guarded by: check-novac-deps.py (the edges lower -> tree / types / diag are
+//   rows of section 3), check-novac-arch-class-proofs.py (the placement door is
+//   declared here and nowhere else), check-novac-lowering-one-door.py (the
+//   emitter's own placement arms only shrink, base moved by hand).
+
+module novac.lower
+
+import ../tree.{Node, AssignOp}
+import ../types.{TyId}
+import ../diag.{ice}
+
+/// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
+/// every other index is a source binding or a temporary, in creation order.
+export type Local int
+
+/// The index behind a `Local` -- for the printer and for tests.
+export fn raw_local(l Local) -> int => l as int
+
+/// A basic block of the lowered body, by its position in `Fn.blocks`.
+export type BlockId int
+
+/// The index behind a `BlockId` -- for the printer and for tests.
+export fn raw_block(b BlockId) -> int => b as int
+
+/// What ROLE a local plays -- the printer spells each differently: the return
+/// place is `return <v>;`, a binding is declared where it is first assigned
+/// (`T name = <v>;`), a temporary is declared by whoever created it and only
+/// assigned here (`name = <v>;`).
+export type LocalKind enum
+    | Return // local 0, the value the body returns (rustc `_0`)
+    | Binding // a source binding: declared at its first assignment
+    | Temp // a temporary of the lowering: declared by its creator
+
+/// What a local is: its type, its role, and its name. A binding's name is the
+/// source name; a temporary's name is the label its creator chose (wave M1
+/// keeps the emitter's legacy spellings such as `_novac_if_t7` so the C stays
+/// byte-identical; M2 makes the printer name temporaries by index and the
+/// label goes).
+export type LocalDecl value {
+    ty TyId /// the local's type, as the checker's channel recorded it
+    kind LocalKind /// return place, binding or temporary -- see LocalKind
+    name str /// the binding's source name, or the temporary's label; "" = unnamed
+}
+
+/// The local that is not one: the statement-position match hands it to arms
+/// that assign nothing (the same shape as `no_ty()` and `no_node()`).
+export fn no_local() -> Local => Local(-1)
+
+/// An operand: a read of a local, or -- until wave M2 -- a tree expression the
+/// emitter still prints by itself. `Tree` is the bridge the waves of 274.8
+/// shrink to nothing; it exists so the form can be adopted position by
+/// position without the differential moving by one file.
+export type Operand enum Place(Local) | Tree(Node)
+
+/// The right side of an assignment: `Use` reads an operand; `Expr` is the same
+/// bridge as `Operand.Tree` for a whole value expression -- the one shape every
+/// value position of the language lowers to at M1.
+export type Rvalue enum Use(Operand) | Expr(Node)
+
+/// `dest = src` -- the ONE way a value reaches a place in the lowered body.
+export type AssignStmt value {
+    dest Local /// where the value lands
+    src Rvalue /// what is computed
+}
+
+/// A store into a place the TREE still names -- `target = src` or
+/// `target op= src` (wave M2a). The target stays a tree node (a name, a
+/// `@field`) until M3 lowers places; the operator is the tree's own: a compound
+/// store IS its binary operator plus a store, and the printer spells it from
+/// the one form table.
+export type StoreStmt value {
+    target Node /// the place written, as the source spelled it
+    op AssignOp /// `Set`, or `Update(op)` for a compound store
+    src Node /// the value stored (the M1 bridge: printed from the tree until M3)
+}
+
+/// A statement: an assignment into a local, an expression evaluated for its
+/// effects, or a store into a place the tree names.
+export type Stmt enum
+    | Assign(AssignStmt) // `local = value` -- through the placement door
+    | Eval(Rvalue) // an expression in statement position, value dropped
+    | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
+
+/// How a block ends. `Unreached` is the state of a block that was reserved
+/// but not yet sealed; `finish` refuses a body that still carries one.
+export type Terminator enum
+    | Return // control leaves the body; the value is in local 0
+    | Goto(BlockId) // control continues in the named block
+    | Unreached // reserved, not yet sealed -- never survives `finish`
+
+/// A basic block: statements in order, then exactly one terminator.
+export type Block {
+    stmts []Stmt /// the block's statements, in order
+    term Terminator /// how control leaves the block
+}
+
+/// One lowered body: its locals and its blocks. `locals[0]` is the return
+/// place, `blocks[0]` the entry block.
+export type Fn {
+    locals []LocalDecl /// `locals[0]` is the return place
+    blocks []Block /// `blocks[0]` is the entry block
+}
+
+/// Builds one `Fn` in program order. A block is RESERVED (gets its id) before
+/// it is SEALED (gets its statements and terminator), so a `Goto` can name a
+/// block that is filled later. Statements accumulate in `cur` and belong to
+/// whichever block is sealed next.
+export type FnBuilder {
+    locals []LocalDecl /// locals so far; index 0 is the return place
+    blocks []Block /// reserved blocks, `Unreached` until sealed
+    cur []Stmt /// statements placed since the last seal
+}
+
+/// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`).
+export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
+    mut locals = []LocalDecl.new()
+    locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "" })
+    FnBuilder { locals, blocks: []Block.new(), cur: []Stmt.new() }
+}
+
+/// The return place of the body under construction.
+export fn FnBuilder @ret_place() -> Local => Local(0)
+
+/// A fresh temporary of type `ty`. `label` is the spelling its creator wants
+/// the printer to use ("" = unnamed, spelled by index) -- see LocalDecl.
+export fn FnBuilder mut @temp(ty TyId, label str) -> Local => @local(ty, LocalKind.Temp, label)
+
+/// A local for the source binding `name` of type `ty`.
+export fn FnBuilder mut @named(ty TyId, name str) -> Local {
+    if name.bytes().len() == 0 {
+        ice("lower: a named local needs a non-empty name -- temporaries go through temp()")
+    }
+    @local(ty, LocalKind.Binding, name)
+}
+
+/// Appends a local and returns its index -- the one place locals are created.
+fn FnBuilder mut @local(ty TyId, kind LocalKind, name str) -> Local {
+    ro id = Local(@locals.len())
+    @locals.push(LocalDecl { ty, kind, name })
+    id
+}
+
+/// The declaration behind a local; an index the body never created is a
+/// compiler bug, named as such.
+export fn FnBuilder @decl_of(l Local) -> LocalDecl {
+    ro i = raw_local(l)
+    if i < 0 || i >= @locals.len() {
+        ice("lower: asking the declaration of a local the body never created")
+    }
+    @locals[i]
+}
+
+/// The statement recorded last -- the streaming bridge of waves M1/M2a: the
+/// emitter prints each statement as it is lowered, until M2b prints sealed
+/// blocks. Asking with nothing recorded is a bug.
+export fn FnBuilder @last_stmt() -> Stmt {
+    if @cur.len() == 0 {
+        ice("lower: last_stmt asked before any statement was recorded")
+    }
+    @cur[@cur.len() - 1]
+}
+
+/// Reserves the next block id. The block stays empty and `Unreached` until
+/// `seal` fills it.
+export fn FnBuilder mut @reserve() -> BlockId {
+    ro id = BlockId(@blocks.len())
+    @blocks.push(Block { stmts: []Stmt.new(), term: Terminator.Unreached })
+    id
+}
+
+/// THE placement door (architecture section 3a, root "where a value lands"):
+/// the value of `e` lands in `dest`, recorded as `dest = Expr(e)` in the block
+/// sealed next. Every value position of the language -- block tail, `=>` body,
+/// `return`, initialiser, `??`, if-value, match arm -- lowers through this one
+/// function; the emitter's own per-position arms are what 274.8 removes.
+export fn FnBuilder mut @place(e Node, dest Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Expr(e) }))
+}
+
+/// A statement expression: evaluated, its value dropped.
+export fn FnBuilder mut @eval(e Node) -> () {
+    @cur.push(Stmt.Eval(Rvalue.Expr(e)))
+}
+
+/// A store into a place the tree names: `target = src`, or `target op= src`
+/// when `op` is `Update`.
+export fn FnBuilder mut @store(target Node, op AssignOp, src Node) -> () {
+    @cur.push(Stmt.Store(StoreStmt { target, op, src }))
+}
+
+/// Seals block `b` with the statements accumulated since the last seal and
+/// the terminator `term`. Sealing a block twice, or one never reserved, is a
+/// compiler bug and is named as such.
+export fn FnBuilder mut @seal(b BlockId, term Terminator) -> () {
+    ro i = raw_block(b)
+    if i < 0 || i >= @blocks.len() {
+        ice("lower: sealing a block that was never reserved")
+    }
+    match @blocks[i].term {
+        Unreached => { } // the only legal state to seal from
+        Return => ice("lower: a block sealed twice (it already returns)")
+        Goto(_) => ice("lower: a block sealed twice (it already jumps)")
+    }
+    @blocks[i] = Block { stmts: @cur, term }
+    @cur = []Stmt.new()
+}
+
+/// The finished body. Statements placed after the last seal, or a block that
+/// was reserved and never sealed, are compiler bugs, named as such.
+export fn FnBuilder @finish() -> Fn {
+    if @cur.len() > 0 {
+        ice("lower: statements were placed after the last sealed block")
+    }
+    for i in 0..@blocks.len() {
+        match @blocks[i].term {
+            Unreached => ice("lower: a reserved block was never sealed")
+            Return => { } // sealed
+            Goto(_) => { } // sealed
+        }
+    }
+    Fn { @locals, @blocks }
+}

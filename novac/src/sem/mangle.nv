@@ -445,6 +445,45 @@ export fn c_instance_method(ctx Ctx, t TyId, name str) -> str =>
 export fn c_shell_method(ctx Ctx, t TyId, name str) -> str =>
     "Nova_${ty_source_name(ctx, t)}_method_${name}"
 
+/// A FREE function of a handed module as the SHELL spells it (wave W6): the
+/// oracle's `nova_fn_` + each module segment length-prefixed + the name
+/// length-prefixed -- `nova_fn_8encoding5utf1617is_high_surrogate` for
+/// `encoding.utf16.is_high_surrogate` (D134; a Nova identifier never starts
+/// with a digit, so the length and the segment cannot run together). INTEROP,
+/// not imitation: one C name for one function on both sides of the link; goes
+/// the day novac compiles handed modules into the unit (E2-b2 multi-file).
+/// Asked only of a row whose `handed_from` is set -- a row of the file's own has no
+/// shell symbol, and the caller's `compiles_body` question comes first.
+export fn c_free_symbol(ctx Ctx, row FnRow) -> str {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    consume s = StringBuilder.new(cap: 48)
+    s.append("nova_fn_")
+    ro b = fd.handed_from.bytes()
+    mut start = 0
+    mut i = 0
+    while i <= b.len() {
+        if i == b.len() || b[i] == DOT_BYTE {
+            if i > start {
+                ro seg = b[start..i].to_str() ?? ""
+                s.append("${i - start}")
+                s.append(seg)
+            } else {
+                // Two dots in a row, or a leading dot: no segment between them.
+            }
+            start = i + 1
+        } else {
+            // Inside a segment: the byte belongs to it.
+        }
+        i += 1
+    }
+    s.append("${fd.name.bytes().len()}")
+    s.append(fd.name)
+    s
+}
+
+/// The byte the module path separates its segments with.
+const DOT_BYTE u8 = 0x2E // .
+
 /// The mono NAME of a tuple type (D123, length-prefixed):
 /// `_NovaTuple_<arity>_<len1>_<spelling1>_..._<lenN>_<spellingN>`, where a
 /// spelling is the component's C type with the pointer star written `_p`

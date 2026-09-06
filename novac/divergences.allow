@@ -15,3 +15,6 @@ novac/fixtures/undeclared_type/neg_1.nv
 novac/fixtures/undeclared_type/neg_2.nv
 novac/fixtures/undeclared_type/neg_3.nv
 novac/fixtures/undeclared_type/neg_4.nv
+novac/fixtures/option_ctor/neg_1.nv
+novac/fixtures/option_ctor/neg_2.nv
+novac/fixtures/handed_free_fn/neg_1.nv

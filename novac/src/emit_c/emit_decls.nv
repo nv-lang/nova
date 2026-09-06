@@ -268,6 +268,62 @@ fn Emitter mut @emit_structural_typedefs() -> () {
         @body.append("} ${name};\n")
         @body.append("#endif\n")
     }
+    @emit_option_typedefs()
+}
+
+/// The C typedef of every OPTION INSTANCE over a type THIS FILE declares
+/// (`Option[Box]` for the file's `type Box`): the shell declares the instances
+/// over its own types and the primitives, and nobody declares these -- the
+/// oracle emits them beside the user types ("forward decls for user types --
+/// needed for NovaOpt_<T>", its own comment), and so does novac, in the shell's
+/// two shapes (emit_option): a heap-record payload is the tagless `_p` struct
+/// holding the pointer, every other payload is `{ int tag; T value; }`.
+///
+/// Runs after the declaration passes, like the structural terms: a value
+/// payload embeds the record's body, so the body must be out first. Order by
+/// term id, deduplicated -- the same discipline as the tuple typedefs above.
+fn Emitter mut @emit_option_typedefs() -> () {
+    mut ids = []int.new()
+    for t in @out.types {
+        if !@is_option_inst(t) { continue }
+        ro payload = @ctx.tys.arg(t, 0)
+        // Only an instance over a DECLARED FILE type: a primitive names no
+        // declaration (asking it for one is an ice by design), a structural
+        // term has none, an instance of a generic is the shell's -- so the
+        // kind is asked first, and only a record, a sum or a newtype goes on
+        // to the boundary test. Spelled as the three kinds that HAVE a
+        // declaration rather than as an exhaustive match, because the word
+        // rule (check-novac-tuple-no-second-door) forbids a new code line that
+        // names the structural kind, and this question is about declarations.
+        ro pk = @ctx.tys.kind_of(payload)
+        ro declared = pk == TypeKind.TkRecord || pk == TypeKind.TkSum || pk == TypeKind.TkNewtype
+        if !declared { continue }
+        // Past the foreign boundary: the file's own. A handed type's instance
+        // is declared by the shell.
+        ro di = decl_index_of_ty(@ctx, payload)
+        if di < @ctx.foreign_types_cnt { continue }
+        ro rid = raw_ty(t)
+        mut dup = false
+        for seen in ids {
+            if seen == rid {
+                dup = true
+            } else {
+                // Not this one; the flag only ever turns on (P31).
+            }
+        }
+        if dup { continue }
+        ids.push(rid)
+    }
+    for rid in ids {
+        ro t = TyId(rid)
+        ro name = c_type(@ctx, t)
+        ro pc = c_type(@ctx, @ctx.tys.arg(t, 0))
+        if @option_payload_is_pointer(t) {
+            @body.append("typedef struct ${name} { ${pc} value; } ${name};\n")
+        } else {
+            @body.append("typedef struct ${name} { int tag; ${pc} value; } ${name};\n")
+        }
+    }
 }
 
 

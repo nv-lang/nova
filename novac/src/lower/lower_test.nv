@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/lower -- tests beside the module. The lowered form is a pure data
+// structure (wave M0 of sub-plan 274.8), so what is judged is its SHAPE: the
+// return place, the one placement door, reserve-before-seal. No pipeline, no
+// files: a stand-in tree node is enough, the form does not look inside it.
+
+module novac.lower
+import ../tree.{Node, NodeKind, NodeId, AssignOp, branch}
+import ../types.{TyId}
+
+fn stand_in_expr() -> Node => branch(NodeId(0), NodeKind.Lit, []Node.new())
+
+test "a body starts with its return place as local 0 (rustc _0) and one sealed block" {
+    mut b = FnBuilder.new(TyId(3))
+    ro blk = b.reserve()
+    b.seal(blk, Terminator.Return)
+    ro f = b.finish()
+    assert(f.locals.len() == 1)
+    assert(b.ret_place() == Local(0))
+    assert(f.blocks.len() == 1)
+    assert(f.blocks[0].stmts.len() == 0)
+}
+
+test "the placement door records dest = Expr(e) in the block sealed next" {
+    mut b = FnBuilder.new(TyId(3))
+    ro t = b.temp(TyId(3), "")
+    ro blk = b.reserve()
+    b.place(stand_in_expr(), t)
+    match b.last_stmt() {
+        Assign(a) => assert(a.dest == t)
+        Eval(_) => assert(false)
+        Store(_) => assert(false)
+    }
+    b.seal(blk, Terminator.Return)
+    ro f = b.finish()
+    assert(f.locals.len() == 2)
+    assert(t == Local(1))
+    assert(f.blocks[0].stmts.len() == 1)
+    match f.blocks[0].stmts[0] {
+        Assign(a) => assert(a.dest == t)
+        Eval(_) => assert(false)
+        Store(_) => assert(false)
+    }
+}
+
+test "a store keeps the tree's target and operator; an evaluation keeps only the expression" {
+    mut b = FnBuilder.new(TyId(3))
+    ro blk = b.reserve()
+    b.store(stand_in_expr(), AssignOp.Set, stand_in_expr())
+    match b.last_stmt() {
+        Store(st) => match st.op {
+            Set => { } // the operator recorded is the one handed in
+            Update(_) => assert(false)
+        }
+        Assign(_) => assert(false)
+        Eval(_) => assert(false)
+    }
+    b.eval(stand_in_expr())
+    b.seal(blk, Terminator.Return)
+    ro f = b.finish()
+    assert(f.blocks[0].stmts.len() == 2)
+}
+
+test "blocks are reserved before they are sealed, so a Goto names a block filled later" {
+    mut b = FnBuilder.new(TyId(3))
+    ro first = b.reserve()
+    ro second = b.reserve()
+    b.seal(first, Terminator.Goto(second))
+    b.eval(stand_in_expr())
+    b.seal(second, Terminator.Return)
+    ro f = b.finish()
+    assert(f.blocks.len() == 2)
+    assert(f.blocks[0].stmts.len() == 0)
+    assert(f.blocks[1].stmts.len() == 1)
+    match f.blocks[0].term {
+        Goto(to) => assert(to == second)
+        Return => assert(false)
+        Unreached => assert(false)
+    }
+}
+
+test "a named local keeps its source name; a temporary carries the empty name" {
+    mut b = FnBuilder.new(TyId(3))
+    ro n = b.named(TyId(5), "count")
+    ro t = b.temp(TyId(5), "_novac_if_t9")
+    ro blk = b.reserve()
+    b.seal(blk, Terminator.Return)
+    ro f = b.finish()
+    assert(f.locals[raw_local(n)].name == "count")
+    assert(f.locals[raw_local(t)].name == "_novac_if_t9")
+    assert(f.locals[raw_local(n)].ty == TyId(5))
+}
+
+test "each local carries its role: the return place, a binding, a temporary" {
+    mut b = FnBuilder.new(TyId(3))
+    ro n = b.named(TyId(5), "count")
+    ro t = b.temp(TyId(5), "")
+    match b.decl_of(b.ret_place()).kind {
+        Return => { } // the expected role of local 0
+        Binding => assert(false)
+        Temp => assert(false)
+    }
+    match b.decl_of(n).kind {
+        Binding => { } // the expected role of a named local
+        Return => assert(false)
+        Temp => assert(false)
+    }
+    match b.decl_of(t).kind {
+        Temp => { } // the expected role of a temporary
+        Return => assert(false)
+        Binding => assert(false)
+    }
+}

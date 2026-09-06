@@ -1,0 +1,11 @@
+module option_ctor.neg_2
+
+// ONE seeded cause: the payload fixes `Option[int]`, the declaration says
+// `Option[str]` -- the return door refuses the mismatch (E7301), as for any
+// other named type.
+
+fn bad() -> Option[str] => Some(1)
+
+fn main() {
+    println(1)
+}

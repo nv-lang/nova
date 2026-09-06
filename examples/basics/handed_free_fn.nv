@@ -1,0 +1,14 @@
+// handed_free_fn.nv -- the corpus carrier of wave W6 (plan 274.7, tier 0):
+// free functions of a handed std module, called by name and emitted as the
+// shell's own symbols.
+
+module basics.handed_free_fn
+
+import std.encoding.utf16.{is_high_surrogate, is_low_surrogate, decode_surrogate_pair}
+
+fn main() {
+    println(is_high_surrogate(0xD800))
+    println(is_low_surrogate(0xD800))
+    println(is_low_surrogate(0xDC00))
+    println(decode_surrogate_pair(0xD83D, 0xDE00))
+}
