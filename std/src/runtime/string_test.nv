@@ -16,7 +16,11 @@
 // coverage (spec_tests/conformance/parse_int_*.nv) — not duplicated here.
 module runtime.string_test
 
-import std.runtime.string.{ParseIntError}
+import std.runtime.string.{ParseFloatError}
+// plan 283 Ф.2: `f64 @to_bits()` for bit-exact comparison, `th.seeded` for the
+// deterministic differential test (the tree's PRNG; no PRNG of its own here).
+import std.runtime.numeric
+import std.testing.handlers as th
 
 test "Числовой паритет-2: str.to_i8 — в диапазоне / overflow / мусор" {
     match "100".to_i8() {
@@ -279,5 +283,105 @@ test "282 Ф.4: str.to_i8 — InvalidDigit несёт позицию" {
     match "-".to_int() {
         Err(Empty) => {}
         _ => assert(false, "a lone sign is Empty")
+    }
+}
+
+// ── plan 283 Ф.2 (2026-09-06): str.to_f64_native — быстрый путь + Eisel-Lemire против strtod ──
+//
+// В этой фазе `to_f64()` ещё округляет через strtod, поэтому он и есть эталон: биты
+// результата обеих дверей обязаны совпасть на каждой строке, а отказы — совпасть по
+// варианту. Что Лемир решить не может, `to_f64_native` пока сам отдаёт strtod (Ф.3
+// заменит это медленным путём), так что расхождение здесь — дефект быстрого пути,
+// Лемира или сборки `Number`, а не резерва.
+
+// One u64 per outcome, so that two Results compare as one number: the bits of the value
+// for Ok, and a NaN bit pattern per error variant (the grammar never yields NaN or inf,
+// so the sentinels cannot collide with a real result).
+fn f64_outcome_bits(r Result[f64, ParseFloatError]) -> u64 {
+    match r {
+        Ok(v) => v.to_bits()
+        Err(Empty) => 0x7FF8000000000001 as u64
+        Err(Malformed { at }) => (0x7FF8000000010000 as u64) | (at as u64)
+        Err(TooLarge) => 0x7FF8000000000002 as u64
+        Err(TooSmall) => 0x7FF8000000000003 as u64
+    }
+}
+
+fn same_as_strtod(s str) -> bool =>
+    f64_outcome_bits(s.to_f64()) == f64_outcome_bits(s.to_f64_native())
+
+test "283 Ф.2: to_f64_native — биты совпадают со strtod на курируемом наборе (границы fast path, 2^53+1, MAX, субнормалы, -0.0)" {
+    ro cases = [
+        // exact integers and powers of two: the fast path, up to and past 2^53
+        "0", "1", "2", "7", "1024", "65536", "4294967296", "4503599627370496",
+        "9007199254740992", "9007199254740993", "9007199254740994", "18014398509481984",
+        // powers of ten around the fast-path window (10^22 exact, 10^23 not) and the
+        // disguised fast path (10^23..10^37 via the integer table)
+        "10", "1000", "1e10", "1e15", "1e16", "1e17", "1e18", "1e19", "1e20", "1e21",
+        "1e22", "1e23", "1e24", "1e30", "1e37", "1e38", "12345e18", "123456e22",
+        // the classic non-terminating binary fractions
+        "0.1", "0.2", "0.3", "0.7", "1.1", "3.14159", "2.718281828459045", "123.456e-3",
+        "0.1e1", "1.e1", ".1e1", "+0.0",
+        // the top of the range: MAX, just past MAX (rounds to MAX), overflow (an error)
+        "1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308",
+        "8.98846567431158e307", "1e308", "1.8e308", "1e999", "-1e999",
+        // the bottom: minimal subnormal, its half (rounds to zero by ties-to-even),
+        // just above the half (rounds up), the 2011 PHP/Java hang value and neighbours
+        "4.9406564584124654e-324", "2.4703282292062327e-324", "2.4703282292062328e-324",
+        "5e-324", "3e-324", "1.5e-323", "1e-324", "1e-400",
+        "2.2250738585072011e-308", "2.2250738585072012e-308", "2.2250738585072014e-308",
+        // signed zeros and zero spelled every way the grammar allows
+        "-0.0", "-0", "0e0", "0.000e-5", "-0e-400",
+        // 18, 19, 20 digits and beyond: the `many_digits` re-read
+        "123456789012345678", "1234567890123456789", "12345678901234567890",
+        "9999999999999999999", "99999999999999999999", "0.000000000000000000000000000001",
+        "1000000000000000000000000000000000000000000000000000000000000000000000",
+        "0.1000000000000000055511151231257827021181583404541015625",
+    ]
+    for s in cases {
+        assert(same_as_strtod(s), s)
+    }
+}
+
+// A random string of the grammar: 1..19 digits, sometimes leading zeros, a dot in one of
+// four positions (none / leading / trailing / inside), an exponent in [-330, 330] or none,
+// a sign or none -- spanning zero, subnormals, normals, the fast-path window and overflow.
+fn random_float_literal() Random -> str {
+    ro n_digits = ((Random.u64() % 19) as int) + 1
+    ro dot_mode = (Random.u64() % 4) as int
+    ro dot_at = ((Random.u64() % ((n_digits - 1) as u64 + 1)) as int) + 1   // 1..n_digits
+    mut body = if dot_mode == 1 { "." } else { "" }
+    if Random.u64() % 5 == 0 { body = "${body}00" }
+    mut k = 0
+    while k < n_digits {
+        ro d = (Random.u64() % 10) as int
+        body = "${body}${d}"
+        k += 1
+        if dot_mode == 3 && k == dot_at && k < n_digits { body = "${body}." }
+    }
+    if dot_mode == 2 { body = "${body}." }
+    ro sign_mode = (Random.u64() % 3) as int
+    ro sign = if sign_mode == 1 { "-" } else { if sign_mode == 2 { "+" } else { "" } }
+    ro exp_mode = (Random.u64() % 3) as int
+    if exp_mode == 0 { return "${sign}${body}" }
+    ro e = ((Random.u64() % 661) as int) - 330
+    ro marker = if exp_mode == 1 { "e" } else { "E" }
+    ro plus = if e >= 0 && Random.u64() % 2 == 0 { "+" } else { "" }
+    "${sign}${body}${marker}${plus}${e}"
+}
+
+test "283 Ф.2: to_f64_native — 10 000 случайных строк грамматики, ноль расхождений битов со strtod, в резерв уходит < 1 %" {
+    with Random = th.seeded(283) {
+        mut fallbacks = 0
+        mut i = 0
+        while i < 10000 {
+            ro s = random_float_literal()
+            assert(same_as_strtod(s), s)
+            if !s.f64_decided_natively() { fallbacks += 1 }
+            i += 1
+        }
+        // The plan's bound for strings of up to 19 digits; the measured count is carried in
+        // the assertion text (tests here do not print).
+        assert(fallbacks * 100 < 10000, "fallbacks: ${fallbacks} of 10000")
     }
 }

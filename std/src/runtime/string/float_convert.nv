@@ -1,0 +1,383 @@
+// Co-equal file of module `runtime.string` (folder = one module).
+// Role: the correctly-rounded decimal -> binary conversion behind `str @to_f64()`.
+//
+// What lives here: the parsed `Number` (the donor's `Decimal`: significand, decimal
+// exponent, sign, "more than 19 digits" flag) as the grammar in `parse_float.nv` hands
+// it over, the Clinger fast path, the Eisel-Lemire algorithm over the 128-bit powers of
+// five in the peer `pow5_table.nv`, and the dispatch that gives up when Lemire cannot
+// decide a half-way case. The GRAMMAR is not here: `parse_float.nv` owns what a number
+// looks like and assembles the `Number` in the same walk over the bytes.
+//
+// Provenance. This file and its peers `pow5_table.nv` and `digit_buf.nv` are a port of
+// the Rust standard library, `library/core/src/num/imp/dec2flt/` (itself a cleaned-up
+// port of Daniel Lemire's fast_float; the paper is "Number Parsing at a Gigabyte per
+// Second", https://arxiv.org/abs/2101.11408), taken from
+// https://github.com/rust-lang/rust at commit 48a229ceaefd4985c50990b14116b6d856af0985
+// and used under the MIT license: text in `THIRD_PARTY/rust-LICENSE`, entry in
+// `THIRD_PARTY/README.md`. Algorithm, control flow, constants, variable names and the
+// comments that justify each rounding decision are kept from the donor; naming follows
+// `docs/dev/nv-coding-style.md`. Each ported function names its donor file.
+//
+// State of the port (plan 283): phases 2 and 3 -- fast path, Lemire and the slow path are
+// live behind the TEMPORARY door `str @to_f64_native()`; `strtod` is no longer called
+// below `parse_number`. Phase 4 makes `@to_f64()` call this code and retires the door;
+// the `extern "C" str_parse_f64` then moves from `parse_float.nv` into the tests, where
+// the C library stays the reference. NOT ported, by decision: `fpu.rs` (x87 precision control for
+// 32-bit x86 without SSE2 -- Nova's C backend targets x86-64, where the fast path's one
+// multiplication is already rounded once) and `parse_inf_nan` (our grammar rejects
+// `inf`/`nan`, plan 282).
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.runtime.numeric
+
+// ─── f64 as the donor's `Float` / `Lemire` traits see it (traits.rs, mod.rs) ───
+//
+// One set of constants named `F64_*`, so that `f32` would be a second SET, not a second
+// copy of the algorithm. Values are the donor's, with the formula that yields each.
+const F64_SIG_BITS int = 52                            // explicit significand bits
+const F64_SIG_TOTAL_BITS int = 53                      // with the hidden bit
+const F64_EXP_MIN int = -1022                          // -(EXP_BIAS - 1), EXP_BIAS = 1023
+const F64_INFINITE_POWER int = 0x7FF                   // saturated biased exponent (inf / nan)
+const F64_MIN_EXPONENT_ROUND_TO_EVEN int = -4          // see `compute_float`
+const F64_MAX_EXPONENT_ROUND_TO_EVEN int = 23
+const F64_SMALLEST_POWER_OF_TEN int = -342             // below this q: zero
+const F64_LARGEST_POWER_OF_TEN int = 308               // above this q: infinity; floor(1024 / log2(10))
+const F64_MIN_EXPONENT_FAST_PATH int = -22             // -floor(53 / log2(5))
+const F64_MAX_EXPONENT_FAST_PATH int = 22
+const F64_MAX_EXPONENT_DISGUISED_FAST_PATH int = 37    // 22 + floor(53 / log2(10))
+const F64_MAX_MANTISSA_FAST_PATH u64 = 9007199254740992   // 1 << 53
+
+// mod.rs `pow10_fast_path` for f64: the powers of ten that are exact in f64, 10^0..10^22.
+// The donor pads the table to 32 entries and masks the index; the index here is always
+// within [0, 22] by the fast-path guard, so the table holds just the real range.
+const POW10_FAST_PATH []f64 = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+    1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+]
+
+// decimal.rs `INT_POW10`: 10^0..10^15 as integers, for the disguised fast path.
+const INT_POW10 []u64 = [
+    1, 10, 100, 1000, 10000, 100000, 1000000, 10000000,
+    100000000, 1000000000, 10000000000, 100000000000,
+    1000000000000, 10000000000000, 100000000000000, 1000000000000000,
+]
+
+// decimal.rs `Decimal`, renamed: it is the number AS PARSED, `mantissa × 10^exponent`,
+// not a decimal type. `mantissa` holds at most 19 digits; `many_digits` says that more
+// significant digits followed and were dropped, so `mantissa` is then a lower bound and
+// the true value lies in [mantissa, mantissa + 1) × 10^exponent.
+type Number(mantissa u64 = 0, exponent int = 0, negative bool = false, many_digits bool = false)
+
+// common.rs `BiasedFp`: `m × 2^p` with `p` already biased, so it shifts straight into the
+// exponent field of the float. `p < 0` is Lemire's answer "could not decide".
+type BiasedFp(m u64 = 0, p int = 0)
+
+// ─── Fast path (decimal.rs `Decimal::try_fast_path`, Clinger) ───
+
+// The float is exact if both the significand (<= 2^53) and 10^|exponent| (|e| <= 22) are
+// exact in f64: one multiplication or division then rounds exactly once. The
+// "disguised" case moves a power of ten from the exponent into the significand first
+// (`1e23` == `10e22`), as long as the significand stays below 2^53.
+fn try_fast_path(n Number) -> Option[f64] {
+    ro usable = F64_MIN_EXPONENT_FAST_PATH <= n.exponent &&
+        n.exponent <= F64_MAX_EXPONENT_DISGUISED_FAST_PATH &&
+        n.mantissa <= F64_MAX_MANTISSA_FAST_PATH &&
+        !n.many_digits
+    if !usable { return None }
+    mut value = 0.0
+    if n.exponent <= F64_MAX_EXPONENT_FAST_PATH {
+        // normal fast path
+        ro m = n.mantissa as f64
+        value = if n.exponent < 0 {
+            m / POW10_FAST_PATH[-n.exponent]
+        } else {
+            m * POW10_FAST_PATH[n.exponent]
+        }
+    } else {
+        // disguised fast path: mantissa × 10^shift must not overflow u64 (the donor's
+        // `checked_mul`) and must stay within the exact range
+        ro shift = n.exponent - F64_MAX_EXPONENT_FAST_PATH
+        ro (hi, wide) = n.mantissa.widening_mul(INT_POW10[shift])
+        if hi != 0 { return None }
+        if wide > F64_MAX_MANTISSA_FAST_PATH { return None }
+        value = (wide as f64) * POW10_FAST_PATH[F64_MAX_EXPONENT_FAST_PATH]
+    }
+    if n.negative { Some(-value) } else { Some(value) }
+}
+
+// ─── Eisel-Lemire (lemire.rs) ───
+
+// lemire.rs `power`: floor(q × log2(10)) + 63 through the integer approximation
+// 217706 / 2^16 (152170 + 65536 in the donor), exact for every finite decimal exponent.
+// The donor's `>> 16` on a signed value is an arithmetic shift, i.e. floor division;
+// written out as such here, because `/` on `int` truncates toward zero.
+fn power(q int) -> int {
+    ro p = q * 217706
+    ro floored = if p >= 0 { p / 65536 } else { -((-p + 65535) / 65536) }
+    floored + 63
+}
+
+// lemire.rs `compute_product_approx`: w × 5^q as two 64-bit words `(lo, hi)` of the
+// 128-bit approximation; the second multiplication is done only when the first leaves
+// the low bits ambiguous (all ones under `mask`).
+//
+// NB on names: the donor destructures a table row as `(lo5, hi5)`, yet the FIRST word of
+// a row is the UPPER half of 5^q (table.rs, `dec2flt_table.py`: `(c >> 64, c mod 2^64)`)
+// and it is the one used for the first, main product. Here the halves are called what
+// they are: `POW5_HI[i]` first, `POW5_LO[i]` for the correction.
+fn compute_product_approx(q int, w u64, precision int) -> (u64, u64) {
+    ro all_ones = 0xFFFFFFFFFFFFFFFF as u64
+    ro mask = if precision < 64 { all_ones >> precision } else { all_ones }
+    // 5^q < 2^64, then the multiplication always provides an exact value.
+    // That means whenever we need to round ties to even, we always have
+    // an exact value.
+    ro index = q - POW5_SMALLEST_Q
+    ro hi5 = POW5_HI[index]
+    ro lo5 = POW5_LO[index]
+    // Only need one multiplication as long as there is 1 zero but
+    // in the explicit mantissa bits, +1 for the hidden bit, +1 to
+    // determine the rounding direction, +1 for if the computed
+    // product has a leading zero.
+    ro (first_hi_0, first_lo_0) = w.widening_mul(hi5)
+    mut first_lo = first_lo_0
+    mut first_hi = first_hi_0
+    if (first_hi & mask) == mask {
+        // Need to do a second multiplication to get better precision
+        // for the lower product. This will always be exact
+        // where q is < 55, since 5^55 < 2^128. If this wraps,
+        // then we need to round up the hi product.
+        ro (second_hi, _second_lo) = w.widening_mul(lo5)
+        first_lo = first_lo.wrapping_add(second_hi)
+        if second_hi > first_lo { first_hi += 1 }
+    }
+    (first_lo, first_hi)
+}
+
+// lemire.rs `compute_float`: w × 10^q as a `BiasedFp`, or `p = -1` when the 128-bit
+// product cannot decide the rounding (near half-way cases; the caller falls back).
+//
+// This algorithm scales the exponent by the decimal exponent using pre-computed
+// powers of five, and calculates if the representation can be unambiguously rounded
+// to the nearest machine float. Described in detail in "Daniel Lemire, Number Parsing
+// at a Gigabyte per Second", section 5 "Fast Algorithm" and section 6 "Exact Numbers
+// And Ties", https://arxiv.org/abs/2101.11408.
+fn compute_float(q int, w_in u64) -> BiasedFp {
+    ro fp_zero = BiasedFp(0, 0)
+    ro fp_inf = BiasedFp(0, F64_INFINITE_POWER)
+    ro fp_error = BiasedFp(0, -1)
+
+    // Short-circuit if the value can only be a literal 0 or infinity.
+    if w_in == 0 || q < F64_SMALLEST_POWER_OF_TEN { return fp_zero }
+    if q > F64_LARGEST_POWER_OF_TEN { return fp_inf }
+    // Normalize our significant digits, so the most-significant bit is set.
+    ro lz = w_in.leading_zeros()
+    ro w = w_in << lz
+    ro (lo, hi) = compute_product_approx(q, w, F64_SIG_BITS + 3)
+    if lo == 0xFFFFFFFFFFFFFFFF as u64 {
+        // If we have failed to approximate w x 5^-q with our 128-bit value.
+        // Since the addition of 1 could lead to an overflow which could then
+        // round up over the half-way point, this can lead to improper rounding
+        // of a float.
+        //
+        // However, this can only occur if q in [-27, 55]. The upper bound of q
+        // is 55 because 5^55 < 2^128, however, this can only happen if 5^q > 2^64,
+        // since otherwise the product can be represented in 64-bits, producing
+        // an exact result. For negative exponents, rounding-to-even can
+        // only occur if 5^-q < 2^64.
+        //
+        // For detailed explanations of rounding for negative exponents, see
+        // https://arxiv.org/pdf/2101.11408.pdf#section.9.1 ; for positive exponents,
+        // https://arxiv.org/pdf/2101.11408.pdf#section.8 .
+        ro inside_safe_exponent = q >= -27 && q <= 55
+        if !inside_safe_exponent { return fp_error }
+    }
+    ro upperbit = (hi >> 63) as int
+    mut mantissa = hi >> (upperbit + 64 - F64_SIG_BITS - 3)
+    mut power2 = power(q) + upperbit - lz - F64_EXP_MIN + 1
+    if power2 <= 0 {
+        if -power2 + 1 >= 64 {
+            // Have more than 64 bits below the minimum exponent, must be 0.
+            return fp_zero
+        }
+        // Have a subnormal value.
+        mantissa = mantissa >> (-power2 + 1)
+        mantissa = mantissa + (mantissa & 1)
+        mantissa = mantissa >> 1
+        power2 = if mantissa >= ((1 as u64) << F64_SIG_BITS) { 1 } else { 0 }
+        return BiasedFp(mantissa, power2)
+    }
+    // Need to handle rounding ties. Normally, we need to round up,
+    // but if we fall right in between and we have an even basis, we
+    // need to round down.
+    //
+    // This will only occur if:
+    //  1. The lower 64 bits of the 128-bit representation is 0.
+    //      IE, 5^q fits in single 64-bit word.
+    //  2. The least-significant bit prior to truncated mantissa is odd.
+    //  3. All the bits truncated when shifting to mantissa bits + 1 are 0.
+    //
+    // Or, we may fall between two floats: we are exactly halfway.
+    if lo <= 1 &&
+        q >= F64_MIN_EXPONENT_ROUND_TO_EVEN &&
+        q <= F64_MAX_EXPONENT_ROUND_TO_EVEN &&
+        (mantissa & 3) == 1 &&
+        (mantissa << (upperbit + 64 - F64_SIG_BITS - 3)) == hi {
+        // Zero the lowest bit, so we don't round up.
+        mantissa = mantissa & (0xFFFFFFFFFFFFFFFE as u64)
+    }
+    // Round-to-even, then shift the significant digits into place.
+    mantissa = mantissa + (mantissa & 1)
+    mantissa = mantissa >> 1
+    if mantissa >= ((2 as u64) << F64_SIG_BITS) {
+        // Rounding up overflowed, so the carry bit is set. Set the
+        // mantissa to 1 (only the implicit, hidden bit is set) and
+        // increase the exponent.
+        mantissa = (1 as u64) << F64_SIG_BITS
+        power2 += 1
+    }
+    // Zero out the hidden bit (bit 52): the mask is !(1 << 52).
+    mantissa = mantissa & (0xFFEFFFFFFFFFFFFF as u64)
+    if power2 >= F64_INFINITE_POWER {
+        // Exponent is above largest normal value, must be infinite.
+        return fp_inf
+    }
+    BiasedFp(mantissa, power2)
+}
+
+// ─── Slow path (slow.rs `parse_long_mantissa`) ───
+
+// slow.rs: shift the decimal by 3.32 bits per digit of decimal-point distance -- a table
+// for distances below 19, capped at 60 (the most `DigitBuf` shifts at once).
+const SLOW_MAX_SHIFT int = 60
+const SLOW_POWERS []int = [0, 3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53, 56, 59]
+
+fn slow_shift_for(n int) -> int => if n < 19 { SLOW_POWERS[n] } else { SLOW_MAX_SHIFT }
+
+// slow.rs `parse_long_mantissa`: the always-correct fallback. The digits go into a
+// `DigitBuf`, are shifted by powers of two until the value sits in [1/2, 1), and the top
+// 53 + 1 bits are read off and rounded ONCE -- so near-half-way cases that need hundreds
+// of digits to settle are settled. "Processing Long Numbers Quickly",
+// https://arxiv.org/pdf/2101.11408.pdf#section.11. Returns |value|; the sign is the
+// caller's. `s` is the whole string (the grammar already accepted it).
+fn parse_long_mantissa(s str) -> BiasedFp {
+    ro fp_zero = BiasedFp(0, 0)
+    ro fp_inf = BiasedFp(0, F64_INFINITE_POWER)
+    mut d = parse_digit_buf(s)
+    // Short-circuit if the value can only be a literal 0 or infinity.
+    if d.num_digits == 0 || d.decimal_point < -324 { return fp_zero }
+    if d.decimal_point >= 310 { return fp_inf }
+    mut exp2 = 0
+    // Shift right toward (1/2 ... 1].
+    while d.decimal_point > 0 {
+        ro shift = slow_shift_for(d.decimal_point)
+        d.right_shift(shift)
+        if d.decimal_point < -DIGIT_BUF_DECIMAL_POINT_RANGE { return fp_zero }
+        exp2 += shift
+    }
+    // Shift left toward (1/2 ... 1].
+    while d.decimal_point <= 0 {
+        mut shift = 0
+        if d.decimal_point == 0 {
+            ro digit = d.digits[0]
+            if digit >= 5 { break }
+            shift = if digit == 0 || digit == 1 { 2 } else { 1 }
+        } else {
+            shift = slow_shift_for(-d.decimal_point)
+        }
+        d.left_shift(shift)
+        if d.decimal_point > DIGIT_BUF_DECIMAL_POINT_RANGE { return fp_inf }
+        exp2 -= shift
+    }
+    // We are now in the range [1/2 ... 1] but the binary format uses [1 ... 2].
+    exp2 -= 1
+    while F64_EXP_MIN > exp2 {
+        mut n = F64_EXP_MIN - exp2
+        if n > SLOW_MAX_SHIFT { n = SLOW_MAX_SHIFT }
+        d.right_shift(n)
+        exp2 += n
+    }
+    if (exp2 - F64_EXP_MIN + 1) >= F64_INFINITE_POWER { return fp_inf }
+    // Shift the decimal to the hidden bit, and then round the value
+    // to get the high mantissa+1 bits.
+    d.left_shift(F64_SIG_BITS + 1)
+    mut mantissa = d.round()
+    if mantissa >= ((1 as u64) << (F64_SIG_BITS + 1)) {
+        // Rounding up overflowed to the carry bit, need to
+        // shift back to the hidden bit.
+        d.right_shift(1)
+        exp2 += 1
+        mantissa = d.round()
+        if (exp2 - F64_EXP_MIN + 1) >= F64_INFINITE_POWER { return fp_inf }
+    }
+    mut power2 = exp2 - F64_EXP_MIN + 1
+    if mantissa < ((1 as u64) << F64_SIG_BITS) { power2 -= 1 }
+    // Zero out all the bits above the explicit mantissa bits.
+    mantissa = mantissa & (((1 as u64) << F64_SIG_BITS) - 1)
+    BiasedFp(mantissa, power2)
+}
+
+// ─── Dispatch (mod.rs `dec2flt`, the part after the grammar) ───
+
+// Number -> f64 through the 128-bit arithmetic alone, or `None` when it could not decide:
+// Lemire answered `p < 0`, or the digits were truncated (`many_digits`) and Lemire's answers
+// for `w` and `w + 1` differ -- then the dropped digits matter and only exact arithmetic
+// settles it. Kept separate from `convert_number` so the tests can judge this layer alone.
+fn fast_or_lemire(n Number) -> Option[f64] {
+    if Some(v) = try_fast_path(n) { return Some(v) }
+    // If significant digits were truncated, then we can have rounding error
+    // only if `mantissa + 1` produces a different result. We also avoid
+    // redundantly using the Eisel-Lemire algorithm if it was unable to
+    // correctly round on the first pass.
+    mut fp = compute_float(n.exponent, n.mantissa)
+    if n.many_digits && fp.p >= 0 {
+        ro fp_next = compute_float(n.exponent, n.mantissa + 1)
+        if fp_next.m != fp.m || fp_next.p != fp.p { fp = BiasedFp(0, -1) }
+    }
+    if fp.p < 0 { return None }
+    // mod.rs `biased_fp_to_float`: the biased exponent slides into bits 52..62.
+    ro word = fp.m | ((fp.p as u64) << F64_SIG_BITS)
+    ro v = f64.from_bits(word)
+    if n.negative { Some(-v) } else { Some(v) }
+}
+
+// mod.rs `dec2flt`, the part after the grammar: the fast path, then Lemire, then -- for the
+// near-half-way cases the 128-bit product cannot settle -- the exact slow path over the
+// digits of the string. Every string the grammar accepted gets an answer here; there is no
+// C library anywhere below this line.
+fn convert_number(n Number, s str) -> f64 {
+    if Some(v) = fast_or_lemire(n) { return v }
+    ro fp = parse_long_mantissa(s)
+    ro word = fp.m | ((fp.p as u64) << F64_SIG_BITS)
+    ro v = f64.from_bits(word)
+    if n.negative { -v } else { v }
+}
+
+/// `str` to `f64` on Nova's own conversion (exact fast path, Eisel-Lemire, then an exact
+/// big-decimal slow path for the near-half-way cases), with exactly the grammar and the
+/// errors of `@to_f64()`. A stepping stone while the new conversion is measured against
+/// the C library: `@to_f64()` takes it over next, and this name goes away.
+export fn str @to_f64_native() -> Result[f64, ParseFloatError] {
+    ro n = parse_number(@)?
+    ro v = convert_number(n, @)
+    // A FINITE literal whose value does not fit f64: infinity is an error, and we say which way.
+    if v > 1.7976931348623157e308 { return Err(ParseFloatError.TooLarge) }
+    if v < -1.7976931348623157e308 { return Err(ParseFloatError.TooSmall) }
+    Ok(v)
+}
+
+/// Does the 128-bit arithmetic settle this string by itself -- the exact fast path or
+/// Eisel-Lemire gives an unambiguous answer? `false` for a string the grammar rejects and
+/// for the rare near-half-way cases that go to the exact big-decimal slow path. A
+/// measurement door: the slow path is correct but slow, and its share must stay small.
+export fn str @f64_decided_natively() -> bool {
+    match parse_number(@) {
+        Err(_) => false
+        Ok(n) => match fast_or_lemire(n) {
+            Some(_) => true
+            None => false
+        }
+    }
+}

@@ -8,12 +8,13 @@
 // `LC_NUMERIC`. Two grammars for numbers in one module (`to_int` is strict), and
 // only two error causes because `strtod` reports no more. Parsing a number is two
 // jobs: the GRAMMAR (what is a number, where it broke, did it overflow) and the
-// correctly-rounded decimal→binary CONVERSION. The first is ~60 lines below and is
-// where every problem lived; the second is a known hard algorithm (Rust/Go/Zig carry
-// ~2k lines of Eisel-Lemire + bignum fallback) and stays delegated to C for now —
-// fed ONLY a string this grammar already accepted, so C syntax and locale cannot
-// leak out. Owning the conversion too is a separate plan (needed when Carina runs
-// without libc).
+// correctly-rounded decimal→binary CONVERSION. The first is `parse_number` below and
+// is where every problem lived; the second is a known hard algorithm (Rust/Go/Zig
+// carry ~2k lines of Eisel-Lemire + bignum fallback) and is being ported into the
+// peer `float_convert.nv` (plan 283; the grammar walk below also assembles the
+// `Number` that port consumes). Until the port takes over `@to_f64()` (plan 283
+// Ф.4), the conversion stays delegated to C — fed ONLY a string this grammar already
+// accepted, so C syntax and locale cannot leak out.
 //
 // `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
 // import cycle.
@@ -54,6 +55,117 @@ export type ParseFloatError enum Empty | Malformed { at int } | TooLarge | TooSm
 // wrapped (`E_UNSAFE_CALL_REQUIRES_WRAP`), and an extra wrap would be `E_UNSAFE_UNUSED`.
 extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 
+// parse.rs `MIN_19DIGIT_INT`: 10^18 — a significand at or above it already carries 19
+// digits, the most a u64 holds without overflow for any next digit.
+const MIN_19DIGIT_INT u64 = 1000000000000000000
+
+// The grammar pass and the `Number` assembly in ONE walk over the bytes (donor: parse.rs
+// `parse_partial_number`, minus the leniencies our grammar never had — no `inf`/`nan`, no
+// partial match). The `Malformed { at }` positions are exactly those of the grammar-only
+// version this replaces (plan 282 Ф.4); `string_test.nv` pins them.
+//
+// The significand is accumulated modulo 2^64 during the walk (wrapping, as the donor
+// does): for up to 19 digits that IS the value; for more, the significant digits are
+// re-read below and `many_digits` tells the converter that the tail was dropped.
+fn parse_number(s str) -> Result[Number, ParseFloatError] {
+    ro bytes = s.bytes()
+    ro n = s.byte_len()
+    if n == 0 { return Err(ParseFloatError.Empty) }
+    mut i = 0
+    ro negative = bytes[0] == '-'
+    if bytes[0] == '-' || bytes[0] == '+' { i = 1 }
+    ro int_start = i
+    mut mantissa = 0 as u64
+    mut n_digits = 0
+    while i < n {
+        ro c = bytes[i] as int
+        if c >= '0' && c <= '9' {
+            mantissa = mantissa.wrapping_mul(10).wrapping_add((c - 48) as u64)
+            i += 1
+            n_digits += 1
+        } else { break }
+    }
+    ro int_end = i
+    mut frac_start = i
+    mut frac_end = i
+    mut exponent = 0
+    if i < n && bytes[i] == '.' {
+        i += 1
+        frac_start = i
+        while i < n {
+            ro c = bytes[i] as int
+            if c >= '0' && c <= '9' {
+                mantissa = mantissa.wrapping_mul(10).wrapping_add((c - 48) as u64)
+                i += 1
+                n_digits += 1
+            } else { break }
+        }
+        frac_end = i
+        exponent = -(frac_end - frac_start)
+    }
+    if n_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
+    mut exp_number = 0
+    if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
+        i += 1
+        mut exp_negative = false
+        if i < n && (bytes[i] == '-' || bytes[i] == '+') {
+            exp_negative = bytes[i] == '-'
+            i += 1
+        }
+        mut exponent_digits = 0
+        while i < n {
+            ro c = bytes[i] as int
+            if c >= '0' && c <= '9' {
+                // Saturate well before overflow (donor: parse_scientific): past 0x10000 the
+                // value is zero or infinity whatever the significand says.
+                if exp_number < 0x10000 { exp_number = 10 * exp_number + (c - 48) }
+                i += 1
+                exponent_digits += 1
+            } else { break }
+        }
+        if exponent_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
+        if exp_negative { exp_number = -exp_number }
+    }
+    if i < n { return Err(ParseFloatError.Malformed { at: i }) }
+    exponent += exp_number
+    if n_digits <= 19 {
+        return Ok(Number(mantissa, exponent, negative, false))
+    }
+    // More than 19 digits: leading zeros (and the dot among them) are not significant.
+    mut significant = n_digits - 19
+    mut p = int_start
+    while p < frac_end && (bytes[p] == '.' || bytes[p] == '0') {
+        if bytes[p] == '0' { significant -= 1 }
+        p += 1
+    }
+    if significant <= 0 {
+        // At most 19 significant digits after all: the wrapped accumulation is exact.
+        return Ok(Number(mantissa, exponent, negative, false))
+    }
+    // Truly more than 19 significant digits: re-read the first 19 of them exactly, let the
+    // exponent account for the digits not read, and flag the truncation.
+    mantissa = 0
+    mut j = int_start
+    while j < int_end && mantissa < MIN_19DIGIT_INT {
+        mantissa = mantissa * 10 + (((bytes[j] as int) - 48) as u64)
+        j += 1
+    }
+    mut exp_read = 0
+    if mantissa >= MIN_19DIGIT_INT {
+        // 19 digits came from the integer part: the rest of it is the exponent
+        exp_read = int_end - j
+    } else {
+        // continue into the fraction (it exists: the integer part alone was short)
+        mut k = frac_start
+        while k < frac_end && mantissa < MIN_19DIGIT_INT {
+            mantissa = mantissa * 10 + (((bytes[k] as int) - 48) as u64)
+            k += 1
+        }
+        exp_read = -(k - frac_start)
+    }
+    Ok(Number(mantissa, exp_read + exp_number, negative, true))
+}
+
 /// Strict float parse. Grammar (the same strictness as `@to_int`):
 ///
 /// ```text
@@ -65,36 +177,9 @@ extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 /// `"+2.5E-3"` — the Rust/Go grammar for a float literal in a string.
 #stable(since = "0.1")
 export fn str @to_f64() -> Result[f64, ParseFloatError] {
-    ro bytes = @bytes()
-    ro n = @byte_len()
-    if n == 0 { return Err(ParseFloatError.Empty) }
-    mut i = 0
-    ro negative = bytes[0] == '-'
-    if bytes[0] == '-' || bytes[0] == '+' { i = 1 }
-    mut mantissa_digits = 0
-    while i < n {
-        ro c = bytes[i] as int
-        if c >= '0' && c <= '9' { i += 1; mantissa_digits += 1 } else { break }
-    }
-    if i < n && bytes[i] == '.' {
-        i += 1
-        while i < n {
-            ro c = bytes[i] as int
-            if c >= '0' && c <= '9' { i += 1; mantissa_digits += 1 } else { break }
-        }
-    }
-    if mantissa_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
-    if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
-        i += 1
-        if i < n && (bytes[i] == '-' || bytes[i] == '+') { i += 1 }
-        mut exponent_digits = 0
-        while i < n {
-            ro c = bytes[i] as int
-            if c >= '0' && c <= '9' { i += 1; exponent_digits += 1 } else { break }
-        }
-        if exponent_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
-    }
-    if i < n { return Err(ParseFloatError.Malformed { at: i }) }
+    // The grammar decides; the assembled `Number` is not consumed here until plan 283
+    // Ф.4 switches the conversion to `float_convert.nv` (today: `@to_f64_native()`).
+    ro _n = parse_number(@)?
     // Grammar accepted the whole string; C only rounds.
     // NB: variants are written qualified AND uniquely named — see the type's doc (#136).
     mut v = 0.0
@@ -106,7 +191,5 @@ export fn str @to_f64() -> Result[f64, ParseFloatError] {
     // A FINITE literal whose value does not fit f64: strtod says ±inf, we say which way.
     if v > 1.7976931348623157e308 { return Err(ParseFloatError.TooLarge) }
     if v < -1.7976931348623157e308 { return Err(ParseFloatError.TooSmall) }
-    // `negative` is only read above through `bytes[0]`; kept named for the reader.
-    ro _ = negative
     Ok(v)
 }
