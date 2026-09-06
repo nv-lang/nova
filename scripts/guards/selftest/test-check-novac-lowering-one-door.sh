@@ -115,6 +115,20 @@ if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
     exit 1
 fi
+# --- список форм сверяется с деревом: переименованный вариант NodeKind красит --------
+# (класс №1000, 2026-09-07: рукописный список стража отстаёт от источника, который
+#  объявляет имена, и храповик тихо начинает считать МЕНЬШЕ, оставаясь зелёным)
+mkdir -p "$T/renamed/novac/src/tree" "$T/renamed/novac/src/emit_c" "$T/renamed/scripts/guards"
+sed "s/| MatchExpr/| MatchExprRenamed/" "$ROOT/novac/src/tree/tree.nv" > "$T/renamed/novac/src/tree/tree.nv"
+cp "$ROOT/novac/src/emit_c/emit_place.nv" "$T/renamed/novac/src/emit_c/"
+cp "$ROOT/scripts/guards/novac-lowering-doors.baseline" "$T/renamed/scripts/guards/"
+if python "$G" "$T/renamed" > "$T/o_ren" 2> "$T/e_ren"; then
+    bad "переименованный вариант NodeKind прошёл: [$(head -n 1 "$T/o_ren")]"
+else
+    grep -q "MatchExpr" "$T/e_ren" && ok "переименованный вариант NodeKind — красный, форма названа" \
+        || bad "красный, но форма не названа: [$(head -n 2 "$T/e_ren")]"
+fi
+
 echo "итог: PASS"
 echo "test-check-novac-lowering-one-door ok: равенство, рост, убыль, нет базы, запись базы, нет мишени"
 exit 0

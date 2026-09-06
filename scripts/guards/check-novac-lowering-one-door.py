@@ -46,6 +46,8 @@ NAME = "check-novac-lowering-one-door"
 BASELINE = "scripts/guards/novac-lowering-doors.baseline"
 VALUE_KINDS = ("MatchExpr", "IfExpr", "IfStmt", "RecordCtor", "ArrayLit",
                "InterpStr", "Coalesce", "Lit", "TupleExpr")
+RE_NODEKIND_DECL = re.compile(r"export type NodeKind enum(.*?)\n\n", re.S)
+RE_VARIANT = re.compile(r"\|\s*([A-Za-z][A-Za-z0-9_]*)")
 RE_KIND = re.compile(r"NodeKind\.(" + "|".join(VALUE_KINDS) + r")\b")
 RE_GENERAL = re.compile(r"\b(is_expr_kind|is_value_tail_kind)\(")
 
@@ -57,6 +59,17 @@ def code_part(line):
     if s.startswith("//"):
         return ""
     return line.split("//")[0]
+
+
+def node_kind_variants(root):
+    """Имена вариантов NodeKind, как их объявляет дерево. Пусто -- файла нет."""
+    p = root / "novac" / "src" / "tree" / "tree.nv"
+    if not p.is_file():
+        return []
+    m = RE_NODEKIND_DECL.search(p.read_text(encoding="utf-8", errors="replace"))
+    if not m:
+        return []
+    return RE_VARIANT.findall(m.group(1))
 
 
 def count_arms(path):
@@ -75,6 +88,26 @@ def main():
     if not emit.is_dir():
         print(f"{NAME} ok: судить нечего (нет {emit})")
         return 0
+
+    # СПИСОК ФОРМ СВЕРЯЕТСЯ С ДЕРЕВОМ (класс №1000, 2026-09-07): VALUE_KINDS -- руками
+    # написанное подмножество вариантов `NodeKind`, и переименование варианта в дереве
+    # тихо вывело бы его из счёта -- храповик стал бы мерить МЕНЬШЕ, оставаясь зелёным.
+    # Родня того же дня: список маркеров стража доки отстал от раннера на одно имя,
+    # имя линт-правила жило в двух литералах (№987), перечень швов был неполон (№992).
+    variants = node_kind_variants(root)
+    if variants:
+        unknown = [k for k in VALUE_KINDS if k not in variants]
+        if unknown:
+            print(f"{NAME}: FAIL -- VALUE_KINDS называет формы, которых нет среди вариантов "
+                  f"NodeKind дерева: {', '.join(unknown)}", file=sys.stderr)
+            print("  Вариант переименован или снят: пока список отстаёт, храповик считает "
+                  "меньше армов и остаётся зелёным на росте.", file=sys.stderr)
+            print("  Почини СПИСОК в этом страже тем же коммитом, что и дерево.", file=sys.stderr)
+            return 1
+    else:
+        # Дерева нет (шов самотеста на пустом каталоге) -- сверять не с чем, и это
+        # честно сказано в строке ok: ниже числом форм.
+        pass
 
     files = [p for p in sorted(emit.glob("*.nv")) if not p.name.endswith("_test.nv")]
     per_file = [(p.name, count_arms(p)) for p in files]
@@ -109,7 +142,9 @@ def main():
               f"--update-baseline", file=sys.stderr)
         return 1
 
-    print(f"{NAME} ok: армов размещения значения в эмиттере {total} (база {base}): {breakdown}")
+    seen = "сверено с NodeKind" if variants else "дерева нет -- список не сверялся"
+    print(f"{NAME} ok: армов размещения значения в эмиттере {total} (база {base}): {breakdown}"
+          f"; форм в списке {len(VALUE_KINDS)}, {seen}")
     return 0
 
 
