@@ -67,7 +67,7 @@ export type ParseRangeError enum
 #stable(since = "0.1")
 export fn str @to_version_req() -> Result[VersionReq, ParseRangeError] {
     ro trimmed = @trim_ascii()
-    if trimmed.byte_len() == 0 { return Err(EmptyInput) }
+    if trimmed == "" { return Err(EmptyInput) }
 
     if trimmed == "*" {
         return Ok({ sets: [], any_match: true })
@@ -89,7 +89,7 @@ fn parse_comparator_set(s str) -> Result[[]Comparator, ParseRangeError] {
     ro tokens = s.split(" ")
     for tok in tokens {
         ro t = tok.trim_ascii()
-        if t.byte_len() == 0 { continue }
+        if t == "" { continue }
         ro comps = parse_one_comparator(t)?
         for c in comps { out.push(c) }
     }

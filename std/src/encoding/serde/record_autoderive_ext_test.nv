@@ -95,7 +95,7 @@ test "encode int >= 2^53 -> Err(SerLossyInteger), not silent-lossy (D346/Q15)" {
 test "encode int < 2^53 -> Ok, round-trips (representable)" {
     ro ok = IntBox{ v: 9007199254740991 }    // 2^53 - 1
     ro enc = json_encode(ok)!!
-    assert(enc.byte_len() > 0)
+    assert(enc != "")
     ro dec = json_decode[IntBox](enc)!!
     assert(dec.v == 9007199254740991)
 }

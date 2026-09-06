@@ -176,7 +176,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
         }
     }
     ro min_str = n_str.into_str()
-    if min_str.byte_len() == 0 { throw InvalidQuantifier { position: start } }
+    if min_str == "" { throw InvalidQuantifier { position: start } }
     ro min = min_str.to_int() ?? throw InvalidQuantifier { position: start }
 
     ro max = if @peek() == Some(',') {
@@ -206,7 +206,7 @@ fn Parser mut @parse_quantifier_max(start int) Fail[CompileError] -> int {
         }
     }
     ro m = m_str.into_str()
-    if m.byte_len() == 0 { return -1 }        // {n,} — unbounded
+    if m == "" { return -1 }        // {n,} — unbounded
     // nova:allow W_MANUAL_COALESCE -- `?? throw D` here breaks D162 cleanup coverage: `check_d162_coverage`'s evidence walker `expr_has_throw` (compiler-codegen/src/types/mod.rs, [M-d162-structural-throw-sibling]) descends into Block/If/Match/IfLet/While/For/Loop looking for a nested `Throw`, but NOT into `ExprKind::Coalesce` — so a `throw` on the `??` RHS is invisible to it and the function is wrongly flagged D162-uncovered-error-path (confirmed empirically: swapping this match for `m.to_int() ?? throw ...` produces exactly that FAIL). Root cause for bug №394 follow-up; the match-form below is the only form the checker currently recognizes as "explicit error-branch handling".
     match m.to_int() {
         Ok(v)  => v

@@ -1,0 +1,37 @@
+// EXPECT_LINT_WARNING W_STR_EMPTY_BY_LEN
+//
+// Owner's rule (2026-09-06, novac conventions P37): the emptiness of a `str`
+// is asked by comparing with `""`, never through a length lens. D249 gave a
+// string three lengths and retired `str.len()` for that reason -- but
+// emptiness is not a length: `s.bytes().len() == 0` answers "how many bytes"
+// and coincides with emptiness by accident, and the form teaches the next
+// reader to pick a lens where none is needed. Canon: `s == ""` / `s != ""`.
+//
+// `EXPECT_LINT_WARNING <rule_id>` (registry #463): the runner calls
+// `lints::run_conv_rules` -- the same engine as `nova lint` -- and asserts the
+// exact rule id among the findings. The `neg/` path component keeps this file
+// out of the directory walk of `nova lint <dir>`, so the gate's canon
+// `nova lint --deny spec_tests` (0 findings) is not disturbed; `nova test`
+// still compiles and runs the program. Proven both ways at the wave's
+// acceptance (2026-09-06): with the rule's DETECTION switched off (an early
+// return in its body) the runner reports `NEG-WRONG-LINT-WARN ... 0 findings`;
+// restored, `PASS (lint-warning: 1)`. Renaming the id in the CONV_RULES table
+// alone proves nothing -- the warning carries its own rule literal, and the
+// runner reads that one (registry #987, the oracle's, the integrator's row).
+//
+// Three spellings of the same drift, all caught: the byte view's length, the
+// direct byte lens, and the zero on the left.
+
+module neg.lint_str_empty_by_len_warns
+
+fn classify(s str) -> int {
+    if s.bytes().len() == 0 { return 0 }
+    if s.byte_len() > 0 { return 1 }
+    if 0 != s.byte_len() { return 2 }
+    3
+}
+
+fn main() {
+    println(classify(""))
+    println(classify("x"))
+}

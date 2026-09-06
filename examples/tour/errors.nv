@@ -4,7 +4,7 @@ module tour.errors
 type ParseErr enum Empty | BadDigit
 
 fn parse_digit(s str) -> Result[int, ParseErr] {
-    if s.byte_len() == 0 { return Err(Empty) }
+    if s == "" { return Err(Empty) }
     ro c = s.bytes()[0]
     if c < 48 || c > 57 { return Err(BadDigit) }
     Ok((c as int) - 48)

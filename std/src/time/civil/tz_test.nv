@@ -40,7 +40,7 @@ test "tz_load: UTC-алиасы и offset-формы" {
 }
 
 test "tzdb_version доступна (D321 §tzdb)" {
-    assert(tzdb_version().byte_len() > 0)
+    assert(tzdb_version() != "")
     assert(tzdb_version().contains("curated"))
 }
 

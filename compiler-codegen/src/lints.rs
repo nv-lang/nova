@@ -3296,6 +3296,16 @@ pub const CONV_RULES: &[ConvRule] = &[
         text: None,
     },
     ConvRule {
+        id: "W_STR_EMPTY_BY_LEN",
+        summary: "string emptiness asked through a length lens — \
+                  `s.bytes().len() == 0` / `s.byte_len() > 0` / `0 != s.byte_len()` \
+                  — drift from the canon `s == \"\"` / `s != \"\"` (D249: a str has \
+                  three lengths, emptiness is none of them; owner 2026-09-06, \
+                  novac conventions P37)",
+        ast: Some(conv_str_empty_by_len),
+        text: None,
+    },
+    ConvRule {
         id: "W_MANUAL_COLLECT",
         summary: "a manual collect `mut v = <empty ctor>; for x in it { \
                   v.push(x) }` — drift from the canon `mut v = it.collect()` \
@@ -6424,6 +6434,102 @@ fn conv_scan_block_for_collect(b: &Block, out: &mut Vec<LintWarning>) {
                 applicability,
             }),
         });
+    }
+}
+
+// W_STR_EMPTY_BY_LEN (owner 2026-09-06, novac conventions P37): emptiness of a
+// `str` is asked by comparing with `""`, never through a length lens. D249 gave a
+// `str` three lengths and retired `str.len()` for that reason — but emptiness is
+// not a length: `s.bytes().len() == 0` answers "how many bytes" and coincides
+// with emptiness by accident, and the form teaches the next reader to pick a
+// lens where none is needed. The five carriers of the day all sat in novac's
+// own source (ir.nv, calls.nv, emit_expr.nv, emit_interp.nv, slots.nv) and were
+// removed with the rule; the novac gate holds it with
+// `check-novac-empty-str-door.py`, this lint holds it for the whole tree.
+//
+// WHAT IT CATCHES: a comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) between the
+// integer literal `0` and either `X.byte_len()` or `X.bytes().len()` — no
+// arguments, no trailing block — on either side. Whether `X` is a `str` is not
+// asked (this pass runs after parse, before types): `byte_len` and `bytes` are
+// str's lenses, and a user type spelling both the same way earns the same note.
+// NOT CAUGHT: a length asked for its own sake (`"${s.bytes().len()}"`, D134's
+// length prefix), comparisons with a non-zero literal, `v.len() == 0` on a
+// vector (a question about the vector, not about a string).
+
+/// `X.byte_len()` -> Some("byte_len()"); `X.bytes().len()` -> Some("bytes().len()");
+/// anything else -> None.
+fn conv_str_len_lens(e: &Expr) -> Option<&'static str> {
+    let ExprKind::Call { func, args, trailing: None } = &e.kind else { return None };
+    if !args.is_empty() {
+        return None;
+    }
+    let ExprKind::Member { obj, name } = &func.kind else { return None };
+    match name.as_str() {
+        "byte_len" => Some("byte_len()"),
+        "len" => {
+            let ExprKind::Call { func: inner, args: inner_args, trailing: None } = &obj.kind else {
+                return None;
+            };
+            if !inner_args.is_empty() {
+                return None;
+            }
+            let ExprKind::Member { name: inner_name, .. } = &inner.kind else { return None };
+            if inner_name == "bytes" { Some("bytes().len()") } else { None }
+        }
+        _ => None,
+    }
+}
+
+fn conv_is_zero_literal(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::IntLit(0))
+}
+
+fn conv_str_empty_by_len(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    use crate::ast::BinOp;
+    for f in conv_all_fns(m) {
+        let mut hits: Vec<(Span, &'static str, &'static str)> = Vec::new();
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| {
+            let ExprKind::Binary { op, left, right } = &e.kind else { return };
+            let is_cmp = matches!(
+                op,
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+            );
+            if !is_cmp {
+                return;
+            }
+            let (lens, zero_on_right) = if conv_is_zero_literal(right) {
+                (conv_str_len_lens(left), true)
+            } else if conv_is_zero_literal(left) {
+                (conv_str_len_lens(right), false)
+            } else {
+                (None, false)
+            };
+            let Some(lens) = lens else { return };
+            // Which side of emptiness the form asks: `len == 0`, `len <= 0`,
+            // `0 == len`, `0 >= len` -> empty; `len != 0`, `len > 0`, `0 != len`,
+            // `0 < len` -> non-empty; `len >= 0` / `0 <= len` is always true and
+            // gets the same note -- a question that cannot fail is not a question.
+            let asks_empty = match (op, zero_on_right) {
+                (BinOp::Eq, _) | (BinOp::Le, true) | (BinOp::Ge, false) => true,
+                _ => false,
+            };
+            let canon = if asks_empty { "s == \"\"" } else { "s != \"\"" };
+            hits.push((e.span, lens, canon));
+        });
+        for (span, lens, canon) in hits {
+            out.push(LintWarning {
+                rule: "W_STR_EMPTY_BY_LEN",
+                diag: Diagnostic::new(
+                    format!(
+                        "string emptiness asked through a length lens (`.{lens}` against 0) — \
+                         drift from the canon `{canon}` (D249: a str has three lengths and \
+                         emptiness is none of them; a length is asked only for its own sake — \
+                         novac conventions P37)",
+                    ),
+                    span,
+                ),
+            });
+        }
     }
 }
 
@@ -10792,6 +10898,48 @@ mod tests {
         assert!(
             coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").is_empty(),
             "must NOT fire when arm body uses a different name than the pattern binds, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // W_STR_EMPTY_BY_LEN (owner 2026-09-06, novac P37): emptiness through a
+    // length lens fires on both lenses and both sides of the zero; the canon
+    // `s == ""`, a length asked for its own sake, and a vector's `len() == 0`
+    // stay silent.
+    #[test]
+    fn str_empty_by_len_pos_both_lenses_both_sides() {
+        let src = "module foo\n\
+             fn f(name str, piece str, text str) -> int {\n\
+                 if name.bytes().len() == 0 { return 1 }\n\
+                 if piece.byte_len() > 0 { return 2 }\n\
+                 if 0 != text.bytes().len() { return 3 }\n\
+                 if text.byte_len() >= 0 { return 4 }\n\
+                 0\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hits = coalesce_rule_hits(&ws, "W_STR_EMPTY_BY_LEN");
+        assert_eq!(hits.len(), 4, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hits[0].diag.message.contains("`s == \"\"`"), "{}", hits[0].diag.message);
+        assert!(hits[1].diag.message.contains("`s != \"\"`"), "{}", hits[1].diag.message);
+        assert!(hits[2].diag.message.contains("`s != \"\"`"), "{}", hits[2].diag.message);
+    }
+
+    #[test]
+    fn str_empty_by_len_neg_canon_length_for_itself_and_vector_silent() {
+        let src = "module foo\n\
+             fn g(name str, v []int) -> str {\n\
+                 if name == \"\" { return \"-\" }\n\
+                 if name != \"\" { return \"+\" }\n\
+                 if v.len() == 0 { return \"v\" }\n\
+                 if name.bytes().len() == 3 { return \"3\" }\n\
+                 \"${name.bytes().len()}${name}\"\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            coalesce_rule_hits(&ws, "W_STR_EMPTY_BY_LEN").is_empty(),
+            "must stay silent on the canon, a length for its own sake and a vector, got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

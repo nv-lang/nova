@@ -7,6 +7,7 @@ test "byte_len returns byte count not char count" {
     assert(s.byte_len() == 5)
     ro unicode = "Привет"
     assert(unicode.byte_len() == 12)
+    // nova:allow W_STR_EMPTY_BY_LEN -- the str method surface is under test, the call must stay
     assert(unicode.byte_len() > 0)
 }
 

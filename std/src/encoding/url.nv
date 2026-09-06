@@ -82,7 +82,7 @@ export type ParseUrlError enum
 #stable(since = "0.1")
 export fn str @to_url() -> Result[Url, ParseUrlError] {
     ro s = @
-    if s.byte_len() == 0 { return Err(EmptyInput) }
+    if s == "" { return Err(EmptyInput) }
 
     // 1. Извлечь scheme (до первого ":") и валидировать.
     ro (scheme, after_scheme) = parse_scheme(s)?
@@ -160,7 +160,7 @@ fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Opti
         None    => (s, "")
     }
 
-    if auth.byte_len() == 0 {
+    if auth == "" {
         // `parse_authority` is only ever called after an explicit "//" was
         // seen (Url.from's dispatch) — an empty `auth` here means an
         // explicit-but-empty authority (`file:///etc/hosts`), i.e. host is

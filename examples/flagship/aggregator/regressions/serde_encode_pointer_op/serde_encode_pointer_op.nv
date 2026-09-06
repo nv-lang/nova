@@ -17,7 +17,7 @@ type M187Point { x int, y int }
 test "M-187 serde json_encode на скалярном #impl(Serialize) record не падает E_POINTER_OP" {
     ro p = M187Point{x: 1, y: 2}
     ro s = json_encode(p)!!
-    assert(s.byte_len() > 0)
+    assert(s != "")
 }
 
 // Прямой корень бага — индексированный массив-литерал + to_str + `+`.

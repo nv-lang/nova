@@ -26,6 +26,7 @@ test "bool type available" {
 
 test "str type available" {
     ro s str = "hello"
+    // nova:allow W_STR_EMPTY_BY_LEN -- the prelude method types are under test, the call must stay
     assert(s.byte_len() > 0)
 }
 

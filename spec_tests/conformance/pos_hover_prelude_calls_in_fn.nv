@@ -11,6 +11,7 @@ fn check_range(lo int, hi int, val int) -> bool {
 
 fn uses_str_prelude(s str) -> int {
     // str methods called inside fn body
+    // nova:allow W_STR_EMPTY_BY_LEN -- a prelude call for the hover fixture, the call must stay
     assert(s.byte_len() >= 0)
     return s.byte_len()
 }

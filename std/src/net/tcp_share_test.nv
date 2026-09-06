@@ -55,7 +55,7 @@ test "tcp/share: real loopback — копия живёт после close ори
                 consume sb = StringBuilder.new(cap: 16)
                 while sb.byte_len() < 8 {
                     ro part = must(srv.read_text(16))
-                    if part.byte_len() == 0 { break }   // EOF
+                    if part == "" { break }   // EOF
                     sb.append(part)
                 }
                 // Если close оригинала рвал бы сокет — второй write упал бы /
@@ -107,7 +107,7 @@ test "tcp/share: конкурентные share-копии per-fiber, авто-c
                 consume sb = StringBuilder.new(cap: 16)
                 while sb.byte_len() < 2 {
                     ro part = must(srv.read_text(8))
-                    if part.byte_len() == 0 { break }
+                    if part == "" { break }
                     sb.append(part)
                 }
                 assert(sb.into_str() == "xy")

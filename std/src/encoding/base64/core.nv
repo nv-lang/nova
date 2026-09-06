@@ -183,7 +183,7 @@ fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
     if require_padding && s.byte_len() % 4 != 0 {
         return Err(InvalidLength { actual: s.byte_len() })
     }
-    if s.byte_len() == 0 {
+    if s == "" {
         return Ok([])
     }
 

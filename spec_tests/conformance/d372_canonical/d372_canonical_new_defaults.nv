@@ -24,7 +24,7 @@ test "str.new() возвращает пустую строку \"\" (D372)" {
     ro s = str.new()
     assert(s == "")
     assert(s.is_empty())
-    assert(s.byte_len() == 0)
+    assert(s == "")
 }
 
 test "[]T.new() возвращает empty array; push после new работает (D372)" {

@@ -90,7 +90,7 @@ export fn str @to_csv() -> Result[[][]str, ParseCsvError] {
 
     // Финальная запись (если последняя строка без \n)
     ro tail = current_field.into_str()
-    if tail.byte_len() > 0 || current_record.len() > 0 {
+    if tail != "" || current_record.len() > 0 {
         current_record.push(tail)
         records.push(current_record)
     }
