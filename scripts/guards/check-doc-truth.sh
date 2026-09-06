@@ -64,7 +64,49 @@ BASELINE="$SCRIPT_DIR/doc-truth.baseline"
 
 # ---------- ОСЬ 1: имена EXPECT_*-маркеров ----------
 
-KNOWN='EXPECT_COMPILE_ERROR|EXPECT_CC_ERROR|EXPECT_RUNTIME_PANIC|EXPECT_EXIT_CODE|EXPECT_STDOUT|EXPECT_STDERR|EXPECT_COMPILE_WARNING|EXPECT_TIMEOUT_MS|EXPECT_TIMEOUT|EXPECT_EXIT'
+# СПИСОК ИЗВЕСТНЫХ МАРКЕРОВ СНИМАЕТСЯ С РАННЕРА, А НЕ ПИШЕТСЯ РУКОЙ (№1000, 2026-09-07).
+# Он был рукописным — и отстал ровно на `EXPECT_LINT_WARNING`: раннер разбирает его с
+# №463 (`test_runner.rs`, `strip_prefix("EXPECT_LINT_WARNING")`), а страж объявил
+# неизвестным маркер, ЧЕСТНО документированный в `docs/dev/novac-compiler-conventions.md`,
+# и покрасил гейт на здоровой доке. Класс тот же, что у №987 (имя правила линта в двух
+# литералах): копия списка расходится с оригиналом в день, когда оригинал пополняют, —
+# а страж, чья мера отстала, врёт УВЕРЕННО. Лечится не дописыванием имени, а снятием
+# копии: множество литералов `"EXPECT_*"` в раннере И ЕСТЬ то, что раннер знает.
+# Отказ (нет файла, нет grep, пустая выборка) роняет страж в прежний рукописный список:
+# мера обязана деградировать до вчерашней, а не до пустоты, иначе «ничего не известно»
+# читается как «всё неизвестно» и красит всё подряд.
+KNOWN_FALLBACK='EXPECT_COMPILE_ERROR|EXPECT_CC_ERROR|EXPECT_RUNTIME_PANIC|EXPECT_EXIT_CODE|EXPECT_STDOUT|EXPECT_STDERR|EXPECT_COMPILE_WARNING|EXPECT_TIMEOUT_MS|EXPECT_TIMEOUT|EXPECT_EXIT|EXPECT_LINT_WARNING'
+RUNNER="$ROOT/compiler-codegen/src/test_runner.rs"
+KNOWN=""
+if [ -f "$RUNNER" ]; then
+    KNOWN=$(grep -oE '"EXPECT_[A-Z_]+"' "$RUNNER" 2>/dev/null \
+                | tr -d '"' | sort -u | paste -sd'|' -)
+fi
+if [ -z "$KNOWN" ]; then
+    echo "check-doc-truth: список маркеров с раннера не снялся ($RUNNER) — беру рукописный запасной" >&2
+    KNOWN="$KNOWN_FALLBACK"
+else
+    # СНЯТЫЙ СПИСОК НЕ СМЕЕТ БЫТЬ КОРОЧЕ ЗАПАСНОГО, И ЭТО НЕ ПЕДАНТИЗМ (оговорка окна 274
+    # к №1000, из их опыта с №992). Греп по литералам верен, пока раннер пишет имена
+    # литералами. Соберут имя конкатенацией, вынесут в константу, переименуют файл —
+    # выборка ТИХО усохнет, и страж либо покраснеет на честной доке (сегодняшний случай
+    # ещё раз), либо, что хуже, пропустит опечатку в маркере как «неизвестное имя, но
+    # ведь их и так мало». Потерянная мишень, прочитанная как замер, — класс №519.
+    # Поэтому: каждое имя запасного списка обязано найтись в снятом; нет — КРАСНОЕ,
+    # и оно НАЗЫВАЕТ пропавшие имена, а не откатывается молча.
+    _LOST=""
+    for _m in $(printf '%s' "$KNOWN_FALLBACK" | tr '|' ' '); do
+        printf '%s' "|$KNOWN|" | grep -q "|$_m|" || _LOST="$_LOST $_m"
+    done
+    if [ -n "$_LOST" ]; then
+        echo "check-doc-truth FAIL: снятый с раннера список КОРОЧЕ запасного — пропали:$_LOST" >&2
+        echo "    Раннер перестал писать эти имена литералами (константа? конкатенация?)," >&2
+        echo "    и мера стража усохла молча. Чинить в стороне снятия, не подгонкой запаса:" >&2
+        echo "    $RUNNER — либо вернуть литералы, либо научить страж новому способу." >&2
+        exit 1
+    fi
+    unset _LOST _m
+fi
 
 scan_paths=()
 [ -f "$ROOT/AGENTS.md" ] && scan_paths+=("$ROOT/AGENTS.md")
