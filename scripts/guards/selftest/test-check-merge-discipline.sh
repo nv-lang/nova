@@ -48,9 +48,10 @@ fi
 
 # 3. Вердикт зелёный, свежий и НАЗЫВАЮЩИЙ СВОЙ ЯРУС — пропуск. Это направление
 #    важнее первых двух: страж, отказывающий всегда, будет обойдён и правило
-#    умрёт. HASH здесь намеренно НЕ указан — вердикт без хеша законен (старый
+#    умрёт. УРОВЕНЬ (`:push`) ОБЯЗАТЕЛЕН с №995: `loop` не судит корпус вовсе,
+#    а выглядел так же, как push. HASH здесь намеренно НЕ указан — вердикт без хеша законен (старый
 #    формат ещё может лежать на машине), проверяется он только когда назван.
-echo "RC=0 SEC=2412 TIER=main" > "$V"
+echo "RC=0 SEC=2412 TIER=main:push" > "$V"
 out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
     ok "пропускает при зелёном и свежем гейте"
@@ -108,7 +109,7 @@ fi
 
 # 8. Вердикт ЧУЖОГО яруса подан как основной — отказ. Ярусы судят разное и не
 #    заменяют друг друга.
-echo "RC=0 SEC=900 TIER=novac" > "$V"
+echo "RC=0 SEC=900 TIER=novac:push" > "$V"
 out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q "яруса 'novac' подан как основной"; then
     ok "отказ, когда вердикт novac подсунут вместо основного"
@@ -118,7 +119,7 @@ fi
 
 # 9. Хеш назван и НЕ совпадает с HEAD — отказ. Свежесть по времени этого не
 #    ловит: гейт мог идти на другой ветке в ту же минуту.
-echo "RC=0 SEC=2412 TIER=main HASH=deadbeef" > "$V"
+echo "RC=0 SEC=2412 TIER=main:push HASH=deadbeef" > "$V"
 out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'ДРУГОЕ дерево'; then
     ok "отказ, когда вердикт судил другое дерево"
@@ -144,7 +145,7 @@ if ! git -C "$TMP" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
 else
     # 10. Слияние приносит novac-пути, вердикта яруса novac нет — ОТКАЗ.
     #     Это и есть дыра №988 в чистом виде.
-    echo "RC=0 SEC=2412 TIER=main HASH=$HEAD_SHA" > "$V"
+    echo "RC=0 SEC=2412 TIER=main:push HASH=$HEAD_SHA" > "$V"
     rm -f "$NV"
     out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
     if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'яруса novac'; then
@@ -203,7 +204,7 @@ $GC add f.txt >/dev/null 2>&1; $GC commit -q -m "plain change" >/dev/null 2>&1
 $GC checkout -q main 2>/dev/null
 $GC merge --no-commit --no-ff plainbr >/dev/null 2>&1
 HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
-echo "RC=0 SEC=2412 TIER=main HASH=$HEAD_SHA" > "$V"
+echo "RC=0 SEC=2412 TIER=main:push HASH=$HEAD_SHA" > "$V"
 rm -f "$NV"
 out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
@@ -213,6 +214,39 @@ else
 fi
 $GC merge --abort >/dev/null 2>&1
 $GC checkout -q main 2>/dev/null
+
+# --- №995: вердикт обязан называть УРОВЕНЬ, а не только ярус -----------
+$GC merge --abort >/dev/null 2>&1
+$GC checkout -q main 2>/dev/null
+
+# 16. Ярус назван, УРОВЕНЬ НЕТ — отказ. До №995 это был единственный
+#     формат, и вердикт текстового яруса loop открывал слияние так же, как push.
+echo "RC=0 SEC=2412 TIER=main" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "не называет УРОВЕНЬ"; then
+    ok "отказ на вердикте без уровня"
+else
+    bad "вердикт без уровня принят (код $rc): $out"
+fi
+
+# 17. Уровень `loop` — отказ, и причина названа СОДЕРЖАТЕЛЬНО.
+echo "RC=0 SEC=200 TIER=main:loop" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "НЕ судит корпус"; then
+    ok "отказ на уровне loop, с причиной"
+else
+    bad "уровень loop принят за достаточный (код $rc): $out"
+fi
+
+# 18. Уровень `full` — проходит: он ВЫШЕ push, а не «другой».
+#     Направление «не мешать»: страж, требующий РОВНО push, запретил бы ночной полный.
+echo "RC=0 SEC=3600 TIER=main:full" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q "слияние законно"; then
+    ok "уровень full принимается как не ниже push"
+else
+    bad "ложный отказ на уровне full (код $rc): $out"
+fi
 
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-merge-discipline: ЕСТЬ ПРОВАЛЫ" >&2

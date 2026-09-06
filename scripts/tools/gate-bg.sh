@@ -77,11 +77,17 @@ date +%s > "$STAMP"
 # «слияние законно», потому что возражать ему было НЕЧЕМ. Замерено на себе:
 # 7994d75ce и 7e6e6ad82 влиты в main без вердикта яруса novac.
 # Хеш снимается ЗДЕСЬ, до запуска, — это дерево, которое гейт и будет судить.
+# УРОВЕНЬ В МЕТКЕ (реестр 221.1 №995). Добавление яруса в №988 закрыло вопрос
+# «кто проверял», но не вопрос «НАСКОЛЬКО». Ярусы самого гейта судят РАЗНОЕ:
+# `loop` вообще не трогает корпус (ни линта, ни мега-CU, ни прогона) — он
+# текстовый. Значит вердикт loop выглядел для стража слияния так же, как push,
+# и открывал слияние с той же лёгкостью. Форма метки: `TIER=<ярус>:<уровень>`.
+GATE_LEVEL="${NOVA_GATE_TIER:-full}"
 GATE_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 GATE_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 nohup bash -c "cd '$ROOT' && bash scripts/gate.sh 2>&1 \
     | awk -v t0=\$(date +%s) '{ printf \"[%5ds] %s\n\", systime()-t0, \$0; fflush() }' > '$LOG'; \
-    echo \"RC=\${PIPESTATUS[0]} SEC=\$SECONDS TIER=main HASH=$GATE_HASH BRANCH=$GATE_BRANCH\" > '$DONE'" \
+    echo \"RC=\${PIPESTATUS[0]} SEC=\$SECONDS TIER=main:$GATE_LEVEL HASH=$GATE_HASH BRANCH=$GATE_BRANCH\" > '$DONE'" \
     > /dev/null 2>&1 &
 
 cat <<'EOF'
