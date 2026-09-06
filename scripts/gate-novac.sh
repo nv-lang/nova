@@ -357,6 +357,7 @@ par_add "$ROOT/scripts/guards/check-novac-no-default-branch.py" "ветка «в
 par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя разбирается обратно (П24)"
 par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
 par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
+par_add "$ROOT/scripts/guards/check-novac-lowering-one-door.py" "форма значения понижена в эмиттере, а не в lower (274.8)"
 par_add "$ROOT/scripts/guards/check-novac-one-door-export.py" "одна операция из двух модулей (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-edge-payload.py" "ребро §3 без «что течёт» (274.1 §2в)"
 par_add "$ROOT/scripts/guards/check-novac-surface.py" "публичная поверхность разошлась с базой (274 §10.4)"
