@@ -134,11 +134,27 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
         N_RC=$(sed -n 's/^RC=\([0-9][0-9]*\).*/\1/p' "$NOVAC_VERDICT" | head -1)
         [ -n "${N_RC:-}" ] || fail "вердикт яруса novac нечитаем ($NOVAC_VERDICT)"
         [ "$N_RC" -eq 0 ] || fail "гейт novac КРАСНЫЙ (RC=$N_RC) — слияние его путей закрыто"
-        N_TIER=$(sed -n 's/.*TIER=\([a-z][a-z]*\).*/\1/p' "$NOVAC_VERDICT" | head -1)
-        [ "${N_TIER:-}" = "novac" ] || fail "в $NOVAC_VERDICT лежит вердикт яруса '${N_TIER:-без имени}', а нужен novac"
-        NV_TS=$(stat -c %Y "$NOVAC_VERDICT" 2>/dev/null)
-        if [ -n "${NV_TS:-}" ] && [ -n "${H_TS:-}" ] && [ "$NV_TS" -lt "$H_TS" ]; then
-            fail "вердикт яруса novac СТАРШЕ HEAD — он относится к другому дереву"
+        N_TIER=$(sed -n 's/.*TIER=\([a-z][a-z-]*\).*/\1/p' "$NOVAC_VERDICT" | head -1)
+        # Ровно `novac`: `novac-sample` — это прогон со швом, НЕ полный.
+        [ "${N_TIER:-}" = "novac" ] || fail "в $NOVAC_VERDICT лежит вердикт яруса '${N_TIER:-без имени}', а нужен novac (выборка со швом не годится)"
+        # СВЕЖЕСТЬ ЯРУСА NOVAC МЕРЯЕТСЯ ПО `MERGE_HEAD`, А НЕ ПО `HEAD`.
+        # Этот ярус гоняется на ВХОДЯЩЕЙ ветке, а не на моём дереве, и его
+        # вердикт законно СТАРШЕ моего `HEAD` — сравнение со временем `HEAD`
+        # давало бы ложный отказ на честно проверенной ветке. Сверка ПО ХЕШУ
+        # строга и точна: вердикт обязан называть ИМЕННО тот коммит, который
+        # вливается. Если хеша нет (старый формат) — падаем на время файла.
+        N_HASH=$(sed -n 's/.*HASH=\([0-9a-f][0-9a-f]*\).*/\1/p' "$NOVAC_VERDICT" | head -1)
+        M_HASH=$(git rev-parse MERGE_HEAD 2>/dev/null)
+        if [ -n "${N_HASH:-}" ] && [ -n "${M_HASH:-}" ]; then
+            case "$M_HASH" in
+                "$N_HASH"*) : ;;
+                *) fail "вердикт яруса novac судил $N_HASH, а сливается $M_HASH — это ДРУГОЕ содержимое" ;;
+            esac
+        else
+            NV_TS=$(stat -c %Y "$NOVAC_VERDICT" 2>/dev/null)
+            if [ -n "${NV_TS:-}" ] && [ -n "${H_TS:-}" ] && [ "$NV_TS" -lt "$H_TS" ]; then
+                fail "вердикт яруса novac СТАРШЕ HEAD и не называет хеша — судить нечем"
+            fi
         fi
         echo "check-merge-discipline: слияние приносит $N_NOVAC файл(ов) яруса novac — его вердикт есть, зелёный и свежий"
     fi

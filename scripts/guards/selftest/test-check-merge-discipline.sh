@@ -134,6 +134,9 @@ $GC add novac/src/a.rs >/dev/null 2>&1; $GC commit -q -m "novac change" >/dev/nu
 $GC checkout -q main 2>/dev/null
 $GC merge --no-commit --no-ff nvbr >/dev/null 2>&1
 HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+# Вердикт яруса novac относится к ВХОДЯЩЕЙ ветке — этот ярус гоняется у себя
+# окном 274, а не на моём дереве, — значит сверяться он обязан с MERGE_HEAD.
+MERGE_SHA=$(git -C "$TMP" rev-parse MERGE_HEAD 2>/dev/null)
 NV="$TMP/novac-verdict"
 
 if ! git -C "$TMP" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
@@ -153,7 +156,7 @@ else
     # 11. Тот же случай, но вердикт яруса novac есть, зелёный и свежий —
     #     ПРОПУСК. Направление «не мешает работать» обязательно: страж,
     #     запрещающий novac-слияния вовсе, будет обойдён в первый же день.
-    echo "RC=0 SEC=900 TIER=novac HASH=$HEAD_SHA" > "$NV"
+    echo "RC=0 SEC=900 TIER=novac HASH=$MERGE_SHA" > "$NV"
     out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
     if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
         ok "пропускает novac-слияние, когда есть вердикты ОБОИХ ярусов"
@@ -162,12 +165,31 @@ else
     fi
 
     # 12. Вердикт яруса novac КРАСНЫЙ — отказ.
-    echo "RC=1 SEC=900 TIER=novac HASH=$HEAD_SHA" > "$NV"
+    echo "RC=1 SEC=900 TIER=novac HASH=$MERGE_SHA" > "$NV"
     out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
     if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'novac КРАСНЫЙ'; then
         ok "отказ на красном гейте novac"
     else
         bad "красный novac пропущен (код $rc): $out"
+    fi
+
+    # 12б. Вердикт яруса novac зелёный, но судил ДРУГОЕ содержимое — отказ.
+    #      Свежесть по времени этого не ловит вовсе: файл только что создан.
+    echo "RC=0 SEC=900 TIER=novac HASH=0123456789abcdef0123456789abcdef01234567" > "$NV"
+    out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'ДРУГОЕ содержимое'; then
+        ok "отказ: вердикт novac о другом содержимом"
+    else
+        bad "вердикт novac о чужом дереве принят (код $rc): $out"
+    fi
+
+    # 12в. Выборка со швом (`novac-sample`) не заменяет полный ярус.
+    echo "RC=0 SEC=90 TIER=novac-sample HASH=$MERGE_SHA" > "$NV"
+    out=$(NOVA_GATE_VERDICT="$V" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+    if [ "$rc" -eq 1 ] && echo "$out" | grep -q "novac-sample"; then
+        ok "отказ: выборка со швом не заменяет полный ярус"
+    else
+        bad "выборка принята за полный ярус (код $rc): $out"
     fi
 
     $GC merge --abort >/dev/null 2>&1

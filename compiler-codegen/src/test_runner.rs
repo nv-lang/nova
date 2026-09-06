@@ -3919,9 +3919,33 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                     // ричном: NT-статусы читаются только во втором), и берём шесть
                     // последних строк вместо трёх — «Running N tests...» съедает первую
                     // же, и три строки регулярно не долетают до содержательного вывода.
-                    let last_lines: Vec<&str> =
-                        stdout.lines().chain(stderr.lines()).rev().take(6).collect();
-                    let tail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                    // №990, способ 1: ОКНО БРАЛОСЬ С НЕ ТОГО КОНЦА.
+                    // Шесть ПОСЛЕДНИХ строк — разумный выбор для обычного вывода и
+                    // худший из возможных для БЭКТРЕЙСА: там внизу стартовый код
+                    // Windows, одинаковый у ЛЮБОГО падения, а вся различающая
+                    // информация — вверху. Рантайм ГОВОРИТ это прямо: `segv_diag.c`
+                    // печатает шапку стека со словами «frame[1] = caller of crash
+                    // site = KEYSTONE». Замер 2026-09-06 (реестр №986/№990): из тридцати
+                    // кадров до человека доехали #03..#07 — `main`,
+                    // `__scrt_common_main_seh`, `BaseThreadInitThunk`, `RtlUserThreadStart`,
+                    // то есть ничего.
+                    //
+                    // ПОЭТОМУ: если в выводе есть диагностика рантайма, берётся ЕЁ
+                    // ВЕРШИНА, и не целиком: только строки, различающие ПРИЧИНУ
+                    // (код исключения, адрес обращения, RVA) и первые кадры. Дамп
+                    // регистров сюда НЕ идёт — он занял бы весь бюджет строки и
+                    // вытеснил кадры, а читают его только после воспроизведения, из полного
+                    // лога. Если диагностики нет — поведение прежнее, шесть последних.
+                    let all_lines: Vec<&str> =
+                        stdout.lines().chain(stderr.lines()).collect();
+                    let tail = match diag_head_window(&all_lines) {
+                        Some(head) => head,
+                        None => {
+                            let last_lines: Vec<&str> = all_lines
+                                .iter().rev().take(6).copied().collect();
+                            last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                        }
+                    };
                     let sig = signal_note(&run_status);
                     if tail.trim().is_empty() {
                         format!("процесс умер молча, exit={} (0x{:X}){}, вывода нет", exit, exit, sig)
@@ -3976,22 +4000,18 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                             names.len() - MERGED_CU_NAMES_SHOWN
                         )
                     };
-                    match attribute_merged_cu_crash(&stderr, &peer_paths) {
-                        Some(culprit) => format!(
-                            "[MERGED CU, {} файлов] вероятный виновник: {} | {} | кандидаты: {}",
-                            peer_paths.len(),
-                            culprit.file_name().map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                            raw_detail,
-                            shown
-                        ),
-                        None => format!(
-                            "[MERGED CU, {} файлов] {} | файл-виновник НЕ определён (нет \
-                             однозначного кадра в SEGV-стеке — нужен NOVA_DIAG_SEGV-\
-                             совместимый crash или уникальный `nova_fn_...` кадр) | кандидаты: {}",
-                            peer_paths.len(), raw_detail, shown
-                        ),
-                    }
+                    // №990, способ 2: ВЕРДИКТ АТРИБУЦИИ СТОИТ ПЕРВЫМ.
+                    // Раньше он приписывался ПОСЛЕ `raw_detail`, а печать режется по
+                    // фиксированной длине — то есть единственная строка, ради которой
+                    // `attribute_merged_cu_crash` и существует, срезалась ПЕРВОЙ.
+                    // Замер 2026-09-06: в чужом логе строка длиной 677 символов
+                    // обрывалась посреди слова `ntdll!RtlUs`, а вердикт стоял за ним.
+                    // Порядок слов при фиксированном бюджете решает, что выживет.
+                    let culprit_name = attribute_merged_cu_crash(&stderr, &peer_paths)
+                        .and_then(|c| c.file_name()
+                            .map(|n| n.to_string_lossy().into_owned()));
+                    merged_cu_detail(
+                        peer_paths.len(), culprit_name.as_deref(), &raw_detail, &shown)
                 } else {
                     raw_detail
                 };
@@ -7172,6 +7192,98 @@ fn json_escape(s: &str) -> String {
 /// Emit one line per test event в соответствии с `format`. Streaming —
 /// output flush'ится сразу после каждой строки.
 /// Б.3: при verbose — печатает захваченный stdout/stderr для Pass.
+
+
+/// ВЕРШИНА диагностики рантайма — то, что различает ПРИЧИНУ падения.
+///
+/// Реестр 221.1 №990, способ 1. Вынесено в отдельную функцию НЕ ради
+/// красоты: приёмка строки требует пробы БЕЗ прогона гейта, а логика,
+/// запечённая внутрь трёхсотстрочной функции, проверяется только целым
+/// прогоном — то есть не проверяется никогда.
+///
+/// Берётся НЕ весь блок: дамп регистров (RAX/RBX/…) занял бы весь бюджет
+/// одной строки вердикта и вытеснил кадры — то есть повторил бы способ 3
+/// того же дефекта в новом месте. Регистры читают из полного лога, уже после
+/// воспроизведения.
+fn diag_head_window(lines: &[&str]) -> Option<String> {
+    // Строки шапки, без которых падение не отличить от другого падения.
+    const KEEP_PREFIXES: [&str; 4] = [
+        "ExceptionCode:",
+        "AccessMode:",
+        "FaultAddress:",
+        "RIP-RVA:",
+    ];
+    // Четырёх кадров хватает: `segv_diag.c` называет главным frame[1].
+    const FRAMES_KEPT: usize = 4;
+
+    let start = lines.iter().position(|l| l.contains("[SEGV-DIAG]"))?;
+    let mut picked: Vec<&str> = Vec::new();
+    let mut frames = 0usize;
+    for l in &lines[start..] {
+        let t = l.trim();
+        if t.starts_with("=== [SEGV-DIAG END]") {
+            break;
+        }
+        if KEEP_PREFIXES.iter().any(|p| t.starts_with(p)) {
+            picked.push(t);
+        } else if t.starts_with('#') && frames < FRAMES_KEPT {
+            picked.push(t);
+            frames += 1;
+        }
+    }
+    let joined = picked.join(" | ");
+    if joined.trim().is_empty() { None } else { Some(joined) }
+}
+
+/// Строка вердикта для отказа в СЛИТОЙ единице компиляции.
+///
+/// Реестр 221.1 №990, способ 2: ВЕРДИКТ АТРИБУЦИИ СТОИТ ПЕРВЫМ.
+/// Раньше он приписывался ПОСЛЕ `raw_detail`. Печать режется по фиксированной
+/// длине, а значит порядок слов РЕШАЕТ, что выживет: единственная строка,
+/// ради которой существует `attribute_merged_cu_crash`, стояла в очереди за
+/// самым длинным куском текста и срезалась ПЕРВОЙ. Замер 2026-09-06:
+/// строка длиной 677 символов обрывалась посреди `ntdll!RtlUs`.
+fn merged_cu_detail(
+    count: usize,
+    culprit: Option<&str>,
+    raw_detail: &str,
+    shown: &str,
+) -> String {
+    match culprit {
+        Some(name) => format!(
+            "[MERGED CU, {} файлов] вероятный виновник: {} | {} | кандидаты: {}",
+            count, name, raw_detail, shown
+        ),
+        None => format!(
+            "[MERGED CU, {} файлов] файл-виновник НЕ определён (нет \
+             однозначного кадра в SEGV-стеке — нужен NOVA_DIAG_SEGV-\
+             совместимый crash или уникальный `nova_fn_...` кадр) | {} | кандидаты: {}",
+            count, raw_detail, shown
+        ),
+    }
+}
+/// Обрезка детали отказа для однострочного вердикта — ГРОМКАЯ, а не молчаливая.
+///
+/// Реестр 221.1 №990, способ 3. До 2026-09-06 оба места печати делали
+/// `detail.chars().take(600)` БЕЗ маркера. Строка обрывалась посреди
+/// слова (замер: `ntdll!RtlUs`), и читатель видел не «текст обрезан», а
+///  «вот всё, что известно» — то есть молчаливая потеря выдавала себя за
+/// полноту. Предел остаётся (одна строка на вердикт — верное решение для
+/// прогона на тысячу фикстур), но потеря теперь НАЗЫВАЕТ СЕБЯ и говорит,
+/// чем добрать остальное.
+fn trunc_detail(detail: &str) -> String {
+    const LIMIT: usize = 600;
+    let total = detail.chars().count();
+    if total <= LIMIT {
+        return detail.to_string();
+    }
+    let head: String = detail.chars().take(LIMIT).collect();
+    format!(
+        "{}… [обрезано: {} из {} символов; полностью — NOVA_DEBUG_RUN_DUMP=1]",
+        head, LIMIT, total
+    )
+}
+
 fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcome: &Outcome, verbosity: Verbosity) {
     let mut out = std::io::stdout().lock();
     match format {
@@ -7181,7 +7293,7 @@ fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcom
             if detail.is_empty() {
                 let _ = writeln!(out, "{:<14} {}", label, name);
             } else {
-                let trunc: String = detail.chars().take(600).collect();
+                let trunc = trunc_detail(&detail);
                 let _ = writeln!(out, "{:<14} {}  # {}", label, name, trunc);
             }
             // Б.3: verbose — dump captured output after Pass line.
@@ -7727,7 +7839,7 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
                 let line = if detail.is_empty() {
                     format!("{:<14} {}", label, name)
                 } else {
-                    let trunc: String = detail.chars().take(600).collect();
+                    let trunc = trunc_detail(&detail);
                     format!("{:<14} {}  # {}", label, name, trunc)
                 };
                 let _ = writeln!(out, "{}", line);
@@ -8169,6 +8281,119 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+
+    // ---- Реестр 221.1 №990: отчётный путь не теряет улику -------------
+    //
+    // ПРОБА ЗДЕСЬ, А НЕ В ПРОГОНЕ, ПОТОМУ ЧТО ДЕФЕКТ ЖИЛ ДВА МЕСЯЦА
+    // именно в виде логики, которую нечем было вызвать отдельно: она стояла
+    // внутри трёхсотстрочной функции и проверялась только целым прогоном — то есть
+    // не проверялась никогда.
+
+    /// Стек той же формы, что пишет `nova_rt/segv_diag.c`, с тридцатью кадрами.
+    /// Форма взята из ЖИВОГО лога (nova-p274, 2026-09-06), а не придумана:
+    /// зелёная проба на несуществующей форме доказывает ничего (реестр №989).
+    fn synthetic_segv_stack() -> Vec<String> {
+        let mut v: Vec<String> = vec![
+            "Running 1 tests...".to_string(),
+            "".to_string(),
+            "=== [SEGV-DIAG] EXCEPTION_ACCESS_VIOLATION ===".to_string(),
+            "PID=1234 TID=5678".to_string(),
+            "ExceptionCode:    0xC0000005".to_string(),
+            "ExceptionAddress: 0x7FF722765D0D (RIP at fault)".to_string(),
+            "AccessMode:       read (info[0]=0)".to_string(),
+            "FaultAddress:     0x0000000000000008 (target of the bad op)".to_string(),
+            "ExeBase:          0x7FF722000000".to_string(),
+            "RIP-RVA:          0x765D0D (= RIP - ExeBase, if RIP in exe)".to_string(),
+            "RIP=0000765D0D RSP=00000000AB RBP=00000000CD".to_string(),
+            "RAX=0000000000 RBX=0000000000 RCX=0000000000 RDX=0000000000".to_string(),
+            "=== Stack trace (frame[1] = caller of crash site = KEYSTONE) ==="
+                .to_string(),
+        ];
+        for i in 0..30 {
+            v.push(format!("  #{:02} 00007FF700000000  bin!frame_{}+0x10", i, i));
+        }
+        v.push("=== [SEGV-DIAG END] ===".to_string());
+        v
+    }
+
+    #[test]
+    fn diag_head_window_keeps_the_crash_site_not_the_windows_startup() {
+        let owned = synthetic_segv_stack();
+        let lines: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        let got = diag_head_window(&lines).expect("диагностика есть — окно обязано найтись");
+
+        // Различающее причину — на месте.
+        assert!(got.contains("ExceptionCode:    0xC0000005"), "нет кода исключения: {}", got);
+        assert!(got.contains("FaultAddress:"), "нет адреса обращения: {}", got);
+        assert!(got.contains("RIP-RVA:"), "нет RVA: {}", got);
+        // ТОЧКА ПАДЕНИЯ — главное, что терялось до фикса.
+        assert!(got.contains("frame_0"), "нет кадра #00: {}", got);
+        assert!(got.contains("frame_1"), "нет кадра #01 (KEYSTONE): {}", got);
+        // Глубокие кадры НЕ берутся: именно они раньше съедали весь бюджет.
+        assert!(!got.contains("frame_29"), "глубокий кадр попал в окно: {}", got);
+        // Дамп регистров НЕ берётся — иначе способ 3 повторился бы в новом месте.
+        assert!(!got.contains("RAX="), "дамп регистров съел бюджет: {}", got);
+
+        // ОБРАТНАЯ СТОРОНА ПРОБЫ, ВСТРОЕННАЯ В ТЕСТ. Зелёный тест на новом
+        // коде не доказывает, что старый был плох. Поэтому ЗДЕСЬ ЖЕ считается, что
+        // вернуло бы ПРЕЖНЕЕ правило (шесть ПОСЛЕДНИХ строк) на ТОМ ЖЕ входе.
+        // Если когда-нибудь эти два результата совпадут — значит проба перестала
+        // различать фикс и его отсутствие, и её надо пересматривать, а не верить ей.
+        let as_old_rule: String = {
+            let last: Vec<&str> = lines.iter().rev().take(6).copied().collect();
+            last.into_iter().rev().collect::<Vec<_>>().join(" | ")
+        };
+        assert!(as_old_rule.contains("frame_29"),
+                "старое правило брало ГЛУБОКИЕ кадры — вход перестал воспроизводить дефект: {}",
+                as_old_rule);
+        assert!(!as_old_rule.contains("ExceptionCode:"),
+                "старое правило теряло код исключения: {}", as_old_rule);
+        assert!(!as_old_rule.contains("frame_1 "),
+                "старое правило теряло KEYSTONE-кадр: {}", as_old_rule);
+    }
+
+    #[test]
+    fn diag_head_window_is_silent_without_diagnostics() {
+        // Обратная сторона: без диагностики поведение обязано остаться ПРЕЖНИМ
+        // (шесть последних строк) — фикс обязан красить ровно то, что чинил.
+        let owned = vec![
+            "Running 1 tests...".to_string(),
+            "some output".to_string(),
+            "more output".to_string(),
+        ];
+        let lines: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        assert!(diag_head_window(&lines).is_none());
+    }
+
+    #[test]
+    fn trunc_detail_never_truncates_silently() {
+        let short = "короткая деталь";
+        assert_eq!(trunc_detail(short), short, "короткое не трогается");
+
+        let long: String = std::iter::repeat('x').take(1000).collect();
+        let got = trunc_detail(&long);
+        // До фикса здесь было ровно 600 символов без единого признака обрезки,
+        // и читатель видел «вот всё, что известно» вместо «текст оборван».
+        assert!(got.contains("обрезано"), "обрезка молчалива: {}", got);
+        assert!(got.contains("1000"), "не назван полный размер: {}", got);
+        assert!(got.contains("NOVA_DEBUG_RUN_DUMP"), "не сказано, чем добрать остальное: {}", got);
+    }
+
+    #[test]
+    fn merged_cu_detail_puts_the_verdict_before_the_long_text() {
+        // Способ 2: при фиксированном бюджете порядок слов решает, что выживет.
+        let raw: String = std::iter::repeat('y').take(900).collect();
+        let got = merged_cu_detail(1179, None, &raw, "a.nv, b.nv");
+        let verdict_at = got.find("НЕ определён").expect("вердикт обязан быть");
+        let raw_at = got.find("yyy").expect("raw_detail обязан быть");
+        assert!(verdict_at < raw_at,
+                "вердикт стоит ПОСЛЕ длинного текста — обрезка съест его первым");
+        // И главное, сквозная приёмка строки №990: после обрезки вердикт ВСЁ ЕЩЁ виден.
+        let printed = trunc_detail(&got);
+        assert!(printed.contains("НЕ определён"),
+                "после обрезки вердикт пропал — ровно дефект №990: {}", printed);
+        assert!(printed.contains("обрезано"), "обрезка молчалива: {}", printed);
+    }
     use super::*;
 
     fn first_marker(src: &str) -> Option<ExpectMarker> {
