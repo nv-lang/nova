@@ -1,0 +1,7 @@
+// SECOND CARRIER, asking whether the alias changes the MEANING of the name:
+// if `f64` now meant int, an int body would be the natural reading.
+//   nova check -> ok, build -> ok, run -> 7
+// The control beside it prints 7 as well, so the alias changed nothing.
+type f64 alias int
+fn whole() -> f64 => 7
+fn main() Io -> () => println(whole())

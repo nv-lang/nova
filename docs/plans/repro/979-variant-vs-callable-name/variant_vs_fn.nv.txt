@@ -1,0 +1,12 @@
+// CARRIER 1. A sum variant and a function share the name `Red`. The checker
+// resolves the call to the FUNCTION -- it types the result as int, which is
+// why the generated C reaches nova_print_int -- while codegen emits the
+// VARIANT CONSTRUCTOR into that slot.
+//   nova check -> ok
+//   nova build -> error: passing 'NovaValue_Color' (aka 'struct NovaValue_Color')
+//                 to parameter of incompatible type
+// Found by window 274 while hunting their own `check x K2` cell (2026-09-05);
+// re-measured here by the integrator before the row was filed.
+type Color enum Red | Green
+fn Red() -> int => 42
+fn main() Io -> () => println(Red())
