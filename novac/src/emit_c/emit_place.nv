@@ -89,7 +89,7 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             @emit_assign_head(d)
             @body.append("${@ir.decl_of(opt).name}.value;\n")
         }
-        Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
+        Use(_) => ice("emit_c: emit_assign met an operand rvalue before M2 lowers one")
     }
 }
 
