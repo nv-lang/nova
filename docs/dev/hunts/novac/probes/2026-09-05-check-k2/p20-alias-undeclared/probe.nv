@@ -1,9 +1,0 @@
-module hunt.p20_alias_undeclared
-
-type Meters alias int
-
-fn dist(m Meters) -> int => m + 0
-
-fn main() {
-    println(dist(7))
-}

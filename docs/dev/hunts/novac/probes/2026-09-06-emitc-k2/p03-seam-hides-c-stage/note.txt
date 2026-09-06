@@ -1,0 +1,28 @@
+Verbatim verdicts of the seam probe, 2026-09-06 (window 274, machine window 19:36-19:41 and 20:13).
+
+Mutation: in novac/src/emit_c/emit_flow.nv the two lines printing `{` and `    }` around the
+chained if-let were removed (the #991 form restored), novac rebuilt.
+
+1. Fixture part of the differential under the old single seam:
+   NOVAC_CORPUS=0 sh scripts/guards/check-novac-differential.sh
+   -> check-novac-differential ok: фикстур 34, исходы совпали с оракулом (в allow: 0)
+   -> check-novac-differential: корпусная часть пропущена (NOVAC_CORPUS=0 — локальная итерация)
+   GREEN on a broken emitter: the switch also removed the behaviour smoke (C compilation + run),
+   and said nothing about it.
+
+2. The same emitter through the behaviour smoke (the stage the seam removed):
+   bash scripts/tools/novac-e1-smoke.sh novac/fixtures/iflet_else/pos_2.nv
+   -> novac-e1-smoke: FAIL — clang -c упал: .../body.c:5606:9: error: use of undeclared identifier
+      '_novac_tmp_t2'; did you mean '_novac_tmp_t1'?
+   (line 5606 is `    else     NovaOpt_nova_int _novac_tmp_t2 = b;`)
+   `novac emit` of the same file exits 0: the emitter does not see the refusal at all.
+
+3. After the fix of #992 (aca8e57d5), the same broken emitter under the split seams:
+   NOVAC_SMOKE=0 NOVAC_CORPUS=0 sh scripts/guards/check-novac-differential.sh
+   -> check-novac-differential ok: фикстур 34, исходы совпали с оракулом (в allow: 0)
+   -> check-novac-differential: стадия ПОВЕДЕНИЯ фикстур пропущена (NOVAC_SMOKE=0) — компиляция C
+      и запуск НЕ проверялись, сверены только исходы принял/отверг
+   -> check-novac-differential: стадия КОРПУСА пропущена (NOVAC_CORPUS=0) — храповик
+      contract/behavior по examples/ НЕ сверялся
+   Still green -- but now it says which stage did not run. Restored emitter: smoke ok, stdout
+   byte-identical to the oracle.
