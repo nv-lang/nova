@@ -391,7 +391,14 @@ if body_runs; then
             git -C "$ROOT" status --porcelain 2>/dev/null | sed -e 's/^...//' -e 's/.* -> //'
             _ups=$(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)
             [ -n "$_ups" ] && git -C "$ROOT" diff --name-only "$_ups..HEAD" 2>/dev/null
-        } | grep -E '^(spec_tests|std)/.*\.nv$' | sort -u ); do
+        } | grep -E '^(spec_tests|std)/.*\.nv$' | grep -v -E '(^|/)([^/]*_)?neg/' | sort -u ); do
+        # `neg/` и `*_neg/` вырезаны НАРОЧНО, зеркально обходу каталога `nova lint <dir>`
+        # (nova-cli/src/main.rs: `s == "neg" || s.ends_with("_neg")`): негативная
+        # фикстура линта — мишень с нарочными находками (EXPECT_LINT_WARNING), и
+        # ярус push её не судит именно потому, что обход каталога `neg/` пропускает.
+        # Этот шаг подаёт файлы ЯВНО, и правило обхода на него не действовало: 2026-09-06
+        # гейт на 9c61b2ef1 покраснел тремя находками в neg/lint_str_empty_by_len_warns.nv
+        # — мишень работала, судья ошибся адресом (реестр 221.1 №999).
         [ -f "$ROOT/$_f" ] && _LNV="$_LNV $ROOT/$_f"
     done
     if [ -z "$_LNV" ]; then
