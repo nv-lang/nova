@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """scripts/guards/check-novac-empty-str-door.py — пустота строки спрашивается
 сравнением с `""`, а не длиной её представления (конвенция П37).
+План: docs/plans/274-novac-self-hosted-compiler.md (ярус novac, волна M2b); правило — docs/dev/conventions.md П37; носители — реестр docs/plans/221.1-bug-sweep.md.
 
 ПОЧЕМУ ЭТОТ СТРАЖ ПОЯВИЛСЯ (владелец, 2026-09-06, глядя на `lower/ir.nv`:
 «пустоту строки нужно проверять сравнением с "", а не длиной байтового
