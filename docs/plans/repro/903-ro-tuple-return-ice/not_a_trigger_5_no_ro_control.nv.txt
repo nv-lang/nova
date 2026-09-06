@@ -1,0 +1,21 @@
+// №903 — КАНДИДАТ C: A, но БЕЗ `ro` на возврате.
+// Это КОНТРОЛЬ, и он обязателен: если C тоже падает, то `ro` ни при чём и вся
+// строка названа неверно — падает кортеж с пользовательским типом как таковой.
+// Если C собирается, а A падает, то `ro` и есть спусковой крючок, и подсказка
+// компилятора ведёт в ICE ровно так, как строка утверждает.
+module standalone.p903_cand_c
+
+type Amount value { ro n int }
+
+fn split(x int, prec int) -> (Amount, int) {
+    ro b = x - prec
+    if b <= 0 { return (Amount { n: x }, 0) }
+    (Amount { n: x - b }, b)
+}
+
+fn use_it(x int) -> int {
+    ro (rounded, bits_lost) = split(x, 4)
+    rounded.n + bits_lost
+}
+
+fn main() Io -> () => println(use_it(10))

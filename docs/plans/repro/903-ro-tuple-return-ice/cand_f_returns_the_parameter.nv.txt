@@ -1,0 +1,36 @@
+// #903 -- CANDIDATE F, and the first one built from the ORIGINAL's own
+// commit message rather than from my guesses.
+//
+// nova-bignum ce8574c ("three fast paths returned a `ro` parameter") states the
+// shape in its own words: a fast path RETURNS ITS PARAMETER UNCHANGED, which
+// trips [E_READONLY_COERCE] because parameters are `ro` by default (D176); the
+// third remedy the compiler itself suggests is `-> ro (BigInt, int)`; the
+// checker accepts it and the codegen then dies with
+//   [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Ident bits_lost not in var_types
+//
+// Candidates A-E in this directory all MISSED TWO INGREDIENTS, and that is why
+// every one of them compiled:
+//   1. they returned a FRESHLY BUILT value on the early path, never the
+//      parameter itself -- so nothing forced `ro` on the return to matter;
+//   2. their type was a value RECORD (`type Amount value { ro n int }`), while
+//      the original is a NAMED TUPLE (`export type BigInt(sign Sign, limbs
+//      []u32)`) -- the commit says outright that BigInt "is a named tuple and
+//      has no clone", which is why remedy (b) was unavailable there.
+//
+// F carries both. Control G differs from F in exactly one thing.
+module standalone.p903_cand_f
+
+type Amount(n int)
+
+fn split(a Amount, prec int) -> ro (Amount, int) {
+    ro b = a.n - prec
+    if b <= 0 { return (a, 0) }
+    (Amount(a.n - b), b)
+}
+
+fn use_it(x int) -> int {
+    ro (rounded, bits_lost) = split(Amount(x), 4)
+    rounded.n + bits_lost
+}
+
+fn main() Io -> () => println(use_it(10))

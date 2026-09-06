@@ -1,0 +1,18 @@
+// №903 — КАНДИДАТ B: A без РАННЕГО RETURN (только хвост).
+// Делит подозреваемых: если A падает, а B собирается, виноват ранний return
+// в паре с `ro`-кортежем; если падают оба — дело в самом `ro (UserType, int)`.
+module standalone.p903_cand_b
+
+type Amount value { ro n int }
+
+fn split(x int, prec int) -> ro (Amount, int) {
+    ro b = x - prec
+    (Amount { n: x - b }, b)
+}
+
+fn use_it(x int) -> int {
+    ro (rounded, bits_lost) = split(x, 4)
+    rounded.n + bits_lost
+}
+
+fn main() Io -> () => println(use_it(10))

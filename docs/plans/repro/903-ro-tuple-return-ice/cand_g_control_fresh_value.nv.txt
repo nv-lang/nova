@@ -1,0 +1,33 @@
+// #903 -- CONTROL G. Identical to candidate F in every respect EXCEPT one: the
+// early path builds a FRESH value instead of handing back the parameter.
+//
+// This is literally the workaround the owner landed in nova-bignum ce8574c
+// ("return a freshly built value, BigInt(mant_abs.sign, mant_abs.limbs)"), so
+// G is expected to COMPILE. The control exists to keep the finding honest:
+//
+//   F red + G green -> the trigger is "the early return hands back the
+//                      PARAMETER", and the named tuple alone is not enough.
+//   F red + G red   -> the parameter is irrelevant and the trigger is the
+//                      named tuple in a `ro` tuple return; the row's wording
+//                      would then be wrong and has to be corrected.
+//   F green         -> both ingredients together are still not the trigger,
+//                      and something else in the original carries it
+//                      (generics, module depth, compilation-unit size). Then
+//                      this file goes to the tree as another not_a_trigger and
+//                      NO guess is written down.
+module standalone.p903_cand_g
+
+type AmountG(n int)
+
+fn split_g(a AmountG, prec int) -> ro (AmountG, int) {
+    ro b = a.n - prec
+    if b <= 0 { return (AmountG(a.n), 0) }
+    (AmountG(a.n - b), b)
+}
+
+fn use_g(x int) -> int {
+    ro (rounded, bits_lost) = split_g(AmountG(x), 4)
+    rounded.n + bits_lost
+}
+
+fn main() Io -> () => println(use_g(10))

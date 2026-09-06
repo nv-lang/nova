@@ -1,0 +1,29 @@
+// №903 — КАНДИДАТ A в минимальную форму. Собран не наугад: две попытки в
+// дереве (`not_a_trigger_1/2`) СОБИРАЮТСЯ, значит они чего-то не несут.
+// Читая подлинник (`nova-bignum/src/bigfloat/core.nv:58`), вижу три отличия
+// сразу, и A несёт их ВСЕ, чтобы сперва воспроизвести, а потом делить:
+//
+//   1. кортеж `(UserType, int)` — первый элемент ПОЛЬЗОВАТЕЛЬСКИЙ, не примитив;
+//   2. РАННИЙ `return` конструирует кортеж, и есть ещё хвостовое выражение;
+//   3. разбор идёт в ДРУГОЙ функции, и второй элемент уходит в АРИФМЕТИКУ
+//      (`-@scale - k + bits_lost` в подлиннике).
+//
+// Возврат объявлен `-> ro (...)` — ровно та форма, которую советует третье
+// решение в тексте [E_READONLY_COERCE] и на которой падает ICE
+// [E_CODEGEN_TYPE_UNKNOWN] Ident `bits_lost` not in var_types.
+module standalone.p903_cand_a
+
+type Amount value { ro n int }
+
+fn split(x int, prec int) -> ro (Amount, int) {
+    ro b = x - prec
+    if b <= 0 { return (Amount { n: x }, 0) }
+    (Amount { n: x - b }, b)
+}
+
+fn use_it(x int) -> int {
+    ro (rounded, bits_lost) = split(x, 4)
+    rounded.n + bits_lost
+}
+
+fn main() Io -> () => println(use_it(10))
