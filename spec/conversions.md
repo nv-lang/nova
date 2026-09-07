@@ -557,18 +557,25 @@ fn Fahrenheit @to_celsius() -> Celsius =>
     Celsius(((@ as f64) - 32.0) * 5.0 / 9.0)
 ```
 
-The fallible case is no longer a conversion but a CONSTRUCTOR with validation, and it
-has a door of its own: `Type.new(...)` returning a `Result` (nv-coding-style §1а, fourth
-row). The name carries no `try_` because there is no infallible sibling (R3,
-[D325](decisions/04-effects.md#d325)) — the same shape as `Date.new`, `TimeOfDay.new` and
-`SnowflakeGen.new` in std:
+The fallible case is the same door with a check: **a conversion with validation from a
+ro-source** is `x.to_*()` returning a `Result` (nv-coding-style §1а, SECOND row). The
+source here is a single carrier value, so a static is forbidden for the same reason as
+above. The name carries no `try_` because there is no infallible sibling (R3,
+[D325](decisions/04-effects.md#d325)); the exact twin in std is
+`int @to_char() -> Result[char, CharError]`:
 
 ```nova
-fn Port.new(n u16) -> Result[Self, str] =>
-    if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
+type Port u16
 
-ro p = Port.new(8080)?
+fn u16 @to_port() -> Result[Port, str] =>
+    if @ == 0 { Err("port 0 reserved") } else { Ok(Port(@)) }
+
+ro p = (8080 as u16).to_port()?
 ```
+
+`Type.new(...)` — the fourth row of §1а — is about something else: a constructor with NO
+carrier source, i.e. composite (`Date.new(y, m, d)`) or wrapping a value in a machine
+(`Parser.new(input)`). One value becoming another type does not belong there.
 
 ---
 
