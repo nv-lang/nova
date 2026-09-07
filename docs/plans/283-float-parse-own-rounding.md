@@ -486,7 +486,7 @@ gitignored-кэш (`nova_tests/.cache/parse-number-fxx/` или путь из `N
 `--slow-only` — идём дальше; не увидел — имя становится `parse_float_corpus_slow_test.nv`
 или файл переезжает в `spec_tests`, и это решение исполнителя, а не открытый вопрос.
 
-Раннер `std/src/runtime/string/parse_float_corpus_slow.nv` (лента `_slow`, D376): читает
+Раннер `std/src/runtime/parse_float_corpus_slow.nv` (лента `_slow`, D376): читает
 каталог из `Os.env`, пусто → 0 тестов (skip-never-fail, как Unicode conformance); иначе на
 каждой строке зовёт `to_f64()`, сравнивает биты с третьим полем; строки, которые наша
 грамматика отвергает (`inf`, hex, пробелы — их в корпусе немного), пропускает по `Malformed`
