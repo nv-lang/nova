@@ -47249,9 +47249,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // over an ordinary `extern "C" fn nova_str_parse_f64(s str,
                 // out *mut f64) -> bool` FFI declaration (D282, out-param
                 // convention) — the compiler has NO special knowledge of it
-                // whatsoever (§3: no new builtin, no new hardcode). `f32` is
-                // untouched (out of this fix's scope; no `f32.parse`
-                // migration was requested).
+                // whatsoever (§3: no new builtin, no new hardcode).
+                // [plan 283 Ф.7, 2026-09-07] `f32` FOLLOWED, by the owner's decision, and
+                // its row is gone from the table below for the same reasons the `f64` one
+                // went: `Option` instead of `Result` (D325 R1/R3/R4) and a grammar that was
+                // whatever `strtod` accepted -- whitespace, `nan`/`inf`, hex, the locale
+                // separator -- while `str @to_f64()` had become strict. The replacement is
+                // `str @to_f32()` (std/runtime/string/parse_float.nv), a plain Nova body
+                // that rounds the decimal DIRECTLY to f32; going through f64 and narrowing
+                // rounds twice and disagrees near the midpoints between two f32 values, so
+                // the old `nova_str_to_f64` call was not merely lenient but wrong at the
+                // edges.
+                // WHAT ACTUALLY HAPPENS AFTER THE ROW IS GONE -- measured 2026-09-07, not
+                // assumed: `T.try_parse(...)` does NOT reach the primitive-static-method
+                // guard. It ICEs -- `[INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Path call
+                // return type unknown for method=try_parse` -- and it does so for EVERY
+                // type, including `i32`, which is still in the table below. So the crash is
+                // older than this edit and belongs to the f64 retraction, whose comment
+                // above claims the opposite and was never probed. Probe:
+                // docs/plans/repro/repro_try_parse_ice.nv.txt. Removing the `f32` row stays
+                // right -- it is what stops `str -> f32` from going through strtod -- but the
+                // retraction is FINISHED only when the retracted spelling reports a
+                // diagnostic naming its replacement instead of panicking, and that fix is
+                // not this wave's.
                 if parts.len() == 2 && parts[1] == "try_parse" {
                     if let Some(arg) = args.first() {
                         let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -47267,7 +47287,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "i32" => Some(("nova_str_to_i64", "nova_parse_int_result", "int32_t")),
                                 "i16" => Some(("nova_str_to_i64", "nova_parse_int_result", "int16_t")),
                                 "i8"  => Some(("nova_str_to_i64", "nova_parse_int_result", "int8_t")),
-                                "f32" => Some(("nova_str_to_f64", "nova_parse_f64_result", "nova_f32")),
                                 "bool" => Some(("nova_str_to_bool", "nova_parse_bool_result", "nova_bool")),
                                 "char" => Some(("nova_str_to_char", "nova_char_decode_result", "nova_char")),
                                 _ => None,

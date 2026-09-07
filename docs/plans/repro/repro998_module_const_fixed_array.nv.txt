@@ -1,0 +1,59 @@
+// Registry 221.1 #998 -- module-level `const X [N]T = [...]`: `nova check` PASS, codegen red.
+// CLOSED 2026-09-07 by 81e4d2462 (emit_lazy_const routes array slots through
+// emit_expr_with_target_type; the Index path asks parse_mono_fixed_array_name). The class
+// is held by fixtures in the corpus now -- spec_tests/conformance/standalone/
+// const_fixed_array_decl_and_index.nv and const_array_elem_width_from_decl.nv -- so this
+// file is kept as the ORIGINAL evidence, not as a live probe. Plan 283's tables went back
+// to `[N]T` the same day (29cbc586c).
+// Found 2026-09-06 by plan 283 F.1 (the powers-of-five table, 651 rows of u64).
+// Measured on the compiler built from a57208585 (nova-cli/target/release/nova.exe).
+//
+// Four probes, each a whole file (`nova test <file>`); the results, verbatim:
+//
+// (a) the form the spec allows (D184: `const` = strict constexpr, module-level):
+//
+//     const A [3]u64 = [0xEEF453D6923BD65A, 2, 3]
+//     fn main() Io -> () { print("${A[0]} ${A[2]}") }
+//
+//     CODEGEN-FAIL ... # [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Index element type
+//     unknown for obj_ty="_NovaFixArr_3_8_uint64_t"; expr.id=ExprId(17784)
+//
+//     and, when the constant is only DECLARED (651 rows, never indexed) inside std:
+//     CC-FAIL std/src/runtime/numeric_test # numeric_test.c:11653:57: error: assigning to
+//     '_NovaFixArr_651_8_uint64_t' (aka 'struct _NovaFixArr_651_8_uint64_t') from
+//     incompatible type 'Nova_Vec____nova_int *' (aka 'struct Nova_Vec____nova_int *')
+//     -- i.e. every std CU goes red while such a constant exists anywhere in the prelude closure.
+//
+// (b) not about u64 -- the same for int:
+//
+//     const C [3]int = [7, 8, 9]
+//     fn main() Io -> () { print("${C[0]} ${C[2]}") }
+//
+//     CODEGEN-FAIL ... [E_CODEGEN_TYPE_UNKNOWN] Index element type unknown ...
+//
+// (c) the only other module-level spelling is refused BY DESIGN and points back at (a):
+//
+//     ro A [3]u64 = [0xEEF453D6923BD65A, 2, 3]
+//
+//     error: [E_RO_FOR_CONSTEXPR_PREFER_CONST] module-level `ro A = ...` has a
+//     constexpr-eligible initialiser (literal / a...) -- so the checker steers every
+//     module-level table into the form that codegen cannot build.
+//
+// (d) control -- the Vec spelling works, values included:
+//
+//     const B []u64 = [4, 5, 0xFFFFFFFFFFFFFFFF]
+//     fn main() Io -> () { print("${B[1]} ${B[2]}") }        // EXPECT_STDOUT 5 18446744073709551615
+//
+//     PASS
+//
+// Nothing in the tree used the form before: `grep -rn "^const .* \[[0-9]" std spec_tests
+// examples novac` finds no module-level const fixed array -- the class was latent, and
+// `nova check` alone cannot find it (the checker accepts the declaration; only the C
+// emitter and the C compiler object).
+
+// EXPECT_STDOUT 17218484906834603610 3
+const A [3]u64 = [0xEEF453D6923BD65A, 2, 3]
+
+fn main() Io -> () {
+    print("${A[0]} ${A[2]}")
+}

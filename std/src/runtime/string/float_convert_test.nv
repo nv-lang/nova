@@ -1,0 +1,589 @@
+#no_prelude
+module runtime.string
+
+// Co-equal test of the float conversion (plan 283 Ф.2 / Ф.3): calls the private pieces
+// directly -- `parse_number`, `try_fast_path`, `compute_float`, `fast_or_lemire`,
+// `parse_long_mantissa` -- so each layer is judged ON ITS OWN, and the slow path can be
+// forced on any string (through `@to_f64()` it only sees what Lemire declines).
+// Reference bits come from two independent oracles: the C library (`str_parse_f64`, the
+// extern this module already declares) for the curated set, and Python `float()`
+// (correctly rounded) for the long half-way strings, computed once and pasted as hex.
+//
+// The differential test with a seeded PRNG lives in `runtime/string_test.nv`: it needs
+// `testing.handlers`, which this `#no_prelude` module cannot import without a cycle
+// through the prelude. Precedent for a `#no_prelude` test inside a folder module:
+// `runtime/fmt_buf/core_test.nv`.
+//
+// The six traps of the plan (docs/plans/283-float-parse-own-rounding.md, «Устройство»)
+// each have a test below that names its trap; the probe for each -- break the condition,
+// watch that test alone go red -- is run at acceptance, not encoded here.
+
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.runtime.numeric
+
+// The C library is the REFERENCE of these tests, not a dependency of the library: since
+// plan 283 Ф.4 `str @to_f64()` rounds on its own, and this declaration is the only thing
+// left that names `strtod`. `*mut f64` makes it `unsafe fn` by inference (D424), so every
+// call below is wrapped.
+extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
+
+const ALL_ONES u64 = 0xFFFFFFFFFFFFFFFF
+const SIGN_MASK_OFF u64 = 0x7FFFFFFFFFFFFFFF
+
+// |value| bits of the C library's answer (sign stripped): the reference for the curated set.
+fn strtod_magnitude_bits(s str) -> u64 {
+    mut v = 0.0
+    if !unsafe { str_parse_f64(s, &v) } { return ALL_ONES }
+    v.to_bits() & SIGN_MASK_OFF
+}
+
+// Bits of the slow path's answer alone (it returns |value|).
+fn slow_path_bits(s str) -> u64 {
+    ro fp = parse_long_mantissa(f64_spec(), s)
+    fp.m | ((fp.p as u64) << F64_SIG_BITS)
+}
+
+// |value| bits through the fast path and Lemire alone; ALL_ONES when they decline -- so a
+// test can tell "decided" from "left to the slow path".
+fn lemire_magnitude_bits(s str) -> u64 {
+    match parse_number(s) {
+        Err(_) => ALL_ONES
+        Ok(n) => match fast_or_lemire(n) {
+            Some(v) => v.to_bits() & SIGN_MASK_OFF
+            None => ALL_ONES
+        }
+    }
+}
+
+fn native_bits(s str) -> u64 {
+    match s.to_f64() {
+        Ok(v) => v.to_bits()
+        Err(_) => ALL_ONES
+    }
+}
+
+// ── parse_number: the Number assembly (parse.rs shapes) ─────────────────────
+
+test "parse_number: mantissa / exponent / sign / many_digits as parse.rs shapes them" {
+    match parse_number("1.5") {
+        Ok(n) => {
+            assert(n.mantissa == 15)
+            assert(n.exponent == -1)
+            assert(!n.negative)
+            assert(!n.many_digits)
+        }
+        Err(_) => assert(false, "1.5 must parse")
+    }
+    match parse_number("-12.340e2") {
+        Ok(n) => {
+            assert(n.mantissa == 12340)
+            assert(n.exponent == -1)
+            assert(n.negative)
+            assert(!n.many_digits)
+        }
+        Err(_) => assert(false, "-12.340e2 must parse")
+    }
+    // 22 digits but only one significant: leading zeros are not `many_digits`
+    match parse_number("0.000000000000000000001") {
+        Ok(n) => {
+            assert(n.mantissa == 1)
+            assert(n.exponent == -21)
+            assert(!n.many_digits)
+        }
+        Err(_) => assert(false, "tiny must parse")
+    }
+    // 20 significant digits: the first 19 exactly, the 20th becomes exponent + flag
+    match parse_number("12345678901234567890") {
+        Ok(n) => {
+            assert(n.mantissa == 1234567890123456789 as u64)
+            assert(n.exponent == 1)
+            assert(n.many_digits)
+        }
+        Err(_) => assert(false, "20 digits must parse")
+    }
+    // 10 integer digits then 13 fraction digits: the 19 come from both sides
+    match parse_number("1234567890.1234567890123") {
+        Ok(n) => {
+            assert(n.mantissa == 1234567890123456789 as u64)
+            assert(n.exponent == -9)
+            assert(n.many_digits)
+        }
+        Err(_) => assert(false, "23 digits must parse")
+    }
+    // the exponent saturates well before it could overflow an int
+    match parse_number("1e99999999999999999999") {
+        Ok(n) => {
+            assert(n.exponent >= 65536)
+            assert(n.exponent < 700000)
+        }
+        Err(_) => assert(false, "huge exponent must parse")
+    }
+    match parse_number("1e-99999999999999999999") {
+        Ok(n) => assert(n.exponent <= -65536)
+        Err(_) => assert(false, "huge negative exponent must parse")
+    }
+}
+
+// ── try_fast_path: exactly Clinger's window, plus the disguised case ─────────
+
+test "try_fast_path: decides inside the exact window and declines outside it" {
+    ro one_e22 = 1e22
+    ro one_e23 = 1e23
+    ro one_e_minus_22 = 1e-22
+    if Some(v) = try_fast_path(Number(1, 22, false, false)) {
+        assert(v.to_bits() == one_e22.to_bits(), "1e22 exact")
+    } else { assert(false, "1e22 is inside the fast path") }
+    // disguised: 1 x 10^23 = 10 x 10^22, mantissa still below 2^53
+    if Some(v) = try_fast_path(Number(1, 23, false, false)) {
+        assert(v.to_bits() == one_e23.to_bits(), "1e23 disguised")
+    } else { assert(false, "1e23 is the disguised fast path") }
+    if Some(v) = try_fast_path(Number(1, -22, false, false)) {
+        assert(v.to_bits() == one_e_minus_22.to_bits(), "1e-22 exact division")
+    } else { assert(false, "1e-22 is inside the fast path") }
+    match try_fast_path(Number(1, 38, false, false)) {
+        Some(_) => assert(false, "1e38 is past the disguised window")
+        None => {}
+    }
+    match try_fast_path(Number(1, -23, false, false)) {
+        Some(_) => assert(false, "1e-23 is below the window")
+        None => {}
+    }
+    match try_fast_path(Number(9007199254740993 as u64, 0, false, false)) {
+        Some(_) => assert(false, "2^53 + 1 is not exact in f64")
+        None => {}
+    }
+    if Some(v) = try_fast_path(Number(9007199254740992 as u64, 0, false, false)) {
+        ro two53 = 9007199254740992.0
+        assert(v.to_bits() == two53.to_bits(), "2^53 exact")
+    } else { assert(false, "2^53 is exact") }
+    match try_fast_path(Number(15, -1, false, true)) {
+        Some(_) => assert(false, "truncated digits never take the fast path")
+        None => {}
+    }
+    if Some(v) = try_fast_path(Number(15, -1, true, false)) {
+        assert(v == -1.5, "sign applied")
+    } else { assert(false, "-1.5 is exact") }
+}
+
+// ── compute_float (Eisel-Lemire) on known (q, w) pairs ────────────────────────
+
+test "compute_float: TRAP 2 -- the exact tie 2^53+1 rounds to even, 2^53+3 rounds up to even" {
+    // 9007199254740993 lies exactly between 2^53 and 2^53+2: ties-to-even gives 2^53,
+    // i.e. m = 0 (hidden bit stripped), biased exponent 1023 + 53 = 1076.
+    ro tie_down = compute_float(f64_spec(), 0, 9007199254740993 as u64)
+    assert(tie_down.p == 1076, "2^53+1 exponent")
+    assert(tie_down.m == 0, "2^53+1 rounds DOWN to even")
+    // 9007199254740995 lies between 2^53+2 (odd mantissa 1) and 2^53+4 (even 2): up.
+    ro tie_up = compute_float(f64_spec(), 0, 9007199254740995 as u64)
+    assert(tie_up.p == 1076, "2^53+3 exponent")
+    assert(tie_up.m == 2, "2^53+3 rounds UP to even")
+}
+
+test "compute_float: TRAP 3 -- subnormals: 5e-324 is the smallest, half of it is zero" {
+    ro smallest = compute_float(f64_spec(), -324, 5)
+    assert(smallest.p == 0, "subnormal exponent field")
+    assert(smallest.m == 1, "smallest subnormal")
+    // 2.4703282292062327e-324 is just below half the smallest subnormal -> 0
+    ro below_half = compute_float(f64_spec(), -340, 24703282292062327 as u64)
+    assert(below_half.p == 0)
+    assert(below_half.m == 0, "below half rounds to zero")
+    // 2.4703282292062328e-324 is just above -> the smallest subnormal
+    ro above_half = compute_float(f64_spec(), -340, 24703282292062328 as u64)
+    assert(above_half.p == 0)
+    assert(above_half.m == 1, "above half rounds to the smallest subnormal")
+    // 2.2250738585072011e-308: the largest subnormal (the 2011 PHP/Java hang value)
+    ro largest_sub = compute_float(f64_spec(), -324, 22250738585072011 as u64)
+    assert(largest_sub.p == 0)
+    assert(largest_sub.m == 0xFFFFFFFFFFFFF as u64, "largest subnormal mantissa")
+    // 2.2250738585072012e-308: the smallest normal
+    // The smallest normal comes out of the SUBNORMAL branch, which returns the mantissa
+    // with the hidden bit still set and `p = 1`; the assembly `m | (p << 52)` ORs the two
+    // into 0x0010000000000000. The donor (lemire.rs) does exactly this -- the branch has
+    // no hidden-bit mask -- so the pair to assert is (1 << 52, 1), not (0, 1).
+    ro smallest_norm = compute_float(f64_spec(), -324, 22250738585072012 as u64)
+    assert(smallest_norm.p == 1, "smallest normal: p")
+    assert(smallest_norm.m == (1 as u64) << F64_SIG_BITS, "smallest normal: m carries the hidden bit")
+    assert((smallest_norm.m | ((smallest_norm.p as u64) << F64_SIG_BITS)) == 0x0010000000000000 as u64,
+        "smallest normal: assembled bits")
+}
+
+test "compute_float: zero, infinity and the exponent guards" {
+    ro z = compute_float(f64_spec(), 0, 0)
+    assert(z.p == 0 && z.m == 0, "w = 0 is zero")
+    ro tiny = compute_float(f64_spec(), -343, 1)
+    assert(tiny.p == 0 && tiny.m == 0, "below the smallest power of ten is zero")
+    ro huge = compute_float(f64_spec(), 309, 1)
+    assert(huge.p == F64_INFINITE_POWER, "above the largest power of ten is infinity")
+    ro max = compute_float(f64_spec(), 292, 17976931348623157 as u64)
+    assert(max.p == 2046 && max.m == 0xFFFFFFFFFFFFF as u64, "f64::MAX")
+    ro over = compute_float(f64_spec(), 292, 17976931348623159 as u64)
+    assert(over.p == F64_INFINITE_POWER, "just past MAX rounds to infinity")
+}
+
+test "DigitBuf: parse, right_shift and left_shift step by step on \"1\" (and the tables they read)" {
+    mut d = parse_digit_buf("1")
+    assert(d.digits.len() == 768, "buffer length")
+    assert(d.num_digits == 1, "parse: num_digits == 1")
+    assert(d.decimal_point == 1, "parse: decimal_point == 1")
+    assert(d.digits[0] == 1, "parse: digits[0] == 1")
+    assert(!d.truncated, "parse: not truncated")
+    d.right_shift(3)
+    assert(d.decimal_point == 0, "right_shift: decimal_point == 0")
+    assert(d.num_digits == 3, "right_shift: num_digits == 3")
+    assert(d.digits[0] == 1, "right_shift: digits[0] == 1")
+    assert(d.digits[1] == 2, "right_shift: digits[1] == 2")
+    assert(d.digits[2] == 5, "right_shift: digits[2] == 5")
+    assert(LEFT_SHIFT_TABLE.len() == 65, "LEFT_SHIFT_TABLE length")
+    assert(LEFT_SHIFT_TABLE[2] == 0x0801, "LEFT_SHIFT_TABLE[2] == 0x0801")
+    assert(LEFT_SHIFT_TABLE[3] == 0x0803, "LEFT_SHIFT_TABLE[3] == 0x0803")
+    assert(TABLE_POW5.len() == 1308, "TABLE_POW5 length")
+    assert(TABLE_POW5[0] == 5, "TABLE_POW5[0] == 5")
+    // Characterising the corruption: if the literal list is built as a Vec of `int`
+    // (8 bytes each) and read back through a `[]u8` slot (1 byte), then element 1 is the
+    // second BYTE of the first int -- zero -- and the real second value shows up at 8.
+    // That was registry 221.1 #1003, found here and fixed 2026-09-07; the table is now
+    // `[1308]u8`, so these two lines stay as the REGRESSION guard for the narrow-element
+    // path rather than as a description of a live defect.
+    assert(TABLE_POW5[1] != 0, "TABLE_POW5[1] is 0 -- int-stride read through a u8 slot")
+    assert(TABLE_POW5[8] != 2, "TABLE_POW5[8] is 2 -- the second value sits 8 bytes on")
+    assert(TABLE_POW5[1] == 2, "TABLE_POW5[1] == 2")
+    assert(TABLE_POW5[2] == 5, "TABLE_POW5[2] == 5")
+    assert(d.number_of_digits_decimal_left_shift(2) == 0, "digits [1,2,5] shifted by 2 gain NO new digit")
+    d.left_shift(2)
+    assert(d.num_digits == 1, "left_shift: num_digits == 1")
+    assert(d.decimal_point == 0, "left_shift: decimal_point == 0")
+    assert(d.digits[0] == 5, "left_shift: digits[0] == 5")
+    ro fp = parse_long_mantissa(f64_spec(), "1")
+    assert(fp.p == 1023, "parse_long_mantissa(1): p == 1023")
+    assert(fp.m == 0, "parse_long_mantissa(1): m == 0")
+}
+
+test "DigitBuf: the truncation flag is set by a string longer than the buffer, and only then" {
+    // Both ways on the flag itself, not through a bit result: `round` reads `truncated` to
+    // decide a tie ("dropped digits mean strictly above the half"), so a flag that never
+    // rises would round those ties the wrong way while every shorter string stayed right.
+    ro short_one = parse_digit_buf("1.5")
+    assert(!short_one.truncated, "a short string must NOT be truncated")
+    assert(short_one.num_digits == 2, "1.5 keeps both digits")
+    // 800 significant digits: past the 768 the buffer holds.
+    mut long_digits = "0."
+    mut k = 0
+    while k < 80 {
+        long_digits = "${long_digits}1234567890"
+        k += 1
+    }
+    ro long_one = parse_digit_buf(long_digits)
+    assert(long_one.truncated, "800 digits must set the flag")
+    assert(long_one.num_digits == 768, "and the buffer keeps exactly its capacity")
+    // Exactly at the edge: 768 digits fit, so nothing is dropped.
+    mut edge = "0."
+    mut j = 0
+    while j < 768 {
+        edge = "${edge}7"
+        j += 1
+    }
+    ro edge_buf = parse_digit_buf(edge)
+    assert(!edge_buf.truncated, "768 digits fit exactly and are NOT truncated")
+    assert(edge_buf.num_digits == 768, "all 768 kept")
+}
+
+// ── the slow path alone ───────────────────────────────────────────────────────
+
+fn curated() -> []str {
+    [
+        "0", "1", "2", "7", "1024", "65536", "4294967296", "4503599627370496",
+        "9007199254740992", "9007199254740993", "9007199254740994", "18014398509481984",
+        "10", "1000", "1e10", "1e15", "1e16", "1e17", "1e18", "1e19", "1e20", "1e21",
+        "1e22", "1e23", "1e24", "1e30", "1e37", "1e38", "12345e18", "123456e22",
+        "0.1", "0.2", "0.3", "0.7", "1.1", "3.14159", "2.718281828459045", "123.456e-3",
+        "0.1e1", "1.e1", ".1e1", "+0.0",
+        "1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308",
+        "8.98846567431158e307", "1e308", "1.8e308", "1e999", "-1e999",
+        "4.9406564584124654e-324", "2.4703282292062327e-324", "2.4703282292062328e-324",
+        "5e-324", "3e-324", "1.5e-323", "1e-324", "1e-400",
+        "2.2250738585072011e-308", "2.2250738585072012e-308", "2.2250738585072014e-308",
+        "-0.0", "-0", "0e0", "0.000e-5", "-0e-400",
+        "123456789012345678", "1234567890123456789", "12345678901234567890",
+        "9999999999999999999", "99999999999999999999", "0.000000000000000000000000000001",
+        "1000000000000000000000000000000000000000000000000000000000000000000000",
+        "0.1000000000000000055511151231257827021181583404541015625",
+    ]
+}
+
+test "slow path alone: every curated string matches the C library bit for bit" {
+    assert(slow_path_bits("1") == strtod_magnitude_bits("1"), "slow path: integer 1")
+    assert(slow_path_bits("1024") == strtod_magnitude_bits("1024"), "slow path: integer 1024")
+    assert(slow_path_bits("9007199254740992") == strtod_magnitude_bits("9007199254740992"), "slow path: 2^53")
+    assert(slow_path_bits("0.1") == strtod_magnitude_bits("0.1"), "slow path: fraction 0.1")
+    assert(slow_path_bits("3.14159") == strtod_magnitude_bits("3.14159"), "slow path: fraction 3.14159")
+    assert(slow_path_bits("1e10") == strtod_magnitude_bits("1e10"), "slow path: 1e10")
+    assert(slow_path_bits("1e22") == strtod_magnitude_bits("1e22"), "slow path: 1e22")
+    assert(slow_path_bits("1e23") == strtod_magnitude_bits("1e23"), "slow path: 1e23")
+    assert(slow_path_bits("1e308") == strtod_magnitude_bits("1e308"), "slow path: 1e308")
+    assert(slow_path_bits("1e-10") == strtod_magnitude_bits("1e-10"), "slow path: 1e-10")
+    assert(slow_path_bits("5e-324") == strtod_magnitude_bits("5e-324"), "slow path: 5e-324")
+    assert(slow_path_bits("1e-400") == strtod_magnitude_bits("1e-400"), "slow path: 1e-400")
+    assert(slow_path_bits("0") == strtod_magnitude_bits("0"), "slow path: zero 0")
+    assert(slow_path_bits("0e0") == strtod_magnitude_bits("0e0"), "slow path: zero 0e0")
+    assert(slow_path_bits("1e999") == strtod_magnitude_bits("1e999"), "slow path: 1e999")
+    assert(slow_path_bits("9007199254740993") == strtod_magnitude_bits("9007199254740993"), "slow path: tie 2^53+1")
+    mut bad = 0
+    for s in curated() {
+        if slow_path_bits(s) != strtod_magnitude_bits(s) { bad += 1 }
+    }
+    assert(bad == 0, "slow path: some curated string still differs")
+}
+
+test "Lemire alone: every curated string it decides matches the C library, and it decides most" {
+    mut decided = 0
+    mut total = 0
+    for s in curated() {
+        total += 1
+        ro b = lemire_magnitude_bits(s)
+        if b != ALL_ONES {
+            decided += 1
+            assert(b == strtod_magnitude_bits(s), s)
+        }
+    }
+    // the set is built from ties and boundaries, so a few go to the slow path on purpose
+    assert(decided * 10 >= total * 8, "Lemire decides at least 80% of the curated set")
+}
+
+const MID2 = "123516411460311636044142198217055343091264950653581191106396420625168876817552187966324959090408998094949141173861429432731664177588984949099693699002695469531575178297577851131961454291962245525922179659014249682680762501596852288391246096828118349318292403785007928846349518531559641397792756664639171692046759890077656232986317897873113832326364136100281870032427499885482997352270104140831131189286967253681695039838809652887533700881623368004844756702677687292583305671118833393020810798402309572336459201502650287654245243826958556932958231197624563118269409398181196866402119455093361742488341175449316942939628141513779978287622277536275946568454181273895934743339974841620248529105142565927256981069188614130727188467062660492956638336181640625e-1075"
+
+test "slow path alone: TRAP 5 -- long half-way strings and the truncation flag (Python oracle)" {
+    // 2.5 x 2^-1074, exactly half-way between the subnormals 2 and 3 (753 digits): even -> 2
+    assert(slow_path_bits(MID2) == 0x0000000000000002 as u64, "mid 2/3 ties to even")
+    // the same digits padded to 768 and followed by a 1: the buffer truncates, `truncated`
+    // says "above the half", and the result is 3
+    assert(slow_path_bits("1235164114603116360441421982170553430912649506535811911063964206251688768175521879663249590904089980949491411738614294327316641775889849490996936990026954695315751782975778511319614542919622455259221796590142496826807625015968522883912460968281183493182924037850079288463495185315596413977927566646391716920467598900776562329863178978731138323263641361002818700324274998854829973522701041408311311892869672536816950398388096528875337008816233680048447567026776872925833056711188333930208107984023095723364592015026502876542452438269585569329582311976245631182694093981811968664021194550933617424883411754493169429396281415137799782876222775362759465684541812738959347433399748416202485291051425659272569810691886141307271884670626604929566383361816406250000000000000001e-1091") == 0x0000000000000003 as u64, "mid 2/3 + tail rounds up")
+    // 1000.5 x 2^-1074 (755 digits): even -> 1000; with the tail beyond 768 digits -> 1001
+    assert(slow_path_bits("49431267866416716744865707726465548305124233251563192680779847534192584502384385624123248627981681037598646297779344058979212003871111776629697418340878726906536386354690656023010974007643290659474056299537502723008841153139060285814176687950612963397180619994760173124309077316330168487396661217188596511157113308009078024441124422728820155697010927267332804386977485454170295540378495677160618701952644294923414354943491623085590987092825671875538871632411610454491838929581757123886928481520604290849050972441360645119228946579548814484569884125289350159931417641152114985934128205928363369343834138414816640564439182233814747310706435470017633816695363345813153084284657931616423461347878054884088243823889283375117020824518476729281246662139892578125e-1075") == 0x00000000000003E8 as u64, "mid 1000/1001 ties to even")
+    assert(slow_path_bits("4943126786641671674486570772646554830512423325156319268077984753419258450238438562412324862798168103759864629777934405897921200387111177662969741834087872690653638635469065602301097400764329065947405629953750272300884115313906028581417668795061296339718061999476017312430907731633016848739666121718859651115711330800907802444112442272882015569701092726733280438697748545417029554037849567716061870195264429492341435494349162308559098709282567187553887163241161045449183892958175712388692848152060429084905097244136064511922894657954881448456988412528935015993141764115211498593412820592836336934383413841481664056443918223381474731070643547001763381669536334581315308428465793161642346134787805488408824382388928337511702082451847672928124666213989257812500000000000001e-1089") == 0x00000000000003E9 as u64, "mid 1000/1001 + tail rounds up")
+    // normal range: exactly 1 + ulp/2 (54 digits) -> 1.0; one more digit -> 1 + ulp
+    assert(slow_path_bits("100000000000000011102230246251565404236316680908203125e-53") == 0x3FF0000000000000 as u64, "1 + ulp/2 ties to even")
+    assert(slow_path_bits("1000000000000000111022302462515654042363166809082031251e-54") == 0x3FF0000000000001 as u64, "1 + ulp/2 + digit rounds up")
+}
+
+// ── the whole native path (the door) ─────────────────────────────────────────
+
+test "native: TRAP 1 -- more than 19 digits: Lemire must decline when the dropped digits matter" {
+    // 35 digits: the 19-digit truncation 9007199254740993000e-3 is EXACTLY the tie between
+    // 2^53 and 2^53+2 (rounds to even, 2^53); the true value is above the tie and rounds
+    // to 2^53+2. Lemire on w and w+1 disagree -> it declines -> the slow path decides.
+    ro above = "9007199254740993.0000000000000000001"
+    assert(lemire_magnitude_bits(above) == ALL_ONES, "Lemire declines a truncated near-tie")
+    assert(native_bits(above) == 0x4340000000000001 as u64, "native rounds up to 2^53+2")
+    ro exact = "9007199254740993.0000000000000000000"
+    assert(native_bits(exact) == 0x4340000000000000 as u64, "the exact tie rounds to even")
+    // 29 digits, same value written differently
+    assert(native_bits("90071992547409930000000000001e-13") == 0x4340000000000001 as u64)
+}
+
+test "native: TRAP 4 -- overflow is an error by direction, underflow is zero" {
+    match "1e309".to_f64() {
+        Err(TooLarge) => {}
+        _ => assert(false, "1e309 must be TooLarge")
+    }
+    match "-1e309".to_f64() {
+        Err(TooSmall) => {}
+        _ => assert(false, "-1e309 must be TooSmall")
+    }
+    match "1.7976931348623159e308".to_f64() {
+        Err(TooLarge) => {}
+        _ => assert(false, "just past MAX rounds to infinity, which is TooLarge")
+    }
+    assert(native_bits("1.7976931348623158e308") == 0x7FEFFFFFFFFFFFFF as u64, "rounds down to MAX")
+    assert(native_bits("1e-400") == 0, "underflow is +0.0, not an error")
+    assert(native_bits("1e-324") == 0, "below half the smallest subnormal is +0.0")
+}
+
+test "native: TRAP 6 -- the sign of zero survives every spelling" {
+    ro neg_zero = 0x8000000000000000 as u64
+    assert(native_bits("-0.0") == neg_zero, "-0.0")
+    assert(native_bits("-0") == neg_zero, "-0")
+    assert(native_bits("-0e-400") == neg_zero, "-0e-400")
+    assert(native_bits("-1e-400") == neg_zero, "underflow keeps the sign")
+    assert(native_bits("0.0") == 0, "+0.0")
+    assert(native_bits("+0") == 0, "+0")
+    // The sign is applied in TWO places -- inside the fast path / Lemire, and again after
+    // the slow path -- and the zeros above only exercise the first. A red probe on the
+    // second stayed green until this case was added: a NEGATIVE near-half-way value, which
+    // only the slow path can settle.
+    ro neg_slow = "-9007199254740993.0000000000000000001"
+    assert(native_bits(neg_slow) == 0xC340000000000001 as u64, "negative through the slow path keeps its sign")
+    assert(lemire_magnitude_bits(neg_slow) == ALL_ONES, "that value is indeed left to the slow path")
+}
+
+test "native: the curated set matches the C library bit for bit, sign included" {
+    for s in curated() {
+        mut v = 0.0
+        ro ok = unsafe { str_parse_f64(s, &v) }
+        assert(ok, s)
+        match s.to_f64() {
+            Ok(x) => assert(x.to_bits() == v.to_bits(), s)
+            Err(_) => assert(v > 1.7976931348623157e308 || v < -1.7976931348623157e308, s)
+        }
+    }
+}
+
+// ── plan 283 Ф.7: the f32 door ────────────────────────────
+//
+// The reference bits below were computed by EXACT single rounding of each decimal
+// (rational arithmetic outside the tree), not by rounding through f64: that path is
+// the very error this phase exists to avoid, so it cannot also be the oracle. The
+// corpus of the slow lane checks the same door against 5.3 million lines, where the
+// second field of every line is the f32 answer.
+
+fn f32_bits(s str) -> u32 {
+    match s.to_f32() {
+        Ok(v) => v.to_bits()
+        Err(_) => 0xFFFFFFFF as u32
+    }
+}
+
+test "283 Ф.7: to_f32 -- exact bits on integers, ties at 2^24, subnormals and both edges" {
+    ro cases = [
+        ("0", 0x00000000 as u32),
+        ("1", 0x3F800000 as u32),
+        ("2", 0x40000000 as u32),
+        ("0.5", 0x3F000000 as u32),
+        ("16777216", 0x4B800000 as u32),
+        ("16777217", 0x4B800000 as u32),
+        ("16777218", 0x4B800001 as u32),
+        ("1e10", 0x501502F9 as u32),
+        ("1e-10", 0x2EDBE6FF as u32),
+        ("3.14159265", 0x40490FDB as u32),
+        ("0.1", 0x3DCCCCCD as u32),
+        ("0.2", 0x3E4CCCCD as u32),
+        ("1.5", 0x3FC00000 as u32),
+        ("-0.0", 0x80000000 as u32),
+        ("-1.5", 0xBFC00000 as u32),
+        ("1e38", 0x7E967699 as u32),
+        ("3.4028234e38", 0x7F7FFFFF as u32),
+        ("1.1754944e-38", 0x00800000 as u32),
+        ("1e-45", 0x00000001 as u32),
+        ("7e-46", 0x00000000 as u32),
+        ("1.4e-45", 0x00000001 as u32),
+        ("1e-46", 0x00000000 as u32),
+        ("1e17", 0x5BB1A2BC as u32),
+        ("1e18", 0x5D5E0B6B as u32),
+        ("16777216e10", 0x5C1502F9 as u32),
+        ("0.000000000000000000000000000000000000000000001", 0x00000001 as u32),
+    ]
+    for c in cases {
+        ro (text, want) = c
+        assert(f32_bits(text) == want, text)
+    }
+}
+
+test "283 Ф.7: to_f32 -- a finite literal outside f32 is an error by direction, not infinity" {
+    match "3.4028236e38".to_f32() {
+        Err(TooLarge) => {}
+        _ => assert(false, "just past f32 MAX must be TooLarge")
+    }
+    match "1e39".to_f32() {
+        Err(TooLarge) => {}
+        _ => assert(false, "1e39 must be TooLarge")
+    }
+    match "-1e39".to_f32() {
+        Err(TooSmall) => {}
+        _ => assert(false, "-1e39 must be TooSmall")
+    }
+    match "".to_f32() {
+        Err(Empty) => {}
+        _ => assert(false, "empty must be Empty")
+    }
+    match "1,5".to_f32() {
+        Err(Malformed { at }) => assert(at == 1, "the f32 door shares the grammar: comma at 1")
+        _ => assert(false, "comma is not a decimal separator here either")
+    }
+    // Below f32 but perfectly finite: zero, not an error (same rule as f64).
+    assert(f32_bits("1e-46") == 0, "underflow is +0.0")
+    assert(f32_bits("-1e-46") == 0x80000000 as u32, "and it keeps the sign")
+}
+
+test "283 Ф.7: to_f32 -- the DOUBLE ROUNDING class, where parsing through f64 gives another answer" {
+    // Each string sits just above the midpoint between two neighbouring f32 values, by
+    // less than the resolution of f64. Rounding to f64 first loses that excess, the value
+    // lands exactly on the midpoint, and round-half-to-even then goes the opposite way.
+    // Two assertions per string, and the second is the point of the test: our answer is
+    // right AND the two-step answer is demonstrably different, so this really is the class
+    // and not a set of strings that would pass either way.
+    ro cases = [
+        ("4219556200954914481506634425", 0x6D5A255D as u32, 0x6D5A255C as u32),
+        ("8871230914960037553819594412817121280", 0x7CD5912F as u32, 0x7CD5912E as u32),
+        ("4016168254798200968858668644024975360", 0x7C415F19 as u32, 0x7C415F18 as u32),
+        ("2233204.125000000000242124476392859000473123387564555741846561431884765625", 0x4A084DD1 as u32, 0x4A084DD0 as u32),
+        ("19193707408392192.0010404929635114967823028564453125", 0x5A886127 as u32, 0x5A886126 as u32),
+        ("1115953038562506572017.98374176025390625", 0x6271FBD7 as u32, 0x6271FBD6 as u32),
+        ("66.5748176574707031538722247748224230081727503804955858868197537958621978759765625", 0x4285264F as u32, 0x4285264E as u32),
+        ("49702074.000000000002694354830391765265318326783017255365848541259765625", 0x4C3D992F as u32, 0x4C3D992E as u32),
+        // FOUND, not constructed: these five come from the parse-number-fxx corpus, where the
+        // two-step path is wrong on 16 lines out of 5 299 993 (measured 2026-09-07). A case
+        // found in someone else's data cannot have been fitted to my own implementation,
+        // which is what makes it worth more here than the eight above.
+        ("2.1665680640000002384185791015625e9", 0x4F012335 as u32, 0x4F012334 as u32),
+        ("8.589934335999999523162841796875e+09", 0x4FFFFFFF as u32, 0x50000000 as u32),
+        // The worst shape available: through f64 the smallest f32 subnormal collapses to ZERO,
+        // because rounding to 53 bits first pushes the value under the threshold.
+        ("7.0064923216240854e-46", 0x00000001 as u32, 0x00000000 as u32),
+        ("1.1754947011469036e-38", 0x00800003 as u32, 0x00800002 as u32),
+        ("0.00036393293703440577", 0x39BECE41 as u32, 0x39BECE40 as u32),
+    ]
+    for c in cases {
+        ro (text, correct, two_step) = c
+        assert(f32_bits(text) == correct, text)
+        ro via_f64 = match text.to_f64() {
+            Ok(d) => (d as f32).to_bits()
+            Err(_) => 0xFFFFFFFF as u32
+        }
+        assert(via_f64 == two_step, "the two-step path must still give its wrong answer")
+        assert(via_f64 != correct, "otherwise this string does not exercise double rounding")
+    }
+}
+
+test "283 Ф.7: the f32 fast path reads the f64 table by CAST, and that is exact only to 10^10" {
+    // Why this test exists at all (recheck finding, 2026-09-07): the f32 fast path does not
+    // own a table -- `pow10_fast_path_f32` reads the f64 one and casts. That is a CHOICE, and
+    // it is exact only while the fast-path range ends at 10^10: 10^10 = 2^10 * 5^10 with
+    // 5^10 = 9 765 625 < 2^24, so the value fits an f32 significand exactly. At 10^11 it does
+    // not (5^11 = 48 828 125 > 2^24). So raising `F32_MAX_EXPONENT_FAST_PATH` would break
+    // exactness SILENTLY, and the only thing that would notice is the corpus lane, which is
+    // manual. This assert lives in the default lane instead, so the change reddens where the
+    // author will see it.
+    assert(F32_MAX_EXPONENT_FAST_PATH == 10, "F32_MAX_EXPONENT_FAST_PATH is not 10 -- read the comment above before changing it")
+    assert(F32_MIN_EXPONENT_FAST_PATH == -10, "F32_MIN_EXPONENT_FAST_PATH is not -10")
+    // Exactness measured, not argued: every row the f32 fast path can reach survives the
+    // round trip f64 -> f32 -> f64 unchanged.
+    for e in 0..(F32_MAX_EXPONENT_FAST_PATH + 1) {
+        ro narrow = POW10_FAST_PATH[e] as f32
+        ro back = narrow as f64
+        assert(back == POW10_FAST_PATH[e], "10^${e} does not survive f64 -> f32 -> f64")
+    }
+    // And the boundary is real, not decorative -- the first row beyond the range does NOT
+    // survive it. Without this half the assert above would pass just as well if the cast were
+    // exact everywhere, and the invariant would be unproven.
+    ro over = POW10_FAST_PATH[F32_MAX_EXPONENT_FAST_PATH + 1] as f32
+    ro over_back = over as f64
+    assert(over_back != POW10_FAST_PATH[F32_MAX_EXPONENT_FAST_PATH + 1],
+        "10^11 survives the cast -- then the range could be widened, and this test is wrong")
+}
+
+test "283 Ф.7: to_f32 and to_f64 share the grammar, so they agree on what is NOT a number" {
+    ro bad = [" 1.5", "0x1p3", "nan", "inf", "1.2.3", "1e", ".", "1.5 ", "1,5"]
+    for text in bad {
+        ro f64_rejected = match text.to_f64() {
+            Ok(_) => false
+            Err(_) => true
+        }
+        ro f32_rejected = match text.to_f32() {
+            Ok(_) => false
+            Err(_) => true
+        }
+        assert(f64_rejected, text)
+        assert(f32_rejected == f64_rejected, text)
+    }
+    // And on what IS one, with the same positions reported.
+    assert(f32_bits("1e10") == 0x501502F9 as u32, "1e10 accepted by both")
+}

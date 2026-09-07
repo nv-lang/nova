@@ -8,8 +8,11 @@
 // double. These tests pin that faithfulness end-to-end.
 //
 // Parse-back path: `Json.parse(...)!!.num()` (Option[f64], the working
-// numeric-extraction path — the parser reads via nova_str_to_f64 and stores a
-// true f64 in JsonValue.Num).
+// numeric-extraction path — the parser reads via `str @to_f64()`, which since
+// plan 283 rounds in Nova rather than in C, and stores a true f64 in
+// JsonValue.Num). The `strtod` named above is the shape of the guarantee, not
+// the code path: the minimal string is the one that re-parses bit-for-bit, and
+// the differential tests of plan 283 keep our conversion equal to it.
 
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}

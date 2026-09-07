@@ -1,0 +1,350 @@
+// Co-equal file of module `runtime.string` (folder = one module).
+// Role: `DigitBuf` -- the big decimal of the slow path of `str @to_f64()`: up to 768
+// decimal digits with a decimal-point offset and a truncation flag, and ONLY the
+// operations the "Simple Decimal Conversion" of Nigel Tao and Ken Thompson needs --
+// multiply or divide by a power of two (`left_shift` / `right_shift`) and `round` to
+// the top bits. It is not a decimal-number library and not a `BigDecimal`: no product
+// of two big numbers, no dependency, one allocation (the buffer) per slow-path parse.
+//
+// Donor: `decimal_seq.rs` of Rust `library/core/src/num/imp/dec2flt/` (`DecimalSeq`,
+// `parse_decimal_seq`, `number_of_digits_decimal_left_shift`), commit
+// 48a229ceaefd4985c50990b14116b6d856af0985, MIT -- `THIRD_PARTY/rust-LICENSE`. The
+// algorithm: "ParseNumberF64 by Simple Decimal Conversion",
+// https://nigeltao.github.io/blog/2020/parse-number-f64-simple.html. Comments that
+// explain a step are the donor's.
+//
+// Two deviations from the donor, both about form, neither about results:
+//   * `digits` is a `[]u8` of length 768 rather than `[u8; 768]`: Nova has no repeat
+//     literal `[0; N]` (a fixed-array literal spells out every element), and the buffer
+//     lives in a heap record anyway, so a Vec sized once at construction costs the same;
+//   * the 8-bytes-at-a-time copy of fraction digits (`read_u64` / `is_8digits`) is a
+//     speed trick with no effect on the result; the byte loop here is the same
+//     computation.
+//
+// Why 768 digits (donor doc): a binary64 value needs up to 767 decimal digits to be
+// written exactly, so 767 + 1 digits decide every rounding unambiguously --
+// `-emin + p2 + floor((emin + 1) * log(2, 10) - log(1 - 2^(-p2), 10))` with emin = -1022,
+// p2 = 53.
+
+#no_prelude
+module runtime.string
+
+// The maximum number of digits required to unambiguously round up to a 64-bit float.
+const DIGIT_BUF_MAX_DIGITS = 768
+// The max decimal digits that can be exactly represented in a 64-bit integer.
+const DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW = 19
+// Beyond this decimal-point offset the value is certainly zero or infinite.
+const DIGIT_BUF_DECIMAL_POINT_RANGE = 2047
+
+// A decimal floating-point number, represented as a sequence of decimal digits.
+type DigitBuf {
+    mut num_digits int        // The number of significant digits in the decimal.
+    mut decimal_point int     // The offset of the decimal point in the significant digits.
+    mut truncated bool        // If the number of significant digits stored in the decimal is truncated.
+    mut digits []u8           // Buffer of the raw digits, in the range [0, 9]; len == DIGIT_BUF_MAX_DIGITS.
+}
+
+fn zeroed_digits() -> []u8 {
+    mut digits []u8 = []u8.new(cap: DIGIT_BUF_MAX_DIGITS)
+    for _i in 0..DIGIT_BUF_MAX_DIGITS {
+        digits.push(0)
+    }
+    digits
+}
+
+fn DigitBuf.new() -> DigitBuf =>
+    { num_digits: 0, decimal_point: 0, truncated: false, digits: zeroed_digits() }
+
+// Append a digit to the buffer if it fits. The count grows regardless (the donor keeps
+// this shape: `parse_from` caps `num_digits` and sets `truncated` afterwards).
+fn DigitBuf mut @try_add_digit(digit u8) -> () {
+    if @num_digits < DIGIT_BUF_MAX_DIGITS { @digits[@num_digits] = digit }
+    @num_digits += 1
+}
+
+// Trim trailing zeros from the buffer.
+fn DigitBuf mut @trim() -> () {
+    while @num_digits != 0 && @digits[@num_digits - 1] == 0 {
+        @num_digits -= 1
+    }
+}
+
+// The integer part of the buffer as a u64, rounded half to even by the digits after the
+// point (and by `truncated`: dropped digits mean "strictly above the half").
+fn DigitBuf @round() -> u64 {
+    if @num_digits == 0 || @decimal_point < 0 { return 0 as u64 }
+    if @decimal_point >= DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW { return 0xFFFFFFFFFFFFFFFF as u64 }
+    ro dp = @decimal_point
+    mut n = 0 as u64
+    for i in 0..dp {
+        n = n * 10
+        if i < @num_digits { n += @digits[i] as u64 }
+    }
+    mut round_up = false
+    if dp < @num_digits {
+        round_up = @digits[dp] >= 5
+        if @digits[dp] == 5 && dp + 1 == @num_digits {
+            round_up = @truncated || (dp != 0 && ((@digits[dp - 1] as int) & 1) != 0)
+        }
+    }
+    if round_up { n += 1 }
+    n
+}
+
+// Computes decimal * 2^shift.
+fn DigitBuf mut @left_shift(shift int) -> () {
+    if @num_digits == 0 { return }
+    ro num_new_digits = @number_of_digits_decimal_left_shift(shift)
+    mut read_index = @num_digits
+    mut write_index = @num_digits + num_new_digits
+    mut n = 0 as u64
+    while read_index != 0 {
+        read_index -= 1
+        write_index -= 1
+        n += (@digits[read_index] as u64) << shift
+        ro quotient = n / 10
+        ro remainder = n - (10 * quotient)
+        if write_index < DIGIT_BUF_MAX_DIGITS {
+            @digits[write_index] = remainder as u8
+        } else if remainder > 0 {
+            @truncated = true
+        }
+        n = quotient
+    }
+    while n > 0 {
+        write_index -= 1
+        ro quotient = n / 10
+        ro remainder = n - (10 * quotient)
+        if write_index < DIGIT_BUF_MAX_DIGITS {
+            @digits[write_index] = remainder as u8
+        } else if remainder > 0 {
+            @truncated = true
+        }
+        n = quotient
+    }
+    @num_digits += num_new_digits
+    @num_digits = @num_digits.min(DIGIT_BUF_MAX_DIGITS)
+    @decimal_point += num_new_digits
+    @trim()
+}
+
+// Computes decimal * 2^-shift.
+fn DigitBuf mut @right_shift(shift int) -> () {
+    mut read_index = 0
+    mut write_index = 0
+    mut n = 0 as u64
+    while (n >> shift) == 0 {
+        if read_index < @num_digits {
+            n = (10 * n) + (@digits[read_index] as u64)
+            read_index += 1
+        } else if n == 0 {
+            return
+        } else {
+            while (n >> shift) == 0 {
+                n = n * 10
+                read_index += 1
+            }
+            break
+        }
+    }
+    @decimal_point -= read_index - 1
+    if @decimal_point < -DIGIT_BUF_DECIMAL_POINT_RANGE {
+        // `self = Self::Default()`, but without the overhead of clearing `digits`.
+        @num_digits = 0
+        @decimal_point = 0
+        @truncated = false
+        return
+    }
+    ro mask = ((1 as u64) << shift) - 1
+    while read_index < @num_digits {
+        ro new_digit = (n >> shift) as u8
+        n = (10 * (n & mask)) + (@digits[read_index] as u64)
+        read_index += 1
+        @digits[write_index] = new_digit
+        write_index += 1
+    }
+    while n > 0 {
+        ro new_digit = (n >> shift) as u8
+        n = 10 * (n & mask)
+        if write_index < DIGIT_BUF_MAX_DIGITS {
+            @digits[write_index] = new_digit
+            write_index += 1
+        } else if new_digit > 0 {
+            @truncated = true
+        }
+    }
+    @num_digits = write_index
+    @trim()
+}
+
+// decimal_seq.rs `parse_decimal_seq`: the digits of a string the grammar already accepted,
+// as this buffer -- leading zeros skipped, trailing zeros trimmed, at most 768 digits kept
+// and `truncated` set when more followed, the exponent folded into `decimal_point`. The
+// sign is the caller's business and is skipped here.
+fn DigitBuf mut @parse_from(s str) -> () {
+    ro bytes = s.bytes()
+    ro n = s.byte_len()
+    mut i = 0
+    if i < n && (bytes[i] == '-' || bytes[i] == '+') { i += 1 }
+    ro start = i
+    while i < n && bytes[i] == '0' { i += 1 }
+    while i < n {
+        ro c = bytes[i] as int
+        if c >= '0' && c <= '9' {
+            @try_add_digit((c - 48) as u8)
+            i += 1
+        } else { break }
+    }
+    if i < n && bytes[i] == '.' {
+        i += 1
+        ro first = i
+        // Skip leading zeros.
+        if @num_digits == 0 {
+            while i < n && bytes[i] == '0' { i += 1 }
+        }
+        while i < n {
+            ro c = bytes[i] as int
+            if c >= '0' && c <= '9' {
+                @try_add_digit((c - 48) as u8)
+                i += 1
+            } else { break }
+        }
+        // Negative: the count of bytes consumed after the point, skipped zeros included.
+        @decimal_point = -(i - first)
+    }
+    if @num_digits != 0 {
+        // Ignore the trailing zeros if there are any
+        mut n_trailing_zeros = 0
+        mut p = i - 1
+        while p >= start {
+            if bytes[p] == '0' {
+                n_trailing_zeros += 1
+            } else if bytes[p] != '.' {
+                break
+            }
+            p -= 1
+        }
+        @decimal_point += n_trailing_zeros
+        @num_digits -= n_trailing_zeros
+        @decimal_point += @num_digits
+        if @num_digits > DIGIT_BUF_MAX_DIGITS {
+            @truncated = true
+            @num_digits = DIGIT_BUF_MAX_DIGITS
+        }
+    }
+    if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
+        i += 1
+        mut neg_exp = false
+        if i < n && (bytes[i] == '-' || bytes[i] == '+') {
+            neg_exp = bytes[i] == '-'
+            i += 1
+        }
+        mut exp_num = 0
+        while i < n {
+            ro c = bytes[i] as int
+            if c >= '0' && c <= '9' {
+                if exp_num < 0x10000 { exp_num = 10 * exp_num + (c - 48) }
+                i += 1
+            } else { break }
+        }
+        @decimal_point += if neg_exp { -exp_num } else { exp_num }
+    }
+    // The donor zeroes the tail up to the 19 digits `round` may read past `num_digits`.
+    if @num_digits < DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
+        for k in @num_digits..DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
+            @digits[k] = 0
+        }
+    }
+}
+
+fn parse_digit_buf(s str) -> DigitBuf {
+    mut d = DigitBuf.new()
+    d.parse_from(s)
+    d
+}
+
+// decimal_seq.rs `number_of_digits_decimal_left_shift`: how many new leading digits
+// `decimal * 2^shift` gains -- the table gives the count assuming the digits are below
+// 5^shift, and the comparison against the written-out 5^shift (TABLE_POW5) corrects it.
+fn DigitBuf @number_of_digits_decimal_left_shift(shift_in int) -> int {
+    ro shift = shift_in & 63
+    ro x_a = LEFT_SHIFT_TABLE[shift]
+    ro x_b = LEFT_SHIFT_TABLE[shift + 1]
+    ro num_new_digits = x_a >> 11
+    ro pow5_a = 0x7FF & x_a
+    ro pow5_b = 0x7FF & x_b
+    ro count = pow5_b - pow5_a
+    for i in 0..count {
+        if i >= @num_digits { return num_new_digits - 1 }
+        ro p5 = TABLE_POW5[pow5_a + i]
+        if @digits[i] < p5 { return num_new_digits - 1 }
+        if @digits[i] > p5 { return num_new_digits }
+    }
+    num_new_digits
+}
+
+// ─── Tables (decimal_seq.rs, verbatim) ───
+//
+// LEFT_SHIFT_TABLE[shift]: bits 11.. = number of new digits for a shift of `shift`, bits
+// 0..10 = offset into TABLE_POW5 where the digits of 5^shift start (they run up to the next
+// entry's offset). TABLE_POW5: the decimal digits of 5^1, 5^2, ... 5^60 back to back.
+//
+// TABLE_POW5 is `u8` as in the donor -- it holds single digits and is compared against
+// `digits`, which is `u8` too. LEFT_SHIFT_TABLE keeps `int` where the donor has `u16`: its
+// entries are immediately shifted and masked into indices, so `int` saves the casts and
+// costs 65 words. Both were `[]T` until 2026-09-07 as a workaround for registry 221.1
+// #998/#1003 (a const array took its element width from the LITERALS, not the declaration).
+const LEFT_SHIFT_TABLE [65]int = [
+    0x0000, 0x0800, 0x0801, 0x0803, 0x1006, 0x1009, 0x100D, 0x1812, 0x1817, 0x181D, 0x2024,
+    0x202B, 0x2033, 0x203C, 0x2846, 0x2850, 0x285B, 0x3067, 0x3073, 0x3080, 0x388E, 0x389C,
+    0x38AB, 0x38BB, 0x40CC, 0x40DD, 0x40EF, 0x4902, 0x4915, 0x4929, 0x513E, 0x5153, 0x5169,
+    0x5180, 0x5998, 0x59B0, 0x59C9, 0x61E3, 0x61FD, 0x6218, 0x6A34, 0x6A50, 0x6A6D, 0x6A8B,
+    0x72AA, 0x72C9, 0x72E9, 0x7B0A, 0x7B2B, 0x7B4D, 0x8370, 0x8393, 0x83B7, 0x83DC, 0x8C02,
+    0x8C28, 0x8C4F, 0x9477, 0x949F, 0x94C8, 0x9CF2, 0x051C, 0x051C, 0x051C, 0x051C,
+]
+const TABLE_POW5 [1308]u8 = [
+    5, 2, 5, 1, 2, 5, 6, 2, 5, 3, 1, 2, 5, 1, 5, 6, 2, 5, 7, 8, 1, 2, 5, 3, 9, 0, 6, 2, 5, 1,
+    9, 5, 3, 1, 2, 5, 9, 7, 6, 5, 6, 2, 5, 4, 8, 8, 2, 8, 1, 2, 5, 2, 4, 4, 1, 4, 0, 6, 2, 5,
+    1, 2, 2, 0, 7, 0, 3, 1, 2, 5, 6, 1, 0, 3, 5, 1, 5, 6, 2, 5, 3, 0, 5, 1, 7, 5, 7, 8, 1, 2,
+    5, 1, 5, 2, 5, 8, 7, 8, 9, 0, 6, 2, 5, 7, 6, 2, 9, 3, 9, 4, 5, 3, 1, 2, 5, 3, 8, 1, 4, 6,
+    9, 7, 2, 6, 5, 6, 2, 5, 1, 9, 0, 7, 3, 4, 8, 6, 3, 2, 8, 1, 2, 5, 9, 5, 3, 6, 7, 4, 3, 1,
+    6, 4, 0, 6, 2, 5, 4, 7, 6, 8, 3, 7, 1, 5, 8, 2, 0, 3, 1, 2, 5, 2, 3, 8, 4, 1, 8, 5, 7, 9,
+    1, 0, 1, 5, 6, 2, 5, 1, 1, 9, 2, 0, 9, 2, 8, 9, 5, 5, 0, 7, 8, 1, 2, 5, 5, 9, 6, 0, 4, 6,
+    4, 4, 7, 7, 5, 3, 9, 0, 6, 2, 5, 2, 9, 8, 0, 2, 3, 2, 2, 3, 8, 7, 6, 9, 5, 3, 1, 2, 5, 1,
+    4, 9, 0, 1, 1, 6, 1, 1, 9, 3, 8, 4, 7, 6, 5, 6, 2, 5, 7, 4, 5, 0, 5, 8, 0, 5, 9, 6, 9, 2,
+    3, 8, 2, 8, 1, 2, 5, 3, 7, 2, 5, 2, 9, 0, 2, 9, 8, 4, 6, 1, 9, 1, 4, 0, 6, 2, 5, 1, 8, 6,
+    2, 6, 4, 5, 1, 4, 9, 2, 3, 0, 9, 5, 7, 0, 3, 1, 2, 5, 9, 3, 1, 3, 2, 2, 5, 7, 4, 6, 1, 5,
+    4, 7, 8, 5, 1, 5, 6, 2, 5, 4, 6, 5, 6, 6, 1, 2, 8, 7, 3, 0, 7, 7, 3, 9, 2, 5, 7, 8, 1, 2,
+    5, 2, 3, 2, 8, 3, 0, 6, 4, 3, 6, 5, 3, 8, 6, 9, 6, 2, 8, 9, 0, 6, 2, 5, 1, 1, 6, 4, 1, 5,
+    3, 2, 1, 8, 2, 6, 9, 3, 4, 8, 1, 4, 4, 5, 3, 1, 2, 5, 5, 8, 2, 0, 7, 6, 6, 0, 9, 1, 3, 4,
+    6, 7, 4, 0, 7, 2, 2, 6, 5, 6, 2, 5, 2, 9, 1, 0, 3, 8, 3, 0, 4, 5, 6, 7, 3, 3, 7, 0, 3, 6,
+    1, 3, 2, 8, 1, 2, 5, 1, 4, 5, 5, 1, 9, 1, 5, 2, 2, 8, 3, 6, 6, 8, 5, 1, 8, 0, 6, 6, 4, 0,
+    6, 2, 5, 7, 2, 7, 5, 9, 5, 7, 6, 1, 4, 1, 8, 3, 4, 2, 5, 9, 0, 3, 3, 2, 0, 3, 1, 2, 5, 3,
+    6, 3, 7, 9, 7, 8, 8, 0, 7, 0, 9, 1, 7, 1, 2, 9, 5, 1, 6, 6, 0, 1, 5, 6, 2, 5, 1, 8, 1, 8,
+    9, 8, 9, 4, 0, 3, 5, 4, 5, 8, 5, 6, 4, 7, 5, 8, 3, 0, 0, 7, 8, 1, 2, 5, 9, 0, 9, 4, 9, 4,
+    7, 0, 1, 7, 7, 2, 9, 2, 8, 2, 3, 7, 9, 1, 5, 0, 3, 9, 0, 6, 2, 5, 4, 5, 4, 7, 4, 7, 3, 5,
+    0, 8, 8, 6, 4, 6, 4, 1, 1, 8, 9, 5, 7, 5, 1, 9, 5, 3, 1, 2, 5, 2, 2, 7, 3, 7, 3, 6, 7, 5,
+    4, 4, 3, 2, 3, 2, 0, 5, 9, 4, 7, 8, 7, 5, 9, 7, 6, 5, 6, 2, 5, 1, 1, 3, 6, 8, 6, 8, 3, 7,
+    7, 2, 1, 6, 1, 6, 0, 2, 9, 7, 3, 9, 3, 7, 9, 8, 8, 2, 8, 1, 2, 5, 5, 6, 8, 4, 3, 4, 1, 8,
+    8, 6, 0, 8, 0, 8, 0, 1, 4, 8, 6, 9, 6, 8, 9, 9, 4, 1, 4, 0, 6, 2, 5, 2, 8, 4, 2, 1, 7, 0,
+    9, 4, 3, 0, 4, 0, 4, 0, 0, 7, 4, 3, 4, 8, 4, 4, 9, 7, 0, 7, 0, 3, 1, 2, 5, 1, 4, 2, 1, 0,
+    8, 5, 4, 7, 1, 5, 2, 0, 2, 0, 0, 3, 7, 1, 7, 4, 2, 2, 4, 8, 5, 3, 5, 1, 5, 6, 2, 5, 7, 1,
+    0, 5, 4, 2, 7, 3, 5, 7, 6, 0, 1, 0, 0, 1, 8, 5, 8, 7, 1, 1, 2, 4, 2, 6, 7, 5, 7, 8, 1, 2,
+    5, 3, 5, 5, 2, 7, 1, 3, 6, 7, 8, 8, 0, 0, 5, 0, 0, 9, 2, 9, 3, 5, 5, 6, 2, 1, 3, 3, 7, 8,
+    9, 0, 6, 2, 5, 1, 7, 7, 6, 3, 5, 6, 8, 3, 9, 4, 0, 0, 2, 5, 0, 4, 6, 4, 6, 7, 7, 8, 1, 0,
+    6, 6, 8, 9, 4, 5, 3, 1, 2, 5, 8, 8, 8, 1, 7, 8, 4, 1, 9, 7, 0, 0, 1, 2, 5, 2, 3, 2, 3, 3,
+    8, 9, 0, 5, 3, 3, 4, 4, 7, 2, 6, 5, 6, 2, 5, 4, 4, 4, 0, 8, 9, 2, 0, 9, 8, 5, 0, 0, 6, 2,
+    6, 1, 6, 1, 6, 9, 4, 5, 2, 6, 6, 7, 2, 3, 6, 3, 2, 8, 1, 2, 5, 2, 2, 2, 0, 4, 4, 6, 0, 4,
+    9, 2, 5, 0, 3, 1, 3, 0, 8, 0, 8, 4, 7, 2, 6, 3, 3, 3, 6, 1, 8, 1, 6, 4, 0, 6, 2, 5, 1, 1,
+    1, 0, 2, 2, 3, 0, 2, 4, 6, 2, 5, 1, 5, 6, 5, 4, 0, 4, 2, 3, 6, 3, 1, 6, 6, 8, 0, 9, 0, 8,
+    2, 0, 3, 1, 2, 5, 5, 5, 5, 1, 1, 1, 5, 1, 2, 3, 1, 2, 5, 7, 8, 2, 7, 0, 2, 1, 1, 8, 1, 5,
+    8, 3, 4, 0, 4, 5, 4, 1, 0, 1, 5, 6, 2, 5, 2, 7, 7, 5, 5, 5, 7, 5, 6, 1, 5, 6, 2, 8, 9, 1,
+    3, 5, 1, 0, 5, 9, 0, 7, 9, 1, 7, 0, 2, 2, 7, 0, 5, 0, 7, 8, 1, 2, 5, 1, 3, 8, 7, 7, 7, 8,
+    7, 8, 0, 7, 8, 1, 4, 4, 5, 6, 7, 5, 5, 2, 9, 5, 3, 9, 5, 8, 5, 1, 1, 3, 5, 2, 5, 3, 9, 0,
+    6, 2, 5, 6, 9, 3, 8, 8, 9, 3, 9, 0, 3, 9, 0, 7, 2, 2, 8, 3, 7, 7, 6, 4, 7, 6, 9, 7, 9, 2,
+    5, 5, 6, 7, 6, 2, 6, 9, 5, 3, 1, 2, 5, 3, 4, 6, 9, 4, 4, 6, 9, 5, 1, 9, 5, 3, 6, 1, 4, 1,
+    8, 8, 8, 2, 3, 8, 4, 8, 9, 6, 2, 7, 8, 3, 8, 1, 3, 4, 7, 6, 5, 6, 2, 5, 1, 7, 3, 4, 7, 2,
+    3, 4, 7, 5, 9, 7, 6, 8, 0, 7, 0, 9, 4, 4, 1, 1, 9, 2, 4, 4, 8, 1, 3, 9, 1, 9, 0, 6, 7, 3,
+    8, 2, 8, 1, 2, 5, 8, 6, 7, 3, 6, 1, 7, 3, 7, 9, 8, 8, 4, 0, 3, 5, 4, 7, 2, 0, 5, 9, 6, 2,
+    2, 4, 0, 6, 9, 5, 9, 5, 3, 3, 6, 9, 1, 4, 0, 6, 2, 5,
+]

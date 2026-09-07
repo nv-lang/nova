@@ -1,0 +1,56 @@
+The following files in the Nova source tree are ports of (and in places
+near-verbatim adaptations of) the decimal-to-binary floating-point conversion
+of the Rust standard library, library/core/src/num/imp/dec2flt/
+(https://github.com/rust-lang/rust, commit
+48a229ceaefd4985c50990b14116b6d856af0985), which is itself a port of Daniel
+Lemire's fast_float. Rust is dual-licensed MIT OR Apache-2.0; Nova takes it
+under the MIT license reproduced below:
+
+  - std/src/runtime/string/float_convert.nv   (mod.rs, decimal.rs, lemire.rs,
+                                               common.rs, slow.rs)
+  - std/src/runtime/string/pow5_table.nv      (table.rs: POWER_OF_FIVE_128,
+                                               re-derived by
+                                               scripts/tools/gen-pow5-table.py,
+                                               itself after src/etc/dec2flt_table.py)
+  - std/src/runtime/string/parse_float.nv     (parse.rs: the assembly of the
+                                               significand / exponent / many_digits
+                                               triple inside Nova's own grammar walk)
+  - std/src/runtime/string/digit_buf.nv       (decimal_seq.rs: DecimalSeq as
+                                               DigitBuf, parse_decimal_seq,
+                                               number_of_digits_decimal_left_shift
+                                               and both of its tables)
+
+Types and primitives are adapted to Nova (the u128 product -> `u64
+@widening_mul`, `leading_zeros` -> a library method, `[u8; 768]` -> `[768]u8`,
+the generic `Float` trait -> one set of f64 constants); the algorithm, control
+flow, constants, variable names and the comments that justify each rounding
+decision are preserved from the Rust original. Each ported function carries an
+in-file reference to its donor file.
+
+--------------------------------------------------------------------------------
+
+Copyright (c) The Rust Project Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
