@@ -68,6 +68,22 @@ fn split_corpus_line(line str) -> Option[(u32, u64, str)] {
     }
 }
 
+// The tally as one line, rewritten after EVERY file rather than once at the end. A run over
+// millions of lines can die -- a panic, a timeout, a machine slot taken away -- and then the
+// only numbers that exist are the ones already on disk. The second effect matters more than
+// the first: while the test is silent, a shell can read this file and see progress, so a long
+// run becomes watchable instead of opaque. An empty path switches the whole thing off.
+// `write` and not `write_text`: the signature is matched exactly (`data []u8`), this is the
+// form the fs tests exercise, and `write_text` has no caller anywhere in the tree.
+fn CorpusTally @report_to(path str) Fs -> () {
+    if path.is_empty() { return }
+    ro line = "283 corpus: files=${@files} lines=${@lines} ok=${@ok} mismatch=${@mismatch} skipped=${@skipped} first=${@first_bad}\n"
+    match write(path.to_path(), line.bytes()) {
+        Ok(()) => {}
+        Err(_) => {}
+    }
+}
+
 fn CorpusTally mut @note_bad(what str) -> () {
     @mismatch += 1
     if @first_bad.is_empty() { @first_bad = what }
@@ -188,20 +204,11 @@ test "283 Ф.5: parse-number-fxx corpus — every f64 and f32 field equals ours 
                             if e.is_file() {
                                 if Some(name) = e.name_str() {
                                     t.judge_file(data_dir, name)
+                                    t.report_to(report)      // after EVERY file, see @report_to
                                 }
                             }
                         }
-                        if !report.is_empty() {
-                            ro tally = "283 corpus: files=${t.files} lines=${t.lines} ok=${t.ok} mismatch=${t.mismatch} skipped=${t.skipped} first=${t.first_bad}\n"
-                            // `write`, not `write_text`: the signature is matched exactly
-                            // (`data []u8`), and this is the form the fs tests exercise --
-                            // `write_text` has no caller and no test anywhere in the tree,
-                            // and a long slot is the wrong place to be its first user.
-                            match write(report.to_path(), tally.bytes()) {
-                                Ok(()) => {}
-                                Err(_) => {}
-                            }
-                        }
+                        t.report_to(report)                  // and once at the end, files=0 included
                         assert(t.mismatch == 0,
                             "283 corpus: files=${t.files} lines=${t.lines} ok=${t.ok} mismatch=${t.mismatch} skipped=${t.skipped}; first: ${t.first_bad}")
                         assert(t.files == 0 || t.ok > 0,
