@@ -52,6 +52,10 @@ const F64_MAX_EXPONENT_DISGUISED_FAST_PATH int = 37    // 22 + floor(53 / log2(1
 const F64_MAX_MANTISSA_FAST_PATH u64 = 9007199254740992   // 1 << 53
 
 // mod.rs `pow10_fast_path` for f64: the powers of ten that are exact in f64, 10^0..10^22.
+// SERVES f32 TOO, through a cast at the point of use (`pow10_fast_path_f32` below): a
+// separate `const []f32` table is NOT declared because such a table is miscompiled today
+// (registry 221.1 #1003 -- the element width comes from the literals, and float literals are
+// f64), and it returns as its own table when #1003 is fixed.
 // The donor pads the table to 32 entries and masks the index; the index here is always
 // within [0, 22] by the fast-path guard, so the table holds just the real range.
 const POW10_FAST_PATH []f64 = [
@@ -396,10 +400,16 @@ fn convert_number(n Number, s str) -> f64 {
 // its one multiplication IN THE TARGET'S ARITHMETIC. Doing it in f64 and narrowing would
 // round twice, which is the very error this phase exists to avoid.
 
-// mod.rs `pow10_fast_path` for f32: the powers of ten that are exact in f32, 10^0..10^10.
-const POW10_FAST_PATH_F32 []f32 = [
-    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10,
-]
+// mod.rs `pow10_fast_path` for f32 is the FIRST ELEVEN ROWS OF THE f64 TABLE, read through
+// a cast, and there is no second table on purpose. Two reasons, one of them a defect:
+//   * 10^0..10^10 are exact in f32 as well as in f64 (10^10 = 5^10 * 2^10 and 5^10 fits in
+//     24 bits), so `as f32` on such a row does not round -- and the multiplication below
+//     still happens in f32 arithmetic, which is what single rounding requires;
+//   * a `const []f32` table of float literals is MISCOMPILED today: the element width is
+//     taken from the literals (float literals are f64, eight bytes) rather than from the
+//     declaration (four), so reads land inside the wrong element. Same class as the `[]u8`
+//     case; measured here by the f32 tests failing on `1e10`.
+fn pow10_fast_path_f32(e int) -> f32 => POW10_FAST_PATH[e] as f32
 
 const F32_SIG_BITS int = 23
 const F32_MIN_EXPONENT_FAST_PATH int = -10            // -floor(24 / log2(5))
@@ -421,16 +431,16 @@ fn try_fast_path_f32(n Number) -> Option[f32] {
     if n.exponent <= F32_MAX_EXPONENT_FAST_PATH {
         ro m = n.mantissa as f32
         value = if n.exponent < 0 {
-            m / POW10_FAST_PATH_F32[-n.exponent]
+            m / pow10_fast_path_f32(-n.exponent)
         } else {
-            m * POW10_FAST_PATH_F32[n.exponent]
+            m * pow10_fast_path_f32(n.exponent)
         }
     } else {
         ro shift = n.exponent - F32_MAX_EXPONENT_FAST_PATH
         ro (hi, wide) = n.mantissa.widening_mul(INT_POW10[shift])
         if hi != 0 { return None }
         if wide > F32_MAX_MANTISSA_FAST_PATH { return None }
-        value = (wide as f32) * POW10_FAST_PATH_F32[F32_MAX_EXPONENT_FAST_PATH]
+        value = (wide as f32) * pow10_fast_path_f32(F32_MAX_EXPONENT_FAST_PATH)
     }
     if n.negative { Some(-value) } else { Some(value) }
 }

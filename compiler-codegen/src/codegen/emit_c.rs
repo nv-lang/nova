@@ -47226,9 +47226,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // that rounds the decimal DIRECTLY to f32; going through f64 and narrowing
                 // rounds twice and disagrees near the midpoints between two f32 values, so
                 // the old `nova_str_to_f64` call was not merely lenient but wrong at the
-                // edges. `f32.try_parse(...)` now falls through to the primitive-static-
-                // method guard below and gets an honest E_UNKNOWN_STATIC_METHOD; the
-                // negative fixture is spec_tests/conformance/neg/f32_try_parse_retracted.nv.
+                // edges.
+                // WHAT ACTUALLY HAPPENS AFTER THE ROW IS GONE -- measured 2026-09-07, not
+                // assumed: `T.try_parse(...)` does NOT reach the primitive-static-method
+                // guard. It ICEs -- `[INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Path call
+                // return type unknown for method=try_parse` -- and it does so for EVERY
+                // type, including `i32`, which is still in the table below. So the crash is
+                // older than this edit and belongs to the f64 retraction, whose comment
+                // above claims the opposite and was never probed. Probe:
+                // docs/plans/repro/repro_try_parse_ice.nv.txt. Removing the `f32` row stays
+                // right -- it is what stops `str -> f32` from going through strtod -- but the
+                // retraction is FINISHED only when the retracted spelling reports a
+                // diagnostic naming its replacement instead of panicking, and that fix is
+                // not this wave's.
                 if parts.len() == 2 && parts[1] == "try_parse" {
                     if let Some(arg) = args.first() {
                         let arg_ty = self.infer_expr_c_type(arg.expr());
