@@ -277,8 +277,8 @@ fn DigitBuf @number_of_digits_decimal_left_shift(shift_in int) -> int {
     for i in 0..count {
         if i >= @num_digits { return num_new_digits - 1 }
         ro p5 = TABLE_POW5[pow5_a + i]
-        if (@digits[i] as int) < p5 { return num_new_digits - 1 }
-        if (@digits[i] as int) > p5 { return num_new_digits }
+        if @digits[i] < p5 { return num_new_digits - 1 }
+        if @digits[i] > p5 { return num_new_digits }
     }
     num_new_digits
 }
@@ -288,7 +288,13 @@ fn DigitBuf @number_of_digits_decimal_left_shift(shift_in int) -> int {
 // LEFT_SHIFT_TABLE[shift]: bits 11.. = number of new digits for a shift of `shift`, bits
 // 0..10 = offset into TABLE_POW5 where the digits of 5^shift start (they run up to the next
 // entry's offset). TABLE_POW5: the decimal digits of 5^1, 5^2, ... 5^60 back to back.
-const LEFT_SHIFT_TABLE []int = [
+//
+// TABLE_POW5 is `u8` as in the donor -- it holds single digits and is compared against
+// `digits`, which is `u8` too. LEFT_SHIFT_TABLE keeps `int` where the donor has `u16`: its
+// entries are immediately shifted and masked into indices, so `int` saves the casts and
+// costs 65 words. Both were `[]T` until 2026-09-07 as a workaround for registry 221.1
+// #998/#1003 (a const array took its element width from the LITERALS, not the declaration).
+const LEFT_SHIFT_TABLE [65]int = [
     0x0000, 0x0800, 0x0801, 0x0803, 0x1006, 0x1009, 0x100D, 0x1812, 0x1817, 0x181D, 0x2024,
     0x202B, 0x2033, 0x203C, 0x2846, 0x2850, 0x285B, 0x3067, 0x3073, 0x3080, 0x388E, 0x389C,
     0x38AB, 0x38BB, 0x40CC, 0x40DD, 0x40EF, 0x4902, 0x4915, 0x4929, 0x513E, 0x5153, 0x5169,
@@ -296,7 +302,7 @@ const LEFT_SHIFT_TABLE []int = [
     0x72AA, 0x72C9, 0x72E9, 0x7B0A, 0x7B2B, 0x7B4D, 0x8370, 0x8393, 0x83B7, 0x83DC, 0x8C02,
     0x8C28, 0x8C4F, 0x9477, 0x949F, 0x94C8, 0x9CF2, 0x051C, 0x051C, 0x051C, 0x051C,
 ]
-const TABLE_POW5 []int = [
+const TABLE_POW5 [1308]u8 = [
     5, 2, 5, 1, 2, 5, 6, 2, 5, 3, 1, 2, 5, 1, 5, 6, 2, 5, 7, 8, 1, 2, 5, 3, 9, 0, 6, 2, 5, 1,
     9, 5, 3, 1, 2, 5, 9, 7, 6, 5, 6, 2, 5, 4, 8, 8, 2, 8, 1, 2, 5, 2, 4, 4, 1, 4, 0, 6, 2, 5,
     1, 2, 2, 0, 7, 0, 3, 1, 2, 5, 6, 1, 0, 3, 5, 1, 5, 6, 2, 5, 3, 0, 5, 1, 7, 5, 7, 8, 1, 2,

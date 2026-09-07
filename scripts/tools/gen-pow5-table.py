@@ -123,15 +123,16 @@ def render_nv(rows):
     out = io.StringIO()
     out.write(HEADER.format(smallest=SMALLEST_Q, largest=LARGEST_Q, rows=ROWS))
     out.write("\n// Upper 64 bits of the 128-bit 5^q; row i <-> q = i + POW5_SMALLEST_Q.\n")
-    out.write("// `[]u64`, not `[%d]u64`: a module-level `const` fixed array is accepted by\n" % ROWS)
-    out.write("// `nova check` and then miscompiled by codegen (registry 221.1 #998); the form\n")
-    out.write("// returns to `[%d]u64` when #998 is fixed. The generator writes the type.\n" % ROWS)
-    out.write("const POW5_HI []u64 = [\n")
+    out.write("// `[%d]u64` and not `[]u64`: the length belongs to the type, so the row count\n" % ROWS)
+    out.write("// is stated by the declaration itself and this script checks it against the exact\n")
+    out.write("// recomputation. The `[]u64` spelling was a workaround for registry 221.1 #998 and\n")
+    out.write("// #1003, both fixed 2026-09-07. The generator writes the type.\n")
+    out.write("const POW5_HI [%d]u64 = [\n" % ROWS)
     for q, hi, _lo in rows:
         out.write("    0x%016X, // 5^%d\n" % (hi, q))
     out.write("]\n")
     out.write("\n// Lower 64 bits of the 128-bit 5^q, same rows.\n")
-    out.write("const POW5_LO []u64 = [\n")
+    out.write("const POW5_LO [%d]u64 = [\n" % ROWS)
     for q, _hi, lo in rows:
         out.write("    0x%016X, // 5^%d\n" % (lo, q))
     out.write("]\n")
@@ -140,9 +141,10 @@ def render_nv(rows):
 
 ROW_RE = re.compile(r"^\s*0x([0-9A-Fa-f]{1,16})\s*,\s*//\s*5\^(-?\d+)\s*$")
 CONST_RE = re.compile(r"^const (POW5_SMALLEST_Q|POW5_LARGEST_Q|POW5_ROWS) = (-?\d+)\s*$")
-# The element type is checked, the length is not declared in the `[]u64` spelling (see the
-# #998 note the generator writes above each array): the row count below is the check.
-ARRAY_RE = re.compile(r"^const (POW5_HI|POW5_LO) \[\]u64 = \[\s*$")
+# Both the DECLARED length and the number of rows found are checked. They are independent:
+# a lost row makes the table disagree with its own declaration, and a declaration edited by
+# hand disagrees with the recomputation. The `[]u64` spelling could state neither.
+ARRAY_RE = re.compile(r"^const (POW5_HI|POW5_LO) \[(\d+)\]u64 = \[\s*$")
 
 
 class TableFormatError(Exception):
@@ -150,7 +152,11 @@ class TableFormatError(Exception):
 
 
 def parse_nv(text):
-    """Return (consts, {'POW5_HI': [(q, word)], 'POW5_LO': [(q, word)]})."""
+    """Return (consts, {'POW5_HI': [(q, word)], 'POW5_LO': [(q, word)]}).
+
+    `consts` also carries DECL_POW5_HI / DECL_POW5_LO -- the length written in the
+    declaration, which `check` compares against the recomputed row count.
+    """
     consts = {}
     arrays = {}
     current = None
@@ -164,6 +170,7 @@ def parse_nv(text):
         if m:
             current = m.group(1)
             arrays[current] = []
+            consts["DECL_" + current] = int(m.group(2))
             continue
         if current is not None:
             if line.strip() == "]":
@@ -203,6 +210,9 @@ def check(root):
             problems += 1
     for key, idx in (("POW5_HI", 1), ("POW5_LO", 2)):
         got = arrays[key]
+        if consts.get("DECL_" + key) != ROWS:
+            print("%s: MISMATCH %s declared length: file=%s expected=%d" % (NAME, key, consts.get("DECL_" + key), ROWS))
+            problems += 1
         if len(got) != ROWS:
             print("%s: MISMATCH %s row count: file=%d expected=%d" % (NAME, key, len(got), ROWS))
             problems += 1
@@ -221,7 +231,7 @@ def check(root):
     if problems:
         print("%s: FAIL -- %d difference(s) against the exact recomputation; regenerate with --write" % (NAME, problems))
         return 1
-    print("%s ok: %d/%d rows match the exact recomputation (hi and lo)" % (NAME, ROWS, ROWS))
+    print("%s ok: %d/%d rows match the exact recomputation (hi and lo), both declared [%d]u64" % (NAME, ROWS, ROWS, ROWS))
     return 0
 
 

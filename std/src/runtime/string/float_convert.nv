@@ -52,19 +52,20 @@ const F64_MAX_EXPONENT_DISGUISED_FAST_PATH = 37    // 22 + floor(53 / log2(10))
 const F64_MAX_MANTISSA_FAST_PATH u64 = 9007199254740992   // 1 << 53
 
 // mod.rs `pow10_fast_path` for f64: the powers of ten that are exact in f64, 10^0..10^22.
-// SERVES f32 TOO, through a cast at the point of use (`pow10_fast_path_f32` below): a
-// separate `const []f32` table is NOT declared because such a table is miscompiled today
-// (registry 221.1 #1003 -- the element width comes from the literals, and float literals are
-// f64), and it returns as its own table when #1003 is fixed.
+// SERVES f32 TOO, through a cast at the point of use (`pow10_fast_path_f32` below). That
+// started as a workaround for registry 221.1 #1003 and is now a CHOICE: #1003 was fixed
+// 2026-09-07, so a `[11]f32` table would compile -- but the whole f32 fast-path range,
+// 10^0..10^10, is exactly representable in f32 (10^10 = 2^10 * 5^10, and 5^10 < 2^24), so
+// the cast loses nothing and one table cannot drift away from another.
 // The donor pads the table to 32 entries and masks the index; the index here is always
 // within [0, 22] by the fast-path guard, so the table holds just the real range.
-const POW10_FAST_PATH []f64 = [
+const POW10_FAST_PATH [23]f64 = [
     1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 ]
 
 // decimal.rs `INT_POW10`: 10^0..10^15 as integers, for the disguised fast path.
-const INT_POW10 []u64 = [
+const INT_POW10 [16]u64 = [
     1, 10, 100, 1000, 10000, 100000, 1000000, 10000000,
     100000000, 1000000000, 10000000000, 100000000000,
     1000000000000, 10000000000000, 100000000000000, 1000000000000000,
@@ -281,7 +282,7 @@ fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
 // slow.rs: shift the decimal by 3.32 bits per digit of decimal-point distance -- a table
 // for distances below 19, capped at 60 (the most `DigitBuf` shifts at once).
 const SLOW_MAX_SHIFT = 60
-const SLOW_POWERS []int = [0, 3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53, 56, 59]
+const SLOW_POWERS [19]int = [0, 3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53, 56, 59]
 
 fn slow_shift_for(n int) -> int => if n < 19 { SLOW_POWERS[n] } else { SLOW_MAX_SHIFT }
 

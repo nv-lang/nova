@@ -241,6 +241,9 @@ test "DigitBuf: parse, right_shift and left_shift step by step on \"1\" (and the
     // Characterising the corruption: if the literal list is built as a Vec of `int`
     // (8 bytes each) and read back through a `[]u8` slot (1 byte), then element 1 is the
     // second BYTE of the first int -- zero -- and the real second value shows up at 8.
+    // That was registry 221.1 #1003, found here and fixed 2026-09-07; the table is now
+    // `[1308]u8`, so these two lines stay as the REGRESSION guard for the narrow-element
+    // path rather than as a description of a live defect.
     assert(TABLE_POW5[1] != 0, "TABLE_POW5[1] is 0 -- int-stride read through a u8 slot")
     assert(TABLE_POW5[8] != 2, "TABLE_POW5[8] is 2 -- the second value sits 8 bytes on")
     assert(TABLE_POW5[1] == 2, "TABLE_POW5[1] == 2")

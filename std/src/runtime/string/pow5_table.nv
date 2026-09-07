@@ -21,10 +21,11 @@ const POW5_LARGEST_Q = 308
 const POW5_ROWS = 651
 
 // Upper 64 bits of the 128-bit 5^q; row i <-> q = i + POW5_SMALLEST_Q.
-// `[]u64`, not `[651]u64`: a module-level `const` fixed array is accepted by
-// `nova check` and then miscompiled by codegen (registry 221.1 #998); the form
-// returns to `[651]u64` when #998 is fixed. The generator writes the type.
-const POW5_HI []u64 = [
+// `[651]u64` and not `[]u64`: the length belongs to the type, so the row count
+// is stated by the declaration itself and this script checks it against the exact
+// recomputation. The `[]u64` spelling was a workaround for registry 221.1 #998 and
+// #1003, both fixed 2026-09-07. The generator writes the type.
+const POW5_HI [651]u64 = [
     0xEEF453D6923BD65A, // 5^-342
     0x9558B4661B6565F8, // 5^-341
     0xBAAEE17FA23EBF76, // 5^-340
@@ -679,7 +680,7 @@ const POW5_HI []u64 = [
 ]
 
 // Lower 64 bits of the 128-bit 5^q, same rows.
-const POW5_LO []u64 = [
+const POW5_LO [651]u64 = [
     0x113FAA2906A13B3F, // 5^-342
     0x4AC7CA59A424C507, // 5^-341
     0x5D79BCF00D2DF649, // 5^-340
