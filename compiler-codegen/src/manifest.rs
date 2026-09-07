@@ -4,9 +4,12 @@
 //! `[package].name`, `[package].edition`, `[lib].enforce-stability` и
 //! `[dependencies]`.
 //!
-//! **Source root = корень пакета** (директория `nova.toml`). D78
-//! (2026-05-22): отдельной `src/` и настройки `[lib] src` больше нет;
-//! `[lib] src`, если задан в legacy-манифесте, ещё уважается.
+//! **Source root задаётся ключом `[lib] src`**; при его отсутствии —
+//! корень пакета (директория `nova.toml`). D78 + амендмент Plan 195
+//! (2026-07-10): для НОВЫХ пакетов канон — `src/` (эталон nova-tls),
+//! плоская раскладка `src = "."` легальна, но не рекомендуется.
+//! Прежняя формулировка («`src/` больше нет, ключ — legacy») цитировала
+//! решение 2026-05-22, ОТМЕНЁННОЕ амендментом (№1026).
 //! Expected module = `<package>.<rel-path-from-package-root-without-ext>`.
 //!
 //! Если файл лежит **вне** source root — пропускаем enforcement (это
@@ -63,8 +66,9 @@ pub struct Manifest {
     pub package_name: String,
     pub source_root: PathBuf,
     /// Directory containing `nova.toml` itself (the package root). Usually
-    /// identical to `source_root` — they diverge only for a legacy `[lib]
-    /// src = "<subdir>"` manifest (D78 back-compat; e.g. `nova-tls`'s
+    /// identical to `source_root` — they diverge for the canonical
+    /// `src/` layout, `[lib] src = "<subdir>"` (D78 + the Plan 195 amendment,
+    /// standard for new packages, NOT back-compat; reference: `nova-tls`'s
     /// `src = "src"`). `[ffi]` paths are documented (see [`FfiConfig`]) as
     /// relative to **this** directory, not `source_root` — found 2026-07-12
     /// while fixing the `nova-tls` standalone-package D133 regression:
@@ -630,9 +634,10 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     }
 
     let pkg = package_name?;
-    // D78 (2026-05-22): source root = корень пакета. Отдельной `src/`
-    // и настройки `[lib] src` больше нет — default `.`. `[lib] src`,
-    // если задан в legacy-манифесте, ещё уважается (back-compat).
+    // D78 + амендмент Plan 195 (2026-07-10): source root задаётся ключом
+    // `[lib] src`; для новых пакетов канон — `src = "src"`, плоская
+    // раскладка `.` легальна и служит умолчанием. Строка ниже даёт
+    // ровно это и НЕ менялась; неверным был только комментарий (№1026).
     let src_subdir = lib_src.unwrap_or_else(|| ".".to_string());
     let source_root = if src_subdir == "." {
         dir.to_path_buf()

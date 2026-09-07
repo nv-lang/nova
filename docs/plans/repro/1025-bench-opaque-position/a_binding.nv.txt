@@ -1,0 +1,10 @@
+// Probe A: `ro _ = bench.opaque(<Result>)` inside a for -- the shape that ICEs.
+module micro.probe_a
+fn set() -> []str { ["1.5", "2.5"] }
+bench "A: ro _ = opaque(Result) in a for" {
+    ro s2 = set()
+    measure {
+        for s in s2 { ro _ = bench.opaque(s.to_f64()) }
+        bench.elements(2)
+    }
+}

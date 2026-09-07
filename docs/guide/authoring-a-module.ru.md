@@ -23,7 +23,8 @@ source_date: 2026-08-02
 
 ## 0. TL;DR
 
-1. Создай каталог; положи в корень `nova.toml` с `[package] name`.
+1. Создай каталог; положи в корень `nova.toml` с `[package] name`, а
+   `.nv`-файлы — в `src/` (`[lib] src = "src"`, §1).
 2. Пиши `.nv`-файлы — **путь файла = путь модуля** (`foo/bar.nv` ⇒ `module foo.bar`).
 3. Тесты — рядом, в файлах `*_test.nv` (или `test "…" { }`-блоки внутри модуля).
 4. Публичную поверхность помечай `export` + `#stable(since = "X")`.
@@ -33,19 +34,26 @@ source_date: 2026-08-02
 
 ## 1. Layout пакета
 
-Пакет — это каталог с `nova.toml` в корне. **Source root = корень пакета**
-(отдельного `src/` нет — D78, 2026-05-22). Модули лежат прямо в подкаталогах:
+Пакет — это каталог с `nova.toml` в корне. **Source root** — каталог,
+от которого резолвятся пути `module`, — задаётся ключом `[lib] src`
+в манифесте: для нового пакета это **`src/`**, а плоская раскладка
+(`src = "."`, умолчание при отсутствии ключа) остаётся легальной, но не
+рекомендуется. Канон и его причина — в амендменте Plan 195 к
+[D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
+(2026-07-10), отменившем прежнее решение «отдельного `src/` нет», которое
+эта страница цитировала. Модули лежат в подкаталогах source root:
 
 ```
 nova-greet/                 repository: nova-<package> (§8)
-├── nova.toml               manifest (required)
+├── nova.toml               manifest (required; [lib] src = "src")
 ├── LICENSE
 ├── README.md
-├── greet.nv                module greet          (the package's root module)
-├── greet_test.nv           tests alongside the module
-└── format/
-    ├── ascii.nv            module format.ascii
-    └── ascii_test.nv       tests alongside
+└── src/                    source root (§1)
+    ├── greet.nv            module greet          (the package's root module)
+    ├── greet_test.nv       tests alongside the module
+    └── format/
+        ├── ascii.nv        module format.ascii
+        └── ascii_test.nv   tests alongside
 ```
 
 Служебные каталоги (`target/`, `.git/`, скрытые `.`-префикс) резолвер
@@ -64,6 +72,9 @@ description = "Greetings in different languages"
 license = "MIT OR Apache-2.0"      # SPDX
 repository = "https://github.com/you/nova-greet"
 
+[lib]
+src = "src"                        # source root: the canon for new packages (§1)
+
 [[bin]]                            # optional: a binary entry point
 name = "greet"
 path = "bin/greet.nv"
@@ -75,15 +86,17 @@ remote   = { git = "https://github.com/…", tag = "v1" } # git (Plan 03.1/03.2)
 ```
 
 Пакет **по умолчанию — библиотека**: его `export`-декларации импортируемы
-другими пакетами без какой-либо `[lib]`-секции. `[[bin]]` добавляет бинарные
-точки входа (пакет может быть и библиотекой, и набором бинарей).
+другими пакетами и вовсе без `[lib]`-секции — эта секция несёт
+раскладку и выключатель стабильности, а не «библиотечность». `[[bin]]`
+добавляет бинарные точки входа (пакет может быть и библиотекой, и
+набором бинарей).
 
 ## 3. Module path = file path (D78)
 
 Компилятор **обязательно** сверяет объявление `module …` с путём файла;
 несоответствие — `E_D78_MODULE_PATH_MISMATCH` с подсказкой. Правило (rev-3):
 
-| Файл (от корня пакета `greet`) | Объявление | Импорт |
+| Файл (от source root пакета `greet`) | Объявление | Импорт |
 |---|---|---|
 | `greet.nv` | `module greet` | `import greet.{hello}` |
 | `format/ascii.nv` | `module format.ascii` | `import format.ascii.{…}` |
@@ -189,7 +202,8 @@ libs         = ["sqlite3"]                 # system: clang -lsqlite3 / sqlite3.l
 
 ## 9. Чек-лист нового модуля
 
-1. `nova.toml` с `[package] name` в корне.
+1. `nova.toml` с `[package] name` в корне; `[lib] src = "src"`, а `.nv`-файлы
+   в `src/` (§1).
 2. `.nv`-файлы: `module path = file path`; папка = один модуль.
 3. Публичное — `export` + `#stable(since)`; для либы — `enforce-stability = true`.
 4. Тесты рядом (`*_test.nv` / `test`-блоки); эффект-модуль → mock-тест.

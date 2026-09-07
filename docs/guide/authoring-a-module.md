@@ -19,7 +19,8 @@
 
 ## 0. TL;DR
 
-1. Create a directory; put `nova.toml` with `[package] name` at its root.
+1. Create a directory; put `nova.toml` with `[package] name` at its root and
+   the `.nv` files in `src/` (`[lib] src = "src"`, §1).
 2. Write `.nv` files — **file path = module path** (`foo/bar.nv` ⇒ `module foo.bar`).
 3. Tests go alongside, in `*_test.nv` files (or `test "…" { }` blocks inside the module).
 4. Mark the public surface with `export` + `#stable(since = "X")`.
@@ -29,20 +30,26 @@
 
 ## 1. Package layout
 
-A package is a directory with `nova.toml` at its root. **Source root =
-package root** (there's no separate `src/` — D78, 2026-05-22). Modules live
-directly in subdirectories:
+A package is a directory with `nova.toml` at its root. The **source root** —
+the directory `module` paths are resolved against — is set by `[lib] src`
+in the manifest: for a new package that is **`src/`**, while the flat
+layout (`src = "."`, the default when the key is absent) stays legal but is
+not recommended. The canon and the reason live in the Plan 195 amendment to
+[D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
+(2026-07-10), which retracted the earlier "no separate `src/`" decision this
+page used to quote. Modules live in subdirectories of the source root:
 
 ```
 nova-greet/                 repository: nova-<package> (§8)
-├── nova.toml               manifest (required)
+├── nova.toml               manifest (required; [lib] src = "src")
 ├── LICENSE
 ├── README.md
-├── greet.nv                module greet          (the package's root module)
-├── greet_test.nv           tests alongside the module
-└── format/
-    ├── ascii.nv            module format.ascii
-    └── ascii_test.nv       tests alongside
+└── src/                    source root (§1)
+    ├── greet.nv            module greet          (the package's root module)
+    ├── greet_test.nv       tests alongside the module
+    └── format/
+        ├── ascii.nv        module format.ascii
+        └── ascii_test.nv   tests alongside
 ```
 
 Service directories (`target/`, `.git/`, hidden `.`-prefixed ones) are
@@ -63,6 +70,9 @@ description = "Greetings in different languages"
 license = "MIT OR Apache-2.0"      # SPDX
 repository = "https://github.com/you/nova-greet"
 
+[lib]
+src = "src"                        # source root: the canon for new packages (§1)
+
 [[bin]]                            # optional: a binary entry point
 name = "greet"
 path = "bin/greet.nv"
@@ -74,8 +84,10 @@ remote   = { git = "https://github.com/…", tag = "v1" } # git (Plan 03.1/03.2)
 ```
 
 A package **is a library by default**: its `export` declarations are
-importable by other packages with no `[lib]` section at all. `[[bin]]` adds
-binary entry points (a package can be both a library and a set of binaries).
+importable by other packages even with no `[lib]` section at all — that
+section carries the layout and the stability switch, not the library-ness.
+`[[bin]]` adds binary entry points (a package can be both a library and a
+set of binaries).
 
 ## 3. Module path = file path (D78)
 
@@ -83,7 +95,7 @@ The compiler **always** checks the `module …` declaration against the file
 path; a mismatch gives `E_D78_MODULE_PATH_MISMATCH` with a hint. The rule
 (rev-3):
 
-| File (from package `greet`'s root) | Declaration | Import |
+| File (from package `greet`'s source root) | Declaration | Import |
 |---|---|---|
 | `greet.nv` | `module greet` | `import greet.{hello}` |
 | `format/ascii.nv` | `module format.ascii` | `import format.ascii.{…}` |
@@ -191,7 +203,8 @@ registry (named `<package> = "1.2"`) is Plan 03.3, separately.
 
 ## 9. New-module checklist
 
-1. `nova.toml` with `[package] name` at the root.
+1. `nova.toml` with `[package] name` at the root; `[lib] src = "src"` and
+   the `.nv` files in `src/` (§1).
 2. `.nv` files: `module path = file path`; a folder = one module.
 3. Public surface — `export` + `#stable(since)`; for a library —
    `enforce-stability = true`.
