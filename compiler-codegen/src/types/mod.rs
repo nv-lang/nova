@@ -12298,6 +12298,58 @@ impl<'a> TypeCheckCtx<'a> {
                 // `ExprKind::Unary` arm (see `assign_target_top`'s field
                 // doc and that arm's comment for the full rationale).
                 let is_assign_target_top = self.assign_target_top.replace(false);
+                // Plan 284 F.2a (D470): a Range index requires the SLICE ROLE —
+                // `@index(r Range)` AND `@end_index() -> int` — and the refusal
+                // belongs HERE, not in codegen. Two measured reasons. A
+                // codegen-side error carries no span, and the negative fixture
+                // said so: "pinned to line 33, but the matching error landed on
+                // line ?"; plan 280 met that wall and moved its own refusal into
+                // this file for the same reason (`E_AMBIGUOUS_CALLER_LOC` above).
+                // And this arm is what lets the form through: it annotates the
+                // receiver type for ANY Range index without asking whether an
+                // `@index(Range)` implementation exists at all.
+                //
+                // THE CONDITION IS NARROW ON PURPOSE, and that is what makes it
+                // safe: refuse only when the type DECLARES `index` and does NOT
+                // declare `end_index`. Anything this table cannot see — a fixed
+                // array `[N]T`, a `[]T` receiver whose slicing codegen handles on
+                // its own path — does not match and behaves exactly as before.
+                // Asking "does it satisfy the role" instead would have needed a
+                // list of builtin shapes to exempt, which is the list this plan
+                // exists to delete.
+                //
+                // Tested on the SYNTACTIC form, and NOT on `index_is_range`
+                // (computed below), even though reusing that variable would look
+                // tidier. It is broader by design — it also matches a `Range`-typed
+                // VALUE, so that `let r = 2..5; s[r]` works — and that form needs no
+                // `@end_index()`: a fully-formed `Range` has no open end to
+                // materialize, and it reaches the type through plain
+                // `Index[Range, V]` (D238). Refusing it would be a NEW refusal on a
+                // form that works today. D470 §3 carries this boundary in normative
+                // text.
+                if matches!(index.kind, ExprKind::Range { .. }) {
+                    if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                        if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                            let has_index = self.find_method_decl(tname, "index").is_some();
+                            let has_end = self.find_method_decl(tname, "end_index").is_some();
+                            if has_index && !has_end {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_SLICE_ROLE_UNSATISFIED] `{}` does not satisfy \
+                                         the slice role `RangeIndex` (D470): it declares \
+                                         `@index(r Range)` but no `@end_index() -> int`, \
+                                         and an open-ended `x[a..]` has nothing to ask \
+                                         for the upper bound. Add `@end_index()` to \
+                                         `{}` — for a container it is usually one line \
+                                         returning its length.",
+                                        tname, tname
+                                    ),
+                                    e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
                 self.f1_expr(obj, gs, scope, errors);
                 self.f1_expr(index, gs, scope, errors);
                 // Plan 152.1 Ф.1 (D249): `str` is NOT integer-indexable — codepoint

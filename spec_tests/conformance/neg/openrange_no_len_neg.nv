@@ -29,23 +29,14 @@ fn Weird @index(r Range) -> Weird {
 
 fn main() -> () {
     ro w = Weird { cap: 5 }
-    // NO `nova:expect` PIN YET, and that is measured, not forgotten. The
-    // diagnostic fires exactly as intended -- verified 2026-09-07:
-    //   [E_SLICE_ROLE_UNSATISFIED] type `Nova_Weird*` does not support range
-    //   slicing (`[a..]`/`[a..b]`): it does not satisfy the slice role ...
-    // but it carries no span, so a pin cannot match it and the runner refuses
-    // honestly: "pinned to line 33, but the matching error landed on line ?".
     //
-    // What closes this, with the precedent that decides how: plan 280 met the
-    // same wall and moved the refusal INTO THE CHECKER, where spans exist
-    // (`compiler-codegen/src/types/mod.rs:6636-6641`, verbatim: "a codegen-side
-    // error carries no span and the neg fixture reported 'landed on line ?' --",
-    // "a diagnostic that points nowhere is the very class this plan exists to
-    // remove"). The checker is also where this check belongs for its own
-    // reason, stated in the header above: `nova check` accepts the form today
-    // because the Index arm returns `obj_tr` for any Range index without
-    // verifying an impl exists. One change closes both, and the pin comes back
-    // WITH it, as its proof (plan 284, F.2a).
+    // The pin is a MEASUREMENT of where the refusal comes from, not decoration.
+    // Codegen refuses with a bare string and no span: this file reported
+    // "pinned to line 33, but the matching error landed on line ?" while that was
+    // the only refusal (2026-09-07). The checker refuses with a `Diagnostic`
+    // carrying `e.span`. So a line pin that MATCHES says the checker refused --
+    // which is the whole reason plan 284 F.2a moved the refusal there.
+    // nova:expect E_SLICE_ROLE_UNSATISFIED -- `Weird` answers `@index(r Range)` and not `@end_index()`
     ro v = w[2..]
     ro _ = v
 }
