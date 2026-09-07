@@ -255,6 +255,35 @@ test "DigitBuf: parse, right_shift and left_shift step by step on \"1\" (and the
     assert(fp.m == 0, "parse_long_mantissa(1): m == 0")
 }
 
+test "DigitBuf: the truncation flag is set by a string longer than the buffer, and only then" {
+    // Both ways on the flag itself, not through a bit result: `round` reads `truncated` to
+    // decide a tie ("dropped digits mean strictly above the half"), so a flag that never
+    // rises would round those ties the wrong way while every shorter string stayed right.
+    ro short_one = parse_digit_buf("1.5")
+    assert(!short_one.truncated, "a short string must NOT be truncated")
+    assert(short_one.num_digits == 2, "1.5 keeps both digits")
+    // 800 significant digits: past the 768 the buffer holds.
+    mut long_digits = "0."
+    mut k = 0
+    while k < 80 {
+        long_digits = "${long_digits}1234567890"
+        k += 1
+    }
+    ro long_one = parse_digit_buf(long_digits)
+    assert(long_one.truncated, "800 digits must set the flag")
+    assert(long_one.num_digits == 768, "and the buffer keeps exactly its capacity")
+    // Exactly at the edge: 768 digits fit, so nothing is dropped.
+    mut edge = "0."
+    mut j = 0
+    while j < 768 {
+        edge = "${edge}7"
+        j += 1
+    }
+    ro edge_buf = parse_digit_buf(edge)
+    assert(!edge_buf.truncated, "768 digits fit exactly and are NOT truncated")
+    assert(edge_buf.num_digits == 768, "all 768 kept")
+}
+
 // ── the slow path alone ───────────────────────────────────────────────────────
 
 fn curated() -> []str {

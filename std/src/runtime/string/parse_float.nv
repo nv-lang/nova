@@ -22,17 +22,20 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 
+// WHY THESE NAMES ARE INTERIM (2026-09-05, registry #136 + its new carrier). This note
+// lives in `//`, not in `///`: a doc comment is a user-facing artifact of the coming
+// release and carries no internal references — no plan numbers, no `[M-...]`, no registry
+// numbers, no repro paths (nv-coding-style §0а). The owner's decision is the shared
+// vocabulary `Empty | Invalid { at } | AboveMax | BelowMin` (same as `ParseIntError`,
+// `RangeError`, `CharError`). It cannot be used yet: a variant name that exists in more
+// than one sum of the CU is lowered by its BARE name — even when written qualified
+// (`ParseFloatError.Invalid { at }`) — and lands in another sum's tag; measured on this
+// file: `Err(Invalid { at })` built a `ParseBoolError.Invalid` (unit) and every match
+// missed, `AboveMax` printed as `Invalid`. `Malformed`/`TooLarge`/`TooSmall` are unique in
+// the CU and are to be renamed back to the vocabulary the day #136 is fixed (probe:
+// `docs/plans/repro/962-variant-name-collision/`).
+
 /// Error variants for `str @to_f64()`.
-///
-/// INTERIM NAMES (2026-09-05, registry #136 + its new carrier): the owner's decision is the
-/// shared vocabulary `Empty | Invalid { at } | AboveMax | BelowMin` (same as `ParseIntError`,
-/// `RangeError`, `CharError`). It cannot be used yet: a variant name that exists in more than
-/// one sum of the CU is lowered by its BARE name — even when written qualified
-/// (`ParseFloatError.Invalid { at }`) — and lands in another sum's tag; measured on this
-/// file: `Err(Invalid { at })` built a `ParseBoolError.Invalid` (unit) and every match
-/// missed, `AboveMax` printed as `Invalid`. `Malformed`/`TooLarge`/`TooSmall` are unique in
-/// the CU and are to be renamed back to the vocabulary the day #136 is fixed (probe:
-/// `docs/plans/repro/962-variant-name-collision/`).
 ///
 /// - `Empty` — the string is empty;
 /// - `Malformed { at }` — the grammar broke at byte index `at` (first byte that does not
