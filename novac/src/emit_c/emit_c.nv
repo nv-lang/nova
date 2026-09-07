@@ -587,11 +587,13 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         ro kids = branch_children(st)
         if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
            kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
-            // A COLLECTION head (wave B16) walks a vector; its own co-equal
-            // door spells the len/get loop. A name or field head costs one
-            // pointer copy into the temporary -- the same one-evaluation
-            // contract a call head needs for its effects.
-            @emit_for_call(kids)
+            // A COLLECTION head (wave B16) walks a vector by index: a loop
+            // of the lowered body whose header carries the collection, the
+            // index and the element locals (274.8 M2b-1c, emit_flow.nv). A
+            // name or field head costs one pointer copy into the temporary --
+            // the same one-evaluation contract a call head needs for its
+            // effects.
+            @lower_for_each(kids)
             return
         }
         // A RANGE head: a loop of the lowered body with the range as its

@@ -73,6 +73,17 @@ export type Rvalue enum
     | Use(Operand) // a read of an operand
     | Expr(Node) // a tree expression, printed by the emitter (the M1 bridge)
     | SomePayload(Local) // the payload of the Some the local holds (if-let binder)
+    | IndexPayload(ElemRead) // the element of a collection local at an index local (for-each binder)
+
+/// The element read of a collection walk (wave M2b-1c): `vec` holds the
+/// collection, `idx` the index; the printer spells the shell's `get` of the
+/// collection's instance and takes `.value` -- the guard of the loop header
+/// proved the index is in range, so the Option is always Some (INTEROP with
+/// the shell's Option ABI, named in emit_option.nv).
+export type ElemRead value {
+    vec Local /// the collection local
+    idx Local /// the index local
+}
 
 /// `dest = src` -- the ONE way a value reaches a place in the lowered body.
 export type AssignStmt value {
@@ -126,13 +137,25 @@ export type RangeHead value {
     hi Node /// the upper bound, exclusive
 }
 
+/// `for v in <collection>` (wave M2b-1c): the collection's value lands in a
+/// binding local ONCE (one evaluation is the contract -- a call head's
+/// effects run once), the index is a binding local of int, and the element
+/// is a binding local assigned at the top of every iteration from the
+/// collection at the index (`Rvalue.IndexPayload`).
+export type EachHead value {
+    vec Local /// the collection, a binding local holding the head's value
+    idx Local /// the index, a binding local of int
+    elem Local /// the element binding, assigned at the top of each iteration
+}
+
 /// How a loop's header reads (wave M2b-1). The header CARRIES its source form
-/// because the C printer spells `while (c)` and `for (nova_int v = lo; v < hi;
-/// v++)` with different words, and the wave's criterion is byte-identical C.
-/// The loop over a collection (`emit_for.nv`) arrives with its own sub-slice.
+/// because the C printer spells `while (c)`, `for (nova_int v = lo; v < hi;
+/// v++)` and the len/get walk of a collection with different words, and the
+/// wave's criterion is byte-identical C.
 export type LoopHead enum
     | While(Node) // `while cond`
     | Range(RangeHead) // `for v in lo..hi`
+    | Each(EachHead) // `for v in <collection>`: index walk over len/get
 
 /// A loop (wave M2b-1). The block carrying this terminator IS the header: it
 /// holds no statements, tests the head, enters `body` or `exit`; the body's
@@ -273,6 +296,13 @@ export fn FnBuilder mut @place(e Node, dest Local) -> () {
 /// the read is safe by construction.
 export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.SomePayload(opt) }))
+}
+
+/// The element binding of a `for` over a collection (wave M2b-1c): `dest =
+/// vec[idx]`, recorded in the current block -- the loop body the header
+/// just opened, where the index is in range by the header's test.
+export fn FnBuilder mut @take_elem(dest Local, vec Local, idx Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.IndexPayload(ElemRead { vec, idx }) }))
 }
 
 /// A statement expression: evaluated, its value dropped.

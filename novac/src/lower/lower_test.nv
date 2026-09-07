@@ -231,6 +231,7 @@ test "a while loop: the header is its own empty block, the body jumps back to it
             match t.head {
                 While(_) => { } // the head handed in
                 Range(_) => assert(false)
+                Each(_) => assert(false)
             }
         }
         Return => assert(false)
@@ -256,12 +257,60 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
                 assert(f.locals[raw_local(r.var)].name == "i")
             }
             While(_) => assert(false)
+            Each(_) => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)
         If(_) => assert(false)
         Unreached => assert(false)
     }
+}
+
+test "a for over a collection: the header carries vec/idx/elem locals, the body starts by reading vec[idx]" {
+    mut b = FnBuilder.new(TyId(3))
+    ro v = b.named(TyId(11), "_novac_tmp_t1")
+    b.place(stand_in_expr(), v)
+    ro i = b.named(TyId(3), "_novac_i_t2")
+    ro e = b.named(TyId(7), "x")
+    ro c = b.begin_loop(LoopHead.Each(EachHead { vec: v, idx: i, elem: e }))
+    b.take_elem(e, v, i)
+    match b.last_stmt() {
+        Assign(a) => {
+            assert(a.dest == e)
+            match a.src {
+                IndexPayload(r) => {
+                    assert(r.vec == v)
+                    assert(r.idx == i)
+                }
+                SomePayload(_) => assert(false)
+                Expr(_) => assert(false)
+                Use(_) => assert(false)
+            }
+        }
+        Eval(_) => assert(false)
+        Store(_) => assert(false)
+    }
+    b.end_loop(c)
+    b.end_body()
+    ro f = b.finish()
+    assert(f.blocks[0].stmts.len() == 1)
+    match f.blocks[raw_block(c.head)].term {
+        Loop(t) => match t.head {
+            Each(h) => {
+                assert(h.vec == v)
+                assert(h.idx == i)
+                assert(h.elem == e)
+            }
+            While(_) => assert(false)
+            Range(_) => assert(false)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        If(_) => assert(false)
+        Unreached => assert(false)
+    }
+    assert(f.blocks[raw_block(c.body)].stmts.len() == 1)
+    assert(goes_to(f.blocks[raw_block(c.body)].term, c.head))
 }
 
 test "an if-let: the Option lands in a binding, the If tests IsSome of it, the binder reads its payload" {
@@ -278,6 +327,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 SomePayload(l) => assert(l == o)
                 Expr(_) => assert(false)
                 Use(_) => assert(false)
+                IndexPayload(_) => assert(false)
             }
         }
         Eval(_) => assert(false)

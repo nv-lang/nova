@@ -20,9 +20,10 @@ module novac.emit_c
 
 import ../tree.{Node, NodeKind, AssignOp}
 import ../diag.{ice}
-import ../sem.{is_value_tail_kind, c_type}
+import ../sem.{is_value_tail_kind, c_type, c_instance_method}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue}
+import ../builtins.{VEC_GET_METHOD}
 
 /// Records `dest = e` in the lowered body and prints it at once -- the
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
@@ -62,6 +63,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         Expr(n) => n
         Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
         SomePayload(_) => ice("emit_c: a payload read reached expr_of -- only an assignment prints it")
+        IndexPayload(_) => ice("emit_c: an element read reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -88,6 +90,15 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
         SomePayload(opt) => {
             @emit_assign_head(d)
             @body.append("${@ir.decl_of(opt).name}.value;\n")
+        }
+        IndexPayload(r) => {
+            // The shell's `get` of the collection's instance hands back the
+            // Option BY VALUE and the loop header proved the index in range,
+            // so `.value` is always the element -- INTEROP (emit_option.nv).
+            ro vd = @ir.decl_of(r.vec)
+            ro get_c = c_instance_method(@ctx, vd.ty, VEC_GET_METHOD)
+            @emit_assign_head(d)
+            @body.append("${get_c}(${vd.name}, ${@ir.decl_of(r.idx).name}).value;\n")
         }
         Use(_) => ice("emit_c: emit_assign met an operand rvalue before M2 lowers one")
     }
