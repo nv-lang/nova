@@ -62,9 +62,16 @@ fi
 # ── 3. ЧЕТВЁРТАЯ ДВЕРЬ — красный ──────────────────────────────────────────
 make_tree "$T/red4/src"
 mkdir -p "$T/red4/src/sem"
+# Г10: случай кодирует ЗАМЕР, а не допущение — здесь лежит ДОСЛОВНОЕ тело
+# настоящего предиката из `compiler-codegen/src/codegen/emit_c.rs`, перенесённое
+# в другой файл. Мутация измеренного кода, а не изобретённый API: так случай
+# ВОСПРОИЗВОДИТ форму «вопрос о роли задан в новом месте», а не описывает её.
 cat > "$T/red4/src/sem/other.rs" <<'RS'
-fn also_asks(t: &str) -> bool {
-    table.has(t, "index") && table.has(t, "end_index")
+fn satisfies_range_index_role(&self, obj_ty: &str) -> bool {
+    let tname = Self::debt_nova_type_name_from_c(obj_ty);
+    let base = tname.split("____").next().unwrap_or(tname.as_str());
+    self.all_methods.contains(&(base.to_string(), "index".to_string()))
+        && self.all_methods.contains(&(base.to_string(), "end_index".to_string()))
 }
 RS
 if python "$G" "$T/red4" "$T/red4/src" > "$T/out3" 2> "$T/err3"; then
