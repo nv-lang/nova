@@ -22,7 +22,13 @@
 
 # Пути, за которые отвечает ЯРУС NOVAC (`scripts/gate-novac.sh`, 87 стражей
 # `check-novac-*`), и которых основной `scripts/gate.sh` не судит вовсе.
-NOVAC_TIER_PATH_RE='^(novac/|scripts/gate-novac\.sh|scripts/guards/check-novac-|scripts/guards/novac-)'
+# САМОТЕСТЫ novac-СТРАЖЕЙ ДОБАВЛЕНЫ 2026-09-06, ЗАМЕРОМ. Обе прежние копии
+# регулярки ловили `scripts/guards/check-novac-*`, но НЕ ловили
+# `scripts/guards/selftest/test-check-novac-*`. То есть ветка, правящая ТОЛЬКО
+# самотесты novac-стражей, не потребовала бы вердикта их яруса, а именно
+# самотест и доказывает, что страж умеет краснеть. Найдено при подсчёте
+# путей готовящегося слияния: три таких файла числились «не-novac».
+NOVAC_TIER_PATH_RE='^(novac/|scripts/gate-novac\.sh|scripts/guards/check-novac-|scripts/guards/novac-|scripts/guards/selftest/test-check-novac-|scripts/guards/selftest/test-novac-)'
 
 novac_paths_re() { printf '%s' "$NOVAC_TIER_PATH_RE"; }
 

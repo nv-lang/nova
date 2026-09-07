@@ -45,7 +45,7 @@ verification) — в [wip/](wip/); при закрытии волны — уда
 | http | [178](178-std-http.md) (umbrella) + [222](222-http-framework.md) (зонтик: nova-http как веб-фреймворк — Router/extractors/middleware/run-loop hardening; волна A в работе) + [222.0](222.0-module-map.md) (карта модулей) + под-планы [222.3](222.3-extractors.md)/[222.4](222.4-middleware.md)/[222.5](222.5-respond.md)/[222.11](222.11-multipart.md)/[222.12](222.12-http-batteries.md)/[222.13](222.13-auth.md)/[222.14](222.14-websocket.md) |
 | encoding/compress | [179](179-std-encoding-compress.md) |
 | serde / typed-json | [180](180-serde-derive.md) + [222.2](222-http-framework.md) (field-атрибуты до Rust-паритета) |
-| формат/Display | [208](208-unified-formatter.md) |
+| формат/Display | [208](208-unified-formatter.md) + [285](285-float-format-own.md) (число в строку без libc: свой кратчайший round-trip, трек Carina) |
 | коэрсии `#coerce` | [214](214-coerce-attribute.md) + [214.1](214.1-generic-coerce.md) (generic-образцы, снятие R14) |
 
 ## Связанные директории

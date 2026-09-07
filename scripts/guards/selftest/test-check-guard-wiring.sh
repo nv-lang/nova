@@ -38,7 +38,12 @@ check() { # имя, ожидаемый_код, фактический_код
 # Собрать игрушечную репу: scripts/guards/ + scripts/guards/selftest/ + gate.sh
 # с циклом самотестов (та же трёхуровневая форма, что настоящая scripts/).
 make_repo() { # каталог
-    mkdir -p "$1/scripts/guards/selftest"
+    mkdir -p "$1/scripts/guards/selftest" "$1/docs/plans"
+    # Страж теперь требует не только ССЫЛКУ на план, но и чтобы названный путь
+    # СУЩЕСТВОВАЛ (2026-09-07, предложение окна 274). В игрушечной репе плана
+    # не было вовсе, и «корректно оформленный страж» перестал быть таковым —
+    # фикстура описывала мир, которого больше нет. Кладём план рядом.
+    : > "$1/docs/plans/231-bug-cycle-exit.md"
     cat > "$1/scripts/gate.sh" <<'EOG'
 #!/usr/bin/env bash
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do bash "$st"; done

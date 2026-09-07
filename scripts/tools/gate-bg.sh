@@ -28,6 +28,18 @@ LOG=/tmp/gate_full.log
 DONE=/tmp/gate_full.done
 STAMP=/tmp/gate_full.started
 
+# «Лог есть, .done нет» — признак идущего гейта, но НЕ ЕДИНСТВЕННЫЙ. Замер
+# 2026-09-06: интегратор снял .done рукой перед запуском, лаунчер увидел «идёт»
+# по ВЧЕРАШНЕМУ логу и отклонил запуск, а сторож 9,5 минут читал финальную
+# строку того лога. Финальная строка — второй признак: `GATE OK (final)`
+# gate.sh печатает ТОЛЬКО на выходе зелёного прогона (gate.sh:1707-1709); у
+# идущего прогона последняя строка — шаг, а не вердикт. Красный прогон
+# второго признака НЕ имеет (`GATE FAIL:` бывает и не последней строкой) —
+# там лаунчер отказывает, как раньше: ошибка в безопасную сторону.
+_gate_log_finished() {
+    tail -1 "$LOG" 2>/dev/null | grep -aqE 'GATE OK \(final\)'
+}
+
 # ── Режим проверки: мгновенный, без ожидания ──────────────────────────────
 if [ "${1:-}" = "-c" ]; then
     if [ -f "$DONE" ]; then
@@ -45,6 +57,10 @@ if [ "${1:-}" = "-c" ]; then
     if [ -f "$LOG" ]; then
         started=$(cat "$STAMP" 2>/dev/null || echo 0)
         now=$(date +%s)
+        if _gate_log_finished; then
+            echo "ГЕЙТ ЗАВЕРШЁН, но .done снят рукой — вердикт только в логе: $(tail -1 "$LOG" | cut -c1-110)"
+            exit 0
+        fi
         echo "ГЕЙТ ИДЁТ: $(wc -l < "$LOG") строк, $(( (now - started) / 60 )) мин — НЕ ЖДИ, займись другим"
         exit 0
     fi
@@ -54,9 +70,13 @@ fi
 
 # ── Режим запуска ─────────────────────────────────────────────────────────
 if [ -f "$LOG" ] && [ ! -f "$DONE" ]; then
-    echo "gate-bg: гейт УЖЕ идёт ($(wc -l < "$LOG") строк) — второй запуск отклонён." >&2
-    echo "gate-bg: параллельные гейты дерутся за nova.exe и дают фантомные падения." >&2
-    exit 1
+    if _gate_log_finished; then
+        echo "gate-bg: .done нет, но лог кончается вердиктом — прошлый прогон ЗАВЕРШЁН (его .done снят рукой); запускаю" >&2
+    else
+        echo "gate-bg: гейт УЖЕ идёт ($(wc -l < "$LOG") строк) — второй запуск отклонён." >&2
+        echo "gate-bg: параллельные гейты дерутся за nova.exe и дают фантомные падения." >&2
+        exit 1
+    fi
 fi
 
 rm -f "$LOG" "$DONE"
@@ -77,11 +97,17 @@ date +%s > "$STAMP"
 # «слияние законно», потому что возражать ему было НЕЧЕМ. Замерено на себе:
 # 7994d75ce и 7e6e6ad82 влиты в main без вердикта яруса novac.
 # Хеш снимается ЗДЕСЬ, до запуска, — это дерево, которое гейт и будет судить.
+# УРОВЕНЬ В МЕТКЕ (реестр 221.1 №995). Добавление яруса в №988 закрыло вопрос
+# «кто проверял», но не вопрос «НАСКОЛЬКО». Ярусы самого гейта судят РАЗНОЕ:
+# `loop` вообще не трогает корпус (ни линта, ни мега-CU, ни прогона) — он
+# текстовый. Значит вердикт loop выглядел для стража слияния так же, как push,
+# и открывал слияние с той же лёгкостью. Форма метки: `TIER=<ярус>:<уровень>`.
+GATE_LEVEL="${NOVA_GATE_TIER:-full}"
 GATE_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 GATE_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 nohup bash -c "cd '$ROOT' && bash scripts/gate.sh 2>&1 \
     | awk -v t0=\$(date +%s) '{ printf \"[%5ds] %s\n\", systime()-t0, \$0; fflush() }' > '$LOG'; \
-    echo \"RC=\${PIPESTATUS[0]} SEC=\$SECONDS TIER=main HASH=$GATE_HASH BRANCH=$GATE_BRANCH\" > '$DONE'" \
+    echo \"RC=\${PIPESTATUS[0]} SEC=\$SECONDS TIER=main:$GATE_LEVEL HASH=$GATE_HASH BRANCH=$GATE_BRANCH\" > '$DONE'" \
     > /dev/null 2>&1 &
 
 cat <<'EOF'
