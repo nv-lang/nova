@@ -23,8 +23,11 @@ test "if-let: a call initializer, an else branch, a returning then-branch (W1)" 
     // is why the reverse probe needs these two.
     ro (d0, c0) = compile_to_c("fn first(xs Vec[int]) -> Option[int] => xs.get(0)\nfn show(o Option[int]) -> () {\n if Some(v) = o {\n  println(v)\n } else {\n  println(0)\n }\n}\nfn pick(xs Vec[int]) -> int {\n if Some(v) = first(xs) {\n  return v\n } else {\n  println(-1)\n }\n 0\n}\nfn main() {\n ro xs = [5, 9]\n show(xs.get(1))\n println(pick(xs))\n}", std)
     assert(d0.len() == 0, messages(d0))
-    // The else is in the C, and the binder is bound from the payload.
-    assert(c0.contains("    else {"), c0)
+    // The else is in the C, and the binder is bound from the payload. The pin
+    // holds the one shape of else (M2b-2-0): brace and `else` share a line, as
+    // the if-value and `??` always printed and as a single printing walk needs --
+    // the two-line form was novac's own (the oracle's recorded C has none).
+    assert(c0.contains("    } else {"), c0)
     assert(c0.contains(".value;"), c0)
     // BOTH branches returning: novac compiles it (the oracle's C does not -- its
     // row; divergences.allow), and the tail rule knows the fn ends there.
@@ -34,7 +37,9 @@ test "if-let: a call initializer, an else branch, a returning then-branch (W1)" 
     // A chained `else if` after an if-let goes through the statement door.
     ro (d2, c2) = compile_to_c("fn show(xs Vec[int], i int, f bool) -> () {\n if Some(v) = xs.get(i) {\n  println(v)\n } else if f {\n  println(1)\n } else {\n  println(2)\n }\n}\nfn main() {\n ro xs = [5]\n show(xs, 3, true)\n}", std)
     assert(d2.len() == 0, messages(d2))
-    assert(c2.contains("    else     if ("), c2)
+    // Since M2b-2-0 the chained `if` continues the `} else ` line with one blank; the
+    // old pin accepted five blanks, a shape nobody had chosen.
+    assert(c2.contains("    } else if ("), c2)
     // The binder is NOT in scope in the else branch.
     ro (d3, _) = compile_to_c("fn show(xs Vec[int], i int) -> () {\n if Some(v) = xs.get(i) {\n  println(v)\n } else {\n  println(v)\n }\n}\nfn main() {\n ro xs = [5]\n show(xs, 0)\n}", std)
     assert(d3.len() == 1, messages(d3))
