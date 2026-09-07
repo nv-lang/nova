@@ -7,12 +7,24 @@
 // reachable) — `str` is immutable, so the view never diverges. Mirrors
 // `[]T @index(Range)` (std/collections/vec/slice.nv).
 //
-// Both methods build the view via the inline byte-slice `@[a..b]` (which codegen
-// lowers to a `(nova_str){.ptr=…+from, .len=…}` view directly). They deliberately
-// do NOT write `str { ptr: @ptr + off, len }` — constructing a str sub-view via a
-// value-record literal with pointer arithmetic on the priv `@ptr` mis-compiles
-// ("passing nova_str to nova_int"); since `runtime.string` links into every
-// program, that would break all str code. See [M-152.1-str-subview-record-ctor].
+// The views are BUILT here, not sliced (plan 284 Ф.1, owner 2026-09-07): every
+// `[a..b]` in the language routes INTO `@index(r Range)` by satisfying the
+// `RangeIndex` role, so a body written with the sugar would route into itself.
+// The construction goes through the module-private door `str.new(buf, len)`
+// (core.nv) — `slice.nv` is a co-equal file of the same module — exactly as
+// `[]T @index(Range)` builds its view out of `data`/`len` (collections/vec).
+//
+// [M-152.1-str-subview-record-ctor] is avoided, not ignored: the shape it records
+// as mis-compiling is a value-record LITERAL carrying pointer arithmetic inside a
+// `str` method (`str { ptr: @ptr + off, len: n }` → "passing nova_str to
+// nova_int"). Here no literal is written in the method at all: it lives in
+// `str.new`, whose parameter is already a plain `*u8`, and the arithmetic stays
+// outside it in a `ro` binding — the discipline `[]u8 @into_str_unchecked()` uses.
+//
+// The codepoint-boundary guard the C helper carried (`nova_str_slice_utf8_guard`,
+// `nova_rt/array.h`) moves into `@slice_boundary_guard` below with its message
+// verbatim: it is data-dependent, so it survives even when the numeric bounds are
+// proven, and a body that dropped it would hand out invalid UTF-8 views.
 //
 // `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
 // import cycle.
@@ -23,18 +35,42 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 import std.collections.range.{Range}
 
+// Module-private: the data-dependent codepoint-boundary guard, moved out of the C
+// helper `nova_str_slice_utf8_guard` (`nova_rt/array.h`) when the bodies below
+// stopped going through the inline slice. Message verbatim, so a panic does not
+// move. A cut at `off == @byte_len()` is always a boundary; a cut landing on a
+// continuation byte (0b10xxxxxx) would yield invalid UTF-8.
+fn str @slice_boundary_guard(off int) -> () {
+    ro n = @byte_len()
+    ro bytes = @bytes()
+    if off < n && (bytes[off] as int & 0xC0) == 0x80 {
+        panic("str: slice splits a UTF-8 codepoint")
+    }
+}
+
+// The upper bound an open-ended `s[a..]` materializes — the second method of the
+// `RangeIndex` role, next to `@index(r Range)`. For `str` this is the BYTE length,
+// the same unit as the slice bounds. It is a METHOD, not a field read, because a
+// `len`-shaped field is not necessarily the end of a type's index space (a
+// counter, a capacity) — that is the very reason the structural test is retired.
+export fn str @end_index() -> int => @byte_len()
+
 // Byte-range sub-view `s[r.start, r.end)`. The numeric bounds are a `requires`
 // CONTRACT: Z3-proven call-sites elide the check (zero-cost),
 // unproven ones are checked at runtime (and in release — enforce-with-elision).
-// The inline `@[a..b]` also carries the UTF-8 codepoint-boundary guard
-// (data-dependent → a runtime panic; slicing through a codepoint would yield
-// invalid UTF-8). `s[a..b]` sugar lowers to the identical inline
-// byte-slice; this Nova body carries the contract for the `Index[Range, str]`
-// protocol and direct `s.index(a..b)` calls.
+// The codepoint-boundary cut is NOT part of that contract — it is a property of
+// the DATA, not of the bounds — so `@slice_boundary_guard` above panics on it at
+// runtime, exactly where the C helper did before plan 284 Ф.1. Since `s[a..b]`
+// routes here by satisfying the role, this body is the ONE place a str view is
+// built: for the sugar, for the `Index[Range, str]` protocol and for a direct
+// `s.index(a..b)` call alike.
 export fn str @index(r Range) -> str
     requires 0 <= r.start && r.start <= r.end && r.end <= @byte_len()
 {
-    @[r.start..r.end]
+    @slice_boundary_guard(r.start)
+    @slice_boundary_guard(r.end)
+    ro buf = unsafe { @ptr().offset(r.start) }
+    str.new(buf, r.end - r.start)
 }
 
 // Safe byte-range slice — `Some(view)` when `[r.start, r.end)` is in bounds AND
@@ -46,7 +82,8 @@ export fn str @get(r Range) -> Option[str] {
     ro bytes = @bytes()
     if r.start < n && (bytes[r.start] as int & 0xC0) == 0x80 { return None }
     if r.end < n && (bytes[r.end] as int & 0xC0) == 0x80 { return None }
-    Some(@[r.start..r.end])
+    ro buf = unsafe { @ptr().offset(r.start) }
+    Some(str.new(buf, r.end - r.start))
 }
 
 // split_at / split_at_checked.
@@ -56,7 +93,9 @@ export fn str @get(r Range) -> Option[str] {
 export fn str @split_at(idx int) -> (str, str)
     requires 0 <= idx && idx <= @byte_len()
 {
-    (@[..idx], @[idx..])
+    @slice_boundary_guard(idx)
+    ro rest = unsafe { @ptr().offset(idx) }
+    (str.new(@ptr(), idx), str.new(rest, @byte_len() - idx))
 }
 
 // Checked split at byte offset `idx`. Returns None when idx is out of bounds
@@ -65,5 +104,6 @@ export fn str @split_at_checked(idx int) -> Option[(str, str)] {
     if idx < 0 || idx > @byte_len() || !@is_char_boundary(idx) {
         return None
     }
-    Some((@[..idx], @[idx..]))
+    ro rest = unsafe { @ptr().offset(idx) }
+    Some((str.new(@ptr(), idx), str.new(rest, @byte_len() - idx)))
 }
