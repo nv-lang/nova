@@ -105,6 +105,24 @@ case "$NOVA_GATE_TIER" in
     full) GATE_TIER_N=3 ;;
 esac
 
+# ДЕРЕВО, КОММИТ И ВЕТКА ПЕЧАТАЮТСЯ В ШАПКЕ И В ИТОГОВЫХ СТРОКАХ — и это не
+# украшение. Класс: «вердикт, снятый не с того дерева, читается точно так же,
+# как снятый с нужного». Два носителя за ОДИН вечер 2026-09-07: окно 283
+# прогнало стражей из main вместо своей ветки (числа СОШЛИСЬ — дырявый метод
+# сам себя спрятал), а `check-commit-refs` дал 819 локально против 844 на CI,
+# потому что у интегратора достижимы ветки соседей. NOVAC-гейт эту строку
+# печатает с самого начала (`scripts/gate-novac.sh:107` — RC/SEC/TIER/HASH/
+# BRANCH), основной — не печатал: тот же перекос, что у стража паритета
+# драйверов, который знал три драйвера из четырёх (реестр 221.1 №1012).
+# ПОЧЕМУ ХВОСТОМ, а не внутри `GATE OK (final)`: эту строку грепают люди,
+# планы и окно-интегратора — якорь ломать нельзя, идентичность едет рядом с
+# `$CI_TAIL`/`$TIER_TAIL`, тем же приёмом.
+GATE_TREE="$ROOT"
+GATE_HEAD="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+GATE_BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+TREE_TAIL=" [tree=$GATE_TREE head=$GATE_HEAD branch=$GATE_BRANCH]"
+echo "gate :: дерево $GATE_TREE, коммит $GATE_HEAD, ветка $GATE_BRANCH, ярус $NOVA_GATE_TIER"
+
 # СУХОЙ ПРОГОН — печатаются заголовки шагов, не исполняется ничего.
 # Заведён как ДОКАЗАТЕЛЬСТВО того, что умолчание не поехало: список шагов до
 # правки и после сверяется дословно (`diff`), а не на глаз. Тот же довод, что
@@ -230,7 +248,7 @@ guard() {
 gate_barrier() {
     if [ "$GATE_FAIL_N" -gt 0 ]; then
         echo "" >&2
-        echo "GATE: отказов на этом рубеже — $GATE_FAIL_N:$GATE_FAILS" >&2
+        echo "GATE: отказов на этом рубеже — $GATE_FAIL_N:$GATE_FAILS$TREE_TAIL" >&2
         exit 1
     fi
 }
@@ -1737,7 +1755,7 @@ gate_barrier
 
 if [ -n "$OVERRIDE_FILES" ]; then
     print_override_warning
-    echo "GATE OK (final) [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]$CI_TAIL$TIER_TAIL"
+    echo "GATE OK (final)$TREE_TAIL [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]$CI_TAIL$TIER_TAIL"
 else
-    echo "GATE OK (final)$CI_TAIL$TIER_TAIL"
+    echo "GATE OK (final)$TREE_TAIL$CI_TAIL$TIER_TAIL"
 fi
