@@ -1,0 +1,37 @@
+--- КОНТРОЛЬ 0: чистый скрипт, путей нет -> ожидается зелёный ---
+check-no-machine-paths ok: скриптов проверено 1, путей к машине вне комментариев 0 (№698)
+rc=0
+
+--- КОНТРОЛЬ 1: НОСИТЕЛЬ №698 голой строкой -> ожидается КРАСНЫЙ ---
+check-no-machine-paths: FAIL — абсолютный путь к машине в отслеживаемом скрипте (№698):
+  scripts/tools/x.sh:
+    2:NOVA_GC_LIB_DIR="D:/Sources/nv-lang/nova/compiler-codegen/nova_rt"
+    Расположение выводится от $ROOT / git-common-dir / dirname $0, а не пишется.
+rc=1
+
+--- ДЕФЕКТ 1: ТА ЖЕ строка + хвостовой комментарий '# GC lives here' ---
+check-no-machine-paths ok: скриптов проверено 1, путей к машине вне комментариев 0 (№698)
+rc=0
+
+--- КОНТРОЛЬ 2: тот же хвост БЕЗ пробела после решётки -> КРАСНЫЙ (значит спусковой крючок — ровно 'решётка+пробел') ---
+check-no-machine-paths: FAIL — абсолютный путь к машине в отслеживаемом скрипте (№698):
+  scripts/tools/x.sh:
+    2:NOVA_GC_LIB_DIR="D:/Sources/nv-lang/nova/compiler-codegen/nova_rt" #GCliveshere
+    Расположение выводится от $ROOT / git-common-dir / dirname $0, а не пишется.
+rc=1
+
+--- ДЕФЕКТ 2: та же строка + слово 'проверялся' где угодно в ней ---
+check-no-machine-paths ok: скриптов проверено 1, путей к машине вне комментариев 0 (№698)
+rc=0
+
+--- ДЕФЕКТ 3: та же строка в scripts/githooks/pre-commit (исполняемый скрипт БЕЗ расширения) ---
+check-no-machine-paths ok: скриптов проверено 1, путей к машине вне комментариев 0 (№698)
+rc=0
+
+--- КОНТРОЛЬ 3: ТОТ ЖЕ файл под именем pre-commit.sh -> КРАСНЫЙ ---
+check-no-machine-paths: FAIL — абсолютный путь к машине в отслеживаемом скрипте (№698):
+  scripts/githooks/pre-commit.sh:
+    2:NOVA_GC_LIB_DIR="D:/Sources/nv-lang/nova/compiler-codegen/nova_rt"
+    Расположение выводится от $ROOT / git-common-dir / dirname $0, а не пишется.
+rc=1
+
