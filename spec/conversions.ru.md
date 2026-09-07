@@ -19,7 +19,7 @@ D-decisions: [D54](decisions/03-syntax.md#d54) (`as`),
 |---|---|---|
 | `as` | infallible numeric/newtype/sum cast, compile-time, без runtime-кода | `42 as f64`, `n as i16` |
 | `.to_str()` | универсальная конверсия значения **в строку** (bare-`T` blanket + специализации) | `42.to_str()`, `bs.to_str()` |
-| `T.from(v)` / `T.try_from(v)` | конкретный статик-конструктор — **имя-конвенция**, НЕ протокол/auto-derive | `Fahrenheit.from(c)`, `u32.try_from(port_str)` |
+| `T.from(v)` / `T.try_from(v)` | конкретный статик-конструктор — **имя-конвенция**, НЕ протокол/auto-derive. Законен ТОЛЬКО когда источник — **концепт**, а не значение-носитель: у значения канон — метод на источнике `x.to_*()` ([§1а nv-coding-style](../docs/dev/nv-coding-style.md), 2026-07-09; линт `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
 | `consume @into_ЦЕЛЬ()` | потребляющая передача владения (конкретное имя на источнике) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | декларативная **неявная** zero-cost конверсия в позиции с известным типом (view/finalize) | `w.write(s)` — `str` неявно `.bytes()` |
 
@@ -507,6 +507,9 @@ Nova-функция без протокола за спиной):
 
 - **(а) `.from(x)` / `.try_from(x)`** — конкретные статик-методы,
   конструктор-конверсия по конвенции имени (не generic-bound-able).
+  **Только для источника-КОНЦЕПТА** (`from_polar`, `embed`): если источник —
+  значение-носитель, дверь запрещена, канон — `x.to_*()` на источнике
+  (§1а, 2026-07-09; линт `W_STATIC_CONVERSION`).
   `try_` — **только** когда есть infallible-сиблинг с тем же именем без
   префикса (R3, [D325](decisions/04-effects.md#d325)); одиночная
   фаллибельная операция без сиблинга — bare-имя без `try_` (пример —
@@ -526,22 +529,27 @@ Nova-функция без протокола за спиной):
 type Celsius f64
 type Fahrenheit f64
 
-fn Fahrenheit.from(c Celsius) -> Self =>
-    Self((c as f64) * 9.0 / 5.0 + 32.0)
+// Источник у обеих сторон — ЗНАЧЕНИЕ, поэтому статик `Fahrenheit.from(c)` тут
+// запрещён (§1а): конверсия живёт методом на источнике.
+fn Celsius @to_fahrenheit() -> Fahrenheit =>
+    Fahrenheit((@ as f64) * 9.0 / 5.0 + 32.0)
 
-// Компилятор НЕ синтезирует c.into() — Into больше нет. Если нужна
-// обратная форма — пишем отдельную функцию явно:
-fn Celsius.from(f Fahrenheit) -> Self =>
-    Self(((f as f64) - 32.0) * 5.0 / 9.0)
+// Компилятор НЕ синтезирует обратную форму — ни `.into()`, ни парную. Нужна
+// обратная — пишем её явно и тем же правилом, на своём источнике:
+fn Fahrenheit @to_celsius() -> Celsius =>
+    Celsius(((@ as f64) - 32.0) * 5.0 / 9.0)
 ```
 
-Fallible-версия — то же самое, но статик возвращает `Result`:
+Фаллибельный случай — это уже не конверсия, а КОНСТРУКТОР с проверкой, и у него
+своя дверь: `Type.new(...)`, возвращающий `Result` (§1а, четвёртая строка). Имя без
+`try_`, потому что инфаллибельного сиблинга нет (R3, [D325](decisions/04-effects.md#d325)) —
+так же устроены `Date.new`, `TimeOfDay.new`, `SnowflakeGen.new` в std:
 
 ```nova
-fn Port.try_from(n u16) -> Result[Self, str] =>
+fn Port.new(n u16) -> Result[Self, str] =>
     if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
 
-ro p = Port.try_from(8080)?
+ro p = Port.new(8080)?
 ```
 
 ---

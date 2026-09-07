@@ -28,7 +28,7 @@ details in the "`from`/`try_from` naming" section below.
 |---|---|---|
 | `as` | infallible numeric/newtype/sum cast, compile-time, no runtime code | `42 as f64`, `n as i16` |
 | `.to_str()` | universal conversion of a value **to a string** (bare-`T` blanket + specializations) | `42.to_str()`, `bs.to_str()` |
-| `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive | `Fahrenheit.from(c)`, `u32.try_from(port_str)` |
+| `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive. Legal ONLY when the source is a **concept** rather than a carrier value: for a value the canon is a method on the source, `x.to_*()` ([nv-coding-style §1а](../docs/dev/nv-coding-style.md), 2026-07-09; lint `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
 | `consume @into_TARGET()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | declarative **implicit** zero-cost conversion in a position with a known expected type (view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
 
@@ -524,6 +524,9 @@ Nova function with no protocol behind it):
 
 - **(a) `.from(x)` / `.try_from(x)`** — concrete static methods,
   constructor-conversion by naming convention (not generic-bound-able).
+  **For a CONCEPT source only** (`from_polar`, `embed`): if the source is a
+  carrier value, this door is forbidden and the canon is `x.to_*()` on the
+  source (nv-coding-style §1а, 2026-07-09; lint `W_STATIC_CONVERSION`).
   `try_` — **only** when there is an infallible sibling with the same name
   without the prefix (R3, [D325](decisions/04-effects.md#d325)); a lone
   fallible operation without a sibling — a bare name without `try_`
@@ -543,22 +546,28 @@ explicitly, under different names.
 type Celsius f64
 type Fahrenheit f64
 
-fn Fahrenheit.from(c Celsius) -> Self =>
-    Self((c as f64) * 9.0 / 5.0 + 32.0)
+// The source on both sides is a VALUE, so the static `Fahrenheit.from(c)` is
+// forbidden here (nv-coding-style §1а): a conversion lives as a method on the source.
+fn Celsius @to_fahrenheit() -> Fahrenheit =>
+    Fahrenheit((@ as f64) * 9.0 / 5.0 + 32.0)
 
-// Компилятор НЕ синтезирует c.into() — Into больше нет. Если нужна
-// обратная форма — пишем отдельную функцию явно:
-fn Celsius.from(f Fahrenheit) -> Self =>
-    Self(((f as f64) - 32.0) * 5.0 / 9.0)
+// The compiler synthesizes no reverse form -- neither `.into()` nor a pair. If the
+// reverse is wanted, it is written explicitly, by the same rule, on its own source:
+fn Fahrenheit @to_celsius() -> Celsius =>
+    Celsius(((@ as f64) - 32.0) * 5.0 / 9.0)
 ```
 
-The fallible version is the same, but the static returns a `Result`:
+The fallible case is no longer a conversion but a CONSTRUCTOR with validation, and it
+has a door of its own: `Type.new(...)` returning a `Result` (nv-coding-style §1а, fourth
+row). The name carries no `try_` because there is no infallible sibling (R3,
+[D325](decisions/04-effects.md#d325)) — the same shape as `Date.new`, `TimeOfDay.new` and
+`SnowflakeGen.new` in std:
 
 ```nova
-fn Port.try_from(n u16) -> Result[Self, str] =>
+fn Port.new(n u16) -> Result[Self, str] =>
     if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
 
-ro p = Port.try_from(8080)?
+ro p = Port.new(8080)?
 ```
 
 ---
