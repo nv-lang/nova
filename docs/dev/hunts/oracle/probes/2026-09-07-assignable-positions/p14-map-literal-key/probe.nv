@@ -1,0 +1,10 @@
+// Position: KEY of a map literal against the declared K of `HashMap[u8, str]`.
+// `n` is 300; if the key were checked, this would be E_IMPLICIT_NARROWING.
+// Looking the entry up under the TRUNCATED key 44 shows what was stored.
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro m HashMap[u8, str] = [n: "stored"]
+    print("mapkey_at_44=${m.get(44 as u8) ?? "absent"}")
+}

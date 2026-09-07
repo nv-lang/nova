@@ -1,0 +1,11 @@
+// Position: MODULE-LEVEL `const` with a declared narrower type, initialised from
+// a wider module-level const. Inside a function body the same two lines are
+// E_IMPLICIT_NARROWING (probe p00-control-local).
+module probe
+
+const WIDE int = 300
+const NARROW u8 = WIDE
+
+fn main() Io -> () {
+    print("const_u8_from_int=${NARROW}")
+}

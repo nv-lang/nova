@@ -1,0 +1,13 @@
+// Is the right-hand side of `??` checked against the declared type of the slot?
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+fn none_beta(x int) -> Option[Beta] => if x > 0 { Some(Beta { other: "b" }) } else { None }
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    ro v Beta = none_beta(-1) ?? a
+    print("read_as_beta=${v.other}")
+}

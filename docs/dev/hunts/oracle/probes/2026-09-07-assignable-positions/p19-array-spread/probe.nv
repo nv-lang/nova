@@ -1,0 +1,13 @@
+// Position: SPREAD `...src` inside an array literal at a declared `[]u8` slot.
+// `src` is `[]int`. The plain-element form `ro a []u8 = [n, 1]` IS refused
+// (probe p04-array-elem-local); adding a spread turns the whole literal off
+// the element-checking path.
+// 300 = 0x0000012C, 777 = 0x00000309. Element-wise wrap would give 44 and 9;
+// a raw byte reinterpretation would give 44 and 1. `len` says which.
+module probe
+
+fn main() Io -> () {
+    ro src []int = [300, 777]
+    ro a []u8 = [...src]
+    print("spread len=${a.len()} a0=${a[0]} a1=${a[1]}")
+}

@@ -1,0 +1,12 @@
+// CONTROL for p28-field-wrong-record: the SAME `Alpha` value into a slot declared
+// `Beta`, this time through the local-binding door.
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    ro b Beta = a
+    print("read_as_beta=${b.other}")
+}

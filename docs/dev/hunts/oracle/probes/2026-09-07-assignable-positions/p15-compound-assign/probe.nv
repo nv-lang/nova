@@ -1,0 +1,10 @@
+// Position: COMPOUND ASSIGNMENT `b += n` where `b u8` and `n int`.
+// Plain `b = n` is refused (spec_tests/conformance/neg/n_reassign.nv).
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    mut b u8 = 1
+    b += n
+    print("compound=${b}")
+}

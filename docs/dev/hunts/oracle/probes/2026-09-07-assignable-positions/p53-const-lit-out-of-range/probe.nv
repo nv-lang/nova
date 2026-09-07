@@ -1,0 +1,11 @@
+// D55, the table of positions with an explicitly expected type, row
+// `const X T = value` -- coercion applies (spec/decisions/02-types.md:1360),
+// and item 4 makes out of range a compile error `E_LIT_OUT_OF_RANGE`.
+// The same literal in `ro a u8 = 300` inside a body IS refused.
+module probe
+
+const K u8 = 300
+
+fn main() Io -> () {
+    print("const_lit=${K}")
+}

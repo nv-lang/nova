@@ -1,0 +1,11 @@
+// The other direction of p20: spread a `[]u8` (4 bytes of payload) into a slot
+// declared `[]int` (8 bytes per element). If the slot is a raw view of the source
+// buffer with the same element COUNT, reading `a[3]` reads bytes 24..31 of a
+// four-byte allocation.
+module probe
+
+fn main() Io -> () {
+    ro src []u8 = [1, 2, 3, 4]
+    ro a []int = [...src]
+    print("len=${a.len()} ${a[0]} ${a[1]} ${a[2]} ${a[3]}")
+}

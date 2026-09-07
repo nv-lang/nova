@@ -1,0 +1,11 @@
+// Position: SHORTHAND field init `{ b }` in a static constructor, where the
+// local `b` is `int` and the field is `u8`.
+module probe
+
+type Boxy { ro b u8 }
+
+fn Boxy.make(b int) -> Boxy => { b }
+
+fn main() Io -> () {
+    print("shorthand=${Boxy.make(300).b}")
+}

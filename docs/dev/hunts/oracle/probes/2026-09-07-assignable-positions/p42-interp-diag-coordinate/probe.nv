@@ -1,0 +1,17 @@
+// Not about acceptance: about the ADDRESS of a refusal that DOES fire.
+// The same refused call appears twice in this file. On line 15 it sits inside a
+// `${...}` string interpolation; on line 16 it is a plain statement. The plain
+// one is reported at 16:18; the interpolated one is reported at 1:6 -- line 1 is
+// this comment, and there is no call on it.
+module probe
+
+fn take(x u8) -> u8 => x
+
+
+
+
+fn main() Io -> () {
+    ro n int = 300
+    print("inside=${take(n)}")
+    ro _q = take(n)
+}

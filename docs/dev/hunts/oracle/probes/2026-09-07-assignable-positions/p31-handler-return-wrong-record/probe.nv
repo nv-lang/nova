@@ -1,0 +1,17 @@
+// Is the EFFECT-HANDLER OPERATION body checked against the declared `-> Beta`?
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+type Meter effect {
+    read() -> Beta
+}
+
+fn use_meter() Meter -> Beta => Meter.read()
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    ro v = with Meter = effect Meter { read() -> Beta => a } { use_meter() }
+    print("read_as_beta=${v.other}")
+}

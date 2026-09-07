@@ -1,0 +1,12 @@
+// Is the ARGUMENT of a call through a CLOSURE VALUE checked? The same call to a
+// NAMED fn is refused by the argument door.
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    ro f = fn(x Beta) -> str => x.other
+    print("read_as_beta=${f(a)}")
+}

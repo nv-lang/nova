@@ -1,0 +1,16 @@
+// Position: BODY of an EFFECT-HANDLER OPERATION against the `-> u8` the effect
+// type declares. The named-fn return door was closed 2026-09-05 (registry #959):
+// `fn wrap(n int) -> u8 => n` is now E_IMPLICIT_NARROWING.
+module probe
+
+type Meter effect {
+    read() -> u8
+}
+
+fn use_meter() Meter -> u8 => Meter.read()
+
+fn main() Io -> () {
+    ro n int = 300
+    ro v = with Meter = effect Meter { read() -> u8 => n } { use_meter() }
+    print("handler_ret=${v}")
+}

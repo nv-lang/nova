@@ -1,0 +1,12 @@
+// Is the payload of `Some(...)` checked against the declared `Option[Beta]`?
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    ro o Option[Beta] = Some(a)
+    ro v = o ?? Beta { other: "fallback" }
+    print("read_as_beta=${v.other}")
+}

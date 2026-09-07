@@ -1,0 +1,10 @@
+// Position: VALUE of a map literal `[k: v]` against the declared V of
+// `HashMap[str, u8]`. The array-literal element position IS checked
+// (probe p04-array-elem-local is refused); is the map value?
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro m HashMap[str, u8] = ["a": n]
+    print("mapval=${m.get("a") ?? 0}")
+}

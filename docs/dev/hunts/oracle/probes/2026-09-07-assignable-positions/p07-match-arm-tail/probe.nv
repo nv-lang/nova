@@ -1,0 +1,9 @@
+// Position: TAIL OF A `match` ARM flowing into a declared `u8` binding.
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro c bool = true
+    ro b u8 = match c { true => n, false => 0 }
+    print("matchtail=${b}")
+}

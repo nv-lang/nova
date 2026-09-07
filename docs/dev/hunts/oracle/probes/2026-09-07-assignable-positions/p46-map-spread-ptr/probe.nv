@@ -1,0 +1,10 @@
+// The pointer half of p45-map-spread: a `HashMap[str, int]` spread into a slot
+// declared `HashMap[str, str]`. The stored int 4919 becomes a `str` and is
+// printed.
+module probe
+
+fn main() Io -> () {
+    ro src HashMap[str, int] = ["a": 4919]
+    ro m HashMap[str, str] = [...src]
+    print("mapspread_ptr=${m.get("a") ?? "absent"}")
+}

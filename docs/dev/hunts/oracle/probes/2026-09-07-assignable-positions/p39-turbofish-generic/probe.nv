@@ -1,0 +1,12 @@
+// Position: ARGUMENT against a generic parameter pinned by an EXPLICIT turbofish
+// `pass[u8](n)`. The same `n` at a plain `u8` parameter is refused
+// (spec_tests/conformance/neg/n_fnarg.nv).
+module probe
+
+fn pass[T](x T) -> ro T => x
+
+fn main() Io -> () {
+    ro n int = 300
+    ro b = pass[u8](n)
+    print("turbofish=${b}")
+}

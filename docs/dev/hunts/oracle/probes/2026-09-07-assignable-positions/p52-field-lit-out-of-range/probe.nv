@@ -1,0 +1,12 @@
+// D55 item 4 names the record-literal FIELD as an expected-type position and
+// says an out-of-range integer literal there is a compile error
+// `E_LIT_OUT_OF_RANGE` (spec/decisions/02-types.md:1298-1306).
+// The literal 300 in `ro a u8 = 300` IS refused that way. Here it is not.
+module probe
+
+type Boxy { ro b u8 }
+
+fn main() Io -> () {
+    ro bx = Boxy { b: 300 }
+    print("field_lit=${bx.b}")
+}

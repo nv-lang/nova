@@ -1,0 +1,9 @@
+// Position: PAYLOAD of `Ok(...)` against a declared `Result[u8, str]`.
+module probe
+
+fn wrap(n int) -> Result[u8, str] => Ok(n)
+
+fn main() Io -> () {
+    ro r = wrap(300)
+    print("okpayload=${r ?? 0}")
+}

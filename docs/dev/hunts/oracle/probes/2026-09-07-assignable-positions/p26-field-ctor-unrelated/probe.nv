@@ -1,0 +1,11 @@
+// Is the record-field position checked AT ALL, or only blind to narrowing?
+// A `str` into a field declared `u8`.
+module probe
+
+type Boxy { ro b u8 }
+
+fn main() Io -> () {
+    ro s str = "hello"
+    ro bx = Boxy { b: s }
+    print("field=${bx.b}")
+}

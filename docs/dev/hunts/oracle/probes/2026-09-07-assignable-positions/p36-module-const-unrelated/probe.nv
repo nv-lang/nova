@@ -1,0 +1,11 @@
+// The LOUD half of p35-module-const-narrowing: a `str` const into a `u8` const.
+// The checker says nothing; the refusal comes from the C compiler, with a
+// coordinate inside the GENERATED `.c` that no Nova author can act on.
+module probe
+
+const TEXT str = "abc"
+const CONFUSED u8 = TEXT
+
+fn main() Io -> () {
+    print("const_u8_from_str=${CONFUSED}")
+}

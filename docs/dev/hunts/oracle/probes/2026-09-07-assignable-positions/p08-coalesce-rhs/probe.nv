@@ -1,0 +1,10 @@
+// Position: RIGHT-HAND SIDE of `??` flowing into a declared `u8` binding.
+module probe
+
+fn maybe(x int) -> Option[u8] => if x > 0 { Some(1) } else { None }
+
+fn main() Io -> () {
+    ro n int = 300
+    ro b u8 = maybe(-1) ?? n
+    print("coalesce=${b}")
+}

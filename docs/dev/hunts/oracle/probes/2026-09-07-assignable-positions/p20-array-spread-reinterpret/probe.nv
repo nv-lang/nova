@@ -1,0 +1,11 @@
+// Sharper half of p19-array-spread: is `[...src]` at a `[]u8` slot a per-element
+// wrap, or a raw byte view of the `[]int` buffer?
+// `[1, 2, 3, 4]` element-wise would stay `1 2 3 4`. As little-endian bytes of the
+// FIRST int (1 = 01 00 00 00 00 00 00 00) it reads `1 0 0 0`.
+module probe
+
+fn main() Io -> () {
+    ro src []int = [1, 2, 3, 4]
+    ro a []u8 = [...src]
+    print("len=${a.len()} ${a[0]} ${a[1]} ${a[2]} ${a[3]}")
+}

@@ -1,0 +1,10 @@
+// Position: NAMED argument at a call. The POSITIONAL form of the same call
+// is refused (spec_tests/conformance/neg/n_fnarg.nv).
+module probe
+
+fn take(x u8) -> u8 => x
+
+fn main() Io -> () {
+    ro n int = 300
+    print("named=${take(x: n)}")
+}
