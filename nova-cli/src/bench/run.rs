@@ -135,6 +135,22 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     }
     // Plan 140 Ф.3 (D24 amend): elide proven contracts in bench builds.
     emitter.set_proven_contracts(&bench_env.proven_contracts);
+    // Registry 221.1 #1012: this driver used to hand the emitter ONE channel of the eight the
+    // reference driver wires (`test_runner.rs::codegen_to_c`), and `nova bench run` then died
+    // on EVERY bench in the tree with `[E_UNKNOWN_STATIC_METHOD] str.new(...)`. The cause is
+    // `resolved_callees`: without it the emitter re-resolves a call by NAME, and the
+    // module-private two-arg `str.new(buf, len)` (std/src/runtime/string/core.nv) is not
+    // findable that way -- while its zero-arg arity sibling is. The data was here all along:
+    // this same function reads `bench_env.resolved_callees` and `.resolved_types` for callnorm
+    // and chain_norm a few lines above, so only the handover was missing. Channels below are
+    // the reference's, read off the same `types::check_module` env.
+    emitter.set_proven_index_sites(&bench_env.proven_index_sites);
+    emitter.set_proven_index_sites_contract(&bench_env.proven_index_sites_contract);
+    emitter.set_resolved_types(&bench_env.resolved_types);
+    emitter.set_pattern_variant_types(&bench_env.pattern_variant_types);
+    emitter.set_resolved_variant_ctors(&bench_env.resolved_variant_ctors);
+    emitter.set_resolved_callees(&bench_env.resolved_callees);
+    emitter.set_node_substs(&bench_env.node_substs);
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
@@ -417,6 +433,16 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     }
     // Plan 140 Ф.3 (D24 amend): elide proven contracts in profile builds.
     emitter.set_proven_contracts(&bench_env.proven_contracts);
+    // Same eight channels as in `run` above, for the same reason (#1012). Both functions emit,
+    // so a channel wired in one and forgotten in the other is the same defect with a longer
+    // fuse -- the guard `check-driver-channel-parity.sh` reads this file as a whole.
+    emitter.set_proven_index_sites(&bench_env.proven_index_sites);
+    emitter.set_proven_index_sites_contract(&bench_env.proven_index_sites_contract);
+    emitter.set_resolved_types(&bench_env.resolved_types);
+    emitter.set_pattern_variant_types(&bench_env.pattern_variant_types);
+    emitter.set_resolved_variant_ctors(&bench_env.resolved_variant_ctors);
+    emitter.set_resolved_callees(&bench_env.resolved_callees);
+    emitter.set_node_substs(&bench_env.node_substs);
     let (c_code, _warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
