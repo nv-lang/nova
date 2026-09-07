@@ -38770,9 +38770,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // window of truth" principle as the rest of D238. The
                     // bounds-check lives ONLY in that method body now (an
                     // always-on panic guard, NOT a `requires` contract — see
-                    // slice.nv), so it can no longer be silently elided by
-                    // contract policy; emit_c.rs no longer knows the check
-                    // exists at all.
+                    // slice.nv); emit_c.rs no longer knows the check exists at all.
+                    // CORRECTION 2026-09-07, by measurement (registry 221.1, plan 284):
+                    // the words that stood here -- "an always-on panic guard, NOT a
+                    // `requires` contract ... can no longer be silently elided by
+                    // contract policy" -- were FALSE on both halves. The body of
+                    // `Vec[T] @index(r Range)` (std/src/collections/vec/slice.nv:39-44)
+                    // carries exactly `requires r.start >= 0 && r.end >= r.start &&
+                    // r.end <= @len` and no guard; and that contract DOES fire in
+                    // release -- probe `v[1..5]` on a 3-element Vec printed
+                    // "panic: slice.nv:40: requires failed" with exit=101 in dev AND
+                    // in --mode release. The claim cost a plan a phase built on it,
+                    // which is why it is corrected here rather than quietly dropped.
+                    // (Same class as #1007: a comment promising behaviour nobody probed.)
                     //
                     // We synthesize `obj.index(materialized_range)` and re-emit
                     // through the normal Call/Member path (mirrors the
