@@ -45,6 +45,11 @@ import os
 import re
 import sys
 
+# Вердикт уходит с LF даже на Windows: гейт разбирает эти строки, а
+# `check-guard-honesty` отвергает стража, чей вердикт приезжает CRLF.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+
 NAME = "check-plan-status-closure-leads"
 MARK = u"**Статус:**"
 
