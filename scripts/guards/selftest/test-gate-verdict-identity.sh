@@ -21,6 +21,13 @@
 #      грепают люди, планы и окно-интегратора, и ломать её нельзя.
 #   4. КРАСНАЯ строка рубежа тоже несёт хвост (красное цитируют не реже).
 #   5. Проба умеет краснеть: без `$TREE_TAIL` рубеж падает под `set -u`.
+#   7–9. ТО ЖЕ ДЛЯ NOVAC-ГЕЙТА: все его итоговые выходы несут хвост
+#      (без хвоста законны только пошаговые репортёры — те, что печатают `$1`),
+#      строка вердикта
+#      из ФАЙЛА печатает хвост и падает без переменной, присваивание раньше
+#      первого вердикта. У novac-гейта НЕТ сухого хода, а живой прогон зовёт
+#      компилятор — поэтому там структура и проба, а не прогон, и это сказано
+#      вслух, а не выдано за равноценное доказательство.
 #      Без этого случая пункт 4 ничего не значит — он бы «проходил» и на
 #      сломанном механизме.
 #
@@ -46,7 +53,7 @@ CASES=0
 ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
 bad() { CASES=$((CASES+1)); echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
-echo "== селфтест: вердикт гейта называет дерево =="
+echo "== селфтест: вердикт обоих гейтов называет дерево =="
 
 if [ ! -f "$GATE" ]; then
     echo "  ПРОВАЛ: не найден $GATE" >&2
@@ -135,6 +142,62 @@ if [ -n "$ASSIGN_LINE" ] && [ -n "$FIRST_BARRIER" ] && [ "$ASSIGN_LINE" -lt "$FI
     ok "присваивание (строка $ASSIGN_LINE) идёт раньше первого рубежа (строка $FIRST_BARRIER)"
 else
     bad "порядок нарушен: присваивание '$ASSIGN_LINE', первый рубеж '$FIRST_BARRIER' — незаданный хвост убьёт гейт на самом отказе"
+fi
+
+
+# --- 7..9: ВТОРОЙ ГЕЙТ (novac) — та же форма, тот же риск ------------------
+# У novac-гейта сухого хода нет, а живой прогон зовёт компилятор. Поэтому здесь
+# структура плюс проба строкой, ВЗЯТОЙ ИЗ ФАЙЛА, — не прогон. Живой вывод
+# проверяется первым же прогоном интегратора, и это сказано вслух, а не скрыто.
+NOVAC_GATE="$REPO_ROOT/scripts/gate-novac.sh"
+if [ ! -f "$NOVAC_GATE" ]; then
+    bad "не найден $NOVAC_GATE"
+else
+    # ПРАВИЛО, А НЕ ЧИСЛО. Строка `echo "NOVAC-GATE...` без хвоста законна ТОЛЬКО если
+    # она принимает `$1`, то есть сообщает об ОДНОМ пункте и повторяется на каждом
+    # (`NOVAC-GATE FAIL: $1`, `NOVAC-GATE РАССИНХРОН: $1`) — там хвост был бы шумом.
+    # Строка, ЗАВЕРШАЮЩАЯ прогон, обязана нести хвост.
+    #
+    # Сначала здесь стояло число «без хвоста ровно 1», и самотест поймал на нём МЕНЯ:
+    # пошаговых репортёров два, а я посчитал одного. Число в проверке устаревает при
+    # первом же добавлении строки — тот же класс, что 168 стражей в AGENTS.md, ставшие
+    # 188 за три дня. Правило не устаревает.
+    UNTAILED_LINES="$(grep -n 'echo "NOVAC-GATE' "$NOVAC_GATE" \
+        | grep -v 'NOVAC_TREE_TAIL' | grep -v ': \$1"' || true)"
+    WITH_TAIL_N="$(grep 'echo "NOVAC-GATE' "$NOVAC_GATE" | grep -c 'NOVAC_TREE_TAIL' || true)"
+    if [ "$WITH_TAIL_N" -ge 4 ] && [ -z "$UNTAILED_LINES" ]; then
+        ok "novac: вердиктов с хвостом $WITH_TAIL_N, а без хвоста — только пошаговые репортёры"
+    else
+        bad "novac: итоговый вердикт без хвоста: ${UNTAILED_LINES:-нет} (с хвостом $WITH_TAIL_N)"
+    fi
+
+    # Строка берётся ИЗ ФАЙЛА — рука разошлась бы с гейтом.
+    NOVAC_LINE="$(grep -m1 'echo "NOVAC-GATE OK (final)' "$NOVAC_GATE" | sed 's/^[[:space:]]*//')"
+    if [ -z "$NOVAC_LINE" ]; then
+        bad "novac: не найдена итоговая строка 'NOVAC-GATE OK (final)'"
+    else
+        OUT_WITH="$(bash -c 'set -u; NOVAC_TREE_TAIL=" [tree=/probe head=deadbeef branch=probe-branch]"; '"$NOVAC_LINE" 2>&1)"
+        case "$OUT_WITH" in
+            "NOVAC-GATE OK (final) [tree=/probe head=deadbeef branch=probe-branch]")
+                ok "novac: итоговая строка несёт хвост и сохраняет префикс" ;;
+            *)
+                bad "novac: итоговая строка дала '$OUT_WITH'" ;;
+        esac
+        OUT_WITHOUT="$(bash -c 'set -u; '"$NOVAC_LINE" 2>&1)"; W_RC=$?
+        if [ "$W_RC" -ne 0 ] && printf '%s' "$OUT_WITHOUT" | grep -q 'NOVAC_TREE_TAIL'; then
+            ok "novac: проба умеет краснеть — без переменной строка падает под set -u"
+        else
+            bad "novac: без переменной строка не покраснела (rc=$W_RC): $OUT_WITHOUT"
+        fi
+    fi
+
+    N_ASSIGN="$(grep -n '^NOVAC_TREE_TAIL=' "$NOVAC_GATE" | head -1 | cut -d: -f1)"
+    N_FIRST="$(grep -n 'NOVAC_TREE_TAIL"' "$NOVAC_GATE" | head -1 | cut -d: -f1)"
+    if [ -n "$N_ASSIGN" ] && [ -n "$N_FIRST" ] && [ "$N_ASSIGN" -lt "$N_FIRST" ]; then
+        ok "novac: присваивание (строка $N_ASSIGN) идёт раньше первого вердикта (строка $N_FIRST)"
+    else
+        bad "novac: порядок нарушен — присваивание '$N_ASSIGN', первый вердикт '$N_FIRST'"
+    fi
 fi
 
 if [ "$FAILED" -eq 0 ]; then

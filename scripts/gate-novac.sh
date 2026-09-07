@@ -99,6 +99,19 @@ esac
 NOVAC_DONE="${NOVA_NOVAC_VERDICT:-/tmp/gate_novac.done}"
 NOVAC_VERDICT_HASH=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 NOVAC_VERDICT_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+# ИДЕНТИЧНОСТЬ ДЕРЕВА — И В ТЕРМИНАЛ, А НЕ ТОЛЬКО В ФАЙЛ-ВЕРДИКТ.
+# Файл читает СКРИПТ, строку в терминале — ЧЕЛОВЕК, и это разные
+# читатели с разными нуждами (слово интегратора 2026-09-07): за один вечер он
+# трижды сверял хэш вердикта с ожидаемой вершиной руками, а сосед один раз
+# решил, что прогон судит чужое дерево. Класс тот же, что в основном гейте:
+# вердикт, снятый не с того дерева, читается точно так же, как снятый с нужного.
+# ФОРМА СОГЛАСОВАНА С `scripts/gate.sh`: префикс строки не трогается (его
+# грепают люди, планы и страж слияния — ему нужно ровно `TIER=novac`),
+# идентичность едет ХВОСТОМ. В файл-вердикт пишется ПОЛНЫЙ хэш (его сверяет
+# скрипт), в терминал — короткий.
+NOVAC_VERDICT_SHORT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+NOVAC_TREE_TAIL=" [tree=$ROOT head=$NOVAC_VERDICT_SHORT branch=$NOVAC_VERDICT_BRANCH]"
+echo "novac-gate :: дерево $ROOT, коммит $NOVAC_VERDICT_SHORT, ветка $NOVAC_VERDICT_BRANCH, ярус $NOVAC_TIER"
 rm -f "$NOVAC_DONE"
 _novac_write_verdict() {
     _rc=$?
@@ -528,21 +541,21 @@ fi
 # Рубеж ПЕРЕД вердиктом — иначе красный прогон печатает зелёную строку (№690).
 if [ "$GATE_FAIL_N" -gt 0 ]; then
     echo "" >&2
-    echo "NOVAC-GATE: отказов novac — $GATE_FAIL_N:$GATE_FAILS" >&2
+    echo "NOVAC-GATE: отказов novac — $GATE_FAIL_N:$GATE_FAILS$NOVAC_TREE_TAIL" >&2
     [ "$DESYNC_N" -gt 0 ] && echo "  (плюс рассинхронов рантайм/оракул: $DESYNC_N — см. выше)" >&2
     exit 1
 fi
 if [ "$DESYNC_N" -gt 0 ]; then
     echo "" >&2
-    echo "NOVAC-GATE BLOCKED: рассинхрон рантайм/оракул — $DESYNC_N:$DESYNC_MSGS" >&2
+    echo "NOVAC-GATE BLOCKED: рассинхрон рантайм/оракул — $DESYNC_N:$DESYNC_MSGS$NOVAC_TREE_TAIL" >&2
     echo "  Это НЕ нарушение конвенций novac. Бинарь оракула и заголовки рантайма" >&2
     echo "  взяты из РАЗНЫХ деревьев (реестр №693). Судить novac нечем: бинарь-" >&2
     echo "  зависимые стражи не отработали. Лечится слиянием рантайма, не правкой novac." >&2
     exit 2
 fi
 if [ -n "$SEAMS" ]; then
-    echo "NOVAC-GATE OK (ВЫБОРКА, швы:$SEAMS — это не полный прогон)"
+    echo "NOVAC-GATE OK (ВЫБОРКА, швы:$SEAMS — это не полный прогон)$NOVAC_TREE_TAIL"
     exit 0
 fi
-echo "NOVAC-GATE OK (final)"
+echo "NOVAC-GATE OK (final)$NOVAC_TREE_TAIL"
 exit 0
