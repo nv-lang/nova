@@ -1035,41 +1035,6 @@ static inline void* nova_vec_slice_nochk(void* src, nova_int from, nova_int to, 
  * guard. _nochk: bounds элидированы (proven), boundary guard остаётся
  * (data-dependent). *_to_end_* варианты — для open-ended `s[from..]`:
  * конец = s.len, single-eval `s` (избегаем double-eval исходного выраж.). */
-static inline void nova_str_slice_utf8_guard(nova_str s, nova_int from, nova_int to) {
-    if ((from < s.len && (((unsigned char)s.ptr[from]) & 0xC0) == 0x80) ||
-        (to   < s.len && (((unsigned char)s.ptr[to])   & 0xC0) == 0x80)) {
-        const char* m = "str: slice splits a UTF-8 codepoint";
-        nv_panic((nova_str){ .ptr = (const uint8_t*)m, .len = (nova_int)strlen(m) });
-    }
-}
-static inline void nova_str_slice_bounds(nova_str s, nova_int from, nova_int to) {
-    if (from < 0 || to < from || to > s.len) {
-        char buf[112];
-        int n = snprintf(buf, 112, "str: slice [%lld..%lld] out of bounds for byte-length %lld",
-                         (long long)from, (long long)to, (long long)s.len);
-        if (n < 0) n = 0; if (n > 111) n = 111;
-        nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
-    }
-}
-static inline nova_str nova_str_slice_chk(nova_str s, nova_int from, nova_int to) {
-    nova_str_slice_bounds(s, from, to);
-    nova_str_slice_utf8_guard(s, from, to);
-    { nova_str r; r.ptr = s.ptr + from; r.len = to - from; return r; }
-}
-static inline nova_str nova_str_slice_nochk(nova_str s, nova_int from, nova_int to) {
-    nova_str_slice_utf8_guard(s, from, to);
-    { nova_str r; r.ptr = s.ptr + from; r.len = to - from; return r; }
-}
-static inline nova_str nova_str_slice_to_end_chk(nova_str s, nova_int from) {
-    nova_str_slice_bounds(s, from, s.len);
-    nova_str_slice_utf8_guard(s, from, s.len);
-    { nova_str r; r.ptr = s.ptr + from; r.len = s.len - from; return r; }
-}
-static inline nova_str nova_str_slice_to_end_nochk(nova_str s, nova_int from) {
-    nova_str_slice_utf8_guard(s, from, s.len);
-    { nova_str r; r.ptr = s.ptr + from; r.len = s.len - from; return r; }
-}
-
 /* Plan 145.1 — portable repack тэггированного NovaOpt_nova_int в NPO
  * (single-pointer) Option-payload (MSVC). Извлекает указатель-или-NULL за
  * ОДИН доступ к `t` (source single-eval); сайт оборачивает результат в

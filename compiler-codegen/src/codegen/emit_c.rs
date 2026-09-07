@@ -38822,12 +38822,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 96 Ф.2). Missing start -> `0`; missing end ->
                     // `obj.len()`; inclusive end -> `end + 1`.
                     //
-                    // [M-open-range-len-source-hardcoded] Ф.1: `o` is now
-                    // computed UNCONDITIONALLY, exactly once, up front for
-                    // every branch below (fixed-array / str / NovaArray_ /
-                    // the generic structural-`len`-field reroute) — the old
-                    // Vec-only early return skipped this (deliberately, per
-                    // the removed comment) but embedded `obj.clone()` TWICE
+                    // `o` is computed UNCONDITIONALLY, exactly once, up front for
+                    // every branch below (fixed array, then the role). Since plan
+                    // 284 F.1 there is no separate `str` branch and the role, not a
+                    // structural `len` field, decides — but the single-eval reason
+                    // below is older than either and still holds. The past defect it
+                    // guards against was recorded as
+                    // [M-open-range-len-source-hardcoded]: the old Vec-only early
+                    // return skipped this (deliberately, per the removed comment)
+                    // but embedded `obj.clone()` TWICE
                     // in its synthetic AST for an OPEN-ended Vec range (once
                     // as the `.index()` receiver, once inside `obj.len()`),
                     // which double-evaluated a side-effecting `obj` at the C
@@ -38836,8 +38839,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let o = self.emit_expr(obj)?;
                     // Plan 96 Ф.4.4 — emit_range_bounds: open-ended → подставить
                     // (0, len) / (start, len) / (0, end) / (start, end[+1]).
-                    // (Vec[T] range-slice handled above — dispatches to `.nv`
-                    // `@index(Range)`, Plan 194 Ф.3.)
+                    // (Every type that satisfies the slice role goes through the
+                    // same synthesized `@index(Range)` call — `Vec[T]` since plan
+                    // 194 F.3, `str` since plan 284 F.1.)
                     // [M-fixed-array-value-semantics] (регрессия main f2f7f65e2 +
                     // [N]T value-класс, чинится волной 172.14): срез value-массива
                     // `[N]T[a..b]` — КОПИЯ диапазона в свежий `[]T` (value-семантика;
@@ -56463,14 +56467,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Self::debt_struct_name_from_c_type(c_ty)
     }
 
-    /// [M-open-range-len-source-hardcoded] Ф.1: does `obj_ty` structurally
-    /// have a field literally named `len`? Reads `record_schemas` — the
-    /// SAME registry every `.nv` record/value-record type's fields land in
-    /// — never the type's NAME. Returns the field's C type so callers can
-    /// verify it is `nova_int` rather than assume. Never resolves for
-    /// `nova_str` (see `record_schema_key_for_c_type`) — str's own
-    /// dedicated branch reads `len` separately and is excluded from calling
-    /// this before it would ever matter.
     /// Plan 284 F.1: does `obj_ty` satisfy the SLICE ROLE — a method
     /// `index(Range)` plus a method `end_index()`?
     ///
@@ -56481,15 +56477,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// into THIS file by name, and a type whose `len` happens to be a counter
     /// or a capacity passed the test silently and got sliced wrongly.
     ///
-    /// Asked of `all_methods` — the method registry every other
-    /// method-existence question in this file consults — with the same
-    /// base-name derivation those sites use: `debt_nova_type_name_from_c`
-    /// (which maps `nova_str` -> `str` and strips the `NovaValue_`/`Nova_`
-    /// prefixes) and then the mono suffix cut at `____`, so a mono
-    /// `Vec[T]` is asked under `Vec`. Deliberately NOT `record_schemas`:
-    /// registering `str` there is what regressed D410 in 2026-07-24 (see the
-    /// reverted-note block in the pre-registration section), and the role
-    /// needs methods, not fields.
+    /// Asks `method_overloads`, where the signatures live — D470 declares the
+    /// role BY SIGNATURE, and an earlier version of this predicate asked
+    /// `all_methods` for two NAMES, which is too weak: one type carries both
+    /// `index(int)` and `index(Range)` under a single name (owner's correction,
+    /// 2026-09-07, registry #1022). The base name is derived the way every other
+    /// method question in this file derives it: `debt_nova_type_name_from_c`
+    /// (mapping `nova_str` -> `str`, stripping `NovaValue_`/`Nova_`) and then the
+    /// mono suffix cut at `____`, so a mono `Vec[T]` is asked under `Vec`.
+    /// Deliberately NOT `record_schemas`: registering `str` there is what
+    /// regressed D410 in 2026-07-24 (see the reverted-note block in the
+    /// pre-registration section), and the role is about methods, not fields.
     fn satisfies_range_index_role(&self, obj_ty: &str) -> bool {
         let tname = Self::debt_nova_type_name_from_c(obj_ty);
         let base = tname.split("____").next().unwrap_or(tname.as_str());
@@ -56536,18 +56534,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         takes_range && answers_end
     }
 
-    /// [M-open-range-len-source-hardcoded] Ф.1: GENERIC open/closed-range
-    /// reroute for any type with a structural `len int` field — generalizes
-    /// the `Nova_Vec____`-only early-return this file used to gate purely
-    /// by C-type name (Plan 194 Ф.3) to the structural predicate above, so
-    /// an arbitrary user type with the same field gets `x[a..]`/`x[a..b]`
-    /// "for free" through its OWN `.nv` `@index(Range)` method — same
-    /// synthetic `obj.index(materialized_range)` re-emission idiom this
-    /// file already uses elsewhere (`rebuilt`/`iter_call`, ~29269/~45729),
-    /// reusing the existing generic-method overload resolution +
-    /// monomorphization + sret/`_out` rewrite. Never invented for str/
-    /// NovaArray_ — the caller only reaches this after excluding both (they
-    /// keep their own dedicated runtime-call fast paths, out of scope here).
+    /// Open/closed-range reroute for every type that SATISFIES THE SLICE ROLE
+    /// (plan 284 F.1). The test used to be a structural field literally named
+    /// `len`, and before that the `Nova_Vec____` C-type name alone (plan 194
+    /// F.3); it is now `satisfies_range_index_role` above, so `str` reaches
+    /// this path too — its dedicated runtime fast path is gone, and the six
+    /// `nova_str_slice_*` helpers with it. `NovaArray_` still does not: the
+    /// plan names it out of scope and it has no Nova-level `@index(Range)`.
+    ///
+    /// The synthetic `obj.index(materialized_range)` re-emission idiom is the
+    /// one this file already uses elsewhere (`rebuilt`/`iter_call`), reusing
+    /// the existing generic-method overload resolution, monomorphization and
+    /// the sret/`_out` rewrite.
     ///
     /// Single-eval: `o` (the receiver, already emitted exactly once by the
     /// caller) is hoisted into a fresh C tmp because it is referenced TWICE
