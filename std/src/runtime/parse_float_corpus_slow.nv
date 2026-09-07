@@ -9,7 +9,8 @@
 // millions of lines live outside, here are the runner and the hash.
 //
 // Corpus line = four space-separated fields: f16 bits, f32 bits, f64 bits (hex) and the
-// string, e.g. `3C00 3F800000 3FF0000000000000 1`. Only the f64 field is judged.
+// string, e.g. `3C00 3F800000 3FF0000000000000 1`. Both the f64 AND the f32 field are
+// judged (plan 283 Ф.7 opened `str @to_f32()`); the f16 field has no door in Nova.
 //
 // Skip-never-fail: no corpus directory -> zero checks and a green test (the same policy as
 // the Unicode conformance lane). A string Nova's grammar rejects (`inf`, `nan`, hex
@@ -28,14 +29,18 @@ const CORPUS_DEFAULT_DIR str = "nova_tests/.cache/parse-number-fxx"
 const F64_POS_INF_BITS u64 = 0x7FF0000000000000
 const F64_NEG_INF_BITS u64 = 0xFFF0000000000000
 
-// One corpus line -> (expected f64 bits, the string), or None when the line has not got
-// the four-field shape (blank lines, comments).
-fn split_corpus_line(line str) -> Option[(u64, str)] {
+// One corpus line -> (expected f32 bits, expected f64 bits, the string), or None when the
+// line has not got the four-field shape (blank lines, comments).
+fn split_corpus_line(line str) -> Option[(u32, u64, str)] {
     ro (_f16, rest1) = line.split_once(" ")?
-    ro (_f32, rest2) = rest1.split_once(" ")?
+    ro (f32_hex, rest2) = rest1.split_once(" ")?
     ro (f64_hex, literal) = rest2.split_once(" ")?
+    ro f32_bits = match f32_hex.to_u32(radix: 16) {
+        Ok(b) => b
+        Err(_) => return None
+    }
     match f64_hex.to_u64(radix: 16) {
-        Ok(bits) => Some((bits, literal))
+        Ok(bits) => Some((f32_bits, bits, literal))
         Err(_) => None
     }
 }
@@ -71,7 +76,17 @@ test "283 Ф.5: parse-number-fxx corpus — every f64 field equals to_f64 bit fo
                                             files += 1
                                             for line in text.lines() {
                                                 if Some(parsed) = split_corpus_line(line) {
-                                                    ro (expected, literal) = parsed
+                                                    ro (expected_f32, expected, literal) = parsed
+                                                    // The f32 door of Ф.7 against the same line.
+                                                    match literal.to_f32() {
+                                                        Ok(v32) => {
+                                                            if v32.to_bits() != expected_f32 {
+                                                                mismatch += 1
+                                                                if first_bad.is_empty() { first_bad = "${name}: ${line} -> f32 got ${v32.to_bits()}" }
+                                                            }
+                                                        }
+                                                        Err(_) => {}
+                                                    }
                                                     match literal.to_f64() {
                                                         Ok(v) => {
                                                             if v.to_bits() == expected {

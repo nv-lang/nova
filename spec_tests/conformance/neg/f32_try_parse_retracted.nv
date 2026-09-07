@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_STATIC_METHOD
+//
+// Plan 283 Ф.7: `f32.try_parse` is retracted from the compiler. It used to be a builtin
+// that emitted a call to the C helper `nova_str_to_f64`, and that was wrong twice over:
+// the grammar was whatever `strtod` accepted (whitespace, `nan`/`inf`, hex, the locale
+// separator) while `str @to_f64()` had become strict, and the value was rounded to f64 and
+// then narrowed -- two roundings, which disagree with the correct answer for a decimal
+// sitting just above the midpoint between two neighbouring f32 values.
+//
+// The replacement is `str @to_f32()`, a plain Nova body that rounds the digits directly to
+// f32. This fixture pins the retraction: the old spelling must not resolve.
+module neg.f32_try_parse_retracted
+
+fn main() Io -> () {
+    // nova:expect E_UNKNOWN_STATIC_METHOD -- `f32.try_parse` is gone; the door is `"1.5".to_f32()`
+    ro parsed = f32.try_parse("1.5")
+    print("${parsed}")
+}

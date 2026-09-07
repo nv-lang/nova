@@ -21,6 +21,8 @@
 // State of the port (plan 283): DONE -- `str @to_f64()` calls `convert_number` below and
 // nothing else; the temporary doors are gone, and the `extern "C" str_parse_f64` now lives
 // in the tests, where the C library is the reference rather than a dependency.
+// Since plan 283 Ф.7 the same three layers also serve `f32` (`str @to_f32()`), by a
+// second CONSTANT SET rather than a second algorithm.
 // NOT ported, by decision: `fpu.rs` (x87 precision control for
 // 32-bit x86 without SSE2 -- Nova's C backend targets x86-64, where the fast path's one
 // multiplication is already rounded once) and `parse_inf_nan` (our grammar rejects
@@ -107,6 +109,26 @@ fn try_fast_path(n Number) -> Option[f64] {
     if n.negative { Some(-value) } else { Some(value) }
 }
 
+// ─── The target type as a set of constants (traits.rs `Float` / `Lemire`) ───
+//
+// The width-dependent numbers travel as a VALUE, so the algorithm below exists once and
+// serves both floats: a second type is a second set, never a second copy (that is why the
+// donor's constants are grouped per type in the first place). `f32` was added by plan 283
+// Ф.7, and it parses DIRECTLY -- decimal to f64 and then narrowing to f32 rounds twice and
+// gives a different answer near the midpoints between two f32 values.
+type FloatSpec(
+    sig_bits int = 0,          // explicit significand bits (without the hidden one)
+    exp_min int = 0,           // minimum exponent of a normal value
+    infinite_power int = 0,    // the saturated biased exponent (infinity / nan)
+    min_exp_rte int = 0,       // the q window where a tie can need round-to-even
+    max_exp_rte int = 0,
+    smallest_pow10 int = 0,    // below this decimal exponent the value is zero
+    largest_pow10 int = 0,     // above it, infinity
+)
+
+fn f64_spec() -> FloatSpec => FloatSpec(52, -1022, 0x7FF, -4, 23, -342, 308)
+fn f32_spec() -> FloatSpec => FloatSpec(23, -126, 0xFF, -17, 10, -65, 38)
+
 // ─── Eisel-Lemire (lemire.rs) ───
 
 // lemire.rs `power`: floor(q × log2(10)) + 63 through the integer approximation
@@ -127,6 +149,9 @@ fn power(q int) -> int {
 // a row is the UPPER half of 5^q (table.rs, `dec2flt_table.py`: `(c >> 64, c mod 2^64)`)
 // and it is the one used for the first, main product. Here the halves are called what
 // they are: `POW5_HI[i]` first, `POW5_LO[i]` for the correction.
+//
+// The table serves both widths: `q` for f32 lives inside the f64 range, so the same rows
+// are read -- one table, not one per type.
 fn compute_product_approx(q int, w u64, precision int) -> (u64, u64) {
     ro all_ones = 0xFFFFFFFFFFFFFFFF as u64
     ro mask = if precision < 64 { all_ones >> precision } else { all_ones }
@@ -155,26 +180,27 @@ fn compute_product_approx(q int, w u64, precision int) -> (u64, u64) {
     (first_lo, first_hi)
 }
 
-// lemire.rs `compute_float`: w × 10^q as a `BiasedFp`, or `p = -1` when the 128-bit
-// product cannot decide the rounding (near half-way cases; the caller falls back).
+// lemire.rs `compute_float`: w × 10^q as a `BiasedFp` for the target `spec`, or `p = -1`
+// when the 128-bit product cannot decide the rounding (near half-way cases; the caller
+// falls back to the slow path).
 //
 // This algorithm scales the exponent by the decimal exponent using pre-computed
 // powers of five, and calculates if the representation can be unambiguously rounded
 // to the nearest machine float. Described in detail in "Daniel Lemire, Number Parsing
 // at a Gigabyte per Second", section 5 "Fast Algorithm" and section 6 "Exact Numbers
 // And Ties", https://arxiv.org/abs/2101.11408.
-fn compute_float(q int, w_in u64) -> BiasedFp {
+fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
     ro fp_zero = BiasedFp(0, 0)
-    ro fp_inf = BiasedFp(0, F64_INFINITE_POWER)
+    ro fp_inf = BiasedFp(0, spec.infinite_power)
     ro fp_error = BiasedFp(0, -1)
 
     // Short-circuit if the value can only be a literal 0 or infinity.
-    if w_in == 0 || q < F64_SMALLEST_POWER_OF_TEN { return fp_zero }
-    if q > F64_LARGEST_POWER_OF_TEN { return fp_inf }
+    if w_in == 0 || q < spec.smallest_pow10 { return fp_zero }
+    if q > spec.largest_pow10 { return fp_inf }
     // Normalize our significant digits, so the most-significant bit is set.
     ro lz = w_in.leading_zeros()
     ro w = w_in << lz
-    ro (lo, hi) = compute_product_approx(q, w, F64_SIG_BITS + 3)
+    ro (lo, hi) = compute_product_approx(q, w, spec.sig_bits + 3)
     if lo == 0xFFFFFFFFFFFFFFFF as u64 {
         // If we have failed to approximate w x 5^-q with our 128-bit value.
         // Since the addition of 1 could lead to an overflow which could then
@@ -194,8 +220,8 @@ fn compute_float(q int, w_in u64) -> BiasedFp {
         if !inside_safe_exponent { return fp_error }
     }
     ro upperbit = (hi >> 63) as int
-    mut mantissa = hi >> (upperbit + 64 - F64_SIG_BITS - 3)
-    mut power2 = power(q) + upperbit - lz - F64_EXP_MIN + 1
+    mut mantissa = hi >> (upperbit + 64 - spec.sig_bits - 3)
+    mut power2 = power(q) + upperbit - lz - spec.exp_min + 1
     if power2 <= 0 {
         if -power2 + 1 >= 64 {
             // Have more than 64 bits below the minimum exponent, must be 0.
@@ -205,7 +231,7 @@ fn compute_float(q int, w_in u64) -> BiasedFp {
         mantissa = mantissa >> (-power2 + 1)
         mantissa = mantissa + (mantissa & 1)
         mantissa = mantissa >> 1
-        power2 = if mantissa >= ((1 as u64) << F64_SIG_BITS) { 1 } else { 0 }
+        power2 = if mantissa >= ((1 as u64) << spec.sig_bits) { 1 } else { 0 }
         return BiasedFp(mantissa, power2)
     }
     // Need to handle rounding ties. Normally, we need to round up,
@@ -220,26 +246,26 @@ fn compute_float(q int, w_in u64) -> BiasedFp {
     //
     // Or, we may fall between two floats: we are exactly halfway.
     if lo <= 1 &&
-        q >= F64_MIN_EXPONENT_ROUND_TO_EVEN &&
-        q <= F64_MAX_EXPONENT_ROUND_TO_EVEN &&
+        q >= spec.min_exp_rte &&
+        q <= spec.max_exp_rte &&
         (mantissa & 3) == 1 &&
-        (mantissa << (upperbit + 64 - F64_SIG_BITS - 3)) == hi {
+        (mantissa << (upperbit + 64 - spec.sig_bits - 3)) == hi {
         // Zero the lowest bit, so we don't round up.
         mantissa = mantissa & (0xFFFFFFFFFFFFFFFE as u64)
     }
     // Round-to-even, then shift the significant digits into place.
     mantissa = mantissa + (mantissa & 1)
     mantissa = mantissa >> 1
-    if mantissa >= ((2 as u64) << F64_SIG_BITS) {
+    if mantissa >= ((2 as u64) << spec.sig_bits) {
         // Rounding up overflowed, so the carry bit is set. Set the
         // mantissa to 1 (only the implicit, hidden bit is set) and
         // increase the exponent.
-        mantissa = (1 as u64) << F64_SIG_BITS
+        mantissa = (1 as u64) << spec.sig_bits
         power2 += 1
     }
-    // Zero out the hidden bit (bit 52): the mask is !(1 << 52).
-    mantissa = mantissa & (0xFFEFFFFFFFFFFFFF as u64)
-    if power2 >= F64_INFINITE_POWER {
+    // Zero out the hidden bit: the mask is all ones with the significand's top bit cleared.
+    mantissa = mantissa & ((0xFFFFFFFFFFFFFFFF as u64) ^ ((1 as u64) << spec.sig_bits))
+    if power2 >= spec.infinite_power {
         // Exponent is above largest normal value, must be infinite.
         return fp_inf
     }
@@ -255,15 +281,20 @@ const SLOW_POWERS []int = [0, 3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 4
 
 fn slow_shift_for(n int) -> int => if n < 19 { SLOW_POWERS[n] } else { SLOW_MAX_SHIFT }
 
-// slow.rs `parse_long_mantissa`: the always-correct fallback. The digits go into a
-// `DigitBuf`, are shifted by powers of two until the value sits in [1/2, 1), and the top
-// 53 + 1 bits are read off and rounded ONCE -- so near-half-way cases that need hundreds
-// of digits to settle are settled. "Processing Long Numbers Quickly",
-// https://arxiv.org/pdf/2101.11408.pdf#section.11. Returns |value|; the sign is the
-// caller's. `s` is the whole string (the grammar already accepted it).
-fn parse_long_mantissa(s str) -> BiasedFp {
+// slow.rs `parse_long_mantissa`: the always-correct fallback for the target `spec`. The
+// digits go into a `DigitBuf`, are shifted by powers of two until the value sits in
+// [1/2, 1), and the top sig_bits + 1 bits are read off and rounded ONCE -- so near-half-way
+// cases that need hundreds of digits to settle are settled. "Processing Long Numbers
+// Quickly", https://arxiv.org/pdf/2101.11408.pdf#section.11. Returns |value|; the sign is
+// the caller's. `s` is the whole string (the grammar already accepted it).
+//
+// The two decimal-point short-circuits below are the donor's f64 numbers and stay as they
+// are for f32 too: they are CONSERVATIVE for a narrower target (a value too small for f64
+// is too small for f32, and one too large is too large), and the exact edge is decided
+// afterwards by `spec.exp_min` / `spec.infinite_power`.
+fn parse_long_mantissa(spec FloatSpec, s str) -> BiasedFp {
     ro fp_zero = BiasedFp(0, 0)
-    ro fp_inf = BiasedFp(0, F64_INFINITE_POWER)
+    ro fp_inf = BiasedFp(0, spec.infinite_power)
     mut d = parse_digit_buf(s)
     // Short-circuit if the value can only be a literal 0 or infinity.
     if d.num_digits == 0 || d.decimal_point < -324 { return fp_zero }
@@ -292,29 +323,29 @@ fn parse_long_mantissa(s str) -> BiasedFp {
     }
     // We are now in the range [1/2 ... 1] but the binary format uses [1 ... 2].
     exp2 -= 1
-    while F64_EXP_MIN > exp2 {
-        mut n = F64_EXP_MIN - exp2
+    while spec.exp_min > exp2 {
+        mut n = spec.exp_min - exp2
         if n > SLOW_MAX_SHIFT { n = SLOW_MAX_SHIFT }
         d.right_shift(n)
         exp2 += n
     }
-    if (exp2 - F64_EXP_MIN + 1) >= F64_INFINITE_POWER { return fp_inf }
+    if (exp2 - spec.exp_min + 1) >= spec.infinite_power { return fp_inf }
     // Shift the decimal to the hidden bit, and then round the value
     // to get the high mantissa+1 bits.
-    d.left_shift(F64_SIG_BITS + 1)
+    d.left_shift(spec.sig_bits + 1)
     mut mantissa = d.round()
-    if mantissa >= ((1 as u64) << (F64_SIG_BITS + 1)) {
+    if mantissa >= ((1 as u64) << (spec.sig_bits + 1)) {
         // Rounding up overflowed to the carry bit, need to
         // shift back to the hidden bit.
         d.right_shift(1)
         exp2 += 1
         mantissa = d.round()
-        if (exp2 - F64_EXP_MIN + 1) >= F64_INFINITE_POWER { return fp_inf }
+        if (exp2 - spec.exp_min + 1) >= spec.infinite_power { return fp_inf }
     }
-    mut power2 = exp2 - F64_EXP_MIN + 1
-    if mantissa < ((1 as u64) << F64_SIG_BITS) { power2 -= 1 }
+    mut power2 = exp2 - spec.exp_min + 1
+    if mantissa < ((1 as u64) << spec.sig_bits) { power2 -= 1 }
     // Zero out all the bits above the explicit mantissa bits.
-    mantissa = mantissa & (((1 as u64) << F64_SIG_BITS) - 1)
+    mantissa = mantissa & (((1 as u64) << spec.sig_bits) - 1)
     BiasedFp(mantissa, power2)
 }
 
@@ -330,9 +361,10 @@ fn fast_or_lemire(n Number) -> Option[f64] {
     // only if `mantissa + 1` produces a different result. We also avoid
     // redundantly using the Eisel-Lemire algorithm if it was unable to
     // correctly round on the first pass.
-    mut fp = compute_float(n.exponent, n.mantissa)
+    ro spec = f64_spec()
+    mut fp = compute_float(spec, n.exponent, n.mantissa)
     if n.many_digits && fp.p >= 0 {
-        ro fp_next = compute_float(n.exponent, n.mantissa + 1)
+        ro fp_next = compute_float(spec, n.exponent, n.mantissa + 1)
         if fp_next.m != fp.m || fp_next.p != fp.p { fp = BiasedFp(0, -1) }
     }
     if fp.p < 0 { return None }
@@ -348,8 +380,81 @@ fn fast_or_lemire(n Number) -> Option[f64] {
 // C library anywhere below this line.
 fn convert_number(n Number, s str) -> f64 {
     if Some(v) = fast_or_lemire(n) { return v }
-    ro fp = parse_long_mantissa(s)
+    ro fp = parse_long_mantissa(f64_spec(), s)
     ro word = fp.m | ((fp.p as u64) << F64_SIG_BITS)
     ro v = f64.from_bits(word)
+    if n.negative { -v } else { v }
+}
+
+// ─── The same three layers for f32 (plan 283 Ф.7) ───
+//
+// Everything width-independent is shared above: the grammar, the powers of five, Lemire,
+// the big-decimal slow path. What is genuinely per-type is here, and it is a set of
+// constants plus a thin dispatch -- NOT a second algorithm.
+//
+// The fast path is the one part that cannot be shared, and for a precise reason: it does
+// its one multiplication IN THE TARGET'S ARITHMETIC. Doing it in f64 and narrowing would
+// round twice, which is the very error this phase exists to avoid.
+
+// mod.rs `pow10_fast_path` for f32: the powers of ten that are exact in f32, 10^0..10^10.
+const POW10_FAST_PATH_F32 []f32 = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10,
+]
+
+const F32_SIG_BITS int = 23
+const F32_MIN_EXPONENT_FAST_PATH int = -10            // -floor(24 / log2(5))
+const F32_MAX_EXPONENT_FAST_PATH int = 10
+const F32_MAX_EXPONENT_DISGUISED_FAST_PATH int = 17   // 10 + floor(24 / log2(10))
+const F32_MAX_MANTISSA_FAST_PATH u64 = 16777216       // 1 << 24
+const F32_INF_BITS u32 = 0x7F800000
+
+// decimal.rs `try_fast_path` for f32: exact if the significand fits 24 bits and the power
+// of ten is exact in f32, so one f32 multiplication rounds exactly once. The disguised
+// case moves a power of ten into the significand first, as for f64.
+fn try_fast_path_f32(n Number) -> Option[f32] {
+    ro usable = F32_MIN_EXPONENT_FAST_PATH <= n.exponent &&
+        n.exponent <= F32_MAX_EXPONENT_DISGUISED_FAST_PATH &&
+        n.mantissa <= F32_MAX_MANTISSA_FAST_PATH &&
+        !n.many_digits
+    if !usable { return None }
+    mut value = 0.0 as f32
+    if n.exponent <= F32_MAX_EXPONENT_FAST_PATH {
+        ro m = n.mantissa as f32
+        value = if n.exponent < 0 {
+            m / POW10_FAST_PATH_F32[-n.exponent]
+        } else {
+            m * POW10_FAST_PATH_F32[n.exponent]
+        }
+    } else {
+        ro shift = n.exponent - F32_MAX_EXPONENT_FAST_PATH
+        ro (hi, wide) = n.mantissa.widening_mul(INT_POW10[shift])
+        if hi != 0 { return None }
+        if wide > F32_MAX_MANTISSA_FAST_PATH { return None }
+        value = (wide as f32) * POW10_FAST_PATH_F32[F32_MAX_EXPONENT_FAST_PATH]
+    }
+    if n.negative { Some(-value) } else { Some(value) }
+}
+
+// The 128-bit arithmetic alone for f32, `None` when it cannot decide -- same shape and same
+// reasons as `fast_or_lemire`, with the f32 constant set.
+fn fast_or_lemire_f32(n Number) -> Option[f32] {
+    if Some(v) = try_fast_path_f32(n) { return Some(v) }
+    ro spec = f32_spec()
+    mut fp = compute_float(spec, n.exponent, n.mantissa)
+    if n.many_digits && fp.p >= 0 {
+        ro fp_next = compute_float(spec, n.exponent, n.mantissa + 1)
+        if fp_next.m != fp.m || fp_next.p != fp.p { fp = BiasedFp(0, -1) }
+    }
+    if fp.p < 0 { return None }
+    ro word = (fp.m as u32) | ((fp.p as u32) << F32_SIG_BITS)
+    ro v = f32.from_bits(word)
+    if n.negative { Some(-v) } else { Some(v) }
+}
+
+fn convert_number_f32(n Number, s str) -> f32 {
+    if Some(v) = fast_or_lemire_f32(n) { return v }
+    ro fp = parse_long_mantissa(f32_spec(), s)
+    ro word = (fp.m as u32) | ((fp.p as u32) << F32_SIG_BITS)
+    ro v = f32.from_bits(word)
     if n.negative { -v } else { v }
 }

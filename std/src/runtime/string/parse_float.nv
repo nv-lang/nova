@@ -158,6 +158,29 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
     Ok(Number(mantissa, exp_read + exp_number, negative, true))
 }
 
+/// Strict float parse into `f32`, same grammar and same errors as `@to_f64()`.
+///
+/// ```text
+/// float := [+-]? ( digits [ "." digits? ] | "." digits ) [ ("e"|"E") [+-]? digits ]
+/// ```
+///
+/// The value is rounded to `f32` in ONE step, directly from the decimal digits. Parsing to
+/// `f64` first and narrowing afterwards rounds twice and disagrees with the correct answer
+/// for strings very close to the midpoint between two `f32` values, so it is not done.
+/// `TooLarge` / `TooSmall` mean the literal is finite but outside `f32`; a value too small
+/// for `f32` is `0.0` (or a denormal), which is what the literal means at this precision.
+#stable(since = "0.1")
+export fn str @to_f32() -> Result[f32, ParseFloatError] {
+    ro n = parse_number(@)?
+    ro v = convert_number_f32(n, @)
+    // Infinity means the finite literal did not fit; we say which way rather than
+    // returning it. Compared as BITS: the sign is carried by the pattern itself.
+    ro bits = v.to_bits()
+    if bits == F32_INF_BITS { return Err(ParseFloatError.TooLarge) }
+    if bits == (F32_INF_BITS | (0x80000000 as u32)) { return Err(ParseFloatError.TooSmall) }
+    Ok(v)
+}
+
 /// Strict float parse. Grammar (the same strictness as `@to_int`):
 ///
 /// ```text

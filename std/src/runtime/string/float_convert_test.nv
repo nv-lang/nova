@@ -39,7 +39,7 @@ fn strtod_magnitude_bits(s str) -> u64 {
 
 // Bits of the slow path's answer alone (it returns |value|).
 fn slow_path_bits(s str) -> u64 {
-    ro fp = parse_long_mantissa(s)
+    ro fp = parse_long_mantissa(f64_spec(), s)
     fp.m | ((fp.p as u64) << F64_SIG_BITS)
 }
 
@@ -170,29 +170,29 @@ test "try_fast_path: decides inside the exact window and declines outside it" {
 test "compute_float: TRAP 2 -- the exact tie 2^53+1 rounds to even, 2^53+3 rounds up to even" {
     // 9007199254740993 lies exactly between 2^53 and 2^53+2: ties-to-even gives 2^53,
     // i.e. m = 0 (hidden bit stripped), biased exponent 1023 + 53 = 1076.
-    ro tie_down = compute_float(0, 9007199254740993 as u64)
+    ro tie_down = compute_float(f64_spec(), 0, 9007199254740993 as u64)
     assert(tie_down.p == 1076, "2^53+1 exponent")
     assert(tie_down.m == 0, "2^53+1 rounds DOWN to even")
     // 9007199254740995 lies between 2^53+2 (odd mantissa 1) and 2^53+4 (even 2): up.
-    ro tie_up = compute_float(0, 9007199254740995 as u64)
+    ro tie_up = compute_float(f64_spec(), 0, 9007199254740995 as u64)
     assert(tie_up.p == 1076, "2^53+3 exponent")
     assert(tie_up.m == 2, "2^53+3 rounds UP to even")
 }
 
 test "compute_float: TRAP 3 -- subnormals: 5e-324 is the smallest, half of it is zero" {
-    ro smallest = compute_float(-324, 5)
+    ro smallest = compute_float(f64_spec(), -324, 5)
     assert(smallest.p == 0, "subnormal exponent field")
     assert(smallest.m == 1, "smallest subnormal")
     // 2.4703282292062327e-324 is just below half the smallest subnormal -> 0
-    ro below_half = compute_float(-340, 24703282292062327 as u64)
+    ro below_half = compute_float(f64_spec(), -340, 24703282292062327 as u64)
     assert(below_half.p == 0)
     assert(below_half.m == 0, "below half rounds to zero")
     // 2.4703282292062328e-324 is just above -> the smallest subnormal
-    ro above_half = compute_float(-340, 24703282292062328 as u64)
+    ro above_half = compute_float(f64_spec(), -340, 24703282292062328 as u64)
     assert(above_half.p == 0)
     assert(above_half.m == 1, "above half rounds to the smallest subnormal")
     // 2.2250738585072011e-308: the largest subnormal (the 2011 PHP/Java hang value)
-    ro largest_sub = compute_float(-324, 22250738585072011 as u64)
+    ro largest_sub = compute_float(f64_spec(), -324, 22250738585072011 as u64)
     assert(largest_sub.p == 0)
     assert(largest_sub.m == 0xFFFFFFFFFFFFF as u64, "largest subnormal mantissa")
     // 2.2250738585072012e-308: the smallest normal
@@ -200,7 +200,7 @@ test "compute_float: TRAP 3 -- subnormals: 5e-324 is the smallest, half of it is
     // with the hidden bit still set and `p = 1`; the assembly `m | (p << 52)` ORs the two
     // into 0x0010000000000000. The donor (lemire.rs) does exactly this -- the branch has
     // no hidden-bit mask -- so the pair to assert is (1 << 52, 1), not (0, 1).
-    ro smallest_norm = compute_float(-324, 22250738585072012 as u64)
+    ro smallest_norm = compute_float(f64_spec(), -324, 22250738585072012 as u64)
     assert(smallest_norm.p == 1, "smallest normal: p")
     assert(smallest_norm.m == (1 as u64) << F64_SIG_BITS, "smallest normal: m carries the hidden bit")
     assert((smallest_norm.m | ((smallest_norm.p as u64) << F64_SIG_BITS)) == 0x0010000000000000 as u64,
@@ -208,15 +208,15 @@ test "compute_float: TRAP 3 -- subnormals: 5e-324 is the smallest, half of it is
 }
 
 test "compute_float: zero, infinity and the exponent guards" {
-    ro z = compute_float(0, 0)
+    ro z = compute_float(f64_spec(), 0, 0)
     assert(z.p == 0 && z.m == 0, "w = 0 is zero")
-    ro tiny = compute_float(-343, 1)
+    ro tiny = compute_float(f64_spec(), -343, 1)
     assert(tiny.p == 0 && tiny.m == 0, "below the smallest power of ten is zero")
-    ro huge = compute_float(309, 1)
+    ro huge = compute_float(f64_spec(), 309, 1)
     assert(huge.p == F64_INFINITE_POWER, "above the largest power of ten is infinity")
-    ro max = compute_float(292, 17976931348623157 as u64)
+    ro max = compute_float(f64_spec(), 292, 17976931348623157 as u64)
     assert(max.p == 2046 && max.m == 0xFFFFFFFFFFFFF as u64, "f64::MAX")
-    ro over = compute_float(292, 17976931348623159 as u64)
+    ro over = compute_float(f64_spec(), 292, 17976931348623159 as u64)
     assert(over.p == F64_INFINITE_POWER, "just past MAX rounds to infinity")
 }
 
@@ -250,7 +250,7 @@ test "DigitBuf: parse, right_shift and left_shift step by step on \"1\" (and the
     assert(d.num_digits == 1, "left_shift: num_digits == 1")
     assert(d.decimal_point == 0, "left_shift: decimal_point == 0")
     assert(d.digits[0] == 5, "left_shift: digits[0] == 5")
-    ro fp = parse_long_mantissa("1")
+    ro fp = parse_long_mantissa(f64_spec(), "1")
     assert(fp.p == 1023, "parse_long_mantissa(1): p == 1023")
     assert(fp.m == 0, "parse_long_mantissa(1): m == 0")
 }
@@ -422,4 +422,127 @@ test "native: the curated set matches the C library bit for bit, sign included" 
             Err(_) => assert(v > 1.7976931348623157e308 || v < -1.7976931348623157e308, s)
         }
     }
+}
+
+// ── plan 283 Ф.7: the f32 door ────────────────────────────
+//
+// The reference bits below were computed by EXACT single rounding of each decimal
+// (rational arithmetic outside the tree), not by rounding through f64: that path is
+// the very error this phase exists to avoid, so it cannot also be the oracle. The
+// corpus of the slow lane checks the same door against 5.3 million lines, where the
+// second field of every line is the f32 answer.
+
+fn f32_bits(s str) -> u32 {
+    match s.to_f32() {
+        Ok(v) => v.to_bits()
+        Err(_) => 0xFFFFFFFF as u32
+    }
+}
+
+test "283 Ф.7: to_f32 -- exact bits on integers, ties at 2^24, subnormals and both edges" {
+    ro cases = [
+        ("0", 0x00000000 as u32),
+        ("1", 0x3F800000 as u32),
+        ("2", 0x40000000 as u32),
+        ("0.5", 0x3F000000 as u32),
+        ("16777216", 0x4B800000 as u32),
+        ("16777217", 0x4B800000 as u32),
+        ("16777218", 0x4B800001 as u32),
+        ("1e10", 0x501502F9 as u32),
+        ("1e-10", 0x2EDBE6FF as u32),
+        ("3.14159265", 0x40490FDB as u32),
+        ("0.1", 0x3DCCCCCD as u32),
+        ("0.2", 0x3E4CCCCD as u32),
+        ("1.5", 0x3FC00000 as u32),
+        ("-0.0", 0x80000000 as u32),
+        ("-1.5", 0xBFC00000 as u32),
+        ("1e38", 0x7E967699 as u32),
+        ("3.4028234e38", 0x7F7FFFFF as u32),
+        ("1.1754944e-38", 0x00800000 as u32),
+        ("1e-45", 0x00000001 as u32),
+        ("7e-46", 0x00000000 as u32),
+        ("1.4e-45", 0x00000001 as u32),
+        ("1e-46", 0x00000000 as u32),
+        ("1e17", 0x5BB1A2BC as u32),
+        ("1e18", 0x5D5E0B6B as u32),
+        ("16777216e10", 0x5C1502F9 as u32),
+        ("0.000000000000000000000000000000000000000000001", 0x00000001 as u32),
+    ]
+    for c in cases {
+        ro (text, want) = c
+        assert(f32_bits(text) == want, text)
+    }
+}
+
+test "283 Ф.7: to_f32 -- a finite literal outside f32 is an error by direction, not infinity" {
+    match "3.4028236e38".to_f32() {
+        Err(TooLarge) => {}
+        _ => assert(false, "just past f32 MAX must be TooLarge")
+    }
+    match "1e39".to_f32() {
+        Err(TooLarge) => {}
+        _ => assert(false, "1e39 must be TooLarge")
+    }
+    match "-1e39".to_f32() {
+        Err(TooSmall) => {}
+        _ => assert(false, "-1e39 must be TooSmall")
+    }
+    match "".to_f32() {
+        Err(Empty) => {}
+        _ => assert(false, "empty must be Empty")
+    }
+    match "1,5".to_f32() {
+        Err(Malformed { at }) => assert(at == 1, "the f32 door shares the grammar: comma at 1")
+        _ => assert(false, "comma is not a decimal separator here either")
+    }
+    // Below f32 but perfectly finite: zero, not an error (same rule as f64).
+    assert(f32_bits("1e-46") == 0, "underflow is +0.0")
+    assert(f32_bits("-1e-46") == 0x80000000 as u32, "and it keeps the sign")
+}
+
+test "283 Ф.7: to_f32 -- the DOUBLE ROUNDING class, where parsing through f64 gives another answer" {
+    // Each string sits just above the midpoint between two neighbouring f32 values, by
+    // less than the resolution of f64. Rounding to f64 first loses that excess, the value
+    // lands exactly on the midpoint, and round-half-to-even then goes the opposite way.
+    // Two assertions per string, and the second is the point of the test: our answer is
+    // right AND the two-step answer is demonstrably different, so this really is the class
+    // and not a set of strings that would pass either way.
+    ro cases = [
+        ("4219556200954914481506634425", 0x6D5A255D as u32, 0x6D5A255C as u32),
+        ("8871230914960037553819594412817121280", 0x7CD5912F as u32, 0x7CD5912E as u32),
+        ("4016168254798200968858668644024975360", 0x7C415F19 as u32, 0x7C415F18 as u32),
+        ("2233204.125000000000242124476392859000473123387564555741846561431884765625", 0x4A084DD1 as u32, 0x4A084DD0 as u32),
+        ("19193707408392192.0010404929635114967823028564453125", 0x5A886127 as u32, 0x5A886126 as u32),
+        ("1115953038562506572017.98374176025390625", 0x6271FBD7 as u32, 0x6271FBD6 as u32),
+        ("66.5748176574707031538722247748224230081727503804955858868197537958621978759765625", 0x4285264F as u32, 0x4285264E as u32),
+        ("49702074.000000000002694354830391765265318326783017255365848541259765625", 0x4C3D992F as u32, 0x4C3D992E as u32),
+    ]
+    for c in cases {
+        ro (text, correct, two_step) = c
+        assert(f32_bits(text) == correct, text)
+        ro via_f64 = match text.to_f64() {
+            Ok(d) => (d as f32).to_bits()
+            Err(_) => 0xFFFFFFFF as u32
+        }
+        assert(via_f64 == two_step, "the two-step path must still give its wrong answer")
+        assert(via_f64 != correct, "otherwise this string does not exercise double rounding")
+    }
+}
+
+test "283 Ф.7: to_f32 and to_f64 share the grammar, so they agree on what is NOT a number" {
+    ro bad = [" 1.5", "0x1p3", "nan", "inf", "1.2.3", "1e", ".", "1.5 ", "1,5"]
+    for text in bad {
+        ro f64_rejected = match text.to_f64() {
+            Ok(_) => false
+            Err(_) => true
+        }
+        ro f32_rejected = match text.to_f32() {
+            Ok(_) => false
+            Err(_) => true
+        }
+        assert(f64_rejected, text)
+        assert(f32_rejected == f64_rejected, text)
+    }
+    // And on what IS one, with the same positions reported.
+    assert(f32_bits("1e10") == 0x501502F9 as u32, "1e10 accepted by both")
 }
