@@ -118,6 +118,39 @@ done < <(awk '
     END { if (prevfile != "") print prevfile "\t" hc "\t" ref }
 ' "${guards[@]}")
 
+# ПУТИ, НАЗВАННЫЕ В ШАПКЕ, ОБЯЗАНЫ СУЩЕСТВОВАТЬ (предложение окна 274, 2026-09-07;
+# оно же нашло носителя: правка интегратора того дня назвала `docs/dev/conventions.md`,
+# которого нет, и страж этого не заметил — ссылку на план он ТРЕБУЕТ, а её истинность
+# не проверял). Класс тот же, что у №1000: запись о механизме расходится с деревом, и
+# следующее окно идёт работать по несуществующему адресу.
+#
+# ЦЕНА. Первая редакция читала каждый файл отдельным `head -40` в подоболочке и шла
+# больше 280 секунд на 185 стражах — это нарушение бюджета шага (gate-guard-conventions),
+# и такой страж выключили бы первым. Здесь ОДИН проход `grep` по всем файлам сразу.
+#
+# ЧТО СУДИТСЯ. Только пути, начинающиеся с настоящего корня дерева (`docs/`, `scripts/`,
+# `spec/`, `std/`, `.claude/`, ...). Всё прочее — образцы (`spec/X.md`), куски переменных
+# (`ROOT/docs/...`) и пути относительно каталога стража: их проверка дала бы ложную
+# красноту, а страж, краснеющий на здоровом, выключается первым (тот же урок, что у
+# №1000). Плейсхолдеры с одной заглавной буквой в имени (`X.md`, `<имя>`) пропускаются.
+# Законное исключение — маркер В ТОЙ ЖЕ СТРОКЕ: `[PATH-GONE-OK: причина]` (шапка
+# говорит о том, чего УЖЕ нет намеренно: «X назывался Y», «Z предписывал»).
+declare -A PATH_GONE_OK_LINE=()
+while IFS=: read -r _f _ln _rest; do
+    [ -n "${_f:-}" ] && PATH_GONE_OK_LINE["$_f:$_ln"]=1
+done < <(grep -Hn 'PATH-GONE-OK' "${guards[@]}" 2>/dev/null)
+declare -A BAD_PATHS=()
+while IFS=: read -r _f _ln _p; do
+    [ -n "${_p:-}" ] || continue
+    [ "${_ln:-999}" -le 40 ] 2>/dev/null || continue
+    [ -n "${PATH_GONE_OK_LINE[$_f:$_ln]:-}" ] && continue
+    case "$_p" in
+        */[A-Z].*|*'<'*|*'>'*|*'*'*) continue ;;   # spec/X.md, spec/X.ru.md — образцы
+    esac
+    [ -e "$REPO_ROOT/$_p" ] && continue
+    BAD_PATHS["$_f"]="${BAD_PATHS[$_f]:-} $_p"
+done < <(grep -Hn -oE '(docs|scripts|spec|std|spec_tests|examples|compiler-codegen|nova-cli|editors|[.]claude|[.]github)/[A-Za-z0-9_./-]+[.](md|sh|py|nv|rs|toml|txt|yml|baseline|list)' "${guards[@]}" 2>/dev/null)
+
 for g in "${guards[@]}"; do
     # basename как bash-подстановка, а не форк внешней команды (оптимизация
     # main: 90 файлов, каждый форк заметен). Расширение снимается ОБА: страж
@@ -133,6 +166,10 @@ for g in "${guards[@]}"; do
     header_lines="${HEADER_LINES[$g]:-0}"
     if [ "$header_lines" -lt "$MIN_HEADER_LINES" ]; then
         report "$name: шапка тонкая ($header_lines строк < $MIN_HEADER_LINES) — нужно «зачем / что проверяет / как запускать»"
+        ok=0
+    fi
+    if [ -n "${BAD_PATHS[$g]:-}" ]; then
+        report "$name: шапка называет путь, которого нет —${BAD_PATHS[$g]} (нужен маркер [PATH-GONE-OK: причина], если файла нет намеренно)"
         ok=0
     fi
     if [ "${HAS_PLAN_REF[$g]:-0}" -ne 1 ]; then
