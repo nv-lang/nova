@@ -87,7 +87,7 @@ fn DigitBuf @round() -> u64 {
             round_up = @truncated || (dp != 0 && ((@digits[dp - 1] as int) & 1) != 0)
         }
     }
-    if round_up { n = n + 1 }
+    if round_up { n += 1 }
     n
 }
 
