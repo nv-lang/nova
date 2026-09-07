@@ -6,16 +6,16 @@ of the Rust standard library, library/core/src/num/imp/dec2flt/
 Lemire's fast_float. Rust is dual-licensed MIT OR Apache-2.0; Nova takes it
 under the MIT license reproduced below:
 
-  - std/src/runtime/string/float_convert.nv   (mod.rs, decimal.rs, lemire.rs,
+  - std/src/runtime/float_parse/convert.nv    (mod.rs, decimal.rs, lemire.rs,
                                                common.rs, slow.rs)
-  - std/src/runtime/string/pow5_table.nv      (table.rs: POWER_OF_FIVE_128,
+  - std/src/runtime/float_parse/pow5_table.nv (table.rs: POWER_OF_FIVE_128,
                                                re-derived by
                                                scripts/tools/gen-pow5-table.py,
                                                itself after src/etc/dec2flt_table.py)
-  - std/src/runtime/string/parse_float.nv     (parse.rs: the assembly of the
+  - std/src/runtime/float_parse/door.nv       (parse.rs: the assembly of the
                                                significand / exponent / many_digits
                                                triple inside Nova's own grammar walk)
-  - std/src/runtime/string/digit_buf.nv       (decimal_seq.rs: DecimalSeq as
+  - std/src/runtime/float_parse/digit_buf.nv  (decimal_seq.rs: DecimalSeq as
                                                DigitBuf, parse_decimal_seq,
                                                number_of_digits_decimal_left_shift
                                                and both of its tables)

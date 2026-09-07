@@ -4730,7 +4730,7 @@ export type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
 // 48a229ceaefd4985c50990b14116b6d856af0985, лицензия MIT, `THIRD_PARTY/rust-LICENSE`):
 // быстрый путь Клинжера, Eisel-Lemire и медленный путь на `DigitBuf` — 768-значном
 // десятичном буфере — для входов, которые не решает ни один из двух. Код —
-// `std/src/runtime/string/float_convert.nv` (алгоритм и константы), `pow5_table.nv`
+// `std/src/runtime/float_parse/convert.nv` (алгоритм и константы), `pow5_table.nv`
 // (таблица степеней пяти), `digit_buf.nv` (медленный путь); сборка `Number` осталась в
 // `parse_float.nv`. НЕ изменилось: грамматика из блока выше, состав и словарь
 // `ParseFloatError`, результат бит-в-бит равен прежнему (дифференциальные тесты против

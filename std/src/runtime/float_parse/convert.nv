@@ -29,7 +29,7 @@
 // `inf`/`nan`, plan 282).
 
 #no_prelude
-module runtime.string
+module runtime.float_parse
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.numeric

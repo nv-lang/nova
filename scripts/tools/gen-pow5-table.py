@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """scripts/tools/gen-pow5-table.py -- the 128-bit powers-of-five table of the
-float parser (std/src/runtime/string/pow5_table.nv): re-derive it with exact
+float parser (std/src/runtime/float_parse/pow5_table.nv): re-derive it with exact
 integers and compare bit for bit, or write it out.
 
 Plan: docs/plans/283-float-parse-own-rounding.md, phase 1. The gate calls the
@@ -34,7 +34,7 @@ USAGE (ROOT defaults to the repository that holds this script):
       default; exit 0 with the row count on a bit-exact match, exit 1 naming
       every differing row, exit 2 when the table file is missing or unparseable
   python scripts/tools/gen-pow5-table.py --write [ROOT]
-      (re)write std/src/runtime/string/pow5_table.nv
+      (re)write std/src/runtime/float_parse/pow5_table.nv
   python scripts/tools/gen-pow5-table.py --against-rust PATH/table.rs
       development aid: compare the generator with the donor's table.rs pair by
       pair (the donor file is not in this tree; fetch it at the pinned commit)
@@ -51,7 +51,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "gen-pow5-table"
-TABLE_REL = os.path.join("std", "src", "runtime", "string", "pow5_table.nv")
+TABLE_REL = os.path.join("std", "src", "runtime", "float_parse", "pow5_table.nv")
 
 SMALLEST_Q = -342
 LARGEST_Q = 308
