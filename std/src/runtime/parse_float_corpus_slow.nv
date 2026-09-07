@@ -30,7 +30,7 @@
 // (real handlers), which the `#no_prelude` string module cannot import.
 module runtime.parse_float_corpus_slow
 
-import std.fs.{real_fs, read_dir, File, Path, write_text}
+import std.fs.{real_fs, read_dir, File, Path, write}
 import std.os.{real_os, env}
 import std.runtime.numeric
 
@@ -193,7 +193,11 @@ test "283 Ф.5: parse-number-fxx corpus — every f64 and f32 field equals ours 
                         }
                         if !report.is_empty() {
                             ro tally = "283 corpus: files=${t.files} lines=${t.lines} ok=${t.ok} mismatch=${t.mismatch} skipped=${t.skipped} first=${t.first_bad}\n"
-                            match write_text(report.to_path(), tally) {
+                            // `write`, not `write_text`: the signature is matched exactly
+                            // (`data []u8`), and this is the form the fs tests exercise --
+                            // `write_text` has no caller and no test anywhere in the tree,
+                            // and a long slot is the wrong place to be its first user.
+                            match write(report.to_path(), tally.bytes()) {
                                 Ok(()) => {}
                                 Err(_) => {}
                             }
