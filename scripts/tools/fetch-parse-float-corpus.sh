@@ -40,11 +40,21 @@ if [ -d "$DEST" ]; then
   fi
 fi
 
-# Clone repository (no checkout, we will checkout manually)
-if ! git clone --no-checkout "$UPSTREAM" "$DEST" 2>&1; then
+# Clone repository (no checkout, we will checkout manually).
+# `core.autocrlf=false` and `core.eol=lf` are NOT decoration: this machine has
+# core.autocrlf=true globally, and under it git rewrites every line ending on checkout.
+# A CRLF corpus is worse than a missing one -- the last field of each line becomes "1\r",
+# the float grammar refuses it, and the runner reports millions of SKIPPED lines with zero
+# checks, which reads exactly like a passing run. Measured 2026-09-07: 60 CR bytes in the
+# 60 lines of more-test-cases.txt after the first clone.
+if ! git -c core.autocrlf=false -c core.eol=lf clone --no-checkout "$UPSTREAM" "$DEST" 2>&1; then
   echo "fetch-parse-float-corpus FAIL: git clone failed" >&2
   exit 1
 fi
+
+# The clone's own config, so a later `git -C "$DEST" checkout` cannot reintroduce CRLF.
+git -C "$DEST" config core.autocrlf false
+git -C "$DEST" config core.eol lf
 
 # Checkout the pinned commit (detached HEAD)
 if ! git -C "$DEST" checkout --detach "$PINNED" 2>&1; then
@@ -59,6 +69,17 @@ if [ "$actual_hash" != "$PINNED" ]; then
   exit 1
 fi
 
+# VERIFY THE LINE ENDINGS. The whole point of the two flags above, asserted rather than
+# trusted: a single CR in the data means the runner will judge nothing while looking green.
+cr_count=$(tr -cd '\r' < "$DEST/data/more-test-cases.txt" 2>/dev/null | wc -c)
+if [ "${cr_count:-0}" -ne 0 ]; then
+  echo "fetch-parse-float-corpus FAIL: the corpus checked out with CR bytes ($cr_count in" >&2
+  echo "  more-test-cases.txt). Every line would end in CR, the float grammar would refuse" >&2
+  echo "  the last field, and the slow-lane runner would report millions of skipped lines" >&2
+  echo "  with zero checks. Remove $DEST and re-run; if it persists, check git core.autocrlf." >&2
+  exit 1
+fi
+
 # Count files and lines
 file_count=$(find "$DEST/data" -name "*.txt" 2>/dev/null | wc -l)
 line_count=$(cat "$DEST/data"/*.txt 2>/dev/null | wc -l)
@@ -66,7 +87,7 @@ line_count=$(cat "$DEST/data"/*.txt 2>/dev/null | wc -l)
 # Read first line of first file to verify corpus format
 first_line=$(head -1 "$DEST/data"/*.txt 2>/dev/null | head -1)
 
-echo "fetch-parse-float-corpus ok: $PINNED, files=$file_count, lines=$line_count, at $DEST"
+echo "fetch-parse-float-corpus ok: $PINNED, files=$file_count, lines=$line_count, LF-only, at $DEST"
 echo "Sample: $first_line"
 
 exit 0
