@@ -531,6 +531,13 @@ export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
     ro _ = @arm_start.pop()
     mut arms = []SwitchArm.new()
     for i in start..@open_arms.len() {
+        // Хвост открытых армов переносится поэлементно, и это НЕ небрежность:
+        // массовой замены в подмножестве, которым novac компилирует сам себя,
+        // нет. Замер 2026-09-07 по всему `novac/src`: срез диапазоном есть
+        // только по строкам (`lex.nv:476`), `.clone()` — ноль употреблений,
+        // `.extend(` — ноль, все 33 `.append(` строковые. Снимется, когда
+        // подмножество получит копию среза вектора одной дверью.
+        // nova:allow W_MANUAL_SLICE_COPY -- no vector bulk copy in novac's own subset yet
         arms.push(@open_arms[i])
     }
     while @open_arms.len() > start {
