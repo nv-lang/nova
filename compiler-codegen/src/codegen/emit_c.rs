@@ -38899,31 +38899,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             &obj_ty, &o, start, end, *inclusive, expr,
                         );
                     }
-                    let len_expr = if obj_ty == "nova_str" {
-                        // Для str у нас len в кодпоинтах; nova_str_slice_panic
-                        // считает их сам. Для open-ended здесь подставим SIZE_MAX-
-                        // равноценный — функция clamp'нет до total_cp на panic-check.
-                        // Безопаснее: подсчёт codepoint-count через временную.
-                        // Но проще: если open-end, пропустить "to" в виде INT64_MAX —
-                        // нет, лучше использовать встроенный счётчик в slice_panic
-                        // (он валидирует to <= total_cp). Используем INT64_MAX как
-                        // sentinel который функция отвергнет — НЕТ, это сломает
-                        // user-OOB-test. Правильно: пройти счётчик через runtime call.
-                        // Для bootstrap проще: запретить open-ended для str-slice.
-                        // Это decision — задокументируем как known limitation.
-                        // Пока — emit как nova_str_byte_at-style цикл подсчёта.
-                        // Plan 152.1 Ф.1b (D249): str slice is BYTE-range — the
-                        // open-ended end is the BYTE length `_s.len` (was a codepoint
-                        // count). `_s` is defined by the inline byte-slice below.
-                        // [M-open-range-len-source-hardcoded]: this value is a
-                        // structural dead-end in practice — the str arm below
-                        // ALWAYS takes the dedicated `_to_end_*` runtime helper
-                        // for an open-ended `s[a..]` (it computes the byte
-                        // length itself), so `len_expr` is never actually read
-                        // for str; kept verbatim (out of scope, Границы) rather
-                        // than "cleaned up" as an unrelated behavior change.
-                        "_s.len".to_string()
-                    } else if obj_ty.starts_with("NovaArray_") {
+                    // Plan 284 F.4: the `nova_str` arm is gone. Its own comment
+                    // already admitted the value was "never actually read for str" —
+                    // an open-ended `s[a..]` always took the dedicated `*_to_end_*`
+                    // helper, which computed the byte length itself. After F.1 the
+                    // whole str fast path is unreachable from the sugar anyway: `str`
+                    // satisfies the slice role and returns above, in
+                    // `emit_range_index_through_role`. What stays here serves the one
+                    // receiver that has no Nova-level `@index(Range)` to route into.
+                    let len_expr = if obj_ty.starts_with("NovaArray_") {
                         // Legacy compiler-intrinsic array header (NOVA_ARRAY_DECL,
                         // nova_rt/array.h) — near-dead (Plan 172.12 A7/A8: `[]T`
                         // is Vec[T]-backed now; this remains only for the erased
@@ -38954,29 +38938,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         (None, _) => len_expr.clone(),
                     };
-                    if obj_ty == "nova_str" {
-                        // Plan 152.1 Ф.1b (D249): byte-range zero-copy sub-view (was
-                        // codepoint-indexed nova_str_slice_panic — the bug behind
-                        // non-ASCII split, which slices on byte offsets). Mirrors the
-                        // Vec[T] elidable slice above (140.2-style): byte bounds-check
-                        // elidable on proven-in-range sites + UTF-8 codepoint-boundary
-                        // guard (data-dependent → always-on). `from_expr`/`to_expr` are
-                        // byte offsets; open-ended end is `_s.len` (set in len_expr).
-                        // Plan 145 — portable str slice (MSVC C2059): nova_str_slice_*
-                        // (array.h) вместо GNU statement-expression. Plan 152.1 byte-range
-                        // zero-copy view + UTF-8 codepoint-boundary guard (внутри хелпера);
-                        // Plan 140.2 элизия bounds -> _nochk (guard остаётся, data-dependent).
-                        // open-ended `s[a..]` -> *_to_end_* (конец = s.len; single-eval `o`).
-                        let str_elided = self.index_site_elided(expr.span.start);
-                        if end.is_none() {
-                            let h = if str_elided { "nova_str_slice_to_end_nochk" }
-                                    else { "nova_str_slice_to_end_chk" };
-                            return Ok(format!("{h}(({o}), ({from}))", h = h, o = o, from = from_expr));
-                        }
-                        let h = if str_elided { "nova_str_slice_nochk" } else { "nova_str_slice_chk" };
-                        return Ok(format!("{h}(({o}), ({from}), ({to}))",
-                            h = h, o = o, from = from_expr, to = to_expr));
-                    } else if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty) {
+                    // Plan 284 F.4: the str emission branch is gone, together with the
+                    // four runtime helper names it printed. It became unreachable in
+                    // F.1, when `s[a..b]` started routing into `str @index(r Range)` by
+                    // satisfying the role. What proves it DEAD rather than merely
+                    // unused is the gap between the two removal steps: with the branch
+                    // gone and the helpers still present, `d470_slice_forms.nv` must be
+                    // green — a stale route would fail to link.
+                    if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty) {
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
                     } else {
@@ -56527,8 +56496,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if base.is_empty() {
             return false;
         }
-        self.all_methods.contains(&(base.to_string(), "index".to_string()))
-            && self.all_methods.contains(&(base.to_string(), "end_index".to_string()))
+        // Owner's correction, 2026-09-07: the role is declared by SIGNATURES in D470,
+        // so asking `all_methods` for two NAMES was too weak. The measured proof
+        // that it matters: one type carries BOTH overloads at once —
+        // `Nova_Vec_method_index(Nova_Vec*, nova_int)` and the `NovaValue_Range`
+        // one — under a single name, so a name-only test cannot tell "can be
+        // sliced" from "can be indexed by an integer". Such a type used to pass
+        // here and then trip on overload resolution, reporting someone else's
+        // error instead of an honest role refusal.
+        //
+        // `method_overloads` carries the signatures (`sig_registry::CodegenView`:
+        // `param_c_types`, `return_c_type`, `is_instance`). `NovaValue_Range` is
+        // read from emitted C, not guessed; a trailing `*` is tolerated in case a
+        // spelling ever passes it by pointer.
+        let base_owned = base.to_string();
+        let takes_range = self
+            .method_overloads
+            .get(&(base_owned.clone(), "index".to_string()))
+            .map(|sigs| {
+                sigs.iter().any(|s| {
+                    s.is_instance
+                        && s.param_c_types.len() == 1
+                        && s.param_c_types[0].trim_end_matches('*').trim()
+                            == "NovaValue_Range"
+                })
+            })
+            .unwrap_or(false);
+        let answers_end = self
+            .method_overloads
+            .get(&(base_owned, "end_index".to_string()))
+            .map(|sigs| {
+                sigs.iter().any(|s| {
+                    s.is_instance
+                        && s.param_c_types.is_empty()
+                        && s.return_c_type == "nova_int"
+                })
+            })
+            .unwrap_or(false);
+        takes_range && answers_end
     }
 
     /// [M-open-range-len-source-hardcoded] Ф.1: GENERIC open/closed-range
