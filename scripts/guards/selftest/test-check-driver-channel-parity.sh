@@ -42,6 +42,46 @@ check "канал есть в test_runner, нет в bench run — красны�
 printf 'emitter.set_resolved_types(&module_env.resolved_types);\nemitter.set_resolved_callees(&module_env.resolved_callees);\n' > "$SA"
 printf 'emitter.set_resolved_types(&bench_env.resolved_types);\nemitter.set_resolved_callees(&bench_env.resolved_callees);\n' > "$BENCH"
 
+# --- ПРОХОДЫ (реестр №1023) ---
+# Зелёный: один и тот же проход во всех четырёх. `desugar` выбран
+# НАРОЧНО: его НЕТ в ALLOW_PASS, значит его отсутствие обязано краснеть.
+printf 'emitter.set_resolved_types(&module_env.resolved_types);
+emitter.set_resolved_callees(&module_env.resolved_callees);
+' > "$SA"
+printf 'emitter.set_resolved_types(&bench_env.resolved_types);
+emitter.set_resolved_callees(&bench_env.resolved_callees);
+' > "$BENCH"
+printf 'crate::desugar::desugar_module(&mut module);
+' >> "$TR"
+printf 'nova_codegen::desugar::desugar_module(&mut module);
+' >> "$CLI"
+printf 'crate::desugar::desugar_module(&mut module);
+' >> "$SA"
+printf 'nova_codegen::desugar::desugar_module(&mut module);
+' >> "$BENCH"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "проход есть во всех четырёх — зелёный" "$?" "0"
+
+# Красный: проход есть в эталоне, нет в bench run.
+printf 'emitter.set_resolved_types(&bench_env.resolved_types);
+emitter.set_resolved_callees(&bench_env.resolved_callees);
+' > "$BENCH"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "проход есть в test_runner, нет в bench run — красный" "$?" "1"
+
+# ALLOW живой: `field_cache` назван в ALLOW_PASS для bench run, значит его отсутствие
+# обязано оставлять зелёным — иначе нельзя отличить «разрешено» от «не заметил».
+printf 'nova_codegen::desugar::desugar_module(&mut module);
+' >> "$BENCH"
+printf 'crate::field_cache::cache_module(&mut module);
+' >> "$TR"
+printf 'nova_codegen::field_cache::cache_module(&mut module);
+' >> "$CLI"
+printf 'crate::field_cache::cache_module(&mut module);
+' >> "$SA"
+sh "$G" "$FIX" >/dev/null 2>&1
+check "проход из ALLOW_PASS — зелёный (ALLOW живой)" "$?" "0"
+
 rm "$SA"
 sh "$G" "$FIX" >/dev/null 2>&1
 check "нет файла драйвера — красный" "$?" "1"
