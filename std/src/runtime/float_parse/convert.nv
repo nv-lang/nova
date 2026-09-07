@@ -1,4 +1,4 @@
-// Co-equal file of module `runtime.string` (folder = one module).
+// Co-equal file of module `runtime.float_parse` (folder = one module).
 // Role: the correctly-rounded decimal -> binary conversion behind `str @to_f64()`.
 //
 // What lives here: the parsed `Number` (the donor's `Decimal`: significand, decimal
