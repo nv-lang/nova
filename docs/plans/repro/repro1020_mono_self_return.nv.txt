@@ -1,0 +1,105 @@
+// Registry 221.1 #1020 -- fresh mono of a method returning `-> @` emits `return NOVA_UNIT`
+// against a declared pointer return type: CC-FAIL, not a diagnostic.
+//
+// FOUND 2026-09-07 by window 283 while fixing #1012: wiring the checker channels into the
+// bench driver removed the FIRST blocker (`[E_UNKNOWN_STATIC_METHOD] str.new(...)`) and
+// exposed this one behind it. Compiler built from p283-float-parse at 456b1133f.
+//
+// ═══ WHAT IS MEASURED, VERBATIM ═══
+//
+// Command: nova bench run bench/micro/hello.nv --samples 5 --warmup-ms 50
+// (hello.nv is six lines of someone else's bench: one `bench.opaque` over a literal.)
+//
+// Result: 16 C errors of one shape, e.g.
+//
+//   hello_bench.c:12152:16: error: returning 'nova_unit' from a function with incompatible
+//   result type 'Nova_Vec____Nova_EmbeddedEntry_p *'
+//   (aka 'struct Nova_Vec____Nova_EmbeddedEntry_p *')
+//
+// The emitted function, verbatim from the saved C (the temp dir is gone; the file was copied
+// to /tmp/p283/hello_bench.c during the slot):
+//
+//   static Nova_Vec____Nova_EmbeddedEntry_p* Vec____Nova_EmbeddedEntry_p_method_cap__nova_int(
+//           Nova_Vec____Nova_EmbeddedEntry_p* nova_self, nova_int n) {
+//       if (!((n >= (nova_self->len)))) nova_contract_violation(...);
+//       nova_unit _nv_if_1408;
+//       if ((n == (nova_self->cap))) {
+//           return NOVA_UNIT;            // <-- declared to return the Vec pointer
+//       }
+//       ...
+//
+// ═══ THE HALF OF THE DIAGNOSIS THAT NAMES THE CONDITION ═══
+//
+// CORRECTED THE SAME DAY, BEFORE ANY FIX WAS WRITTEN. First I wrote "the erased form is green,
+// so mono is the break", going by the DECLARATION at std/src/encoding/json.c:2348:
+//
+//   static Nova_Vec* Nova_Vec_method_cap__nova_int(Nova_Vec* nova_self, nova_int n);
+//
+// Then I read its BODY, and it is a STUB -- `(void)nova_self; (void)n; return NULL;` -- the
+// body was elided as unused, so it proves nothing about `-> @` at all.
+//
+// The REAL contrast is stronger: the emitter CAN return the receiver. The same json.c holds 69
+// `return nova_self;` statements, e.g.
+//
+//   static Nova_StringBuilder* Nova_StringBuilder_method_append_repeat(
+//           Nova_StringBuilder* nova_self, nova_str s, nova_int n) {
+//       ...
+//       if ((n <= ((nova_int)0LL))) {
+//           return nova_self;      // <-- a BARE `return` in a `-> @` method, done right
+//
+// (source: std/src/runtime/string_builder.nv:187, also declared `-> @`.)
+//
+// And the broken method's source has bare returns too -- std/src/collections/vec/core.nv:228,
+// `fn Vec[T] mut @cap(n int) -> @`, with `{ return }` in two early branches.
+//
+// So the condition is the INTERSECTION, not either half: a bare `return` in a method declared
+// `-> @` emits the receiver when the receiver type is NON-generic, and emits NOVA_UNIT when the
+// receiver is a MONOMORPHISED generic (`Vec[T]` at a concrete `T`).
+//
+// The bench driver reaches this by accident -- it monomorphises `Vec[EmbeddedEntry]`, which no
+// other driver does for this method -- so anything else that mono-instantiates a `-> @` method
+// should hit the same wall. The method itself was NOT touched by this wave.
+//
+// ═══ THE MINIMAL FORM BELOW IS A HYPOTHESIS, NOT A MEASUREMENT ═══
+//
+// Everything above is measured. The program below is what I would run FIRST in the next
+// machine slot to pull the class off the bench driver and onto a user type: a record with a
+// `-> @` method, instantiated at a concrete type so the emitter must monomorphise it. It has
+// NOT been run -- saying so here rather than letting the file imply it did. If it compiles
+// green, the condition is narrower than "any mono of `-> @`" and the row's acceptance must
+// name what else the bench path adds (a Vec of POINTERS to a record, most likely).
+//
+// Run as: nova test docs/plans/repro/repro1020_mono_self_return.nv   (after renaming to .nv)
+
+// EXPECT_STDOUT 3 7
+module standalone.repro1020_mono_self_return
+
+type Slot[T] {
+    mut items []T
+    mut room int
+}
+
+fn Slot[T].new() -> Slot[T] => { items: []T.new(), room: 0 }
+
+// The shape under suspicion: a method that returns the receiver (`-> @`) on a generic type,
+// so a concrete instantiation has to be monomorphised.
+fn Slot[T] mut @with_room(n int) -> @ {
+    @room = n
+    @
+}
+
+fn Slot[T] mut @put(v T) -> @ {
+    @items.push(v)
+    @
+}
+
+type Cell { mut n int }
+
+fn main() Io -> () {
+    mut a = Slot[int].new()
+    a.with_room(3).put(1)
+    print("${a.room} ")
+    mut b = Slot[Cell].new()
+    b.with_room(7).put({ n: 1 })
+    print("${b.room}")
+}

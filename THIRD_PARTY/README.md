@@ -64,7 +64,7 @@ These dependencies are not vendored but installed via vcpkg at build time:
 - **License**: MIT OR Apache-2.0 upstream; Nova takes it under **MIT** (one file,
   one license — the same shape as the Go entry)
 - **Source**: https://github.com/rust-lang/rust, `library/core/src/num/imp/dec2flt/`,
-  commit `48a229ceaefd4985c50990b14116b6d856af0985`
+  commit `rust-lang/rust@48a229ceaefd4985c50990b14116b6d856af0985`
 - **Copyright**: The Rust Project Contributors
 
 A port, not a vendored copy: the algorithm (Clinger fast path, Eisel-Lemire over

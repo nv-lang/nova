@@ -1,6 +1,16 @@
 #!/bin/sh
-# scripts/guards/check-driver-channel-parity.sh — три драйвера кодогена кормят
+# scripts/guards/check-driver-channel-parity.sh — ЧЕТЫРЕ драйвера кодогена кормят
 # эмиттер ОДНИМ набором чекер-каналов.
+#
+# ЧЕТЫРЕ, А НЕ ТРИ (правка 2026-09-07, реестр №1012). Докстрока обещала три
+# драйвера, и это была не описка, а слепое пятно: дерево отрастило четвёртый —
+# `nova-cli/src/bench/run.rs` со своим конвейером (`parse` →
+# `resolve_imports_inline` → `alpha_rename` → `number_exprs` → …) — а страж о
+# нём не знал. ЗАМЕР 2026-09-07 С ПРАВИЛОМ СЧЁТА, потому что без него число ничего не значит: ПО ОПРЕДЕЛЕНИЮ ЭТОГО СТРАЖА (каналы, кормящиеся полем `env.<field>`) эталон проводит 8, а бенч-драйвер ОДИН; если же считать ВСЕ вызовы `emitter.set_*` вместе с конфигурационными (`set_bench_mode`, `set_mono_depth_limit`), будет 12 против 4. Значимо первое, и
+# `nova bench run` падал на ЛЮБОМ бенче дерева с
+# `[E_UNKNOWN_STATIC_METHOD] str.new(...)`, потому что без `resolved_callees`
+# вызов резолвился по имени. Страж не «пропустил» — он мерил меньше, чем
+# обещал, и это тот же класс, что он сам и сторожит.
 #
 # План/реестр: docs/plans/221.1-bug-sweep.md №669 (класс Ф.4c: «nova build
 # молча пропускал канал»); план 196 (каналы resolved_*), 231.2 §1.
@@ -32,7 +42,8 @@ NAME=check-driver-channel-parity
 TR="$ROOT/compiler-codegen/src/test_runner.rs"
 CLI="$ROOT/nova-cli/src/main.rs"
 SA="$ROOT/compiler-codegen/src/main.rs"
-for f in "$TR" "$CLI" "$SA"; do
+BENCH="$ROOT/nova-cli/src/bench/run.rs"
+for f in "$TR" "$CLI" "$SA" "$BENCH"; do
     [ -f "$f" ] || { echo "$NAME: FAIL — нет $f" >&2; exit 1; }
 done
 
@@ -47,7 +58,7 @@ ALLOW=""
 
 TRS=$(chan_set "$TR")
 BAD=0
-for f in "$CLI" "$SA"; do
+for f in "$CLI" "$SA" "$BENCH"; do
     HAVE=$(chan_set "$f")
     for s in $TRS; do
         case " $ALLOW " in *" $s "*) continue;; esac
@@ -58,9 +69,9 @@ for f in "$CLI" "$SA"; do
     done
 done
 if [ "$BAD" -ne 0 ]; then
-    echo "  Каналы 196 проводятся ВО ВСЕХ трёх драйверах одной волной (№669)." >&2
+    echo "  Каналы 196 проводятся ВО ВСЕХ ЧЕТЫРЁХ драйверах одной волной (№669, №1012)." >&2
     exit 1
 fi
 N=$(printf '%s\n' "$TRS" | grep -c .)
-echo "$NAME ok: $N чекер-каналов test_runner проведены и в nova build, и в standalone"
+echo "$NAME ok: $N чекер-каналов test_runner проведены в nova build, standalone и bench run"
 exit 0

@@ -2,7 +2,7 @@ The following files in the Nova source tree are ports of (and in places
 near-verbatim adaptations of) the decimal-to-binary floating-point conversion
 of the Rust standard library, library/core/src/num/imp/dec2flt/
 (https://github.com/rust-lang/rust, commit
-48a229ceaefd4985c50990b14116b6d856af0985), which is itself a port of Daniel
+rust-lang/rust@48a229ceaefd4985c50990b14116b6d856af0985), which is itself a port of Daniel
 Lemire's fast_float. Rust is dual-licensed MIT OR Apache-2.0; Nova takes it
 under the MIT license reproduced below:
 
