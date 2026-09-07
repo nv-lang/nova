@@ -119,7 +119,7 @@ static inline nova_parse_u64_result nova_str_to_u64(nova_str s) {
  * функции изменилась, а текст выше остался верным лишь про механику:
  *   1) ЭТАЛОН ТЕСТОВ. `str @to_f64()` больше сюда НЕ ходит: округление
  *      десятичной записи в двоичную делает Nova (порт `core::num::dec2flt`,
- *      std/src/runtime/string/float_convert.nv). Обёртка `str_parse_f64`
+ *      std/src/runtime/float_parse/convert.nv). Обёртка `str_parse_f64`
  *      ниже осталась ради дифференциальных тестов, где C — независимый
  *      эталон, а не зависимость библиотеки.
  *   2) ЖИВОЙ ПУТЬ ЯЗЫКА: `f32.try_parse(s)` — компиляторный builtin

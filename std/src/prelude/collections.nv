@@ -130,6 +130,14 @@ export type Iter[I] protocol {
 // resolution cycle before this facade is visited, tripping the cycle guard.
 import std.runtime.string
 import std.runtime.char
+// `runtime.float_parse` (plan 283.1) carries the doors `str @to_f64()` / `@to_f32()`.
+// They were co-equal files of `runtime.string` until the port grew to 64 % of that
+// module; the algorithm moved out, the doors moved with it, and consumers must keep
+// seeing them WITHOUT an import of their own -- `json`, `toml`, `complex` and
+// `Duration` all call `text.to_f64()` bare. That visibility comes from this line and
+// nothing else: remove it and those bodies stop resolving the method (measured by the
+// wave's own both-ways probe, plan 283.1 F.2).
+import std.runtime.float_parse
 
 // f32/f64 `.to_bits()`/`.from_bits()` (plain Nova-body methods in
 // std/runtime/numeric.nv, no longer compiler intrinsics) need NO import

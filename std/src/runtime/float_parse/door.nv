@@ -18,9 +18,10 @@
 // import cycle.
 
 #no_prelude
-module runtime.string
+module runtime.float_parse
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.runtime.string
 
 // WHY THESE NAMES ARE INTERIM (2026-09-05, registry #136 + its new carrier). This note
 // lives in `//`, not in `///`: a doc comment is a user-facing artifact of the coming

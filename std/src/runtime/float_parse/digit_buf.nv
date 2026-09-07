@@ -27,7 +27,11 @@
 // p2 = 53.
 
 #no_prelude
-module runtime.string
+module runtime.float_parse
+
+// `str @bytes()` / `@byte_len()` live in the string module; this module reads a string
+// exactly twice (here and in door.nv) and works on the []u8 slice afterwards.
+import std.runtime.string
 
 // The maximum number of digits required to unambiguously round up to a 64-bit float.
 const DIGIT_BUF_MAX_DIGITS = 768

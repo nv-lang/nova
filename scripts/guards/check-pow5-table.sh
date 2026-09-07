@@ -5,7 +5,7 @@
 # ДОМ И ОСНОВАНИЕ: план docs/plans/283-float-parse-own-rounding.md, Ф.1
 # («правка таблицы без пересчёта краснеет»).
 #
-# ЗАЧЕМ. `std/src/runtime/string/pow5_table.nv` — 651 строка по два 64-битных
+# ЗАЧЕМ. `std/src/runtime/float_parse/pow5_table.nv` — 651 строка по два 64-битных
 # слова, 1302 шестнадцатеричных литерала. Одна неверная цифра даёт парсер,
 # верный на всех входах, кроме тех, чей десятичный порядок попадает в эту
 # строку, — и конечный дифференциальный корпус её не обязан задеть. Поэтому
@@ -30,7 +30,7 @@ export LC_ALL=C
 NAME="check-pow5-table"
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 GEN="$ROOT/scripts/tools/gen-pow5-table.py"
-TABLE="$ROOT/std/src/runtime/string/pow5_table.nv"
+TABLE="$ROOT/std/src/runtime/float_parse/pow5_table.nv"
 
 if [ ! -f "$GEN" ]; then
     echo "$NAME: FAIL — нет генератора $GEN: судить нечем, а нечем != зелено" >&2

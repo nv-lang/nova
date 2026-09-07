@@ -58,7 +58,7 @@ These dependencies are not vendored but installed via vcpkg at build time:
 
 ### 5. Rust `core::num::dec2flt` (rust-LICENSE)
 - **Component**: correctly-rounded decimal→binary float conversion behind
-  `str @to_f64()` — `std/src/runtime/string/float_convert.nv` and its peers
+  `str @to_f64()` — `std/src/runtime/float_parse/convert.nv` and its peers
   `pow5_table.nv`, `digit_buf.nv` (the files land with the phases of plan 283;
   `rust-LICENSE` lists the ones present)
 - **License**: MIT OR Apache-2.0 upstream; Nova takes it under **MIT** (one file,
@@ -82,7 +82,7 @@ justify each rounding decision are preserved; types and primitives are Nova's. R
 | bdwgc (Boehm GC) | MIT-style | compiler-codegen/nova_rt/gc | Vendored (submodule) |
 | libatomic_ops | MIT | compiler-codegen/nova_rt/libatomic_ops | Vendored (submodule) |
 | libuv | MIT | compiler-codegen/nova_rt/libuv | Vendored (submodule) |
-| Rust `core::num::dec2flt` | MIT (of MIT OR Apache-2.0) | std/src/runtime/string/float_convert.nv (+ peers) | Ported |
+| Rust `core::num::dec2flt` | MIT (of MIT OR Apache-2.0) | std/src/runtime/float_parse/convert.nv (+ peers) | Ported |
 
 ## License Files
 

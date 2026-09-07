@@ -90,7 +90,7 @@ D430 (R6 float `to_*`, R7 имя `to_<T>` и `RangeError enum AboveMax | BelowMi
 
 ### Ф.4 — грамматика float на Nova (закрыта 2026-09-05, имена временные)
 
-`std/src/runtime/string/parse_float.nv`: строгая грамматика `[+-]?(digits[.digits?]|.digits)
+`std/src/runtime/float_parse/door.nv`: строгая грамматика `[+-]?(digits[.digits?]|.digits)
 ([eE][+-]?digits)?`, позиция ошибки, `TooLarge`/`TooSmall` вместо молчаливого `inf`, underflow —
 `Ok`. Округление — `strtod` только для принятой строки. Четыре блока тестов в `string_test.nv`
 (грамматика, отказы с позицией, переполнение, позиция у `to_i8`).

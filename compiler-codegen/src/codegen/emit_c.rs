@@ -47282,7 +47282,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // went: `Option` instead of `Result` (D325 R1/R3/R4) and a grammar that was
                 // whatever `strtod` accepted -- whitespace, `nan`/`inf`, hex, the locale
                 // separator -- while `str @to_f64()` had become strict. The replacement is
-                // `str @to_f32()` (std/runtime/string/parse_float.nv), a plain Nova body
+                // `str @to_f32()` (std/runtime/float_parse/door.nv), a plain Nova body
                 // that rounds the decimal DIRECTLY to f32; going through f64 and narrowing
                 // rounds twice and disagrees near the midpoints between two f32 values, so
                 // the old `nova_str_to_f64` call was not merely lenient but wrong at the

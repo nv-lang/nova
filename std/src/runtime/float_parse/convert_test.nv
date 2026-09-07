@@ -1,5 +1,5 @@
 #no_prelude
-module runtime.string
+module runtime.float_parse
 
 // Co-equal test of the float conversion (plan 283 Ф.2 / Ф.3): calls the private pieces
 // directly -- `parse_number`, `try_fast_path`, `compute_float`, `fast_or_lemire`,
@@ -20,6 +20,7 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.numeric
+import std.runtime.string
 
 // The C library is the REFERENCE of these tests, not a dependency of the library: since
 // plan 283 Ф.4 `str @to_f64()` rounds on its own, and this declaration is the only thing
