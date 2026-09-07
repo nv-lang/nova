@@ -500,16 +500,29 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     // the hoist of a construction inside it is the printer's.
     ro lo = @ir.named(ot, opt)
     @lower_place(qk[0], lo)
+    // The result is a temporary of the body (M2b-2 step 1). Its declaration with the
+    // zero initialiser (274.3/F29) is still spelled here by the printer; step 2 of the
+    // wave moves it into the body as Stmt.Decl with zero_init.
+    ro lr = @ir.temp(res_t, res)
     @body.append("    ${c_type(@ctx, res_t)} ${res} = (${c_type(@ctx, res_t)}){0};\n")
-    // The Some-test through the ONE Option door (emit_option, wave W4).
+    // The Some-test through the ONE Option door (emit_option, wave W4), printed
+    // BEFORE the branch opens -- the same order lower_if_let keeps, for the same
+    // reason (emit_flow.nv header).
     @body.append("    if (${@option_some_test(ot, opt)}) {\n")
-    @body.append("        ${res} = ${opt}.value;\n")
+    // Both branches are BLOCKS of the body with one join, and the Some branch's
+    // one statement is the payload read through the one door -- printed by the
+    // one assignment printer, which spells a Temp with the indent the hand-written
+    // line had (measured before the edit, plan 274.8 decision (1)).
+    ro c = @ir.begin_if(Cond.IsSome(lo), true)
+    @ir.take_payload(lr, lo)
+    @emit_last_stmt()
+    @ir.begin_else(c)
     @body.append("    } else {\n")
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.
-    ro lr = @ir.temp(res_t, res)
     @lower_place(qk[2], lr)
     @body.append("    }\n")
+    @ir.end_if(c)
     res
 }
 
