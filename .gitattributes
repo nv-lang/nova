@@ -47,6 +47,16 @@ novac/src/emit_c/shell.tpl.c -text
 # соврал и про правило, и про то, что вообще было проверено. Из 275 скриптов в
 # CRLF лежали ровно эти два; атрибут снимает класс целиком, а не эти два файла.
 *.sh            text eol=lf
+
+# ТА ЖЕ ПРИЧИНА ДЛЯ PYTHON, и до 2026-09-07 её здесь не было: атрибут
+# крепил `*.sh`, а стражей на python в дереве 99, и их разбирает та же
+# машина. Замер 2026-09-07: `core.autocrlf = true`, `check-attr` даёт для
+# `check-guard-wiring.sh` — `text: set, eol: lf`, а для `check-guard-honesty.py` —
+# `unspecified`. Значит при следующем чекауте python-стражи приедут CRLF, а
+# `check-guard-honesty` считает CRLF в скриптах нарушением — краснота по
+# ОКРУЖЕНИЮ разом на 99 файлах. Сейчас зелено только потому, что файлы
+# легли на диск как LF и checkout их не трогал.
+*.py            text eol=lf
 # Plan 280 E7: emission baselines are compared byte-for-byte against fresh
 # compiler output (LF). EOL translation would break every future comparison.
 *.expected.c -text
