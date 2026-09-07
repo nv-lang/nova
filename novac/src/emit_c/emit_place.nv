@@ -20,9 +20,10 @@ module novac.emit_c
 
 import ../tree.{Node, NodeKind, AssignOp}
 import ../diag.{ice}
-import ../sem.{is_value_tail_kind, c_type}
+import ../sem.{is_value_tail_kind, c_type, c_instance_method, raw_vrow}
 import ../types.{TyId, is_ty}
-import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue}
+import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand}
+import ../builtins.{VEC_GET_METHOD}
 
 /// Records `dest = e` in the lowered body and prints it at once -- the
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
@@ -62,6 +63,8 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         Expr(n) => n
         Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
         SomePayload(_) => ice("emit_c: a payload read reached expr_of -- only an assignment prints it")
+        IndexPayload(_) => ice("emit_c: an element read reached expr_of -- only an assignment prints it")
+        VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -89,7 +92,39 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             @emit_assign_head(d)
             @body.append("${@ir.decl_of(opt).name}.value;\n")
         }
-        Use(_) => ice("emit_c: emit_assign met an operand rvalue before M2 lowers one")
+        IndexPayload(r) => {
+            // The shell's `get` of the collection's instance hands back the
+            // Option BY VALUE and the loop header proved the index in range,
+            // so `.value` is always the element -- INTEROP (emit_option.nv).
+            ro vd = @ir.decl_of(r.vec)
+            ro get_c = c_instance_method(@ctx, vd.ty, VEC_GET_METHOD)
+            @emit_assign_head(d)
+            @body.append("${get_c}(${vd.name}, ${@ir.decl_of(r.idx).name}).value;\n")
+        }
+        VariantField(r) => {
+            // The payload union of the shell's sum ABI (INTEROP, header):
+            // the arm's test proved the variant, so the field is there.
+            ro vname = @ctx.variant_rows[raw_vrow(r.vrow)].name
+            @emit_assign_head(d)
+            @body.append("${@ir.decl_of(r.scr).name}->payload.${vname}._${r.slot};\n")
+        }
+        // A plain binder of a match: the scrutinee under a new name. The
+        // operand is read by its own door, so this arm holds one call and no
+        // match sits nested on the payload the arm above just bound.
+        Use(op) => {
+            @emit_assign_head(d)
+            @body.append("${@operand_name(op)};\n")
+        }
+    }
+}
+
+/// The C NAME of an operand: a local reads as its name; a tree operand does
+/// not reach an assignment (the M1 bridge is `Rvalue.Expr`, not `Use`), and
+/// this says so rather than printing something plausible.
+fn Emitter @operand_name(op Operand) -> str {
+    match op {
+        Place(src) => @ir.decl_of(src).name
+        Tree(_) => ice("emit_c: an operand of the tree reached emit_assign -- the bridge is Rvalue.Expr")
     }
 }
 
@@ -173,8 +208,12 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
 fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     ro k = e.kind_of()
     if k == NodeKind.MatchExpr {
+        // The match is a Switch of the lowered body (274.8 M2b-1d); its
+        // result local is declared here by the printer, assigned in each
+        // arm through the one door.
         ro u = @fresh_uniq()
-        @emit_match(e, u, ty)
+        ro t = @ir.temp(ty, "_novac_match_t${u}")
+        @lower_match(e, u, t)
         return Some("_novac_match_t${u}")
     }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {

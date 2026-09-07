@@ -1,0 +1,70 @@
+// Plan 284 F.1 (2026-09-07). The four `str` view bodies -- `@index(Range)`,
+// `@get(Range)`, `@split_at`, `@split_at_checked` in
+// std/src/runtime/string/slice.nv -- stopped going through the inline byte-slice
+// `@[a..b]` and now BUILD the view via `str.new(ptr, len)`, the way
+// `[]T @index(Range)` always did. The reason is the plan's own rule: once every
+// `[a..b]` routes into `@index` by satisfying the slice role, a body written
+// with the sugar routes into itself.
+//
+// Nothing observable may move with them, and three of those four bodies were
+// named by NO test at all (measured 2026-09-07 across spec_tests and std:
+// `@split_at`, `@split_at_checked` and `@get(Range)` had zero carriers, while
+// `str_slice_basic.nv` covered only the `s[a..b]` sugar, which does not reach
+// these bodies today).
+//
+// Each test pins one thing the rewrite could have lost:
+//  - the two halves and the length invariant of `@split_at`, the body that
+//    builds TWO views, the second one at a pointer offset;
+//  - the empty edges at 0 and at byte_len, where the offset is degenerate;
+//  - the codepoint-boundary guard. It is data-dependent, so it is NOT part of
+//    the `requires` contract and survives bounds elision: it used to live in
+//    the C helper `nova_str_slice_utf8_guard` (compiler-codegen/nova_rt/array.h)
+//    and now lives in `@slice_boundary_guard`. Its message is pinned verbatim,
+//    because a guard that keeps working with a different text is still a
+//    behaviour change for every program that reads the panic;
+//  - `@split_at_checked` answering None on the same cut instead of panicking;
+//  - `@end_index()`, the second method of the slice role, added by this wave.
+//    For `str` it is the BYTE length -- the same unit as the slice bounds.
+//
+// The multibyte literal is the one `pos_str_methods_accurate.nv` already uses:
+// six Cyrillic letters, two bytes each.
+module spec_tests.conformance
+
+test "str split_at builds both halves and keeps the length invariant" {
+    ro s = "hello world"
+    ro pair = s.split_at(5)
+    assert(pair.0 == "hello")
+    assert(pair.1 == " world")
+    assert(pair.0.byte_len() + pair.1.byte_len() == s.byte_len())
+}
+
+test "str split_at at 0 and at byte_len gives the empty edges" {
+    ro s = "abc"
+    ro head = s.split_at(0)
+    assert(head.0 == "")
+    assert(head.1 == "abc")
+    ro tail = s.split_at(3)
+    assert(tail.0 == "abc")
+    assert(tail.1 == "")
+}
+
+test "str split_at_checked answers None on a mid-codepoint cut" {
+    ro s = "Привет"
+    assert(s.byte_len() == 12)
+    assert(s.split_at_checked(1).is_none())
+    assert(s.split_at_checked(2).is_some())
+}
+
+test "str end_index is the byte length" {
+    ro s = "Привет"
+    ro empty = ""
+    assert(s.end_index() == s.byte_len())
+    assert(s.end_index() == 12)
+    assert(empty.end_index() == 0)
+}
+
+test "str split_at through a codepoint panics with the moved guard" panics "str: slice splits a UTF-8 codepoint" {
+    ro s = "Привет"
+    ro pair = s.split_at(1)
+    assert(pair.0 == "")
+}

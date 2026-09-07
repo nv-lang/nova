@@ -1,103 +1,114 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Donor: rustc's SwitchInt lowering as the reference for "test once, bind,
-// run the arm"; the `if (!matched && tag)` chain is the plain C spelling of
-// it. NOT taken: decision trees over patterns -- the subset's patterns are
-// one level deep, and a tree would be machinery without a question.
-// Role: layer 10 (emit_c) -- the C text of a `match`: scrutinee temporary,
-// result temporary (value position), matched flag, and the arm chain; the
-// statement variant runs arms for effect and declares no result (wave B5).
-// Used by: emit_c.nv -- bindings, `=>` bodies, block tails, and statements.
-// Guarded by: check-novac-file-size.py (this file exists because emit_c.nv
-// crossed 1000 lines on 2026-08-30 -- the cut sem.nv and typing.nv took
-// before it), and the match fixtures through check-novac-differential.sh.
-// novac/src/emit_c/emit_match.nv -- how a match becomes C.
+// Donor: rustc MIR building of `match` (`rustc_mir_build::build::matches`):
+// the scrutinee lands in a place once, each arm gets its own block, binders
+// are statements at the top of the arm's block, a guard is a branch inside
+// it, every arm joins. The FORM of the terminator is a structured `Switch`
+// with a named join (plan 274.8 section 2a), not rustc's flat `SwitchInt`;
+// decision trees over patterns are NOT taken -- the subset's patterns are one
+// level deep, and a tree would be machinery without a question.
+// Role: layer emit_c -- the lowering AND the printing of a `match`, on one
+//   event stream (wave M2b-1d of sub-plan 274.8): the C is the if-chain with
+//   a `matched` flag the printer used to spell by hand, byte for byte; the
+//   flag is the PRINTER's emulation of first-match and does not enter the IR.
+// Used by: emit_place.nv (`build_value`, the value position) and emit_c.nv
+//   (the statement position and the untyped block tail).
+// Guarded by: check-novac-differential.sh (the match fixtures), the corpus C
+//   diff of the wave, lower_test.nv (the Switch shape), check-novac-file-size.py.
+//
+// INTEROP, named as such: `->tag` / `.tag` by placement (A4) and the payload
+// union `->payload.<Variant>._<i>` are the shell's sum ABI (read off
+// shell.tpl.c); goes the day novac emits the whole prelude.
 
 module novac.emit_c
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, arm_body_at, c_type}
+import ../sem.{branch_children, leaf_text, leaf_kind, arm_body_at, c_type}
 import ../sem.{int_literal_c_text}
 import ../sem.{disj_head_slots, pattern_has_disj}
 import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, variant_in_sum}
 import ../builtins.{bool_c_literal}
 import ../types.{TyId}
-import ../lower.{Local, no_local}
+import ../lower.{Local, no_local, Pattern, VariantMatch, SwitchCtx, Cond}
 
-/// the tag and unpacks payload fields in order. uniq must be unique per
-/// function body: the binding name or the fn name.
-fn Emitter mut @emit_match(m Node, uniq int, res_t TyId) -> () {
+/// One `match`, in either position. `dest` is the local the arms' values
+/// land in (the caller declared it: `_novac_match_t<uniq>`), or `no_local()`
+/// in statement position, where the arms run for effect and nothing holds an
+/// answer -- declaring a variable for an answer nobody asked for is the shape
+/// this compiler keeps refusing elsewhere (wave B5). `uniq` names the
+/// scrutinee, the result and the flag: unique per body, never the binding
+/// name (F30: Nova lets a name be bound twice in one scope).
+fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
     ro kids = branch_children(m)
     ro scr = kids[1]
     ro scr_t = @out.type_of(scr.id_of())
-    @body.append("    ")
-    @body.append(c_type(@ctx, scr_t))
-    @body.append(" _novac_scr_t${uniq} = ")
-    @emit_expr(scr)
-    @body.append(";\n    ")
-    // The temporary is declared with its type AND zero-initialised
-    // (274.3/F29). The checker demands exhaustiveness for SUMS now, but a
-    // match on `int` may legally leave values uncovered -- both compilers
-    // accept `match n { 1 => 10  2 => 20 }` -- and the oracle answers 0
-    // there. An uninitialised temporary answered whatever the stack held:
-    // valid C, a different number per run, no diagnostic anywhere. The
-    // compound literal `(T){0}` is C99 and works for scalars and structs
-    // alike, so the emitter needs no per-type knowledge here.
-    @body.append(c_type(@ctx, res_t))
-    @body.append(" _novac_match_t${uniq} = (")
-    @body.append(c_type(@ctx, res_t))
-    @body.append("){0};\n")
-    @body.append("    int _novac_matched_t${uniq} = 0;\n")
-    // The result temporary is a LOCAL of the lowered body (274.8 M1): declared
-    // just above by this printer, assigned in each arm through the one door.
-    ro t = @ir.temp(res_t, "_novac_match_t${uniq}")
-    for c in kids {
-        if c.kind_of() != NodeKind.MatchArm { continue }
-        @emit_arm(c, uniq, scr_t, t)
-    }
-}
-
-/// The BODY of one arm: assigned to the result temporary in value position,
-/// run for effect in statement position (274.5 wave B5). A statement arm's
-/// body may be a block (`{}` included) or a single statement, and both go
-/// through the doors that already print those shapes.
-fn Emitter mut @emit_arm_value(arm_e Node, t Local, as_stmt bool) -> () {
-    if !as_stmt {
-        // The arm's value lands in the match temporary through the one door
-        // (274.8 M1); `t` is the local `emit_match` declared for it.
-        @lower_place(arm_e, t)
-        return
+    // The scrutinee lands in a binding ONCE through the one door: every arm
+    // tests the same value, and a call in the scrutinee runs one time.
+    ro ls = @ir.named(scr_t, "_novac_scr_t${uniq}")
+    @lower_place(scr, ls)
+    if dest != no_local() {
+        // The result temporary is declared with its type AND zero-initialised
+        // (274.3/F29): a match on `int` may legally leave values uncovered --
+        // both compilers accept `match n { 1 => 10  2 => 20 }` -- and the
+        // oracle answers 0 there; an uninitialised temporary answered whatever
+        // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
+        ro res_t = @ir.decl_of(dest).ty
+        @body.append("    ${c_type(@ctx, res_t)} _novac_match_t${uniq} = (${c_type(@ctx, res_t)}){0};\n")
     } else {
-        // Statement position: the body runs, and nothing holds its answer.
+        // Statement position: no result, nothing to declare.
     }
-    // TERMINATOR, not an else: the two shape guards meet on a node-kind test
-    // (274.5 section 2g), and a `return` satisfies both.
-    if arm_e.kind_of() == NodeKind.Block {
-        @emit_block_stmts_fn(arm_e, false)
-        return
+    // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
+    // arm that held; the `Switch` means first-match by construction.
+    @body.append("    int _novac_matched_t${uniq} = 0;\n")
+    ro c = @ir.begin_switch(ls)
+    for a in kids {
+        if a.kind_of() != NodeKind.MatchArm { continue }
+        @lower_arm(a, uniq, scr_t, ls, c, dest)
     }
-    @emit_stmt(arm_e)
+    @ir.end_switch(c)
 }
 
-/// A match in STATEMENT position: the scrutinee temporary and the `matched`
-/// flag, then the arms -- and NO result temporary, because the statement form
-/// answers nothing. The arms print their bodies as STATEMENTS through
-/// `@emit_arm_stmt`, so `{}` and `println(...)` both work where a value form
-/// would demand an expression.
-fn Emitter mut @emit_match_stmt(m Node, uniq int) -> () {
-    ro kids = branch_children(m)
-    ro scr = kids[1]
-    ro scr_t = @out.type_of(scr.id_of())
-    @body.append("    ")
-    @body.append(c_type(@ctx, scr_t))
-    @body.append(" _novac_scr_t${uniq} = ")
-    @emit_expr(scr)
-    @body.append(";\n")
-    @body.append("    int _novac_matched_t${uniq} = 0;\n")
-    for c in kids {
-        if c.kind_of() != NodeKind.MatchArm { continue }
-        @emit_arm(c, uniq, scr_t, no_local(), as_stmt: true)
+/// The guard of an arm, if the source wrote one -- found by walking the arm's
+/// children once; a function with returns, so no Option local is ever
+/// reassigned (the oracle miscompiles that shape today, check.nv notes it).
+fn Emitter @guard_of(ak []Node) -> Option[Node] {
+    for g in ak {
+        if g.kind_of() == NodeKind.Guard {
+            return Some(branch_children(g)[1])
+        }
+    }
+    None
+}
+
+/// What the arm's pattern IS -- decided once, before anything is printed. The
+/// head is asked of the MATCHED SUM through the checker's own door (wave B6,
+/// #964): the emitter does not consult the name table, so the two passes
+/// cannot disagree on which row a head names. A disjunction's other heads
+/// travel with the variant; the checker held every binder of one to `_`.
+fn Emitter @pattern_of(pat []Node, scr_t TyId) -> Pattern {
+    ro p0 = pat[0]
+    if leaf_kind(p0) == TokenKind.IntLit {
+        return Pattern.Lit(p0)
+    }
+    if leaf_kind(p0) != TokenKind.Ident {
+        ice("emit_c: match pattern is neither an int literal nor an identifier")
+    }
+    match variant_in_sum(@ctx, scr_t, leaf_text(p0)) {
+        Some(vrow) => {
+            mut also = []VariantRow.new()
+            for hi in disj_head_slots(pat) {
+                match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
+                    None => {}
+                    Some(hrow) => also.push(hrow)
+                }
+            }
+            Pattern.Variant(VariantMatch { head: vrow, also })
+        }
+        None => {
+            // Not a variant head: a name binds the scrutinee, `_` binds nothing.
+            if leaf_text(p0) != "_" { Pattern.Bind } else { Pattern.Wild }
+        }
     }
 }
 
@@ -110,112 +121,124 @@ fn Emitter mut @emit_tag_test(uniq int, vrow VariantRow, scr_t TyId) -> () {
     @body.append("(_novac_scr_t${uniq}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
-/// Emit one match arm: pattern test, binder unpacking, optional guard, arm
-/// value. `as_stmt` (274.5 wave B5) switches only the TAIL: a statement-position
-/// arm runs its body for effect instead of assigning it to a result temporary.
-/// One door with a parameter rather than two copies -- the pattern walk below
-/// is sixty lines, and a second copy of it would drift on the first fix.
-fn Emitter mut @emit_arm(arm Node, uniq int, scr_t TyId, t Local, as_stmt bool = false) -> () {
+/// The C of the arm's test, spelled FROM the pattern: an int compare, the tag
+/// test(s), or `true` for a binder and the wildcard.
+fn Emitter mut @emit_pattern_test(pattern Pattern, uniq int, scr_t TyId) -> () {
+    match pattern {
+        Lit(n) => {
+            @body.append("(_novac_scr_t${uniq} == ")
+            @body.append(int_literal_c_text(leaf_text(n)))
+            @body.append("LL)")
+        }
+        Variant(vm) => {
+            @emit_tag_test(uniq, vm.head, scr_t)
+            for hrow in vm.also {
+                @body.append(" || ")
+                @emit_tag_test(uniq, hrow, scr_t)
+            }
+        }
+        // A binder and the wildcard match anything: the test IS `true`, and the
+        // two are joined rather than copied (the codebase's own spelling for
+        // arms that answer the same, check/operators.nv).
+        Bind | Wild => @body.append(bool_c_literal(true))
+    }
+}
+
+/// One arm: the pattern is decided, its test printed and the arm's block
+/// opened; the binders are recorded as statements of that block and printed
+/// from the IR; a guard opens an `If` inside the block; the body lands in
+/// `dest` (value position) or runs as statements; the printer's flag is set.
+fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
-    mut has_guard = false
-    for g in ak {
-        has_guard = has_guard || g.kind_of() == NodeKind.Guard
-    }
+    ro guard = @guard_of(ak)
+    ro pattern = @pattern_of(pat, scr_t)
     @body.append("    if (!_novac_matched_t${uniq} && (")
-    ro p0 = pat[0]
-    mut vrow = no_vrow()
-    if leaf_kind(p0) == TokenKind.IntLit {
-        @body.append("(_novac_scr_t${uniq} == ")
-        @body.append(int_literal_c_text(leaf_text(p0)))
-        @body.append("LL)")
-    } else if leaf_kind(p0) == TokenKind.Ident {
-        // The head is asked of the MATCHED SUM through the checker's own door
-        // (wave B6, #964): the emitter does not consult the name table, so the
-        // two passes cannot disagree on which row a head names.
-        vrow = variant_in_sum(@ctx, scr_t, leaf_text(p0)) ?? no_vrow()
-        if is_vrow(vrow) {
-            @emit_tag_test(uniq, vrow, scr_t)
-            for hi in disj_head_slots(pat) {
-                match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
-                    None => {}
-                    Some(hrow) => {
-                        @body.append(" || ")
-                        @emit_tag_test(uniq, hrow, scr_t)
+    @emit_pattern_test(pattern, uniq, scr_t)
+    @body.append(")) {\n")
+    @ir.begin_arm(c, pattern, guard)
+    match pattern {
+        Variant(vm) => {
+            if !pattern_has_disj(pat) {
+                // Unpack payload fields onto the arm's binders, in order:
+                // binder names sit after '(' in the pattern; field types are
+                // the variant's rows of the flat context. Each binder is a
+                // Binding local assigned the field through the one assignment
+                // printer (M2b-1d).
+                mut binders = []str.new()
+                for j in 2..pat.len() {
+                    // [LEGACY-#676] var-index-method: same workaround as in
+                    // collect_types: variable-index receiver miscompiles.
+                    ro pj = pat[j]
+                    match pj.ident_str() {
+                        Some(binder) => binders.push(binder)
+                        None => {}
                     }
                 }
-            }
-        } else {
-            @body.append(bool_c_literal(true))
-        }
-    } else {
-        ice("emit_c: match pattern is neither an int literal nor an identifier")
-    }
-    @body.append(")) {\n")
-    // Asked once and named, so the chain below tests bools rather than
-    // variants (no-default-branch keeps variant dispatch for `match`, and a
-    // TokenKind match here would need the wildcard the same rule forbids).
-    ro is_plain_binder = leaf_kind(p0) == TokenKind.Ident && leaf_text(p0) != "_"
-    // A disjunction unpacks nothing: the checker held every binder to `_`.
-    if is_vrow(vrow) && !pattern_has_disj(pat) {
-        // Unpack payload fields onto the arm's binders, in order: binder
-        // names sit after '(' in the pattern; field types are the variant's
-        // rows of the flat context.
-        ro vname = leaf_text(p0)
-        mut binders = []str.new()
-        // `for` over the RANGE (owner 2026-08-22): the comment below used to
-        // WARN that "the walk cannot `continue` on None -- `j += 1` is what
-        // advances it". A warning about a hazard is worse than a form without
-        // the hazard: over a range, `continue` advances by construction.
-        for j in 2..pat.len() {
-            // [LEGACY-#676] var-index-method: same workaround as in
-            // collect_types: variable-index receiver miscompiles.
-            ro pj = pat[j]
-            // The test and the TEXT are one question: `ident_str` answers
-            // both, and None is the pattern's punctuation -- '(' ',' ')' --
-            // which names no binder.
-            // A match, not `if Some(...)`: the second case is empty, and P31
-            // would demand an `else` with a reason -- which is longer than the
-            // arm it replaced (measured 2026-08-22).
-            match pj.ident_str() {
-                Some(binder) => binders.push(binder)
-                None => {}
+                mut pi = 0
+                for bname in binders {
+                    ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
+                    ro lb = @ir.named(bt, bname)
+                    @ir.take_field(lb, ls, vm.head, pi)
+                    @emit_last_stmt()
+                    pi += 1
+                }
+            } else {
+                // A disjunction unpacks nothing: the checker held every
+                // binder to `_`.
             }
         }
-        mut pi = 0
-        for bname in binders {
-            ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vrow)].payload_off + pi]
-            @body.append("        ")
-            @body.append(c_type(@ctx, bt))
-            @body.append(" ${bname} = _novac_scr_t${uniq}->payload.${vname}._${pi};\n")
-            pi += 1
+        Bind => {
+            // Plain binder: the scrutinee under a new name -- the first real
+            // use of the operand rvalue.
+            ro lb = @ir.named(scr_t, leaf_text(pat[0]))
+            @ir.copy(lb, ls)
+            @emit_last_stmt()
         }
-    } else if is_plain_binder {
-        // Plain binder: the scrutinee under a new name.
-        @body.append("        ")
-        @body.append(c_type(@ctx, scr_t))
-        @body.append(" ${leaf_text(p0)} = _novac_scr_t${uniq};\n")
-    } else {
-        // The remaining pattern shapes -- an int literal and the wildcard
-        // `_` -- introduce no name: the test emitted above IS the whole
-        // arm, so nothing is declared inside it. This closes the chain;
-        // the no-default-branch rule is satisfied because the conditions
-        // test a LEAF KIND and a spelling, not a sum variant.
+        Lit(_) => {
+            // An int literal introduces no name: the test IS the whole arm.
+        }
+        Wild => {
+            // The wildcard introduces no name either.
+        }
     }
-    if has_guard {
-        for g in ak {
-            if g.kind_of() != NodeKind.Guard { continue }
-            @body.append("        if (")
-            @emit_expr(branch_children(g)[1])
+    match guard {
+        Some(g) => {
+            @body.append("    if (")
+            @emit_expr(g)
             @body.append(") {\n")
+            ro gi = @ir.begin_if(Cond.Expr(g), false)
+            @lower_arm_body(arm_e, dest)
+            @body.append("    _novac_matched_t${uniq} = 1;\n    }\n")
+            @ir.end_if(gi)
         }
-        @emit_arm_value(arm_e, t, as_stmt)
-        @body.append("            _novac_matched_t${uniq} = 1;\n        }\n")
-    } else {
-        @emit_arm_value(arm_e, t, as_stmt)
-        @body.append("        _novac_matched_t${uniq} = 1;\n")
+        None => {
+            @lower_arm_body(arm_e, dest)
+            @body.append("    _novac_matched_t${uniq} = 1;\n")
+        }
     }
     @body.append("    }\n")
+    @ir.end_arm(c)
 }
 
+/// The BODY of one arm: assigned to the result local in value position,
+/// run for effect in statement position (wave B5). A statement arm's body
+/// may be a block (`{}` included) or a single statement, and both go through
+/// the doors that already print those shapes.
+fn Emitter mut @lower_arm_body(arm_e Node, dest Local) -> () {
+    if dest != no_local() {
+        // The arm's value lands in the match local through the one door.
+        @lower_place(arm_e, dest)
+        return
+    } else {
+        // Statement position: the body runs, and nothing holds its answer.
+    }
+    // TERMINATOR, not an else: the two shape guards meet on a node-kind test
+    // (274.5 section 2g), and a `return` satisfies both.
+    if arm_e.kind_of() == NodeKind.Block {
+        @emit_block_stmts_fn(arm_e, false)
+        return
+    }
+    @emit_stmt(arm_e)
+}

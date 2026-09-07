@@ -1,14 +1,20 @@
-// EXPECT_COMPILE_ERROR E_OPEN_RANGE_NO_LEN
+// EXPECT_COMPILE_ERROR E_SLICE_ROLE_UNSATISFIED
 //
-// [M-open-range-len-source-hardcoded] Ф.2 neg: `Weird` implements
-// `@index(Range)` (so `nova check`'s permissive Range-index result-type
-// inference — `infer_expr_type`'s `ExprKind::Index` arm just returns
-// `obj_tr` unconditionally for any Range index, without verifying an
-// `@index(Range)` impl exists — accepts `w[2..]` at check-time) but has NO
-// field literally named `len` (only `cap`). The open-range `end`
-// materialization in emit_c.rs can't structurally find a `len int` field to
-// read, so codegen must fail with the honest `E_OPEN_RANGE_NO_LEN`
-// diagnostic — not an ICE/panic.
+// Plan 284 F.1/F.2a neg: `Weird` declares `@index(r Range)` and does NOT
+// declare `@end_index()`, so it does not satisfy the slice role `RangeIndex`
+// (D470) and `w[2..]` must be REFUSED — by a named diagnostic, not an ICE and
+// not a panic.
+//
+// `nova check` accepts the form on its own: `infer_expr_type`'s `ExprKind::Index`
+// arm returns `obj_tr` unconditionally for any Range index, without verifying
+// that an `@index(Range)` impl exists at all. So the refusal is codegen's, and
+// this fixture pins that it stays a diagnostic.
+//
+// The file used to expect `E_OPEN_RANGE_NO_LEN` and explained the refusal by a
+// missing field literally named `len` (the type has only `cap`). That was the
+// retired test: a field named `len` admitted any type whose `len` is a counter
+// or a capacity. Ironically `Weird`'s own field is `cap` — under the role the
+// field name stops mattering entirely, and what is missing is a METHOD.
 
 module neg.openrange_no_len_neg
 import std.collections.range.{Range}
@@ -23,6 +29,14 @@ fn Weird @index(r Range) -> Weird {
 
 fn main() -> () {
     ro w = Weird { cap: 5 }
+    //
+    // The pin is a MEASUREMENT of where the refusal comes from, not decoration.
+    // Codegen refuses with a bare string and no span: this file reported
+    // "pinned to line 33, but the matching error landed on line ?" while that was
+    // the only refusal (2026-09-07). The checker refuses with a `Diagnostic`
+    // carrying `e.span`. So a line pin that MATCHES says the checker refused --
+    // which is the whole reason plan 284 F.2a moved the refusal there.
+    // nova:expect E_SLICE_ROLE_UNSATISFIED -- `Weird` answers `@index(r Range)` and not `@end_index()`
     ro v = w[2..]
     ro _ = v
 }

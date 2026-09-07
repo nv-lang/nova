@@ -308,7 +308,16 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
 ///    reachable (the intersection at the method-firing loop, ~:418-424); never
 ///    fired ⇒ `dead_method_keys`, whose fwd+body are skipped at the emission
 ///    gates (~:3091-3100). Granularity is coarse-by-name (`[M-159-method-pruning]`):
-///    a reachable name-collision over-keeps (never over-prunes). Consts/`ro`-globals
+///    a reachable name-collision over-keeps. **It DOES over-prune a SYNTHESIZED
+///    selector** — one the compiler calls but no source text spells — because
+///    reachability is collected from the AST, not from what the emitter will
+///    write. Measured by registry 221.1 #1011: `@end_index()`, synthesized for
+///    `a[k..]`, was pruned and left `lld-link: undefined symbol:
+///    Nova_str_method_end_index`. Such selectors must be seeded in
+///    `collect_used_names` (`lints.rs`, the `ExprKind::Index` arm seeds both
+///    `index` and `end_index` for exactly this reason). The earlier wording here
+///    said "never over-prunes", which promised safety in the one direction where
+///    the defect lives. Consts/`ro`-globals
 ///    likewise pruned via `.dead_consts`. See `compute_dead_decls_with`.
 ///
 /// **Soundness.** A monomorphic free function is only ever *called* by its
@@ -6919,22 +6928,24 @@ impl CEmitter {
         // [M-open-range-len-source-hardcoded] Ф.1 (REVERTED — regression
         // 2026-07-24, integrator mega-CU): a global `record_schemas["str"]`
         // registration was tried here to make str's `len` visible to
-        // `structural_len_field_ty`/`structural_len_field_access`. That
+        // the then-existing `structural_len_field_ty`/`_access` helpers. That
         // regressed `neg_str_from_retracted` (D410: `str.from(5)` must stay
         // a compile error) — putting `"str"` in `record_schemas` at all
         // revives an UNRELATED generic method/`.from` resolution path that
         // keys off "is this name in record_schemas", independent of the
-        // `len` field content. str never needs the GLOBAL registry entry
-        // for slice-materialization purposes anyway: its open-range `end`
-        // is computed by its OWN dedicated branch below (`obj_ty ==
-        // "nova_str"`), which the generic structural reroute explicitly
-        // excludes BEFORE ever consulting `record_schemas` (see the
-        // `obj_ty != "nova_str"` guard ahead of `structural_len_field_ty`
-        // in the `ExprKind::Index` Range-arm) — so str's `len` access never
-        // actually went through this global entry in practice. Removed
-        // rather than narrowed: no minimal "ignore me for `.from`" tag on a
-        // schema entry existed to reach for, and str doesn't need the
-        // entry at all.
+        // `len` field content. Removed rather than narrowed: no minimal
+        // "ignore me for `.from`" tag on a schema entry existed to reach for.
+        //
+        // Plan 284 F.1 REPLACED that fence with a different question, so the
+        // note is kept for its REASON, not for its mechanism. The old fence
+        // was a `obj_ty != "nova_str"` guard standing ahead of the structural
+        // `len`-field test, plus a dedicated str branch that computed the open
+        // end itself; both are gone. `str` now takes the same route as every
+        // other type — `satisfies_range_index_role` — and that predicate asks
+        // `all_methods`, the METHOD registry. So the trap this note describes
+        // stays shut for the reason that matters: no `record_schemas` entry for
+        // `str` is created, and none is needed, because the role is about
+        // methods and not about fields.
 
         // Plan 103.1 Ф.6: Pre-register MemOrdering in sum_schemas +
         // sum_schema_registry so test files can use `Relaxed`/`Acquire`/etc.
@@ -38857,20 +38868,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             f = fa_from, to = fa_to, e = fa_elem_c
                         ));
                     }
-                    // [M-open-range-len-source-hardcoded] Ф.1: str and
-                    // NovaArray_ keep their OWN dedicated runtime-call fast
-                    // path below (nova_str_slice_*/nova_array_slice_* —
-                    // Границы: out of scope, not touched) — checked FIRST so
-                    // they retain priority. The GENERIC structural-`len`-
-                    // field reroute (Vec's mechanism, generalized) only
-                    // fires for what's left over — Vec itself (no longer
-                    // gated by the `Nova_Vec____` name) and any user type
-                    // with the same structural field.
-                    if obj_ty != "nova_str"
-                        && !obj_ty.starts_with("NovaArray_")
-                        && self.structural_len_field_ty(&obj_ty).as_deref() == Some("nova_int")
-                    {
-                        return self.emit_generic_len_field_range_index(
+                    // Plan 284 F.1 (owner, 2026-09-07): the test "can this be
+                    // sliced" is now SATISFACTION OF THE ROLE — a method
+                    // `index(Range)` plus `end_index()` — asked of every type
+                    // at once, `str` included. `str` is no longer an
+                    // exception: its dedicated `nova_str_slice_*` fast path
+                    // below becomes unreachable from the sugar (it is retired
+                    // by F.4, not here). `NovaArray_` keeps its own path — the
+                    // plan names it out of scope, and it has no Nova-level
+                    // `@index(Range)` to route into.
+                    //
+                    // Why this does NOT revive the D410 regression of
+                    // 2026-07-24 (the reverted `record_schemas["str"]`
+                    // registration, whose note stands in the pre-registration
+                    // block above): the role is asked of `all_methods`, the
+                    // METHOD registry, never of `record_schemas`. Nothing
+                    // about `str`'s fields becomes visible here, so the `.from`
+                    // resolution path that keyed off "is `str` in
+                    // record_schemas" is untouched.
+                    // No type NAME stands in this condition any more (plan 284,
+                    // consequence 4). `NovaArray_*` needed no exclusion once the
+                    // question became the role: its lookup name survives mangled
+                    // (it starts with `NovaA`, not the `Nova_` prefix the mapping
+                    // strips), array extension methods register under the receiver
+                    // name `[]T`, so the role cannot match and such a receiver falls
+                    // through to its own `nova_array_slice_*` path below — which is
+                    // precisely where the explicit name test used to send it.
+                    if self.satisfies_range_index_role(&obj_ty) {
+                        return self.emit_range_index_through_role(
                             &obj_ty, &o, start, end, *inclusive, expr,
                         );
                     }
@@ -38910,9 +38935,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         format!("({})->len", o)
                     } else {
                         return Err(format!(
-                            "[E_OPEN_RANGE_NO_LEN] type `{}` does not support range \
-                             slicing (`[a..]`/`[a..b]`) — no structural `len int` field \
-                             ([M-open-range-len-source-hardcoded])",
+                            "[E_SLICE_ROLE_UNSATISFIED] type `{}` does not support range \
+                             slicing (`[a..]`/`[a..b]`): it does not satisfy the slice role \
+                             `RangeIndex` (D470), which needs BOTH `@index(r Range)` and \
+                             `@end_index() -> int` — the second is what an open end asks for",
                             obj_ty
                         ));
                     };
@@ -38954,16 +38980,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
                     } else {
-                        // Unreachable by construction: the `len_expr` chain above
-                        // already returns for any `obj_ty` that is neither
-                        // `nova_str` nor `NovaArray_*` (either via the generic
-                        // structural-`len`-field reroute or the honest
-                        // [E_OPEN_RANGE_NO_LEN] error) — kept as a defensive
-                        // fallback, message harmonized with that one.
+                        // Unreachable by construction: the chain above already
+                        // returns for any `obj_ty` that satisfies the slice role
+                        // (plan 284 F.1) and errors honestly for any that does not,
+                        // so only `NovaArray_*` — which has no Nova-level
+                        // `@index(Range)` to route into — reaches this far. Kept as
+                        // a defensive fallback, message harmonized with that one.
                         return Err(format!(
-                            "[E_OPEN_RANGE_NO_LEN] type `{}` does not support range \
-                             slicing (`[a..]`/`[a..b]`) — no structural `len int` field \
-                             ([M-open-range-len-source-hardcoded])",
+                            "[E_SLICE_ROLE_UNSATISFIED] type `{}` does not support range \
+                             slicing (`[a..]`/`[a..b]`): it does not satisfy the slice role \
+                             `RangeIndex` (D470), which needs BOTH `@index(r Range)` and \
+                             `@end_index() -> int` — the second is what an open end asks for",
                             obj_ty
                         ));
                     }
@@ -56475,34 +56502,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `nova_str` (see `record_schema_key_for_c_type`) — str's own
     /// dedicated branch reads `len` separately and is excluded from calling
     /// this before it would ever matter.
-    fn structural_len_field_ty(&self, obj_ty: &str) -> Option<String> {
-        let key = Self::record_schema_key_for_c_type(obj_ty)?;
-        self.record_schemas.get(&key)?.get("len").cloned()
-    }
-
-    /// [M-open-range-len-source-hardcoded] Ф.1: the open-range `end`
-    /// materialization access for a structurally-`len`-having type (owner
-    /// rule п.1: field found → read it) — Vec and arbitrary user types,
-    /// NOT `str` (never resolves for it, see `record_schema_key_for_c_type`
-    /// — str's own dedicated branch handles its `len` separately). The C
-    /// access FORM — `.len` (stack value, e.g. a `value`-record) vs `->len`
-    /// (heap handle, e.g. a mono `Vec[T]`) — is chosen by
-    /// `Self::is_value_type(obj_ty)`, a storage-CLASS predicate, never by
-    /// the type's name. `recv` MUST already be a
-    /// single-eval-safe C expression (a bare identifier/tmp-var): it is
-    /// embedded verbatim and may be referenced more than once by the
-    /// caller, so a side-effecting `recv` (e.g. a raw call expression)
-    /// would double-evaluate at the C level.
-    fn structural_len_field_access(&self, obj_ty: &str, recv: &str) -> Option<String> {
-        let field_ty = self.structural_len_field_ty(obj_ty)?;
-        if field_ty != "nova_int" {
-            return None;
+    /// Plan 284 F.1: does `obj_ty` satisfy the SLICE ROLE — a method
+    /// `index(Range)` plus a method `end_index()`?
+    ///
+    /// This replaces the test that used to stand here, which was three
+    /// hard-wired facts at once: not `nova_str`, not `NovaArray_`, and a
+    /// structural field literally named `len`. Both halves of it were wrong,
+    /// in opposite directions: every new type with a slice had to be written
+    /// into THIS file by name, and a type whose `len` happens to be a counter
+    /// or a capacity passed the test silently and got sliced wrongly.
+    ///
+    /// Asked of `all_methods` — the method registry every other
+    /// method-existence question in this file consults — with the same
+    /// base-name derivation those sites use: `debt_nova_type_name_from_c`
+    /// (which maps `nova_str` -> `str` and strips the `NovaValue_`/`Nova_`
+    /// prefixes) and then the mono suffix cut at `____`, so a mono
+    /// `Vec[T]` is asked under `Vec`. Deliberately NOT `record_schemas`:
+    /// registering `str` there is what regressed D410 in 2026-07-24 (see the
+    /// reverted-note block in the pre-registration section), and the role
+    /// needs methods, not fields.
+    fn satisfies_range_index_role(&self, obj_ty: &str) -> bool {
+        let tname = Self::debt_nova_type_name_from_c(obj_ty);
+        let base = tname.split("____").next().unwrap_or(tname.as_str());
+        if base.is_empty() {
+            return false;
         }
-        if Self::is_value_type(obj_ty) {
-            Some(format!("({}).len", recv))
-        } else {
-            Some(format!("({})->len", recv))
-        }
+        self.all_methods.contains(&(base.to_string(), "index".to_string()))
+            && self.all_methods.contains(&(base.to_string(), "end_index".to_string()))
     }
 
     /// [M-open-range-len-source-hardcoded] Ф.1: GENERIC open/closed-range
@@ -56525,7 +56551,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Vec-only code's `obj.clone()`-in-two-AST-places version did for an
     /// open-ended `v[a..]`, double-evaluates a side-effecting receiver at
     /// the C level. Hoisting to a tmp closes that latent gap (Ф.0(c)).
-    fn emit_generic_len_field_range_index(
+    fn emit_range_index_through_role(
         &mut self,
         obj_ty: &str,
         o: &str,
@@ -56554,19 +56580,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 expr.span,
             )),
             (None, _) => {
-                // Structural `len` read (owner rule п.1) — `.len`/`->len`
-                // chosen by storage class, materialized into its OWN fresh
-                // tmp (not inlined as a raw string) so it becomes an `Expr`
-                // embeddable in the synthetic `Range` below.
-                let access = self.structural_len_field_access(obj_ty, &recv_tmp)
-                    .ok_or_else(|| format!(
-                        "[E_OPEN_RANGE_NO_LEN] internal: `{}` lost its structural \
-                         `len int` field between the caller's check and here \
-                         ([M-open-range-len-source-hardcoded])",
-                        obj_ty
-                    ))?;
+                // Plan 284 F.1: the open end is ASKED, not read — the role's
+                // second method, `recv.end_index()`. The code here used to read
+                // a structural field named `len`, which is exactly why a type
+                // whose `len` is a counter or a capacity sliced silently and
+                // wrongly. Materialized into its own fresh tmp, like the field
+                // read it replaces, so it becomes an `Expr` embeddable in the
+                // synthetic `Range` below AND is evaluated exactly once.
+                let end_call = Expr::new(
+                    ExprKind::Call {
+                        func: Box::new(Expr::new(
+                            ExprKind::Member {
+                                obj: Box::new(Expr::new(
+                                    ExprKind::Ident(recv_tmp.clone()), expr.span)),
+                                name: "end_index".to_string(),
+                            },
+                            expr.span,
+                        )),
+                        args: vec![],
+                        trailing: None,
+                    },
+                    expr.span,
+                );
+                let end_c = self.emit_expr(&end_call)?;
                 let len_tmp = self.fresh_tmp();
-                self.line(&format!("nova_int {} = ({});", len_tmp, access));
+                self.line(&format!("nova_int {} = ({});", len_tmp, end_c));
                 self.var_types.insert(len_tmp.clone(), "nova_int".to_string());
                 Box::new(Expr::new(ExprKind::Ident(len_tmp), expr.span))
             }

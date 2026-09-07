@@ -208,7 +208,7 @@
         <div class="station ok"><div class="name">sem</div><div class="role">реестры типов и вызываемых; жатва поданных деклараций std</div><div class="note ok">W6: свободные функции std</div></div>
         <div class="station wip"><div class="name">names · resolve</div><div class="role">имя → объявление; подбор перегрузки по типам</div><div class="note wip">W5: пространства имён (№976–978)</div></div>
         <div class="station ok"><div class="name">check</div><div class="role">типизация и правила; единственный писатель канала</div><div class="note wip">растёт по корпусу (274.7)</div></div>
-        <div class="station wip"><div class="name">lower</div><div class="role">MIR: локалы, блоки, одна дверь размещения</div><div class="note wip">M0–M2a есть, M2b–M3 впереди</div></div>
+        <div class="station wip"><div class="name">lower</div><div class="role">MIR: локалы, блоки, одна дверь размещения</div><div class="note wip">M0–M2b-1 есть, M2b-2 · M2c · M3 впереди</div></div>
         <div class="station ok"><div class="name">mono</div><div class="role">достижимость, инстансы обобщённых</div><div class="note todo">переезд на IR — M3</div></div>
         <div class="station ok"><div class="name">emit_c</div><div class="role">печать C поверх оболочки оракула</div><div class="note wip">ещё читает дерево (until:E4)</div></div>
         <div class="station ok ext"><div class="name">clang / tcc</div><div class="role">C → бинарь, один рантайм на линковке</div><div class="note ok">смоук байт-в-байт</div></div>
@@ -260,7 +260,7 @@
         <tr><td class="k">Э1</td><td>MVP: <code>hello</code> до бинаря вертикальным срезом</td><td><span class="pill ok">ядро взято</span></td><td>смоук байт-в-байт, оболочка оракула регенерируется из probe</td></tr>
         <tr><td class="k">Э2 · 274.4–274.7</td><td>Ширина: подмножество растёт по корпусу; одна дверь на корень (274.4 пройден 29.08); Э2-б1/б2/б3 закрыты</td><td><span class="pill wip">идёт</span></td><td>дифференциал 60/115 · 58, самосборка 6/94, волны W1–W4 и W6 закрыты, W5 впереди</td></tr>
         <tr><td class="k">Э3</td><td>LSP на фронтенде Карины, за флагом; девять сканеров разметки</td><td><span class="pill todo">впереди</span></td><td>требование «имя не несёт модуля» записано (9.1д)</td></tr>
-        <tr><td class="k">Э4 · 274.8</td><td>MIR и полный чекер: форма, одна дверь размещения, эмиттер читает только IR</td><td><span class="pill wip">начат 06.09</span></td><td>M0–M2a: держатели 26/26, C корпуса побайтово прежний, страж дверей 40 → 35</td></tr>
+        <tr><td class="k">Э4 · 274.8</td><td>MIR и полный чекер: форма, одна дверь размещения, эмиттер читает только IR</td><td><span class="pill wip">начат 06.09</span></td><td>M0–M2b-1: держатели 26/26, C корпуса побайтово прежний, страж дверей 40 → 34</td></tr>
         <tr><td class="k">274.5</td><td>Чтение собственного исходника (самосборка) — главный носитель отказов</td><td><span class="pill wip">в работе</span></td><td>класс «not a callable» 20 файлов → 0 после W6; остаток — формы подмножества</td></tr>
         <tr><td class="k">274.2 · 274.3</td><td>Цена итерации; классы находок ревью</td><td><span class="pill wip">в работе</span></td><td>бюджет гейта — храповик с условием снятия; фуззер 4189 мутаций / 60 файлов</td></tr>
       </tbody>
@@ -275,7 +275,9 @@
       <div class="wave ok"><div class="w">M0</div><div class="t">Форма и дверь</div><div class="d"><code>lower/ir.nv</code>: Fn, Block, Stmt, Terminator; <code>FnBuilder.place</code>; страж с базой 40</div></div>
       <div class="wave ok"><div class="w">M1</div><div class="t">Восемь позиций → одна дверь</div><div class="d">один принтер <code>emit_place</code>; C побайтово; emit_c.nv 998 → 884 строк</div></div>
       <div class="wave ok"><div class="w">M2a</div><div class="t">Операторы без потока</div><div class="d">вызовы-операторы, присваивания — из IR; emit_c.nv 829 строк</div></div>
-      <div class="wave todo"><div class="w">M2b</div><div class="t">Блоки и терминаторы</div><div class="d">if / while / for / match как блоки со структурными терминаторами; <code>seal</code> по-настоящему</div></div>
+      <div class="wave ok"><div class="w">M2b-1</div><div class="t">Терминаторы при потоковой печати</div><div class="d">if / else if / else, while, диапазонный и коллекционный for, return, if-значение, if let — <code>If</code>/<code>Loop</code> с названными join/exit; события билдера, <code>emit_flow.nv</code>; C побайтово, дефект №991 найден пробой и починен</div></div>
+      <div class="wave todo"><div class="w">M2b-1г</div><div class="t">match как Switch</div><div class="d">образцы, дизъюнкции, guard, обе позиции; флаг matched остаётся у принтера — в форме его нет</div></div>
+      <div class="wave todo"><div class="w">M2b-2</div><div class="t">Один обход печати</div><div class="d">вложенные позиции значения понижаются ДО печати; идёт вместе с M2c — нумерация временных сдвигается по построению</div></div>
       <div class="wave todo"><div class="w">M2c</div><div class="t">Имена временных</div><div class="d">по индексу локала; C меняется только в именах — дифф после нормализации пуст</div></div>
       <div class="wave todo"><div class="w">M3</div><div class="t">Эмиттер читает только IR</div><div class="d">временные рёбра сняты, <code>mono</code> по IR, <code>emit_expr</code> исчезает как модуль дерева</div></div>
     </div>

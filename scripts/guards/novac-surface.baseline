@@ -223,7 +223,7 @@ emit_c 3
 # тело от forward-typedef по этой форме). Правило пробелов ОДНО — копия в
 # emit_c дрейфовала бы от лексерной при первом же новом пробельном байте.
 lex 11
-lower 46
+lower 61
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -792,3 +792,16 @@ types 26
 # узлом дерева, if-let ему не выразить); +1 дверь билдера — `take_payload(dest, opt)` (биндер if-let:
 # `dest = payload локала`, первый rvalue не из дерева — `Rvalue.SomePayload`). Наружу — потому что их зовёт
 # emit_c (emit_flow.nv: lower_if_let понижает и печатает на одних событиях) и судит lower_test.
+# lower 46 -> 49 (2026-09-06, подплан 274.8 M2b-1c — коллекционный `for` как терминатор Loop):
+# +2 типа формы — `EachHead` (vec/idx/elem — три локала заголовка: коллекция один раз, индекс, элемент) и
+# `ElemRead` (vec/idx — чтение элемента, полезная нагрузка `Rvalue.IndexPayload`, второй rvalue не из дерева);
+# +1 дверь билдера — `take_elem(dest, vec, idx)` (биндер элемента в начале каждой итерации). Наружу — потому
+# что их зовёт emit_c (emit_flow.nv: lower_for_each; emit_place.nv печатает IndexPayload) и судит lower_test.
+# lower 49 -> 61 (2026-09-07, подплан 274.8 M2b-1d — `match` как терминатор Switch):
+# +6 типов формы — `Pattern` (Lit | Variant | Bind | Wild: что проверяет арм), `VariantMatch` (голова
+# дизъюнкции и остальные), `SwitchArm` (образец, guard, блок), `SwitchTerm` (скрутиний, армы, join),
+# `SwitchCtx` (что возвращает событие) и `VariantRead` (чтение поля payload — третий rvalue не из дерева);
+# +6 дверей билдера — `begin_switch`, `begin_arm`, `end_arm`, `end_switch`, `take_field`, `copy`. Наружу —
+# потому что их зовёт emit_c (emit_match.nv: lower_match/lower_arm; emit_place.nv печатает VariantField и Use)
+# и судит lower_test. Флаг `matched` в форму НЕ входит: он артефакт печати if-цепи, первое совпадение —
+# смысл самого `Switch`.

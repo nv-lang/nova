@@ -29,8 +29,9 @@ module novac.emit_c
 
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../sem.{branch_children, leaf_text}
-import ../lower.{IfCtx, LoopHead, RangeHead, Cond}
+import ../sem.{branch_children, leaf_text, c_instance_method, for_head_elem}
+import ../lower.{IfCtx, LoopHead, RangeHead, EachHead, Cond}
+import ../builtins.{VEC_LEN_METHOD}
 
 /// One `if` statement with its `else` / `else if` chain. `outer` is the
 /// enclosing `if` when this one IS its else branch: then the else branch is
@@ -168,6 +169,35 @@ fn Emitter mut @lower_for_range(kids []Node) -> () {
     @body.append("; ${v}++) {\n")
     ro lv = @ir.named(@ctx.prims.int_id, v)
     ro c = @ir.begin_loop(LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] }))
+    @emit_block_stmts_fn(kids[4], false)
+    @body.append("    }\n")
+    @ir.end_loop(c)
+}
+
+/// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
+/// ONCE into a binding local through the placement door, the index is a
+/// binding local of int, the header carries all three locals, and the body
+/// starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
+/// shell's `get(...).value` by the one assignment printer. The C is the same
+/// walk `emit_for_call` spelled by hand: `T vtmp = <head>;`, `for (nova_int
+/// itmp = 0; itmp < len(vtmp); itmp++) {`, `E var = get(vtmp, itmp).value;`.
+/// The element type is the CHECKER's decision (`for_head_elem`), not a second
+/// derivation here (hunt emit_c x K4, 2026-09-04).
+fn Emitter mut @lower_for_each(kids []Node) -> () {
+    ro head = kids[3]
+    ro ht = @out.type_of(head.id_of())
+    ro elem_t = for_head_elem(@ctx, ht)
+    ro vtmp = "_novac_tmp_t${@fresh_uniq()}"
+    ro itmp = "_novac_i_t${@fresh_uniq()}"
+    ro lv = @ir.named(ht, vtmp)
+    @lower_place(head, lv)
+    ro len_c = c_instance_method(@ctx, ht, VEC_LEN_METHOD)
+    @body.append("    for (nova_int ${itmp} = 0; ${itmp} < ${len_c}(${vtmp}); ${itmp}++) {\n")
+    ro li = @ir.named(@ctx.prims.int_id, itmp)
+    ro le = @ir.named(elem_t, leaf_text(kids[1]))
+    ro c = @ir.begin_loop(LoopHead.Each(EachHead { vec: lv, idx: li, elem: le }))
+    @ir.take_elem(le, lv, li)
+    @emit_last_stmt()
     @emit_block_stmts_fn(kids[4], false)
     @body.append("    }\n")
     @ir.end_loop(c)
