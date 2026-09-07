@@ -1,0 +1,48 @@
+// Registry 221.1 #1003 -- module-level `const X []u8 = [...]` reads back as garbage.
+// CLOSED 2026-09-07 by 81e4d2462, same root as #998: the const initialiser was emitted
+// with no target type, so the element width came from the LITERALS. Held by
+// spec_tests/conformance/standalone/const_array_elem_width_from_decl.nv ([]u8, []u16,
+// []f32). Kept as the original evidence; TABLE_POW5 is `[1308]u8` again (29cbc586c).
+// Found 2026-09-07 by plan 283 F.3 (the digits of 5^k table of the slow path).
+// Compiler built from a57208585. SEPARATE from #998: there the `[N]T` form did not
+// compile at all; here `[]T` compiles, runs, and returns wrong values in silence.
+//
+// The whole probe (this file below the marker line) prints
+//     const-index 5 0 0 0  /  runtime-index 5 0 0 0
+// where every reading must be 5 2 5 1. Element 0 is right, every later element is 0.
+//
+// Mechanism, consistent with the C error #998 carries: the literal list is built as a
+// Vec of `int` (8 bytes per element -- the literals' own type) and stored in a slot
+// typed `[]u8`, so a 1-byte read lands inside the first int. Element 1 is its second
+// BYTE, i.e. zero. `.len()` is right (4), which is what makes the defect quiet.
+//
+// WIDTH DECIDES: `[]int`, `[]u64` and `[]f64` module constants are correct, and that is
+// luck rather than health -- their element width already matches what the initializer
+// built (`[]f64` because float literals build a Vec of f64 to begin with). Only the
+// narrow integer types (u8/u16/u32, i8/i16/i32) are affected.
+//
+// A TRAP THIS PROBE ITSELF FELL INTO, worth repeating: the first version printed the
+// broken values on line 1 and a correct `[]int` control on line 2, and
+// `EXPECT_STDOUT 5 2 5 1` MATCHED THE CONTROL LINE -- the probe passed while showing
+// the defect. EXPECT_STDOUT is a substring match over the first lines; a control value
+// must never repeat the expected text.
+//
+// Plan 283 works around it by declaring the table `[]int` and casting at the comparison
+// (std/src/runtime/string/digit_buf.nv). Acceptance for the fix: this file prints
+// `5 2 5 1` twice, and the same for a `[]u16` / `[]u32` variant.
+
+// EXPECT_STDOUT const-index 5 2 5 1
+const T []u8 = [5, 2, 5, 1]
+
+fn at(i int) -> u8 => T[i]
+
+fn main() Io -> () {
+    print("const-index ${T[0]} ${T[1]} ${T[2]} ${T[3]}")
+    mut out = ""
+    mut i = 0
+    while i < 4 {
+        out = "${out} ${at(i)}"
+        i += 1
+    }
+    print("runtime-index${out}")
+}

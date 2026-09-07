@@ -1,0 +1,276 @@
+// std/runtime/parse_float_corpus_slow.nv — plan 283 Ф.5: the external float-parsing
+// corpus (github.com/nigeltao/parse-number-fxx-test-data, 5 299 993 lines) against Nova's
+// own conversion, bit for bit. Slow lane (`_slow`, D376): skipped by `nova test` by
+// default, run with `--slow-only` / `--include-slow`.
+//
+// Where the corpus comes from: `scripts/tools/fetch-parse-float-corpus.sh` clones it at a
+// pinned commit into `nova_tests/.cache/parse-number-fxx/` (gitignored) or into
+// `$NOVA_PARSE_FLOAT_CORPUS`. The data is NOT in the repository (plan 283, «Не делаем»):
+// millions of lines live outside, here are the runner and the hash.
+//
+// Corpus line = four space-separated fields: f16 bits, f32 bits, f64 bits (hex) and the
+// string, e.g. `3C00 3F800000 3FF0000000000000 1`. Both the f64 AND the f32 field are
+// judged (plan 283 Ф.7 opened `str @to_f32()`); the f16 field has no door in Nova.
+//
+// STREAMED, NOT SLURPED, and that is not premature: the four largest files are about 52 MB
+// each, so reading one whole would allocate the file as a single `str` and then a Vec of
+// five million line slices. The loop below holds one 64 KiB buffer and the tail of the
+// previous chunk, so memory stays flat however large the corpus grows. The shape (`resize`,
+// `loop` over `read`, `chunk[..n]`, retry on `is_interrupted`) is the one `io.read_to_end`
+// uses; only the accumulation differs.
+//
+// Skip-never-fail: no corpus directory -> zero checks and a green test (the same policy as
+// the Unicode conformance lane). A string Nova's grammar rejects (`inf`, hex floats,
+// whitespace — the corpus has a few) is COUNTED as skipped, not failed. A mismatch anywhere
+// is a FAIL naming the first offending line. The SECOND assertion is the one that catches a
+// quiet nothing: files read but zero judged is a failure, not a pass — which is exactly how
+// a CRLF corpus looked before the fetch script began refusing one.
+//
+// A sibling module of `runtime.string`, not a co-equal file: it needs `std.fs` / `std.os`
+// (real handlers), which the `#no_prelude` string module cannot import.
+module runtime.parse_float_corpus_slow
+
+import std.fs.{real_fs, read_dir, File, Path, write}
+import std.os.{real_os, env}
+import std.runtime.numeric
+
+const CORPUS_DEFAULT_DIR = "nova_tests/.cache/parse-number-fxx"
+const CORPUS_CHUNK = 65536
+const F64_POS_INF_BITS u64 = 0x7FF0000000000000
+const F64_NEG_INF_BITS u64 = 0xFFF0000000000000
+const F32_POS_INF_BITS u32 = 0x7F800000
+const F32_NEG_INF_BITS u32 = 0xFF800000
+
+/// What the run found. Carried by reference, so the file loop and the line judge share one.
+type CorpusTally {
+    mut ok int
+    mut mismatch int
+    mut skipped int
+    mut files int
+    mut lines int
+    mut first_bad str
+    // Two counters that exist because their absence was invisible. `io_bad`: a corpus file
+    // that would not open, or a chunk that would not decode -- both mean lines never judged,
+    // and the run would still have gone green. `f32_skipped`: how many lines the f32 door
+    // refused. The test asserts io_bad == 0 and f32_skipped == skipped, which is the machine
+    // form of "both doors of one language refuse exactly the same lines" -- the very
+    // divergence registry #1004 was opened for.
+    mut io_bad int
+    mut f32_skipped int
+    mut f32_ok int
+}
+
+fn CorpusTally.new() -> CorpusTally =>
+    { ok: 0, mismatch: 0, skipped: 0, files: 0, lines: 0, first_bad: "", io_bad: 0, f32_skipped: 0, f32_ok: 0 }
+
+// One corpus line -> (expected f32 bits, expected f64 bits, the string), or None when the
+// line has not got the four-field shape (blank lines, comments).
+fn split_corpus_line(line str) -> Option[(u32, u64, str)] {
+    ro (_f16, rest1) = line.split_once(" ")?
+    ro (f32_hex, rest2) = rest1.split_once(" ")?
+    ro (f64_hex, literal) = rest2.split_once(" ")?
+    ro f32_bits = f32_hex.to_u32(radix: 16).ok()?
+    match f64_hex.to_u64(radix: 16) {
+        Ok(bits) => Some((f32_bits, bits, literal))
+        Err(_) => None
+    }
+}
+
+// The tally as one line, rewritten after EVERY file rather than once at the end. A run over
+// millions of lines can die -- a panic, a timeout, a machine slot taken away -- and then the
+// only numbers that exist are the ones already on disk. The second effect matters more than
+// the first: while the test is silent, a shell can read this file and see progress, so a long
+// run becomes watchable instead of opaque. An empty path switches the whole thing off.
+// `write` and not `write_text`: the signature is matched exactly (`data []u8`), this is the
+// form the fs tests exercise, and `write_text` has no caller anywhere in the tree.
+fn CorpusTally @report_to(path str) Fs -> () {
+    if path.is_empty() { return }
+    ro line = "283 corpus: files=${@files} lines=${@lines} ok=${@ok} mismatch=${@mismatch} skipped=${@skipped} io_bad=${@io_bad} f32_ok=${@f32_ok} f32_skipped=${@f32_skipped} first=${@first_bad}\n"
+    match write(path.to_path(), line.bytes()) {
+        Ok(()) => {}
+        // The report is best-effort diagnostics: a run over millions of lines must not be
+        // failed by a full disk, and the assertions below judge the numbers whether or not
+        // the file was written. The marker sits on the line DIRECTLY above the arm, which is
+        // the only place the linter reads it (measured 2026-09-07: prose first, marker last).
+        // nova:allow W_RESULT_DISCARDED -- best-effort diagnostics file, never a verdict
+        Err(_) => {}
+    }
+}
+
+fn CorpusTally mut @note_bad(what str) -> () {
+    @mismatch += 1
+    if @first_bad.is_empty() { @first_bad = what }
+}
+
+// Both doors against one corpus line. An overflow of ours (`TooLarge` / `TooSmall`) is the
+// corpus's infinity: its field carries the bit pattern, we carry the direction.
+fn CorpusTally mut @judge(name str, line str) -> () {
+    if Some(parsed) = split_corpus_line(line) {
+        ro (expected_f32, expected_f64, literal) = parsed
+        @lines += 1
+        match literal.to_f64() {
+            Ok(v) => {
+                if v.to_bits() == expected_f64 {
+                    @ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f64 ${v.to_bits()}")
+                }
+            }
+            Err(TooLarge) => {
+                if expected_f64 == F64_POS_INF_BITS {
+                    @ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> TooLarge")
+                }
+            }
+            Err(TooSmall) => {
+                if expected_f64 == F64_NEG_INF_BITS {
+                    @ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> TooSmall")
+                }
+            }
+            Err(_) => { @skipped += 1 }
+        }
+        // The f32 door judged the SAME way as the f64 one, overflow included: an `Err(_)`
+        // arm here used to swallow every refusal, so a door that started rejecting what the
+        // other accepts would have passed in silence.
+        match literal.to_f32() {
+            Ok(v32) => {
+                if v32.to_bits() == expected_f32 {
+                    @f32_ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f32 ${v32.to_bits()}")
+                }
+            }
+            Err(TooLarge) => {
+                if expected_f32 == F32_POS_INF_BITS {
+                    @f32_ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f32 TooLarge")
+                }
+            }
+            Err(TooSmall) => {
+                if expected_f32 == F32_NEG_INF_BITS {
+                    @f32_ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f32 TooSmall")
+                }
+            }
+            Err(_) => { @f32_skipped += 1 }
+        }
+    }
+}
+
+// One file, streamed: read a chunk, judge every COMPLETE line in it, carry the tail over.
+fn CorpusTally mut @judge_file(dir Path, name str) Fs -> () {
+    match File.open(dir.join(name)) {
+        // Counted, not ignored: a file that will not open means lines never judged, and the
+        // run would otherwise report a green verdict over a smaller corpus than it claims.
+        Err(_) => { @io_bad += 1 }
+        Ok(consume f) => {
+            mut chunk []u8 = []u8.new()
+            chunk.resize(CORPUS_CHUNK, 0 as u8)
+            mut pending = ""
+            mut done = false
+            while !done {
+                match f.read(chunk) {
+                    // Braces, not a bare assignment: an arm whose body is `x = y` runs into
+                    // the next arm as far as the parser is concerned (E_MATCH_ARM_SEP_MISSING,
+                    // D452) -- measured 2026-09-07, this file had never been type-checked.
+                    Ok(0) => { done = true }
+                    Ok(n) => {
+                        mut text = ""
+                        match chunk[..n].to_str() {
+                            Ok(str_chunk) => { text = str_chunk }
+                            // Same reason as the open failure: a dropped chunk is lines that
+                            // were never judged, and silence about it reads as success.
+                            Err(_) => { @io_bad += 1 }
+                        }
+                        ro joined = "${pending}${text}"
+                        match joined.rsplit_once("\n") {
+                            Some((head, tail)) => {
+                                for line in head.split("\n") { @judge(name, line) }
+                                pending = tail
+                            }
+                            None => { pending = joined }   // braces for the same reason as above
+                        }
+                    }
+                    Err(e) => {
+                        // `is_interrupted` is worth a retry; anything else ends this file.
+                        if !e.is_interrupted() { done = true }
+                    }
+                }
+            }
+            if !pending.is_empty() { @judge(name, pending) }
+            match f.close() {
+                Ok(()) => {}
+                // Every byte was already read and judged; a failure to close cannot change
+                // a verdict, and failing the run over it would throw away hours of work.
+                // nova:allow W_RESULT_DISCARDED -- close of a fully read and judged file
+                Err(_) => {}
+            }
+            @files += 1
+        }
+    }
+}
+
+test "283 Ф.5: parse-number-fxx corpus — every f64 and f32 field equals ours bit for bit (zero checks when the corpus is absent)" {
+    ro dir = with Os = real_os() {
+        match env("NOVA_PARSE_FLOAT_CORPUS") {
+            Some(d) => d
+            None => CORPUS_DEFAULT_DIR
+        }
+    }
+    // A green run prints NOTHING: the harness echoes a test's stdout only when the binary
+    // exits non-zero (`test_runner.rs`), and an `assert` message with interpolation is lost
+    // whole (registry 221.1 #1002). So a run over 5.3 million lines would leave one word,
+    // `PASS`, and no numbers -- and on a failure, no first offending line either. When
+    // `NOVA_PARSE_FLOAT_CORPUS_REPORT` names a path, the tally is written there before the
+    // assertions, so it survives both outcomes.
+    ro report = with Os = real_os() {
+        match env("NOVA_PARSE_FLOAT_CORPUS_REPORT") {
+            Some(pth) => pth
+            None => ""
+        }
+    }
+    with Fs = real_fs() {
+        supervised {
+            spawn {
+                ro data_dir = "${dir}/data".to_path()
+                match read_dir(data_dir) {
+                    Err(_) => {
+                        // corpus absent: nothing to judge (run scripts/tools/fetch-parse-float-corpus.sh)
+                        assert(true)
+                    }
+                    Ok(entries) => {
+                        mut t = CorpusTally.new()
+                        for e in entries {
+                            if e.is_file() {
+                                if Some(name) = e.name_str() {
+                                    t.judge_file(data_dir, name)
+                                    t.report_to(report)      // after EVERY file, see @report_to
+                                }
+                            }
+                        }
+                        t.report_to(report)                  // and once at the end, files=0 included
+                        assert(t.mismatch == 0,
+                            "283 corpus: files=${t.files} lines=${t.lines} ok=${t.ok} mismatch=${t.mismatch} skipped=${t.skipped}; first: ${t.first_bad}")
+                        assert(t.io_bad == 0,
+                            "283 corpus: ${t.io_bad} file(s)/chunk(s) could not be read -- the run judged less than it claims")
+                        // Every line judged by the f32 door: matched or refused, nothing in
+                        // between -- a mismatch would already have failed the assert above.
+                        // Without this, "the corpus is checked on the second field too" (F.7)
+                        // rested on nothing: a branch that quietly did nothing would pass.
+                        assert(t.f32_ok + t.f32_skipped == t.lines,
+                            "283 corpus: the f32 door judged ${t.f32_ok} + refused ${t.f32_skipped} of ${t.lines} lines -- the rest it never saw")
+                        assert(t.f32_skipped == t.skipped,
+                            "283 corpus: the two doors disagree on WHICH lines are numbers -- f32 refused ${t.f32_skipped}, f64 refused ${t.skipped}")
+                        assert(t.files == 0 || t.ok > 0,
+                            "283 corpus: ${t.files} file(s) read, ${t.lines} line(s) parsed, but nothing judged")
+                    }
+                }
+            }
+        }
+    }
+}

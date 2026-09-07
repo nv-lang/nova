@@ -28,7 +28,7 @@ details in the "`from`/`try_from` naming" section below.
 |---|---|---|
 | `as` | infallible numeric/newtype/sum cast, compile-time, no runtime code | `42 as f64`, `n as i16` |
 | `.to_str()` | universal conversion of a value **to a string** (bare-`T` blanket + specializations) | `42.to_str()`, `bs.to_str()` |
-| `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive | `Fahrenheit.from(c)`, `u32.try_from(port_str)` |
+| `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive. Legal ONLY when the source is a **concept** rather than a carrier value: for a value the canon is a method on the source, `x.to_*()` (`nv-coding-style` §1а, 2026-07-09; lint `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
 | `consume @into_TARGET()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | declarative **implicit** zero-cost conversion in a position with a known expected type (view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
 
@@ -186,7 +186,9 @@ fn parse_decimal_f64(s str) -> Result[f64, ParseFloatError] =>
 Errors — structural enums: `type ParseIntError enum Empty | InvalidDigit
 | AboveMax | BelowMin | InvalidRadix` (2026-09-05: `Overflow` split by direction) and `type ParseFloatError enum Empty | Malformed { at int } | TooLarge | TooSmall` (interim names — registry #136; target vocabulary `Invalid`/`AboveMax`/`BelowMin`)
 
-**Float grammar is Nova's (plan 282 Ф.4, 2026-09-05).** `s.to_f64()` accepts exactly `[+-]?(digits[.digits?]|.digits)([eE][+-]?digits)?` — no whitespace, no `nan`/`inf`, no hex, no `_`, no locale separator; the first offending byte is reported in `Malformed { at }`; a finite literal outside `f64` is `TooLarge`/`TooSmall`, not a silent `inf`. Only the correctly-rounded decimal→binary step is delegated to C, and only for a string the grammar already accepted.
+**Float grammar and conversion are both Nova's (plan 282 Ф.4, 2026-09-05; plan 283 Ф.4, 2026-09-07).** `s.to_f64()` accepts exactly `[+-]?(digits[.digits?]|.digits)([eE][+-]?digits)?` — no whitespace, no `nan`/`inf`, no hex, no `_`, no locale separator; the first offending byte is reported in `Malformed { at }`; a finite literal outside `f64` is `TooLarge`/`TooSmall`, not a silent `inf`. The correctly-rounded decimal→binary step is Nova too — a port of Rust's `core::num::dec2flt` (a Clinger fast path, Eisel-Lemire, and a big-decimal slow path for the inputs neither one resolves); C plays no part in `to_f64()` any more, and `strtod` survives only as the differential-test oracle.
+
+**`str -> f32` exists too, and it rounds in ONE step (plan 283 Ф.7, 2026-09-07).** `s.to_f32()` takes the same grammar and the same `ParseFloatError` as `to_f64()`, and converts the decimal digits straight to `f32`. It is NOT `to_f64()` followed by a narrowing cast: for a decimal that sits within less than the resolution of `f64` above the midpoint between two neighbouring `f32` values, rounding to `f64` first loses the excess, the value lands exactly on the midpoint, and round-half-to-even then goes the opposite way from the truth (measured: five of six such strings differ). The retracted `f32.try_parse` did exactly that and is gone.
 
 **Comparing a result.** Until registry #136 is fixed, compare a `Result` whose error has a shared variant name (`AboveMax`/`BelowMin` live in `RangeError`, `CharError` and `ParseIntError`) with `match` or a qualified variant (`r == Err(ParseIntError.AboveMax)`); a bare `r == Err(AboveMax)` may silently pick another type's variant.
 (`std/runtime/string/parse.nv`).
@@ -522,6 +524,9 @@ Nova function with no protocol behind it):
 
 - **(a) `.from(x)` / `.try_from(x)`** — concrete static methods,
   constructor-conversion by naming convention (not generic-bound-able).
+  **For a CONCEPT source only** (`from_polar`, `embed`): if the source is a
+  carrier value, this door is forbidden and the canon is `x.to_*()` on the
+  source (nv-coding-style §1а, 2026-07-09; lint `W_STATIC_CONVERSION`).
   `try_` — **only** when there is an infallible sibling with the same name
   without the prefix (R3, [D325](decisions/04-effects.md#d325)); a lone
   fallible operation without a sibling — a bare name without `try_`
@@ -541,23 +546,36 @@ explicitly, under different names.
 type Celsius f64
 type Fahrenheit f64
 
-fn Fahrenheit.from(c Celsius) -> Self =>
-    Self((c as f64) * 9.0 / 5.0 + 32.0)
+// Источник у обеих сторон — ЗНАЧЕНИЕ, поэтому статик `Fahrenheit.from(c)` тут
+// запрещён (§1а): конверсия живёт методом на источнике.
+fn Celsius @to_fahrenheit() -> Fahrenheit =>
+    Fahrenheit((@ as f64) * 9.0 / 5.0 + 32.0)
 
-// Компилятор НЕ синтезирует c.into() — Into больше нет. Если нужна
-// обратная форма — пишем отдельную функцию явно:
-fn Celsius.from(f Fahrenheit) -> Self =>
-    Self(((f as f64) - 32.0) * 5.0 / 9.0)
+// Компилятор НЕ синтезирует обратную форму — ни `.into()`, ни парную. Нужна
+// обратная — пишем её явно и тем же правилом, на своём источнике:
+fn Fahrenheit @to_celsius() -> Celsius =>
+    Celsius(((@ as f64) - 32.0) * 5.0 / 9.0)
 ```
 
-The fallible version is the same, but the static returns a `Result`:
+The fallible case is the same door with a check: **a conversion with validation from a
+ro-source** is `x.to_*()` returning a `Result` (nv-coding-style §1а, SECOND row). The
+source here is a single carrier value, so a static is forbidden for the same reason as
+above. The name carries no `try_` because there is no infallible sibling (R3,
+[D325](decisions/04-effects.md#d325)); the exact twin in std is
+`int @to_char() -> Result[char, CharError]`:
 
 ```nova
-fn Port.try_from(n u16) -> Result[Self, str] =>
-    if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
+type Port u16
 
-ro p = Port.try_from(8080)?
+fn u16 @to_port() -> Result[Port, str] =>
+    if @ == 0 { Err("port 0 reserved") } else { Ok(Port(@)) }
+
+ro p = (8080 as u16).to_port()?
 ```
+
+`Type.new(...)` — the fourth row of §1а — is about something else: a constructor with NO
+carrier source, i.e. composite (`Date.new(y, m, d)`) or wrapping a value in a machine
+(`Parser.new(input)`). One value becoming another type does not belong there.
 
 ---
 

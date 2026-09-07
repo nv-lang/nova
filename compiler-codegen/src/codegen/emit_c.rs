@@ -36144,9 +36144,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // the generic Nova_T* BinOp::Add path below, which dispatches to
                 // Nova_StringBuilder_method_plus (the Nova-defined @plus method).
                 // nova_str is a struct — can't use == directly.
-                // Plan 13 Ф.9.2: BinOp::Add для str routes через @plus → @concat.
-                // Invisible-intrinsic заменён на тот же C-вызов, но через
-                // явную декларацию `str.@plus` в std/runtime/string.nv.
+                // Plan 13 Ф.9.2 ИСТОРИЯ, ПОПРАВЛЕНА 2026-09-07 (реестр 221.1 №1010):
+                // здесь было сказано, что `BinOp::Add` для `str` идёт через `@plus`,
+                // «через явную декларацию `str.@plus` в std/runtime/string.nv».
+                // Ни того, ни другого больше нет: оператор `+` для `str`
+                // РЕТРАКТИРОВАН владельцем 2026-07-21 (чекер даёт
+                // `[E_STR_CONCAT_PLUS]`), а сам метод снят из std 2026-09-07.
+                // Арм `BinOp::Add` ниже выпускает `Nova_str_method_concat`
+                // НАПРЯМУЮ и для `str` недостижим — он остаётся ради `StringBuilder`
+                // и прочих `Nova_*` получателей, чьи операторы живы.
                 // Plan 109 (D179): if LHS is Nova_T* (e.g. Nova_StringBuilder*),
                 // skip nova_str path and fall through to Nova_T* @plus dispatch.
                 let lhs_is_nova_ptr = lty.starts_with("Nova_") && lty.ends_with('*');
@@ -38781,9 +38787,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // window of truth" principle as the rest of D238. The
                     // bounds-check lives ONLY in that method body now (an
                     // always-on panic guard, NOT a `requires` contract — see
-                    // slice.nv), so it can no longer be silently elided by
-                    // contract policy; emit_c.rs no longer knows the check
-                    // exists at all.
+                    // slice.nv); emit_c.rs no longer knows the check exists at all.
+                    // CORRECTION 2026-09-07, by measurement (registry 221.1, plan 284):
+                    // the words that stood here -- "an always-on panic guard, NOT a
+                    // `requires` contract ... can no longer be silently elided by
+                    // contract policy" -- were FALSE on both halves. The body of
+                    // `Vec[T] @index(r Range)` (std/src/collections/vec/slice.nv:39-44)
+                    // carries exactly `requires r.start >= 0 && r.end >= r.start &&
+                    // r.end <= @len` and no guard; and that contract DOES fire in
+                    // release -- probe `v[1..5]` on a 3-element Vec printed
+                    // "panic: slice.nv:40: requires failed" with exit=101 in dev AND
+                    // in --mode release. The claim cost a plan a phase built on it,
+                    // which is why it is corrected here rather than quietly dropped.
+                    // (Same class as #1007: a comment promising behaviour nobody probed.)
                     //
                     // We synthesize `obj.index(materialized_range)` and re-emit
                     // through the normal Call/Member path (mirrors the
@@ -47260,9 +47276,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // over an ordinary `extern "C" fn nova_str_parse_f64(s str,
                 // out *mut f64) -> bool` FFI declaration (D282, out-param
                 // convention) — the compiler has NO special knowledge of it
-                // whatsoever (§3: no new builtin, no new hardcode). `f32` is
-                // untouched (out of this fix's scope; no `f32.parse`
-                // migration was requested).
+                // whatsoever (§3: no new builtin, no new hardcode).
+                // [plan 283 Ф.7, 2026-09-07] `f32` FOLLOWED, by the owner's decision, and
+                // its row is gone from the table below for the same reasons the `f64` one
+                // went: `Option` instead of `Result` (D325 R1/R3/R4) and a grammar that was
+                // whatever `strtod` accepted -- whitespace, `nan`/`inf`, hex, the locale
+                // separator -- while `str @to_f64()` had become strict. The replacement is
+                // `str @to_f32()` (std/runtime/string/parse_float.nv), a plain Nova body
+                // that rounds the decimal DIRECTLY to f32; going through f64 and narrowing
+                // rounds twice and disagrees near the midpoints between two f32 values, so
+                // the old `nova_str_to_f64` call was not merely lenient but wrong at the
+                // edges.
+                // WHAT ACTUALLY HAPPENS AFTER THE ROW IS GONE -- measured 2026-09-07, not
+                // assumed: `T.try_parse(...)` does NOT reach the primitive-static-method
+                // guard. It ICEs -- `[INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Path call
+                // return type unknown for method=try_parse` -- and it does so for EVERY
+                // type, including `i32`, which is still in the table below. So the crash is
+                // older than this edit and belongs to the f64 retraction, whose comment
+                // above claims the opposite and was never probed. Probe:
+                // docs/plans/repro/repro_try_parse_ice.nv.txt. Removing the `f32` row stays
+                // right -- it is what stops `str -> f32` from going through strtod -- but the
+                // retraction is FINISHED only when the retracted spelling reports a
+                // diagnostic naming its replacement instead of panicking, and that fix is
+                // not this wave's.
                 if parts.len() == 2 && parts[1] == "try_parse" {
                     if let Some(arg) = args.first() {
                         let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -47278,7 +47314,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "i32" => Some(("nova_str_to_i64", "nova_parse_int_result", "int32_t")),
                                 "i16" => Some(("nova_str_to_i64", "nova_parse_int_result", "int16_t")),
                                 "i8"  => Some(("nova_str_to_i64", "nova_parse_int_result", "int8_t")),
-                                "f32" => Some(("nova_str_to_f64", "nova_parse_f64_result", "nova_f32")),
                                 "bool" => Some(("nova_str_to_bool", "nova_parse_bool_result", "nova_bool")),
                                 "char" => Some(("nova_str_to_char", "nova_char_decode_result", "nova_char")),
                                 _ => None,

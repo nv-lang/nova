@@ -54,6 +54,24 @@ These dependencies are not vendored but installed via vcpkg at build time:
   vendored, and vendoring means we redistribute the sources — a different set of
   obligations than linking against something the user installed.
 
+## Ported Algorithms (std)
+
+### 5. Rust `core::num::dec2flt` (rust-LICENSE)
+- **Component**: correctly-rounded decimal→binary float conversion behind
+  `str @to_f64()` — `std/src/runtime/string/float_convert.nv` and its peers
+  `pow5_table.nv`, `digit_buf.nv` (the files land with the phases of plan 283;
+  `rust-LICENSE` lists the ones present)
+- **License**: MIT OR Apache-2.0 upstream; Nova takes it under **MIT** (one file,
+  one license — the same shape as the Go entry)
+- **Source**: https://github.com/rust-lang/rust, `library/core/src/num/imp/dec2flt/`,
+  commit `48a229ceaefd4985c50990b14116b6d856af0985`
+- **Copyright**: The Rust Project Contributors
+
+A port, not a vendored copy: the algorithm (Clinger fast path, Eisel-Lemire over
+128-bit powers of five, big-decimal slow path), its constants and the comments that
+justify each rounding decision are preserved; types and primitives are Nova's. Rust's
+`dec2flt` is itself a port of Daniel Lemire's fast_float.
+
 ## Summary Table
 
 | Component | License | Location | Type |
@@ -64,8 +82,10 @@ These dependencies are not vendored but installed via vcpkg at build time:
 | bdwgc (Boehm GC) | MIT-style | compiler-codegen/nova_rt/gc | Vendored (submodule) |
 | libatomic_ops | MIT | compiler-codegen/nova_rt/libatomic_ops | Vendored (submodule) |
 | libuv | MIT | compiler-codegen/nova_rt/libuv | Vendored (submodule) |
+| Rust `core::num::dec2flt` | MIT (of MIT OR Apache-2.0) | std/src/runtime/string/float_convert.nv (+ peers) | Ported |
 
 ## License Files
 
 - `go-LICENSE` — Full BSD-3-Clause license text for Go Runtime
 - `minicoro-LICENSE` — Full license texts for minicoro and LuaCoco components
+- `rust-LICENSE` — Full MIT license text for the Rust `dec2flt` port, with the list of ported files

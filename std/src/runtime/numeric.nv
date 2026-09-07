@@ -1,5 +1,7 @@
 // std/runtime/numeric.nv — Plan 74: IEEE 754 primitive bit-cast
-// (`f64 ↔ u64`, `f32 ↔ u32` reinterpret-cast).
+// (`f64 ↔ u64`, `f32 ↔ u32` reinterpret-cast); plan 283 Ф.0 added the `u64`
+// bit-level helpers (`@widening_mul`, `@leading_zeros`) shared by `math.int128`
+// and the float parser in `runtime.string` — the section at the end of the file.
 //
 // [M-ptr-raw-access-contract-and-unaligned] item 3 (2026-07-08): NOT
 // auto-gen anymore. Was `extern "nova" fn ...` (C-side `nova_rt/numeric.h`,
@@ -36,3 +38,66 @@ export fn f32 @to_bits() -> u32 => unsafe { (&@ as *u32).read_unaligned() }
 
 // Восстановить f32 из IEEE 754 bit-pattern (reinterpret-cast).
 export fn f32.from_bits(bits u32) -> f32 => unsafe { (&bits as *f32).read_unaligned() }
+
+// ─── u64 bit-level helpers ───
+//
+// Shared by `math.int128` (the wide multiply behind `@wrapping_mul`) and the float
+// parser in `runtime.string` (Eisel-Lemire needs the full 128-bit product and the
+// leading-zero count). Both are library bodies ON PURPOSE (plan 283 Ф.0): whether a
+// compiler intrinsic (`unsigned __int128`, `__builtin_clzll`) pays for itself is
+// measured in Ф.6, and the call sites do not change when it does. Until then this
+// file still needs nothing from the prelude — only builtin operators.
+
+/// Full 128-bit product `@ × other` as `(upper 64 bits, lower 64 bits)`.
+///
+/// No hardware 128-bit intermediate exists, hence the classic decomposition into
+/// 32-bit halves. `u64` overflow here is IMPOSSIBLE (proven at the boundary
+/// maximum: `0xFFFF…FF × 0xFFFF…FF` → `(2^64-2, 1)`), so the plain `+`
+/// trap-default acts as an assertion of the decomposition's correctness.
+export fn u64 @widening_mul(other u64) -> (u64, u64) {
+    ro mask = 0xFFFFFFFF as u64
+    ro al = @ & mask
+    ro ah = @ >> 32
+    ro bl = other & mask
+    ro bh = other >> 32
+    ro p0 = al * bl
+    ro p1 = al * bh
+    ro p2 = ah * bl
+    ro p3 = ah * bh
+    ro mid = (p0 >> 32) + (p1 & mask) + (p2 & mask)
+    ro lo = (p0 & mask) | (mid << 32)
+    ro hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32)
+    (hi, lo)
+}
+
+/// Number of leading zero bits in the 64-bit pattern; `64` for zero.
+///
+/// Binary search over the bit width: six shift-and-compare steps after the zero
+/// check, no table.
+export fn u64 @leading_zeros() -> int {
+    if @ == 0 { return 64 }
+    mut x = @
+    mut n = 0
+    if (x >> 32) == 0 {
+        n += 32
+        x = x << 32
+    }
+    if (x >> 48) == 0 {
+        n += 16
+        x = x << 16
+    }
+    if (x >> 56) == 0 {
+        n += 8
+        x = x << 8
+    }
+    if (x >> 60) == 0 {
+        n += 4
+        x = x << 4
+    }
+    if (x >> 62) == 0 {
+        n += 2
+        x = x << 2
+    }
+    if (x >> 63) == 0 { n += 1 }
+    n
+}

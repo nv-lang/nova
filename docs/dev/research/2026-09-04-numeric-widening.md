@@ -396,6 +396,11 @@ Malformed { at int } | TooLarge | TooSmall` (временные имена, см
 (D430 R1: не навязывать вызывающему невозможные варианты; у float нет radix), общий словарь
 вариантов важнее общего имени типа. План работы целиком — `docs/plans/282-numeric-conversions.md`.
 
+Второе (правильно-округляющая конверсия, тогда отложенная за `strtod`) сделано планом 283
+(2026-09-07): порт Rust `core::num::dec2flt` — `float_convert.nv`, `pow5_table.nv`,
+`digit_buf.nv`, все три co-equal-файлы `runtime.string` рядом с `parse_float.nv`. `strtod`
+в `to_f64()` больше не участвует, остался только эталоном дифференциальных тестов.
+
 ### 5.10. Общий словарь упёрся в №136 — временные имена в `ParseFloatError`
 
 При реализации §5.9 `ParseFloatError enum Empty | Invalid { at } | AboveMax | BelowMin`

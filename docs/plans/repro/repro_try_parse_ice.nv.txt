@@ -1,0 +1,37 @@
+// Registry 221.1: `T.try_parse(s)` ICEs instead of reporting an error -- for EVERY type.
+// Measured 2026-09-07 by window 283 in its acceptance slot, on the main binary
+// (nova-cli/target/release/nova.exe built from a57208585 + the integrator's pushes).
+//
+//     f32.try_parse("1.5")  ->  [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN]
+//                               Path call return type unknown for method=try_parse
+//     f64.try_parse("1.5")  ->  the same
+//     i32.try_parse("15")   ->  the same
+//
+// The third line is the one that settles the cause: `i32` is STILL PRESENT in the
+// `try_parse` mapping table of codegen/emit_c.rs, so the crash is not a consequence of
+// plan 283 removing the `f32` row -- it is there for mapped and unmapped types alike.
+//
+// AND THE COMPILER'S OWN COMMENT ABOUT IT IS FALSE. The f64 retraction
+// ([M-f64-try-parse-to-parse-f64], 2026-07-07) records in emit_c.rs that after removal
+// "`f64.try_parse(...)` now falls through to the primitive-static-method guard below and
+// gets an honest E_UNKNOWN_STATIC_METHOD". It does not: it crashes. The claim was written
+// and never probed, which is why the class survived two retractions.
+//
+// WHY IT MATTERS EVEN THOUGH THE FORM IS RETRACTED: a user who writes yesterday's spelling
+// deserves a diagnostic naming the replacement, not an internal panic. A retraction is not
+// finished while the retracted spelling crashes the compiler.
+//
+// Acceptance for the fix: each of the three lines below reports E_UNKNOWN_STATIC_METHOD (or
+// a diagnostic naming the replacement `s.to_f32()` / `s.to_f64()` / `s.to_i32()`), and none
+// of them panics. Plan 283 Ф.7 removed the `f32` row from the mapping table in the same
+// wave; whether that alone suffices is UNVERIFIED -- the binary in the slot was built from
+// main and did not contain the change, and a rebuild did not fit the fifteen minutes.
+
+// EXPECT_COMPILE_ERROR E_UNKNOWN_STATIC_METHOD
+module neg.try_parse_ice
+
+fn main() Io -> () {
+    // nova:expect E_UNKNOWN_STATIC_METHOD -- `T.try_parse` is retracted; the door is `s.to_f32()`
+    ro parsed = f32.try_parse("1.5")
+    print("${parsed}")
+}
