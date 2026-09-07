@@ -60,7 +60,7 @@ bench "to_f64: long significands, mostly Eisel-Lemire x9" {
     ro set = long_set()
     measure {
         for s in set { ro _ = bench.opaque(s.to_f64()) }
-        bench.elements(8)
+        bench.elements(9)   // nine strings in long_set -- counted, not remembered
     }
 }
 
