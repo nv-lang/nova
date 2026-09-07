@@ -20,6 +20,7 @@ fn goes_to(t Terminator, to BlockId) -> bool {
         Return => false
         If(_) => false
         Loop(_) => false
+        Switch(_) => false
         Unreached => false
     }
 }
@@ -31,6 +32,7 @@ fn returns(t Terminator) -> bool {
         Goto(_) => false
         If(_) => false
         Loop(_) => false
+        Switch(_) => false
         Unreached => false
     }
 }
@@ -153,6 +155,7 @@ test "an if without else: the else branch IS the join, and end_if seals the bran
         Return => assert(false)
         Goto(_) => assert(false)
         Loop(_) => assert(false)
+        Switch(_) => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
@@ -205,6 +208,7 @@ test "an else-if chain: the else block carries no statement, its If shares the o
         Return => assert(false)
         Goto(_) => assert(false)
         Loop(_) => assert(false)
+        Switch(_) => assert(false)
         Unreached => assert(false)
     }
     assert(goes_to(f.blocks[raw_block(inner.then)].term, outer.join))
@@ -237,6 +241,7 @@ test "a while loop: the header is its own empty block, the body jumps back to it
         Return => assert(false)
         Goto(_) => assert(false)
         If(_) => assert(false)
+        Switch(_) => assert(false)
         Unreached => assert(false)
     }
     assert(goes_to(f.blocks[raw_block(c.body)].term, c.head))
@@ -262,6 +267,7 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
         Return => assert(false)
         Goto(_) => assert(false)
         If(_) => assert(false)
+        Switch(_) => assert(false)
         Unreached => assert(false)
     }
 }
@@ -285,6 +291,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 SomePayload(_) => assert(false)
                 Expr(_) => assert(false)
                 Use(_) => assert(false)
+                VariantField(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -307,6 +314,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
         Return => assert(false)
         Goto(_) => assert(false)
         If(_) => assert(false)
+        Switch(_) => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[raw_block(c.body)].stmts.len() == 1)
@@ -328,6 +336,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 Expr(_) => assert(false)
                 Use(_) => assert(false)
                 IndexPayload(_) => assert(false)
+                VariantField(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -344,6 +353,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         Return => assert(false)
         Goto(_) => assert(false)
         Loop(_) => assert(false)
+        Switch(_) => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[0].stmts.len() == 1)

@@ -20,6 +20,7 @@ module novac.lower
 import ../tree.{Node, AssignOp}
 import ../types.{TyId}
 import ../diag.{ice}
+import ../sem.{VariantRow}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -74,6 +75,17 @@ export type Rvalue enum
     | Expr(Node) // a tree expression, printed by the emitter (the M1 bridge)
     | SomePayload(Local) // the payload of the Some the local holds (if-let binder)
     | IndexPayload(ElemRead) // the element of a collection local at an index local (for-each binder)
+    | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
+
+/// A payload field of a matched variant (wave M2b-1d): the arm's test proved
+/// the sum in `scr` carries `vrow`, so field `index` of its payload is
+/// readable -- the printer spells the shell's payload union (INTEROP, named
+/// in emit_match.nv).
+export type VariantRead value {
+    scr Local /// the scrutinee local
+    vrow VariantRow /// the variant the arm matched
+    slot int /// the field's position in the variant's payload
+}
 
 /// The element read of a collection walk (wave M2b-1c): `vec` holds the
 /// collection, `idx` the index; the printer spells the shell's `get` of the
@@ -169,6 +181,42 @@ export type LoopTerm value {
     exit BlockId /// entered when it fails
 }
 
+/// What an arm of a `match` tests (wave M2b-1d). One level deep, as the
+/// subset's patterns are: an int literal, a variant head (with the other
+/// heads of a disjunction `A | B`), a plain binder (any value, under a new
+/// name), the wildcard.
+export type Pattern enum
+    | Lit(Node) // an int literal, compared with the scrutinee
+    | Variant(VariantMatch) // a variant head, plus the alternatives of a disjunction
+    | Bind // a plain binder: matches anything, the scrutinee under a new name
+    | Wild // `_`: matches anything, binds nothing
+
+/// The variant heads an arm accepts: the first written and the rest of a
+/// disjunction (empty when the pattern names one variant).
+export type VariantMatch value {
+    head VariantRow /// the variant written first
+    also []VariantRow /// the other heads of `A | B | C`, in order
+}
+
+/// One arm of a `Switch`: its pattern, its guard as the tree spells it (the
+/// M1 bridge; the guard is tested by an `If` inside the arm's block), and
+/// the block its binders and body occupy.
+export type SwitchArm value {
+    pat Pattern /// what the arm tests
+    guard Option[Node] /// the `if` after the pattern, if written
+    body BlockId /// the arm's block: binders first, then the body
+}
+
+/// A `match` (wave M2b-1d): the first arm whose pattern (and guard) holds is
+/// entered, every arm jumps to the join. FIRST-MATCH IS THE TERMINATOR'S
+/// MEANING: the C printer emulates it with an if-chain and a `matched` flag,
+/// and that flag is the printer's, not the form's.
+export type SwitchTerm value {
+    scrutinee Local /// the local the match tests
+    arms []SwitchArm /// in source order
+    join BlockId /// where every arm continues
+}
+
 /// How a block ends. `Unreached` is the state of a block that was reserved
 /// but not yet sealed; `finish` refuses a body that still carries one.
 export type Terminator enum
@@ -176,6 +224,7 @@ export type Terminator enum
     | Goto(BlockId) // control continues in the named block
     | If(IfTerm) // two-way branch with a named join (M2b-1)
     | Loop(LoopTerm) // header of a loop with a named exit (M2b-1)
+    | Switch(SwitchTerm) // a match: first arm whose test holds, one join (M2b-1d)
     | Unreached // reserved, not yet sealed -- never survives `finish`
 
 /// What `begin_if` hands back and `begin_else` / `end_if` take: the three
@@ -192,6 +241,16 @@ export type LoopCtx value {
     body BlockId /// the first block of the body
     exit BlockId /// where control continues after the loop
 }
+
+/// What `begin_switch` hands back and `begin_arm` / `end_arm` / `end_switch`
+/// take: the header block (sealed with the `Switch` when the arms are known),
+/// the scrutinee local and the join.
+export type SwitchCtx value {
+    head BlockId /// the block whose terminator becomes the `Switch`
+    scr Local /// the scrutinee local
+    join BlockId /// where every arm continues
+}
+
 
 /// A basic block: statements in order, then exactly one terminator.
 export type Block {
@@ -217,6 +276,8 @@ export type FnBuilder {
     blocks []Block /// reserved blocks, `Unreached` until sealed
     cur []Stmt /// statements placed since the last seal
     cur_id BlockId /// the reserved block the statements in `cur` belong to
+    open_arms []SwitchArm /// arms of the open matches, innermost match last (M2b-1d)
+    arm_start []int /// where each open match's arms begin in `open_arms`, innermost last
 }
 
 /// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`)
@@ -226,7 +287,10 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "" })
     mut blocks = []Block.new()
     blocks.push(Block { stmts: []Stmt.new(), term: Terminator.Unreached })
-    FnBuilder { locals, blocks, cur: []Stmt.new(), cur_id: BlockId(0) }
+    mut cur = []Stmt.new()
+    mut open_arms = []SwitchArm.new()
+    mut arm_start = []int.new()
+    FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start }
 }
 
 /// The block the next statement lands in.
@@ -330,6 +394,7 @@ export fn FnBuilder mut @seal(b BlockId, term Terminator) -> () {
         Goto(_) => ice("lower: a block sealed twice (it already jumps)")
         If(_) => ice("lower: a block sealed twice (it already branches)")
         Loop(_) => ice("lower: a block sealed twice (it already loops)")
+        Switch(_) => ice("lower: a block sealed twice (it already switches)")
     }
     @blocks[i] = Block { stmts: @cur, term }
     @cur = []Stmt.new()
@@ -412,6 +477,69 @@ export fn FnBuilder mut @end_loop(c LoopCtx) -> () {
     @close(Terminator.Goto(c.head), c.exit)
 }
 
+/// A binder of a matched variant (wave M2b-1d): `dest = field index of the
+/// variant vrow in scr`, recorded in the current block -- the arm's block,
+/// where the test just proved the variant.
+export fn FnBuilder mut @take_field(dest Local, scr Local, vrow VariantRow, slot int) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.VariantField(VariantRead { scr, vrow, slot }) }))
+}
+
+/// A plain binder (wave M2b-1d): `dest = src`, the scrutinee under a new name
+/// -- the first use of the operand rvalue.
+export fn FnBuilder mut @copy(dest Local, src Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Use(Operand.Place(src)) }))
+}
+
+/// Opens a `match` on the local `scr`: the current block jumps to a fresh
+/// header block, which is sealed with the `Switch` by `end_switch` once the
+/// arms are known; nothing is placed in the header meanwhile.
+export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
+    ro h = @reserve()
+    ro join = @reserve()
+    @close(Terminator.Goto(h), h)
+    @arm_start.push(@open_arms.len())
+    SwitchCtx { head: h, scr, join }
+}
+
+/// Opens an arm: a fresh block for its binders and body becomes current.
+/// Asked while a previous arm is still open, or a match is not, it is a
+/// compiler bug named as such.
+export fn FnBuilder mut @begin_arm(c SwitchCtx, pat Pattern, guard Option[Node]) -> () {
+    if @cur_id != c.head {
+        ice("lower: begin_arm while the previous arm of the match is still open")
+    }
+    if @arm_start.len() == 0 {
+        ice("lower: begin_arm outside of a match")
+    }
+    ro body = @reserve()
+    @open_arms.push(SwitchArm { pat, guard, body })
+    @cur_id = body
+}
+
+/// Closes an arm: its block jumps to the join; the header is current again.
+export fn FnBuilder mut @end_arm(c SwitchCtx) -> () {
+    @close(Terminator.Goto(c.join), c.head)
+}
+
+/// Closes a `match`: the header is sealed with the `Switch` over the arms
+/// collected, and what is placed next belongs to the join.
+export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
+    if @arm_start.len() == 0 {
+        ice("lower: end_switch without an open match")
+    }
+    ro start = @arm_start[@arm_start.len() - 1]
+    ro _ = @arm_start.pop()
+    mut arms = []SwitchArm.new()
+    for i in start..@open_arms.len() {
+        arms.push(@open_arms[i])
+    }
+    while @open_arms.len() > start {
+        ro _ = @open_arms.pop()
+    }
+    @seal(c.head, Terminator.Switch(SwitchTerm { scrutinee: c.scr, arms, join: c.join }))
+    @cur_id = c.join
+}
+
 /// A `return` in the middle of the body: the current block ends with
 /// `Return`, and whatever the source wrote after it -- nothing, usually --
 /// lands in a fresh block that the enclosing `end_if` / `end_loop` /
@@ -440,6 +568,7 @@ export fn FnBuilder @finish() -> Fn {
             Goto(_) => { } // sealed
             If(_) => { } // sealed
             Loop(_) => { } // sealed
+            Switch(_) => { } // sealed
         }
     }
     Fn { @locals, @blocks }
