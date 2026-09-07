@@ -1,0 +1,43 @@
+// Probe of the ORACLE (not novac): does a disjunction pattern bind by the
+// FIRST alternative's layout while the value carries another variant?
+//
+// Read in compiler-codegen/src/codegen/emit_c.rs, `pattern_bind_typed`, arm
+// `Pattern::Or`: "bindings берём из первого варианта … bootstrap не
+// проверяет, используем первого как канонический" -- it recurses into
+// alternatives.first(). If the alternatives have DIFFERENT payload shapes and
+// the checker does not refuse the form, the emitted C reads
+// `scr->payload.<FIRST>._i` on a value that is not the first variant: field
+// `_1` of `P` does not exist in `Q`, so the read lands on whatever sits next.
+//
+// The variants below differ in ARITY on purpose (`P(int, int)` against
+// `Q(int)`) and agree on the binder's type, so a type error cannot be the
+// reason for a refusal. Three outcomes, all informative:
+//   1. the compiler REFUSES the form -> the shortcut is unreachable, no defect;
+//   2. it accepts and prints 7 (or any right answer for Q) -> the layouts
+//      happen to coincide and the probe needs sharper shapes;
+//   3. it accepts and prints garbage / crashes -> a silent wrong read.
+
+type Pair enum P(int, int) | Q(int)
+
+fn first_of(v Pair) -> int {
+    match v {
+        P(a, b) | Q(a) => a
+        _ => -1
+    }
+}
+
+fn sum_of(v Pair) -> int {
+    match v {
+        P(a, b) | Q(a) => a + b
+        _ => -1
+    }
+}
+
+fn main() {
+    ro p = Pair.P(3, 4)
+    ro q = Pair.Q(7)
+    println(first_of(p))   // 3
+    println(first_of(q))   // 7 if the binder is honest
+    println(sum_of(p))     // 7
+    println(sum_of(q))     // `b` does not exist in Q -- this is the question
+}
