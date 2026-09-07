@@ -30,11 +30,11 @@
 module runtime.string
 
 // The maximum number of digits required to unambiguously round up to a 64-bit float.
-const DIGIT_BUF_MAX_DIGITS int = 768
+const DIGIT_BUF_MAX_DIGITS = 768
 // The max decimal digits that can be exactly represented in a 64-bit integer.
-const DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW int = 19
+const DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW = 19
 // Beyond this decimal-point offset the value is certainly zero or infinite.
-const DIGIT_BUF_DECIMAL_POINT_RANGE int = 2047
+const DIGIT_BUF_DECIMAL_POINT_RANGE = 2047
 
 // A decimal floating-point number, represented as a sequence of decimal digits.
 type DigitBuf {
@@ -46,10 +46,8 @@ type DigitBuf {
 
 fn zeroed_digits() -> []u8 {
     mut digits []u8 = []u8.new(cap: DIGIT_BUF_MAX_DIGITS)
-    mut i = 0
-    while i < DIGIT_BUF_MAX_DIGITS {
+    for _i in 0..DIGIT_BUF_MAX_DIGITS {
         digits.push(0)
-        i += 1
     }
     digits
 }
@@ -61,13 +59,13 @@ fn DigitBuf.new() -> DigitBuf =>
 // this shape: `parse_from` caps `num_digits` and sets `truncated` afterwards).
 fn DigitBuf mut @try_add_digit(digit u8) -> () {
     if @num_digits < DIGIT_BUF_MAX_DIGITS { @digits[@num_digits] = digit }
-    @num_digits = @num_digits + 1
+    @num_digits += 1
 }
 
 // Trim trailing zeros from the buffer.
 fn DigitBuf mut @trim() -> () {
     while @num_digits != 0 && @digits[@num_digits - 1] == 0 {
-        @num_digits = @num_digits - 1
+        @num_digits -= 1
     }
 }
 
@@ -78,11 +76,9 @@ fn DigitBuf @round() -> u64 {
     if @decimal_point >= DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW { return 0xFFFFFFFFFFFFFFFF as u64 }
     ro dp = @decimal_point
     mut n = 0 as u64
-    mut i = 0
-    while i < dp {
+    for i in 0..dp {
         n = n * 10
-        if i < @num_digits { n = n + (@digits[i] as u64) }
-        i += 1
+        if i < @num_digits { n += @digits[i] as u64 }
     }
     mut round_up = false
     if dp < @num_digits {
@@ -105,7 +101,7 @@ fn DigitBuf mut @left_shift(shift int) -> () {
     while read_index != 0 {
         read_index -= 1
         write_index -= 1
-        n = n + ((@digits[read_index] as u64) << shift)
+        n += (@digits[read_index] as u64) << shift
         ro quotient = n / 10
         ro remainder = n - (10 * quotient)
         if write_index < DIGIT_BUF_MAX_DIGITS {
@@ -126,9 +122,9 @@ fn DigitBuf mut @left_shift(shift int) -> () {
         }
         n = quotient
     }
-    @num_digits = @num_digits + num_new_digits
-    if @num_digits > DIGIT_BUF_MAX_DIGITS { @num_digits = DIGIT_BUF_MAX_DIGITS }
-    @decimal_point = @decimal_point + num_new_digits
+    @num_digits += num_new_digits
+    @num_digits = @num_digits.min(DIGIT_BUF_MAX_DIGITS)
+    @decimal_point += num_new_digits
     @trim()
 }
 
@@ -151,7 +147,7 @@ fn DigitBuf mut @right_shift(shift int) -> () {
             break
         }
     }
-    @decimal_point = @decimal_point - (read_index - 1)
+    @decimal_point -= read_index - 1
     if @decimal_point < -DIGIT_BUF_DECIMAL_POINT_RANGE {
         // `self = Self::Default()`, but without the overhead of clearing `digits`.
         @num_digits = 0
@@ -228,9 +224,9 @@ fn DigitBuf mut @parse_from(s str) -> () {
             }
             p -= 1
         }
-        @decimal_point = @decimal_point + n_trailing_zeros
-        @num_digits = @num_digits - n_trailing_zeros
-        @decimal_point = @decimal_point + @num_digits
+        @decimal_point += n_trailing_zeros
+        @num_digits -= n_trailing_zeros
+        @decimal_point += @num_digits
         if @num_digits > DIGIT_BUF_MAX_DIGITS {
             @truncated = true
             @num_digits = DIGIT_BUF_MAX_DIGITS
@@ -251,13 +247,13 @@ fn DigitBuf mut @parse_from(s str) -> () {
                 i += 1
             } else { break }
         }
-        @decimal_point = @decimal_point + (if neg_exp { -exp_num } else { exp_num })
+        @decimal_point += if neg_exp { -exp_num } else { exp_num }
     }
     // The donor zeroes the tail up to the 19 digits `round` may read past `num_digits`.
-    mut k = @num_digits
-    while k < DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
-        @digits[k] = 0
-        k += 1
+    if @num_digits < DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
+        for k in @num_digits..DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
+            @digits[k] = 0
+        }
     }
 }
 
@@ -278,13 +274,11 @@ fn DigitBuf @number_of_digits_decimal_left_shift(shift_in int) -> int {
     ro pow5_a = 0x7FF & x_a
     ro pow5_b = 0x7FF & x_b
     ro count = pow5_b - pow5_a
-    mut i = 0
-    while i < count {
+    for i in 0..count {
         if i >= @num_digits { return num_new_digits - 1 }
         ro p5 = TABLE_POW5[pow5_a + i]
         if (@digits[i] as int) < p5 { return num_new_digits - 1 }
         if (@digits[i] as int) > p5 { return num_new_digits }
-        i += 1
     }
     num_new_digits
 }

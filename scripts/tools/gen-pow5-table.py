@@ -113,9 +113,9 @@ HEADER = """\
 module runtime.string
 
 // Decimal exponent of row 0 and of the last row; the row count is their span.
-const POW5_SMALLEST_Q int = {smallest}
-const POW5_LARGEST_Q int = {largest}
-const POW5_ROWS int = {rows}
+const POW5_SMALLEST_Q = {smallest}
+const POW5_LARGEST_Q = {largest}
+const POW5_ROWS = {rows}
 """
 
 
@@ -139,7 +139,7 @@ def render_nv(rows):
 
 
 ROW_RE = re.compile(r"^\s*0x([0-9A-Fa-f]{1,16})\s*,\s*//\s*5\^(-?\d+)\s*$")
-CONST_RE = re.compile(r"^const (POW5_SMALLEST_Q|POW5_LARGEST_Q|POW5_ROWS) int = (-?\d+)\s*$")
+CONST_RE = re.compile(r"^const (POW5_SMALLEST_Q|POW5_LARGEST_Q|POW5_ROWS) = (-?\d+)\s*$")
 # The element type is checked, the length is not declared in the `[]u64` spelling (see the
 # #998 note the generator writes above each array): the row count below is the check.
 ARRAY_RE = re.compile(r"^const (POW5_HI|POW5_LO) \[\]u64 = \[\s*$")

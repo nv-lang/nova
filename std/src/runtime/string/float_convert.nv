@@ -38,17 +38,17 @@ import std.runtime.numeric
 //
 // One set of constants named `F64_*`, so that `f32` would be a second SET, not a second
 // copy of the algorithm. Values are the donor's, with the formula that yields each.
-const F64_SIG_BITS int = 52                            // explicit significand bits
-const F64_SIG_TOTAL_BITS int = 53                      // with the hidden bit
-const F64_EXP_MIN int = -1022                          // -(EXP_BIAS - 1), EXP_BIAS = 1023
-const F64_INFINITE_POWER int = 0x7FF                   // saturated biased exponent (inf / nan)
-const F64_MIN_EXPONENT_ROUND_TO_EVEN int = -4          // see `compute_float`
-const F64_MAX_EXPONENT_ROUND_TO_EVEN int = 23
-const F64_SMALLEST_POWER_OF_TEN int = -342             // below this q: zero
-const F64_LARGEST_POWER_OF_TEN int = 308               // above this q: infinity; floor(1024 / log2(10))
-const F64_MIN_EXPONENT_FAST_PATH int = -22             // -floor(53 / log2(5))
-const F64_MAX_EXPONENT_FAST_PATH int = 22
-const F64_MAX_EXPONENT_DISGUISED_FAST_PATH int = 37    // 22 + floor(53 / log2(10))
+const F64_SIG_BITS = 52                            // explicit significand bits
+const F64_SIG_TOTAL_BITS = 53                      // with the hidden bit
+const F64_EXP_MIN = -1022                          // -(EXP_BIAS - 1), EXP_BIAS = 1023
+const F64_INFINITE_POWER = 0x7FF                   // saturated biased exponent (inf / nan)
+const F64_MIN_EXPONENT_ROUND_TO_EVEN = -4          // see `compute_float`
+const F64_MAX_EXPONENT_ROUND_TO_EVEN = 23
+const F64_SMALLEST_POWER_OF_TEN = -342             // below this q: zero
+const F64_LARGEST_POWER_OF_TEN = 308               // above this q: infinity; floor(1024 / log2(10))
+const F64_MIN_EXPONENT_FAST_PATH = -22             // -floor(53 / log2(5))
+const F64_MAX_EXPONENT_FAST_PATH = 22
+const F64_MAX_EXPONENT_DISGUISED_FAST_PATH = 37    // 22 + floor(53 / log2(10))
 const F64_MAX_MANTISSA_FAST_PATH u64 = 9007199254740992   // 1 << 53
 
 // mod.rs `pow10_fast_path` for f64: the powers of ten that are exact in f64, 10^0..10^22.
@@ -233,7 +233,7 @@ fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
         }
         // Have a subnormal value.
         mantissa = mantissa >> (-power2 + 1)
-        mantissa = mantissa + (mantissa & 1)
+        mantissa += mantissa & 1
         mantissa = mantissa >> 1
         power2 = if mantissa >= ((1 as u64) << spec.sig_bits) { 1 } else { 0 }
         return BiasedFp(mantissa, power2)
@@ -258,7 +258,7 @@ fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
         mantissa = mantissa & (0xFFFFFFFFFFFFFFFE as u64)
     }
     // Round-to-even, then shift the significant digits into place.
-    mantissa = mantissa + (mantissa & 1)
+    mantissa += mantissa & 1
     mantissa = mantissa >> 1
     if mantissa >= ((2 as u64) << spec.sig_bits) {
         // Rounding up overflowed, so the carry bit is set. Set the
@@ -280,7 +280,7 @@ fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
 
 // slow.rs: shift the decimal by 3.32 bits per digit of decimal-point distance -- a table
 // for distances below 19, capped at 60 (the most `DigitBuf` shifts at once).
-const SLOW_MAX_SHIFT int = 60
+const SLOW_MAX_SHIFT = 60
 const SLOW_POWERS []int = [0, 3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53, 56, 59]
 
 fn slow_shift_for(n int) -> int => if n < 19 { SLOW_POWERS[n] } else { SLOW_MAX_SHIFT }
@@ -328,8 +328,7 @@ fn parse_long_mantissa(spec FloatSpec, s str) -> BiasedFp {
     // We are now in the range [1/2 ... 1] but the binary format uses [1 ... 2].
     exp2 -= 1
     while spec.exp_min > exp2 {
-        mut n = spec.exp_min - exp2
-        if n > SLOW_MAX_SHIFT { n = SLOW_MAX_SHIFT }
+        ro n = (spec.exp_min - exp2).min(SLOW_MAX_SHIFT)
         d.right_shift(n)
         exp2 += n
     }
@@ -411,10 +410,10 @@ fn convert_number(n Number, s str) -> f64 {
 //     case; measured here by the f32 tests failing on `1e10`.
 fn pow10_fast_path_f32(e int) -> f32 => POW10_FAST_PATH[e] as f32
 
-const F32_SIG_BITS int = 23
-const F32_MIN_EXPONENT_FAST_PATH int = -10            // -floor(24 / log2(5))
-const F32_MAX_EXPONENT_FAST_PATH int = 10
-const F32_MAX_EXPONENT_DISGUISED_FAST_PATH int = 17   // 10 + floor(24 / log2(10))
+const F32_SIG_BITS = 23
+const F32_MIN_EXPONENT_FAST_PATH = -10            // -floor(24 / log2(5))
+const F32_MAX_EXPONENT_FAST_PATH = 10
+const F32_MAX_EXPONENT_DISGUISED_FAST_PATH = 17   // 10 + floor(24 / log2(10))
 const F32_MAX_MANTISSA_FAST_PATH u64 = 16777216       // 1 << 24
 const F32_INF_BITS u32 = 0x7F800000
 

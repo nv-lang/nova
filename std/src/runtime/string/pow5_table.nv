@@ -16,9 +16,9 @@
 module runtime.string
 
 // Decimal exponent of row 0 and of the last row; the row count is their span.
-const POW5_SMALLEST_Q int = -342
-const POW5_LARGEST_Q int = 308
-const POW5_ROWS int = 651
+const POW5_SMALLEST_Q = -342
+const POW5_LARGEST_Q = 308
+const POW5_ROWS = 651
 
 // Upper 64 bits of the 128-bit 5^q; row i <-> q = i + POW5_SMALLEST_Q.
 // `[]u64`, not `[651]u64`: a module-level `const` fixed array is accepted by
