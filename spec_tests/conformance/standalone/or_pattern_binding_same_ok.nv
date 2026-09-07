@@ -1,0 +1,44 @@
+// EXPECT_STDOUT 3|7|9
+// Дизъюнкция с ОДИНАКОВЫМИ биндерами по-прежнему законна — сторона «не мешать»
+// у правила №1009 (реестр 221.1). Без этого контроля правило, отвергающее всё
+// подряд, выглядело бы работающим: краснота на здоровом коде обнаруживается
+// не тестом, а раздражением следующего окна.
+//
+// Три формы, которые обязаны остаться зелёными: одинаковые биндеры в обеих
+// альтернативах, дизъюнкция без биндеров вовсе, и дизъюнкция ВНУТРИ варианта
+// (вложенный `Pattern::Or` — рекурсия правила не должна ломать законное).
+// Имя типа НЕ `T`: односимвольное имя сталкивается с генерик-параметром std
+// в том же CU (`Option[Result[T, E]] @transpose`, `std/src/prelude/core.nv:249`)
+// и даёт `[E_RECV_GENERIC_SHADOWS_TYPE]` — замер 2026-09-07, стоил прогона.
+module standalone.or_pattern_binding_same_ok
+
+type OrPair enum P(int) | Q(int)
+type OrTag enum Red | Green | Blue
+
+fn same(t OrPair) -> int {
+    match t {
+        P(a) | Q(a) => a
+    }
+}
+
+fn no_binders(g OrTag) -> int {
+    match g {
+        Red | Green => 7
+        Blue => 8
+    }
+}
+
+fn nested(t OrPair) -> int {
+    match t {
+        P(a) | Q(a) => match a {
+            1 | 2 => 9
+            _ => a
+        }
+    }
+}
+
+fn main() Io -> () {
+    print("${same(P(3))}|")
+    print("${no_binders(Green)}|")
+    print("${nested(Q(1))}")
+}

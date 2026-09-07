@@ -36133,9 +36133,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // the generic Nova_T* BinOp::Add path below, which dispatches to
                 // Nova_StringBuilder_method_plus (the Nova-defined @plus method).
                 // nova_str is a struct — can't use == directly.
-                // Plan 13 Ф.9.2: BinOp::Add для str routes через @plus → @concat.
-                // Invisible-intrinsic заменён на тот же C-вызов, но через
-                // явную декларацию `str.@plus` в std/runtime/string.nv.
+                // Plan 13 Ф.9.2 ИСТОРИЯ, ПОПРАВЛЕНА 2026-09-07 (реестр 221.1 №1010):
+                // здесь было сказано, что `BinOp::Add` для `str` идёт через `@plus`,
+                // «через явную декларацию `str.@plus` в std/runtime/string.nv».
+                // Ни того, ни другого больше нет: оператор `+` для `str`
+                // РЕТРАКТИРОВАН владельцем 2026-07-21 (чекер даёт
+                // `[E_STR_CONCAT_PLUS]`), а сам метод снят из std 2026-09-07.
+                // Арм `BinOp::Add` ниже выпускает `Nova_str_method_concat`
+                // НАПРЯМУЮ и для `str` недостижим — он остаётся ради `StringBuilder`
+                // и прочих `Nova_*` получателей, чьи операторы живы.
                 // Plan 109 (D179): if LHS is Nova_T* (e.g. Nova_StringBuilder*),
                 // skip nova_str path and fall through to Nova_T* @plus dispatch.
                 let lhs_is_nova_ptr = lty.starts_with("Nova_") && lty.ends_with('*');
