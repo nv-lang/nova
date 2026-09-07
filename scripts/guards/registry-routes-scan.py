@@ -49,8 +49,12 @@ def main():
             blockers.append(l)
 
     no_route = [l for l in open_k1 if u"ЧИНИТСЯ" not in l]
-    no_caveat = [l for l in open_k1
-                 if u"приёмкой не считается" not in l and u"приемкой не считается" not in l]
+    # Оговорка читается в ОБЕИХ формах — «не» и «НЕ» (и е/ё): страж формы
+    # check-registry-entry-shape.sh принимает `(НЕ|не)`, и строка №998 с «приёмкой
+    # НЕ считается» прошла его, а здесь легла в no_caveat (27 > 26, 2026-09-06).
+    # Один канон — одна регулярка на оба стража по смыслу, не по регистру.
+    CAVEAT = re.compile(u"при[её]мкой\\s+(?:не|НЕ)\\s+считается")
+    no_caveat = [l for l in open_k1 if not CAVEAT.search(l)]
 
     w = sys.stdout.write
     w("no_route=%d\n" % len(no_route))

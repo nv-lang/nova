@@ -10481,6 +10481,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         let val = match val {
             Some(v) => v,
+            // [реестр 221.1 №998/№1003/№1008] Инициализатор КОНСТАНТЫ шёл через
+            // `emit_expr` — БЕЗ целевого типа, — и ширина элемента бралась из самих
+            // литералов: `const T []u8 = [5, 2, 5, 1]` строился как вектор `int`
+            // (8 байт на элемент) и клался в слот `[]u8`, поэтому однобайтовое
+            // чтение попадало внутрь первого `int` и печатало `5 0 0 0`. У `[N]T`
+            // та же причина давала CC-FAIL: слот — фиксированный массив, значение —
+            // Vec-указатель. Замер 2026-09-07 пятью пробами показал, что путь
+            // константы ЕДИНСТВЕННЫЙ сломанный: локальный `ro`, поле записи и
+            // возврат печатают верное — они идут через `emit_expr_with_target_type`,
+            // который ставит `current_array_elem_hint` для `[]X` и строит агрегат
+            // для `[N]T`. Значит чинится не новым каналом, а вызовом СУЩЕСТВУЮЩЕГО.
+            // Сужено до векторов и фиксированных массивов НАРОЧНО: у прочих
+            // констант поведение обязано остаться байт-в-байт (запись, строка,
+            // число), и это проверяется C-диффом корпуса.
+            None if ty_c.starts_with("Nova_Vec____") || ty_c.starts_with("_NovaFixArr_") => {
+                self.emit_expr_with_target_type(value, ty_c)?
+            }
             None => self.emit_expr(value)?,
         };
         self.expected_record_type = saved_expected;
@@ -38753,9 +38770,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // window of truth" principle as the rest of D238. The
                     // bounds-check lives ONLY in that method body now (an
                     // always-on panic guard, NOT a `requires` contract — see
-                    // slice.nv), so it can no longer be silently elided by
-                    // contract policy; emit_c.rs no longer knows the check
-                    // exists at all.
+                    // slice.nv); emit_c.rs no longer knows the check exists at all.
+                    // CORRECTION 2026-09-07, by measurement (registry 221.1, plan 284):
+                    // the words that stood here -- "an always-on panic guard, NOT a
+                    // `requires` contract ... can no longer be silently elided by
+                    // contract policy" -- were FALSE on both halves. The body of
+                    // `Vec[T] @index(r Range)` (std/src/collections/vec/slice.nv:39-44)
+                    // carries exactly `requires r.start >= 0 && r.end >= r.start &&
+                    // r.end <= @len` and no guard; and that contract DOES fire in
+                    // release -- probe `v[1..5]` on a 3-element Vec printed
+                    // "panic: slice.nv:40: requires failed" with exit=101 in dev AND
+                    // in --mode release. The claim cost a plan a phase built on it,
+                    // which is why it is corrected here rather than quietly dropped.
+                    // (Same class as #1007: a comment promising behaviour nobody probed.)
                     //
                     // We synthesize `obj.index(materialized_range)` and re-emit
                     // through the normal Call/Member path (mirrors the
@@ -63489,6 +63516,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return pointee.to_string();
                             }
                         }
+                    }
+                    // [реестр 221.1 №998] Фиксированный массив: тип элемента ЗАКОДИРОВАН
+                    // в самом имени (`_NovaFixArr_<N>_<len>_<elem>`), и обратный разбор
+                    // живёт в этом же файле — `parse_mono_fixed_array_name` (:23183),
+                    // объявленный «Inverse of compute_mono_fixed_array_c_name». Путь
+                    // индексации его не звал и падал внутренней паникой на `const A [3]u64`
+                    // + `A[0]`: объявление собиралось, а чтение — нет. Замер 2026-09-07:
+                    // после починки пути КОНСТАНТЫ (тип элемента из объявления) осталась
+                    // ровно эта половина, на обоих типах элемента (`u64` и `int`), то есть
+                    // дефект не про ширину, а про НЕЗАДАННЫЙ вопрос: имя знало ответ,
+                    // спрашивающего не было.
+                    if let Some((_, elem_c)) = Self::parse_mono_fixed_array_name(obj_ty_pre.trim()) {
+                        return elem_c;
                     }
                     self.fatal_codegen_type_unknown(
                         &format!("Index element type unknown for obj_ty={:?}; expr.id={:?}", obj_ty_pre, expr.id),

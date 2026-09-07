@@ -52,15 +52,58 @@ else
     bad "ось 1: ложно краснит на известных именах"
 fi
 
+# Мишень — имя, которого НЕТ в раннере ни в каком виде. До 2026-09-07 здесь стояло
+# `EXPECT_LINT_WARNING`, и случай был верен, пока список стража был рукописным и
+# отставал; со снятием списка с раннера (№1000) мишень стала законной, и случай
+# покраснел — правильно покраснел: он проверял устаревшую меру.
 cat > "$T/AGENTS.md" <<'EOF'
-Marker reference: `EXPECT_STDOUT`, `EXPECT_LINT_WARNING`.
+Marker reference: `EXPECT_STDOUT`, `EXPECT_NO_SUCH_MARKER`.
 EOF
 OUT=$(bash "$TG" "$T" 2>&1)
 if [ $? -ne 0 ] && echo "$OUT" | grep -q "AGENTS.md"; then
     ok "ось 1: ловит неизвестное имя и называет файл"
 else
-    bad "ось 1: НЕ поймал EXPECT_LINT_WARNING или не назвал файл"
+    bad "ось 1: НЕ поймал EXPECT_NO_SUCH_MARKER или не назвал файл"
 fi
+
+# Список ДЕЙСТВИТЕЛЬНО снимается с раннера, а не зашит: кладём поддельный
+# test_runner.rs с именем, которого нет ни в одном рукописном списке, и то же имя
+# в доке. Зелёный тут доказывает снятие; без него страж мог бы пройти случай выше
+# на одном лишь запасном списке (реестр №1000, тот же класс, что №989).
+mkdir -p "$T/compiler-codegen/src"
+# Поддельный раннер несёт ВСЕ имена настоящего плюс выдуманное: проверка усыхания
+# (ниже) законно краснеет на пропаже, и случай, несущий одно имя, мерял бы её, а не
+# снятие списка. Имена берутся ИЗ настоящего раннера — рукописная копия здесь была бы
+# тем самым дефектом, который чинит №1000.
+grep -oE '"EXPECT_[A-Z_]+"' "$ROOT/compiler-codegen/src/test_runner.rs" \
+    | sort -u | sed 's/^/body.strip_prefix(/; s/$/)/' > "$T/compiler-codegen/src/test_runner.rs"
+printf '%s\n' 'body.strip_prefix("EXPECT_INVENTED_BY_SELFTEST")' \
+    >> "$T/compiler-codegen/src/test_runner.rs"
+cat > "$T/AGENTS.md" <<'EOF'
+Marker reference: `EXPECT_INVENTED_BY_SELFTEST`.
+EOF
+if bash "$TG" "$T" >/dev/null 2>&1; then
+    ok "ось 1: имя, известное ТОЛЬКО раннеру фикстуры, принимается — список снят, а не зашит"
+else
+    bad "ось 1: имя из раннера фикстуры отвергнуто — список не снимается"
+fi
+rm -rf "$T/compiler-codegen"
+
+# Раннер ЕСТЬ, но имён в нём меньше запасного списка — красное, и оно называет
+# пропавшие имена. Без этого случая усохшая выборка выглядела бы как честная мера
+# (оговорка окна 274 к №1000; класс №519 — потерянная мишень как замер).
+mkdir -p "$T/compiler-codegen/src"
+printf '%s\n' 'body.strip_prefix("EXPECT_STDOUT")' > "$T/compiler-codegen/src/test_runner.rs"
+cat > "$T/AGENTS.md" <<'EOF'
+Marker reference: `EXPECT_STDOUT`.
+EOF
+OUT=$(bash "$TG" "$T" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && echo "$OUT" | grep -q 'EXPECT_COMPILE_ERROR'; then
+    ok "ось 1: усохший список с раннера — красное, и пропавшие имена названы"
+else
+    bad "ось 1: усохший список принят молча (код $rc): $OUT"
+fi
+rm -rf "$T/compiler-codegen"
 
 rm -f "$T/AGENTS.md"
 printf 'unknown_markers=1\n' > /dev/null  # (используем прежний baseline=0 ниже отдельно)

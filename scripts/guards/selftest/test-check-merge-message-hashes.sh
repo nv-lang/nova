@@ -105,6 +105,19 @@ else
     bad "отсутствие базы обработано молча (код $rc): $out"
 fi
 
+# --- 8. tree от `git merge-tree` в сообщении — НЕ коммит и НЕ нарушение ------
+#     Интегратор пишет в сообщение id дерева, которым проверял слияние ДО
+#     коммита (2026-09-06: a57208585 назвал e2350bdbf). Страж объявлял его
+#     «коммитом, которого нет вовсе» — ложный текст отказа на честной проверке.
+$GC reset -q --hard main~1 2>/dev/null
+TREE=$($GC merge-tree HEAD side 2>/dev/null | head -1)
+$GC merge --no-ff -m "merge side: inspected via merge-tree $TREE beforehand" side >/dev/null 2>&1
+if [ -n "$TREE" ] && run && grep -q "не коммит" "$TMP/out"; then
+    ok "tree из merge-tree опознан как не-коммит, слияние не отвергнуто"
+else
+    bad "tree принят за несуществующий коммит (tree='$TREE'): $(cat "$TMP/out" "$TMP/err")"
+fi
+
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-message-hashes: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-merge-message-hashes: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

@@ -1,0 +1,31 @@
+module probe.p
+
+// The chained if-let after `else`: the subset accepts the form; until
+// 0d988efca the printer spelled the else branch as `else <declaration>;` --
+// the Option temporary's declaration bare after `else`, not a statement in
+// C. Arguments are pre-bound: two call arguments in one call are outside the
+// subset (F65), which would refuse the probe before it reaches the form.
+
+fn some(v int) -> Option[int] => Some(v)
+fn none() -> Option[int] => None
+
+fn pick(a Option[int], b Option[int]) -> int {
+    mut k = 0
+    if Some(x) = a {
+        k = x
+    } else if Some(y) = b {
+        k = y
+    } else {
+        k = -1
+    }
+    k
+}
+
+fn main() {
+    ro s1 = some(1)
+    ro s2 = some(2)
+    ro n = none()
+    println(pick(s1, n))
+    println(pick(n, s2))
+    println(pick(n, n))
+}

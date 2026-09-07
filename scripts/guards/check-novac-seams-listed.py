@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """scripts/guards/check-novac-seams-listed.py — каждый шов яруса novac стоит в
 перечне SEAMS gate-novac.sh, и каждая строка SEAMS кем-то читается (реестр №992).
+План: docs/plans/274-novac-self-hosted-compiler.md (ярус novac); дефект — реестр docs/plans/221.1-bug-sweep.md №992.
 
 ПОЧЕМУ ЭТОТ СТРАЖ ПОЯВИЛСЯ (2026-09-06). Производитель вердикта яруса novac
 (№988) метит прогон `TIER=novac-sample` РОВНО ПО НЕПУСТОМУ `$SEAMS`: шов, не
