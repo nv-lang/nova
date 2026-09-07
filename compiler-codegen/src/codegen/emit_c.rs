@@ -308,7 +308,16 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
 ///    reachable (the intersection at the method-firing loop, ~:418-424); never
 ///    fired ⇒ `dead_method_keys`, whose fwd+body are skipped at the emission
 ///    gates (~:3091-3100). Granularity is coarse-by-name (`[M-159-method-pruning]`):
-///    a reachable name-collision over-keeps (never over-prunes). Consts/`ro`-globals
+///    a reachable name-collision over-keeps. **It DOES over-prune a SYNTHESIZED
+///    selector** — one the compiler calls but no source text spells — because
+///    reachability is collected from the AST, not from what the emitter will
+///    write. Measured by registry 221.1 #1011: `@end_index()`, synthesized for
+///    `a[k..]`, was pruned and left `lld-link: undefined symbol:
+///    Nova_str_method_end_index`. Such selectors must be seeded in
+///    `collect_used_names` (`lints.rs`, the `ExprKind::Index` arm seeds both
+///    `index` and `end_index` for exactly this reason). The earlier wording here
+///    said "never over-prunes", which promised safety in the one direction where
+///    the defect lives. Consts/`ro`-globals
 ///    likewise pruned via `.dead_consts`. See `compute_dead_decls_with`.
 ///
 /// **Soundness.** A monomorphic free function is only ever *called* by its
