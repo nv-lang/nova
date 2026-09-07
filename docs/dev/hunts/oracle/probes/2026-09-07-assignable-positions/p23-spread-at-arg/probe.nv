@@ -1,0 +1,10 @@
+// Is the spread hole (p19..p22) also open at the ARGUMENT position, where the
+// plain element form IS checked?
+module probe
+
+fn show(t []u8) Io -> () => print("arg_spread=${t.len()} ${t[0]} ${t[1]}")
+
+fn main() Io -> () {
+    ro src []int = [1, 2]
+    show([...src])
+}

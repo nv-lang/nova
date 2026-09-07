@@ -1,0 +1,12 @@
+// Position: TUPLE ELEMENT in the RETURN slot of a declared `-> (u8, u8)`.
+// The scalar return door was closed 2026-09-05 (registry #959); does it see
+// through a tuple?
+module probe
+
+fn pair(n int) -> (u8, u8) => (n, 1)
+
+fn main() Io -> () {
+    ro n int = 300
+    ro p = pair(n)
+    print("tuple_ret=${p.0}")
+}

@@ -1,0 +1,10 @@
+// CONTROL for p48-bare-slice-local: the same `[]int` value, same `[]u8` slot,
+// this time at the ARGUMENT door.
+module probe
+
+fn show(t []u8) Io -> () => print("arg=${t[0]}")
+
+fn main() Io -> () {
+    ro src []int = [1, 2]
+    show(src)
+}

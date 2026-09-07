@@ -1,0 +1,11 @@
+// The pointer half of p20/p21: spread a `[]int` into a slot declared `[]str`.
+// A `str` element is a pointer; the ints 1,2,3,4 become four addresses that were
+// never allocated, and printing one dereferences it.
+module probe
+
+fn main() Io -> () {
+    ro src []int = [1, 2, 3, 4]
+    ro a []str = [...src]
+    print("len=${a.len()}")
+    print("elem0=${a[0]}")
+}

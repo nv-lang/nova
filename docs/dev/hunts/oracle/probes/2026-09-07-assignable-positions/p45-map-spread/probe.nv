@@ -1,0 +1,9 @@
+// Position: MAP SPREAD `[...src]` at a slot declared `HashMap[str, u8]`,
+// where `src` is `HashMap[str, int]`.
+module probe
+
+fn main() Io -> () {
+    ro src HashMap[str, int] = ["a": 300]
+    ro m HashMap[str, u8] = [...src]
+    print("mapspread=${m.get("a") ?? 0}")
+}

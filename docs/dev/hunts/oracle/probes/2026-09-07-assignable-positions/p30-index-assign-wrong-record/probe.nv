@@ -1,0 +1,12 @@
+// Is the INDEX-ASSIGNMENT slot checked at all? `Alpha` into a `Vec[Beta]` element.
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    mut v []Beta = [Beta { other: "b0" }]
+    v[0] = a
+    print("read_as_beta=${v[0].other}")
+}

@@ -1,0 +1,9 @@
+// Position: INDEX ASSIGNMENT into a `[]u8` slot.
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    mut a []u8 = [1, 2]
+    a[0] = n
+    print("idx=${a[0]}")
+}

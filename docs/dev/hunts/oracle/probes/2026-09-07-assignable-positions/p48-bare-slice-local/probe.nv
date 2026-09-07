@@ -1,0 +1,13 @@
+// A BARE `[]int` value (no literal, no spread) into a local slot DECLARED `[]u8`.
+// The same value at the ARGUMENT door is refused by name --
+// `[E_ARG_ELEM_TYPE_MISMATCH] ... a generic instantiation is a distinct
+// monomorphized type, so this would reinterpret its contents` (probe
+// p49-bare-slice-arg). Here nothing is said, and the reinterpretation the other
+// door warns about is exactly what happens: `[1, 2]` reads as `1 0`.
+module probe
+
+fn main() Io -> () {
+    ro src []int = [1, 2]
+    ro a []u8 = src
+    print("len=${a.len()} ${a[0]} ${a[1]}")
+}

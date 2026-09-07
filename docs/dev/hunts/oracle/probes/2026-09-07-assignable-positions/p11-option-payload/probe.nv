@@ -1,0 +1,8 @@
+// Position: PAYLOAD of `Some(...)` against a declared `Option[u8]`.
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro o Option[u8] = Some(n)
+    print("payload=${o ?? 0}")
+}

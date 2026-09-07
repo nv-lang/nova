@@ -1,0 +1,11 @@
+// A BARE `[]int` in the RETURN slot of a fn declared `-> ro []u8`. Sibling of
+// p48-bare-slice-local; the argument door refuses the same value
+// (p49-bare-slice-arg).
+module probe
+
+fn make(src []int) -> ro []u8 => src
+
+fn main() Io -> () {
+    ro out = make([1, 2])
+    print("ret=${out.len()} ${out[0]} ${out[1]}")
+}

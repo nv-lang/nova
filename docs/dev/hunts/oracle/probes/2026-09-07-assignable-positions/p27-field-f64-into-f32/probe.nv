@@ -1,0 +1,11 @@
+// Second FORM of the same property (not int->u8): f64 into a field declared f32.
+// `spec/conversions.ru.md`: `f64 -> f32` is narrowing, `as` required.
+module probe
+
+type Boxy { ro b f32 }
+
+fn main() Io -> () {
+    ro d f64 = 1.0e300
+    ro bx = Boxy { b: d }
+    print("f32field=${bx.b}")
+}

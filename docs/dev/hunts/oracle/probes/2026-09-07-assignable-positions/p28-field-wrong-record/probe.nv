@@ -1,0 +1,14 @@
+// The field position with two UNRELATED RECORD types. Both are heap pointers in
+// the generated C, so the C compiler has nothing to complain about -- the value
+// simply arrives as the wrong type and is read through the wrong layout.
+module probe
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+type Holder { ro slot Beta }
+
+fn main() Io -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    ro h = Holder { slot: a }
+    print("read_as_beta=${h.slot.other}")
+}

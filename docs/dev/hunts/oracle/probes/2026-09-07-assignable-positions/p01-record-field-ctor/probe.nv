@@ -1,0 +1,11 @@
+// Position: RECORD FIELD at construction. `n int` (300) into a field declared `u8`.
+// Same value at the local-binding door (`ro b u8 = n`) is E_IMPLICIT_NARROWING.
+module probe
+
+type Boxy { ro b u8 }
+
+fn main() Io -> () {
+    ro n int = 300
+    ro bx = Boxy { b: n }
+    print("field=${bx.b}")
+}

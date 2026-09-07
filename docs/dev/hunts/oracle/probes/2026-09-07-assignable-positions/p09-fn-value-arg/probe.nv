@@ -1,0 +1,11 @@
+// Position: ARGUMENT of an INDIRECT call through a value of fn type.
+// The direct-call door refuses this (spec_tests/conformance/neg/n_fnarg.nv).
+module probe
+
+fn take(x u8) -> u8 => x
+
+fn main() Io -> () {
+    ro n int = 300
+    ro g fn(u8) -> u8 = take
+    print("fnval=${g(n)}")
+}

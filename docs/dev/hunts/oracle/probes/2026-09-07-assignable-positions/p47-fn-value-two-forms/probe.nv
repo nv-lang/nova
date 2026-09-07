@@ -1,0 +1,19 @@
+// Two ways to hold the SAME one-parameter function in a value, and one question:
+// does `int` 300 reach the `u8` parameter?
+//   line 16, `g(n)` -- the callee sits in a slot DECLARED `fn(u8) -> u8`: REFUSED
+//   line 17, `f(n)` -- the callee is a closure literal in an inferred slot: SILENT
+// This build prints exactly ONE diagnostic, at 16:15. Line 17 asks the same
+// question of the same door and gets no answer. Delete line 16 and the file
+// builds and prints 44 -- see the sibling probe p10-closure-arg.
+module probe
+
+fn take(x u8) -> u8 => x
+
+fn main() Io -> () {
+    ro n int = 300
+    ro g fn(u8) -> u8 = take
+    ro f = fn(x u8) -> u8 => x
+    ro _a = g(n)
+    ro b = f(n)
+    print("closure_form=${b}")
+}

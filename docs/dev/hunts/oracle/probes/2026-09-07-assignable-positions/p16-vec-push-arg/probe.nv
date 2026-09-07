@@ -1,0 +1,9 @@
+// Position: ARGUMENT of a generic std method (`Vec[u8].push`).
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    mut v = Vec[u8].new()
+    v.push(n)
+    print("push=${v[0]}")
+}

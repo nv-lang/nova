@@ -1,0 +1,8 @@
+// Position: ARGUMENT passed to a CLOSURE whose parameter is declared `u8`.
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro f = fn(x u8) -> u8 => x
+    print("closurearg=${f(n)}")
+}

@@ -1,0 +1,9 @@
+// Position: TAIL OF AN `if` BRANCH flowing into a declared `u8` binding.
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro c bool = true
+    ro b u8 = if c { n } else { 0 }
+    print("iftail=${b}")
+}

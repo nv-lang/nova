@@ -1,0 +1,10 @@
+// The same spread inside a RECORD FIELD declared `[]u8`.
+module probe
+
+type Boxy { ro t []u8 }
+
+fn main() Io -> () {
+    ro src []int = [1, 2]
+    ro b = Boxy { t: [...src] }
+    print("field_spread=${b.t.len()} ${b.t[0]} ${b.t[1]}")
+}

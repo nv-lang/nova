@@ -1,0 +1,12 @@
+// A BARE `[]int` into a record FIELD declared `[]u8`. Sibling of
+// p48-bare-slice-local; the argument door refuses the same value
+// (p49-bare-slice-arg).
+module probe
+
+type Boxy { ro t []u8 }
+
+fn main() Io -> () {
+    ro src []int = [1, 2]
+    ro b = Boxy { t: src }
+    print("field=${b.t.len()} ${b.t[0]} ${b.t[1]}")
+}

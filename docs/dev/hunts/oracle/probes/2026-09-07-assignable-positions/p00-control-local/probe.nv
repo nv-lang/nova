@@ -1,0 +1,11 @@
+// CONTROL. The value used by every probe in this hunt -- a non-literal `int`
+// holding 300 -- landing in a slot declared `u8` through the door that DOES
+// judge it: a local `ro` binding with an annotation.
+// Expected and observed: [E_IMPLICIT_NARROWING] (D54).
+module probe
+
+fn main() Io -> () {
+    ro n int = 300
+    ro b u8 = n
+    print("control=${b}")
+}

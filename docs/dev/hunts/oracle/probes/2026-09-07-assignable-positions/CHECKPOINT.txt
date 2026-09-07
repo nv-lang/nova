@@ -1,0 +1,68 @@
+HUNT oracle 2026-09-07 -- cell: door `assignable`, one compatibility rule across
+every position where a value lands in a DECLARED type.
+
+Probe value unless stated otherwise: non-literal `n int = 300` into a `u8` slot.
+Every probe dir holds exactly cmd.sh + nova.toml + probe.nv. cmd.sh runs from the
+nova worktree root. All 51 verified in a final sweep.
+
+CONTROLS (the door answers, as it must)
+  p00-control-local            ro b u8 = n                  E_IMPLICIT_NARROWING
+  p29-control-local-wrong-record  ro b Beta = alpha         E7301
+  p49-bare-slice-arg           show(src) []int -> []u8      E_ARG_ELEM_TYPE_MISMATCH
+  p53-const-lit-out-of-range   const K u8 = 300             E_LIT_OUT_OF_RANGE
+
+DOOR ANSWERS CORRECTLY (not findings)
+  p04-array-elem-local, p06-if-branch-tail, p07-match-arm-tail, p09-fn-value-arg,
+  p15-compound-assign, p16-vec-push-arg, p17-named-arg
+
+SILENT: accepted, builds, prints the TRUNCATED value 44
+  p01-record-field-ctor      Boxy { b: n }
+  p02-field-assign           bx.b = n
+  p03-tuple-elem-return      fn pair(n int) -> (u8, u8) => (n, 1)
+  p05-index-assign           a[0] = n   on []u8
+  p08-coalesce-rhs           ro b u8 = maybe(-1) ?? n
+  p10-closure-arg            f(n)  where f = fn(x u8) -> u8 => x
+  p11-option-payload         ro o Option[u8] = Some(n)
+  p13-map-literal-value      HashMap[str,u8] = ["a": n]
+  p14-map-literal-key        HashMap[u8,str] = [n: "stored"]   (stored under 44)
+  p18-result-payload         fn -> Result[u8,str] => Ok(n)
+  p25-handler-op-return      effect op body vs its declared -> u8
+  p35-module-const-narrowing const NARROW u8 = WIDE
+  p37-default-param-value    fn take(x u8 = WIDE)
+  p38-variadic-arg           fn total(...xs []u8); total(n, 1) -> 45
+  p39-turbofish-generic      pass[u8](n)
+  p44-record-shorthand       fn Boxy.make(b int) -> Boxy => { b }
+  p45-map-spread             HashMap[str,u8] = [...src] where src HashMap[str,int]
+  p52-field-lit-out-of-range Boxy { b: 300 }   -- LITERAL, D55 says E_LIT_OUT_OF_RANGE
+  p27-field-f64-into-f32     f64 1e300 into an f32 field -> prints inf
+  p41-for-binding-two-readings  for x u8 in []int: x as int = 300, sink(x) = 44
+
+SILENT with a DIFFERENT TYPE, not just a narrower one (runtime death)
+  p28-field-wrong-record     Holder { slot: alpha } , slot Beta   -> out of memory, exit 127
+  p30-index-assign-wrong-record  v[0] = alpha on []Beta            -> out of memory, exit 127
+  p31-handler-return-wrong-record effect op -> Beta returns Alpha  -> out of memory, exit 127
+  p32-coalesce-wrong-record  ro v Beta = none_beta(-1) ?? alpha    -> out of memory, exit 127
+  p34-closure-arg-wrong-record   f(alpha) where f = fn(x Beta)     -> out of memory, exit 127
+
+SPREAD / BARE SLICE: a raw reinterpretation of the source buffer
+  p19-array-spread            []int -> []u8   len=2 a0=44 a1=1
+  p20-array-spread-reinterpret  [1,2,3,4] []int -> []u8 prints 1 0 0 0
+  p21-array-spread-oob        []u8 -> []int   a[0]=67305985=0x04030201, a[1..3] past the buffer
+  p22-array-spread-ptr        []int -> []str  SEGFAULT exit=139
+  p23-spread-at-arg           show([...src]) -- open even at the ARGUMENT door
+  p24-spread-in-field         Boxy { t: [...src] }
+  p48-bare-slice-local        ro a []u8 = src   (no literal at all) prints 1 0
+  p50-bare-slice-field        Boxy { t: src }
+  p51-bare-slice-return       fn make(src []int) -> ro []u8 => src
+
+LOUD: the checker is silent, the C compiler refuses with a coordinate in the GENERATED .c
+  p26-field-ctor-unrelated       str into a u8 field   -> probe.c:5444:20
+  p33-option-payload-wrong-record Some(alpha) vs Option[Beta] -> probe.c:5469:25
+  p36-module-const-unrelated     const CONFUSED u8 = TEXT -> probe.c:1350:24
+  p46-map-spread-ptr             HashMap[str,int] -> HashMap[str,str] -> probe.c:5670:78
+
+DIAGNOSTIC ADDRESS
+  p42-interp-diag-coordinate  the same refused call twice: plain statement gets 16:18,
+                              the copy inside `${...}` gets 1:6 (a comment line)
+  p47-fn-value-two-forms      one file, two callee forms; only the declared-fn-type one
+                              is judged (16:15), the closure literal on 17 is silent

@@ -1,0 +1,12 @@
+// Position: DEFAULT VALUE of a parameter against the parameter's declared type.
+// The same value passed EXPLICITLY at the call is refused by the argument door
+// (spec_tests/conformance/neg/n_fnarg.nv).
+module probe
+
+const WIDE int = 300
+
+fn take(x u8 = WIDE) -> u8 => x
+
+fn main() Io -> () {
+    print("default=${take()}")
+}

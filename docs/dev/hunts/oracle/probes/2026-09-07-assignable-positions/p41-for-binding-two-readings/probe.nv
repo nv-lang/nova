@@ -1,0 +1,13 @@
+// `for x u8 in src` where `src` is `[]int`: the annotation is accepted with no
+// diagnostic, and then the SAME binding `x` answers differently in two
+// expressions of the SAME loop body -- `x as int` reads 300, `sink(x)` reads 44.
+module probe
+
+fn sink(b u8) -> int => b as int
+
+fn main() Io -> () {
+    ro src []int = [300]
+    for x u8 in src {
+        print("x_as_int=${x as int} sink_x=${sink(x)}")
+    }
+}

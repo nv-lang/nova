@@ -1,0 +1,12 @@
+// Position: FIELD ASSIGNMENT `bx.b = n`. Local reassignment `a = n` is refused
+// (spec_tests/conformance/neg/n_reassign.nv). Is the field target the same door?
+module probe
+
+type Boxy { mut b u8 }
+
+fn main() Io -> () {
+    ro n int = 300
+    mut bx = Boxy { b: 0 }
+    bx.b = n
+    print("field_assign=${bx.b}")
+}
