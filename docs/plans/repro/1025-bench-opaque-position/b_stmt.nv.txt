@@ -1,0 +1,10 @@
+// Probe B: same argument, but the call is a STATEMENT (the shape hello/arith use).
+module micro.probe_b
+fn set() -> []str { ["1.5", "2.5"] }
+bench "B: opaque(Result) as a statement in a for" {
+    ro s2 = set()
+    measure {
+        for s in s2 { bench.opaque(s.to_f64()) }
+        bench.elements(2)
+    }
+}

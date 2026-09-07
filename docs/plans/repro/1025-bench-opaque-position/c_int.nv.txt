@@ -1,0 +1,8 @@
+// Probe C: `ro _ =` binding but a plain int argument -- isolates the binding from the type.
+module micro.probe_c
+bench "C: ro _ = opaque(int) in a for" {
+    measure {
+        for i in 0..2 { ro _ = bench.opaque(i + 1) }
+        bench.elements(2)
+    }
+}
