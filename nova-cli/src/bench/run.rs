@@ -110,6 +110,15 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         bench_env.resolved_types = resolved_seed;
         bench_env.resolved_types.extend(checker_annotations);
     }
+    // Registry 221.1 #1020: this driver did not run the `-> @` lowering pass at all, and it was
+    // the ONLY driver that did not -- test_runner.rs:4628, compiler-codegen/src/main.rs:312 and
+    // :455, nova-cli/src/main.rs:5256 and doc/test_runner.rs:265 all call it. The pass rewrites
+    // every implicit exit of a `-> @` body into an explicit `return @` (Plan 174, D409); without
+    // it a bare `return` reaches codegen, where `Stmt::Return { value: None }` emits
+    // `return NOVA_UNIT;` regardless of the declared return type -- and `nova bench run` died
+    // with `returning 'nova_unit' from a function with incompatible result type`. Placed where
+    // the reference places it: after `check_module`, before `desugar`.
+    nova_codegen::self_return_lower::lower_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
     // Plan 57.C.7: run lints (включая bench-specific warnings).
     for w in nova_codegen::lints::lint_module(&module) {
@@ -418,6 +427,9 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
         bench_env.resolved_types = resolved_seed;
         bench_env.resolved_types.extend(checker_annotations);
     }
+    // Same pass, same reason (#1020): both emitting functions must run it, or the profile build
+    // breaks exactly where the bench build did.
+    nova_codegen::self_return_lower::lower_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
