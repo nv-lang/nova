@@ -519,6 +519,17 @@ test "283 Ф.7: to_f32 -- the DOUBLE ROUNDING class, where parsing through f64 g
         ("1115953038562506572017.98374176025390625", 0x6271FBD7 as u32, 0x6271FBD6 as u32),
         ("66.5748176574707031538722247748224230081727503804955858868197537958621978759765625", 0x4285264F as u32, 0x4285264E as u32),
         ("49702074.000000000002694354830391765265318326783017255365848541259765625", 0x4C3D992F as u32, 0x4C3D992E as u32),
+        // FOUND, not constructed: these five come from the parse-number-fxx corpus, where the
+        // two-step path is wrong on 16 lines out of 5 299 993 (measured 2026-09-07). A case
+        // found in someone else's data cannot have been fitted to my own implementation,
+        // which is what makes it worth more here than the eight above.
+        ("2.1665680640000002384185791015625e9", 0x4F012335 as u32, 0x4F012334 as u32),
+        ("8.589934335999999523162841796875e+09", 0x4FFFFFFF as u32, 0x50000000 as u32),
+        // The worst shape available: through f64 the smallest f32 subnormal collapses to ZERO,
+        // because rounding to 53 bits first pushes the value under the threshold.
+        ("7.0064923216240854e-46", 0x00000001 as u32, 0x00000000 as u32),
+        ("1.1754947011469036e-38", 0x00800003 as u32, 0x00800002 as u32),
+        ("0.00036393293703440577", 0x39BECE41 as u32, 0x39BECE40 as u32),
     ]
     for c in cases {
         ro (text, correct, two_step) = c

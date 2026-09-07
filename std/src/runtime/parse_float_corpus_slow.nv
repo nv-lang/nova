@@ -57,10 +57,11 @@ type CorpusTally {
     // divergence registry #1004 was opened for.
     mut io_bad int
     mut f32_skipped int
+    mut f32_ok int
 }
 
 fn CorpusTally.new() -> CorpusTally =>
-    { ok: 0, mismatch: 0, skipped: 0, files: 0, lines: 0, first_bad: "", io_bad: 0, f32_skipped: 0 }
+    { ok: 0, mismatch: 0, skipped: 0, files: 0, lines: 0, first_bad: "", io_bad: 0, f32_skipped: 0, f32_ok: 0 }
 
 // One corpus line -> (expected f32 bits, expected f64 bits, the string), or None when the
 // line has not got the four-field shape (blank lines, comments).
@@ -84,7 +85,7 @@ fn split_corpus_line(line str) -> Option[(u32, u64, str)] {
 // form the fs tests exercise, and `write_text` has no caller anywhere in the tree.
 fn CorpusTally @report_to(path str) Fs -> () {
     if path.is_empty() { return }
-    ro line = "283 corpus: files=${@files} lines=${@lines} ok=${@ok} mismatch=${@mismatch} skipped=${@skipped} io_bad=${@io_bad} f32_skipped=${@f32_skipped} first=${@first_bad}\n"
+    ro line = "283 corpus: files=${@files} lines=${@lines} ok=${@ok} mismatch=${@mismatch} skipped=${@skipped} io_bad=${@io_bad} f32_ok=${@f32_ok} f32_skipped=${@f32_skipped} first=${@first_bad}\n"
     match write(path.to_path(), line.bytes()) {
         Ok(()) => {}
         // The report is best-effort diagnostics: a run over millions of lines must not be
@@ -136,13 +137,25 @@ fn CorpusTally mut @judge(name str, line str) -> () {
         // other accepts would have passed in silence.
         match literal.to_f32() {
             Ok(v32) => {
-                if v32.to_bits() != expected_f32 { @note_bad("${name}: ${line} -> f32 ${v32.to_bits()}") }
+                if v32.to_bits() == expected_f32 {
+                    @f32_ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f32 ${v32.to_bits()}")
+                }
             }
             Err(TooLarge) => {
-                if expected_f32 != F32_POS_INF_BITS { @note_bad("${name}: ${line} -> f32 TooLarge") }
+                if expected_f32 == F32_POS_INF_BITS {
+                    @f32_ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f32 TooLarge")
+                }
             }
             Err(TooSmall) => {
-                if expected_f32 != F32_NEG_INF_BITS { @note_bad("${name}: ${line} -> f32 TooSmall") }
+                if expected_f32 == F32_NEG_INF_BITS {
+                    @f32_ok += 1
+                } else {
+                    @note_bad("${name}: ${line} -> f32 TooSmall")
+                }
             }
             Err(_) => { @f32_skipped += 1 }
         }
@@ -245,6 +258,12 @@ test "283 Ф.5: parse-number-fxx corpus — every f64 and f32 field equals ours 
                             "283 corpus: files=${t.files} lines=${t.lines} ok=${t.ok} mismatch=${t.mismatch} skipped=${t.skipped}; first: ${t.first_bad}")
                         assert(t.io_bad == 0,
                             "283 corpus: ${t.io_bad} file(s)/chunk(s) could not be read -- the run judged less than it claims")
+                        // Every line judged by the f32 door: matched or refused, nothing in
+                        // between -- a mismatch would already have failed the assert above.
+                        // Without this, "the corpus is checked on the second field too" (F.7)
+                        // rested on nothing: a branch that quietly did nothing would pass.
+                        assert(t.f32_ok + t.f32_skipped == t.lines,
+                            "283 corpus: the f32 door judged ${t.f32_ok} + refused ${t.f32_skipped} of ${t.lines} lines -- the rest it never saw")
                         assert(t.f32_skipped == t.skipped,
                             "283 corpus: the two doors disagree on WHICH lines are numbers -- f32 refused ${t.f32_skipped}, f64 refused ${t.skipped}")
                         assert(t.files == 0 || t.ok > 0,
