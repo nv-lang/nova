@@ -77,7 +77,7 @@ src = "src"                        # source root: the canon for new packages (§
 
 [[bin]]                            # optional: a binary entry point
 name = "greet"
-path = "src/bin/greet.nv"
+path = "src/greet.nv"
 
 [dependencies]                     # optional: external packages
 some-lib = "1.2"                                        # from the registry
