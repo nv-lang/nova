@@ -1,0 +1,103 @@
+// Co-equal test file of module `runtime.string` (folder = one module).
+//
+// WHY THIS FILE EXISTS, and it is not tidiness. Plan 283.1 moved the float port out of this
+// folder, and `check-std-module-coverage` immediately went red: `std/src/runtime/string`
+// became a module with no `test "…"` block beside it. The move did not delete anyone's tests
+// -- it revealed that the folder never had its own. Its neighbour `runtime.string_test` is,
+// despite the name, a NUMERIC PARSING module (17 tests: to_i8/to_i16/to_i32/to_u16/to_uint,
+// radix, to_bool, to_char, to_f64), and the departed `float_convert_test.nv` was the only
+// thing making this folder look covered. A module of ~1300 lines of string primitives with no
+// test beside it looked healthy exactly as registry #471 describes.
+//
+// So this file tests what the folder itself owns: length and emptiness, the byte view, the
+// []u8 -> str doors in both their forms, comparison, char boundaries and the search surface.
+// Not exhaustive by design -- it is the module's floor, not its ceiling.
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.collections.vec.{Vec}
+
+test "runtime.string: byte_len and is_empty count BYTES, not codepoints" {
+    assert("".byte_len() == 0, "empty string has zero bytes")
+    assert("".is_empty(), "empty string is empty")
+    assert("abc".byte_len() == 3, "ascii: one byte per char")
+    // Two-byte and four-byte UTF-8: the length is in bytes, and that is the whole point of
+    // the name -- a codepoint count would give 1 and 1 here.
+    assert("ф".byte_len() == 2, "cyrillic ef is two bytes")
+    assert("🎈".byte_len() == 4, "balloon is four bytes")
+    assert(!"a".is_empty(), "one byte is not empty")
+}
+
+test "runtime.string: bytes() is a view of the same bytes, in order" {
+    ro b = "hi!".bytes()
+    assert(b.len() == 3, "three bytes")
+    assert(b[0] == 104, "h")
+    assert(b[1] == 105, "i")
+    assert(b[2] == 33, "!")
+    // A multi-byte codepoint arrives as its UTF-8 sequence, not as one element.
+    ro c = "ф".bytes()
+    assert(c.len() == 2, "two bytes for one codepoint")
+    assert(c[0] == 0xD1, "first byte of U+0444")
+    assert(c[1] == 0x84, "second byte of U+0444")
+}
+
+test "runtime.string: []u8 -> str has two doors, and they differ on invalid UTF-8" {
+    mut good = []u8.new()
+    good.push(0x68 as u8)
+    good.push(0x69 as u8)
+    match good.to_str() {
+        Ok(s) => assert(s == "hi", "valid bytes decode to their string")
+        Err(_) => assert(false, "valid UTF-8 must not fail")
+    }
+    // 0xFF is not a legal UTF-8 lead byte: the checked door refuses, the lossy one replaces.
+    mut bad = []u8.new()
+    bad.push(0x41 as u8)
+    bad.push(0xFF as u8)
+    match bad.to_str() {
+        Ok(_) => assert(false, "invalid UTF-8 must be refused by to_str")
+        Err(_) => assert(true, "refused, as the door promises")
+    }
+    ro lossy = bad.to_str_lossy()
+    assert(!lossy.is_empty(), "the lossy door returns a string rather than failing")
+    assert(lossy.starts_with("A"), "the valid prefix survives replacement")
+}
+
+test "runtime.string: compare and equal agree, and case folding is ASCII-only" {
+    assert("a".equal("a"), "equal on identical")
+    assert(!"a".equal("b"), "not equal on different")
+    assert("a".compare("a") == 0, "compare says zero on identical")
+    assert("a".compare("b") < 0, "a sorts before b")
+    assert("b".compare("a") > 0, "b sorts after a")
+    assert("AbC".eq_ignore_ascii_case("aBc"), "ASCII case folds")
+    // Deliberate: the method says ASCII, so non-ASCII case must NOT fold. Without this line
+    // the test would pass just as well for a function that folded everything.
+    assert(!"Ф".eq_ignore_ascii_case("ф"), "non-ASCII case does not fold, by contract")
+}
+
+test "runtime.string: char boundaries are where codepoints start" {
+    ro s = "aф"
+    assert(s.is_char_boundary(0), "start is a boundary")
+    assert(s.is_char_boundary(1), "after the ascii byte is a boundary")
+    assert(!s.is_char_boundary(2), "inside the two-byte codepoint is NOT a boundary")
+    assert(s.is_char_boundary(3), "end of the string is a boundary")
+}
+
+test "runtime.string: the search surface answers on both hit and miss" {
+    ro s = "alpha beta gamma"
+    assert(s.starts_with("alpha"), "prefix found")
+    assert(!s.starts_with("beta"), "prefix that is not at the start")
+    assert(s.ends_with("gamma"), "suffix found")
+    assert(!s.ends_with("alpha"), "suffix that is not at the end")
+    assert(s.contains("beta"), "needle inside")
+    assert(!s.contains("delta"), "needle absent")
+    match s.find("beta") {
+        Some(i) => assert(i == 6, "find returns the BYTE offset of the needle")
+        None => assert(false, "beta is there")
+    }
+    match s.find("delta") {
+        Some(_) => assert(false, "delta is not there")
+        None => assert(true, "a miss is None, not a panic")
+    }
+}
