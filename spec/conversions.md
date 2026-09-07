@@ -28,7 +28,7 @@ details in the "`from`/`try_from` naming" section below.
 |---|---|---|
 | `as` | infallible numeric/newtype/sum cast, compile-time, no runtime code | `42 as f64`, `n as i16` |
 | `.to_str()` | universal conversion of a value **to a string** (bare-`T` blanket + specializations) | `42.to_str()`, `bs.to_str()` |
-| `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive. Legal ONLY when the source is a **concept** rather than a carrier value: for a value the canon is a method on the source, `x.to_*()` ([nv-coding-style §1а](../docs/dev/nv-coding-style.md), 2026-07-09; lint `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
+| `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive. Legal ONLY when the source is a **concept** rather than a carrier value: for a value the canon is a method on the source, `x.to_*()` (`nv-coding-style` §1а, 2026-07-09; lint `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
 | `consume @into_TARGET()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | declarative **implicit** zero-cost conversion in a position with a known expected type (view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
 
@@ -546,13 +546,13 @@ explicitly, under different names.
 type Celsius f64
 type Fahrenheit f64
 
-// The source on both sides is a VALUE, so the static `Fahrenheit.from(c)` is
-// forbidden here (nv-coding-style §1а): a conversion lives as a method on the source.
+// Источник у обеих сторон — ЗНАЧЕНИЕ, поэтому статик `Fahrenheit.from(c)` тут
+// запрещён (§1а): конверсия живёт методом на источнике.
 fn Celsius @to_fahrenheit() -> Fahrenheit =>
     Fahrenheit((@ as f64) * 9.0 / 5.0 + 32.0)
 
-// The compiler synthesizes no reverse form -- neither `.into()` nor a pair. If the
-// reverse is wanted, it is written explicitly, by the same rule, on its own source:
+// Компилятор НЕ синтезирует обратную форму — ни `.into()`, ни парную. Нужна
+// обратная — пишем её явно и тем же правилом, на своём источнике:
 fn Fahrenheit @to_celsius() -> Celsius =>
     Celsius(((@ as f64) - 32.0) * 5.0 / 9.0)
 ```

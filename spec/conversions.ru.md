@@ -19,7 +19,7 @@ D-decisions: [D54](decisions/03-syntax.md#d54) (`as`),
 |---|---|---|
 | `as` | infallible numeric/newtype/sum cast, compile-time, без runtime-кода | `42 as f64`, `n as i16` |
 | `.to_str()` | универсальная конверсия значения **в строку** (bare-`T` blanket + специализации) | `42.to_str()`, `bs.to_str()` |
-| `T.from(v)` / `T.try_from(v)` | конкретный статик-конструктор — **имя-конвенция**, НЕ протокол/auto-derive. Законен ТОЛЬКО когда источник — **концепт**, а не значение-носитель: у значения канон — метод на источнике `x.to_*()` ([§1а nv-coding-style](../docs/dev/nv-coding-style.md), 2026-07-09; линт `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
+| `T.from(v)` / `T.try_from(v)` | конкретный статик-конструктор — **имя-конвенция**, НЕ протокол/auto-derive. Законен ТОЛЬКО когда источник — **концепт**, а не значение-носитель: у значения канон — метод на источнике `x.to_*()` (§1а `nv-coding-style`, 2026-07-09; линт `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
 | `consume @into_ЦЕЛЬ()` | потребляющая передача владения (конкретное имя на источнике) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | декларативная **неявная** zero-cost конверсия в позиции с известным типом (view/finalize) | `w.write(s)` — `str` неявно `.bytes()` |
 
