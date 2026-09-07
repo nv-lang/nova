@@ -1,12 +1,31 @@
 //
-// Plan 96 Ф.4 D-str-slice — негатив: s[a..b] с OOB → panic
-// (НЕ clamp, в отличие от старого s.slice(a, b) метода).
-// Plan 152.1 (D249): str получил собственный byte-range slice-путь →
-// паника `str: slice [a..b] out of bounds for byte-length N` (была общая
-// `array: slice ... length` от Vec-пути). Директива обновлена под новый текст.
+// Plan 96 Ф.4 D-str-slice — негатив: s[a..b] с OOB → panic (НЕ clamp, в
+// отличие от снятого метода s.slice(a, b)).
+//
+// Plan 152.1 (D249): str получил собственный byte-range slice-путь, и текст
+// паники стал `str: slice [a..b] out of bounds for byte-length N` — приходил
+// из C-хелпера `nova_str_slice_bounds` (nova_rt/array.h), мимо Nova-метода.
+//
+// Plan 284 Ф.1 (2026-09-07): `s[a..b]` больше не идёт мимо метода. Признак
+// «умеет срез» — удовлетворение роли (`@index(r Range)` + `@end_index()`), и
+// сахар разворачивается в вызов `s.index(a..b)`, то есть попадает в тело
+// `str @index(Range)` вместе с его `requires`. Поэтому OOB теперь ловит
+// КОНТРАКТ, и текст паники — контрактный.
+//
+// ЭТО ПРИВЕДЕНИЕ К ПАРИТЕТУ, А НЕ ОСЛАБЛЕНИЕ ТЕСТА. У вектора маршрут через
+// метод стоит с плана 194, и все три его негатива пришпиливают именно
+// контрактный текст: `neg_slice_a_gt_b.nv`, `neg_slice_a_negative.nv`,
+// `neg_slice_oob_to.nv` — каждый `panics "requires failed"`. Строка была
+// последним типом, у которого срез судился в кодогене по имени типа.
+//
+// Пришпилено СИЛЬНЕЕ, чем у вектора: не просто «requires failed», а начало
+// самого условия строкового метода. Голое «requires failed» зеленело бы на
+// ЛЮБОМ нарушенном контракте в программе — в том числе на чужом, случайно
+// сработавшем раньше; условие в тексте привязывает панику к телу
+// `std/src/runtime/string/slice.nv`.
 
 module spec_tests.conformance
-test "neg str slice oob" panics "str: slice" {
+test "neg str slice oob" panics "requires failed: 0 <= r.start" {
     ro s = "abc"
     ro _ = s[0..100]
 }

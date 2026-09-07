@@ -1,12 +1,22 @@
-// [M-open-range-len-source-hardcoded] Ф.2 pos (heap storage class): a
-// user-defined HEAP record (`type ByteBag { ... }`, default allocation —
-// `Nova_ByteBag*`, no `Nova_Vec____`/`nova_str`/`NovaArray_` involved) with
-// a structural `len int` field gets `x[a..]` open-range slicing "for free"
-// through its OWN `.nv` `@index(Range)` method — the generalized structural
-// reroute (emit_c.rs `emit_generic_len_field_range_index`) dispatches it
-// exactly like `Vec[T]` always has, gated by the field's presence, not by
-// the type's name. The C access form for `len` is `->len` (heap handle),
-// chosen by `Self::is_value_type` (storage-class predicate).
+// Plan 284 F.1 pos (heap storage class): a user-defined HEAP record
+// (`type ByteBag { ... }`, default allocation — `Nova_ByteBag*`, no
+// `Nova_Vec____`/`nova_str`/`NovaArray_` involved) gets `x[a..]` open-range
+// slicing through its OWN `.nv` methods, by SATISFYING THE ROLE: `@index(r
+// Range)` plus `@end_index() -> int`. Nothing about the type's name is
+// consulted, and nothing about its FIELDS either.
+//
+// This file used to pin the previous test — the presence of a structural
+// field literally named `len` ([M-open-range-len-source-hardcoded] Ф.2).
+// That test admitted any type whose `len` happens to be a counter or a
+// capacity, silently and wrongly, which is why plan 284 retires it. The
+// migration is one added method: the file now proves the stronger thing,
+// that the slice is reachable by a USER type through the role.
+//
+// Two storage classes are two fixtures on purpose (the value-record sibling
+// is `openrange_len_field_value.nv`): the open end is now materialized by a
+// CALL, so the C access form for a field is no longer what varies — but the
+// receiver ABI still does, and a role satisfied on a heap handle must be
+// satisfied on a stack value too.
 
 module spec_tests.conformance
 import std.collections.range.{Range}
@@ -20,6 +30,11 @@ fn ByteBag @index(r Range) -> ByteBag {
 }
 
 fn ByteBag @len() -> int => @len
+
+// The role's second method: the end of THIS value's index space, asked and
+// answered by the type itself. Here it coincides with the `len` field, and
+// that coincidence is the point — a type is free to answer differently.
+fn ByteBag @end_index() -> int => @len
 
 test "heap user record with len int field gets open-range slice for free" {
     ro b = ByteBag { len: 10 }
