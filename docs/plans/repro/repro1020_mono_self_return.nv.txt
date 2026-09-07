@@ -30,18 +30,35 @@
 //
 // ═══ THE HALF OF THE DIAGNOSIS THAT NAMES THE CONDITION ═══
 //
-// The ERASED form of the same method is GREEN and ships in the tree today. Measured by grep
-// over generated C already in the worktree (std/src/encoding/json.c:2348):
+// CORRECTED THE SAME DAY, BEFORE ANY FIX WAS WRITTEN. First I wrote "the erased form is green,
+// so mono is the break", going by the DECLARATION at std/src/encoding/json.c:2348:
 //
 //   static Nova_Vec* Nova_Vec_method_cap__nova_int(Nova_Vec* nova_self, nova_int n);
 //
-// That file compiles. So the break is NOT "the method returns `-> @`" and NOT "Vec" -- it is
-// the MONOMORPHISED instantiation of a `-> @` method. The bench driver reaches it by accident:
-// it monomorphises `Vec[EmbeddedEntry]`, which no other driver does for this method. Anything
-// else that mono-instantiates a `-> @` method should hit the same wall.
+// Then I read its BODY, and it is a STUB -- `(void)nova_self; (void)n; return NULL;` -- the
+// body was elided as unused, so it proves nothing about `-> @` at all.
 //
-// Source of the method (unchanged by this wave): std/src/collections/vec/core.nv:228,
-// `fn Vec[T] mut @cap(n int) -> @` -- self-returning, with a precondition.
+// The REAL contrast is stronger: the emitter CAN return the receiver. The same json.c holds 69
+// `return nova_self;` statements, e.g.
+//
+//   static Nova_StringBuilder* Nova_StringBuilder_method_append_repeat(
+//           Nova_StringBuilder* nova_self, nova_str s, nova_int n) {
+//       ...
+//       if ((n <= ((nova_int)0LL))) {
+//           return nova_self;      // <-- a BARE `return` in a `-> @` method, done right
+//
+// (source: std/src/runtime/string_builder.nv:187, also declared `-> @`.)
+//
+// And the broken method's source has bare returns too -- std/src/collections/vec/core.nv:228,
+// `fn Vec[T] mut @cap(n int) -> @`, with `{ return }` in two early branches.
+//
+// So the condition is the INTERSECTION, not either half: a bare `return` in a method declared
+// `-> @` emits the receiver when the receiver type is NON-generic, and emits NOVA_UNIT when the
+// receiver is a MONOMORPHISED generic (`Vec[T]` at a concrete `T`).
+//
+// The bench driver reaches this by accident -- it monomorphises `Vec[EmbeddedEntry]`, which no
+// other driver does for this method -- so anything else that mono-instantiates a `-> @` method
+// should hit the same wall. The method itself was NOT touched by this wave.
 //
 // ═══ THE MINIMAL FORM BELOW IS A HYPOTHESIS, NOT A MEASUREMENT ═══
 //
