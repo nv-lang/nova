@@ -43,7 +43,7 @@ fn long_set() -> []str {
 bench "to_f64: short literals x16" {
     ro set = short_set()
     measure {
-        for s in set { ro _ = bench.opaque(s.to_f64()) }
+        for s in set { bench.opaque(s.to_f64()) }
         bench.elements(16)
     }
 }
@@ -51,7 +51,7 @@ bench "to_f64: short literals x16" {
 bench "to_f64: JSON-typical 17 digits x16" {
     ro set = json_set()
     measure {
-        for s in set { ro _ = bench.opaque(s.to_f64()) }
+        for s in set { bench.opaque(s.to_f64()) }
         bench.elements(16)
     }
 }
@@ -59,7 +59,7 @@ bench "to_f64: JSON-typical 17 digits x16" {
 bench "to_f64: long significands, mostly Eisel-Lemire x9" {
     ro set = long_set()
     measure {
-        for s in set { ro _ = bench.opaque(s.to_f64()) }
+        for s in set { bench.opaque(s.to_f64()) }
         bench.elements(9)   // nine strings in long_set -- counted, not remembered
     }
 }
@@ -79,7 +79,7 @@ bench "to_f64: the big-decimal SLOW path, every string x5" {
     // is not orders slower than the others, the fast paths are not doing their job.
     ro set = slow_set()
     measure {
-        for s in set { ro _ = bench.opaque(s.to_f64()) }
+        for s in set { bench.opaque(s.to_f64()) }
         bench.elements(5)
     }
 }
@@ -94,7 +94,7 @@ bench "u64 widening_mul (library, 32-bit halves) x1000" {
             acc = acc ^ hi ^ lo
             i += 1
         }
-        ro _ = bench.opaque(acc)
         bench.elements(1000)
+        bench.opaque(acc)
     }
 }
