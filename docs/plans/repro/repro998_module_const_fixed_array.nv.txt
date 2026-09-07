@@ -1,4 +1,10 @@
 // Registry 221.1 #998 -- module-level `const X [N]T = [...]`: `nova check` PASS, codegen red.
+// CLOSED 2026-09-07 by 81e4d2462 (emit_lazy_const routes array slots through
+// emit_expr_with_target_type; the Index path asks parse_mono_fixed_array_name). The class
+// is held by fixtures in the corpus now -- spec_tests/conformance/standalone/
+// const_fixed_array_decl_and_index.nv and const_array_elem_width_from_decl.nv -- so this
+// file is kept as the ORIGINAL evidence, not as a live probe. Plan 283's tables went back
+// to `[N]T` the same day (29cbc586c).
 // Found 2026-09-06 by plan 283 F.1 (the powers-of-five table, 651 rows of u64).
 // Measured on the compiler built from a57208585 (nova-cli/target/release/nova.exe).
 //

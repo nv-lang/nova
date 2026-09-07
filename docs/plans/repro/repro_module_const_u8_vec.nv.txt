@@ -1,4 +1,8 @@
-// Registry 221.1: module-level `const X []u8 = [...]` reads back as garbage.
+// Registry 221.1 #1003 -- module-level `const X []u8 = [...]` reads back as garbage.
+// CLOSED 2026-09-07 by 81e4d2462, same root as #998: the const initialiser was emitted
+// with no target type, so the element width came from the LITERALS. Held by
+// spec_tests/conformance/standalone/const_array_elem_width_from_decl.nv ([]u8, []u16,
+// []f32). Kept as the original evidence; TABLE_POW5 is `[1308]u8` again (29cbc586c).
 // Found 2026-09-07 by plan 283 F.3 (the digits of 5^k table of the slow path).
 // Compiler built from a57208585. SEPARATE from #998: there the `[N]T` form did not
 // compile at all; here `[]T` compiles, runs, and returns wrong values in silence.
