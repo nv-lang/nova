@@ -662,6 +662,7 @@ M-opt-leaf-preempt-entry-elision
 M-opt-preempt-strided-loop
 M-opt-value-sum-types
 M-option-self-recursive-record-mono
+M-oracle-classes-replayed-in-carina
 M-p200-17-remaining-1-fmtbuf
 M-p200-17-remaining-3
 M-p67-legacy-multiblanket-return-type
