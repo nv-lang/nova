@@ -68,3 +68,30 @@ test "str split_at through a codepoint panics with the moved guard" panics "str:
     ro pair = s.split_at(1)
     assert(pair.0 == "")
 }
+
+// The three tests below close case E5 of the plan's phase 3 -- a cut that is not on a
+// codepoint boundary, taken THROUGH THE SUGAR. Until this wave the sugar did not reach these
+// bodies at all, so no fixture could pin it; now `s[a..b]` routes into `str @index(Range)`,
+// which calls the guard on BOTH ends (std/src/runtime/string/slice.nv:70-71). One test per
+// end, because a fixture pinning only the start would stay green if the second call were lost.
+// The positive is not decoration: without it, a guard that panicked on EVERY multibyte slice
+// would satisfy both negatives.
+test "the sugar reaches the codepoint guard on a bad start" panics "str: slice splits a UTF-8 codepoint" {
+    ro s = "Привет"
+    // byte 1 is the continuation byte of the first letter
+    ro _ = s[1..4]
+}
+
+test "the sugar reaches the codepoint guard on a bad end" panics "str: slice splits a UTF-8 codepoint" {
+    ro s = "Привет"
+    // byte 3 is the continuation byte of the second letter
+    ro _ = s[0..3]
+}
+
+test "the sugar slices the same multibyte string on real boundaries" {
+    ro s = "Привет"
+    assert(s[0..4] == "Пр")
+    assert(s[4..12] == "ивет")
+    assert(s[0..0] == "")
+    assert(s[12..12] == "")
+}
