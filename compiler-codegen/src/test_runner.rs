@@ -992,7 +992,8 @@ impl ResolvedFfiConfig {
     /// от директории `nova.toml`, D214 doc-contract — см.
     /// `manifest::FfiConfig`). Plan 193 Ф.1 continuation (2026-07-12): было
     /// `m.source_root`, которая расходится с `nova.toml`-директорией для
-    /// legacy `[lib] src = "<subdir>"` (напр. `nova-tls`'s `src = "src"`),
+    /// канонической раскладки `[lib] src = "<subdir>"` (эталон — `nova-tls`,
+    /// `src = "src"`; амендмент Plan 195, а не back-compat),
     /// ломая `c_shims`/`include_dirs` на любом пакете с non-trivial `[lib]
     /// src` — `manifest_dir` всегда = директория `nova.toml`.
     /// None — у манифеста нет `[ffi]`.

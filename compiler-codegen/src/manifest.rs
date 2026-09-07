@@ -66,8 +66,9 @@ pub struct Manifest {
     pub package_name: String,
     pub source_root: PathBuf,
     /// Directory containing `nova.toml` itself (the package root). Usually
-    /// identical to `source_root` — they diverge only for a legacy `[lib]
-    /// src = "<subdir>"` manifest (D78 back-compat; e.g. `nova-tls`'s
+    /// identical to `source_root` — they diverge for the canonical
+    /// `src/` layout, `[lib] src = "<subdir>"` (D78 + the Plan 195 amendment,
+    /// standard for new packages, NOT back-compat; reference: `nova-tls`'s
     /// `src = "src"`). `[ffi]` paths are documented (see [`FfiConfig`]) as
     /// relative to **this** directory, not `source_root` — found 2026-07-12
     /// while fixing the `nova-tls` standalone-package D133 regression:
