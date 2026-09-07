@@ -38,7 +38,7 @@ verification) — в [wip/](wip/); при закрытии волны — уда
 
 | Модуль | План |
 |---|---|
-| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) |
+| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) + [282](282-numeric-conversions.md) (грамматика и целые) + [283](283-float-parse-own-rounding.md) (float без libc: своё верное округление, пара к 285) |
 | time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) |
 | io / fs / os | [176](176-io-fs-os.md) (umbrella) |
 | nova lint | [185](185-nova-lint.md) |
