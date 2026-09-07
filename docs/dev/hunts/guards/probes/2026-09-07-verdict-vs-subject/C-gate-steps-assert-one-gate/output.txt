@@ -1,0 +1,34 @@
+--- КОНТРОЛЬ 0: оба гейта чисты -> ожидается зелёный ---
+check-gate-steps-assert ok: каждый шаг гейта требует от стража его собственную строку
+rc=0
+
+--- КОНТРОЛЬ 1: голый bash-вызов стража В gate.sh -> ожидается КРАСНЫЙ ---
+check-gate-steps-assert: стражи зовутся мимо обёртки guard — 1
+    3:bash "$ROOT/scripts/guards/check-demo.sh" "$ROOT" || fail "demo"
+    Замени 'bash "$ROOT/scripts/guards/X"' на 'guard "$ROOT/scripts/guards/X"':
+    голый вызов засчитывает ноль без доказательства (реестр №645).
+    Правило: П1 №4 (не рапортовать того, чего не видел); реестр 221.1 №645, №647.
+check-gate-steps-assert: FAIL
+rc=1
+
+--- ДЕФЕКТ 1: ТОТ ЖЕ голый bash-вызов, перенесён в gate-novac.sh ---
+check-gate-steps-assert ok: каждый шаг гейта требует от стража его собственную строку
+rc=0
+
+--- КОНТРОЛЬ 2: обёртка guard аргументом timeout В gate.sh -> ожидается КРАСНЫЙ ---
+check-gate-steps-assert: обёртка guard стоит аргументом чужой команды — 1
+    gate.sh:4
+    guard — функция оболочки; внешняя команда её не найдёт.
+    Предел времени задаётся так: guard --deadline 300 "$ROOT/…"
+    Правило: П1 №4 (не рапортовать того, чего не видел); реестр 221.1 №645, №647.
+check-gate-steps-assert: FAIL
+rc=1
+
+--- ДЕФЕКТ 2: ТА ЖЕ форма, перенесена в gate-novac.sh ---
+check-gate-steps-assert ok: каждый шаг гейта требует от стража его собственную строку
+rc=0
+
+--- КОНТРОЛЬ 3: gate.sh удалён, gate-novac.sh на месте -> страж отказывает («нет gate.sh»), то есть про второй гейт он не знает вовсе ---
+check-gate-steps-assert: нет /tmp/probeC.3017301/scripts/gate.sh
+rc=1
+

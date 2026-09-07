@@ -764,7 +764,7 @@ per-test timeout, JSON output) живёт в Rust в
 
 | Флаг | Что |
 |---|---|
-| `--filter <substr>` | Прогнать только тесты содержащие substring |
+| `--filter <substr>` | Прогнать только тесты содержащие substring. **Судит ИМЯ ТЕСТА, а для `conformance/` тест — ЭТО ВЕСЬ CU:** фильтр по имени ОТДЕЛЬНОГО файла из `spec_tests/conformance/` не совпадёт ни с чем и даст `PASS: 0 FAIL: 0` с кодом 0 — то есть ЗЕЛЁНЫЙ НОЛЬ, неотличимый от успеха. Гонять такую фикстуру ПО ЯВНОМУ ПУТИ: `nova test spec_tests/conformance/<имя>.nv`. Фильтр работает там, где файл = тест: `standalone/`, `neg/`, `std/src/**`. Замер 2026-09-07: два окна независимо попали в это за полчаса; одно едва не завело ложную строку реестра, второе едва не приняло три зелёных нуля за пробу в обе стороны. |
 | `[PATH]...` | Один или несколько путей к директориям с тестами (multi-path, Plan 36.D.1). **Обязателен** — без аргументов `nova test` завершается ошибкой (Plan 172.6, `nova test requires at least one path`). Пример: `nova test spec_tests std` |
 | `--mode dev\|release` | dev (default) или release с `-O3 -flto` |
 | `--toolchain auto\|clang\|msvc\|gcc` | Compiler. Default: auto (Clang → MSVC → GCC) |

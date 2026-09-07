@@ -80,8 +80,20 @@ RULES = [
     # Читающие команды (status/log/diff/show/branch/ls-files) НЕ трогаем:
     # ошибиться деревом на чтении дёшево и заметно. Ловим только те, что
     # МЕНЯЮТ состояние.
+    #
+    # ПОЧЕМУ В АЛЬТЕРНАТИВАХ ОТРИЦАТЕЛЬНЫЕ ПРОСМОТРЫ (правка 2026-09-07, реестр
+    # 221.1 №TBD). Обещание абзаца выше держалось НЕ ВЕЗДЕ: `\b` между `merge` и
+    # дефисом — тоже граница слова, поэтому `merge\b` ловил `merge-base`,
+    # `commit\b` — `commit-graph`, `checkout\b` — `checkout-index`; а `worktree`
+    # и `tag` ловились вместе со своими читающими под-командами (`worktree list`,
+    # `tag -l`). Замер: меняющих ловилось 12 из 12 — и вместе с ними ШЕСТЬ
+    # читающих форм, которым отказ называл их «state-changing». Обе стороны
+    # держит `selftest/test-guard-git-readonly.py`; снимая просмотр, сперва
+    # прогони его — он покраснеет на той форме, которую просмотр защищал.
     (re.compile(r"\bgit\s+(?!-C\b|--git-dir\b|--work-tree\b)"
-                r"(add|commit|push|merge|checkout|switch|reset|rm|mv|worktree|tag|branch\s+-[dDmM])\b",
+                r"(add|commit(?!-)|push|merge(?!-)|checkout(?!-)|switch|reset|rm|mv"
+                r"|worktree(?!\s+list\b)|tag(?!\s*(?:-l\b|--list\b|$))"
+                r"|branch\s+-[dDmM])\b",
                 re.IGNORECASE),
      "FORBIDDEN: git <state-changing> bez -C — ukazhi derevo yavno: "
      "git -C /d/Sources/nv-lang/nova <cmd>. Prichina: cwd obolochki dreyfuet mezhdu "
@@ -165,7 +177,7 @@ RAW_RULES = [
     # Правило узкое НАМЕРЕННО: только `git commit` + `-m` + обратный апостроф.
     # Форма `-F файл` не трогается — она и есть верный ответ, вместе с
     # heredoc в ОДИНАРНЫХ кавычках.
-    (re.compile(r"git\s+(-C\s+\S+\s+)?commit\b(.|\n)*?-m(.|\n)*?`"),
+    (re.compile(r"git\s+(-C\s+\S+\s+)?commit(?!-)\b(.|\n)*?-m(.|\n)*?`"),
      "FORBIDDEN: soobshchenie kommita s obratnym apostrofom cherez -m. V dvoynyh "
      "kavychkah bash DELAET PODSTANOVKU KOMANDY: `mut sender` ispolnitsya, a v "
      "tekste ostanetsya dyra (221.1 №637, pyatyy sluchay klassa). Pishi soobshchenie "
@@ -195,9 +207,15 @@ _HEREDOC = re.compile(r"<<-?\s*'?(\w+)'?.*?\n\1\b", re.DOTALL)
 #   * слияние/cherry-pick/revert/rebase в процессе: git ОТКАЗЫВАЕТ в
 #     частичном коммите («cannot do a partial commit during a merge»), значит
 #     запрет требовал бы невозможного. Определяется по дереву, а не по слову;
-#   * осознанный override `# index-verified: <причина>` — коммит всего индекса
+#   * осознанный override
+#
+# ИМЯ ПОДКОМАНДЫ ЗАКРЫТО `(?!-)`, А НЕ ОДНИМ `\b` (правка 2026-09-07, реестр
+# 221.1 №TBD): между `commit` и дефисом граница слова ЕСТЬ, поэтому `commit\b`
+# ловил читающий `git commit-graph verify`. Носителей у класса было три —
+# перечисление state-changing, это правило и правило про апостроф в `-m`;
+# держит их `selftest/test-guard-git-readonly.py`. `# index-verified: <причина>` — коммит всего индекса
 #     остаётся возможным, но становится НАЗВАННЫМ и грепаемым.
-_COMMIT = re.compile(r"\bgit\s+(?:-C\s+\S+\s+|--git-dir[= ]\S+\s+|--work-tree[= ]\S+\s+)*commit\b",
+_COMMIT = re.compile(r"\bgit\s+(?:-C\s+\S+\s+|--git-dir[= ]\S+\s+|--work-tree[= ]\S+\s+)*commit(?!-)\b",
                      re.IGNORECASE)
 _SCOPED = re.compile(r"(--only\b|\s-o\b|--include\b|\s-i\b|--amend\b|\s--\s)", re.IGNORECASE)
 _DASH_C = re.compile(r"\bgit\s+-C\s+(\S+)")

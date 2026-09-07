@@ -74,7 +74,34 @@ def collect(root):
             for n in sorted(names):
                 rel = os.path.relpath(os.path.join(base, n), root)
                 files.append(rel.replace("\\", "/"))
-    return sorted(files)
+    return drop_ignored(root, sorted(files))
+
+
+def drop_ignored(root, files):
+    """Выбросить то, что git ИГНОРИРУЕТ — СГЕНЕРИРОВАННОЕ, а не исходное.
+
+    ЗАЧЕМ (правка интегратора 2026-09-07, в день заведения стража). На дереве
+    интегратора страж нашёл 213 «нарушений», и ВСЕ они — внутри
+    `.claude/cargo-target/` (156 МБ вывода cargo, `.gitignore:75` — `.claude/*`).
+    У того, у кого этот каталог пуст, страж зелён; у того, кто собирал, —
+    красен. То есть вердикт зависел от СРЕДЫ, а не от предмета — нарушение Г7
+    конвенции гейтов тем самым стражем, который заводился ради соседнего класса.
+
+    Спрашиваем ОДНИМ процессом (Г2), вход БАЙТАМИ — по той же причине, что
+    в `attrs` ниже: текстовый режим допишет `\r` и замер испортится сам собой.
+    Код возврата `check-ignore`: 0 — есть игнорируемые, 1 — нет ни одного,
+    128 — ошибка; при ошибке НЕ выбрасываем ничего (лучше ложный отказ,
+    чем тихая зелень на пустом списке).
+    """
+    if not files:
+        return files
+    proc = subprocess.run(
+        ["git", "-C", root, "check-ignore", "--stdin"],
+        input=("\n".join(files) + "\n").encode("utf-8"), capture_output=True)
+    if proc.returncode not in (0, 1):
+        return files
+    ignored = set(proc.stdout.decode("utf-8", "replace").split("\n"))
+    return [f for f in files if f not in ignored]
 
 
 def attrs(root, files):
