@@ -12498,18 +12498,35 @@ impl<'a> TypeCheckCtx<'a> {
                 if matches!(index.kind, ExprKind::Range { .. }) {
                     if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
                         if let Some(tname) = Self::typeref_named_base(&obj_tr) {
-                            let has_index = self.find_method_decl(tname, "index").is_some();
-                            let has_end = self.find_method_decl(tname, "end_index").is_some();
-                            if has_index && !has_end {
+                            // №1022: судим ПОДПИСЬЮ. Отказ выносится только если
+                            // таблица про тип что-то знает и у него есть перегрузки
+                            // `index` — иначе встроенный тип, которого здесь не
+                            // видно, получил бы ложный отказ.
+                            let (known, has_index, takes_range, answers_end) =
+                                self.t_slice_role_by_signature(tname);
+                            if known && has_index && !takes_range {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_SLICE_ROLE_UNSATISFIED] `{}` does not satisfy the \
+                                         slice role `RangeIndex` (D470): it declares `index`, but \
+                                         no overload of it takes a `Range`, so a range slice \
+                                         `x[a..b]` has nothing to call. Add `@index(r Range) -> V` \
+                                         (and `@end_index() -> int`, which the role also needs).",
+                                        tname
+                                    ),
+                                    e.span,
+                                ));
+                            } else if takes_range && !answers_end {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_SLICE_ROLE_UNSATISFIED] `{}` does not satisfy \
-                                         the slice role `RangeIndex` (D470): it declares \
-                                         `@index(r Range)` but no `@end_index() -> int`, \
-                                         and an open-ended `x[a..]` has nothing to ask \
-                                         for the upper bound. Add `@end_index()` to \
-                                         `{}` — for a container it is usually one line \
-                                         returning its length.",
+                                         the slice role `RangeIndex` (D470): it HAS an \
+                                         `@index(r Range)` overload but does not answer \
+                                         `@end_index() -> int`, so an open-ended `x[a..]` has \
+                                         nothing to ask for the upper bound. Both halves are \
+                                         verified by SIGNATURE here, not by name (#1022). Add \
+                                         `@end_index()` to `{}` — for a container it is \
+                                         usually one line returning its length.",
                                         tname, tname
                                     ),
                                     e.span,
@@ -19654,6 +19671,55 @@ impl<'a> TypeCheckCtx<'a> {
             None
         };
         search(self.sig.methods_of(tname)).or_else(|| search(self.synth_methods.get(tname)))
+    }
+
+    /// Plan 284 / реестр 221.1 №1022: удовлетворяет ли `tname` роли среза ПО
+    /// ПОДПИСИ. `find_method_decl` отвечает по имени и оставляет только ПЕРВУЮ
+    /// перегрузку — этого мало: один тип несёт и `@index(i int)`, и
+    /// `@index(r Range)` под одним именем, и по имени их не различить (замер:
+    /// в выпущенном C стоят обе, `Nova_Vec_method_index(Nova_Vec*, nova_int)` и
+    /// вариант с `NovaValue_Range`). Здесь обходятся ВСЕ перегрузки имени.
+    ///
+    /// Возвращает тройку: знает ли таблица про этот тип вообще, есть ли хоть одна
+    /// перегрузка `index`, берёт ли какая-нибудь из них `Range`, отвечает ли
+    /// `end_index()` целым. Разбор подписи — той же формой, что проверка
+    /// `CallerLoc` в этом файле (`fd.params`, `p.ty` как `TypeRef::Named`).
+    fn t_slice_role_by_signature(&self, tname: &str) -> (bool, bool, bool, bool) {
+        // Спрашивает через существующие двери этого же файла, а не обходит таблицу заново:
+        // `method_overloads` (:5547) отдаёт набор перегрузок с synth-оверлеем
+        // поверх базы, `type_has_any_method` — знает ли таблица про тип вообще.
+        // Первая версия делала то же руками через `sig.methods_of`, то есть
+        // заводила второй ответ на вопрос, у которого уже есть владелец.
+        //
+        // Ключи голые, без `@`: `all_methods` в эмиттере наполняется из `f.name`,
+        // и все его проверки по имени работают; таблица здесь строится на тех же
+        // `FnDecl`, а `method_overloads` берёт точным `get`, и его вызывающие живы.
+        let known = self.type_has_any_method(tname);
+        let idx = self.method_overloads(tname, "index");
+        let has_index = idx.is_some();
+        let takes_range = idx
+            .map(|fns| {
+                fns.iter().any(|fd| {
+                    fd.params.len() == 1
+                        && matches!(&fd.params[0].ty,
+                            TypeRef::Named { path, .. }
+                                if path.last().map(|s| s.as_str()) == Some("Range"))
+                })
+            })
+            .unwrap_or(false);
+        let answers_end = self
+            .method_overloads(tname, "end_index")
+            .map(|fns| {
+                fns.iter().any(|fd| {
+                    fd.params.is_empty()
+                        && fd.return_type
+                            .as_ref()
+                            .and_then(Self::typeref_named_base)
+                            == Some("int")
+                })
+            })
+            .unwrap_or(false);
+        (known, has_index, takes_range, answers_end)
     }
 
     fn t_provides_field(&self, tname: &str, name: &str) -> bool {

@@ -1,0 +1,47 @@
+// EXPECT_COMPILE_ERROR E_SLICE_ROLE_UNSATISFIED
+//
+// Registry 221.1 #1022 neg, and this is the carrier the row's caveat demands.
+// The owner found the class by reading the spec against the code: D470 declares
+// the slice role by SIGNATURES — `@index(r Range) -> V` plus
+// `@end_index() -> int` — while both places that asked about it asked by method
+// NAME. `IntBag` below is exactly the shape that slips through a name check: it
+// declares `index` and it declares `end_index`, so by name the role looks
+// satisfied, but its only `index` overload takes an `int`. A range slice has
+// nothing to call.
+//
+// What the name check produced before the fix, and why it was expensive: the
+// type passed, codegen synthesized a call carrying a `Range`, and the failure
+// surfaced as an overload-resolution error — someone else's message, pointing
+// away from the cause. The refusal must name the ROLE and the missing overload
+// instead.
+//
+// The measured reason a name cannot decide this: one type carries BOTH
+// overloads under one name. In emitted C they stand side by side as
+// `Nova_Vec_method_index(Nova_Vec* nova_self, nova_int i)` and the
+// `NovaValue_Range` one, so "declares index" says nothing about slicing.
+//
+// The positive counterpart is not written here on purpose — it already exists
+// twice, in `openrange_len_field_heap.nv` and `openrange_len_field_value.nv`,
+// where a user type carries `@index(r Range)` AND `@end_index()` and slices in
+// both storage classes.
+
+module neg.slice_role_int_index_only_neg
+
+type IntBag {
+    len int
+}
+
+// The only `index` overload takes an int, not a Range. By NAME this is
+// indistinguishable from a slicing type; by SIGNATURE it is not.
+fn IntBag @index(i int) -> int => i
+
+// Present on purpose: `end_index` exists, so a check that merely looks for the
+// two names finds both and concludes the role is satisfied.
+fn IntBag @end_index() -> int => @len
+
+fn main() -> () {
+    ro b = IntBag { len: 10 }
+    // nova:expect E_SLICE_ROLE_UNSATISFIED -- `index` exists, no overload takes a `Range`
+    ro v = b[1..3]
+    ro _ = v
+}
