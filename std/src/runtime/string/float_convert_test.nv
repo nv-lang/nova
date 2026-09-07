@@ -543,6 +543,33 @@ test "283 Ф.7: to_f32 -- the DOUBLE ROUNDING class, where parsing through f64 g
     }
 }
 
+test "283 Ф.7: the f32 fast path reads the f64 table by CAST, and that is exact only to 10^10" {
+    // Why this test exists at all (recheck finding, 2026-09-07): the f32 fast path does not
+    // own a table -- `pow10_fast_path_f32` reads the f64 one and casts. That is a CHOICE, and
+    // it is exact only while the fast-path range ends at 10^10: 10^10 = 2^10 * 5^10 with
+    // 5^10 = 9 765 625 < 2^24, so the value fits an f32 significand exactly. At 10^11 it does
+    // not (5^11 = 48 828 125 > 2^24). So raising `F32_MAX_EXPONENT_FAST_PATH` would break
+    // exactness SILENTLY, and the only thing that would notice is the corpus lane, which is
+    // manual. This assert lives in the default lane instead, so the change reddens where the
+    // author will see it.
+    assert(F32_MAX_EXPONENT_FAST_PATH == 10, "F32_MAX_EXPONENT_FAST_PATH is not 10 -- read the comment above before changing it")
+    assert(F32_MIN_EXPONENT_FAST_PATH == -10, "F32_MIN_EXPONENT_FAST_PATH is not -10")
+    // Exactness measured, not argued: every row the f32 fast path can reach survives the
+    // round trip f64 -> f32 -> f64 unchanged.
+    for e in 0..(F32_MAX_EXPONENT_FAST_PATH + 1) {
+        ro narrow = POW10_FAST_PATH[e] as f32
+        ro back = narrow as f64
+        assert(back == POW10_FAST_PATH[e], "10^${e} does not survive f64 -> f32 -> f64")
+    }
+    // And the boundary is real, not decorative -- the first row beyond the range does NOT
+    // survive it. Without this half the assert above would pass just as well if the cast were
+    // exact everywhere, and the invariant would be unproven.
+    ro over = POW10_FAST_PATH[F32_MAX_EXPONENT_FAST_PATH + 1] as f32
+    ro over_back = over as f64
+    assert(over_back != POW10_FAST_PATH[F32_MAX_EXPONENT_FAST_PATH + 1],
+        "10^11 survives the cast -- then the range could be widened, and this test is wrong")
+}
+
 test "283 Ф.7: to_f32 and to_f64 share the grammar, so they agree on what is NOT a number" {
     ro bad = [" 1.5", "0x1p3", "nan", "inf", "1.2.3", "1e", ".", "1.5 ", "1,5"]
     for text in bad {
