@@ -27,7 +27,7 @@ import ../diag.{ice}
 import ../sem.{branch_children, leaf_text, leaf_kind, arm_body_at, c_type}
 import ../sem.{int_literal_c_text}
 import ../sem.{disj_head_slots, pattern_has_disj}
-import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, is_vrow, variant_in_sum}
+import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, variant_in_sum}
 import ../builtins.{bool_c_literal}
 import ../types.{TyId}
 import ../lower.{Local, no_local, Pattern, VariantMatch, SwitchCtx, Cond}

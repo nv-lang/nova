@@ -1075,7 +1075,7 @@ repository = "https://github.com/..."       # опционально
 
 [[bin]]                                     # опционально, для каждого бинаря
 name = "my-tool"
-path = "bin/my_tool.nv"                     # путь к файлу-точке-входа от корня пакета
+path = "src/my_tool.nv"                     # от корня пакета; весь `.nv` — в `src/` (амендмент Plan 195 ниже)
 
 [dependencies]
 serde = "1.2"                               # из реестра, semver-range
