@@ -165,7 +165,13 @@ else
     UNTAILED_LINES="$(grep -n 'echo "NOVAC-GATE' "$NOVAC_GATE" \
         | grep -v 'NOVAC_TREE_TAIL' | grep -v ': \$1"' || true)"
     WITH_TAIL_N="$(grep 'echo "NOVAC-GATE' "$NOVAC_GATE" | grep -c 'NOVAC_TREE_TAIL' || true)"
-    if [ "$WITH_TAIL_N" -ge 4 ] && [ -z "$UNTAILED_LINES" ]; then
+    # `-gt 0` здесь НЕ счёт-снимок, а проверка на НЕПУСТОТУ: если завтра сменится
+    # префикс `NOVAC-GATE`, оба грепа найдут ноль строк, пустой список
+    # непомеченных прочтётся как «всё хорошо», и случай зазеленеет НА ПУСТОМ
+    # МЕСТЕ. Числа `4` тут стоять не должно по правилу, которое этот же файл
+    # и проверяет: критерий — СВОЙСТВО, а не снимок дерева; счёт покраснел бы на
+    # ЗАКОННОМ удалении вердикта и ничего не поймал бы при добавлении.
+    if [ "$WITH_TAIL_N" -gt 0 ] && [ -z "$UNTAILED_LINES" ]; then
         ok "novac: вердиктов с хвостом $WITH_TAIL_N, а без хвоста — только пошаговые репортёры"
     else
         bad "novac: итоговый вердикт без хвоста: ${UNTAILED_LINES:-нет} (с хвостом $WITH_TAIL_N)"
