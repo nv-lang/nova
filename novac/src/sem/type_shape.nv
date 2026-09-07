@@ -11,7 +11,7 @@
 //   is it the language's Option (and what is its payload), what does a for-head
 //   hand out per step. Written once, asked by the checker AND the emitter.
 // Used by: check/type_of.nv, check/typing.nv, check/methods.nv, check/exprs.nv
-//   (the judges) and emit_c/emit_for.nv (the spelling).
+//   (the judges) and emit_c/emit_flow.nv (the spelling, lower_for_each).
 // Guarded by: check-novac-second-door.py (these three exist because the same
 //   question was spelled twice before), check-novac-surface.py (their move out
 //   of `check` raised the sem base, named in that baseline).

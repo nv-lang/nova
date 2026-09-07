@@ -133,6 +133,21 @@
 #     Go. For novac this is not work yet: the subset has no newtype operators
 #     at all -- but when it gets them, the rule says the operator asks the same
 #     door the call asks, which is the shape novac already wants.
+#   * D470 (2026-09-07) -- the slice role `RangeIndex[V]`: a type supports
+#     `a[x..y]` when it answers BOTH `@index(r Range)` and `@end_index() -> int`,
+#     and an open end is materialized by the second method rather than by reading
+#     a field named `len` (that half is an amendment to D238). For novac this IS
+#     work, and it is small: the subset already routes `a[i]` through the method
+#     table, so a slice asks the same table for two names instead of one. Worth
+#     adopting early rather than late -- the oracle carried the opposite shape
+#     until today, a type NAME in the condition plus a structural field as the
+#     test, which is the kind of thing Carina exists in order not to inherit.
+#   * D470 AMEND (2026-09-07) -- the role is asked of the SYNTACTIC slice
+#     forms only; an explicit `Range` value passed as `x[r]` stays plain
+#     `Index[Range, V]` and needs no `@end_index()`. For novac this narrows the
+#     work rather than adding any: the subset lowers the sugar, so the question
+#     is asked exactly where the sugar is expanded, and a Range value travels
+#     as an ordinary argument.
 #   spec-queue: 62
 #   oracle-pin: 2803de2d9
 #   stage: E2

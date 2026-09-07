@@ -80,7 +80,7 @@ import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 import ../types.{no_ty}
 import ../sem.{is_value_tail_kind}
-import ../lower.{FnBuilder, Local, Cond}
+import ../lower.{FnBuilder, Local, Cond, no_local}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
 /// so the day substitutions arrive there is one place to stop passing it.
@@ -432,7 +432,7 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     // checker recorded no type on purpose. The statement form
                     // is the honest emission: no result temporary, no `return`
                     // of a value nobody produced.
-                    @emit_match_stmt(c, @fresh_uniq())
+                    @lower_match(c, @fresh_uniq(), no_local())
                 } else if tail && j == last_branch && @tail_places_value(c) {
                     // THE TAIL IS THE RETURNED VALUE -- one door (274.8 M1).
                     // Until M1 four arms stood here (match, if, positional
@@ -559,7 +559,7 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         // effect. No result temporary is declared -- nobody asked this match
         // for a value, and emitting a variable to hold an answer no one wants
         // is the shape this compiler keeps refusing elsewhere.
-        @emit_match_stmt(st, @fresh_uniq())
+        @lower_match(st, @fresh_uniq(), no_local())
     } else if k == NodeKind.Call {
         // A call in statement position is an EVALUATION of the lowered body
         // (274.8 M2a); its printer keeps the arguments and their hoists.
@@ -587,11 +587,13 @@ fn Emitter mut @emit_stmt(st Node) -> () {
         ro kids = branch_children(st)
         if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
            kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
-            // A COLLECTION head (wave B16) walks a vector; its own co-equal
-            // door spells the len/get loop. A name or field head costs one
-            // pointer copy into the temporary -- the same one-evaluation
-            // contract a call head needs for its effects.
-            @emit_for_call(kids)
+            // A COLLECTION head (wave B16) walks a vector by index: a loop
+            // of the lowered body whose header carries the collection, the
+            // index and the element locals (274.8 M2b-1c, emit_flow.nv). A
+            // name or field head costs one pointer copy into the temporary --
+            // the same one-evaluation contract a call head needs for its
+            // effects.
+            @lower_for_each(kids)
             return
         }
         // A RANGE head: a loop of the lowered body with the range as its

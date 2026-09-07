@@ -43,6 +43,13 @@ export fn Vec[T] @index(r Range) -> Self
     Self { data: unsafe { @data.offset(r.start) }, len: n, cap: n }
 }
 
+/// The upper bound an open-ended `v[a..]` materializes — the second method of the
+/// `RangeIndex` role, next to `@index(r Range)`. Plan 284: the sugar used to read
+/// the receiver's `len` FIELD, which made "can be sliced" a structural property —
+/// a type with a `len` that is a counter or a capacity passed the test silently.
+/// Asking a named method instead makes the answer the type's own.
+export fn Vec[T] @end_index() -> int => @len
+
 /// Safe zero-copy sub-range view — `Some(view)` when `[r.start, r.end)` is in
 /// bounds, `None` otherwise. The non-panicking counterpart of `@index(Range)`.
 export fn Vec[T] @get(r Range) -> Option[Self] {

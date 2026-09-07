@@ -43,3 +43,15 @@ test "split_first/split_last → Option; пусто → None (D262)" {
     assert(empty.split_first().is_none())
     assert(empty.split_last().is_none())
 }
+
+test "end_index — конец пространства индексов СПРАШИВАЕТСЯ методом (план 284)" {
+    ro v = []int.of(10, 20, 30, 40, 50)
+    assert(v.end_index() == v.len())
+    assert(v.end_index() == 5)
+    ro empty []int = []int.new()
+    assert(empty.end_index() == 0)
+    // Вид отвечает СВОИМ концом, а не родительским — именно это нужно
+    // открытому концу `view[a..]`, который развёртка материализует вызовом.
+    ro view = v[1..4]
+    assert(view.end_index() == 3)
+}

@@ -3725,6 +3725,174 @@ impl<'c, 'a> Drop for FailPayloadScope<'c, 'a> {
     }
 }
 
+/// [реестр 221.1 №1009] Имена, которые СВЯЗЫВАЕТ образец — только они, без тегов вариантов.
+///
+/// Повторяет решение `NameResCtx::collect_pattern_bindings`: имя с ЗАГЛАВНОЙ буквы —
+/// это вариант или тип (конвенция Nova: варианты и типы PascalCase, функции snake_case),
+/// а не биндер. Проверка `builtins` там дополнительная и здесь не нужна: встроенные
+/// имена тоже начинаются с заглавной (`Some`, `Ok`, `None`). Свободная функция, а не
+/// метод, НАМЕРЕННО: вызов живёт в `TypeCheckCtx`, а сборщик биндеров — в `NameResCtx`,
+/// и метод не мог бы видеть оба (сборка отказала именно так, 2026-09-07).
+fn or_rule_collect_bindings(p: &Pattern, out: &mut HashSet<String>) {
+    match p {
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+        Pattern::Ident { name, .. } => {
+            let is_variant_like =
+                name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+            if !is_variant_like {
+                out.insert(name.clone());
+            }
+        }
+        Pattern::Variant { kind, .. } => match kind {
+            VariantPatternKind::Unit => {}
+            VariantPatternKind::Tuple { patterns, .. } => {
+                for sub in patterns {
+                    or_rule_collect_bindings(sub, out);
+                }
+            }
+        },
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(sub) => or_rule_collect_bindings(sub, out),
+                    None => {
+                        out.insert(f.name.clone());
+                    }
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for el in elems {
+                match el {
+                    ArrayPatternElem::Item(sub) => or_rule_collect_bindings(sub, out),
+                    ArrayPatternElem::Rest => {}
+                    ArrayPatternElem::RestBind(name) => {
+                        out.insert(name.clone());
+                    }
+                }
+            }
+        }
+        Pattern::Tuple(elems, _) => {
+            for sub in elems {
+                or_rule_collect_bindings(sub, out);
+            }
+        }
+        Pattern::Binding { name, inner, .. } => {
+            out.insert(name.clone());
+            or_rule_collect_bindings(inner, out);
+        }
+        Pattern::Or { alternatives, .. } => {
+            // Внутри уже проверенной дизъюнкции наборы равны — берём первую.
+            if let Some(first) = alternatives.first() {
+                or_rule_collect_bindings(first, out);
+            }
+        }
+    }
+}
+
+/// [реестр 221.1 №1009] Все альтернативы дизъюнкции обязаны вводить ОДИН набор биндеров.
+///
+/// Это ровно тот инвариант, который `collect_pattern_bindings` и `pattern_bind_typed`
+/// в эмиттере ПРЕДПОЛАГАЛИ, беря биндеры из первой альтернативы со словами «по spec все
+/// alternatives имеют одинаковый набор». Это предположение СТАЛО ПРАВИЛОМ ниже в этом
+/// же файле (`E_OR_PATTERN_BINDING_MISMATCH`), и оба места читают первую альтернативу
+/// законно. До него механизма не было вовсе, а корпус молчал: в нём нет арма с разной
+/// арностью альтернатив (класс №989 — зелёный корпус
+/// доказывает отсутствие ФОРМЫ, а не отсутствие дефекта). Охота окна 274 напечатала `7`
+/// для биндера, которого сработавшая альтернатива не вводит, и пустую строку там, где из
+/// int-варианта прочитали указатель. Теперь предположение стало правилом, и оба места
+/// читают первую альтернативу ЗАКОННО.
+///
+/// Проверяются ИМЕНА. Совпадение ТИПОВ одноимённых биндеров — вторая половина правила;
+/// она требует типов сцены и делается отдельным шагом, о чём сказано в приёмке строки
+/// реестра, чтобы её отсутствие читалось как решение, а не пропуск.
+fn check_or_pattern_bindings(p: &Pattern, errors: &mut Vec<Diagnostic>) {
+    match p {
+        Pattern::Or { alternatives, span } => {
+            let mut sets: Vec<HashSet<String>> = Vec::with_capacity(alternatives.len());
+            for alt in alternatives {
+                let mut b = HashSet::new();
+                or_rule_collect_bindings(alt, &mut b);
+                sets.push(b);
+            }
+            if let Some(first) = sets.first() {
+                for (idx, other) in sets.iter().enumerate().skip(1) {
+                    // Симметрическая разность: называем ОБЕ стороны, потому что автор
+                    // одинаково часто забывает биндер и добавляет лишний.
+                    let mut missing: Vec<&String> = first.difference(other).collect();
+                    let mut extra: Vec<&String> = other.difference(first).collect();
+                    missing.sort();
+                    extra.sort();
+                    if missing.is_empty() && extra.is_empty() {
+                        continue;
+                    }
+                    let join = |v: &Vec<&String>| {
+                        v.iter()
+                            .map(|n| format!("`{}`", n))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    let mut what = String::new();
+                    if !missing.is_empty() {
+                        what.push_str(&format!("не вводит {}", join(&missing)));
+                    }
+                    if !extra.is_empty() {
+                        if !what.is_empty() {
+                            what.push_str(" и ");
+                        }
+                        what.push_str(&format!("вводит лишние {}", join(&extra)));
+                    }
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_OR_PATTERN_BINDING_MISMATCH] альтернативы дизъюнкции обязаны \
+                             вводить ОДИН И ТОТ ЖЕ набор биндеров: альтернатива {} {} \
+                             относительно первой. Тело арма читает имена по одной разметке, \
+                             и на сработавшей альтернативе это дало бы ЧУЖОЕ значение молча \
+                             (реестр 221.1 №1009). Либо введи то же имя во всех \
+                             альтернативах, либо разнеси их по отдельным армам.",
+                            idx + 1,
+                            what
+                        ),
+                        *span,
+                    ));
+                }
+            }
+            for alt in alternatives {
+                check_or_pattern_bindings(alt, errors);
+            }
+        }
+        Pattern::Variant { kind, .. } => match kind {
+            VariantPatternKind::Unit => {}
+            VariantPatternKind::Tuple { patterns, .. } => {
+                for sub in patterns {
+                    check_or_pattern_bindings(sub, errors);
+                }
+            }
+        },
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                if let Some(sub) = &f.pattern {
+                    check_or_pattern_bindings(sub, errors);
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for el in elems {
+                if let ArrayPatternElem::Item(sub) = el {
+                    check_or_pattern_bindings(sub, errors);
+                }
+            }
+        }
+        Pattern::Tuple(elems, _) => {
+            for sub in elems {
+                check_or_pattern_bindings(sub, errors);
+            }
+        }
+        Pattern::Binding { inner, .. } => check_or_pattern_bindings(inner, errors),
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) | Pattern::Ident { .. } => {}
+    }
+}
+
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
     arity: HashMap<String, ArityInfo>,
@@ -12298,6 +12466,58 @@ impl<'a> TypeCheckCtx<'a> {
                 // `ExprKind::Unary` arm (see `assign_target_top`'s field
                 // doc and that arm's comment for the full rationale).
                 let is_assign_target_top = self.assign_target_top.replace(false);
+                // Plan 284 F.2a (D470): a Range index requires the SLICE ROLE —
+                // `@index(r Range)` AND `@end_index() -> int` — and the refusal
+                // belongs HERE, not in codegen. Two measured reasons. A
+                // codegen-side error carries no span, and the negative fixture
+                // said so: "pinned to line 33, but the matching error landed on
+                // line ?"; plan 280 met that wall and moved its own refusal into
+                // this file for the same reason (`E_AMBIGUOUS_CALLER_LOC` above).
+                // And this arm is what lets the form through: it annotates the
+                // receiver type for ANY Range index without asking whether an
+                // `@index(Range)` implementation exists at all.
+                //
+                // THE CONDITION IS NARROW ON PURPOSE, and that is what makes it
+                // safe: refuse only when the type DECLARES `index` and does NOT
+                // declare `end_index`. Anything this table cannot see — a fixed
+                // array `[N]T`, a `[]T` receiver whose slicing codegen handles on
+                // its own path — does not match and behaves exactly as before.
+                // Asking "does it satisfy the role" instead would have needed a
+                // list of builtin shapes to exempt, which is the list this plan
+                // exists to delete.
+                //
+                // Tested on the SYNTACTIC form, and NOT on `index_is_range`
+                // (computed below), even though reusing that variable would look
+                // tidier. It is broader by design — it also matches a `Range`-typed
+                // VALUE, so that `let r = 2..5; s[r]` works — and that form needs no
+                // `@end_index()`: a fully-formed `Range` has no open end to
+                // materialize, and it reaches the type through plain
+                // `Index[Range, V]` (D238). Refusing it would be a NEW refusal on a
+                // form that works today. D470 §3 carries this boundary in normative
+                // text.
+                if matches!(index.kind, ExprKind::Range { .. }) {
+                    if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                        if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                            let has_index = self.find_method_decl(tname, "index").is_some();
+                            let has_end = self.find_method_decl(tname, "end_index").is_some();
+                            if has_index && !has_end {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_SLICE_ROLE_UNSATISFIED] `{}` does not satisfy \
+                                         the slice role `RangeIndex` (D470): it declares \
+                                         `@index(r Range)` but no `@end_index() -> int`, \
+                                         and an open-ended `x[a..]` has nothing to ask \
+                                         for the upper bound. Add `@end_index()` to \
+                                         `{}` — for a container it is usually one line \
+                                         returning its length.",
+                                        tname, tname
+                                    ),
+                                    e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
                 self.f1_expr(obj, gs, scope, errors);
                 self.f1_expr(index, gs, scope, errors);
                 // Plan 152.1 Ф.1 (D249): `str` is NOT integer-indexable — codepoint
@@ -12644,6 +12864,16 @@ impl<'a> TypeCheckCtx<'a> {
                     None
                 });
                 for arm in arms {
+                    // [реестр 221.1 №1009] Альтернативы дизъюнкции обязаны вводить
+                    // ОДИН И ТОТ ЖЕ набор биндеров. До этой проверки чекер принимал
+                    // `P(a, b) | Q(a)`, а эмиттер печатал биндеры по разметке ПЕРВОЙ
+                    // альтернативы (`pattern_bind_typed`, арм `Pattern::Or`, признание
+                    // в комментарии; правило `E_OR_PATTERN_BINDING_MISMATCH`, которое
+                    // вызывается строкой ниже, делает то признание неактуальным), то есть на значении `Q`
+                    // читался чужой член union: охота окна 274 напечатала `7` для `b`,
+                    // которого `Q` не вводит, и ПУСТУЮ СТРОКУ там, где из int-варианта
+                    // прочитали указатель на строку. Молча, exit 0.
+                    check_or_pattern_bindings(&arm.pattern, errors);
                     self.check_priv_pattern_recursive(&arm.pattern, scrut_ty.as_ref(), errors);
                     // №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]:
                     // resolve each nested bare-variant sub-pattern (e.g.

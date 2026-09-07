@@ -1,0 +1,22 @@
+// Sharpening of probe.nv: the oracle ACCEPTED `P(a, b) | Q(a)` and printed
+// `a + b` = 7 for `Q(7)`, i.e. `b` -- a binder Q does not introduce -- read as
+// 0. Zero is not an answer, it is whatever the union held. Here P's second
+// field is a `str`, so reading it out of a `Q` value reads a POINTER that was
+// never stored: printing it shows garbage or crashes, and the "it just prints
+// 0" reading of probe.nv is settled either way.
+
+type Tagged enum P(int, str) | Q(int)
+
+fn label_of(v Tagged) -> str {
+    match v {
+        P(a, b) | Q(a) => b
+        _ => "none"
+    }
+}
+
+fn main() {
+    ro p = Tagged.P(1, "real")
+    ro q = Tagged.Q(9)
+    println(label_of(p))   // real
+    println(label_of(q))   // `b` is not a binder of Q -- what does it print?
+}
