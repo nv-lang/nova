@@ -38861,9 +38861,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // about `str`'s fields becomes visible here, so the `.from`
                     // resolution path that keyed off "is `str` in
                     // record_schemas" is untouched.
-                    if !obj_ty.starts_with("NovaArray_")
-                        && self.satisfies_range_index_role(&obj_ty)
-                    {
+                    // No type NAME stands in this condition any more (plan 284,
+                    // consequence 4). `NovaArray_*` needed no exclusion once the
+                    // question became the role: its lookup name survives mangled
+                    // (it starts with `NovaA`, not the `Nova_` prefix the mapping
+                    // strips), array extension methods register under the receiver
+                    // name `[]T`, so the role cannot match and such a receiver falls
+                    // through to its own `nova_array_slice_*` path below — which is
+                    // precisely where the explicit name test used to send it.
+                    if self.satisfies_range_index_role(&obj_ty) {
                         return self.emit_range_index_through_role(
                             &obj_ty, &o, start, end, *inclusive, expr,
                         );
@@ -38904,9 +38910,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         format!("({})->len", o)
                     } else {
                         return Err(format!(
-                            "[E_OPEN_RANGE_NO_LEN] type `{}` does not support range \
-                             slicing (`[a..]`/`[a..b]`) — no structural `len int` field \
-                             ([M-open-range-len-source-hardcoded])",
+                            "[E_SLICE_ROLE_UNSATISFIED] type `{}` does not support range \
+                             slicing (`[a..]`/`[a..b]`): it does not satisfy the slice role \
+                             `RangeIndex` (D470), which needs BOTH `@index(r Range)` and \
+                             `@end_index() -> int` — the second is what an open end asks for",
                             obj_ty
                         ));
                     };
@@ -38948,16 +38955,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
                     } else {
-                        // Unreachable by construction: the `len_expr` chain above
-                        // already returns for any `obj_ty` that is neither
-                        // `nova_str` nor `NovaArray_*` (either via the generic
-                        // structural-`len`-field reroute or the honest
-                        // [E_OPEN_RANGE_NO_LEN] error) — kept as a defensive
-                        // fallback, message harmonized with that one.
+                        // Unreachable by construction: the chain above already
+                        // returns for any `obj_ty` that satisfies the slice role
+                        // (plan 284 F.1) and errors honestly for any that does not,
+                        // so only `NovaArray_*` — which has no Nova-level
+                        // `@index(Range)` to route into — reaches this far. Kept as
+                        // a defensive fallback, message harmonized with that one.
                         return Err(format!(
-                            "[E_OPEN_RANGE_NO_LEN] type `{}` does not support range \
-                             slicing (`[a..]`/`[a..b]`) — no structural `len int` field \
-                             ([M-open-range-len-source-hardcoded])",
+                            "[E_SLICE_ROLE_UNSATISFIED] type `{}` does not support range \
+                             slicing (`[a..]`/`[a..b]`): it does not satisfy the slice role \
+                             `RangeIndex` (D470), which needs BOTH `@index(r Range)` and \
+                             `@end_index() -> int` — the second is what an open end asks for",
                             obj_ty
                         ));
                     }
