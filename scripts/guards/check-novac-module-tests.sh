@@ -144,7 +144,7 @@ if [ "$PASSED" = "0" ]; then
     echo "$NAME: FAIL — исполнено НОЛЬ тестов при $N файлах ($SUMMARY)" >&2
     echo "  Ноль исполненных — это НЕ ЗАМЕР, а пустая выборка, надевшая одежду" >&2
     echo "  успеха (класс №1040/№1041). Смотри, дошла ли команда до фикстур:" >&2
-    printf %s\\n "$OUT" | tail -n 15 >&2
+    printf '%s\n' "$OUT" | tail -n 15 >&2
     exit 1
 fi
 
@@ -152,7 +152,7 @@ if [ "$(( PASSED + SKIPPED ))" -ne "$N" ]; then
     echo "$NAME: FAIL — счёт не сошёлся: файлов $N, а исходов $((PASSED + SKIPPED)) (PASS $PASSED + SKIP $SKIPPED)" >&2
     echo "  Каждый найденный *_test.nv обязан кончиться исходом. Разница означает," >&2
     echo "  что часть файлов не дошла до прогона МОЛЧА — ни PASS, ни FAIL, ни SKIP." >&2
-    printf %s\\n "$OUT" | sed 's/\x1b\[[0-9;]*m//g' | tail -n 15 >&2
+    printf '%s\n' "$OUT" | sed 's/\x1b\[[0-9;]*m//g' | tail -n 15 >&2
     exit 1
 fi
 
