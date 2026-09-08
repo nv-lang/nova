@@ -33,27 +33,61 @@ import ../sem.{branch_children, leaf_text, c_instance_method, for_head_elem}
 import ../lower.{IfCtx, LoopHead, RangeHead, EachHead, Cond}
 import ../builtins.{VEC_LEN_METHOD}
 
+/// Whether this branch continues a `} else ` line its caller printed.
+fn chained_of(outer Option[IfCtx]) -> bool {
+    match outer {
+        None => false
+        Some(_) => true
+    }
+}
+
+/// THE HEAD OF A BRANCH, printed from the IR (wave M2b-2 step 3a): `if (<cond>) {`.
+///
+/// ONE printer for the plain `if` and for the `if let`. What differs between those two is
+/// the `Cond` the lowering RECORDED, not the printing -- until this step each spelled its
+/// own head, and the two could drift the way the two `else` tails did (registry #991).
+/// A chained branch carries no indent of its own: it continues the `} else ` its caller
+/// printed (M2b-2-0).
+fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
+    if chained {
+        @body.append("if (")
+    } else {
+        @body.append("    if (")
+    }
+    match cond {
+        Expr(e) => @emit_expr(e)
+        IsSome(l) => {
+            // The Some-test through the ONE Option door, spelled from the local's type
+            // and name -- the same two the hand-written head passed by hand.
+            ro d = @ir.decl_of(l)
+            @body.append(@option_some_test(d.ty, d.name))
+        }
+    }
+    @body.append(") {\n")
+}
+
 /// One `if` statement with its `else` / `else if` chain. `outer` is the
 /// enclosing `if` when this one IS its else branch: then the else branch is
 /// opened first and the chained `if` shares the outer join.
 fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     ro kids = branch_children(st)
     ro has_else = kids.len() > 4
-    // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
-    // caller printed, so it starts without the indent the top-level `if` carries.
-    match outer {
-        None => @body.append("    if (")
+    // The condition is RECORDED first and PRINTED from the record (M2b-2 step 3a): the
+    // printing no longer reads the tree, which is what lets one walk print every branch
+    // later. Recording before printing is safe because printing a condition lowers
+    // nothing -- `emit_expr` touches neither the builder nor the name counter (measured
+    // 2026-09-08); only `build_value` lowers, and a condition never goes through it.
+    ro cond = Cond.Expr(kids[1])
+    ro c = match outer {
+        None => @ir.begin_if(cond, has_else)
         Some(o) => {
             @ir.begin_else(o)
-            @body.append("if (")
+            @ir.begin_chained_if(cond, has_else, o.join)
         }
     }
-    @emit_expr(kids[1])
-    @body.append(") {\n")
-    ro c = match outer {
-        None => @ir.begin_if(Cond.Expr(kids[1]), has_else)
-        Some(o) => @ir.begin_chained_if(Cond.Expr(kids[1]), has_else, o.join)
-    }
+    // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
+    // caller printed, so it starts without the indent the top-level `if` carries.
+    @print_if_head(cond, chained_of(outer))
     @emit_block_stmts_fn(kids[2], false)
     if has_else {
         // The closing brace and the `else` share one line -- the one shape of else
@@ -134,11 +168,24 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     ro tmp = "_novac_tmp_t${@fresh_uniq()}"
     ro lo = @ir.named(ot, tmp)
     @lower_place(init, lo)
-    @body.append("    if (${@option_some_test(ot, tmp)}) {\n")
+    // Recorded first, printed from the record -- the same door the plain `if` uses
+    // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
+    // `option_some_test` reads the local's type and name, which is what it was passed.
+    ro cond = Cond.IsSome(lo)
     ro c = match outer {
-        None => @ir.begin_if(Cond.IsSome(lo), has_else)
-        Some(o) => @ir.begin_chained_if(Cond.IsSome(lo), has_else, o.join)
+        None => @ir.begin_if(cond, has_else)
+        Some(o) => @ir.begin_chained_if(cond, has_else, o.join)
     }
+    // NOT chained for the purpose of PRINTING, even when `outer` is Some -- braced, not continued.
+    // A chained plain `if` continues the `} else ` line its caller printed, so it carries no
+    // indent; a chained `if let` is wrapped in braces by `lower_else_tail` (`{` before it,
+    // `    }` after), because C has no `else <declaration>` and an if-let's first line IS the
+    // declaration of its Option temporary -- unbraced, clang refuses the unit (registry
+    // #991, found by the M2b-1b probe). Inside those braces the head starts a NEW line and
+    // keeps its indent. Measured, not reasoned: passing `chained_of(outer)` here made the
+    // corpus C differ in exactly one file (fixtures/iflet_else/pos_2), the hunk being this
+    // lost indent.
+    @print_if_head(cond, false)
     // The binder: the checker bound it to the payload type, this door spells
     // what was decided.
     ro bv = @ir.named(payload, leaf_text(kids[3]))
@@ -155,13 +202,45 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     @ir.end_if(c)
 }
 
+/// THE HEAD OF A LOOP, printed from the IR (wave M2b-2 step 3a): one printer for all three
+/// loop forms, because what differs between them is the `LoopHead` the lowering RECORDED,
+/// not the printing. Until this step three functions spelled three heads, each reading the
+/// tree; the walk that comes next needs one door that reads the record.
+///
+/// INTEROP, named as such: the element walk spells the shell's `len` of the collection's
+/// instance -- it goes the day novac emits the whole prelude (emit_option.nv carries the
+/// same note for the Option ABI).
+fn Emitter mut @print_loop_head(head LoopHead) -> () {
+    match head {
+        While(e) => {
+            @body.append("    while (")
+            @emit_expr(e)
+            @body.append(") {\n")
+        }
+        Range(r) => {
+            ro v = @ir.decl_of(r.var).name
+            @body.append("    for (nova_int ${v} = ")
+            @emit_expr(r.lo)
+            @body.append("; ${v} < ")
+            @emit_expr(r.hi)
+            @body.append("; ${v}++) {\n")
+        }
+        Each(e) => {
+            ro vd = @ir.decl_of(e.vec)
+            ro i = @ir.decl_of(e.idx).name
+            ro len_c = c_instance_method(@ctx, vd.ty, VEC_LEN_METHOD)
+            @body.append("    for (nova_int ${i} = 0; ${i} < ${len_c}(${vd.name}); ${i}++) {\n")
+        }
+    }
+}
+
 /// One `while`: the header block carries the loop, the body jumps back.
 fn Emitter mut @lower_while(st Node) -> () {
     ro kids = branch_children(st)
-    @body.append("    while (")
-    @emit_expr(kids[1])
-    @body.append(") {\n")
-    ro c = @ir.begin_loop(LoopHead.While(kids[1]))
+    // Recorded first, printed from the record (M2b-2 step 3a).
+    ro head = LoopHead.While(kids[1])
+    ro c = @ir.begin_loop(head)
+    @print_loop_head(head)
     @emit_block_stmts_fn(kids[2], false)
     @body.append("    }\n")
     @ir.end_loop(c)
@@ -173,13 +252,12 @@ fn Emitter mut @lower_while(st Node) -> () {
 fn Emitter mut @lower_for_range(kids []Node) -> () {
     ro v = leaf_text(kids[1])
     ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
-    @body.append("    for (nova_int ${v} = ")
-    @emit_expr(range[0])
-    @body.append("; ${v} < ")
-    @emit_expr(range[2])
-    @body.append("; ${v}++) {\n")
+    // The loop variable is a binding local of the body, and the head is printed from the
+    // record that carries it (M2b-2 step 3a).
     ro lv = @ir.named(@ctx.prims.int_id, v)
-    ro c = @ir.begin_loop(LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] }))
+    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] })
+    ro c = @ir.begin_loop(head)
+    @print_loop_head(head)
     @emit_block_stmts_fn(kids[4], false)
     @body.append("    }\n")
     @ir.end_loop(c)
@@ -202,11 +280,13 @@ fn Emitter mut @lower_for_each(kids []Node) -> () {
     ro itmp = "_novac_i_t${@fresh_uniq()}"
     ro lv = @ir.named(ht, vtmp)
     @lower_place(head, lv)
-    ro len_c = c_instance_method(@ctx, ht, VEC_LEN_METHOD)
-    @body.append("    for (nova_int ${itmp} = 0; ${itmp} < ${len_c}(${vtmp}); ${itmp}++) {\n")
+    // All three locals of the walk exist before the head is printed, because the head is
+    // printed FROM the record that names them (M2b-2 step 3a).
     ro li = @ir.named(@ctx.prims.int_id, itmp)
     ro le = @ir.named(elem_t, leaf_text(kids[1]))
-    ro c = @ir.begin_loop(LoopHead.Each(EachHead { vec: lv, idx: li, elem: le }))
+    ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
+    ro c = @ir.begin_loop(lh)
+    @print_loop_head(lh)
     @ir.take_elem(le, lv, li)
     @emit_last_stmt()
     @emit_block_stmts_fn(kids[4], false)
