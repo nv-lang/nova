@@ -163,6 +163,10 @@ fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr_t TyId) -> () {
     @body.append(")) {\n")
 }
 
+/// Lowers ONE arm of a `match`: records it into the IR, prints its head, unpacks the
+/// variant payload onto the arm's binders, then emits the body into `dest`.
+/// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
+/// so that a single later walk can print every arm without reading the tree again.
 fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
