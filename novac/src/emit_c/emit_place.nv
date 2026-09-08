@@ -52,7 +52,23 @@ fn Emitter mut @emit_last_stmt() -> () {
         Assign(a) => @emit_assign(a)
         Eval(rv) => @emit_eval(rv)
         Store(st) => @emit_store(st)
+        Decl(l) => @emit_decl(l)
     }
+}
+
+/// The declaration of a result temporary: `T name = (T){0};` at the body's indent. The
+/// zero is not decoration -- see `LocalDecl.zero_init` for the two forms that need it and
+/// why the lowering, not this printer, decides.
+///
+/// A `Decl` of a local that is NOT zero-initialised is a lowering bug, not a shape to
+/// print: bindings are declared by their first assignment, and no form records a bare
+/// declaration. It is named here rather than printed as dead code with no carrier.
+fn Emitter mut @emit_decl(l Local) -> () {
+    ro d = @ir.decl_of(l)
+    if !d.zero_init {
+        ice("emit: a Decl statement for a local that is not zero-initialised")
+    }
+    @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = (${c_type(@ctx, d.ty)}){0};\n")
 }
 
 /// The tree expression behind an rvalue -- the M1 bridge; an operand rvalue

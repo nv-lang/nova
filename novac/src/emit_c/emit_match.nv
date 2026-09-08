@@ -53,8 +53,11 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
         // both compilers accept `match n { 1 => 10  2 => 20 }` -- and the
         // oracle answers 0 there; an uninitialised temporary answered whatever
         // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
-        ro res_t = @ir.decl_of(dest).ty
-        @body.append("    ${c_type(@ctx, res_t)} _novac_match_t${uniq} = (${c_type(@ctx, res_t)}){0};\n")
+        // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
+        // created the local, this door records WHERE it is declared and that it starts
+        // at zero -- the reason is on `LocalDecl.zero_init`.
+        @ir.declare_zeroed(dest)
+        @emit_last_stmt()
     } else {
         // Statement position: no result, nothing to declare.
     }
@@ -144,20 +147,34 @@ fn Emitter mut @emit_pattern_test(pattern Pattern, uniq int, scr_t TyId) -> () {
     }
 }
 
-/// One arm: the pattern is decided, its test printed and the arm's block
-/// opened; the binders are recorded as statements of that block and printed
-/// from the IR; a guard opens an `If` inside the block; the body lands in
-/// `dest` (value position) or runs as statements; the printer's flag is set.
+/// THE HEAD OF ONE ARM: `if (!<flag> && (<test>)) {`. The flag is the PRINTER'S -- first
+/// match is the `Switch` terminator's meaning by construction, and the if-chain is how C
+/// emulates it (see `SwitchTerm` in lower/ir.nv). The test is spelled from the `Pattern`
+/// the lowering recorded, never from the tree.
+fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr_t TyId) -> () {
+    @body.append("    if (!_novac_matched_t${uniq} && (")
+    @emit_pattern_test(pattern, uniq, scr_t)
+    @body.append(")) {\n")
+}
+
+/// Lowers ONE arm of a `match`: records it into the IR, prints its head, then binds
+/// whatever the pattern introduces -- a variant's payload fields, or the scrutinee
+/// under a new name for a plain binder, or nothing at all for a literal or `_` --
+/// emits the body into `dest`, and sets the printer's first-match flag. A guard, if
+/// written, wraps the body in a branch of its own.
+/// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
+/// so that a single later walk can print every arm without reading the tree again.
 fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
     ro guard = @guard_of(ak)
     ro pattern = @pattern_of(pat, scr_t)
-    @body.append("    if (!_novac_matched_t${uniq} && (")
-    @emit_pattern_test(pattern, uniq, scr_t)
-    @body.append(")) {\n")
+    // Recorded first, printed from the record (M2b-2 step 3a). The test itself already
+    // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
+    // PLACE of the printing, which is what lets one walk print every arm later.
     @ir.begin_arm(c, pattern, guard)
+    @print_arm_head(uniq, pattern, scr_t)
     match pattern {
         Variant(vm) => {
             if !pattern_has_disj(pat) {
@@ -205,10 +222,12 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
     }
     match guard {
         Some(g) => {
-            @body.append("    if (")
-            @emit_expr(g)
-            @body.append(") {\n")
-            ro gi = @ir.begin_if(Cond.Expr(g), false)
+            // The guard's head is an `if` like any other: it goes through the ONE head
+            // door (`@print_if_head`, emit_flow.nv), which until this step was the third
+            // place spelling `    if (` + condition + `) {` by hand.
+            ro gcond = Cond.Expr(g)
+            ro gi = @ir.begin_if(gcond, false)
+            @print_if_head(gcond, false)
             @lower_arm_body(arm_e, dest)
             @body.append("    _novac_matched_t${uniq} = 1;\n    }\n")
             @ir.end_if(gi)

@@ -53,7 +53,29 @@ export type LocalDecl value {
     ty TyId /// the local's type, as the checker's channel recorded it
     kind LocalKind /// return place, binding or temporary -- see LocalKind
     name str /// the binding's source name, or the temporary's label; "" = unnamed
+    zero_init bool /// declared as `(T){0}` -- see the note below; set by the LOWERING
 }
+
+/// WHY `zero_init` IS A FIELD AND NOT THE PRINTER'S GUESS (wave M2b-2, decision of
+/// 2026-09-07). THREE forms declare a result temporary with a zero initialiser, and their
+/// reasons are NOT the same -- counted by probe, not by memory (2026-09-08: removing the
+/// initialiser changed 28 declarations in 17 corpus files, `_novac_match` 14, `_novac_qq` 8,
+/// `_novac_if` 6):
+///   * a `match` in value position -- a match on `int` may legally leave values uncovered
+///     (274.3/F29) and the oracle answers 0 there; an uninitialised temporary answered
+///     whatever the stack held. The zero is REQUIRED;
+///   * an `if` in value position, for the same reason on the branch that falls through.
+///     Also REQUIRED;
+///   * a `??` -- and here the zero is DEFENSIVE, not required: both branches assign the
+///     result (`take_payload` in the Some branch, the placement door in the None branch),
+///     so no path reads it unassigned. It is kept because this wave's criterion is
+///     byte-identical C, and dropping it would be a behaviour question decided in passing.
+///     Whether it should stay is a followup of plan 274.8, not a silent choice.
+/// Those THREE are the whole set today. The zeroing knows a REASON, and the reason is visible to what
+/// sees the FORM -- the lowering. The printer cannot know it without deriving it again,
+/// which is deciding twice in two places. A fourth client must NAME its reason, and
+/// "by analogy with the others" is not one -- as the three above show, the analogy is
+/// already false between them.
 
 /// The local that is not one: the statement-position match hands it to arms
 /// that assign nothing (the same shape as `no_ty()` and `no_node()`).
@@ -120,6 +142,7 @@ export type Stmt enum
     | Assign(AssignStmt) // `local = value` -- through the placement door
     | Eval(Rvalue) // an expression in statement position, value dropped
     | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
+    | Decl(Local) // the local's declaration point (donor: rustc MIR `StorageLive`)
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
@@ -284,7 +307,7 @@ export type FnBuilder {
 /// and whose entry block is reserved and current (rustc `START_BLOCK`).
 export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut locals = []LocalDecl.new()
-    locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "" })
+    locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "", zero_init: false })
     mut blocks = []Block.new()
     blocks.push(Block { stmts: []Stmt.new(), term: Terminator.Unreached })
     mut cur = []Stmt.new()
@@ -311,11 +334,27 @@ export fn FnBuilder mut @named(ty TyId, name str) -> Local {
     @local(ty, LocalKind.Binding, name)
 }
 
-/// Appends a local and returns its index -- the one place locals are created.
+/// Appends a local and returns its index -- the one place locals are created. A local is
+/// born WITHOUT a declaration point: `declare_zeroed` records that separately, the way
+/// rustc MIR separates a local from its `StorageLive`.
 fn FnBuilder mut @local(ty TyId, kind LocalKind, name str) -> Local {
     ro id = Local(@locals.len())
-    @locals.push(LocalDecl { ty, kind, name })
+    @locals.push(LocalDecl { ty, kind, name, zero_init: false })
     id
+}
+
+/// The declaration point of a result temporary that starts at zero: the local is marked
+/// and a `Decl` statement is recorded HERE, in the block being built. Only the two forms
+/// named on `LocalDecl.zero_init` use it; a binding is still declared by its first
+/// assignment, which spells its type and value in one line.
+export fn FnBuilder mut @declare_zeroed(l Local) -> () {
+    ro i = raw_local(l)
+    if i < 0 || i >= @locals.len() {
+        ice("lower: declaring a local the body never created")
+    }
+    ro d = @locals[i]
+    @locals[i] = LocalDecl { ty: d.ty, kind: d.kind, name: d.name, zero_init: true }
+    @cur.push(Stmt.Decl(l))
 }
 
 /// The declaration behind a local; an index the body never created is a

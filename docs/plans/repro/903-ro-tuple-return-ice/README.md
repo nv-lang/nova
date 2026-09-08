@@ -38,7 +38,7 @@ NOVA_CG_INCLUDE=<nova>/compiler-codegen \
 
 Отрицательный результат — тоже результат, и вот чем он оказался ценен: пять промахов
 подряд заставили перечитать не строку реестра, а ПОДЛИННИК. Ответ лежал в сообщении
-коммита `ce8574c` в `nova-bignum` — того самого, которым владелец обошёл дефект:
+коммита `nova-bignum@ce8574c` в `nova-bignum` — того самого, которым владелец обошёл дефект:
 
 > `round_by_dropping` and both `round_to_precision` functions **return their
 > `mant_abs` parameter unchanged** on the "nothing to drop" fast path. Parameters
@@ -108,7 +108,7 @@ value-записи (F); **именованный кортеж С полем-ве
 буквальная форма `BigInt(sign Sign, limbs []u32)`).
 
 Последние два были главными подозреваемыми — их называет сам коммит-обход
-`ce8574c` («return their `mant_abs` parameter unchanged», «`BigInt` is a named
+`nova-bignum@ce8574c` («return their `mant_abs` parameter unchanged», «`BigInt` is a named
 tuple and has no `clone`»). Оба зелёные. Значит подозрение, взятое из
 формулировки подлинника, тоже оказалось ложным, и это стоит записать: цитата
 объясняет, почему автор поступил так, а не что ломает компилятор.

@@ -107,6 +107,50 @@ else
     fi
 fi
 
+# -- 6-9. СЧЁТ ИСХОДОВ. Заглушка-оракул вместо настоящего: случаи должны быть
+#         ДЕТЕРМИНИРОВАНЫ, а живой корпус меняет число файлов на каждом новом
+#         модуле. Дерево строим своё, ровно из двух тестовых файлов, поэтому
+#         N == 2 и все четыре ожидания считаются на бумаге, а не подгоняются.
+#         Заведено 2026-09-08: страж принимал `PASS: 0  FAIL: 0` за успех —
+#         строка итога есть, провалов нет, значит «ok». Прогон, не исполнивший
+#         ни одного теста, читался как доказательство (класс №1040/№1041).
+TWO="$T/two/novac/src"
+mkdir -p "$TWO/a" "$TWO/b"
+echo "module a" > "$TWO/a/a_test.nv"
+echo "module b" > "$TWO/b/b_test.nv"
+
+# $1 — строка итога заглушки; $2 — PASS|FAIL; $3 — имя случая; $4 — что
+# обязано найтись в выводе (пусто = не проверять текст).
+stub_case() {
+    _line="$1"; _want="$2"; _name="$3"; _needle="$4"
+    _stub="$T/stub.sh"
+    printf '#!/bin/sh\necho "%s"\nexit 0\n' "$_line" > "$_stub"
+    chmod +x "$_stub"
+    if sh "$G" "$T/two" "$_stub" > "$T/outS" 2> "$T/errS"; then
+        _got=PASS
+    else
+        _got=FAIL
+    fi
+    if [ "$_got" != "$_want" ]; then
+        bad "$_name: получено $_got, ожидалось $_want [$(head -n 1 "$T/outS")$(head -n 1 "$T/errS")]"
+        return
+    fi
+    if [ -n "$_needle" ] && ! grep -q "$_needle" "$T/outS" "$T/errS"; then
+        bad "$_name: вердикт $_got верный, но без слов «$_needle»"
+        return
+    fi
+    ok "$_name"
+}
+
+stub_case "PASS: 0  FAIL: 0" FAIL \
+    "ноль исполненных при двух файлах — красный" "НОЛЬ тестов"
+stub_case "PASS: 1  FAIL: 0" FAIL \
+    "счёт не сошёлся (1 из 2) — красный" "счёт не сошёлся"
+stub_case "PASS: 1  FAIL: 0  SKIP: 1 (skipped)" PASS \
+    "пропуск учтён: 1+1=2 — зелёный, но сказано вслух" "пропущено тестов"
+stub_case "PASS: 2  FAIL: 0" PASS \
+    "здоровый случай: 2 из 2 — зелёный" "счёт сошёлся"
+
 if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
     exit 1

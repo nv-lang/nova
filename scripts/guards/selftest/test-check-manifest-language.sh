@@ -45,6 +45,22 @@ mkdir -p "$TMP/pkg2"; printf '# second package\n' > "$TMP/pkg2/nova.toml"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q "проверено манифестов 2"; then ok "счётчик считает живые манифесты"; else bad "счётчик врёт (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-manifest-language: 5/5 ok"; exit 0; fi
+# 6. НИ ОДНОГО манифеста — красный. Ноль проверенных это «предмет не найден»,
+#    а не «нарушений нет»: пустой список (git отдал ноль, шаблон разъехался,
+#    манифесты переименованы) давал чистое «ok». Класс реестра 221.1 №1041 —
+#    пустая выборка, надевшая одежду успеха.
+EMPTY="$TMP/empty"
+mkdir -p "$EMPTY/sub"
+printf 'nothing to see here\n' > "$EMPTY/sub/readme.txt"
+out=$(bash "$G" "$EMPTY" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then
+    bad "дерево без манифестов сочтено проверенным (код 0): $out"
+elif printf %s "$out" | grep -q "НОЛЬ манифестов"; then
+    ok "дерево без манифестов — красный, и назван причиной"
+else
+    bad "красный, но не про ноль манифестов (код $rc): $out"
+fi
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-manifest-language: 6/6 ok"; exit 0; fi
 echo "селфтест check-manifest-language: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
