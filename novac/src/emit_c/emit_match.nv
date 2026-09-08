@@ -147,12 +147,6 @@ fn Emitter mut @emit_pattern_test(pattern Pattern, uniq int, scr_t TyId) -> () {
     }
 }
 
-/// One arm: the pattern is decided, its test printed and the arm's block
-/// opened; the binders are recorded as statements of that block and printed
-/// from the IR; a guard opens an `If` inside the block; the body lands in
-/// `dest` (value position) or runs as statements; the printer's flag is set.
-///
-/// (The head of an arm is printed by `@print_arm_head` below it -- see M2b-2 step 3a.)
 /// THE HEAD OF ONE ARM: `if (!<flag> && (<test>)) {`. The flag is the PRINTER'S -- first
 /// match is the `Switch` terminator's meaning by construction, and the if-chain is how C
 /// emulates it (see `SwitchTerm` in lower/ir.nv). The test is spelled from the `Pattern`
