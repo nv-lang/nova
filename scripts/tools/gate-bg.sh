@@ -141,6 +141,25 @@ if [ "${1:-}" = "-c" ]; then
         fi
         echo "    вердикт ниже, если он есть, относится к ПРОШЛОМУ прогону:"
     fi
+    if [ -f "$DONE" ]; then
+        verdict=$(cat "$DONE")
+        rc=$(echo "$verdict" | sed -n 's/.*RC=\([0-9]*\).*/\1/p')
+        vhash=$(echo "$verdict" | sed -n 's/.*HASH=\([0-9a-f]*\).*/\1/p')
+        mega=$(grep -a 'mega-CU exit' "$LOG" 2>/dev/null | tail -1 | cut -c1-70)
+        _tag=$(_verdict_tag "$DONE" "$vhash")
+        if [ "${rc:-1}" = "0" ]; then
+            echo "ГЕЙТ ЗЕЛЁНЫЙ $_tag ($verdict) :: $mega"
+        else
+            echo "ГЕЙТ КРАСНЫЙ $_tag ($verdict) :: $mega"
+            grep -aE 'GATE FAIL' "$LOG" 2>/dev/null | tail -2
+        fi
+        _verdict_context "$DONE" "$vhash"
+    # ПОРЯДОК: основной вердикт ПЕРВЫМ, novac следом (правка 2026-09-08).
+    # Сперва я поставил novac перед основным, и он занял ПЕРВУЮ строку —
+    # самотест окна 274 держит на ней контракт («протухший назван протухшим
+    # в первой строке») и упал. Увидеть это можно было только в ОБЪЕДИНЁННОМ
+    # дереве: у них нет моего читателя, у меня не было их случаев.
+    # Основной ярус судит дерево ЦЕЛИКОМ — его вердикт и старше.
     # ВЕРДИКТ NOVAC-ЯРУСА, ЕСЛИ ОН ЕСТЬ (правка 2026-09-08).
     #
     # ЗАЧЕМ. Окно 274 сказало «ярус novac вердикта не пишет», интегратор
@@ -162,19 +181,6 @@ if [ "${1:-}" = "-c" ]; then
             echo "ЯРУС NOVAC КРАСНЫЙ $_ntag ($_nv)"
         fi
     fi
-    if [ -f "$DONE" ]; then
-        verdict=$(cat "$DONE")
-        rc=$(echo "$verdict" | sed -n 's/.*RC=\([0-9]*\).*/\1/p')
-        vhash=$(echo "$verdict" | sed -n 's/.*HASH=\([0-9a-f]*\).*/\1/p')
-        mega=$(grep -a 'mega-CU exit' "$LOG" 2>/dev/null | tail -1 | cut -c1-70)
-        _tag=$(_verdict_tag "$DONE" "$vhash")
-        if [ "${rc:-1}" = "0" ]; then
-            echo "ГЕЙТ ЗЕЛЁНЫЙ $_tag ($verdict) :: $mega"
-        else
-            echo "ГЕЙТ КРАСНЫЙ $_tag ($verdict) :: $mega"
-            grep -aE 'GATE FAIL' "$LOG" 2>/dev/null | tail -2
-        fi
-        _verdict_context "$DONE" "$vhash"
         exit 0
     fi
     if [ -f "$LOG" ]; then
