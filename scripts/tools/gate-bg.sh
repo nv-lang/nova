@@ -79,6 +79,27 @@ _novac_minutes() {
 # Возраст вердикта и о КАКОМ дереве он: сохранённый вердикт без этих двух чисел
 # читается как свежий и про текущий HEAD. Замер 2026-09-07: файлу 68 минут, дерево
 # ушло на 24 коммита вперёд, а в выводе не было ни того, ни другого.
+# КОРОТКАЯ МЕТКА ДЛЯ ЗАГОЛОВКА. Замер 2026-09-08: подробная строка ниже печаталась
+# ПОСЛЕДНЕЙ, а вывод этой команды читают через `head -2` — и её срезало четыре раза
+# подряд у того же окна, которое её и завело. Вердикт девятичасовой давности, судивший
+# дерево на 13 коммитов позади, был прочитан как состояние машины. Факт, который важен
+# только если прочитан, не должен стоять там, где привычное усечение его убирает.
+_verdict_tag() {
+    _vf="$1"; _vh="$2"
+    _mt=$(date -r "$_vf" +%s 2>/dev/null || echo 0)
+    _age=$(( ($(date +%s) - _mt) / 60 ))
+    [ "$_mt" = "0" ] && _age="?"
+    _bh="?"
+    if [ -n "$_vh" ] && git -C "$ROOT" cat-file -e "$_vh^{commit}" 2>/dev/null; then
+        _bh=$(git -C "$ROOT" rev-list --count "$_vh..HEAD" 2>/dev/null || echo "?")
+    fi
+    if [ "$_bh" = "0" ] && [ "$_age" != "?" ] && [ "$_age" -lt 60 ]; then
+        printf '[СВЕЖИЙ: %s мин, ТЕКУЩИЙ HEAD]' "$_age"
+    else
+        printf '[ПРОТУХШИЙ: %s мин, дерево ушло на %s коммит(ов)]' "$_age" "$_bh"
+    fi
+}
+
 _verdict_context() {
     _vf="$1"; _vh="$2"
     _mt=$(date -r "$_vf" +%s 2>/dev/null || echo 0)
@@ -113,10 +134,11 @@ if [ "${1:-}" = "-c" ]; then
         rc=$(echo "$verdict" | sed -n 's/.*RC=\([0-9]*\).*/\1/p')
         vhash=$(echo "$verdict" | sed -n 's/.*HASH=\([0-9a-f]*\).*/\1/p')
         mega=$(grep -a 'mega-CU exit' "$LOG" 2>/dev/null | tail -1 | cut -c1-70)
+        _tag=$(_verdict_tag "$DONE" "$vhash")
         if [ "${rc:-1}" = "0" ]; then
-            echo "ГЕЙТ ЗЕЛЁНЫЙ ($verdict) :: $mega"
+            echo "ГЕЙТ ЗЕЛЁНЫЙ $_tag ($verdict) :: $mega"
         else
-            echo "ГЕЙТ КРАСНЫЙ ($verdict) :: $mega"
+            echo "ГЕЙТ КРАСНЫЙ $_tag ($verdict) :: $mega"
             grep -aE 'GATE FAIL' "$LOG" 2>/dev/null | tail -2
         fi
         _verdict_context "$DONE" "$vhash"
