@@ -459,16 +459,16 @@ fn Emitter mut @emit_block_stmts_fn(b Node, tail bool) -> () {
 /// costs one C token and removes a whole class of question.
 fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     ro kids = branch_children(n)
-    @body.append("    ")
-    @body.append(c_type(@ctx, res_t))
-    @body.append(" _novac_if_t${uniq} = (")
-    @body.append(c_type(@ctx, res_t))
-    @body.append("){0};\n    if (")
+    // The temporary is a LOCAL of the lowered body, and its DECLARATION is a statement of
+    // that body (274.8 M2b-2 step 2): recorded here, printed by the one statement door. It
+    // starts at zero because a branch may fall through without assigning it -- the reason
+    // lives on `LocalDecl.zero_init`, with both of its clients named.
+    ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
+    @ir.declare_zeroed(t)
+    @emit_last_stmt()
+    @body.append("    if (")
     @emit_expr(kids[1])
     @body.append(") {\n")
-    // The temporary is a LOCAL of the lowered body (274.8 M1): declared just
-    // above by this printer, assigned in each branch through the one door.
-    ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
     // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
     // if-value always has an else, so `has_else` is a fact, not a guess.
     ro c = @ir.begin_if(Cond.Expr(kids[1]), true)
@@ -500,16 +500,29 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     // the hoist of a construction inside it is the printer's.
     ro lo = @ir.named(ot, opt)
     @lower_place(qk[0], lo)
-    @body.append("    ${c_type(@ctx, res_t)} ${res} = (${c_type(@ctx, res_t)}){0};\n")
-    // The Some-test through the ONE Option door (emit_option, wave W4).
+    // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
+    // the zero initialiser is a field the lowering sets, not a shape this printer knows.
+    ro lr = @ir.temp(res_t, res)
+    @ir.declare_zeroed(lr)
+    @emit_last_stmt()
+    // The Some-test through the ONE Option door (emit_option, wave W4), printed
+    // BEFORE the branch opens -- the same order lower_if_let keeps, for the same
+    // reason (emit_flow.nv header).
     @body.append("    if (${@option_some_test(ot, opt)}) {\n")
-    @body.append("        ${res} = ${opt}.value;\n")
+    // Both branches are BLOCKS of the body with one join, and the Some branch's
+    // one statement is the payload read through the one door -- printed by the
+    // one assignment printer, which spells a Temp with the indent the hand-written
+    // line had (measured before the edit, plan 274.8 decision (1)).
+    ro c = @ir.begin_if(Cond.IsSome(lo), true)
+    @ir.take_payload(lr, lo)
+    @emit_last_stmt()
+    @ir.begin_else(c)
     @body.append("    } else {\n")
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.
-    ro lr = @ir.temp(res_t, res)
     @lower_place(qk[2], lr)
     @body.append("    }\n")
+    @ir.end_if(c)
     res
 }
 

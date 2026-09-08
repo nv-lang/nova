@@ -53,8 +53,11 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
         // both compilers accept `match n { 1 => 10  2 => 20 }` -- and the
         // oracle answers 0 there; an uninitialised temporary answered whatever
         // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
-        ro res_t = @ir.decl_of(dest).ty
-        @body.append("    ${c_type(@ctx, res_t)} _novac_match_t${uniq} = (${c_type(@ctx, res_t)}){0};\n")
+        // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
+        // created the local, this door records WHERE it is declared and that it starts
+        // at zero -- the reason is on `LocalDecl.zero_init`.
+        @ir.declare_zeroed(dest)
+        @emit_last_stmt()
     } else {
         // Statement position: no result, nothing to declare.
     }

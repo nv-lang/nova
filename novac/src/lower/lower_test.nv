@@ -57,6 +57,7 @@ test "the placement door records dest = Expr(e) in the current block" {
         Assign(a) => assert(a.dest == t)
         Eval(_) => assert(false)
         Store(_) => assert(false)
+        Decl(_) => assert(false)
     }
     b.end_body()
     ro f = b.finish()
@@ -67,6 +68,7 @@ test "the placement door records dest = Expr(e) in the current block" {
         Assign(a) => assert(a.dest == t)
         Eval(_) => assert(false)
         Store(_) => assert(false)
+        Decl(_) => assert(false)
     }
 }
 
@@ -80,6 +82,7 @@ test "a store keeps the tree's target and operator; an evaluation keeps only the
         }
         Assign(_) => assert(false)
         Eval(_) => assert(false)
+        Decl(_) => assert(false)
     }
     b.eval(stand_in_expr())
     b.end_body()
@@ -296,6 +299,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
         }
         Eval(_) => assert(false)
         Store(_) => assert(false)
+        Decl(_) => assert(false)
     }
     b.end_loop(c)
     b.end_body()
@@ -341,6 +345,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         }
         Eval(_) => assert(false)
         Store(_) => assert(false)
+        Decl(_) => assert(false)
     }
     b.end_if(c)
     b.end_body()

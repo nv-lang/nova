@@ -39,11 +39,15 @@ import ../builtins.{VEC_LEN_METHOD}
 fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     ro kids = branch_children(st)
     ro has_else = kids.len() > 4
+    // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
+    // caller printed, so it starts without the indent the top-level `if` carries.
     match outer {
-        None => {}
-        Some(o) => @ir.begin_else(o)
+        None => @body.append("    if (")
+        Some(o) => {
+            @ir.begin_else(o)
+            @body.append("if (")
+        }
     }
-    @body.append("    if (")
     @emit_expr(kids[1])
     @body.append(") {\n")
     ro c = match outer {
@@ -51,8 +55,13 @@ fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
         Some(o) => @ir.begin_chained_if(Cond.Expr(kids[1]), has_else, o.join)
     }
     @emit_block_stmts_fn(kids[2], false)
-    @body.append("    }\n")
     if has_else {
+        // The closing brace and the `else` share one line -- the one shape of else
+        // (M2b-2-0). Until then the statement `if` printed `}` and `else` on two lines
+        // while the if-value printed `} else {`; the oracle's recorded C has 41 753
+        // `} else {` and no bare `else {`, so the second shape was novac's own, and a
+        // single printing walk would have needed a flag to reproduce it.
+        @body.append("    } else ")
         // The ELSE branch, since 2026-08-18. Before that the parser did not
         // read `else` at all; reading it without writing it here would have
         // been worse than not reading it -- the branch would vanish from the
@@ -61,6 +70,7 @@ fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
         @lower_else_tail(c, kids[4])
     } else {
         // No else branch was written: the else block IS the join.
+        @body.append("    }\n")
     }
     @ir.end_if(c)
 }
@@ -73,7 +83,7 @@ fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
 /// for "every other node kind" is what P21 refuses, because the next kind
 /// added to the tree would quietly land in it.
 fn Emitter mut @lower_else_tail(c IfCtx, tail Node) -> () {
-    @body.append("    else ")
+    // The caller printed `    } else ` already: this door prints only what follows.
     ro tk = tail.kind_of()
     if tk == NodeKind.Block {
         @ir.begin_else(c)
@@ -135,11 +145,12 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     @ir.take_payload(bv, lo)
     @emit_last_stmt()
     @emit_block_stmts_fn(kids[7], false)
-    @body.append("    }\n")
     if has_else {
+        @body.append("    } else ")
         @lower_else_tail(c, kids[9])
     } else {
         // No else branch was written: the else block IS the join.
+        @body.append("    }\n")
     }
     @ir.end_if(c)
 }
