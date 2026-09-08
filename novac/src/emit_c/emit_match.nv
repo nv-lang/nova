@@ -147,12 +147,6 @@ fn Emitter mut @emit_pattern_test(pattern Pattern, uniq int, scr_t TyId) -> () {
     }
 }
 
-/// One arm: the pattern is decided, its test printed and the arm's block
-/// opened; the binders are recorded as statements of that block and printed
-/// from the IR; a guard opens an `If` inside the block; the body lands in
-/// `dest` (value position) or runs as statements; the printer's flag is set.
-///
-/// (The head of an arm is printed by `@print_arm_head` below it -- see M2b-2 step 3a.)
 /// THE HEAD OF ONE ARM: `if (!<flag> && (<test>)) {`. The flag is the PRINTER'S -- first
 /// match is the `Switch` terminator's meaning by construction, and the if-chain is how C
 /// emulates it (see `SwitchTerm` in lower/ir.nv). The test is spelled from the `Pattern`
@@ -163,6 +157,13 @@ fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr_t TyId) -> () {
     @body.append(")) {\n")
 }
 
+/// Lowers ONE arm of a `match`: records it into the IR, prints its head, then binds
+/// whatever the pattern introduces -- a variant's payload fields, or the scrutinee
+/// under a new name for a plain binder, or nothing at all for a literal or `_` --
+/// emits the body into `dest`, and sets the printer's first-match flag. A guard, if
+/// written, wraps the body in a branch of its own.
+/// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
+/// so that a single later walk can print every arm without reading the tree again.
 fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
