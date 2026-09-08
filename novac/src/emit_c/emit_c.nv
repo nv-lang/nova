@@ -466,12 +466,13 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> () {
     ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
     @ir.declare_zeroed(t)
     @emit_last_stmt()
-    @body.append("    if (")
-    @emit_expr(kids[1])
-    @body.append(") {\n")
     // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
-    // if-value always has an else, so `has_else` is a fact, not a guess.
-    ro c = @ir.begin_if(Cond.Expr(kids[1]), true)
+    // if-value always has an else, so `has_else` is a fact, not a guess. The head goes
+    // through the ONE door (M2b-2 step 3a) -- the same one the statement `if`, the
+    // `if let` and a match guard use.
+    ro cond = Cond.Expr(kids[1])
+    ro c = @ir.begin_if(cond, true)
+    @print_if_head(cond, false)
     @emit_block_value(kids[2], t)
     @ir.begin_else(c)
     @body.append("    } else {\n")
@@ -505,15 +506,15 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     ro lr = @ir.temp(res_t, res)
     @ir.declare_zeroed(lr)
     @emit_last_stmt()
-    // The Some-test through the ONE Option door (emit_option, wave W4), printed
-    // BEFORE the branch opens -- the same order lower_if_let keeps, for the same
-    // reason (emit_flow.nv header).
-    @body.append("    if (${@option_some_test(ot, opt)}) {\n")
-    // Both branches are BLOCKS of the body with one join, and the Some branch's
-    // one statement is the payload read through the one door -- printed by the
-    // one assignment printer, which spells a Temp with the indent the hand-written
-    // line had (measured before the edit, plan 274.8 decision (1)).
-    ro c = @ir.begin_if(Cond.IsSome(lo), true)
+    // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
+    // from the local's type and name -- the two values this function used to pass by
+    // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
+    // one statement is the payload read through the one door -- printed by the one
+    // assignment printer, which spells a Temp with the indent the hand-written line
+    // had (measured before the edit, plan 274.8 decision (1)).
+    ro cond = Cond.IsSome(lo)
+    ro c = @ir.begin_if(cond, true)
+    @print_if_head(cond, false)
     @ir.take_payload(lr, lo)
     @emit_last_stmt()
     @ir.begin_else(c)

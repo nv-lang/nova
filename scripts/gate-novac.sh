@@ -438,6 +438,7 @@ par_add "$ROOT/scripts/guards/check-novac-string-build-door.py" "строка с
 par_add "$ROOT/scripts/guards/check-novac-required-token-door.py" "требуемый грамматикой токен взят необязательной дверью (#809/#815)"
 par_add "$ROOT/scripts/guards/check-novac-recovery-closer.py" "место восстановления парсера может съесть закрывающий токен объемлющей формы (274.3/F15)"
 par_add "$ROOT/scripts/guards/check-novac-prim-id-compare.py" "«это целое?» спрошено сравнением с одним id вместо двери семьи (№910): сравнений с prims.int_id/f64_id больше базы"
+par_add "$ROOT/scripts/guards/check-novac-one-branch-head.py" "голову ветвления C печатает не только названная дверь (П21, волна M2b-2)"
 par_add "$ROOT/scripts/guards/check-novac-table-one-filler.py" "у таблицы реестра появился ВТОРОЙ наполнитель: наполняющий и спрашивающий связаны только намерением автора (274.5 §3-пред62)"
 par_add "$ROOT/scripts/guards/check-novac-deferral-address.py" "комментарий отсылает ответственность («это проверит X»), не называя адреса: отсылка в дверь, которая не открывается (П6)"
 par_add "$ROOT/scripts/guards/check-novac-module-decl-uniform.py" "папка novac/src объявляет разные модули в своих файлах: расколотая папка — не folder-модуль, E_D78 через каталог (2026-09-05)"
