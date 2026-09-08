@@ -588,3 +588,37 @@ test "283 Ф.7: to_f32 and to_f64 share the grammar, so they agree on what is NO
     // And on what IS one, with the same positions reported.
     assert(f32_bits("1e10") == 0x501502F9 as u32, "1e10 accepted by both")
 }
+
+test "u64 >>= : logical shift, and this module is the first user of the form in std" {
+    // `spec_tests/conformance/m234_compound_assign_pos.nv` judges `>>=` on a SIGNED int
+    // (arithmetic: `-16 >>= 2 == -4`) and `<<=` on `uint`, but NOT `>>=` on an unsigned
+    // type -- checked by reading it. `mantissa` here is `u64`, so the form this module
+    // now uses (`compute_float`: `mantissa >>= 1`, `mantissa >>= -power2 + 1`) is only
+    // PARTLY covered, and whoever adopts a form owes its proof.
+    //
+    // The control is inside the case: an arithmetic shift over a signed value would
+    // smear the top bit and give all ones, not 1. So this reddens on exactly the defect
+    // it exists for.
+    mut top = 0x8000000000000000 as u64
+    top >>= 63
+    assert(top == (1 as u64), "u64 >>= must be a logical shift")
+
+    // Shift amount from an `int` expression -- the shape `compute_float` uses.
+    ro power2 = -2
+    mut m = 0x10 as u64
+    m >>= -power2 + 1
+    assert(m == (2 as u64), "shift amount may be an int expression")
+
+    // Zero shift is identity.
+    mut keep = 0xDEADBEEF as u64
+    keep >>= 0
+    assert(keep == (0xDEADBEEF as u64), ">>= 0 is identity")
+
+    // The widest LEGAL shift (width - 1) drops every bit of a small value. 64 is
+    // deliberately NOT tested here: shifting by the full width is a question about the
+    // language, not about this module, and answering it with a green test would be
+    // guessing.
+    mut wide = 0xDEADBEEF as u64
+    wide >>= 63
+    assert(wide == (0 as u64), ">>= 63 clears a value below 2^63")
+}

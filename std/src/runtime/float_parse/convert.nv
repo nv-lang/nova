@@ -233,9 +233,9 @@ fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
             return fp_zero
         }
         // Have a subnormal value.
-        mantissa = mantissa >> (-power2 + 1)
+        mantissa >>= -power2 + 1
         mantissa += mantissa & 1
-        mantissa = mantissa >> 1
+        mantissa >>= 1
         power2 = if mantissa >= ((1 as u64) << spec.sig_bits) { 1 } else { 0 }
         return BiasedFp(mantissa, power2)
     }
@@ -260,7 +260,7 @@ fn compute_float(spec FloatSpec, q int, w_in u64) -> BiasedFp {
     }
     // Round-to-even, then shift the significant digits into place.
     mantissa += mantissa & 1
-    mantissa = mantissa >> 1
+    mantissa >>= 1
     if mantissa >= ((2 as u64) << spec.sig_bits) {
         // Rounding up overflowed, so the carry bit is set. Set the
         // mantissa to 1 (only the implicit, hidden bit is set) and
