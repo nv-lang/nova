@@ -18,7 +18,13 @@ import sys
 import time
 
 # Heavy = actually occupies the machine's slot.
-BUSY = re.compile(r"(gate\.sh|gate-novac|nova test|nova\.exe|novac\.exe|cargo|clang|cl\.exe|link\.exe)")
+# Both spellings on purpose: the built oracle is `target/release/nova.exe` on Windows and
+# `target/release/nova` on Linux, and novac lives at `novac/target/novac[.exe]`. A pattern
+# that knew only the .exe form would find nothing on Linux and print "machine FREE" --
+# silence dressed as a verdict. Caught by scripts/guards/check-guard-honesty.py, 2026-09-08.
+# Anchored to release/ and target/ rather than a bare name: a bare `nova` would match every
+# command line that merely contains the repository path.
+BUSY = re.compile(r"(gate\.sh|gate-novac|nova test|(?:release|target)[/\\\\]novac?(?:\.exe)?(?![\w.])|cargo|clang|cl\.exe|link\.exe)")
 # Noise = present in ps, but not a slot holder.
 NOISE = re.compile(r"(tail -|tail\.exe|vcvars|cmd\.exe)")
 # Attribute a process to a tree by the path inside its command line.
