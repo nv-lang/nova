@@ -97,13 +97,22 @@ def main():
     # The observer must not appear in its own measurement. Caught 16:16Z: this script's own
     # `ps`/`grep` carried the string "nova-p283" in its command line and was reported as that
     # tree taking the machine out of turn. A watch that accuses itself is worse than no watch.
-    SELF = re.compile(r"(controller-machine-watch|controller-peers-|\bps -ef\b|grep -E|shell-snapshots)")
+    # `grep -E` alone missed `grep -ciE` and other flag orders -- caught 00:51Z 2026-09-09, when
+    # my own counting command showed up as an unidentified slot holder for the second time.
+    # Match the tool, not one spelling of its flags.
+    SELF = re.compile(r"(controller-\w+|\bps -ef\b|\bgrep\b|\bawk\b|\bwc\b|shell-snapshots)")
+    # THIRD occurrence of the same class (00:51Z 2026-09-09): a heredoc python probe of mine put
+    # the BUSY pattern itself into its argv, so the watch listed its own source lines as slot
+    # holders. Word filters cannot fix this -- the words are legitimately there. A real slot
+    # holder is a process line that starts with the ps columns (uid pid ppid tty stime cmd);
+    # anything without that shape is text that leaked into the listing, not a process.
+    PS_ROW = re.compile(r"^\S+\s+\d+\s+\d+\s")
 
     busy, noise = [], []
     for ln in lines[1:]:
         if not ln.strip():
             continue
-        if SELF.search(ln):
+        if SELF.search(ln) or not PS_ROW.match(ln):
             continue
         # A process started days ago is not a slot holder, whatever it is called. The `ps`
         # output of a days-old process shows a DATE instead of a clock, so match either form:
