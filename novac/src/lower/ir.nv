@@ -789,3 +789,18 @@ export type Lowerer {
 export fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
     @ir.store(target, op, src)
 }
+
+/// A temporary of the body holding a destructuring scrutinee, with the initialiser placed
+/// into it. Second method to live on the receiver (274.8 M3, slice 2), and the LAST one
+/// that could move alone: the call-structure measure found only two leaves, and this is the
+/// one with no outward calls at all. What remains are two mutually recursive groups plus
+/// three methods that call into printing -- they move as wholes, not one at a time.
+///
+/// The name is the body's own index, never the author's: a destructuring scrutinee is the
+/// compiler's invention, and `named` would claim otherwise (held by
+/// check-novac-invented-name-not-named).
+export fn Lowerer mut @bind_pair_temp(init Node, pt TyId) -> Local {
+    ro l = @ir.temp(pt)
+    @ir.place(init, l)
+    l
+}

@@ -28,20 +28,6 @@ import ../types.{TyId}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 
-/// An initializer that is not a construction lands in a fresh binding of the
-/// pair's type through the one door (274.8 M1); its name is what the unpacking
-/// reads. The value's constructions were already hoisted by `build_value` in
-/// the caller, so the line is printed with nothing left to build: the head by
-/// the local's role, the expression inline -- NOT through `emit_assign`, which
-/// would build (and hoist) a second time.
-fn Emitter mut @bind_pair_temp(init Node, pt TyId) -> Local {
-    // A temporary of the body, named by its index: the scrutinee of a destructuring
-    // is the compiler's own, and `named` would claim the author wrote it (274.8 M3).
-    ro l = @lo.ir.temp(pt)
-    @lo.ir.place(init, l)
-    l
-}
-
 /// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
 /// name becomes a plain C local read out of it.
 ///
@@ -71,7 +57,7 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
     // projection below is a LOCAL -- which is what lets the reads become statements.
     ro base = match @lower_value_source(init, pt) {
         Some(l) => l
-        None => @bind_pair_temp(init, pt)
+        None => @lo.bind_pair_temp(init, pt)
     }
     ro by_name = brace_pattern(kids)
     mut i = 0
