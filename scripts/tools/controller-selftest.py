@@ -223,7 +223,22 @@ def freeze_state():
     # the integrator's `cargo test --release` was running, and what stopped me was his freeze,
     # not this check. A check whose job is done in the crucial moment by someone else's word is
     # not working, however few errors stand against it.
-    SLOT = re.compile(r"(gate\.sh|gate-novac|nova test|(?:release|target)[/\\]novac?(?:\.exe)?(?![\w.])|cargo|clang|cl\.exe|link\.exe)")
+    # A TIER IS A RUN THAT PASSES VERDICT ON THE TREE -- the integrator's distinction, 19:31 local
+    # 2026-09-09, and it closes the fourth appearance of one question today. His words: "dangerous
+    # is not `somebody took the CPU`, but a run that passes verdict on the tree: gate.sh,
+    # gate-novac.sh, nova test. A build passes no verdict: it turns source into a binary, and an
+    # edit to a neighbouring file does not affect it." Measured cost of the old width: at 19:24 my
+    # edit landed while `cargo build --release` held the slot, this check called it a TIER, and I
+    # sent him an URGENT letter about a verdict that did not exist. The area (any slot holder) was
+    # again wider than the subject (a verdict about the tree) -- same shape as the guard whose scope
+    # outran its subject, now on the holder's NAME rather than on its tree.
+    #
+    # Kept OUT of this pattern on purpose: `cargo`, `clang`, `cl.exe`, `link.exe`, and the bare
+    # `release/nova` binary. They occupy the machine -- which the WATCH must report, and does --
+    # but they judge nothing, so they cannot spoil a verdict by definition. The freeze that does
+    # matter is also announced by the integrator in words: it "starts with the word tier and ends
+    # with the word end", so a run that merely looks heavy is never his freeze.
+    SLOT = re.compile(r"(gate\.sh|gate-novac|nova test)")
     tiers = [r for r in rows if SLOT.search(r) and "grep" not in r and "controller-" not in r]
 
     # WHOSE tree holds the slot -- asked 15:16Z 2026-09-09, after this check called window 274's
