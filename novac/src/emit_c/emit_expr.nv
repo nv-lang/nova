@@ -810,79 +810,28 @@ fn Emitter mut @emit_expr(e Node) -> () {
 /// floor, not the first answer (owner's question 2026-08-16: the name
 /// `emit_println` read as if every Call were a println).
 /// One printer per argument by its type, then a newline.
+/// AN EXPRESSION IN STATEMENT POSITION WHOSE RESULT IS DISCARDED (wave B12): emitting a call
+/// as a VALUE is something this file already does, and a statement is that plus a semicolon.
+/// No temporary is declared, because nobody asked this call for an answer. Measured with the
+/// oracle BEFORE it was written: discarding a result is legal there and silent, so warning
+/// about it here would be our invention rather than the language's rule.
 fn Emitter mut @emit_call_stmt(call Node) -> () {
-    ro kids = branch_children(call)
-    if call_callee_text(kids) != PRINT_FN {
-        // A CALL WHOSE RESULT IS DISCARDED (wave B12). Emitting a call as a
-        // VALUE is something this file already does; a statement is that plus a
-        // semicolon and nothing more -- no temporary is declared, because
-        // nobody asked this call for an answer.
-        //
-        // Measured with the oracle BEFORE it was written: discarding a result
-        // is legal there and silent, so warning about it here would be our
-        // invention rather than the language's rule.
-        @hoist_array_lits(call)
-        @body.append("    ")
-        @emit_expr(call)
-        @body.append(";\n")
-        return
+    if call_callee_text(branch_children(call)) == PRINT_FN {
+        // `println` IS LOWERED, NOT PRINTED FROM HERE (M3a). Its output interleaves with the
+        // effects of building its arguments, and THAT ORDER IS OBSERVABLE, so the sequence
+        // lives in the channel: `lower_eval` turns it into output statements and the walk
+        // prints those. Arriving here with a println means the lowering did not recognise the
+        // form -- a hole, not a shape to print. The ice is what keeps it a hole: the printing
+        // this branch used to do went through the PRINT-TIME HOIST, and that hoist is exactly
+        // what refused with `lower: a block sealed twice (it already returns)` under the walk
+        // of step 3b. A dead printer that restores retired behaviour is worse than none -- it
+        // turns a hole into a silent divergence.
+        ice("emit_c: a println reached the call-statement door -- it is lowered, not printed (M3a)")
     } else {
-        // `println` is not an ordinary call: every argument goes to its own
-        // printer and the newline comes once, at the end. That is the path
-        // below, and it is why this door exists at all.
+        // An ordinary call: the lines below own it.
     }
-    // EACH ARGUMENT IS HOISTED RIGHT BEFORE ITS OWN PRINT LINE (hunt
-    // emit_c x K1, finding H1). Hoisting the whole call up front ran a
-    // constructor argument's effects AHEAD of its neighbours' prints: the
-    // oracle prints `head` then ticks, novac ticked first. println is the one
-    // place where output interleaves with argument effects, so the order of
-    // the two IS the observable.
-    for c in kids {
-        ro ck = c.kind_of()
-        if is_expr_kind(ck) {
-            @hoist_array_lits(c)
-        } else {
-            // Punctuation and the callee leaf hoist nothing.
-        }
-        if ck == NodeKind.Lit && leaf_kind(branch_children(c)[0]) == TokenKind.StrLit {
-            ro t = branch_children(c)[0]
-            // An INTERPOLATED argument was hoisted into its chain above
-            // (I1); the temporary prints where the pool literal would.
-            ro itmp = @lit_tmp[raw_node(c.id_of())]
-            if itmp != "" {
-                @body.append("    nova_print_str(${itmp});\n")
-                continue
-            }
-            ro idx = @pool.slot(leaf_text(t))
-            @body.append("    nova_print_str(_novac_strlit_${idx});\n")
-        } else if is_expr_kind(ck) {
-            // Dispatch on the registry — the oracle prints each argument
-            // with its own printer, newline once at the end.
-            // The CARRIER, not the declared type: a newtype prints as what it
-            // holds, and the channel keeps the declared type because that is
-            // what resolution needs. Two questions, two doors.
-            ro at = carrier_of(@ctx, @out.type_of(c.id_of()))
-            @body.append("    ")
-            @body.append(@printer_of(at))
-            @body.append("(")
-            @emit_expr(c)
-            @body.append(");\n")
-        } else {
-            match c {
-                Leaf(_) => {
-                    // The callee leaf and the parenthesis leaves are not
-                    // arguments; the callee itself was already refused or
-                    // accepted by name above.
-                }
-                Branch { .. } => {
-                    // The checker refuses every branch it cannot type in an
-                    // argument position (#870), so a branch here is a broken
-                    // invariant, not a shape to skip -- the silent fallout
-                    // this arm replaces printed `ab` for `a20b`.
-                    ice("emit_c: an argument form the checker let through (#870)")
-                }
-            }
-        }
-    }
-    @body.append("    nova_print_newline();\n")
+    @hoist_array_lits(call)
+    @body.append("    ")
+    @emit_expr(call)
+    @body.append(";\n")
 }

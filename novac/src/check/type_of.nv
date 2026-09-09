@@ -22,6 +22,8 @@ import ../names.{NameTable, NamespaceId}
 import ../sem.{variants_named}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{LitArg}
+// M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
+import ../sem.{literal_prim_of}
 import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
 import ../sem.{is_vrow, is_arg_node, arg_expr_of, arg_name_of}
 import ../types.{TyId, no_ty, is_ty, same_ty}
@@ -227,16 +229,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // A negated literal is [Minus, lit] — judge the LAST leaf.
         ro lk_kids = branch_children(e)
         ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
-        // A table maps, so it is a match -- and its leftover branch is a
-        // REFUSAL, not a guess (P21: the wildcard may only carry `None` where
-        // the type declares partiality; here it carries an ice).
-        match lk {
-            StrLit => { return ctx.prims.str_id }
-            FloatLit => { return ctx.prims.f64_id }
-            IntLit => { return ctx.prims.int_id }
-            CharLit => { return ctx.prims.char_id }
-            _ => { ice("check: literal token kind without a type rule (#652 class)") }
-        }
+        // THE TABLE LIVES IN `sem`, and both consumers ask it there (M3a): the other one
+        // is the lowering of a `println` argument, which has no position type to read
+        // first. Keeping a copy here would have been a second home for one rule.
+        return literal_prim_of(lk, ctx)
     }
     if k == NodeKind.Coalesce {
         // DECIDED by the walk (the payload of the left side), read here --

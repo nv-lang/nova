@@ -81,6 +81,10 @@ export type LocalDecl value {
 /// that assign nothing (the same shape as `no_ty()` and `no_node()`).
 export fn no_local() -> Local => Local(-1)
 
+/// The block that is not one -- the stop a walk of the whole body passes: the root chain
+/// runs until a `Return`, so its stop must equal no block at all. Same shape as `no_local`.
+export fn no_block() -> BlockId => BlockId(-1)
+
 /// An operand: a read of a local, or -- until wave M2 -- a tree expression the
 /// emitter still prints by itself. `Tree` is the bridge the waves of 274.8
 /// shrink to nothing; it exists so the form can be adopted position by
@@ -98,6 +102,36 @@ export type Rvalue enum
     | SomePayload(Local) // the payload of the Some the local holds (if-let binder)
     | IndexPayload(ElemRead) // the element of a collection local at an index local (for-each binder)
     | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
+    | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
+
+/// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
+///
+/// The step carries the NAME the author wrote, not the field's registry row, and that is
+/// forced rather than chosen: the emitter may not compute a field row from a name (the
+/// channel guard refuses it by name, and `emit_destructure.nv` remembers being wrong about
+/// that on 2026-09-04), while the channel records the binder's TYPE and not its row. The
+/// name is legal here because it is a C SPELLING and not an identity key -- the same role
+/// `LocalDecl.name` already has. `check-novac-no-string-keys.py` judges `Map[str` outside
+/// `names/` and keys SYNTHESISED by interpolation; a name stored in a field is neither.
+///
+/// How it is spelled stays with the printer: `.` for a value record, `->` for a GC
+/// pointer, `.fN` for a positional shape -- each taken from the channel by the base's
+/// type, which is a name lookup and not a decision about form.
+export type Projection enum
+    | Field(str) // a named field, as the source spelled it
+    | Elem(int) // a positional component, by index
+
+/// A READ OF ONE PROJECTION OF A LOCAL (wave M3c): `base.field` / `base.fN` as a value.
+///
+/// Why this is an rvalue of the body and not a tree expression printed inline: the reads a
+/// destructuring lays down have to stand in the ORDER of the statements around them. While
+/// they were printed straight into the output during lowering, they landed ABOVE the
+/// assignment they read -- use before declaration, C that does not compile (measured
+/// 2026-09-09 on `examples/basics/destructure_record.nv`).
+export type PlaceRead value {
+    base Local /// the local the projection reads
+    proj Projection /// which field or component
+}
 
 /// A payload field of a matched variant (wave M2b-1d): the arm's test proved
 /// the sum in `scr` carries `vrow`, so field `index` of its payload is
@@ -136,13 +170,30 @@ export type StoreStmt value {
     src Node /// the value stored (the M1 bridge: printed from the tree until M3)
 }
 
+/// ONE VALUE HANDED TO OUTPUT, at this point of the sequence (wave M3a). `println` is the
+/// one place in the language where output INTERLEAVES with the effects of building the
+/// arguments, so the ORDER of the two is observable (hunt emit_c x K1, finding H1: hoisting
+/// a whole call up front ran a constructor argument's effects ahead of its neighbours'
+/// prints). An observable order has to live in the channel: the lowering of an argument
+/// lands immediately before ITS OWN output statement, and the interleaving then holds by
+/// construction rather than by the printer's care.
+///
+/// The C printer's NAME is not here on purpose -- `printer_of` is a pure function of the
+/// carrier type, so looking it up is a name lookup and not a decision about form.
+export type OutputStmt value {
+    value Operand /// what is printed -- a local, or a tree expression while the bridge stands
+    ty TyId /// its DECLARED type; the printer takes the carrier from it (a newtype prints as what it holds)
+}
+
 /// A statement: an assignment into a local, an expression evaluated for its
-/// effects, or a store into a place the tree names.
+/// effects, a store into a place the tree names, or one step of output.
 export type Stmt enum
     | Assign(AssignStmt) // `local = value` -- through the placement door
     | Eval(Rvalue) // an expression in statement position, value dropped
     | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
     | Decl(Local) // the local's declaration point (donor: rustc MIR `StorageLive`)
+    | Output(OutputStmt) // one value handed to output, in this position of the sequence
+    | OutputEnd // the newline that closes a `println` -- once, at the end
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
@@ -162,7 +213,19 @@ export type IfTerm value {
     then BlockId /// entered when `cond` holds
     els BlockId /// entered otherwise; equals `join` when there is no else
     join BlockId /// where both branches continue
+    els_braced bool /// the else branch has its own `{ }` -- see the note below
 }
+
+/// WHY `els_braced` AND NOT "is this a chain" (wave M2b-2, decision of 2026-09-08). A printer
+/// walking sealed blocks must know whether to open a brace after `} else `. The tempting field
+/// was "was this opened as a chained if" -- and it is USELESS for printing, which a wave step
+/// proved: a chained `if` and a chained `if let` are opened by the SAME door, yet the first
+/// continues the `} else ` line while the second sits in braces, because C has no
+/// `else <declaration>` and an if-let's first line IS the declaration of its Option temporary
+/// (registry #991). The bit that actually decides is read off the TAIL's shape, and the
+/// lowering knows it at the call: a block tail and an if-let tail are braced, a chained `if`
+/// is not. Whether the head of a chained `if` carries an indent is NOT a field: it is the
+/// walk's own state at the moment it recurses into an unbraced else.
 
 /// `for v in lo..hi`: the loop variable -- a binding of the body, created
 /// through `named` like any other -- and its bounds, as the tree spells them.
@@ -238,7 +301,15 @@ export type SwitchTerm value {
     scrutinee Local /// the local the match tests
     arms []SwitchArm /// in source order
     join BlockId /// where every arm continues
+    uniq int /// the number the printer's names are built from -- see the note below
 }
+
+/// WHY `uniq` IS A FIELD (wave M2b-2, decision of 2026-09-08). The C printer emulates
+/// first-match with an if-chain and a `matched` flag, and both that flag and the scrutinee are
+/// spelled from one number: `_novac_matched_t${uniq}`, `_novac_scr_t${uniq}`. A walk over
+/// sealed blocks could recover it only by PARSING the scrutinee local's name -- taking apart a
+/// string the lowering composed. A name is data to whoever built it and a riddle to whoever
+/// reads it; the number travels as a number.
 
 /// How a block ends. `Unreached` is the state of a block that was reserved
 /// but not yet sealed; `finish` refuses a body that still carries one.
@@ -272,6 +343,7 @@ export type SwitchCtx value {
     head BlockId /// the block whose terminator becomes the `Switch`
     scr Local /// the scrutinee local
     join BlockId /// where every arm continues
+    uniq int /// the number the printer's names are built from -- see SwitchTerm
 }
 
 
@@ -322,9 +394,17 @@ export fn FnBuilder @current() -> BlockId => @cur_id
 /// The return place of the body under construction.
 export fn FnBuilder @ret_place() -> Local => Local(0)
 
-/// A fresh temporary of type `ty`. `label` is the spelling its creator wants
-/// the printer to use ("" = unnamed, spelled by index) -- see LocalDecl.
-export fn FnBuilder mut @temp(ty TyId, label str) -> Local => @local(ty, LocalKind.Temp, label)
+/// A fresh temporary of type `ty`. ITS NAME COMES FROM ITS OWN INDEX (M2c), not from the
+/// caller: the local already knows its number, so `_novac_l<i>` is built here, by one
+/// scheme for all. Until M2c every site invented its own spelling (`_novac_if_t7`,
+/// `_novac_match_t7`, `_novac_qq_t7`) out of the PRINT COUNTER `fresh_uniq` -- so a local's
+/// name depended on the order of printing, which wave M2b-2 had just stopped treating as
+/// significant. Two names could also collide: the same label handed to two locals printed
+/// one C variable for both (measured in `examples_basics_coalesce.nv`).
+export fn FnBuilder mut @temp(ty TyId) -> Local {
+    ro name = "_novac_l${@locals.len()}"
+    @local(ty, LocalKind.Temp, name)
+}
 
 /// A local for the source binding `name` of type `ty`.
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {
@@ -408,6 +488,22 @@ export fn FnBuilder mut @take_elem(dest Local, vec Local, idx Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.IndexPayload(ElemRead { vec, idx }) }))
 }
 
+/// Records one step of output: this operand goes to the printer here, in this position of
+/// the sequence (wave M3a -- the reason the position is a statement is on `OutputStmt`).
+export fn FnBuilder mut @output(value Operand, ty TyId) -> () {
+    @cur.push(Stmt.Output(OutputStmt { value, ty }))
+}
+
+/// Records the newline that closes a `println`: once, after the last value.
+export fn FnBuilder mut @output_end() -> () {
+    @cur.push(Stmt.OutputEnd)
+}
+
+/// Records the read of one projection of a local into `dest` (wave M3c).
+export fn FnBuilder mut @read(dest Local, base Local, proj Projection) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Read(PlaceRead { base, proj }) }))
+}
+
 /// A statement expression: evaluated, its value dropped.
 export fn FnBuilder mut @eval(e Node) -> () {
     @cur.push(Stmt.Eval(Rvalue.Expr(e)))
@@ -450,9 +546,9 @@ fn FnBuilder mut @close(term Terminator, next BlockId) -> () {
 /// `If`, and what is placed next belongs to the `then` branch. `has_else`
 /// decides whether the else branch is a block of its own or the join itself
 /// -- the source knows, the builder does not guess.
-export fn FnBuilder mut @begin_if(cond Cond, has_else bool) -> IfCtx {
+export fn FnBuilder mut @begin_if(cond Cond, has_else bool, els_braced bool) -> IfCtx {
     ro join = @reserve()
-    @begin_chained_if(cond, has_else, join)
+    @open_if(cond, has_else, join, els_braced)
 }
 
 /// Opens an `if` whose join ALREADY exists: the current block ends with `If`
@@ -460,10 +556,19 @@ export fn FnBuilder mut @begin_if(cond Cond, has_else bool) -> IfCtx {
 /// comes here; `begin_else_if` comes here with the outer join, so a chain
 /// shares one. The emitter calls it directly when it has to print the
 /// condition after `begin_else` and before the branch opens.
-export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId) -> IfCtx {
+export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId,
+                                          els_braced bool) -> IfCtx {
+    @open_if(cond, has_else, join, els_braced)
+}
+
+/// The ONE place an `If` terminator is built. Both public doors delegate here, which is
+/// exactly why `els_braced` is a PARAMETER: from inside, the entry door is invisible, and
+/// a bit inferred here would come out the same for both forms -- measured in step 3a of
+/// wave M2b-2, where that mistake moved the C of one corpus file by one indent.
+fn FnBuilder mut @open_if(cond Cond, has_else bool, join BlockId, els_braced bool) -> IfCtx {
     ro then = @reserve()
     ro els = if has_else { @reserve() } else { join }
-    @close(Terminator.If(IfTerm { cond, then, els, join }), then)
+    @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
     IfCtx { then, els, join }
 }
 
@@ -481,9 +586,14 @@ export fn FnBuilder mut @begin_else(c IfCtx) -> () {
 /// terminator is a second `If` sharing the outer join. Hands back the inner
 /// context; its `end_if` closes onto the shared join, after which the outer
 /// `end_if` finds the join current and has nothing to seal.
-export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool) -> IfCtx {
+/// THE door for "an else followed by a chain". Until 2026-09-08 the emitter opened this
+/// pair BY HAND in two places (`lower_if`, `lower_if_let`) and only a builder test called
+/// the door -- one concept, two implementations, and the hand-written pair would not have
+/// followed a change to the door (registry #991 is that class). The emitter now comes here.
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool,
+                                       els_braced bool) -> IfCtx {
     @begin_else(outer)
-    @begin_chained_if(cond, has_else, outer.join)
+    @begin_chained_if(cond, has_else, outer.join, els_braced)
 }
 
 /// Closes an `if`: the open branch jumps to the join, and what is placed next
@@ -532,12 +642,12 @@ export fn FnBuilder mut @copy(dest Local, src Local) -> () {
 /// Opens a `match` on the local `scr`: the current block jumps to a fresh
 /// header block, which is sealed with the `Switch` by `end_switch` once the
 /// arms are known; nothing is placed in the header meanwhile.
-export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
+export fn FnBuilder mut @begin_switch(scr Local, uniq int) -> SwitchCtx {
     ro h = @reserve()
     ro join = @reserve()
     @close(Terminator.Goto(h), h)
     @arm_start.push(@open_arms.len())
-    SwitchCtx { head: h, scr, join }
+    SwitchCtx { head: h, scr, join, uniq }
 }
 
 /// Opens an arm: a fresh block for its binders and body becomes current.
@@ -582,7 +692,8 @@ export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
     while @open_arms.len() > start {
         ro _ = @open_arms.pop()
     }
-    @seal(c.head, Terminator.Switch(SwitchTerm { scrutinee: c.scr, arms, join: c.join }))
+    @seal(c.head, Terminator.Switch(SwitchTerm { scrutinee: c.scr, arms, join: c.join,
+                                                 uniq: c.uniq }))
     @cur_id = c.join
 }
 

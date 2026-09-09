@@ -57,14 +57,12 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
         // created the local, this door records WHERE it is declared and that it starts
         // at zero -- the reason is on `LocalDecl.zero_init`.
         @ir.declare_zeroed(dest)
-        @emit_last_stmt()
     } else {
         // Statement position: no result, nothing to declare.
     }
     // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
     // arm that held; the `Switch` means first-match by construction.
-    @body.append("    int _novac_matched_t${uniq} = 0;\n")
-    ro c = @ir.begin_switch(ls)
+    ro c = @ir.begin_switch(ls, uniq)
     for a in kids {
         if a.kind_of() != NodeKind.MatchArm { continue }
         @lower_arm(a, uniq, scr_t, ls, c, dest)
@@ -119,25 +117,25 @@ fn Emitter @pattern_of(pat []Node, scr_t TyId) -> Pattern {
 /// value sum is read with `.`, a heap sum with `->`. Before A4 the arrow was
 /// unconditional, which is exactly the shape that breaks silently the day the
 /// oracle moves a type off the heap.
-fn Emitter mut @emit_tag_test(uniq int, vrow VariantRow, scr_t TyId) -> () {
-    ro arrow = if is_value_sum(@ctx, scr_t) { "." } else { "->" }
-    @body.append("(_novac_scr_t${uniq}${arrow}tag == ${c_tag(@ctx, vrow)})")
+fn Emitter mut @emit_tag_test(scr Local, vrow VariantRow) -> () {
+    ro arrow = if is_value_sum(@ctx, @ir.decl_of(scr).ty) { "." } else { "->" }
+    @body.append("(${@ir.decl_of(scr).name}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
 /// The C of the arm's test, spelled FROM the pattern: an int compare, the tag
 /// test(s), or `true` for a binder and the wildcard.
-fn Emitter mut @emit_pattern_test(pattern Pattern, uniq int, scr_t TyId) -> () {
+fn Emitter mut @emit_pattern_test(pattern Pattern, scr Local) -> () {
     match pattern {
         Lit(n) => {
-            @body.append("(_novac_scr_t${uniq} == ")
+            @body.append("(${@ir.decl_of(scr).name} == ")
             @body.append(int_literal_c_text(leaf_text(n)))
             @body.append("LL)")
         }
         Variant(vm) => {
-            @emit_tag_test(uniq, vm.head, scr_t)
+            @emit_tag_test(scr, vm.head)
             for hrow in vm.also {
                 @body.append(" || ")
-                @emit_tag_test(uniq, hrow, scr_t)
+                @emit_tag_test(scr, hrow)
             }
         }
         // A binder and the wildcard match anything: the test IS `true`, and the
@@ -151,9 +149,9 @@ fn Emitter mut @emit_pattern_test(pattern Pattern, uniq int, scr_t TyId) -> () {
 /// match is the `Switch` terminator's meaning by construction, and the if-chain is how C
 /// emulates it (see `SwitchTerm` in lower/ir.nv). The test is spelled from the `Pattern`
 /// the lowering recorded, never from the tree.
-fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr_t TyId) -> () {
+fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr Local) -> () {
     @body.append("    if (!_novac_matched_t${uniq} && (")
-    @emit_pattern_test(pattern, uniq, scr_t)
+    @emit_pattern_test(pattern, scr)
     @body.append(")) {\n")
 }
 
@@ -174,7 +172,6 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
     // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
     // PLACE of the printing, which is what lets one walk print every arm later.
     @ir.begin_arm(c, pattern, guard)
-    @print_arm_head(uniq, pattern, scr_t)
     match pattern {
         Variant(vm) => {
             if !pattern_has_disj(pat) {
@@ -198,7 +195,6 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
                     ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
                     ro lb = @ir.named(bt, bname)
                     @ir.take_field(lb, ls, vm.head, pi)
-                    @emit_last_stmt()
                     pi += 1
                 }
             } else {
@@ -211,7 +207,6 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
             // use of the operand rvalue.
             ro lb = @ir.named(scr_t, leaf_text(pat[0]))
             @ir.copy(lb, ls)
-            @emit_last_stmt()
         }
         Lit(_) => {
             // An int literal introduces no name: the test IS the whole arm.
@@ -226,18 +221,16 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
             // door (`@print_if_head`, emit_flow.nv), which until this step was the third
             // place spelling `    if (` + condition + `) {` by hand.
             ro gcond = Cond.Expr(g)
-            ro gi = @ir.begin_if(gcond, false)
-            @print_if_head(gcond, false)
+            // A guard has no else branch, so the bit is not read; passed explicitly so
+            // no default is left for someone to interpret later.
+            ro gi = @ir.begin_if(gcond, false, false)
             @lower_arm_body(arm_e, dest)
-            @body.append("    _novac_matched_t${uniq} = 1;\n    }\n")
             @ir.end_if(gi)
         }
         None => {
             @lower_arm_body(arm_e, dest)
-            @body.append("    _novac_matched_t${uniq} = 1;\n")
         }
     }
-    @body.append("    }\n")
     @ir.end_arm(c)
 }
 

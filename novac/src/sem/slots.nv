@@ -628,6 +628,28 @@ export fn leaf_kind(n Node) -> TokenKind {
 export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
 
 /// Node kinds that stand as expressions (argument/operand positions).
+/// THE TYPE A LITERAL TOKEN STANDS FOR -- the ONE home of the four-way table (D44:
+/// an undecided literal is its own kind, `int` and `f64`).
+///
+/// Two consumers ask it, and that is why it is here rather than in either of them: the
+/// checker's `type_of` (after the channel had no type for the position) and the lowering
+/// of a `println` argument (where there IS no position type -- `println` is a builtin name
+/// with no registry row, so nothing can dictate a width). A copy in the second consumer
+/// would be a second home for one rule, and the first edit to part them would be the day
+/// a new literal kind arrives in one place and not the other.
+///
+/// A table maps, so it is a match -- and its leftover branch is a REFUSAL, not a guess
+/// (P21: a wildcard may only carry `None` where the type declares partiality).
+export fn literal_prim_of(lk TokenKind, ctx Ctx) -> TyId {
+    match lk {
+        StrLit => ctx.prims.str_id
+        FloatLit => ctx.prims.f64_id
+        IntLit => ctx.prims.int_id
+        CharLit => ctx.prims.char_id
+        _ => ice("sem: literal token kind without a type rule (#652 class)")
+    }
+}
+
 export fn is_expr_kind(k NodeKind) -> bool {
     // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
     // `||` on the next line is parsed as something else entirely (the oracle

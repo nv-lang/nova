@@ -249,6 +249,16 @@ pub struct FfiConfig {
     /// vendor build attempted, unchanged legacy behaviour (falls through to
     /// the existing `first_missing_ffi_lib` detect-and-degrade probe).
     pub vendor_src_dirs: Vec<String>,
+    /// D466 (2026-09-09): the package links a C++ library, so the LINK step must
+    /// run through a C++ driver (`clang++`/`g++`) instead of the C one. A static
+    /// C++ archive does not carry its standard library: MSVC picks it up from
+    /// directives inside the objects, ELF toolchains have no such thing and rely
+    /// on the driver to add it. Declaring the LANGUAGE of the library is the true
+    /// fact; `libs.linux = ["stdc++"]` would make every package author re-derive
+    /// per platform what the toolchain already knows, and on Windows such an entry
+    /// degrades the package into a SILENT FfiLibNotFound skip (measured on
+    /// nova-duckdb, 2026-09-09). Default false — unchanged behaviour.
+    pub cxx: bool,
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -537,6 +547,7 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     // Plan 193 Ф.2 gate-3: [ffi] vendor_src_dirs — vendored C sources for
     // generic build-and-cache (see FfiConfig::vendor_src_dirs doc-comment).
     let mut ffi_vendor_src_dirs: Vec<String> = Vec::new();
+    let mut ffi_cxx = false;
     let mut ffi_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
     let mut runtime_fiber_stack: Option<String> = None;
@@ -602,6 +613,9 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                     "lib_dirs"     => ffi_lib_dirs = parse_toml_string_array(raw_val),
                     "libs"         => ffi_libs = parse_toml_string_array(raw_val),
                     "vendor_src_dirs" => ffi_vendor_src_dirs = parse_toml_string_array(raw_val),
+                    // Bool, not an array: it never meets parse_toml_string_array,
+                    // and so never meets the silent-empty defect of #1055.
+                    "cxx"          => ffi_cxx = raw_val.trim_matches('"') == "true",
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -654,6 +668,7 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             lib_dirs: ffi_lib_dirs,
             libs: ffi_libs,
             vendor_src_dirs: ffi_vendor_src_dirs,
+            cxx: ffi_cxx,
         })
     } else {
         None

@@ -790,6 +790,36 @@ changes diagnostically — they reveal where regressions interact.
 Each anti-pattern below has burned ≥1 session in Plan 83.11. Repeat at
 your peril.
 
+### 5.0 Comparing builds with and without a flag, on a warm cache
+
+**The single most expensive silent lie in this playbook**, because it corrupts
+the method the rest of the document depends on: separating causes by building
+twice and diffing.
+
+The content-addressed build cache (Plan 81 Ф.9) keys on SOURCE CONTENT and does
+NOT include codegen flags. So `--no-field-cache` on and off can hand you the
+SAME generated C, and the run says the flag makes no difference -- when in fact
+nothing was rebuilt. Registry 221.1 #415.
+
+**Rule:** an A/B over a flag STARTS by clearing `target/.nova-cache`. If you did
+not clear it, you measured the cache, not the flag.
+
+**The class is wider than this cache, and it bit three different tools in one
+night (2026-09-08/09):** a package build whose cache key omitted its cmake flags
+served a stale library as new; a shared `CARGO_TARGET_DIR` made a crate-test step
+finish in 33 seconds and call a healthy crate red; a corpus baseline captured with
+an instrumented compiler made the first diff meaningless. One form:
+**the artefact outlived its tree, and the measuring instrument did not notice.**
+
+**Two detectors that have actually fired, both cheap:**
+
+* *the step finished suspiciously fast* -- 33 seconds where 1897 tests need
+  minutes. Timing is evidence about WHAT RAN, not only about speed;
+* *print the DENOMINATOR next to the number.* Not "2 files differ" but "93
+  emitted out of 94". A file that stopped compiling looks exactly like a file
+  that changed, and only the denominator tells them apart. This one saved window
+  274 twice in a day.
+
 ### 5.1 Hypothesis-driven fix iteration without debugger
 
 Plan 83.11 §12.13-26 burned ~10 hours across 7 attempts that all got

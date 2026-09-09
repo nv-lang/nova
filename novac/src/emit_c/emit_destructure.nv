@@ -34,14 +34,11 @@ import ../lex.{TokenKind}
 /// the caller, so the line is printed with nothing left to build: the head by
 /// the local's role, the expression inline -- NOT through `emit_assign`, which
 /// would build (and hoist) a second time.
-fn Emitter mut @bind_pair_temp(init Node, pt TyId) -> str {
+fn Emitter mut @bind_pair_temp(init Node, pt TyId) -> Local {
     ro u = "_novac_tmp_t${@fresh_uniq()}"
     ro l = @ir.named(pt, u)
     @ir.place(init, l)
-    @emit_assign_head(@ir.decl_of(l))
-    @emit_expr(init)
-    @body.append(";\n")
-    u
+    l
 }
 
 /// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
@@ -64,9 +61,18 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
     // a construction builds into a temporary of its own and that temporary IS
     // the source; any other initializer lands in a fresh binding of the pair's
     // type through the one door -- and only then, `??` short-circuits (D86).
-    ro tmp = @build_value(init, pt) ?? @bind_pair_temp(init, pt)
+    // The lowering door comes FIRST (prerequisite 5): a `match`/`if` initializer lays
+    // down blocks, and its local is the source. Only then the printing forms, and only
+    // then the fresh binding -- `??` short-circuits in that order (D86).
+    // ALWAYS THROUGH A LOCAL (M3c). The construction case no longer needs its own line
+    // here: `@ir.place` records the initializer, and the assignment printer builds a
+    // construction in its own `Expr` arm. One door instead of two, and the base of every
+    // projection below is a LOCAL -- which is what lets the reads become statements.
+    ro base = match @lower_value_source(init, pt) {
+        Some(l) => l
+        None => @bind_pair_temp(init, pt)
+    }
     ro by_name = brace_pattern(kids)
-    ro reach = if is_value_record(@ctx, pt) { "." } else { "->" }
     mut i = 0
     for b in pattern_binders(kids) {
         // THE CHANNEL, and nothing else. The checker decided this binder's
@@ -76,11 +82,15 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
         // refuses by name and was right to: a second asker becomes a second
         // answer the day the two spellings drift.
         ro nm = binder_text(b)
-        ro nt = c_type(@ctx, @out.type_of(b.id_of()))
+        // THE BINDER IS A LOCAL OF THE BODY, and its read is a STATEMENT (M3c) -- not a
+        // line printed while lowering. Printed straight, these reads landed above the
+        // assignment they read once the walk of step 3b took over the printing: use before
+        // declaration, C that does not compile.
+        ro l = @ir.named(@out.type_of(b.id_of()), nm)
         if by_name {
-            @body.append("    ${nt} ${nm} = ${tmp}${reach}${nm};\n")
+            @ir.read(l, base, Projection.Field(nm))
         } else {
-            @body.append("    ${nt} ${nm} = ${tmp}.f${i};\n")
+            @ir.read(l, base, Projection.Elem(i))
         }
         i += 1
     }

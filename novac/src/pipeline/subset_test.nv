@@ -62,8 +62,13 @@ test "an `if` initializer binds through the same doors as the tail form (B14)" {
  println(x)\n\
 }", std)
     assert(d.len() == 0)
-    // The TEMPORARY again, not the keyword: only the value form declares one.
-    assert(c.contains("_novac_if_t"))
+    // THE TEMPORARY again, not the keyword: only the value form declares one, and the
+    // value FLOWS FROM IT into the binding. Asserting the flow rather than a bare name is
+    // what keeps this strict: since M2c (274.8) every temporary is spelled `_novac_l<i>`
+    // from its own local index, so a bare `_novac_l` would pass on any emission that
+    // declares any temporary at all -- weaker than the `_novac_if_t` it replaced. The
+    // shape below is taken from the real emission, not guessed.
+    assert(c.contains("x = _novac_l"))
 
     // THE OTHER DIRECTION: without an `else` there is no value to bind, and
     // the refusal must come by name -- the parser leaves the else slot absent
@@ -93,11 +98,14 @@ test "a tail `if` is the returned VALUE, and the branches must agree (wave B14)"
 }\n\
 fn main() { println(pick(0)) }", std)
     assert(d.len() == 0)
-    // THE TEMPORARY, not the word `if`: what this wave added is the value
-    // form, and only a value form declares a result variable and assigns it
-    // from both branches. Asserting on `if (` would stay green on the old
-    // statement-only emitter.
-    assert(c.contains("_novac_if_t"))
+    // THE TEMPORARY, not the word `if`: what this wave added is the value form, and only a
+    // value form declares a result variable and assigns it from both branches. Asserting
+    // on `if (` would stay green on the old statement-only emitter.
+    //
+    // Here the form is a TAIL one, so the flow ends in the return -- and that is what is
+    // asserted, for the same reason as above: since M2c a bare `_novac_l` would pass on any
+    // emission with any temporary. Shape taken from the real emission.
+    assert(c.contains("return _novac_l"))
 
     // THE OTHER DIRECTION, and it is the rule that makes the form safe:
     // branches that disagree have no type between them. A compiler that took
