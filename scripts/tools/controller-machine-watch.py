@@ -119,7 +119,11 @@ def main():
     print("time_utc=%s time_local=%s" % (time.strftime("%H:%M:%SZ", time.gmtime()),
                                          time.strftime("%H:%M:%S")))
     print()
-    print("BUSY (slot holders): %d" % len(busy))
+    # The composition below is the UNION of two `ps` samples taken ~2s apart, so during a tier's
+    # start it can list transient children that no single snapshot would show. The COUNT is not
+    # inflated by that (a busy machine is busy), but the composition must not be passed off as one
+    # instant slice -- integrator's note, 22:27 local 2026-09-08, after my "BUSY 9 then BUSY 3".
+    print("BUSY (slot holders, union of two ps samples ~2s apart): %d" % len(busy))
     owners = {}
     for ln in busy:
         o = owner_of(ln)
