@@ -81,6 +81,10 @@ export type LocalDecl value {
 /// that assign nothing (the same shape as `no_ty()` and `no_node()`).
 export fn no_local() -> Local => Local(-1)
 
+/// The block that is not one -- the stop a walk of the whole body passes: the root chain
+/// runs until a `Return`, so its stop must equal no block at all. Same shape as `no_local`.
+export fn no_block() -> BlockId => BlockId(-1)
+
 /// An operand: a read of a local, or -- until wave M2 -- a tree expression the
 /// emitter still prints by itself. `Tree` is the bridge the waves of 274.8
 /// shrink to nothing; it exists so the form can be adopted position by
@@ -162,7 +166,19 @@ export type IfTerm value {
     then BlockId /// entered when `cond` holds
     els BlockId /// entered otherwise; equals `join` when there is no else
     join BlockId /// where both branches continue
+    els_braced bool /// the else branch has its own `{ }` -- see the note below
 }
+
+/// WHY `els_braced` AND NOT "is this a chain" (wave M2b-2, decision of 2026-09-08). A printer
+/// walking sealed blocks must know whether to open a brace after `} else `. The tempting field
+/// was "was this opened as a chained if" -- and it is USELESS for printing, which a wave step
+/// proved: a chained `if` and a chained `if let` are opened by the SAME door, yet the first
+/// continues the `} else ` line while the second sits in braces, because C has no
+/// `else <declaration>` and an if-let's first line IS the declaration of its Option temporary
+/// (registry #991). The bit that actually decides is read off the TAIL's shape, and the
+/// lowering knows it at the call: a block tail and an if-let tail are braced, a chained `if`
+/// is not. Whether the head of a chained `if` carries an indent is NOT a field: it is the
+/// walk's own state at the moment it recurses into an unbraced else.
 
 /// `for v in lo..hi`: the loop variable -- a binding of the body, created
 /// through `named` like any other -- and its bounds, as the tree spells them.
@@ -238,7 +254,15 @@ export type SwitchTerm value {
     scrutinee Local /// the local the match tests
     arms []SwitchArm /// in source order
     join BlockId /// where every arm continues
+    uniq int /// the number the printer's names are built from -- see the note below
 }
+
+/// WHY `uniq` IS A FIELD (wave M2b-2, decision of 2026-09-08). The C printer emulates
+/// first-match with an if-chain and a `matched` flag, and both that flag and the scrutinee are
+/// spelled from one number: `_novac_matched_t${uniq}`, `_novac_scr_t${uniq}`. A walk over
+/// sealed blocks could recover it only by PARSING the scrutinee local's name -- taking apart a
+/// string the lowering composed. A name is data to whoever built it and a riddle to whoever
+/// reads it; the number travels as a number.
 
 /// How a block ends. `Unreached` is the state of a block that was reserved
 /// but not yet sealed; `finish` refuses a body that still carries one.
@@ -272,6 +296,7 @@ export type SwitchCtx value {
     head BlockId /// the block whose terminator becomes the `Switch`
     scr Local /// the scrutinee local
     join BlockId /// where every arm continues
+    uniq int /// the number the printer's names are built from -- see SwitchTerm
 }
 
 
@@ -450,9 +475,9 @@ fn FnBuilder mut @close(term Terminator, next BlockId) -> () {
 /// `If`, and what is placed next belongs to the `then` branch. `has_else`
 /// decides whether the else branch is a block of its own or the join itself
 /// -- the source knows, the builder does not guess.
-export fn FnBuilder mut @begin_if(cond Cond, has_else bool) -> IfCtx {
+export fn FnBuilder mut @begin_if(cond Cond, has_else bool, els_braced bool) -> IfCtx {
     ro join = @reserve()
-    @begin_chained_if(cond, has_else, join)
+    @open_if(cond, has_else, join, els_braced)
 }
 
 /// Opens an `if` whose join ALREADY exists: the current block ends with `If`
@@ -460,10 +485,19 @@ export fn FnBuilder mut @begin_if(cond Cond, has_else bool) -> IfCtx {
 /// comes here; `begin_else_if` comes here with the outer join, so a chain
 /// shares one. The emitter calls it directly when it has to print the
 /// condition after `begin_else` and before the branch opens.
-export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId) -> IfCtx {
+export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId,
+                                          els_braced bool) -> IfCtx {
+    @open_if(cond, has_else, join, els_braced)
+}
+
+/// The ONE place an `If` terminator is built. Both public doors delegate here, which is
+/// exactly why `els_braced` is a PARAMETER: from inside, the entry door is invisible, and
+/// a bit inferred here would come out the same for both forms -- measured in step 3a of
+/// wave M2b-2, where that mistake moved the C of one corpus file by one indent.
+fn FnBuilder mut @open_if(cond Cond, has_else bool, join BlockId, els_braced bool) -> IfCtx {
     ro then = @reserve()
     ro els = if has_else { @reserve() } else { join }
-    @close(Terminator.If(IfTerm { cond, then, els, join }), then)
+    @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
     IfCtx { then, els, join }
 }
 
@@ -481,9 +515,14 @@ export fn FnBuilder mut @begin_else(c IfCtx) -> () {
 /// terminator is a second `If` sharing the outer join. Hands back the inner
 /// context; its `end_if` closes onto the shared join, after which the outer
 /// `end_if` finds the join current and has nothing to seal.
-export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool) -> IfCtx {
+/// THE door for "an else followed by a chain". Until 2026-09-08 the emitter opened this
+/// pair BY HAND in two places (`lower_if`, `lower_if_let`) and only a builder test called
+/// the door -- one concept, two implementations, and the hand-written pair would not have
+/// followed a change to the door (registry #991 is that class). The emitter now comes here.
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool,
+                                       els_braced bool) -> IfCtx {
     @begin_else(outer)
-    @begin_chained_if(cond, has_else, outer.join)
+    @begin_chained_if(cond, has_else, outer.join, els_braced)
 }
 
 /// Closes an `if`: the open branch jumps to the join, and what is placed next
@@ -532,12 +571,12 @@ export fn FnBuilder mut @copy(dest Local, src Local) -> () {
 /// Opens a `match` on the local `scr`: the current block jumps to a fresh
 /// header block, which is sealed with the `Switch` by `end_switch` once the
 /// arms are known; nothing is placed in the header meanwhile.
-export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
+export fn FnBuilder mut @begin_switch(scr Local, uniq int) -> SwitchCtx {
     ro h = @reserve()
     ro join = @reserve()
     @close(Terminator.Goto(h), h)
     @arm_start.push(@open_arms.len())
-    SwitchCtx { head: h, scr, join }
+    SwitchCtx { head: h, scr, join, uniq }
 }
 
 /// Opens an arm: a fresh block for its binders and body becomes current.
@@ -582,7 +621,8 @@ export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
     while @open_arms.len() > start {
         ro _ = @open_arms.pop()
     }
-    @seal(c.head, Terminator.Switch(SwitchTerm { scrutinee: c.scr, arms, join: c.join }))
+    @seal(c.head, Terminator.Switch(SwitchTerm { scrutinee: c.scr, arms, join: c.join,
+                                                 uniq: c.uniq }))
     @cur_id = c.join
 }
 

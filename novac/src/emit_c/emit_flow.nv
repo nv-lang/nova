@@ -33,6 +33,16 @@ import ../sem.{branch_children, leaf_text, c_instance_method, for_head_elem}
 import ../lower.{IfCtx, LoopHead, RangeHead, EachHead, Cond}
 import ../builtins.{VEC_LEN_METHOD}
 
+/// Whether the `else` tail prints its OWN pair of braces -- ONE door for the question, so
+/// `lower_if` and `lower_if_let` cannot answer it differently. A block tail and a chained
+/// `if let` are braced; a chained `if` is not, because its head continues the `} else `
+/// line. The reason if-let is braced: C has no `else <declaration>`, and an if-let's first
+/// line IS the declaration of its Option temporary (registry #991).
+fn else_is_braced(tail Node) -> bool {
+    ro k = tail.kind_of()
+    k == NodeKind.Block || k == NodeKind.IfLet
+}
+
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
     match outer {
@@ -78,12 +88,13 @@ fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     // nothing -- `emit_expr` touches neither the builder nor the name counter (measured
     // 2026-09-08); only `build_value` lowers, and a condition never goes through it.
     ro cond = Cond.Expr(kids[1])
+    ro braced = if has_else { else_is_braced(kids[4]) } else { false }
     ro c = match outer {
-        None => @ir.begin_if(cond, has_else)
-        Some(o) => {
-            @ir.begin_else(o)
-            @ir.begin_chained_if(cond, has_else, o.join)
-        }
+        None => @ir.begin_if(cond, has_else, braced)
+        // THE door for "else, then a chain" -- until 2026-09-08 this pair was opened by
+        // hand here and in `lower_if_let`, while the door itself had only a test as its
+        // caller (class #991: one concept, two implementations).
+        Some(o) => @ir.begin_else_if(o, cond, has_else, braced)
     }
     // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
     // caller printed, so it starts without the indent the top-level `if` carries.
@@ -159,12 +170,18 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     ro ot = @out.type_of(init.id_of())
     ro payload = @ctx.tys.arg(ot, 0)
     ro has_else = kids.len() > 9
-    // The else branch is opened FIRST when this if-let is one: the temporary
-    // and the test belong to that branch's block, not to the branch before.
-    match outer {
-        None => {}
-        Some(o) => @ir.begin_else(o)
-    }
+    // THE ELSE BRANCH IS OPENED BY THE DOOR, NOT HERE (fix 2026-09-08, ICE «a block sealed
+    // twice (it already jumps)» on `novac/fixtures/iflet_else/pos_2.nv`). Until the door
+    // `@begin_else_if` existed, this function opened the pair «else, then a chain» by hand:
+    // `begin_else` here, the chained `if` below. The door now does BOTH, so the call here was
+    // the second half of a pair whose first half had moved -- `begin_else` ran twice and the
+    // second `@close` hit a block already sealed with `Goto`. The door stays whole; the
+    // leftover half goes. For a non-chained if-let (`outer == None`) nothing changes at all.
+    //
+    // Consequence to keep in mind, and the corpus judges it: the Option temporary is now
+    // recorded BEFORE the else branch is opened, not after. Its declaration therefore belongs
+    // to the block that precedes the branch -- which is what `lower_else_tail` braces anyway
+    // (C has no `else <declaration>`, registry #991).
     ro tmp = "_novac_tmp_t${@fresh_uniq()}"
     ro lo = @ir.named(ot, tmp)
     @lower_place(init, lo)
@@ -172,9 +189,10 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
     ro cond = Cond.IsSome(lo)
+    ro braced = if has_else { else_is_braced(kids[9]) } else { false }
     ro c = match outer {
-        None => @ir.begin_if(cond, has_else)
-        Some(o) => @ir.begin_chained_if(cond, has_else, o.join)
+        None => @ir.begin_if(cond, has_else, braced)
+        Some(o) => @ir.begin_else_if(o, cond, has_else, braced)
     }
     // NOT chained for the purpose of PRINTING, even when `outer` is Some -- braced, not continued.
     // A chained plain `if` continues the `} else ` line its caller printed, so it carries no
