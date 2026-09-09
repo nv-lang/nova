@@ -957,6 +957,8 @@ pub struct ResolvedFfiConfig {
     /// Plan 193 Ф.2 gate-3: vendored C source dirs for generic
     /// build-and-cache (`manifest::FfiConfig::vendor_src_dirs` doc-comment).
     pub vendor_src_dirs: Vec<PathBuf>,
+    /// D466: link through a C++ driver. See `manifest::FfiConfig::cxx`.
+    pub cxx: bool,
 }
 
 /// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): Windows
@@ -1006,6 +1008,7 @@ impl ResolvedFfiConfig {
             lib_dirs: cfg.lib_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
             libs: cfg.libs.clone(),
             vendor_src_dirs: cfg.vendor_src_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
+            cxx: cfg.cxx,
         })
     }
 
@@ -1181,6 +1184,62 @@ fn effect_count_define_arg_from_line(first_line: &str, prefix: &str) -> Option<S
 /// Возвращает command, готовую к запуску. Для Clang/MSVC на Windows
 /// инкапсулирует cmd /c "vcvars && actual-cmd" — иначе headers/libs
 /// MSVC SDK недоступны.
+/// D471: the C++ driver's name for a given C driver's FILE NAME.
+///
+/// Only the last path component is ever rewritten -- a directory such as
+/// `.../clang-15/bin/` must survive untouched, which is why this takes a stem
+/// and not a path. An input that is already a C++ driver is returned unchanged,
+/// so calling twice is the same as calling once. Anything unrecognised is
+/// returned as-is: guessing at a name we do not know would turn a clear
+/// "driver not found" into a confusing "no such file".
+fn cxx_driver_name(stem: &str) -> String {
+    if stem.starts_with("clang++") || stem.starts_with("g++") {
+        stem.to_string()
+    } else if stem.starts_with("clang") {
+        stem.replacen("clang", "clang++", 1)
+    } else if stem.starts_with("gcc") {
+        stem.replacen("gcc", "g++", 1)
+    } else {
+        stem.to_string()
+    }
+}
+
+#[cfg(test)]
+mod cxx_driver_name_tests {
+    use super::cxx_driver_name;
+
+    /// POS: the two drivers we actually switch, with and without a version suffix
+    /// and with the .exe that Windows adds.
+    #[test]
+    fn pos_known_drivers_are_switched() {
+        assert_eq!(cxx_driver_name("clang"), "clang++");
+        assert_eq!(cxx_driver_name("gcc"), "g++");
+        assert_eq!(cxx_driver_name("clang-15"), "clang++-15");
+        assert_eq!(cxx_driver_name("gcc-13"), "g++-13");
+        assert_eq!(cxx_driver_name("clang.exe"), "clang++.exe");
+    }
+
+    /// POS: applying it twice must not produce `clang++++` -- the switch happens
+    /// once per link, but nothing in the type system says so.
+    #[test]
+    fn pos_idempotent_on_an_already_cxx_driver() {
+        assert_eq!(cxx_driver_name("clang++"), "clang++");
+        assert_eq!(cxx_driver_name("g++"), "g++");
+        assert_eq!(cxx_driver_name(cxx_driver_name("clang").as_str()), "clang++");
+    }
+
+    /// NEG: a driver we do not recognise is returned UNCHANGED rather than
+    /// guessed at. The caller then reports "no C++ driver found" naming this
+    /// exact string, which is a true statement; inventing `cc++` would produce a
+    /// misleading "no such file" about a name nobody ships.
+    #[test]
+    fn neg_unknown_driver_is_not_invented() {
+        assert_eq!(cxx_driver_name("cc"), "cc");
+        assert_eq!(cxx_driver_name("icx"), "icx");
+        assert_eq!(cxx_driver_name(""), "");
+    }
+}
+
 fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // Plan 27 Ф.1: alloc source chosen by GC backend.
     let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
@@ -1377,7 +1436,37 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // Direct clang invocation with pre-captured vcvars env.
             // On Windows: env snapshot from capture_vcvars_env() at detect_toolchain() time.
             // Saves ~7s per test by avoiding `call vcvars64.bat` on every compile.
-            let mut c = Command::new(clang);
+            // D466: a package that declares `[ffi] cxx = true` links a C++
+            // library, and a static C++ archive does not carry its standard
+            // library. ELF toolchains add it only when invoked through the C++
+            // driver, so switch the executable: clang -> clang++, gcc -> g++.
+            // The switch is on the LAST path component only; a directory named
+            // .../clang-15/bin/ must not be rewritten. If the C++ driver is not
+            // on disk we do NOT silently fall back to the C one -- a silent
+            // fallback here produces an undefined-symbol wall pointing at the
+            // user's own code, which is exactly how this defect was found.
+            let driver = match opts.ffi.map(|f| f.cxx) {
+                Some(true) => {
+                    let p: &std::path::Path = clang.as_ref();
+                    let stem = p.file_name().and_then(|s| s.to_str()).unwrap_or("clang");
+                    let cxx_name = cxx_driver_name(stem);
+                    let cand = p.with_file_name(&cxx_name);
+                    if cand.exists() || which(&cxx_name).is_some() {
+                        if cand.exists() { cand.to_string_lossy().into_owned() } else { cxx_name }
+                    } else {
+                        eprintln!(
+                            "error: [ffi] cxx = true, but no C++ driver was found (looked for {} \
+                             next to {} and on PATH). A C++ library cannot be linked by the C \
+                             driver: the standard library would be missing and every C++ symbol \
+                             would come back undefined, pointing at your code instead of here.",
+                            cxx_name, clang.display()
+                        );
+                        std::process::exit(2);
+                    }
+                }
+                _ => clang.to_string_lossy().into_owned(),
+            };
+            let mut c = Command::new(&driver);
             if !env.is_empty() {
                 // Replace process env with the vcvars snapshot so clang sees
                 // INCLUDE, LIB, PATH from VS Build Tools without re-running the bat.
