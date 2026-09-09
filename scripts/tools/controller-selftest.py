@@ -225,7 +225,34 @@ def freeze_state():
     # not working, however few errors stand against it.
     SLOT = re.compile(r"(gate\.sh|gate-novac|nova test|(?:release|target)[/\\]novac?(?:\.exe)?(?![\w.])|cargo|clang|cl\.exe|link\.exe)")
     tiers = [r for r in rows if SLOT.search(r) and "grep" not in r and "controller-" not in r]
+
+    # WHOSE tree holds the slot -- asked 15:16Z 2026-09-09, after this check called window 274's
+    # `novac.exe emit examples/basic` a TIER and printed "tier since 18:13:48" while neither
+    # gate.sh nor gate-novac existed in `ps` at all. The prohibition it guards is about the MAIN
+    # tree: a run inside `nova-p274` reads that window's own files and cannot judge, or be spoiled
+    # by, an edit in the main copy. Verdict already learnt this at 14:08Z, when a one-second
+    # `nova build` was read as a tier -- and the fix went into the verdict only, leaving the same
+    # code in this second carrier untouched. That is the shape worth naming: a class closed in one
+    # carrier and left open in another, because the repair followed the report and not the code.
+    # Attribution comes from the watch's OWN function, never a second spelling of it.
+    def _tree(line):
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "cmw", os.path.join(TOOLS, "controller-machine-watch.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.owner_of(line)
+        except Exception:  # noqa: BLE001
+            return "?"
+
+    MAIN = os.path.basename(os.path.abspath(REPO))
+    foreign = [r for r in tiers if _tree(r) not in (MAIN, "?")]
+    tiers = [r for r in tiers if _tree(r) in (MAIN, "?")]
     if not tiers:
+        if foreign:
+            return ("no tier in the main tree (foreign slot: %s) -- main tree may be edited"
+                    % ",".join(sorted({_tree(r) for r in foreign}))), True
         return "no tier running -- tree may be edited", True
 
     # `ps -ef` STIME is a clock (HH:MM:SS) for a process started today. Take the earliest.
