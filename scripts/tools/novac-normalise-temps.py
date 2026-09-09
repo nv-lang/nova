@@ -1,0 +1,74 @@
+# -*- coding: utf-8 -*-
+"""Нормализатор имён временных для критерия шага (3б): БИЕКЦИЯ, а не свёртка.
+
+Свёртка (`sed -E 's/\\b_novac_(([a-z_]+_t)|l)[0-9]+\\b/T/g'`) заменяла КАЖДОЕ имя на один и тот же
+токен `T`. Она пропускает настоящий дефект: печать, взявшую НЕ ТУ временную в ОДНОМ месте, — после
+свёртки такой файл выглядит идентично. Замер 2026-09-08 на снимках `target/c-before`
+(`examples_basics_array_lit_positions.nv.c`, последнее вхождение `_novac_tmp_t2` переписано как
+`_novac_tmp_t1`): свёртка говорит «идентично», биекция — «различно».
+
+Биекция даёт каждому РАЗЛИЧНОМУ имени свой токен `T<k>` по порядку ПЕРВОГО появления в файле.
+Поэтому:
+  * сдвиг нумерации (`t1,t2` -> `t101,t102`), который шаг (3б) разрешает намеренно, остаётся
+    невидимым — порядок первых появлений не меняется (проверено: «идентично»);
+  * подмена одной временной другой меняет последовательность токенов и ВИДНА.
+
+Вызов: python scratch/normalise_names.py <src-dir> <dst-dir>
+EOL: файлы читаются побайтово и CRLF приводится к LF — часть их наследует CRLF от исходника
+(замер 2026-09-08: первый регексп ловил только `}\\n` и оставлял пять носителей из шести
+«различными»)."""
+import io
+import os
+import re
+import sys
+
+RE_NAME = re.compile(r"\b_novac_(?:[a-z_]+_t|l)[0-9]+\b")
+
+
+def bijection(text):
+    seen = {}
+
+    def repl(m):
+        n = m.group(0)
+        if n not in seen:
+            seen[n] = "T%d" % (len(seen) + 1)
+        return seen[n]
+
+    return RE_NAME.sub(repl, text)
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.stderr.write("usage: normalise_names.py <src-dir> <dst-dir>\n")
+        return 2
+    src, dst = sys.argv[1], sys.argv[2]
+    if not os.path.isdir(src):
+        sys.stderr.write("no such directory: %s\n" % src)
+        return 2
+    if os.path.isdir(dst):
+        for f in os.listdir(dst):
+            try:
+                os.remove(os.path.join(dst, f))
+            except OSError:
+                pass
+    else:
+        os.makedirs(dst)
+    n = 0
+    for fn in sorted(os.listdir(src)):
+        p = os.path.join(src, fn)
+        if not os.path.isfile(p) or not fn.endswith(".c"):
+            # ТОЛЬКО `.c`, как и прежний sed-режим. Снимок несёт ещё 150 `.err`
+            # (JSON-диагностика отказов), плюс `.txt` и `.log` прогона. Включить их значило бы
+            # РАСШИРИТЬ область под видом починки слепоты — две правки в одной, причём вторая
+            # тянет в сравнение лог, который меняется сам по себе. Расширять область, если
+            # понадобится, — отдельным шагом и со своей пробой.
+            continue
+        text = io.open(p, "rb").read().decode("utf-8", "replace").replace("\r\n", "\n")
+        io.open(os.path.join(dst, fn), "w", encoding="utf-8", newline="\n").write(bijection(text))
+        n += 1
+    sys.stderr.write("normalise_names(bijection): %d file(s) -> %s\n" % (n, dst))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
