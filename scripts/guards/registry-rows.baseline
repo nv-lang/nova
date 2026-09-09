@@ -594,6 +594,10 @@
 #   встретился при живой отправке 47 коммитов, обе причины красноты проверены
 #   командами (`merge-base --is-ancestor` по трём хэшам, состояние ветки на origin),
 #   а не выведены. Номер 1062 остаётся законной дырой — он у окна claude-limits.
-rows=1019
-max=1064
+# 2026-09-09 (integrator): rows -> 1020, max -> 1065. Zavedena ODNA stroka -- 1065:
+#   strazh myortvykh ssylok schitaet kommitom lyuboy hex-token v kavychkakh i pri
+#   etom propuskaet nastoyashchie. Rost chestnyy: nayden chteniem koda i fayla,
+#   nositeli nazvany poimenno i proveren kazhdyy `merge-base --is-ancestor`.
+rows=1020
+max=1065
 gaps=174-208,210-215,653-654,743,1062
