@@ -45,7 +45,16 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
     ro scr_t = @out.type_of(scr.id_of())
     // The scrutinee lands in a binding ONCE through the one door: every arm
     // tests the same value, and a call in the scrutinee runs one time.
-    ro ls = @ir.named(scr_t, "_novac_scr_t${uniq}")
+    // THE SCRUTINEE IS A TEMPORARY OF THE COMPILER, and it can finally say so (2026-09-09).
+    // `_novac_scr_t7` was never a name the author wrote, yet `named` was the only door that
+    // kept a declaration -- because `kind` decided both the name and the declaration point.
+    // `DeclAt` now carries the point, so a `Temp` declared at its first assignment is
+    // expressible, and this line stops lying about who invented the name.
+    //
+    // Slice M2c tried exactly this move and the C stopped compiling: `nova_int T1 = n;`
+    // became `T1 = n;`, the declaration gone. That failure is the both-ways proof of the
+    // separation -- the same edit is correct only after it.
+    ro ls = @ir.temp(scr_t)
     @lower_place(scr, ls)
     if dest != no_local() {
         // The result temporary is declared with its type AND zero-initialised
@@ -55,7 +64,7 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
         // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
         // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
         // created the local, this door records WHERE it is declared and that it starts
-        // at zero -- the reason is on `LocalDecl.zero_init`.
+        // at zero -- the reason is on `DeclAt.Zeroed`.
         @ir.declare_zeroed(dest)
     } else {
         // Statement position: no result, nothing to declare.

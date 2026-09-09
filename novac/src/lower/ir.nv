@@ -39,10 +39,32 @@ export fn raw_block(b BlockId) -> int => b as int
 /// place is `return <v>;`, a binding is declared where it is first assigned
 /// (`T name = <v>;`), a temporary is declared by whoever created it and only
 /// assigned here (`name = <v>;`).
+/// WHAT A LOCAL IS FOR -- and ONLY that, since 2026-09-09. Until then this field also
+/// decided WHERE the local is declared, and the two questions were welded: a compiler
+/// temporary declared BY ITS OWN VALUE was inexpressible, so the `match` scrutinee had to
+/// live in `named` although the compiler, not the author, invented its name. Moving it to
+/// `temp` lost the declaration outright and the C stopped compiling (measured in slice
+/// M2c). The declaration point now lives in `DeclAt`.
 export type LocalKind enum
     | Return // local 0, the value the body returns (rustc `_0`)
-    | Binding // a source binding: declared at its first assignment
-    | Temp // a temporary of the lowering: declared by its creator
+    | Binding // a source binding: its name is the author's
+    | Temp // a temporary of the lowering: its name comes from its own index (M2c)
+
+/// WHERE A LOCAL'S DECLARATION IS PRINTED. Two shapes, and they are the two the C needs:
+///   `FirstAssign` -- the assignment spells it whole: `T name = <v>;`
+///   `Zeroed`      -- a `Stmt.Decl` spells `T name = (T){0};` before any branch writes it,
+///                    and the assignments that follow are bare: `name = <v>;`
+///
+/// This is ORTHOGONAL to `LocalKind`, and separating them is what makes the fourth
+/// combination legal -- a `Temp` declared at its first assignment, which is exactly the
+/// `match` scrutinee. The indent follows THIS field rather than the kind: four spaces for a
+/// declaration, eight for a bare assignment inside a branch. That correlation is total
+/// today -- every existing `Temp` is zero-initialised (all three `temp` sites either call
+/// `declare_zeroed` themselves or hand the local to a door that does) -- which is why this
+/// separation changes no printing at all.
+export type DeclAt enum
+    | FirstAssign // the first assignment declares it
+    | Zeroed // a `Stmt.Decl` declares it, zeroed
 
 /// What a local is: its type, its role, and its name. A binding's name is the
 /// source name; a temporary's name is the label its creator chose (wave M1
@@ -53,10 +75,10 @@ export type LocalDecl value {
     ty TyId /// the local's type, as the checker's channel recorded it
     kind LocalKind /// return place, binding or temporary -- see LocalKind
     name str /// the binding's source name, or the temporary's label; "" = unnamed
-    zero_init bool /// declared as `(T){0}` -- see the note below; set by the LOWERING
+    decl_at DeclAt /// WHERE the declaration is printed -- see DeclAt; set by the LOWERING
 }
 
-/// WHY `zero_init` IS A FIELD AND NOT THE PRINTER'S GUESS (wave M2b-2, decision of
+/// WHY `DeclAt.Zeroed` IS A FIELD AND NOT THE PRINTER'S GUESS (wave M2b-2, decision of
 /// 2026-09-07). THREE forms declare a result temporary with a zero initialiser, and their
 /// reasons are NOT the same -- counted by probe, not by memory (2026-09-08: removing the
 /// initialiser changed 28 declarations in 17 corpus files, `_novac_match` 14, `_novac_qq` 8,
@@ -379,7 +401,7 @@ export type FnBuilder {
 /// and whose entry block is reserved and current (rustc `START_BLOCK`).
 export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut locals = []LocalDecl.new()
-    locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "", zero_init: false })
+    locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "", decl_at: DeclAt.FirstAssign })
     mut blocks = []Block.new()
     blocks.push(Block { stmts: []Stmt.new(), term: Terminator.Unreached })
     mut cur = []Stmt.new()
@@ -419,13 +441,13 @@ export fn FnBuilder mut @named(ty TyId, name str) -> Local {
 /// rustc MIR separates a local from its `StorageLive`.
 fn FnBuilder mut @local(ty TyId, kind LocalKind, name str) -> Local {
     ro id = Local(@locals.len())
-    @locals.push(LocalDecl { ty, kind, name, zero_init: false })
+    @locals.push(LocalDecl { ty, kind, name, decl_at: DeclAt.FirstAssign })
     id
 }
 
 /// The declaration point of a result temporary that starts at zero: the local is marked
-/// and a `Decl` statement is recorded HERE, in the block being built. Only the two forms
-/// named on `LocalDecl.zero_init` use it; a binding is still declared by its first
+/// and a `Decl` statement is recorded HERE, in the block being built. Only the THREE forms
+/// named on `DeclAt.Zeroed` use it; a binding is still declared by its first
 /// assignment, which spells its type and value in one line.
 export fn FnBuilder mut @declare_zeroed(l Local) -> () {
     ro i = raw_local(l)
@@ -433,7 +455,7 @@ export fn FnBuilder mut @declare_zeroed(l Local) -> () {
         ice("lower: declaring a local the body never created")
     }
     ro d = @locals[i]
-    @locals[i] = LocalDecl { ty: d.ty, kind: d.kind, name: d.name, zero_init: true }
+    @locals[i] = LocalDecl { ty: d.ty, kind: d.kind, name: d.name, decl_at: DeclAt.Zeroed }
     @cur.push(Stmt.Decl(l))
 }
 
