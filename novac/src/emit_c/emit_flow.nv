@@ -30,6 +30,9 @@ module novac.emit_c
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../sem.{branch_children, leaf_text, c_instance_method, for_head_elem}
+// The walk prints a unit return from the type of the return place (2026-09-09).
+import ../sem.{is_unit_ty}
+import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, RangeHead, EachHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
 import ../builtins.{VEC_LEN_METHOD}
 
@@ -171,8 +174,9 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // second `@close` hit a block already sealed with `Goto`. The door stays whole; the
     // leftover half goes. For a non-chained if-let (`outer == None`) nothing changes at all.
     //
-    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
-    ro lo = @ir.named(ot, tmp)
+    // A temporary of the body, named by its index (274.8 M3): the Option of an
+    // `if let` is the compiler's, not the author's.
+    ro lo = @ir.temp(ot)
     // Recorded first, printed from the record -- the same door the plain `if` uses
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
@@ -281,25 +285,27 @@ fn Emitter mut @lower_for_range(kids []Node) -> () {
 }
 
 /// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
-/// ONCE into a binding local through the placement door, the index is a
-/// binding local of int, the header carries all three locals, and the body
-/// starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
+/// ONCE into a TEMPORARY through the placement door, the index is a temporary of
+/// int, the element is the author's binding, the header carries all three, and the
+/// body starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
 /// shell's `get(...).value` by the one assignment printer. The C is the same
-/// walk `emit_for_call` spelled by hand: `T vtmp = <head>;`, `for (nova_int
-/// itmp = 0; itmp < len(vtmp); itmp++) {`, `E var = get(vtmp, itmp).value;`.
+/// walk `emit_for_call` spelled by hand: `T <vec> = <head>;`, `for (nova_int <idx>
+/// = 0; <idx> < len(<vec>); <idx>++) {`, `E v = get(<vec>, <idx>).value;` -- the
+/// two temporaries are numbered by the body, so no name is spelled here (274.8 M3).
 /// The element type is the CHECKER's decision (`for_head_elem`), not a second
 /// derivation here (hunt emit_c x K4, 2026-09-04).
 fn Emitter mut @lower_for_each(kids []Node) -> () {
     ro head = kids[3]
     ro ht = @out.type_of(head.id_of())
     ro elem_t = for_head_elem(@ctx, ht)
-    ro vtmp = "_novac_tmp_t${@fresh_uniq()}"
-    ro itmp = "_novac_i_t${@fresh_uniq()}"
-    ro lv = @ir.named(ht, vtmp)
+    // Both the collection and the index are TEMPORARIES of the body, named by their
+    // indices (274.8 M3). Only the element keeps `named`: `for v in xs` -- `v` is the
+    // author's word, and that is the one question `LocalKind` still answers.
+    ro lv = @ir.temp(ht)
     @lower_place(head, lv)
     // All three locals of the walk exist before the head is printed, because the head is
     // printed FROM the record that names them (M2b-2 step 3a).
-    ro li = @ir.named(@ctx.prims.int_id, itmp)
+    ro li = @ir.temp(@ctx.prims.int_id)
     ro le = @ir.named(elem_t, leaf_text(kids[1]))
     ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
     ro c = @ir.begin_loop(lh)
@@ -316,110 +322,89 @@ fn Emitter mut @lower_return(st Node) -> () {
     if kids.len() > 1 {
         @lower_place(kids[1], @ir.ret_place())
     } else {
-        @body.append("    return NOVA_UNIT;\n")
+        // A BARE `return` RECORDS AND PRINTS NOTHING HERE (2026-09-09). It used to print
+        // `return NOVA_UNIT;` on the spot, and under the walk that landed the line right
+        // after the opening brace -- before every statement -- so the function returned
+        // immediately and skipped its body. Legal Nova, wrong C, and no corpus file had
+        // the form: a grep for a bare `return` found zero carriers, which is why every
+        // green measurement of this wave was silent about it. The `Return` terminator is
+        // what the walk prints from, and it prints the same for a body that just ends.
     }
     @ir.ret()
 }
 
-// ── ОБХОД ПО ЗАКРЫТЫМ БЛОКАМ (M2b-2 шаг 3б) ───────────────────────────────
-// Печать перестала быть привязанной к порядку ПОСТРОЕНИЯ: тело печатается ОДНИМ проходом
-// по `Fn`, снятому `@ir.finish()`. Текст функций ниже перенесён из черновика волны
-// дословно; его дом до переноса — `scratch/m2b2_walk_draft.nv`, где записаны причины
-// каждого решения (почему `els_braced` — поле, а `head_continues` — параметр; почему
-// пометка напечатанных блоков снимает два инварианта раздела).
-// ЧЕРНОВИК ОБХОДА (3б) — НЕ В ДЕРЕВЕ, вторая редакция (2026-09-08).
+// ---- THE WALK OVER SEALED BLOCKS (wave M2b-2, step 3b) ---------------------
 //
-// Первая редакция стояла на заглушках `<< LIT >>`: я не знал, какие двери печати будут. Теперь
-// они есть, заведены шагами (3а), и обход пишется против них, а не против текста:
-//   @print_if_head(cond Cond, chained bool)          -- голова ветвления: if, if let, guard арма
-//   @print_loop_head(head LoopHead)                  -- голова цикла: While, Range, Each
-//   @print_arm_head(uniq int, pattern Pattern, scr_t TyId) -- голова арма match
-//   @emit_decl(l Local) / @emit_assign(a) / @emit_eval(rv) / @emit_store(st) -- дверь оператора
+// Printing is no longer tied to the order of BUILDING: the body is printed by ONE pass over
+// the `Fn` that `@ir.finish()` handed back. Structural terminators (M2b-1) were chosen for
+// exactly this -- `If`/`Loop`/`Switch` carry their own blocks and ONE join -- so the walk
+// stays structural and needs neither graph analysis nor C labels.
 //
-// ЧТО ДЕЛАЕТ ОБХОД: печатает тело по ЗАКРЫТЫМ блокам после `@ir.finish()`. Структурные
-// терминаторы (M2b-1 §2а) выбирались ровно ради этого: `If`/`Loop`/`Switch` несут свои блоки и
-// ОДИН join, поэтому обход остаётся структурным и не требует ни анализа графа, ни меток C.
+// The print doors it walks against:
+//   @print_if_head(cond, chained)     -- the head of a branch: if, if let, an arm's guard
+//   @print_loop_head(head)            -- the head of a loop: While, Range, Each
+//   @print_arm_head(uniq, pat, scr)   -- the head of a match arm
+//   @emit_decl / @emit_assign / @emit_eval / @emit_store / @emit_output -- the statement door
 //
-// ЧЕГО ОБХОД НЕ ДЕЛАЕТ, и это правило конвенций, а не мой вкус (архитектура 301-314): не решает
-// того, что решил лоуэринг. Не хватает данных для печати -> ПОЛЕ в терминаторе, не вычисление
-// здесь. Предусловия названы в плане: `IfTerm.els_braced` и `SwitchTerm.uniq`.
+// WHAT THE WALK DOES NOT DO, and this is the convention rather than taste (architecture,
+// section 3): it does not decide what the lowering decided. Missing data for printing means a
+// FIELD on the terminator, never a computation here -- `IfTerm.els_braced` and
+// `SwitchTerm.uniq` exist for that reason.
 //
-// ПОЛЕ `chained` СНЯТО (поправка 2026-09-08, после ошибки формы 3а). Оно записывало «открыт
-// как цепочка», а печатать по этому факту НЕЛЬЗЯ: цепочечный `if` и цепочечный `if let`
-// открываются одной дверью, но первый продолжает строку `} else `, а второй стоит в скобках
-// (в C нет `else <объявление>`). Признак печати — бит `els_braced` ВНЕШНЕГО ветвления; а
-// «продолжает ли голова строку» — состояние ОБХОДА в момент рекурсии, и потому ПАРАМЕТР,
-// а не поле: полю пришлось бы описывать внутренний `if` по тому, кем он оказался снаружи.
+// WHY `chained` IS A PARAMETER AND NOT A FIELD (correction of 2026-09-08, after a wrong shape
+// in step 3a). A field recorded `opened as a chain`, and printing may NOT follow that fact: a
+// chained `if` and a chained `if let` open through one door, but the first continues the
+// `} else ` line while the second stands in braces (C has no `else <declaration>`). What
+// decides the print is the `els_braced` bit of the OUTER branch; whether a head continues a
+// line is the state of the WALK at the moment of recursion -- a parameter. A field would have
+// had to describe an inner `if` by what it turned out to be from the outside.
 //
-// ИСЧЕРПЫВАЮЩИЙ MATCH БЕЗ `_` — П21 п.3 конвенции novac, держит check-novac-no-default-branch.py.
-// Поэтому `Unreached` получает явный `ice`, а не молчаливую ветку.
+// EXHAUSTIVE MATCH WITHOUT `_` -- convention P21.3, held by check-novac-no-default-branch.py.
+// That is why `Unreached` gets an explicit `ice` instead of a silent arm.
 
-// ПОМОЩНИКИ, ПРОВЕРЕННЫЕ ПО ДЕРЕВУ (2026-09-08, до кода). Из трёх, на которые эта редакция
-// опиралась, существует ОДИН:
-//   raw_block(b)   -- ЕСТЬ (lower/ir.nv:36);
-//   same_block(a,b) -- НЕ НУЖЕН: `BlockId` сравнивается прямо через `==`, так делает сам
-//                      строитель (ir.nv:474 `if c.els == c.join`) и четыре теста строителя;
-//   no_block() -- ОДНА СТРОКА в lower/ir.nv по готовому образцу `no_local() -> Local(-1)`
-//                      (ir.nv:82). Это предусловие обхода, а не изобретение на месте.
 
-// ФОРМЫ ЯЗЫКА, ИСПОЛЬЗОВАННЫЕ НИЖЕ, СВЕРЕНЫ С КОМПИЛИРУЕМЫМ КОДОМ (2026-09-08, машина была
-// занята чужим ярусом — компилятор спросить нельзя, следующий по старшинству источник — код,
-// который УЖЕ компилируется). Синтаксис не выдуман: у каждой формы есть место в дереве.
-//   `[]bool.new()` + `for _ in 0..n { v.push(false) }`   -- emit_decls.nv:177-178
-//   `mut printed []bool` параметром через рекурсию       -- mono.nv:246 (`mut seen []bool`)
-//   `v[i] = true` / `if v[i]`                             -- emit_decls.nv:184, mono.nv:179
-//   `BlockId(0)`, `f.blocks[i]`                           -- lower_test.nv (SRC в lower_test.c)
-//   `a != b` на BlockId                                   -- ir.nv:493 `@cur_id != c.join`,
-//                                                            lower_test.nv:172 `c.els != c.join`
-//   `Cond.Expr(g)`                                        -- emit_match.nv:228
-//   `Some(x) => …` / `None => …`                          -- match_arms.nv:156
-//   `ice("…")`, `"…${t.uniq}…"`                           -- tree.nv:203, methods.nv:207
-//   `no_block()`                                          -- ЕДИНСТВЕННОЕ новое имя; вводит
-//                                                            предпосылка по образцу `no_local()`
-//                                                            (emit_match.nv:50 `dest != no_local()`)
-// Это не замена `nova check`: она идёт первой, как только машина свободна. Это то, что можно
-// было сделать без неё, чтобы первый запуск компилятора ловил ошибки СМЫСЛА, а не опечатки.
 
-// ── Точка входа: заменяет интерливинг в `emit_callable` ────────────────────
-// Сегодня `emit_callable` печатает тело ПО ХОДУ и в конце зовёт `@ir.finish()` ради проверки
-// целостности графа. После (3б) порядок обратный: `finish`, затем ОДИН обход по нему.
+// ---- THE ENTRY POINT: it replaces the interleaving `emit_callable` used to do ----
+// Before step 3b, `emit_callable` printed the body AS IT WENT and called `@ir.finish()` at
+// the end only to check the graph's integrity. The order is now the reverse: `finish` first,
+// then ONE walk over what it returned.
 fn Emitter mut @print_body(f Fn) -> () {
-    // ПОМЕТКА НАПЕЧАТАННЫХ БЛОКОВ — она снимает ДВА инварианта раздела (и1 «каждый блок
-    // ровно один раз», и2 «обход завершается»), поэтому стоит здесь, а не «потом».
-    // Приём — свой, из `mono/mono.nv`: там `seen []bool` индексируется рядом таблицы,
-    // строится тем же циклом и идёт через рекурсию ПАРАМЕТРОМ (mono.nv:55, 119-123, 246).
-    // Поле на `Emitter` было бы хуже: его пришлось бы сбрасывать на каждом теле, то есть
-    // мы обменяли бы два инварианта на один новый.
+    // MARKING BLOCKS AS PRINTED removes TWO invariants of this section at once -- `every
+    // block exactly once` and `the walk terminates` -- which is why it stands here rather
+    // than being left for later. The technique is this compiler's own, from `mono/mono.nv`:
+    // a `seen []bool` indexed alongside the table, built by the same loop and carried
+    // through recursion as a PARAMETER. A field on `Emitter` would be worse: it would have
+    // to be reset for every body, trading two invariants for one new one.
     mut printed = []bool.new()
     for _ in 0..f.blocks.len() {
         printed.push(false)
     }
     @print_chain(f, BlockId(0), no_block(), false, printed)
 }
-// ── Цепочка блоков от `at` до `stop` (не включая `stop`) ───────────────────
-// `stop` = `no_block()` означает «до конца тела»: так печатается корневая цепочка, чей последний
-// блок несёт `Return`.
-// `head_continues` истинно РОВНО для первого блока необёрнутой ветви `else`: его голова
-// продолжает строку `} else `, которую напечатал вызывающий, и потому идёт без отступа.
-// Дальше по цепочке он гаснет — вторая голова уже начинает свою строку.
+// ---- The chain of blocks from `at` up to `stop`, `stop` excluded ----
+// `stop` = `no_block()` means `to the end of the body`: that is how the root chain prints,
+// the one whose last block carries a `Return`.
+// `head_continues` is true for EXACTLY the first block of an unbraced `else` branch: its head
+// continues the `} else ` line the caller printed, so it carries no indent. Further along the
+// chain it goes out -- a second head already starts its own line.
 fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                             mut printed []bool) -> () {
     mut continues = head_continues
     mut cur = at
     while cur != stop {
         ro bi = raw_block(cur)
-        // ИНДЕКС СНИМАЕТСЯ С newtype ДО обращения, как во всех местах `mono.nv`: newtype и
-        // его носитель делят представление, поэтому C проглотил бы и необёрнутый (там это
-        // молчало до 2026-09-05, #894/#921).
+        // THE INDEX IS UNWRAPPED BEFORE USE, as it is everywhere in `mono.nv`: a newtype
+        // and its carrier share a representation, so the C would swallow an unwrapped one
+        // too -- and there that stayed silent until 2026-09-05 (registry #894/#921).
         if bi < 0 || bi >= printed.len() {
             ice("emit: the walk reached a block outside the body's table")
         }
         if printed[bi] {
-            // ПОВТОРНЫЙ ВХОД. Два случая, и оба — сломанный инвариант, а не форма
-            // программы: либо join напечатан дважды (ветвь не остановилась на нём), либо в
-            // графе цикл из `Goto`. Без этой проверки первый вылезал бы удвоенным C, а
-            // второй — ПОВИСОМ, то есть таймаутом, который гейт не отличает от упавшего
-            // ассерта.
+            // RE-ENTRY. Two cases, and both are a broken invariant rather than a shape of
+            // the program: either a join was printed twice (a branch failed to stop at it),
+            // or the graph holds a cycle of `Goto`s. Without this check the first would
+            // surface as doubled C and the second as a HANG -- a timeout, which the gate
+            // cannot tell from a failed assertion.
             ice("emit: the walk entered a block twice")
         }
         printed[bi] = true
@@ -429,25 +414,47 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
         }
         match b.term {
             Return => {
-                // Возврат печатает дверь оператора: значение уже лежит в локали 0, и её
-                // присваивание было напечатано как `return <expr>;` (`emit_assign_head`,
-                // ветка `Return`). Здесь печатать нечего — цепочка кончается.
+                // A VALUE return is printed by the statement door: the value already sits
+                // in local 0 and its assignment was printed as `return <expr>;`
+                // (`emit_assign_head`, the `Return` arm). A UNIT return has no such
+                // assignment -- there is no value to place -- so it is printed HERE, from
+                // the type of the return place (`Fn` says `locals[0]` is that place).
+                //
+                // Asking the type is a NAME LOOKUP, not a decision about form: `NOVA_UNIT`
+                // is the C spelling of the unit value. And one place printing it closes
+                // two holes at once -- the bare `return` that used to print during
+                // lowering and land above the body, and the unit function whose block body
+                // simply ends and got no trailing return at all.
+                // NO VALUE TO RETURN comes in TWO shapes, and both must be named: the return
+                // place's type is the unit type, OR there is no type at all. The second is the
+                // entry point -- `emit_c.nv` says it in its own words, `ret_id is -1 for main
+                // only` -- so a test for the unit type alone left `main` with no return at all
+                // (measured 2026-09-09 by emission, after the first edition of this fix).
+                ro rt = f.locals[0].ty
+                if !is_ty(rt) || is_unit_ty(@ctx, rt) {
+                    @body.append("    return NOVA_UNIT;\n")
+                } else {
+                    // The assignment to the return place already printed the return.
+                }
                 return
             }
-            // ОБРАТНОЕ РЕБРО КОНЧАЕТ ЦЕПОЧКУ, а не продолжает её (замер 2026-09-09, граф
-            // `examples/basics/for_name_head.nv`: `b1=Loop(body=2,exit=3) b2=Goto(1)`). Премиса
-            // этого черновика — «ребро тело → заголовок структурно и НЕ записывается» — была
-            // НЕВЕРНА: строитель его пишет. Обход шёл по нему обратно в заголовок и заходил туда
-            // вторично; поймала это пометка напечатанных блоков, ради которой она и заведена.
+            // A BACK EDGE ENDS THE CHAIN rather than continuing it (measured 2026-09-09 on
+            // the graph of `examples/basics/for_name_head.nv`: `b1=Loop(body=2,exit=3)`,
+            // `b2=Goto(1)`). The draft's premise -- `the body-to-head edge is structural and
+            // is NOT recorded` -- was WRONG: the builder does record it. The walk followed it
+            // back into the header and entered it a second time; the printed-blocks marking
+            // caught that, which is what it exists for.
             //
-            // Правило общее, а не заплата на цикл: `Goto` в УЖЕ НАПЕЧАТАННЫЙ блок — это возврат
-            // (тело → заголовок), и в C его печатает закрывающая скоба цикла, а не обход. `Goto`
-            // в join сюда не попадает: join печатается ПОСЛЕ ветвей, а ветвь и так кончается на
-            // `stop`. Проверка бесплатна — множество `printed` уже есть.
+            // The rule is general rather than a patch for loops: a `Goto` into an ALREADY
+            // PRINTED block is a return edge (body to head), and in C the loop's closing
+            // brace prints it, not the walk. A `Goto` into a join never arrives here: a join
+            // prints AFTER the branches, and a branch already ends at `stop`. The check is
+            // free -- the `printed` set is already there.
             //
-            // Присваивание в теле арма БЕРЁТСЯ В СКОБКИ: без них парсер читает `= next` как
-            // начало СЛЕДУЮЩЕГО арма и отказывает (D452, `E_MATCH_ARM_SEP_MISSING`). Форма взята
-            // из дерева (`Leaf(t) => { e = … }` в `check/`), а не придумана.
+            // The assignment in an arm's body IS PARENTHESISED: without the braces the parser
+            // reads `= next` as the start of the NEXT arm and refuses (D452,
+            // `E_MATCH_ARM_SEP_MISSING`). The shape is taken from the tree (`Leaf(t) => { e =
+            // ... }` in `check/`), not invented.
             Goto(next) => {
                 ro ni = raw_block(next)
                 if ni >= 0 && ni < printed.len() && printed[ni] {
@@ -460,17 +467,17 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                 continues = false
                 @print_chain(f, t.then, t.join, false, printed)
                 if t.els == t.join {
-                    // Ветви `else` не было: блок `els` И ЕСТЬ join.
+                    // There was no `else` branch: the `els` block IS the join.
                     @body.append("    }\n")
                 } else {
                     @body.append("    } else ")
                     if t.els_braced {
-                        // Хвост-блок или хвост `if let`: своя пара скобок (см. предусловие).
+                        // A block tail or an `if let` tail: its own pair of braces.
                         @body.append("{\n")
                         @print_chain(f, t.els, t.join, false, printed)
                         @body.append("    }\n")
                     } else {
-                        // Хвост-цепочка `if`: её голова продолжает эту же строку.
+                        // An `if` chain tail: its head continues this very line.
                         @print_chain(f, t.els, t.join, true, printed)
                     }
                 }
@@ -490,26 +497,29 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
         }
     }
 }
-// ХВОСТ `else` РАЗОБРАН ВЫШЕ, ОТДЕЛЬНОЙ ФУНКЦИИ НЕТ. В первой редакции здесь стояли
-// `@print_else` и `@term_is_chained_if` — последняя с исчерпывающим match по шести видам
-// терминатора, чтобы узнать, цепочка ли в ветви else. Обе ушли: бит `els_braced` внешнего
-// ветвления отвечает на тот же вопрос без разбора, а «продолжает ли голова строку» стало
-// параметром обхода. Поправка предусловия убрала не только поле, но и функцию.
-// ── `match`: флаг — ПЕЧАТНИКА, первое совпадение — смысл терминатора ───────
-// `SwitchTerm` объявляет о себе дословно (lower/ir.nv): «FIRST-MATCH IS THE TERMINATOR'S
-// MEANING: the C printer emulates it with an if-chain and a `matched` flag, and that flag is the
-// printer's, not the form's». Поэтому флаг заводит и гасит обход, а не лоуэринг.
+// THE `else` TAIL IS HANDLED ABOVE; THERE IS NO SEPARATE FUNCTION FOR IT. The first
+// edition had `@print_else` and `@term_is_chained_if` here, the latter with an exhaustive
+// match over six kinds of terminator just to learn whether the else branch held a chain.
+// Both are gone: the `els_braced` bit of the outer branch answers the same question
+// without any inspection, and `does the head continue a line` became a parameter of the
+// walk. Correcting the prerequisite removed not only a field but a whole function.
+// ---- `match`: the flag is the PRINTER'S, first-match is the terminator's meaning ----
+// `SwitchTerm` says so about itself in `lower/ir.nv`: "FIRST-MATCH IS THE TERMINATOR'S
+// MEANING: the C printer emulates it with an if-chain and a `matched` flag, and that flag
+// is the printer's, not the form's". So the walk raises and clears that flag, not the
+// lowering.
 //
-// `uniq` берётся из ПОЛЯ терминатора (предусловие в плане). Разбирать имя локали-скрутинии
-// строкой — тот самый «решить второй раз», которого конвенция не разрешает.
-// ── Операторы блока БЕЗ его терминатора ───────────────────────────────────
-// Нужен ровно одному месту — арму с guard'ом, где привязки печатаются ДО головы guard'а, а
-// голова берётся из терминатора того же блока. Отдельная дверь, а не флаг у `@print_chain`:
-// флаг «идти ли за терминатором» пришлось бы читать в цикле на каждом блоке, и он стал бы
-// вторым способом ответить на вопрос, на который уже отвечает `stop`.
+// `uniq` comes from a FIELD of the terminator. Rebuilding the scrutinee local's name from a
+// string would be the `decide it twice` the convention forbids.
+// ---- A block's statements WITHOUT following its terminator ----
+// Exactly one place needs this: an arm with a guard, where the binders print BEFORE the
+// guard's head while the head itself comes from the terminator of that same block. A door
+// of its own rather than a flag on `@print_chain`: a `follow the terminator?` flag would
+// have to be read in the loop for every block, and it would become a second way to answer
+// what `stop` already answers.
 //
-// Блок ПОМЕЧАЕТСЯ напечатанным здесь же: иначе обход, дойдя до него другим путём, напечатал бы
-// операторы вторично — а пометка для того и заведена.
+// The block IS MARKED printed right here: otherwise the walk, reaching it by another path,
+// would print its statements a second time -- which is what the marking exists to stop.
 fn Emitter mut @print_block_stmts(f Fn, b BlockId, mut printed []bool) -> () {
     ro bi = raw_block(b)
     if bi < 0 || bi >= printed.len() {
@@ -527,22 +537,26 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
     ro sd = @ir.decl_of(t.scrutinee)
     @body.append("    int _novac_matched_t${t.uniq} = 0;\n")
     for a in t.arms {
-        // ЛОКАЛЬ, А НЕ ЕЁ ТИП (M2c): дверь спрашивает запись сама — и имя, и тип. Передавать
-        // `sd.ty` значило бы нести ключ рядом с предметом, из которого он и взят.
+        // THE LOCAL, NOT ITS TYPE (M2c): the door asks the record itself, for both the name
+        // and the type. Passing `sd.ty` would mean carrying a key beside the very subject it
+        // was taken from.
         @print_arm_head(t.uniq, a.pat, t.scrutinee)
-        // GUARD ПЕЧАТАЕТСЯ ЗДЕСЬ, А НЕ ОБЩИМ ОБХОДОМ, и причина не в удобстве (правка
-        // 2026-09-09, после того как замер снял предыдущую попытку). `SwitchArm.body`
-        // документирован дословно: «binders first, then the body», и ГРАНИЦУ между привязками и
-        // телом держит терминатор `If` guard'а — привязки в блоке арма, тело в then-ветви.
-        // Общий обход напечатал бы голову guard'а структурно, а `print_switch` — ещё раз из
-        // поля; убрать же терминатор нельзя, иначе граница исчезает и биндер уезжает ПОСЛЕ
-        // guard'а, который его читает (измерено: такой C не компилируется).
+        // A GUARD IS PRINTED HERE AND NOT BY THE GENERAL WALK, and the reason is not
+        // convenience (correction of 2026-09-09, after a measurement retired the previous
+        // attempt). `SwitchArm.body` is documented word for word -- "binders first, then the
+        // body" -- and the BOUNDARY between the binders and the body is held by the guard's
+        // `If` terminator: binders in the arm's block, body in the then-branch.
         //
-        // Поэтому: операторы блока арма печатаются БЕЗ его терминатора, голова guard'а берётся
-        // из терминатора, then-ветвь идёт обходом, а флаг ставится там, где он только и может
-        // стоять — внутри then-ветви. Флаг — собственность ПРИНТЕРА (так сказано в `SwitchTerm`),
-        // и знать его место принтер вправе; чего он не вправе — решать ФОРМУ, а форму по-прежнему
-        // диктует запись.
+        // The general walk would print the guard's head structurally and `print_switch` would
+        // print it again from the field; and the terminator cannot simply be dropped, because
+        // then the boundary disappears and a binder lands AFTER the guard that reads it
+        // (measured: such C does not compile).
+        //
+        // So: the arm block's statements print WITHOUT its terminator, the guard's head comes
+        // from the terminator, the then-branch goes through the walk, and the flag is set
+        // where it alone can be -- inside the then-branch. The flag is the PRINTER'S property
+        // (`SwitchTerm` says so), and the printer may know where it goes; what it may not do
+        // is decide the FORM, and the form is still dictated by the record.
         match a.guard {
             Some(_) => {
                 @print_block_stmts(f, a.body, printed)
@@ -567,18 +581,22 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
         @body.append("    }\n")
     }
 }
-// ── Оператор: ОДИН dispatch по виду ────────────────────────────────────────
-// Тот самый, что живёт в `@emit_last_stmt` (emit_place.nv). Он НЕ ИСЧЕЗАЕТ — он переезжает
-// сюда; вторая копия такого match'а была бы второй дверью (274.8, «одна читающая дверь»).
-// ПЯТОЕ ПРЕДУСЛОВИЕ ОБЯЗАНО БЫТЬ ПРИМЕНЕНО ДО ЭТОГО ДИСПЕТЧЕРА, иначе он теряет код молча.
-// `@emit_assign` СЕГОДНЯ НЕ ПРИНТЕР: он зовёт `@build_value` (emit_place.nv:94, 224-232), а тот
-// для `MatchExpr` делает `@fresh_uniq()`, `@ir.temp(...)` и **`@lower_match(e, u, t)`** — то есть
-// ПОНИЖАЕТ. Обход идёт по `f`, снятому `@ir.finish()`; толкать новые блоки в закрытый билдер
-// значит записать их и не напечатать НИКОГДА — из C исчезло бы тело каждого match-значения (11
-// файлов) и каждого if-значения (24 вхождения). Корень — в самой записи: `@ir.place` кладёт
-// `Rvalue.Expr(e)` с СЫРЫМ узлом дерева, и `Rvalue.Expr` объявляет себя «the M1 bridge» (ir.nv:97).
-// Лечение (предусловие, не часть обхода): лоуэринг match/if-значения переезжает в фазу понижения,
-// `Assign` записывается с ГОТОВЫМ источником, и только тогда `@emit_assign` становится принтером.
+// ---- A statement: ONE dispatch on its kind ----
+// The same one that lives in `@emit_last_stmt` (emit_place.nv). It does not disappear -- it
+// moves here; a second copy of that match would be a second door.
+//
+// THE FIFTH PREREQUISITE HAD TO LAND BEFORE THIS DISPATCHER, and it did. Without it
+// `@emit_assign` was no printer: it called `@build_value`, which for a `MatchExpr` did
+// `@fresh_uniq()`, `@ir.temp(...)` and `@lower_match(...)` -- it LOWERED. The walk runs over
+// the `f` that `@ir.finish()` returned, and pushing new blocks into a finished builder means
+// recording them and printing them NEVER: the body of every match-value (11 files) and every
+// if-value (24 sites) would have vanished from the C. The root was in the record itself:
+// `@ir.place` stores `Rvalue.Expr(e)` with a RAW tree node, and `Rvalue.Expr` calls itself
+// "the M1 bridge".
+//
+// The cure was the prerequisite rather than a part of the walk: the lowering of a match- or
+// if-value moved into the lowering phase (`@lower_value_source`), `Assign` is recorded with
+// a FINISHED source, and only then did `@emit_assign` become a printer.
 fn Emitter mut @print_stmt(s Stmt) -> () {
     match s {
         Assign(a) => @emit_assign(a)

@@ -40,6 +40,10 @@
   #include <alloca.h>
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ── Forward declarations ──────────────────────────────────────── */
 
 typedef struct Nova_ChannelState Nova_ChannelState;
@@ -1602,5 +1606,9 @@ static inline nova_int Nova_TimerMetrics_timer_cancelled(void) {
 static inline nova_int Nova_TimerMetrics_timer_longest_pending_ms(void) {
     return (nova_int)_nova_timer_stats.longest_pending_ms;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_CHANNELS_H */

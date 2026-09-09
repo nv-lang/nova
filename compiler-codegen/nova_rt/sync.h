@@ -52,6 +52,10 @@
   #error "Plan 44.1 Tier 1 unsupported platform"
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ── Mutex ─────────────────────────────────────────────────────── */
 
 #if defined(NOVA_SYNC_BACKEND_WINDOWS)
@@ -230,6 +234,10 @@ static inline bool nova_aptr_cas(volatile nova_atomic_ptr* p,
   #define NOVA_CACHELINE_SIZE 128
 #else
   #define NOVA_CACHELINE_SIZE 64
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif /* NOVA_RT_SYNC_H */

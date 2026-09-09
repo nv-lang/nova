@@ -1783,8 +1783,8 @@ uint64_t random_secure_u64(void) {
     if (rc != 0) {
         fprintf(stderr, "nova: BCryptGenRandom failed для Random.real_random(): 0x%lx\n",
                 (unsigned long)rc);
-        nv_panic((nova_str){ .ptr = "secure random: BCryptGenRandom failed (OS CSPRNG unavailable)",
-                              .len = sizeof("secure random: BCryptGenRandom failed (OS CSPRNG unavailable)") - 1 });
+        nv_panic(nova_str_of(  "secure random: BCryptGenRandom failed (OS CSPRNG unavailable)",
+                               sizeof("secure random: BCryptGenRandom failed (OS CSPRNG unavailable)") - 1 ));
     }
     return v;
 }
@@ -1795,16 +1795,16 @@ uint64_t random_secure_u64(void) {
     if (n != (ssize_t)sizeof(v)) {
         fprintf(stderr, "nova: getrandom failed для Random.real_random(): %s\n",
                 strerror(errno));
-        nv_panic((nova_str){ .ptr = "secure random: getrandom failed (OS CSPRNG unavailable)",
-                              .len = sizeof("secure random: getrandom failed (OS CSPRNG unavailable)") - 1 });
+        nv_panic(nova_str_of(  "secure random: getrandom failed (OS CSPRNG unavailable)",
+                               sizeof("secure random: getrandom failed (OS CSPRNG unavailable)") - 1 ));
     }
     return v;
 }
 #else
 uint64_t random_secure_u64(void) {
     fprintf(stderr, "nova: no known OS CSPRNG source для Random.real_random() на этой платформе\n");
-    nv_panic((nova_str){ .ptr = "secure random: no OS CSPRNG source on this platform",
-                          .len = sizeof("secure random: no OS CSPRNG source on this platform") - 1 });
+    nv_panic(nova_str_of(  "secure random: no OS CSPRNG source on this platform",
+                           sizeof("secure random: no OS CSPRNG source on this platform") - 1 ));
     return 0; /* unreachable — nv_panic не возвращается */
 }
 #endif

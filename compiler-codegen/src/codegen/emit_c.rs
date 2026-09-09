@@ -29937,7 +29937,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                  * would abort. We catch it via _tf_fail and report as test
                  * failure. _tf still catches plain main-flow asserts. */
                 self.line("NovaFailFrame _tf_fail;");
-                self.line("_tf_fail.error_msg = (nova_str){.ptr=NULL, .len=0};");
+                self.line("_tf_fail.error_msg = nova_str_of(NULL, 0);");
                 // Plan 173 Ф.6 (D348): kind sentinel — panics-ветка дискриминирует
                 // PANIC-класс (D13) от throw/cancel по error_kind.
                 self.line("_tf_fail.error_kind = NOVA_THROW_USER;");
@@ -30969,7 +30969,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let comp_tid     = format!("_defer_{}_comp_tid", scope.block_id);
         let comp_chain   = format!("_defer_{}_comp_chain", scope.block_id);
         let comp_has     = format!("_defer_{}_comp_has", scope.block_id);
-        self.line(&format!("nova_str {} = (nova_str){{0}};", comp_msg));
+        self.line(&format!("nova_str {} = nova_str_of(0, 0);", comp_msg));
         self.line(&format!("NovaThrowKind {} = NOVA_THROW_USER;", comp_kind));
         self.line(&format!("void* {} = NULL;", comp_payload));
         self.line(&format!("NovaTypeId {} = 0;", comp_tid));
@@ -37924,7 +37924,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     ty = err_c, tmp = try_tmp)
                             };
                             self.line(&format!(
-                                "nova_throw_typed((nova_str){{.ptr=(const uint8_t*)\"<typed err>\", .len=11}}, {p}, {tid});",
+                                "nova_throw_typed(nova_str_of((const uint8_t*)\"<typed err>\", 11), {p}, {tid});",
                                 p = payload_expr, tid = tid));
                         }
                         self.indent -= 1;
@@ -38064,7 +38064,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 ty = err_c, tmp = bang_tmp)
                         };
                         self.line(&format!(
-                            "nova_throw_typed((nova_str){{.ptr=(const uint8_t*)\"<typed err>\", .len=11}}, {p}, {tid});",
+                            "nova_throw_typed(nova_str_of((const uint8_t*)\"<typed err>\", 11), {p}, {tid});",
                             p = payload_expr, tid = tid));
                     }
                     self.indent -= 1;
@@ -38637,13 +38637,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
                 // Build a single nova_str by concatenating all parts and arg string reprs.
                 if parts.is_empty() {
-                    return Ok("(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into());
+                    return Ok("nova_str_of((const uint8_t*)\"\", 0)".into());
                 }
                 if args.is_empty() {
                     // Simple string literal: all content is in parts[0]
                     let combined = parts.join("");
                     let escaped = Self::escape_c_str(&combined);
-                    return Ok(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, combined.len()));
+                    return Ok(format!("nova_str_of((const uint8_t*)\"{}\", {})", escaped, combined.len()));
                 }
                 // With interpolations: concatenate parts[0] + str.from(args[0]) + parts[1] + ...
                 // (D73: string interpolation uses From[X]/str. In bootstrap codegen we call
@@ -38652,7 +38652,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 for (i, part) in parts.iter().enumerate() {
                     if !part.is_empty() {
                         let escaped = Self::escape_c_str(part);
-                        result_exprs.push(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, part.len()));
+                        result_exprs.push(format!("nova_str_of((const uint8_t*)\"{}\", {})", escaped, part.len()));
                     }
                     if let Some(arg) = args.get(i) {
                         let v = self.emit_expr(arg)?;
@@ -38672,7 +38672,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 if result_exprs.is_empty() {
-                    return Ok("(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into());
+                    return Ok("nova_str_of((const uint8_t*)\"\", 0)".into());
                 }
                 let mut acc = result_exprs[0].clone();
                 for expr in &result_exprs[1..] {
@@ -42137,7 +42137,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     ));
                                 }
                                 return Ok(format!(
-                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=(const uint8_t*)\"cancelled\",.len=9}})), NOVA_UNIT)",
+                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str(nova_str_of((const uint8_t*)\"cancelled\", 9))), NOVA_UNIT)",
                                     obj_c));
                             }
                             "is_cancelled" => {
@@ -42534,7 +42534,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let none_check = self.option_is_none_check(&tmp, &elem_ty);
                                 self.line(&format!("if ({}) {{", none_check));
                                 self.indent += 1;
-                                self.line("Nova_Fail_fail((nova_str){.ptr=(const uint8_t*)\"called unwrap on None\", .len=21});");
+                                self.line("Nova_Fail_fail(nova_str_of((const uint8_t*)\"called unwrap on None\", 21));");
                                 self.indent -= 1;
                                 self.line("}");
                                 return Ok(format!("({}.value)", tmp));
@@ -42835,7 +42835,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 if err_c_ty == "nova_str" {
                                     self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
                                 } else {
-                                    self.line("Nova_Fail_fail((nova_str){.ptr=(const uint8_t*)\"called unwrap on Err\", .len=20});");
+                                    self.line("Nova_Fail_fail(nova_str_of((const uint8_t*)\"called unwrap on Err\", 20));");
                                 }
                                 self.indent -= 1;
                                 self.line("}");
@@ -49177,7 +49177,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 109 (D179): StringBuilder is now Nova-defined.
                     // Generated method: Nova_StringBuilder_method_append (str overload).
                     self.line(&format!(
-                        "Nova_StringBuilder_method_append({}, (nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}});",
+                        "Nova_StringBuilder_method_append({}, nova_str_of((const uint8_t*)\"{}\", {}));",
                         sb, escaped, s.len()
                     ));
                 }
@@ -50033,7 +50033,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (and composite types generally) default to LEFT alignment (Rust
         // convention).
         Ok(Some(format!(
-            "nova_fmt_pad((nova_str){{\"\", 0}}, {}, {}, {}, {}, {})",
+            "nova_fmt_pad(nova_str_of(\"\", 0), {}, {}, {}, {}, {})",
             core,
             fill_cp,
             align_code(spec.align, true),
@@ -51704,7 +51704,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             // Ключ — str literal из имени поля.
             let key_str = format!(
-                "(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}",
+                "nova_str_of((const uint8_t*)\"{}\", {})",
                 Self::escape_c_str(&f.name),
                 f.name.len()
             );
@@ -52299,7 +52299,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 self.line(&format!(
-                    "nova_str {} = (nova_str){{.ptr=(const uint8_t*)({}), .len=(int64_t)({})}};",
+                    "nova_str {} = nova_str_of((const uint8_t*)({}), (int64_t)({}));",
                     tmp, ptr_val, len_val));
                 self.var_types.insert(tmp.clone(), "nova_str".into());
             } else if !self.record_schemas.contains_key(&struct_name) {
@@ -57988,7 +57988,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "{storage}NovaRes_{n}* nova_make_NovaRes_{n}_Err_typed(void* payload, NovaTypeId tid) {{ \
                  NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
                  r->tag = NOVA_TAG_Result_Err; \
-                 r->payload.Err._0 = (nova_str){{.ptr = (const uint8_t*)\"<typed err>\", .len = 11}}; \
+                 r->payload.Err._0 = nova_str_of((const uint8_t*)\"<typed err>\", 11); \
                  r->err_typed_payload = payload; r->err_typed_type_id = tid; \
                  return r; }}\n",
                 storage = self.top_level_storage_inline(), n = name));
@@ -65790,7 +65790,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Empty string: no rodata buffer needed; inline compound literal with
         // a shared empty-string literal pointer. Keeps parity with prior code.
         if s.is_empty() {
-            return "(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into();
+            return "nova_str_of((const uint8_t*)\"\", 0)".into();
         }
         if let Some(sym) = self.interned_str_literals.get(s) {
             return sym.clone();

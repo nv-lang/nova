@@ -193,7 +193,7 @@ static inline nova_parse_bool_result nova_str_to_bool(nova_str s) {
  * exists (out of Ф.4R's primitive-family scope, Plan 208 Ф.4R Ш4). */
 static inline nova_str nova_ptr_to_debug_str(const void* p) {
     if (p == 0) {
-        return (nova_str){ "0x0 (null)", 10 };
+        return nova_str_of( "0x0 (null)", 10 );
     }
     char* buf = (char*)nova_alloc(20);
     int n = snprintf(buf, 20, "0x%p", p);
@@ -206,7 +206,7 @@ static inline nova_str nova_ptr_to_debug_str(const void* p) {
         n -= 2;
         buf[n] = '\0';
     }
-    return (nova_str){ buf, (size_t)n };
+    return nova_str_of( buf, (size_t)n );
 }
 
 /* === str → char (single codepoint) === */
@@ -282,10 +282,15 @@ static inline size_t nova_fmt_encode_fill(int32_t cp, char* dst) {
 
 /* Count Unicode scalar values (codepoints) in a UTF-8 byte run — used as the
  * "display width" of the content (Rust counts chars for width/precision). */
-static inline size_t nova_fmt_char_count(const char* p, size_t len) {
+/* Параметр — `const uint8_t*`, то есть РОВНО тип поля `nova_str.ptr`, а не
+ * соседний `const char*`. C приводил их сам и печатал лишь -Wpointer-sign;
+ * C++ такого преобразования не имеет, и вызов не находил функции. Приведение
+ * в двух местах вызова починило бы сегодняшние два, тип параметра чинит все
+ * будущие. (Реестр 221.1 №1061.) */
+static inline size_t nova_fmt_char_count(const uint8_t* p, size_t len) {
     size_t n = 0;
     for (size_t i = 0; i < len; i++) {
-        if (((unsigned char)p[i] & 0xC0) != 0x80) n++;
+        if ((p[i] & 0xC0) != 0x80) n++;
     }
     return n;
 }
@@ -315,7 +320,7 @@ static inline nova_str nova_fmt_pad(
         memcpy(buf + j, prefix.ptr, prefix.len); j += prefix.len;
         for (int64_t k = 0; k < pad_total; k++) buf[j++] = '0';
         memcpy(buf + j, body.ptr, body.len); j += body.len;
-        return (nova_str){ (const uint8_t*)buf, j };
+        return nova_str_of( (const uint8_t*)buf, j );
     }
 
     int64_t left_pad = 0, right_pad = 0;
@@ -332,14 +337,14 @@ static inline nova_str nova_fmt_pad(
                 + (size_t)(left_pad + right_pad) * fbytes;
     /* Plan 199 Ф.3 (D418): buffer is EXACTLY `need` bytes — no trailing NUL.
      * Guard the all-empty/no-pad case so we never nova_alloc(0). */
-    if (need == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    if (need == 0) return nova_str_of( (const uint8_t*)"", 0 );
     char* buf = (char*)nova_alloc(need);
     size_t j = 0;
     for (int64_t k = 0; k < left_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
     memcpy(buf + j, prefix.ptr, prefix.len); j += prefix.len;
     memcpy(buf + j, body.ptr, body.len); j += body.len;
     for (int64_t k = 0; k < right_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
-    return (nova_str){ (const uint8_t*)buf, j };
+    return nova_str_of( (const uint8_t*)buf, j );
 }
 
 #endif /* NOVA_CONV_H */

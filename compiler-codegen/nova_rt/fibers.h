@@ -1604,8 +1604,6 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
         nova_sched_cancel_all_pending(q);
         nova_scope_cancel_wake_all(q);
         {
-            extern void nova_runtime_cancel_worker_fibers(
-                struct NovaFiberQueue* scope);
             nova_runtime_cancel_worker_fibers(q);
         }
         _nova_cancel_via_driver(q);
@@ -1776,7 +1774,7 @@ static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) 
     NovaOpt_nova_str r;
     if (!t || !t->has_reason || t->reason_ptr == NULL) {
         r.tag = NOVA_TAG_Option_None;
-        r.value = (nova_str){0, 0};
+        r.value = nova_str_of(0, 0);
         return r;
     }
     r.tag = NOVA_TAG_Option_Some;
@@ -2523,7 +2521,6 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
     {
         NovaSpawnCtxBase* _d656 = (NovaSpawnCtxBase*)mco_get_user_data(co);
         if (_d656 && _d656->_nova_worker_slot < 0) {
-            extern void nova_diag656_count_first_run(void);
             nova_diag656_count_first_run();
         }
     }
@@ -2906,7 +2903,6 @@ static inline bool nova_scope_retain_or_release_child(NovaSpawnCtxBase* dead_ctx
  * runtime.h which (like the 83.10.3 decls just below) is included AFTER
  * fibers.h in nova_rt.h. Needed by nova_supervised_run_impl's decision-loop
  * tail to release retained child ctx buffers back to their pool. */
-void nova_spawn_pool_release(void* ctx, size_t size);
 
 /* [196.6 / D466 §6 class, 2026-07-13]: the ONE post-mortem sweep for a dead
  * remote child — retain-or-release the ctx, then RELEASE-decrement the parent
@@ -2931,8 +2927,6 @@ static inline void nova_scope_sweep_dead_child(NovaSpawnCtxBase* dead_ctx) {
      * освобождённому ctx = double-sweep (двойной pool-release + чтение
      * freelist-линка как _nova_parent_scope). Диаг-режим ловит до порчи. */
     {
-        extern int  nova_spawn_pool_diag(void);
-        extern void nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
         if (nova_spawn_pool_diag()) nova_spawn_ctx_diag_check_live(dead_ctx, "sweep-dead-child");
     }
     NovaFiberQueue* parent_snapshot = dead_ctx->_nova_parent_scope;
@@ -2947,7 +2941,6 @@ static inline void nova_scope_sweep_dead_child(NovaSpawnCtxBase* dead_ctx) {
 /* Plan 83.10.3 (2026-05-26): forward-decls — runtime.h included AFTER
  * fibers.h in nova_rt.h. Forward-declare to allow use in fibers.h functions.
  * Returns -1 on main thread, worker id (>=0) on worker thread. */
-int nova_runtime_current_worker_id(void);
 
 /* Plan 83.10.3 (2026-05-26): pump current worker's deque/runnext for a fiber
  * belonging to scope q. If found and IDLE, resumes it inline (handles nested
@@ -2955,7 +2948,6 @@ int nova_runtime_current_worker_id(void);
  * supervised_run_impl). If nothing found, blocks on UV_RUN_ONCE (woken by
  * nova_runtime_signal_main broadcast or timer). Defined in runtime.c.
  * forward-declared here because runtime.h comes AFTER fibers.h. */
-void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope);
 
 /* Plan 83.10.3 (2026-05-26): helper — true when running on a worker thread.
  * Used in nova_supervised_run_impl to detect nested supervised case. */
@@ -3189,7 +3181,6 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
      * NOVA_WATCHDOG_DUMP_SECS on purpose: turning the dump off must not turn
      * the fix off. The window runs from the last CHANGE of `remote`, so a
      * scope whose children keep completing keeps resetting it. */
-    extern struct NovaFiberQueue* nova_runtime_orphan_scope(void);
     const bool _ods_is_orphan = (q == (NovaFiberQueue*)nova_runtime_orphan_scope());
     bool     _ods_fired  = false;
     int      _ods_secs   = 10;
@@ -3243,7 +3234,6 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                 uint64_t _pxwd_now = uv_hrtime();
                 if ((_pxwd_now - _pxwd_start) / 1000000000ULL >= (uint64_t)_pxwd_secs) {
                     _pxwd_fired = true;
-                    extern void nova_runtime_dump_state(const char* reason);
                     char _pxwd_buf[80];
                     snprintf(_pxwd_buf, sizeof(_pxwd_buf),
                              "pre-exit-drain-%ds-remote-%d", _pxwd_secs, remote);
@@ -3323,7 +3313,6 @@ static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr
     nova_sched_cancel_all_pending(q);
     nova_scope_cancel_wake_all(q);
     {
-        extern void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* scope);
         nova_runtime_cancel_worker_fibers(q);
     }
     _nova_cancel_via_driver(q);
@@ -3771,7 +3760,6 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
     bool _watchdog_enabled = (!_nova_on_worker_thread() || _watchdog_worker_opt_in)
                               && _watchdog_threshold_secs > 0;
     if (_watchdog_enabled) {
-        extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
         nova_runtime_set_watchdog_scope((struct NovaFiberQueue*)q);
     }
     /* Plan 174 (D349): scope deadline — absolute monotonic ns (0 = none),
@@ -3810,7 +3798,6 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
              * consecutive fires while `over_by_ns` stays large, the delay is
              * NOT GC — look at scheduling/contention instead. */
             if (getenv("NOVA_DIAG_DEADLINE_OVERRUN")) {
-                extern void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns);
                 uint64_t gc_count = 0, gc_total_ns = 0, gc_max_ns = 0;
                 nova_gc_pause_diag_snapshot(&gc_count, &gc_total_ns, &gc_max_ns);
                 int64_t now = time_monotonic_ns();
@@ -3850,7 +3837,6 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                 uint64_t now = uv_hrtime();
                 uint64_t elapsed_ns = now - _watchdog_start;
                 if (elapsed_ns / 1000000000ULL >= (uint64_t)_watchdog_threshold_secs) {
-                    extern bool nova_runtime_has_stuck_fibers(void);
                     /* №656: has_stuck_fibers СЛЕП к никогда не стартовавшему
                      * ребёнку — он ищет SUSPENDED-not-parked по слотам, а у
                      * неисполненного нет ни корутины, ни слота. Доказано
@@ -3860,7 +3846,6 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                      * диагностический режим, по умолчанию поведение прежнее. */
                     if (nova_runtime_has_stuck_fibers() || getenv("NOVA_DIAG_656")) {
                         _watchdog_fired = true;
-                        extern void nova_runtime_dump_state(const char* reason);
                         char buf[64];
                         snprintf(buf, sizeof(buf),
                                  "supervised-watchdog-%ds-remote-%d",
@@ -3897,7 +3882,6 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
     }
     /* Plan 83.11 Phase A: clear watchdog scope before cleanup. */
     if (_watchdog_enabled) {
-        extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* qq);
         nova_runtime_set_watchdog_scope(NULL);
     }
     /* Plan 83.11 §12.31: wait for driver to finish processing any in-flight
@@ -5139,7 +5123,6 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
         }
         /* Plan 83.11 Ф.3: route to centralized driver if started, otherwise
          * fallback to legacy per-worker path (bootstrap/single-thread mode). */
-        extern bool nova_driver_is_started(void);  /* forward decl */
         if (nova_driver_is_started()) {
             _nova_sleep_via_driver(_nova_active_scope, _nova_active_slot, ms);
         } else {

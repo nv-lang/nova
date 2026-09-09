@@ -12,10 +12,17 @@ and window 283's count of 5 were BOTH right with different selections:
 Usage: python controller-machine-watch.py
 Prints one block per class, plus a verdict line naming the owning tree(s).
 """
+import os
 import re
 import subprocess
 import sys
 import time
+
+# Derived, never remembered -- the integrator's rule, 21:41 local 2026-09-08: any tool of
+# mine that knows the repository path must derive it, or it reads a stranger's files and
+# reports them as its own. NOVA_REPO_ROOT overrides.
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.environ.get("NOVA_REPO_ROOT") or os.path.abspath(os.path.join(HERE, "..", ".."))
 
 # Heavy = actually occupies the machine's slot.
 # Both spellings on purpose: the built oracle is `target/release/nova.exe` on Windows and
@@ -34,7 +41,35 @@ NOISE = re.compile(r"(tail -|tail\.exe|vcvars|cmd\.exe)")
 # bare name matched inside that prose, and the watch printed `machine BUSY by nova-b8 x2` while I
 # had launched nothing. The tool answered "which line contains this name" and called it an answer
 # to "who holds the slot" -- the class this role exists to catch, in the role's own instrument.
-TREE = re.compile(r"[/\\](nova-p\d+\w*|nova-[a-z]+\d*|nova)(?=[/\\])")
+# DERIVED, not guessed -- fixed 15:19Z 2026-09-09 after a six-case probe went 4/6. The pattern
+# used to spell the names it expected (`nova`, `nova-pNNN`, `nova-<word>`), and two live cases
+# broke it: a RELATIVE main-copy path (`./nova-cli/target/release/nova`) attributed to a
+# non-existent tree called `nova-cli`, and a worktree whose name does not begin with "nova" at all
+# (`claude-limits`) attributed to `nova-cli` as well, because the real name was invisible to the
+# pattern. Both are one class: a check that recites the members of a set instead of reading the
+# set. The set is on disk -- the directories beside the main copy that carry a `.git` -- so the
+# names come from there, longest first (a longest-match alternation makes `nova-p274` win over
+# `nova`), and the main copy's own subdirectories are excluded by NAME rather than by the shape of
+# the path around them, which is what let the relative form slip through.
+SUBDIRS = ("nova-cli", "compiler-codegen", "nova-lsp", "nova_rt", "novac", "std", "spec_tests")
+
+
+def _tree_names():
+    parent = os.path.dirname(os.path.abspath(ROOT)) if "ROOT" in globals() else None
+    names = set()
+    if parent and os.path.isdir(parent):
+        for d in os.listdir(parent):
+            p = os.path.join(parent, d)
+            if os.path.isdir(os.path.join(p, ".git")) or os.path.isfile(os.path.join(p, ".git")):
+                names.add(d)
+    names.add(os.path.basename(os.path.abspath(ROOT)) if "ROOT" in globals() else "nova")
+    names -= set(SUBDIRS)
+    return sorted(names, key=len, reverse=True)
+
+
+TREE_NAMES = _tree_names()
+TREE = re.compile(r"[/\\](" + "|".join(re.escape(n) for n in TREE_NAMES) + r")(?=[/\\])") \
+    if TREE_NAMES else re.compile(r"[/\\](nova)(?=[/\\])")
 # Everything after `-c` / `-m` / `-F` is DATA the process was handed, not an address: a commit
 # message, a python snippet, a grep pattern. Cut it before attributing.
 DATA_ARG = re.compile(r"\s-(?:c|m|F)\s")
@@ -42,6 +77,23 @@ DATA_ARG = re.compile(r"\s-(?:c|m|F)\s")
 # script's own `ps`/`grep` carried a tree name in its command line and was reported as that tree
 # taking the machine). Kept at module level so sibling tools reuse it rather than copy it.
 SELF_RE = re.compile(r"(controller-\w+|\bps -ef\b|\bgrep\b|\bawk\b|\bwc\b|shell-snapshots)")
+
+
+# STDOUT MUST NOT BE ABLE TO KILL THE MEASUREMENT -- fixed 16:24Z 2026-09-09, and the cause is
+# the machine itself: the slot holder was `C:\Users\<russian name>\.cargo\bin\cargo.exe`, that
+# path decodes with a replacement character (we read bytes with errors="replace"), and printing it
+# to a cp1251 console raised UnicodeEncodeError. The traceback landed INSTEAD of the verdict line,
+# so the watch answered nothing at all -- and the watch is the tool every other decision of this
+# role stands on: "is the main tree free to edit", "who holds the slot", "did a tier start".
+#
+# The class is the one I have been writing down all shift, in its harshest form yet: the tool did
+# not answer wrongly, it answered NOTHING, and a missing verdict reads to a hurried eye exactly
+# like a quiet machine. Same shape as prohibition 16 ("busy by unknown is not a conclusion") --
+# only here the unknown was produced by my own print statement.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001
+    pass
 
 
 def ps():

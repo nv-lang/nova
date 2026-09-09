@@ -26,10 +26,21 @@ Usage:
   python controller-verdict.py --prove      # both-ways probe on synthetic cases
 """
 import glob
+# Каталог РЯДОМ с главной копией, выведенный от положения этого файла: в
+# синтетических строках `ps` путь — данные, но записанный литералом он привязывает
+# пробу к одной машине (страж №698 краснеет на этом законно, и поймал именно здесь).
+_PARENT_POSIX = __import__('os').path.dirname(__import__('os').path.dirname(
+    __import__('os').path.dirname(__import__('os').path.dirname(
+        __import__('os').path.abspath(__file__))))).replace('\\', '/')
+# msys-форма пути: приписка сравнивает с `/d/...`, а не с `D:/...`. Проба H
+# поймала это первым же прогоном — выведенный путь верен, а НАПИСАНИЕ было чужим.
+_PARENT_POSIX = __import__('re').sub(
+    r'^([A-Za-z]):/', lambda m: '/' + m.group(1).lower() + '/', _PARENT_POSIX)
 import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -143,6 +154,58 @@ def newest_dirty_file(tree, limit=40):
     return best_path, best_mtime
 
 
+# How many of the session's most recent command lines decide where it works. 300 covers a couple
+# of hours of a busy window and does not reach back to yesterday's home.
+RECENT_CMD_LINES = 300
+
+
+# The map of session -> tree(s), as DECLARED BY THE WINDOWS THEMSELVES. Added 15:37Z 2026-09-09
+# after the sixth run of the same defect: inference from a transcript has now been fixed four
+# times (threshold 20, threshold 60, command filter, recent window) and each fix moved the error
+# rather than removing it -- this cycle it swept the sdl window into the main copy, so THREE of
+# four sessions lost their file signals to the "shared tree" refusal. The refusal is honest, but
+# a tool whose honest answer is "I cannot tell" about three quarters of its subject is not doing
+# its job.
+#
+# The right source was named by a window, not by me (nova-9c, 18:27 local): "чините приписку под
+# этот случай, а не под догадку" -- fix the attribution for THIS case, not for your guess. What a
+# session knows about itself beats anything I can count in its text, and it costs them one line.
+# So the map is data, gathered by asking, keyed by SESSION ID (stable across renames), and the
+# textual inference stays only as the fallback for a session nobody has asked yet.
+#
+# The file lives in the scratchpad, not in the repo: it is role state, like the reminder stamp,
+# and the repo holds only code (the lesson of 15:05Z, when moving state into the tree silently
+# reset the owner's hourly clock).
+def _state_dir():
+    for var in ("CLAUDE_SCRATCHPAD", "CLAUDE_SCRATCHPAD_DIR", "TMPDIR", "TEMP", "TMP"):
+        v = os.environ.get(var)
+        if v and os.path.isdir(v):
+            d = v if "SCRATCHPAD" in var else os.path.join(v, "controller-reminder")
+            try:
+                os.makedirs(d, exist_ok=True)
+                return d
+            except OSError:
+                continue
+    return HERE
+
+
+TREE_MAP_PATH = os.path.join(_state_dir(), "tree-map.json")
+
+
+def declared_trees(sid):
+    """Trees this session told me it works in, newest declaration first. [] if never asked."""
+    try:
+        with io.open(TREE_MAP_PATH, encoding="utf-8") as fh:
+            m = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return []
+    for key, rec in m.items():
+        if sid.startswith(key) or key.startswith(sid[:8]):
+            t = rec.get("trees") or []
+            return [x for x in t if isinstance(x, str)]
+    return []
+
+
 def tree_of(path, cwd_hint):
     """Which working copy is this session's? Frequency of tree paths in its own transcript.
 
@@ -165,18 +228,80 @@ def tree_of(path, cwd_hint):
     # while the integrator, who lives in the main copy, mentions nova-p274 exactly 4 times,
     # because I keep writing to him ABOUT their tier. Frequency without a floor made the tool
     # hand him a stranger's tree, and with it a stranger's slot as his "signal of work".
-    MIN_TREE_HITS = 20
+    # RAISED 20 -> 60 at 14:38Z 2026-09-09, because 20 was pierced by a stranger's tree and the
+    # tool handed the integrator the wrong home for the second time. Measured on the same tails
+    # this function reads (400 KB), so these numbers ARE facts about this code, not about the dock:
+    #   integrator  gate/push=6   max foreign tree = 27 (claude-limits), own tree: none
+    #   window 283  gate/push=1   nova-p283 = 141
+    #   window 274  gate/push=2   nova-p274 = 141
+    #   claude-limits/sdl         nova-sdl  = 113, claude-limits 26, nova-duckdb 53
+    # 60 sits with a two-fold margin on BOTH sides: twice the loudest stranger, half the quietest
+    # home. The dock disagreed with this function at 14:36Z (it said "nova (main)", correctly, by
+    # its gate/push signal) -- and by my own rule a disagreement between two of my measurers is a
+    # defect, not noise. The floor is the fix; the dock's signal stays its own.
+    # REPLACED 15:26Z 2026-09-09, third fix of this function and the first one measured rather
+    # than tuned. The floor was pierced AGAIN: the integrator came out as `nova-p274` and his
+    # status stood on THEIR build. Two causes, both in the counting rather than in the threshold:
+    #
+    #   1. `blob.count("nova-p274")` counts my own LETTERS TO HIM about their tier -- prose about
+    #      a stranger's tree, piled into his transcript by me, the very window that then reads it
+    #      as proof of his home. The code already knew the mirror image of this (the main copy
+    #      "loses by construction" because its name prefixes every worktree name) and patched
+    #      only that half.
+    #   2. Counting by SUBSTRING: `nova` occurs inside `nova-p274` and `nova-sdl`, so any
+    #      unbounded count of the main copy is inflated by every worktree path. The 60-hit floor
+    #      held by luck, not by measurement.
+    #
+    # The fix is one question asked properly: in how many COMMAND lines does this session name
+    # this tree BETWEEN PATH SEPARATORS. A command line cannot be written by someone else's prose
+    # about the session. Measured on the four live tails (400 KB each), prose vs commands:
+    #   integrator  prose nova=143 p274=8    -> cmd nova=45  p274=8    (main copy, correct)
+    #   window 274  prose p274=220 nova=37   -> cmd p274=100 nova=7    (correct either way)
+    #   window 283  prose nova=98  p283=67   -> cmd p283=15  nova=6    (PROSE WOULD LIE)
+    #   sdl window  prose nova=162 sdl=58    -> cmd sdl=39   nova=32   (PROSE WOULD LIE)
+    # Two of four are decided ONLY by the command filter -- that is the whole measurement.
+    CMD_CTX = re.compile(r"(git -C |cd |bash scripts/|python scripts/|/target/|\.exe|nova test |novac )")
+    SEP_PAT = "[/\\\\]"
+    TAIL_PAT = "(?=[/\\\\\\\\\"' ])"
+    # RECENT, not cumulative -- the formulation is window nova-9c's, 18:27 local 2026-09-09, and
+    # it is better than mine: "the dock counts mentions across the whole shift, where claude-limits
+    # is inevitably ahead -- I worked in it for eight hours; the verdict looks at the LAST actions,
+    # and those have been in nova-sdl since 17:20. Both are right about different things. The
+    # `one tree by frequency` attribution breaks not on a large window but on the very existence
+    # of a second home." They have TWO trees today, by the owner's permission, and so the question
+    # a status needs answered is not "where is their home" but "where are they working NOW".
+    # Measured cost of getting this wrong, same minute: window 283 was given the MAIN COPY as its
+    # tree and the integrator's dirty `check-runtime-cxx-clean.sh` as its signal of work -- a
+    # status standing on a stranger's file, while their own tree had not moved since 17:56.
+    cmd_lines = [ln for ln in lines if CMD_CTX.search(ln)][-RECENT_CMD_LINES:]
+    homes = {}
     for d in names:
         if not os.path.isdir(os.path.join(parent, d, ".git")) and not os.path.isfile(os.path.join(parent, d, ".git")):
             continue
-        n = blob.count(d)
-        if d == os.path.basename(ROOT):
-            # The main copy loses this contest by construction: its name is a prefix of every
-            # worktree name (nova / nova-p274), so counting it plainly would always win.
-            n = blob.count(os.path.basename(ROOT) + "/scripts") + blob.count("gate.sh") + blob.count("integrator-push")
-        if n > best_n:
-            best, best_n = d, n
-    if best is None or best_n < MIN_TREE_HITS or best == os.path.basename(ROOT):
+        pat = re.compile(SEP_PAT + re.escape(d) + TAIL_PAT)
+        homes[d] = sum(len(pat.findall(ln)) for ln in cmd_lines)
+    main_name = os.path.basename(ROOT)
+    if not homes or max(homes.values()) == 0:
+        return ROOT, 0
+    best = max(homes, key=lambda k: homes[k])
+    best_n = homes[best]
+    rest = sorted((v for k, v in homes.items() if k != best), reverse=True)
+    second = rest[0] if rest else 0
+    # The command filter alone is NOT enough, and probe case I is what said so: MY OWN LETTERS
+    # carry commands. I write to windows with full paths inside (`grep -c ... /d/.../nova-p274/...`),
+    # so a stranger's tree appears in command context in their transcript too -- measured live at
+    # 15:23Z: the integrator has 8 such lines for `nova-p274`, all of them mine. So two conditions
+    # together, and both are read off the live tails rather than chosen for roundness:
+    #   MIN_CMD_HITS = 10 kills the case of a handful of quoted commands (probe I uses 1);
+    #   MARGIN = 1.2 keeps the sdl window, which genuinely works in TWO trees today
+    #            (nova-sdl 39 vs nova 32) -- a 2x margin would have called its home the main copy,
+    #            safe but wrong, and the window's own answer is the thing I asked them for.
+    # Live check of both, all four sessions correct: nova / nova-p274 / nova-p283 / nova-sdl.
+    MIN_CMD_HITS = 10
+    MARGIN = 1.2
+    if best == main_name:
+        return ROOT, best_n
+    if best_n < MIN_CMD_HITS or best_n < MARGIN * max(second, 1):
         return ROOT, best_n
     return os.path.join(parent, best), best_n
 
@@ -220,7 +345,7 @@ def slot_holders_by_tree():
     return held
 
 
-def verdict_for(entry, last_text_epoch, tree, held, now, threshold_min):
+def verdict_for(entry, last_text_epoch, tree, held, now, threshold_min, shared_tree=False):
     """The closed list, in order. Returns (status, signal, push?)."""
     tree_name = os.path.basename(tree.rstrip("/\\")) if tree else "?"
     if held is None:
@@ -236,15 +361,39 @@ def verdict_for(entry, last_text_epoch, tree, held, now, threshold_min):
         return "works", "own-tree %s holds the slot since %s" % (kind, stime), False
     if has_tool_use(entry):
         return "works", "tool_use at %s" % hhmmss(iso_to_epoch(entry.get("timestamp"))), False
-    h, ctime = head_commit(tree) if tree else (None, None)
-    if ctime and last_text_epoch and ctime > last_text_epoch:
-        return "works on the unblocked", "commit %s at %s newer than text" % (h, hhmmss(ctime)), False
-    p, mt = newest_dirty_file(tree) if tree else (None, None)
-    if mt and last_text_epoch and mt > last_text_epoch:
-        return "works on the unblocked", "dirty %s at %s newer than text" % (p, hhmmss(mt)), False
+    # SHARED TREE: skip the two file signals, do not short-circuit the verdict. Placed here after
+    # my own first attempt put the refusal ABOVE the freshness threshold and turned every session
+    # sharing the main copy into STOOD -- including the integrator, whose text was seconds old.
+    # That is the same trade I keep warning others about: I removed a false "works" and bought a
+    # false "STOOD" with it, because the fix landed at the wrong point in an ORDERED list. The
+    # refusal belongs to the two signals it distrusts, and to nothing else.
+    if not shared_tree:
+        h, ctime = head_commit(tree) if tree else (None, None)
+        if ctime and last_text_epoch and ctime > last_text_epoch:
+            return "works on the unblocked", "commit %s at %s newer than text" % (h, hhmmss(ctime)), False
+        p, mt = newest_dirty_file(tree) if tree else (None, None)
+        if mt and last_text_epoch and mt > last_text_epoch:
+            return "works on the unblocked", "dirty %s at %s newer than text" % (p, hhmmss(mt)), False
     if last_text_epoch is None:
         return "UNKNOWN", "no assistant text in tail", False
+    # Window 283 resolved to the MAIN COPY because their recent commands really are there:
+    # `git log -p main -- <file>` is how they read the integrator's unpushed work without merging
+    # it. The attribution was not wrong about the commands -- it was wrong about what a command
+    # MEANS: reading someone else's tree is not working in it. With two sessions on one tree the
+    # integrator's dirty file became THEIR signal of work, while their own tree had not moved
+    # since 17:56. Naming the unhandled case beats guessing a home (prohibition 16).
     age = (now - last_text_epoch) / 60
+    # A NEGATIVE age is impossible as an age, and printing it as one ("text -0.1 min old") hands
+    # the reader a number that cannot be true and says nothing about why. Caught 13:43Z 2026-09-09
+    # on a live cycle. The cause is in this tool's own order: `now` is sampled ONCE in main, before
+    # the histories are read, so an entry written DURING the scan is newer than the measurement's
+    # own clock. That is not noise -- it is the strongest possible signal of work, because the
+    # window acted while I was measuring it. Same class as "the measurement before the edit answers
+    # a different question": the number is right about the moment it was taken and wrong about the
+    # moment it is used. So name it instead of smoothing it.
+    if age < 0:
+        return "works", "text at %s is NEWER than the scan start -- entry appeared mid-scan" % (
+            hhmmss(last_text_epoch)), False
     if age < threshold_min:
         return "too early", "text %.1f min old, threshold %.0f" % (age, threshold_min), False
     return "STOOD", "no signal; silent %.1f min since %s" % (age, hhmmss(last_text_epoch)), True
@@ -267,9 +416,31 @@ def main():
     print("")
     print("%-10s | %-11s | %-24s | %-46s | %s" % ("id", "tree", "status", "signal", "push"))
     rows = []
+    # Two passes, because "is this tree shared" is a fact about the SET of sessions and cannot be
+    # known while looking at one of them.
+    resolved = []
     for f in files[:4]:
+        tail0 = SCAN.parse(SCAN.read_tail_lines(f, TAIL_BYTES))
+        if not tail0:
+            continue
+        cwd0 = next((e["cwd"] for e in tail0 if e.get("cwd")), None)
+        sid0 = os.path.basename(f)[:-6]
+        decl = declared_trees(sid0)
+        if decl:
+            # A window that declared TWO homes gets the first one for file signals, and the
+            # second is printed beside it -- because "which of my two trees moved" is a question
+            # only they can answer, and pretending otherwise is how the last four fixes failed.
+            t0 = os.path.join(os.path.dirname(os.path.abspath(ROOT)), decl[0]) \
+                if decl[0] != os.path.basename(ROOT) else ROOT
+        else:
+            t0, _ = tree_of(f, cwd0)
+        resolved.append((f, tail0, t0))
+    counts = {}
+    for _, _, t0 in resolved:
+        key = os.path.abspath(t0 or "?")
+        counts[key] = counts.get(key, 0) + 1
+    for f, tail, tree0 in resolved:
         sid = os.path.basename(f)[:-6]
-        tail = SCAN.parse(SCAN.read_tail_lines(f, TAIL_BYTES))
         if not tail:
             continue
         last_entry = tail[-1]
@@ -278,10 +449,10 @@ def main():
             if e.get("type") == "assistant" and SCAN.text_of(e.get("message") or {}).strip():
                 last_text_ts = e.get("timestamp")
                 break
-        cwd = next((e["cwd"] for e in tail if e.get("cwd")), None)
-        tree, _ = tree_of(f, cwd)
+        tree = tree0
+        shared = counts.get(os.path.abspath(tree or "?"), 0) > 1
         status, signal, push = verdict_for(
-            last_entry, iso_to_epoch(last_text_ts), tree, held, now, threshold)
+            last_entry, iso_to_epoch(last_text_ts), tree, held, now, threshold, shared)
         print("%-10s | %-11s | %-24s | %-46s | %s" % (
             sid[:8], os.path.basename(tree or "?")[:11], status, signal[:46], "YES" if push else "no"))
         if push:
@@ -332,8 +503,55 @@ def prove():
     ok = status == "too early" and not push
     fail += 0 if ok else 1
     print("%-38s | %-24s | %-24s | %s" % ("E fresh text under threshold", "too early", status, "OK" if ok else "FAIL"))
-    print("")
-    print("PROVE %s (%d cases)" % ("OK" if not fail else "FAIL", len(cases) + 1))
+    # F: an entry born DURING the scan -- timestamp after `now`. Must be named, not printed as a
+    # negative age. And it must say `works`: the window acted while being measured.
+    status, sig, push = verdict_for(txt, now + 6, tree, {}, now, THRESHOLD_MIN)
+    ok = status == "works" and not push and "NEWER than the scan start" in sig
+    fail += 0 if ok else 1
+    print("%-38s | %-24s | %-24s | %s" % ("F entry newer than scan start", "works (named)", status,
+                                          "OK" if ok else "FAIL"))
+    # G is the side the fix must NOT touch (rule bought 08:52Z: a probe on a narrowing fix must
+    # carry the case the narrowing was not meant to reach). A text exactly at the threshold edge
+    # but POSITIVE stays "too early", not "works" -- otherwise the new branch would have swallowed
+    # every fresh text and turned the tool into a machine that never pushes anybody.
+    status, _, push = verdict_for(txt, now - 1, tree, {}, now, THRESHOLD_MIN)
+    ok = status == "too early" and not push
+    fail += 0 if ok else 1
+    print("%-38s | %-24s | %-24s | %s" % ("G one-second-old text stays early", "too early", status,
+                                          "OK" if ok else "FAIL"))
+    # H, I, J: what makes a tree this session's HOME. Rewritten 15:27Z 2026-09-09 together with
+    # tree_of, because the old synthetic tail exercised the OLD signal (bare mentions) and went
+    # red the moment the signal changed -- the probe was measuring a set the check no longer
+    # reads. That is my own rule about probes, met from the other side: a probe pinned to the
+    # previous implementation reports its own staleness as a defect of the subject.
+    #
+    # J is the case the whole fix exists for: a hundred PROSE mentions of a stranger's tree
+    # (exactly what my letters to the integrator about window 274's tier look like in his
+    # transcript) must NOT make that tree his home. Before the fix J was the live bug, twice.
+    import tempfile as _tf
+    home = "nova-p274"
+    CASES_T = (
+        ("H own tree in COMMAND lines", 100, True, False),
+        ("I too few command lines", 1, True, True),
+        ("J prose only, no commands", 100, False, True),
+    )
+    for label, n, as_cmd, want_main in CASES_T:
+        d = _tf.mkdtemp(prefix="tree-probe-")
+        p = os.path.join(d, "t.jsonl")
+        with open(p, "w", encoding="utf-8") as fh:
+            for _ in range(n):
+                if as_cmd:
+                    fh.write('{"cwd":"x","text":"git -C %s/%s/ status"}\n' % (_PARENT_POSIX, home))
+                else:
+                    fh.write('{"cwd":"x","text":"a letter about %s/%s/ and its tier"}\n' % (_PARENT_POSIX, home))
+        got, hits = tree_of(p, None)
+        is_main = os.path.abspath(got) == os.path.abspath(ROOT)
+        ok = (is_main == want_main)
+        fail += 0 if ok else 1
+        print("%-38s | %-24s | %-24s | %s" % (
+            label, "main copy" if want_main else "own tree",
+            "main copy" if is_main else os.path.basename(got), "OK" if ok else "FAIL"))
+    print("PROVE %s (%d cases)" % ("OK" if not fail else "FAIL", len(cases) + 6))
     return 1 if fail else 0
 
 

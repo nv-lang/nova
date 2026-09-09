@@ -14,6 +14,10 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 #if defined(_WIN32)
 #  include <io.h>       /* _lseeki64 */
 #else
@@ -81,5 +85,9 @@ static inline int64_t fs_is_windows(void) {
     return 0;
 #endif
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_IO_CONSOLE_H */

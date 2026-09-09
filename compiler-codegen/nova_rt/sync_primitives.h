@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Plan 18 std.sync: fiber-aware AtomicInt / AtomicBool / Mutex / WaitGroup / Once.
  *
  * Included from nova_rt.h AFTER nova_sched.h (needs nova_sched_park_with_unlock,
@@ -2339,5 +2343,9 @@ static inline nova_unit Nova_OnceGuard_consume_abort(Nova_OnceGuard* g) {
 }
 
 /* === END PLAN-103.9 CONSUME GUARDS === */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_SYNC_PRIMITIVES_H */

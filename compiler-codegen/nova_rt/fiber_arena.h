@@ -47,6 +47,10 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Plan 82 Ф.1: Windows присоединён к arena-пути. POSIX-реализация —
  * fiber_arena.c (mmap); Windows — fiber_arena_win.c (VirtualAlloc lazy-
  * commit). Оба файла компилируются на всех платформах, каждый — пустой
@@ -263,5 +267,9 @@ void nova_fiber_arena_register_native_stack(void);
 void nova_fiber_arena_unregister_native_stack(void);
 
 #endif /* NOVA_FIBER_ARENA_ENABLED */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_FIBER_ARENA_H */

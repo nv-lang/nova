@@ -178,15 +178,15 @@ fn Emitter mut @emit_last_stmt() -> () {
 }
 
 /// The declaration of a result temporary: `T name = (T){0};` at the body's indent. The
-/// zero is not decoration -- see `LocalDecl.zero_init` for the two forms that need it and
-/// why the lowering, not this printer, decides.
+/// zero is not decoration -- see `DeclAt.Zeroed` for the three forms that need it and why
+/// the lowering, not this printer, decides.
 ///
 /// A `Decl` of a local that is NOT zero-initialised is a lowering bug, not a shape to
 /// print: bindings are declared by their first assignment, and no form records a bare
 /// declaration. It is named here rather than printed as dead code with no carrier.
 fn Emitter mut @emit_decl(l Local) -> () {
     ro d = @ir.decl_of(l)
-    if !d.zero_init {
+    if d.decl_at != DeclAt.Zeroed {
         ice("emit: a Decl statement for a local that is not zero-initialised")
     }
     @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = (${c_type(@ctx, d.ty)}){0};\n")
@@ -285,10 +285,19 @@ fn Emitter @operand_name(op Operand) -> str {
 /// binding (declared where it is first assigned), `        name = ` for a
 /// temporary its creator declared.
 fn Emitter mut @emit_assign_head(d LocalDecl) -> () {
+    // THE HEAD FOLLOWS THE DECLARATION POINT, not the kind (2026-09-09). A local declared
+    // by its first assignment gets the whole line -- type, name, `=` -- and one declared by
+    // a `Stmt.Decl` gets a bare assignment, because its declaration is already printed. The
+    // indent belongs to the same question: four spaces for a declaration at statement
+    // level, eight for an assignment standing inside a branch.
     match d.kind {
         Return => @body.append("    return ")
-        Binding => @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = ")
-        Temp => @body.append("        ${d.name} = ")
+        Binding | Temp => {
+            match d.decl_at {
+                FirstAssign => @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = ")
+                Zeroed => @body.append("        ${d.name} = ")
+            }
+        }
     }
 }
 
@@ -363,9 +372,8 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     if k == NodeKind.MatchExpr {
         // The match is a Switch of the lowered body (274.8 M2b-1d); its result local is
         // recorded here, assigned in each arm through the one door.
-        ro u = @fresh_uniq()
         ro t = @ir.temp(ty)
-        @lower_match(e, u, t)
+        @lower_match(e, t)
         return Some(t)
     }
     if k == NodeKind.Coalesce {
@@ -380,8 +388,7 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
         // hands back the local it declared.
-        ro u = @fresh_uniq()
-        return Some(@emit_if_value(e, u, ty))
+        return Some(@emit_if_value(e, ty))
     }
     None
 }

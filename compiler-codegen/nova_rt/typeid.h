@@ -35,6 +35,10 @@
 #include <string.h>   /* memcpy — nova_any_box payload copy */
 #include "alloc.h"    /* nova_alloc — nova_any_box/nova_any_from_boxed (typeid.c is a standalone TU, no nova_rt.h bootstrap) */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef uint32_t NovaTypeId;
 
 #define NOVA_TID_NONE         ((NovaTypeId)0)
@@ -180,5 +184,9 @@ static inline void* nova_any_from_boxed(void* payload, NovaTypeId tid) {
     }
     return (void*)a;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_TYPEID_H */

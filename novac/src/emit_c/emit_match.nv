@@ -32,20 +32,36 @@ import ../builtins.{bool_c_literal}
 import ../types.{TyId}
 import ../lower.{Local, no_local, Pattern, VariantMatch, SwitchCtx, Cond}
 
-/// One `match`, in either position. `dest` is the local the arms' values
-/// land in (the caller declared it: `_novac_match_t<uniq>`), or `no_local()`
-/// in statement position, where the arms run for effect and nothing holds an
-/// answer -- declaring a variable for an answer nobody asked for is the shape
-/// this compiler keeps refusing elsewhere (wave B5). `uniq` names the
-/// scrutinee, the result and the flag: unique per body, never the binding
-/// name (F30: Nova lets a name be bound twice in one scope).
-fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
+/// One `match`, in either position. `dest` is the local the arms' values land in -- a
+/// TEMPORARY of the body, numbered by the builder -- or `no_local()` in statement
+/// position, where the arms run for effect and nothing holds an answer; declaring a
+/// variable for an answer nobody asked for is the shape this compiler keeps refusing
+/// elsewhere (wave B5).
+///
+/// This doc used to say the caller declared `_novac_match_t<uniq>` and that `uniq` named
+/// the scrutinee, the result AND the flag. Two of those three moved on 2026-09-09: the
+/// scrutinee and the result are temporaries numbered by their own index, and only the
+/// printer's `matched` flag is still spelled from `uniq` -- which the BUILDER now mints,
+/// so this function no longer takes it. What has not changed is why the number exists at
+/// all: it must be unique per body and must never be the binding name, because Nova lets [INV-TODO: №TBD]
+/// a name be bound twice in one scope (F30) and the C would then declare one variable
+/// twice in one block.
+fn Emitter mut @lower_match(m Node, dest Local) -> () {
     ro kids = branch_children(m)
     ro scr = kids[1]
     ro scr_t = @out.type_of(scr.id_of())
     // The scrutinee lands in a binding ONCE through the one door: every arm
     // tests the same value, and a call in the scrutinee runs one time.
-    ro ls = @ir.named(scr_t, "_novac_scr_t${uniq}")
+    // THE SCRUTINEE IS A TEMPORARY OF THE COMPILER, and it can finally say so (2026-09-09).
+    // `_novac_scr_t7` was never a name the author wrote, yet `named` was the only door that
+    // kept a declaration -- because `kind` decided both the name and the declaration point.
+    // `DeclAt` now carries the point, so a `Temp` declared at its first assignment is
+    // expressible, and this line stops lying about who invented the name.
+    //
+    // Slice M2c tried exactly this move and the C stopped compiling: `nova_int T1 = n;`
+    // became `T1 = n;`, the declaration gone. That failure is the both-ways proof of the
+    // separation -- the same edit is correct only after it.
+    ro ls = @ir.temp(scr_t)
     @lower_place(scr, ls)
     if dest != no_local() {
         // The result temporary is declared with its type AND zero-initialised
@@ -55,17 +71,17 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
         // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
         // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
         // created the local, this door records WHERE it is declared and that it starts
-        // at zero -- the reason is on `LocalDecl.zero_init`.
+        // at zero -- the reason is on `DeclAt.Zeroed`.
         @ir.declare_zeroed(dest)
     } else {
         // Statement position: no result, nothing to declare.
     }
     // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
     // arm that held; the `Switch` means first-match by construction.
-    ro c = @ir.begin_switch(ls, uniq)
+    ro c = @ir.begin_switch(ls)
     for a in kids {
         if a.kind_of() != NodeKind.MatchArm { continue }
-        @lower_arm(a, uniq, scr_t, ls, c, dest)
+        @lower_arm(a, scr_t, ls, c, dest)
     }
     @ir.end_switch(c)
 }
@@ -162,7 +178,7 @@ fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr Local) -> () {
 /// written, wraps the body in a branch of its own.
 /// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
 /// so that a single later walk can print every arm without reading the tree again.
-fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
+fn Emitter mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
     ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]

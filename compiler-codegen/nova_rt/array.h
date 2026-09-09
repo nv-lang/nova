@@ -112,9 +112,9 @@
          * Truncation idiom: dst[..n].copy_from(src[..n]) via Plan 96 slicing.        \
          * memmove vs memcpy: overlap-safe by default, paritет с Go; no UB. */       \
         if (src->len != dst->len) { \
-            nv_panic((nova_str){ \
-                .ptr = "copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)", \
-                .len = sizeof("copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)") - 1 }); } \
+            nv_panic(nova_str_of( \
+                 "copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)", \
+                 sizeof("copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)") - 1 )); } \
         memmove(dst->data, src->data, (size_t)(dst->len) * sizeof(T)); \
     } \
     /* Plan 90.1 (D141 amendment): append — bulk-add to end with 2x growth, memmove (self-extend safe). \
@@ -180,8 +180,8 @@
     static void nova_array_copy_within_##T(NovaArray_##T* a, int64_t src_from, int64_t dst_from, int64_t len) { \
         if (len < 0 || src_from < 0 || dst_from < 0 || \
             src_from + len > a->len || dst_from + len > a->len) { \
-            nv_panic((nova_str){ .ptr = "copy_within: range out of bounds", \
-                                 .len = sizeof("copy_within: range out of bounds") - 1 }); } \
+            nv_panic(nova_str_of(  "copy_within: range out of bounds", \
+                                  sizeof("copy_within: range out of bounds") - 1 )); } \
         memmove(a->data + dst_from, a->data + src_from, (size_t)len * sizeof(T)); \
     } \
     static void nova_array_fill_##T(NovaArray_##T* a, T v) { \
@@ -201,9 +201,9 @@
      * write-window в encoders, padding, length-prefix patching. Returns @ \
      * через codegen для fluent chain (Plan 91.7 D181). */ \
     static void nova_array_append_zero_##T(NovaArray_##T* a, int64_t n) { \
-        if (n < 0) { nv_panic((nova_str){ \
-            .ptr = "append_zero: n must be >= 0", \
-            .len = sizeof("append_zero: n must be >= 0") - 1 }); } \
+        if (n < 0) { nv_panic(nova_str_of( \
+             "append_zero: n must be >= 0", \
+             sizeof("append_zero: n must be >= 0") - 1 )); } \
         if (n == 0) return; \
         int64_t new_len = a->len + n; \
         if (new_len > a->cap) { \
@@ -696,7 +696,7 @@ static inline NovaRes_nova_int_nova_str* nova_make_NovaRes_nova_int_nova_str_Err
 static inline NovaRes_nova_int_nova_str* nova_make_NovaRes_nova_int_nova_str_Err_typed(void* payload, NovaTypeId tid) {
     NovaRes_nova_int_nova_str* r = (NovaRes_nova_int_nova_str*)nova_alloc(sizeof(NovaRes_nova_int_nova_str));
     r->tag = NOVA_TAG_Result_Err;
-    r->payload.Err._0 = (nova_str){.ptr = "<typed err>", .len = 11};  /* diag fallback */
+    r->payload.Err._0 = nova_str_of( "<typed err>",  11);  /* diag fallback */
     r->err_typed_payload = payload;
     r->err_typed_type_id = tid;
     return r;
@@ -852,7 +852,7 @@ static inline void nv_panic_index_oob(nova_int idx, nova_int len) {
         (long long)idx, (long long)len);
     if (n < 0) n = 0;
     if (n > 95) n = 95;
-    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+    nv_panic(nova_str_of(  buf,  (size_t)n ));
 }
 
 /* Plan 145 — portable bounds-checked element access (MSVC C2059 fix).
@@ -948,7 +948,7 @@ static inline void* nova_fixarr_slice_copy(const void* data, nova_int total, nov
         int n = snprintf(buf, 96, "fixed array: slice [%lld..%lld] out of bounds for length %lld",
                          (long long)from, (long long)to, (long long)total);
         if (n < 0) n = 0; if (n > 95) n = 95;
-        nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
+        nv_panic(nova_str_of(  (const uint8_t*)buf,  (nova_int)n ));
     }
     NovaArrHdr* h = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
     nova_int cnt = to - from;
@@ -1007,7 +1007,7 @@ static inline void* nova_vec_slice_chk_out(void* src, nova_int from, nova_int to
         int n = snprintf(buf, 96, "Vec: slice [%lld..%lld] out of bounds for length %lld",
                          (long long)from, (long long)to, (long long)s->len);
         if (n < 0) n = 0; if (n > 95) n = 95;
-        nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
+        nv_panic(nova_str_of(  (const uint8_t*)buf,  (nova_int)n ));
     }
     NovaArrHdr* r = (NovaArrHdr*)out;
     r->data = (char*)s->data + (size_t)from * esz;
@@ -1076,7 +1076,7 @@ static inline void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len) 
         (long long)from, (long long)to, (long long)len);
     if (n < 0) n = 0;
     if (n > 111) n = 111;
-    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+    nv_panic(nova_str_of(  buf,  (size_t)n ));
 }
 
 /* D178 (Plan 91 Ф.2.6): nova_str_compare — lexicographic comparison.
@@ -1129,7 +1129,7 @@ static inline void nv_panic_insert_oob(nova_int i, nova_int len) {
         (long long)i, (long long)len);
     if (n < 0) n = 0;
     if (n > 95) n = 95;
-    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+    nv_panic(nova_str_of(  buf,  (size_t)n ));
 }
 
 /* Plan 90.1 — bounds-check для reserve(extra) argument.
@@ -1141,7 +1141,7 @@ static inline void nv_panic_negative_reserve(nova_int extra) {
         (long long)extra);
     if (n < 0) n = 0;
     if (n > 79) n = 79;
-    nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
+    nv_panic(nova_str_of(  buf,  (size_t)n ));
 }
 
 #endif /* NOVA_RT_ARRAY_H */

@@ -29,6 +29,10 @@
 #include "deque.h"      /* Plan 44.5: Chase-Lev deque (Ф.1: kept, unused) */
 #include "runq.h"       /* Plan 83-go-cmn Ф.1: fixed-size per-worker ring */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Forward — full definition в runtime.c (opaque to API users). */
 typedef struct NovaWorker NovaWorker;
 
@@ -220,5 +224,9 @@ void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
  * nova_runtime_dump_state's full dump already flags). Returns true only when
  * at least one worker has such a stuck fiber. */
 bool nova_runtime_has_stuck_fibers(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_RUNTIME_H */

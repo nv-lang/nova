@@ -35,8 +35,9 @@ import ../lex.{TokenKind}
 /// the local's role, the expression inline -- NOT through `emit_assign`, which
 /// would build (and hoist) a second time.
 fn Emitter mut @bind_pair_temp(init Node, pt TyId) -> Local {
-    ro u = "_novac_tmp_t${@fresh_uniq()}"
-    ro l = @ir.named(pt, u)
+    // A temporary of the body, named by its index: the scrutinee of a destructuring
+    // is the compiler's own, and `named` would claim the author wrote it (274.8 M3).
+    ro l = @ir.temp(pt)
     @ir.place(init, l)
     l
 }

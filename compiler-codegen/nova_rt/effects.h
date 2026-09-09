@@ -1413,7 +1413,7 @@ static inline void nv_panic(nova_str msg) {
  * `__builtin_*_overflow` пишут результат в `*r` всегда (даже при
  * переполнении — обёрнутое значение), поэтому `return r` определён. */
 #define NOVA_INT_OVF_PANIC(lit) \
-    nv_panic((nova_str){ .ptr = (lit), .len = sizeof(lit) - 1 })
+    nv_panic(nova_str_of(  (lit),  sizeof(lit) - 1 ))
 
 static inline nova_int nova_int_checked_add(nova_int a, nova_int b) {
     nova_int r;

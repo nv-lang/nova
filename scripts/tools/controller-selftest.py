@@ -38,8 +38,15 @@ REPO = os.environ.get(
 )
 CMD_DEFAULT = os.path.join(REPO, ".claude", "commands", "controller.md")
 TOOLS = os.path.join(REPO, "scripts", "tools")
+# Derived, never a literal: the count stood at "4" while six tools existed -- a
+# ratchet comparing a live set against a number frozen in its own source. 15:09Z.
 TOOL_NAMES = ["controller-dock.py", "controller-peers-scan.py",
-              "controller-peers-deep.py", "controller-machine-watch.py"]
+              "controller-peers-deep.py", "controller-machine-watch.py",
+              # Added 15:09Z 2026-09-09: these two existed for an hour and were judged by
+              # nothing. The check asks "is every tool named in the command", and a tool
+              # missing from THIS list passes it by being invisible -- the guard was honest
+              # about the four it knew and silent about the two it did not.
+              "controller-verdict.py", "controller-limits-reminder.py"]
 
 
 def read(path):
@@ -216,9 +223,51 @@ def freeze_state():
     # the integrator's `cargo test --release` was running, and what stopped me was his freeze,
     # not this check. A check whose job is done in the crucial moment by someone else's word is
     # not working, however few errors stand against it.
-    SLOT = re.compile(r"(gate\.sh|gate-novac|nova test|(?:release|target)[/\\]novac?(?:\.exe)?(?![\w.])|cargo|clang|cl\.exe|link\.exe)")
+    # A TIER IS A RUN THAT PASSES VERDICT ON THE TREE -- the integrator's distinction, 19:31 local
+    # 2026-09-09, and it closes the fourth appearance of one question today. His words: "dangerous
+    # is not `somebody took the CPU`, but a run that passes verdict on the tree: gate.sh,
+    # gate-novac.sh, nova test. A build passes no verdict: it turns source into a binary, and an
+    # edit to a neighbouring file does not affect it." Measured cost of the old width: at 19:24 my
+    # edit landed while `cargo build --release` held the slot, this check called it a TIER, and I
+    # sent him an URGENT letter about a verdict that did not exist. The area (any slot holder) was
+    # again wider than the subject (a verdict about the tree) -- same shape as the guard whose scope
+    # outran its subject, now on the holder's NAME rather than on its tree.
+    #
+    # Kept OUT of this pattern on purpose: `cargo`, `clang`, `cl.exe`, `link.exe`, and the bare
+    # `release/nova` binary. They occupy the machine -- which the WATCH must report, and does --
+    # but they judge nothing, so they cannot spoil a verdict by definition. The freeze that does
+    # matter is also announced by the integrator in words: it "starts with the word tier and ends
+    # with the word end", so a run that merely looks heavy is never his freeze.
+    SLOT = re.compile(r"(gate\.sh|gate-novac|nova test)")
     tiers = [r for r in rows if SLOT.search(r) and "grep" not in r and "controller-" not in r]
+
+    # WHOSE tree holds the slot -- asked 15:16Z 2026-09-09, after this check called window 274's
+    # `novac.exe emit examples/basic` a TIER and printed "tier since 18:13:48" while neither
+    # gate.sh nor gate-novac existed in `ps` at all. The prohibition it guards is about the MAIN
+    # tree: a run inside `nova-p274` reads that window's own files and cannot judge, or be spoiled
+    # by, an edit in the main copy. Verdict already learnt this at 14:08Z, when a one-second
+    # `nova build` was read as a tier -- and the fix went into the verdict only, leaving the same
+    # code in this second carrier untouched. That is the shape worth naming: a class closed in one
+    # carrier and left open in another, because the repair followed the report and not the code.
+    # Attribution comes from the watch's OWN function, never a second spelling of it.
+    def _tree(line):
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "cmw", os.path.join(TOOLS, "controller-machine-watch.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.owner_of(line)
+        except Exception:  # noqa: BLE001
+            return "?"
+
+    MAIN = os.path.basename(os.path.abspath(REPO))
+    foreign = [r for r in tiers if _tree(r) not in (MAIN, "?")]
+    tiers = [r for r in tiers if _tree(r) in (MAIN, "?")]
     if not tiers:
+        if foreign:
+            return ("no tier in the main tree (foreign slot: %s) -- main tree may be edited"
+                    % ",".join(sorted({_tree(r) for r in foreign}))), True
         return "no tier running -- tree may be edited", True
 
     # `ps -ef` STIME is a clock (HH:MM:SS) for a process started today. Take the earliest.
@@ -283,7 +332,7 @@ def run(cmd_path, show_table=True):
 
     missing, broken = tools_present()
     tools_ok = not missing and not broken
-    tools_note = "vse 4 na meste i parsyatsya"
+    tools_note = "vse %d na meste i parsyatsya" % len(TOOL_NAMES)
     if missing:
         tools_note = "NET: " + ",".join(missing)
     elif broken:

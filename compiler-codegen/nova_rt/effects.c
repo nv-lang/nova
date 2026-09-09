@@ -340,9 +340,9 @@ void nova_interrupt(nova_int value) {
             /* Use a sentinel error message so spawn-entry can distinguish
              * interrupt-abort from real error. The catch reads
              * scope->interrupt_pending instead. */
-            _nova_land680->error_msg = (nova_str){
-                .ptr = "__nova_interrupt__", .len = 18
-            };
+            _nova_land680->error_msg = nova_str_of(
+                 "__nova_interrupt__",  18
+            );
             longjmp(_nova_land680->jmp, 1);
             /* unreachable */
         }
@@ -402,9 +402,9 @@ void nova_interrupt_ptr(void* value) {
         _nova_active_scope->cancel_requested    = true;
         NovaFailFrame* _nova_land680 = nova_fail_landing();  /* #680 */
         if (_nova_land680) {
-            _nova_land680->error_msg = (nova_str){
-                .ptr = "__nova_interrupt__", .len = 18
-            };
+            _nova_land680->error_msg = nova_str_of(
+                 "__nova_interrupt__",  18
+            );
             longjmp(_nova_land680->jmp, 1);
             /* unreachable */
         }
