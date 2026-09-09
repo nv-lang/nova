@@ -347,9 +347,17 @@ export fn FnBuilder @current() -> BlockId => @cur_id
 /// The return place of the body under construction.
 export fn FnBuilder @ret_place() -> Local => Local(0)
 
-/// A fresh temporary of type `ty`. `label` is the spelling its creator wants
-/// the printer to use ("" = unnamed, spelled by index) -- see LocalDecl.
-export fn FnBuilder mut @temp(ty TyId, label str) -> Local => @local(ty, LocalKind.Temp, label)
+/// A fresh temporary of type `ty`. ITS NAME COMES FROM ITS OWN INDEX (M2c), not from the
+/// caller: the local already knows its number, so `_novac_l<i>` is built here, by one
+/// scheme for all. Until M2c every site invented its own spelling (`_novac_if_t7`,
+/// `_novac_match_t7`, `_novac_qq_t7`) out of the PRINT COUNTER `fresh_uniq` -- so a local's
+/// name depended on the order of printing, which wave M2b-2 had just stopped treating as
+/// significant. Two names could also collide: the same label handed to two locals printed
+/// one C variable for both (measured in `examples_basics_coalesce.nv`).
+export fn FnBuilder mut @temp(ty TyId) -> Local {
+    ro name = "_novac_l${@locals.len()}"
+    @local(ty, LocalKind.Temp, name)
+}
 
 /// A local for the source binding `name` of type `ty`.
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {

@@ -463,7 +463,7 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
     // that body (274.8 M2b-2 step 2): recorded here, printed by the one statement door. It
     // starts at zero because a branch may fall through without assigning it -- the reason
     // lives on `LocalDecl.zero_init`, with both of its clients named.
-    ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
+    ro t = @ir.temp(res_t)
     @ir.declare_zeroed(t)
     @emit_last_stmt()
     // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
@@ -501,14 +501,13 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     ro res_t = @out.type_of(e.id_of())
     ro u = @fresh_uniq()
     ro opt = "_novac_tmp_t${u}"
-    ro res = "_novac_qq_t${u}"
     // The Option lands in its own binding through the one door (274.8 M1):
     // the hoist of a construction inside it is the printer's.
     ro lo = @ir.named(ot, opt)
     @lower_place(qk[0], lo)
     // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
     // the zero initialiser is a field the lowering sets, not a shape this printer knows.
-    ro lr = @ir.temp(res_t, res)
+    ro lr = @ir.temp(res_t)
     @ir.declare_zeroed(lr)
     @emit_last_stmt()
     // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
@@ -530,7 +529,13 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     @lower_place(qk[2], lr)
     @body.append("    }\n")
     @ir.end_if(c)
-    res
+    // THE NAME IS ASKED OF THE RECORD, NOT BUILT A SECOND TIME (M2c). This function hands
+    // its caller the TEXT of an expression, and the text has to be the name the
+    // declaration actually carries. While the caller invented that name it also passed it
+    // to the door, and the two agreed by luck; the moment the door started naming by
+    // index the two parted, and the C declared `_novac_l3` while printing `_novac_qq_t2`
+    // (measured 2026-09-09 in `examples_basics_coalesce.nv.c`).
+    @ir.decl_of(lr).name
 }
 
 /// Emit a block whose LAST statement is its value: everything before it runs

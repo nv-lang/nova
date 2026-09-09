@@ -51,7 +51,7 @@ test "a body starts with its return place as local 0 (rustc _0) and its entry bl
 
 test "the placement door records dest = Expr(e) in the current block" {
     mut b = FnBuilder.new(TyId(3))
-    ro t = b.temp(TyId(3), "")
+    ro t = b.temp(TyId(3))
     b.place(stand_in_expr(), t)
     match b.last_stmt() {
         Assign(a) => assert(a.dest == t)
@@ -104,21 +104,25 @@ test "blocks are reserved before they are sealed, so a Goto names a block filled
     assert(goes_to(f.blocks[0].term, second))
 }
 
-test "a named local keeps its source name; a temporary carries the empty name" {
+test "a named local keeps its source name; a temporary is named by its own index" {
     mut b = FnBuilder.new(TyId(3))
     ro n = b.named(TyId(5), "count")
-    ro t = b.temp(TyId(5), "_novac_if_t9")
+    ro t = b.temp(TyId(5))
     b.end_body()
     ro f = b.finish()
     assert(f.locals[raw_local(n)].name == "count")
-    assert(f.locals[raw_local(t)].name == "_novac_if_t9")
+    // M2c: the caller no longer spells a temporary. Local 0 is the return place, `n` is 1,
+    // so `t` is 2 -- and the name follows the index, which is why two temporaries can no
+    // longer be handed one and the same spelling.
+    assert(f.locals[raw_local(t)].name == "_novac_l2")
+    assert(raw_local(t) == 2)
     assert(f.locals[raw_local(n)].ty == TyId(5))
 }
 
 test "each local carries its role: the return place, a binding, a temporary" {
     mut b = FnBuilder.new(TyId(3))
     ro n = b.named(TyId(5), "count")
-    ro t = b.temp(TyId(5), "")
+    ro t = b.temp(TyId(5))
     match b.decl_of(b.ret_place()).kind {
         Return => { } // the expected role of local 0
         Binding => assert(false)

@@ -222,25 +222,19 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
     @body.append(";\n")
 }
 
-/// THE ONE DISPATCH on the form of a value. Forms that need statements of
-/// their own -- a match, an if-value, a record or positional-record
-/// constructor, an array literal -- are built here into a temporary, and its
-/// name is the value. Any other expression is hoisted (its constructions laid
-/// down first) and printed inline by `emit_expr`. Until M1 this dispatch
-/// stood in eight positions with four to six arms each (274.8 section 0).
-/// The value forms that LOWER: a `match` and an `if` in value position lay down blocks of
-/// the body, so they are resolved WHILE LOWERING and hand back the local that holds the
-/// result. Prerequisite 5 of M2b-2 step 3b: after the walk prints from sealed blocks, a
-/// printer that lowered would push into a FINISHED builder -- the blocks would be recorded
-/// and never printed. The forms that only PRINT (a record constructor, an array literal)
-/// stay in `build_value` below.
+/// THE LOWERING HALF of the dispatch on the form of a value: a `match` and an `if` in value
+/// position lay down blocks of the body, so they are resolved WHILE LOWERING and hand back
+/// the local that holds the result. Prerequisite 5 of M2b-2 step 3b: after the walk prints
+/// from sealed blocks, a printer that lowered would push into a FINISHED builder -- the
+/// blocks would be recorded and never printed. The forms that only PRINT stay in
+/// `build_value` below, which is the other half.
 fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     ro k = e.kind_of()
     if k == NodeKind.MatchExpr {
         // The match is a Switch of the lowered body (274.8 M2b-1d); its result local is
         // recorded here, assigned in each arm through the one door.
         ro u = @fresh_uniq()
-        ro t = @ir.temp(ty, "_novac_match_t${u}")
+        ro t = @ir.temp(ty)
         @lower_match(e, u, t)
         return Some(t)
     }
@@ -253,6 +247,18 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     None
 }
 
+/// THE PRINTING HALF of the same dispatch: forms that need statements of their own but do
+/// NOT lower -- a record or positional-record constructor, an array literal -- are built
+/// here into a temporary, and its NAME is the value. Any other expression is hoisted (its
+/// constructions laid down first) and printed inline by `emit_expr`. Until M1 this dispatch
+/// stood in eight positions with four to six arms each (274.8 section 0); prerequisite 5
+/// then split it in two by WHO owns the statements -- the lowering or the printer.
+///
+/// This doc is written again from scratch, and that is the point: prerequisite 5 inserted
+/// `lower_value_source` BETWEEN this function and its documentation, so one ///-block ended
+/// up signing the neighbour and this function had none. The guard of convention P13 said so
+/// (`check-novac-type-field-docs`); re-gluing the old text would have kept describing a
+/// single dispatch that no longer exists.
 fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     ro k = e.kind_of()
     if k == NodeKind.RecordCtor {
