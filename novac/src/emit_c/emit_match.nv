@@ -43,9 +43,18 @@ import ../lower.{Local, no_local, Pattern, VariantMatch, SwitchCtx, Cond}
 /// scrutinee and the result are temporaries numbered by their own index, and only the
 /// printer's `matched` flag is still spelled from `uniq` -- which the BUILDER now mints,
 /// so this function no longer takes it. What has not changed is why the number exists at
-/// all: it must be unique per body and must never be the binding name, because Nova lets [INV-TODO: №TBD]
-/// a name be bound twice in one scope (F30) and the C would then declare one variable
-/// twice in one block.
+/// all: it must be unique per body, because Nova lets a name be bound twice in one
+/// scope (F30) and a C variable declared twice in one block is invalid C from legal
+/// Nova.
+///
+/// WHAT HOLDS IT MECHANICALLY, and what does not. A number invented here can never
+/// enter the author's door: `named` refuses invented names by guard
+/// [INV-GUARD: check-novac-invented-name-not-named], which reddens on a literal, on an
+/// interpolated name and on a missing door. The MIRROR half -- that a generated name
+/// never coincides with a name the author wrote -- holds by construction today (every
+/// generated name carries the `_novac_` prefix, which the checker forbids in source
+/// identifiers) and is NOT machine-checked here; that is said out loud rather than
+/// implied by the mark.
 fn Emitter mut @lower_match(m Node, dest Local) -> () {
     ro kids = branch_children(m)
     ro scr = kids[1]
