@@ -326,12 +326,17 @@ export type SwitchTerm value {
     uniq int /// the number the printer's names are built from -- see the note below
 }
 
-/// WHY `uniq` IS A FIELD (wave M2b-2, decision of 2026-09-08). The C printer emulates
-/// first-match with an if-chain and a `matched` flag, and both that flag and the scrutinee are
-/// spelled from one number: `_novac_matched_t${uniq}`, `_novac_scr_t${uniq}`. A walk over
-/// sealed blocks could recover it only by PARSING the scrutinee local's name -- taking apart a
-/// string the lowering composed. A name is data to whoever built it and a riddle to whoever
-/// reads it; the number travels as a number.
+/// WHY `uniq` IS A FIELD (wave M2b-2, decision of 2026-09-08; narrowed 2026-09-09). The C
+/// printer emulates first-match with an if-chain and a `matched` flag, and that flag is
+/// spelled from this number: `_novac_matched_t${uniq}`.
+///
+/// NARROWED, because this note used to name the scrutinee too (`_novac_scr_t${uniq}`):
+/// the scrutinee became a temporary of the body on 2026-09-09 and is now numbered by its
+/// own index, `_novac_l<N>`. The flag is the last name built from `uniq`. The REASON the
+/// number must be a field did not change with it: a walk over sealed blocks could
+/// otherwise recover it only by PARSING a local's name -- taking apart a string the
+/// lowering composed. A name is data to whoever built it and a riddle to whoever reads
+/// it; the number travels as a number.
 
 /// How a block ends. `Unreached` is the state of a block that was reserved
 /// but not yet sealed; `finish` refuses a body that still carries one.
@@ -395,6 +400,7 @@ export type FnBuilder {
     cur_id BlockId /// the reserved block the statements in `cur` belong to
     open_arms []SwitchArm /// arms of the open matches, innermost match last (M2b-1d)
     arm_start []int /// where each open match's arms begin in `open_arms`, innermost last
+    switches int /// how many matches this body has opened -- the source of `SwitchTerm.uniq`
 }
 
 /// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`)
@@ -407,7 +413,7 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut cur = []Stmt.new()
     mut open_arms = []SwitchArm.new()
     mut arm_start = []int.new()
-    FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start }
+    FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0 }
 }
 
 /// The block the next statement lands in.
@@ -664,7 +670,16 @@ export fn FnBuilder mut @copy(dest Local, src Local) -> () {
 /// Opens a `match` on the local `scr`: the current block jumps to a fresh
 /// header block, which is sealed with the `Switch` by `end_switch` once the
 /// arms are known; nothing is placed in the header meanwhile.
-export fn FnBuilder mut @begin_switch(scr Local, uniq int) -> SwitchCtx {
+/// THE NUMBER IS THE BUILDER'S, not the printer's (274.8 M3, 2026-09-09). It used to arrive
+/// as an argument from `@fresh_uniq()`, a counter of the PRINTER -- so the lowering held a
+/// piece of printing state and the move out of `emit_c/` would have carried it along. The
+/// number is a plain count of the matches opened in THIS body, which is what a reader of
+/// `_novac_matched_t2` needs it to mean. It stays a FIELD for the reason recorded at
+/// `SwitchTerm`: a walk over sealed blocks could otherwise recover it only by taking apart
+/// a name the lowering composed.
+export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
+    ro uniq = @switches
+    @switches = @switches + 1
     ro h = @reserve()
     ro join = @reserve()
     @close(Terminator.Goto(h), h)

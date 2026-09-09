@@ -372,9 +372,8 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     if k == NodeKind.MatchExpr {
         // The match is a Switch of the lowered body (274.8 M2b-1d); its result local is
         // recorded here, assigned in each arm through the one door.
-        ro u = @fresh_uniq()
         ro t = @ir.temp(ty)
-        @lower_match(e, u, t)
+        @lower_match(e, t)
         return Some(t)
     }
     if k == NodeKind.Coalesce {
@@ -389,8 +388,7 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
         // hands back the local it declared.
-        ro u = @fresh_uniq()
-        return Some(@emit_if_value(e, u, ty))
+        return Some(@emit_if_value(e, ty))
     }
     None
 }
