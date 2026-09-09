@@ -106,7 +106,7 @@ type Emitter consume {
         /// "the ONLY source of temporary names" until 2026-09-09, and that stopped being
         /// true twice over: M2c gave the lowering's temporaries their own index (`_novac_l<i>`),
         /// and M3 moved the `match` number to the builder. F30 still applies to what is left:
-        /// a name may be bound twice in one scope, so a hoist must never be named after a
+        /// a name may be bound twice in one scope, so a hoist must never be named after a [INV-TODO: №TBD]
         /// binding.
     mut ir FnBuilder /// the lowered body of the callable being emitted (274.8 M1): every value position records `dest = e` here through the one door and prints it; blocks and terminators come at M2
     lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none

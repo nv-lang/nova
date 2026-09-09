@@ -17,10 +17,22 @@ spec = importlib.util.spec_from_file_location("cmw", os.path.join(TOOLS, "contro
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
 
+# Корни ВЫВОДЯТСЯ, а не пишутся: путь в случае — данные, но записанный литералом он
+# привязывает пробу к одной машине (страж №698 краснеет на этом законно). MAIN — имя
+# главной копии, PAR — каталог рядом с ней; оба берутся из положения этого файла.
+import os as _os
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+_MAIN = _os.path.dirname(_os.path.dirname(_HERE))          # <...>/nova
+_PAR = _os.path.dirname(_MAIN)                              # <...>/nv-lang
+MAIN = _MAIN.replace('\\', '/')
+PAR = _PAR.replace('\\', '/')
+MAIN_BS = MAIN.replace('/', '\\')
+PAR_BS = PAR.replace('/', '\\')
+
 CASES = [
     # (name, ps line, expected owner)
     ("A abs main copy, backslashes",
-     r"uid 1 1 ? 18:00:00 D:\Sources\nv-lang\nova\nova-cli\target\release\nova.exe test std/src", "nova"),
+     "uid 1 1 ? 18:00:00 %s\\nova-cli\\target\\release\\nova.exe test std/src" % MAIN_BS, "nova"),
     # B: a RELATIVE path carries NO tree name at all, so the honest answer from the LINE alone is
     # "?" -- and the name then comes from cwd_owner(pid), which the live watch already calls. The
     # old code answered `nova-cli` here: it invented a tree out of a subdirectory rather than
@@ -29,14 +41,14 @@ CASES = [
     ("B REL main copy subdir -- line alone is silent",
      "uid 1 1 ? 18:00:00 timeout 540 ./nova-cli/target/release/nova test std/src", "?"),
     ("C abs main copy, forward slashes",
-     "uid 1 1 ? 18:00:00 /d/Sources/nv-lang/nova/compiler-codegen/target/debug/nova-codegen test", "nova"),
+     "uid 1 1 ? 18:00:00 %s/compiler-codegen/target/debug/nova-codegen test" % MAIN, "nova"),
     ("D real worktree, abs",
-     r"uid 1 1 ? 18:00:00 D:\Sources\nv-lang\nova-p274\novac\target\novac.exe emit examples/basic", "nova-p274"),
+     "uid 1 1 ? 18:00:00 %s\\nova-p274\\novac\\target\\novac.exe emit examples/basic" % PAR_BS, "nova-p274"),
     ("E real worktree WITH the same subdir inside",
-     "uid 1 1 ? 18:00:00 /d/Sources/nv-lang/nova-p274/nova-cli/target/release/nova test spec_tests",
+     "uid 1 1 ? 18:00:00 %s/nova-p274/nova-cli/target/release/nova test spec_tests" % PAR,
      "nova-p274"),
     ("F another worktree, forward slashes",
-     "uid 1 1 ? 18:00:00 /d/Sources/nv-lang/claude-limits/nova-cli/target/release/nova build", "claude-limits"),
+     "uid 1 1 ? 18:00:00 %s/claude-limits/nova-cli/target/release/nova build" % PAR, "claude-limits"),
 ]
 
 ok = 0
