@@ -208,7 +208,16 @@ def freeze_state():
     except Exception:  # noqa: BLE001
         return "ps unavailable -- freeze state UNKNOWN, do not treat as free", True
 
-    tiers = [r for r in rows if re.search(r"(gate\.sh|gate-novac)", r) and "grep" not in r]
+    # ONE pattern with the machine-watch: a run that starts with a build holds the slot before
+    # gate.sh comes up. Measured 01:57Z 2026-09-09 by comparing my reading with window 274's --
+    # they saw `nova` at 04:49:48 while I called the tier's start 04:51:37, a 109-second window
+    # in which an edit would be reported as "before the tier" though the run was already reading
+    # the tree. It then showed itself LIVE at 02:23Z: freeze-now said "tree may be edited" while
+    # the integrator's `cargo test --release` was running, and what stopped me was his freeze,
+    # not this check. A check whose job is done in the crucial moment by someone else's word is
+    # not working, however few errors stand against it.
+    SLOT = re.compile(r"(gate\.sh|gate-novac|nova test|(?:release|target)[/\\]novac?(?:\.exe)?(?![\w.])|cargo|clang|cl\.exe|link\.exe)")
+    tiers = [r for r in rows if SLOT.search(r) and "grep" not in r and "controller-" not in r]
     if not tiers:
         return "no tier running -- tree may be edited", True
 

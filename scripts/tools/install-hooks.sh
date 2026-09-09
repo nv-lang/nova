@@ -60,6 +60,34 @@ chmod +x "$H" 2>/dev/null
 
 echo "install-hooks: поставлен $H"
 
+# ---- pre-commit: TA ZHE proverka na VTOROM puti sliyaniya -------------------
+# ZACHEM (naydeno 2026-09-09, cena -- odinnadcat` sliyaniy za noch`):
+# `pre-merge-commit` git zovyot TOL`KO kogda `git merge` sam sozdayot kommit.
+# Integrator zhe slivaet po konvencii `git merge --no-commit --no-ff`, a zatem
+# kommitit OTDEL`NOY komandoy -- i togda etot hook ne zapuskaetsya voobshche.
+# To est strazh byl napisan verno, ustanovlen verno i STRUKTURNO obhodilsya
+# toy samoy proceduroy, radi kotoroy zavedyon. Klass tot zhe, chto my lovim
+# ves den: mekhanizm est, molchanie chitaetsya kak razreshenie.
+# Etot hook zakryvaet vtoroy put: on srabatyvaet tolko kogda kommit
+# ZAVERSHAET sliyanie (sushchestvuet MERGE_HEAD), i nichego ne sudit u obychnyh
+# kommitov -- inache on stoyal by na kazhdom kommite i byl by otklyuchen pervym
+# zhe oknom, kotoromu pomeshal.
+H1B="$HOOKS/pre-commit"
+cat > "$H1B" <<'HOOK'
+#!/usr/bin/env bash
+# Postavlen scripts/tools/install-hooks.sh. Ne redaktirovat zdes.
+set -u
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+GITDIR=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+# Ne sliyanie -- ne nashe delo.
+[ -f "$GITDIR/MERGE_HEAD" ] || exit 0
+G="$TOP/scripts/guards/check-merge-discipline.sh"
+[ -f "$G" ] || exit 0
+exec bash "$G" "$TOP"
+HOOK
+chmod +x "$H1B"
+echo "  pre-commit       -> check-merge-discipline.sh (tolko pri MERGE_HEAD)"
+
 H2="$HOOKS/commit-msg"
 cat > "$H2" <<'HOOK'
 #!/usr/bin/env bash

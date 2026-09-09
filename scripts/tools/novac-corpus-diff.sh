@@ -23,16 +23,32 @@
 #                                                    # no build, no snapshot: re-run the diff on
 #                                                    # existing snapshots (normaliser fixes, re-reads)
 set -u
-T=/d/Sources/nv-lang/nova-p274
+# WHERE WE ARE is derived, not written down (registry No698). The hardcoded
+# path to one worktree that stood here reddened the tier the hour it was merged:
+# on any other checkout the loop would snapshot a DIFFERENT tree and report on it
+# as if it were this one. NOVAC_CORPUS_ROOT overrides for a deliberate cross-run.
+T=${NOVAC_CORPUS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 cd "$T" || exit 2
-NOVA="$T/nova-cli/target/release/nova.exe"
-NOVAC="$T/novac/target/novac.exe"
+# BOTH BINARY SPELLINGS, or the tool lies on Linux by finding nothing and saying
+# nothing (registry No847: a check that cannot run is worse than none). The same
+# blindness was fixed in the controller's machine watch the same night.
+_pick() { [ -x "$1" ] && { echo "$1"; return; }; [ -x "$2" ] && { echo "$2"; return; }; echo "$1"; }
+NOVA=$(_pick "$T/nova-cli/target/release/nova.exe" "$T/nova-cli/target/release/nova")
+NOVAC=$(_pick "$T/novac/target/novac.exe" "$T/novac/target/novac")
 STEP="${1:-}"; NAME="${2:-x}"
 
 build_novac() {
     echo "[m2b2] building novac from $(git -C "$T" log -1 --format=%h) ... ($(date +%H:%M:%S))"
     bash "$T/scripts/tools/with-deadline.sh" 300 "$NOVA" build novac/src/main.nv -o "$NOVAC" > "$T/target/m2b2_build.log" 2>&1
     rc=$?
+    # A LIMIT MUST SPEAK A THIRD WORD (G16): without it, 'the build failed' and
+    # 'nobody ever judged the build' leave here as ONE word, and the reader goes
+    # fixing something that was never examined. 124 is with-deadline's cut.
+    if [ "$rc" -eq 124 ]; then
+        echo "[m2b2] BUILD CUT BY THE 300s LIMIT: there is no verdict here, only silence" >&2
+        tail -20 "$T/target/m2b2_build.log" >&2
+        exit 1
+    fi
     echo "[m2b2] build rc=$rc ($(date +%H:%M:%S)); warnings: $(grep -c '^warning' "$T/target/m2b2_build.log")"
     [ $rc -eq 0 ] || { tail -20 "$T/target/m2b2_build.log"; exit 1; }
 }

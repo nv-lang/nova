@@ -957,6 +957,8 @@ pub struct ResolvedFfiConfig {
     /// Plan 193 Ф.2 gate-3: vendored C source dirs for generic
     /// build-and-cache (`manifest::FfiConfig::vendor_src_dirs` doc-comment).
     pub vendor_src_dirs: Vec<PathBuf>,
+    /// D466: link through a C++ driver. See `manifest::FfiConfig::cxx`.
+    pub cxx: bool,
 }
 
 /// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): Windows
@@ -1006,6 +1008,7 @@ impl ResolvedFfiConfig {
             lib_dirs: cfg.lib_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
             libs: cfg.libs.clone(),
             vendor_src_dirs: cfg.vendor_src_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
+            cxx: cfg.cxx,
         })
     }
 
@@ -1181,6 +1184,62 @@ fn effect_count_define_arg_from_line(first_line: &str, prefix: &str) -> Option<S
 /// Возвращает command, готовую к запуску. Для Clang/MSVC на Windows
 /// инкапсулирует cmd /c "vcvars && actual-cmd" — иначе headers/libs
 /// MSVC SDK недоступны.
+/// D471: the C++ driver's name for a given C driver's FILE NAME.
+///
+/// Only the last path component is ever rewritten -- a directory such as
+/// `.../clang-15/bin/` must survive untouched, which is why this takes a stem
+/// and not a path. An input that is already a C++ driver is returned unchanged,
+/// so calling twice is the same as calling once. Anything unrecognised is
+/// returned as-is: guessing at a name we do not know would turn a clear
+/// "driver not found" into a confusing "no such file".
+fn cxx_driver_name(stem: &str) -> String {
+    if stem.starts_with("clang++") || stem.starts_with("g++") {
+        stem.to_string()
+    } else if stem.starts_with("clang") {
+        stem.replacen("clang", "clang++", 1)
+    } else if stem.starts_with("gcc") {
+        stem.replacen("gcc", "g++", 1)
+    } else {
+        stem.to_string()
+    }
+}
+
+#[cfg(test)]
+mod cxx_driver_name_tests {
+    use super::cxx_driver_name;
+
+    /// POS: the two drivers we actually switch, with and without a version suffix
+    /// and with the .exe that Windows adds.
+    #[test]
+    fn pos_known_drivers_are_switched() {
+        assert_eq!(cxx_driver_name("clang"), "clang++");
+        assert_eq!(cxx_driver_name("gcc"), "g++");
+        assert_eq!(cxx_driver_name("clang-15"), "clang++-15");
+        assert_eq!(cxx_driver_name("gcc-13"), "g++-13");
+        assert_eq!(cxx_driver_name("clang.exe"), "clang++.exe");
+    }
+
+    /// POS: applying it twice must not produce `clang++++` -- the switch happens
+    /// once per link, but nothing in the type system says so.
+    #[test]
+    fn pos_idempotent_on_an_already_cxx_driver() {
+        assert_eq!(cxx_driver_name("clang++"), "clang++");
+        assert_eq!(cxx_driver_name("g++"), "g++");
+        assert_eq!(cxx_driver_name(cxx_driver_name("clang").as_str()), "clang++");
+    }
+
+    /// NEG: a driver we do not recognise is returned UNCHANGED rather than
+    /// guessed at. The caller then reports "no C++ driver found" naming this
+    /// exact string, which is a true statement; inventing `cc++` would produce a
+    /// misleading "no such file" about a name nobody ships.
+    #[test]
+    fn neg_unknown_driver_is_not_invented() {
+        assert_eq!(cxx_driver_name("cc"), "cc");
+        assert_eq!(cxx_driver_name("icx"), "icx");
+        assert_eq!(cxx_driver_name(""), "");
+    }
+}
+
 fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // Plan 27 Ф.1: alloc source chosen by GC backend.
     let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
@@ -1377,7 +1436,37 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // Direct clang invocation with pre-captured vcvars env.
             // On Windows: env snapshot from capture_vcvars_env() at detect_toolchain() time.
             // Saves ~7s per test by avoiding `call vcvars64.bat` on every compile.
-            let mut c = Command::new(clang);
+            // D466: a package that declares `[ffi] cxx = true` links a C++
+            // library, and a static C++ archive does not carry its standard
+            // library. ELF toolchains add it only when invoked through the C++
+            // driver, so switch the executable: clang -> clang++, gcc -> g++.
+            // The switch is on the LAST path component only; a directory named
+            // .../clang-15/bin/ must not be rewritten. If the C++ driver is not
+            // on disk we do NOT silently fall back to the C one -- a silent
+            // fallback here produces an undefined-symbol wall pointing at the
+            // user's own code, which is exactly how this defect was found.
+            let driver = match opts.ffi.map(|f| f.cxx) {
+                Some(true) => {
+                    let p: &std::path::Path = clang.as_ref();
+                    let stem = p.file_name().and_then(|s| s.to_str()).unwrap_or("clang");
+                    let cxx_name = cxx_driver_name(stem);
+                    let cand = p.with_file_name(&cxx_name);
+                    if cand.exists() || which(&cxx_name).is_some() {
+                        if cand.exists() { cand.to_string_lossy().into_owned() } else { cxx_name }
+                    } else {
+                        eprintln!(
+                            "error: [ffi] cxx = true, but no C++ driver was found (looked for {} \
+                             next to {} and on PATH). A C++ library cannot be linked by the C \
+                             driver: the standard library would be missing and every C++ symbol \
+                             would come back undefined, pointing at your code instead of here.",
+                            cxx_name, clang.display()
+                        );
+                        std::process::exit(2);
+                    }
+                }
+                _ => clang.to_string_lossy().into_owned(),
+            };
+            let mut c = Command::new(&driver);
             if !env.is_empty() {
                 // Replace process env with the vcvars snapshot so clang sees
                 // INCLUDE, LIB, PATH from VS Build Tools without re-running the bat.
@@ -3142,6 +3231,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let codegen_result = catch_unit_panic(std::panic::AssertUnwindSafe(|| {
         codegen_to_c(
             opts.nv_file, &src, opts.mono_depth, contracts_mode, opts.repo, opts.stdlib_dir,
+            opts.tmp_dir,
         )
     }));
     let codegen_warnings: Vec<String> = match &codegen_result {
@@ -3368,9 +3458,15 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         }
     }
 
-    let c_file = opts.nv_file.with_extension("c");
+    // ТОТ ЖЕ путь, что у писателя выше (`codegen_to_c`): каталог сборки, а не
+    // соседство с исходником. Две конструкции обязаны ехать ВМЕСТЕ — разъедутся,
+    // и проверка существования начнёт искать файл там, где его больше не пишут.
+    let c_file = opts.tmp_dir.join(format!(
+        "{}.c",
+        opts.nv_file.file_stem().and_then(|s| s.to_str()).unwrap_or("cu")
+    ));
     // Plan 209 Ф.2: multi-TU (`CodegenArtifact::Split`) never writes a
-    // single `.c` next to `opts.nv_file` (codegen_to_c doc) — `common_h`/
+    // single `.c` into the build dir (codegen_to_c doc) — `common_h`/
     // `parts` are compiled from the per-test `obj_dir` further below
     // instead. The `NoCFile` sanity-check only applies to the Single shape.
     if matches!(codegen_artifact, CodegenArtifact::Single) && !c_file.is_file() {
@@ -4424,7 +4520,7 @@ fn attribute_merged_cu_crash(stderr: &str, peer_paths: &[PathBuf]) -> Option<Pat
 /// Plan 209 Ф.2: which shape `codegen_to_c` produced.
 ///
 /// `Single` — the existing/default behavior, UNCHANGED: a single `.c`
-/// already written to `path.with_extension("c")`, byte-identical to
+/// already written to `<out_dir>/<stem>.c`, byte-identical to
 /// pre-209 (`NOVA_MULTI_TU` unset, or the CU is under the split threshold).
 ///
 /// `Split` — multi-TU (env `NOVA_MULTI_TU=1` AND the CU exceeds the Ф.1
@@ -4458,6 +4554,12 @@ fn codegen_to_c(
     contracts_mode: ast::ContractsMode,
     repo: &Path,
     stdlib_dir: &Path,
+    // WHERE THE `.c` GOES. Until 2026-09-08 it went NEXT TO THE SOURCE
+    // (`path.with_extension("c")`), so a `nova test-build` left an artefact
+    // inside someone's source tree -- the owner reported exactly that, a
+    // `.c` sitting beside its `.nv`. `nova build` had long written its `.c`
+    // into a temp dir with automatic cleanup; only this path had not caught up.
+    out_dir: &Path,
 ) -> Result<(Vec<String>, Vec<String>, bool, CodegenArtifact), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
@@ -4816,7 +4918,11 @@ fn codegen_to_c(
     };
     let artifact = match emit_output {
         crate::codegen::EmitOutput::Single(c_code) => {
-            let out_path = path.with_extension("c");
+            // Имя прежнее, каталог другой: `<out_dir>/<stem>.c` вместо
+            // соседства с исходником. Имя не трогаем намеренно — по нему
+            // ориентируются снимки корпуса и человек в отладке.
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu");
+            let out_path = out_dir.join(format!("{}.c", stem));
             std::fs::write(&out_path, &c_code).map_err(|e| {
                 format!(
                     "failed to write {}: {}",
@@ -8865,6 +8971,7 @@ mod tests {
         let stdlib_dir = crate::manifest::resolve_std_path(&repo);
         let result = codegen_to_c(
             &nv_path, &src, None, ast::ContractsMode::Checked, &repo, &stdlib_dir,
+            &std::env::temp_dir(),
         );
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }

@@ -75,6 +75,23 @@ gate rather than passing quietly.
 
 * `main` belongs to the integrator. You work in **your own branch in your own
   worktree**, and the integrator merges.
+* **Temporary files and scratch directories go in your session's scratchpad, and
+  NOWHERE else.** Never at the root of a drive, never beside the repository,
+  never in the parent of the working copy. Owner's instruction, 2026-09-09, after
+  finding what a month of sessions had left: 53 MB of test artefacts sitting at
+  `D:\` itself (`nova_test_art4..6`, `nova_test_artifacts1..3`, `net_smoke_tmp`,
+  `nova202repro`, `nova202rootpeers*`, newest file 13 July), and 1.1 GB beside the
+  repository -- two orphaned copies of the whole tree (`nova-pk2fix` 347 MB,
+  `nova-premerge` 170 MB, neither a git checkout), a `.tmp` log heap of 510 MB,
+  plus twenty-one loose `nova-scratch-*.txt` / `msg*.txt` / `tmp_*` files. None of
+  it was named in any plan; all of it was somebody's "just for a minute".
+  **Why it is a rule and not tidiness:** a stray directory beside the repository
+  is swept into greps and guard scans and reddens someone else's snapshot; a
+  full-tree copy without `.git` looks like a worktree to a human and holds work
+  nobody can merge; and a drive that fills up turns a build failure into thirty
+  fake test failures. If you genuinely need a file to outlive your session, it
+  belongs in the repository under a named path, in a commit -- or it does not
+  need to outlive the session.
 * Worktrees live **beside the repository** — under the directory that holds the
   main working copy, never inside the repository itself, and never on a system
   drive with no room on it. The permitted root is *derived*, not written down:
