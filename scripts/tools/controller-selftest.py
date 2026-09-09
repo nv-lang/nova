@@ -158,6 +158,36 @@ CHECKS = [
 ]
 
 
+def subject_of(path):
+    """Does any guard actually JUDGE this file? Printed next to every late edit.
+
+    Ordered by the integrator (04:39 local 2026-09-09) after both of us spent two cycles on the
+    wrong question. We were comparing "did the guard read the file before or after the edit",
+    when the first question is "is this guard about this file at all". His third fact settled it:
+    `controller.md` is NOT in `.claude/after-compact.list`, the context-layer guard counts three
+    files after compaction and five at start, and my command is in neither list -- so the budget
+    guard never judged it, whichever side of the clock the edit fell on. His own verdict of the
+    previous cycle, he says, was right by numbers and by accident.
+
+    Cheap and honest: name the lists this file provably belongs to, and say "no known subject"
+    rather than guessing. An unknown answer is reported as unknown, never as "safe".
+    """
+    rel = os.path.relpath(path, REPO).replace("\\", "/")
+    subjects = []
+    lst = os.path.join(REPO, ".claude", "after-compact.list")
+    try:
+        entries = [l.strip() for l in io.open(lst, encoding="utf-8").read().splitlines()]
+        if any(e and not e.startswith("#") and e.strip("/") in rel for e in entries):
+            subjects.append("context-layer")
+    except Exception:  # noqa: BLE001
+        subjects.append("after-compact.list UNREADABLE")
+    # scripts/ is the subject of the EOL and shebang guards -- they walk the directory, so
+    # membership is by location, not by a list.
+    if rel.startswith("scripts/"):
+        subjects.append("script-eol/mixed-eol")
+    return ",".join(subjects) if subjects else "no known subject"
+
+
 def freeze_state():
     """LIVE check, not a text check: is a tier running, and did my files change after it started?
 
@@ -208,8 +238,9 @@ def freeze_state():
             continue
         mts = os.path.getmtime(p)
         if mts > start_ts:
-            newer.append("%s@%s" % (os.path.basename(p),
-                                    time.strftime("%H:%M:%S", time.localtime(mts))))
+            newer.append("%s@%s[%s]" % (os.path.basename(p),
+                                        time.strftime("%H:%M:%S", time.localtime(mts)),
+                                        subject_of(p)))
     if newer:
         return "TIER since %s, CHANGED AFTER IT: %s -- tell the integrator" % (start, ",".join(newer)), False
     return "tier since %s, no controller file newer" % start, True
