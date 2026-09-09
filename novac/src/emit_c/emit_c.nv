@@ -379,7 +379,9 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     // prologue prints from the tree before any of this.
     @print_body(lowered)
     if @ctx.fns.is_entry_row(row) {
-        @body.append("    return NOVA_UNIT;\n}\n")
+        // ONLY THE BRACE (2026-09-09): the unit return is printed by the walk now, from
+        // the type of the return place. Printing it here as well would emit it twice.
+        @body.append("}\n")
     } else {
         // Trailing safety return only for block bodies of int fns (the E1
         // shape); an expression body IS the return, and non-int returns
