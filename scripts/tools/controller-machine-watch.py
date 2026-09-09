@@ -79,6 +79,23 @@ DATA_ARG = re.compile(r"\s-(?:c|m|F)\s")
 SELF_RE = re.compile(r"(controller-\w+|\bps -ef\b|\bgrep\b|\bawk\b|\bwc\b|shell-snapshots)")
 
 
+# STDOUT MUST NOT BE ABLE TO KILL THE MEASUREMENT -- fixed 16:24Z 2026-09-09, and the cause is
+# the machine itself: the slot holder was `C:\Users\<russian name>\.cargo\bin\cargo.exe`, that
+# path decodes with a replacement character (we read bytes with errors="replace"), and printing it
+# to a cp1251 console raised UnicodeEncodeError. The traceback landed INSTEAD of the verdict line,
+# so the watch answered nothing at all -- and the watch is the tool every other decision of this
+# role stands on: "is the main tree free to edit", "who holds the slot", "did a tier start".
+#
+# The class is the one I have been writing down all shift, in its harshest form yet: the tool did
+# not answer wrongly, it answered NOTHING, and a missing verdict reads to a hurried eye exactly
+# like a quiet machine. Same shape as prohibition 16 ("busy by unknown is not a conclusion") --
+# only here the unknown was produced by my own print statement.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001
+    pass
+
+
 def ps():
     """One `ps -ef` snapshot, decoded defensively.
 
