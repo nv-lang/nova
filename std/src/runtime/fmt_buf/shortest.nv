@@ -102,7 +102,9 @@ fn log10_pow5(e int) -> int => (e * 732923) >> 20
 fn div5(x u64) -> u64 => x / 5
 fn div10(x u64) -> u64 => x / 10
 fn div100(x u64) -> u64 => x / 100
-fn div1e8(x u64) -> u64 => x / 100000000
+// The donor's `div1e8` is NOT here: its only caller is `to_chars`, which we do not
+// port (see the file header). A ported helper with no caller is not thoroughness --
+// it is a claim that something uses it.
 
 /// Number of times 5 divides `value`; donor `pow5Factor`, `value != 0`.
 ///
