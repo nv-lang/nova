@@ -38,8 +38,10 @@
      мерка ОТКАЗЫВАЕТ (rc=2), а не печатает «0 в 0 файлах». Ноль по пустому входу выглядит как
      успех волны и именно так и был бы прочитан.
 
-Вызов: python scripts/tools/novac-tree-edges.py [--all]
-  без флага — мера волны (с исключениями выше);  --all — все имена, без исключений.
+Вызов: python scripts/tools/novac-tree-edges.py [--all | --split]
+  без флага — мера волны (с исключениями выше);  --all — все имена, без исключений;
+  --split — ВТОРАЯ мера той же волны: кто ПИШЕТ в билдер (понижение) против тех, кто только
+            ЧИТАЕТ запись (печать). См. `split_measure` ниже.
 """
 import glob
 import io
@@ -149,8 +151,96 @@ def declaration_of(name, srcs):
     return None
 
 
+RE_METHOD = re.compile(r"^fn Emitter (?:mut )?@([a-z_0-9]+)\(")
+
+# THE NAMED EXCEPTION OF THE MOVE'S CRITERION, and it is a SET OF DOORS rather than a function.
+#
+# Read out of `emit_callable` on 2026-09-09: the orchestrator touches the builder only through
+# `FnBuilder.new`, `end_body` and `finish` -- the LIFECYCLE -- plus the read `ret_place`. It
+# lowers nothing itself; it CALLS the lowering (`lower_place`, `emit_block_stmts_fn`). Three
+# quarters of its work is printing: the signature, the braces, the contract prologue, the
+# trailing returns.
+#
+# Why the exception is a door set and not the name `emit_callable`: an exception by NAME stays
+# true even if that function starts writing statements, while an exception by DOORS reddens the
+# same moment. Same lesson as the normaliser's scope and the move's own counting rule -- the
+# property is read from the source, never from a list of names.
+LIFECYCLE = frozenset(("end_body", "finish"))
+
+
+def split_measure(root):
+    """КТО ПИШЕТ В БИЛДЕР против тех, кто только ЧИТАЕТ запись -- мера ПЕРЕЕЗДА понижения.
+
+    ЗАЧЕМ ОТДЕЛЬНАЯ МЕРА. Волна M3 обещает «эмиттер читает только IR», но проверить это нельзя,
+    пока понижение и печать делят один модуль: понижение читает дерево ПО ОПРЕДЕЛЕНИЮ (ребро
+    `lower` -> `tree` в таблице архитектуры постоянное, без `until:`), и его законные чтения
+    попадают в половину B критерия К1 как чужие. Замер 2026-09-09: волна, снявшая расхождения
+    обхода, подняла половину B с 62 до 68 — потому что понижение `println` и деструктуризации
+    легло в `emit_c/emit_place.nv`.
+
+    ПРАВИЛО СЧЁТА ВЫВЕДЕНО ИЗ ИСТОЧНИКА, А НЕ ИЗ СПИСКА ИМЁН, и это третья его редакция за день
+    — каждая следующая родилась из дефекта предыдущей:
+      1. по приставке `@lower_*` -> 15. НЕДОСЧЁТ: понижают и `emit_coalesce`, `emit_if_value`,
+         `emit_bind`, `bind_pair_temp`, `emit_destructure_bind` — названы `emit_*`;
+      2. по «обращается к `@ir`» -> 32. ПЕРЕБОР: принтеры законно СПРАШИВАЮТ запись
+         (`decl_of` даёт имя и тип локали) — это и есть «печатать из записи»;
+      3. по «зовёт ИЗМЕНЯЮЩУЮ дверь билдера» -> 20. Фазы разделяет ЗАПИСЬ, а не обращение.
+         Набор изменяющих дверей берётся из `ir.nv` по `export fn FnBuilder mut @...`, то есть
+         из объявлений, а не из моей памяти о них.
+
+    КРИТЕРИЙ ПЕРЕЕЗДА, который эта мера делает проверяемым: после переезда НИ ОДИН метод в
+    `emit_c/` не зовёт изменяющую дверь билдера. Исключение возможно одно — оркестратор
+    (`emit_callable`), который ведёт обе фазы; если он остаётся, он обязан быть НАЗВАН здесь, а
+    не молча вычтен.
+    """
+    ir_path = os.path.join(root, "novac/src/lower/ir.nv").replace("\\", "/")
+    if not os.path.isfile(ir_path):
+        sys.stderr.write("novac-tree-edges: REFUSED -- no IR module at %s\n" % ir_path)
+        return 2
+    ir = read(ir_path)
+    mut = set(re.findall(r"^export fn FnBuilder mut @([a-z_0-9]+)\(", ir, re.M))
+    rdo = set(re.findall(r"^export fn FnBuilder @([a-z_0-9]+)\(", ir, re.M))
+    if not mut:
+        sys.stderr.write("novac-tree-edges: REFUSED -- no mutating builder doors found; the rule\n"
+                         "cannot tell lowering from printing, and a zero here would fake a split.\n")
+        return 2
+    writers, readers, lifecycle = [], [], []
+    for p in sorted(glob.glob(os.path.join(root, "novac/src/emit_c/*.nv").replace("\\", "/"))):
+        base = p.replace("\\", "/").split("/")[-1]
+        lines = read(p).split("\n")
+        idx = [i for i, l in enumerate(lines) if RE_METHOD.match(l)]
+        for j, i in enumerate(idx):
+            end = idx[j + 1] if j + 1 < len(idx) else len(lines)
+            code = "\n".join(l.split("//")[0] for l in lines[i:end])
+            name = RE_METHOD.match(lines[i]).group(1)
+            used = set(re.findall(r"@ir\.([a-z_0-9]+)\(", code))
+            wrote = used & mut
+            if wrote and wrote <= LIFECYCLE:
+                lifecycle.append((base, name, " ".join(sorted(wrote))))
+            elif wrote:
+                writers.append((base, name, " ".join(sorted(wrote - LIFECYCLE))))
+            elif used & rdo:
+                readers.append((base, name))
+    print("novac-tree-edges --split: the lowering/printing split inside emit_c/")
+    print("builder doors read from ir.nv: %d mutating, %d read-only" % (len(mut), len(rdo)))
+    print("LIFECYCLE only (the named exception -- these MAY stay): %d" % len(lifecycle))
+    for b, n, d in lifecycle:
+        print("  %-26s %-22s doors: %s" % (b, n, d))
+    print("WRITE statements to the builder (the lowering, must leave emit_c/): %d" % len(writers))
+    for b, n, d in writers:
+        print("  %-26s %-22s doors: %s" % (b, n, d))
+    print("READ only (printers asking the record -- these STAY): %d" % len(readers))
+    print("")
+    print("criterion of the move: %s"
+          % ("MET -- emit_c/ calls no mutating door beyond the lifecycle trio" if not writers
+             else "not met -- %d method(s) still write statements" % len(writers)))
+    return 0
+
+
 def main():
     root = repo_root()
+    if "--split" in sys.argv:
+        return split_measure(root)
     show_all = "--all" in sys.argv
     printers = sorted(glob.glob(os.path.join(root, "novac/src/emit_c/*.nv").replace("\\", "/")))
     if not printers:
