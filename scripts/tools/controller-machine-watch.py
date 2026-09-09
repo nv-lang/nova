@@ -117,11 +117,39 @@ def main():
         if f:
             rows[f[0]] = (f[1], ln)
 
+    def cwd_owner(pid):
+        """The tree a process actually RUNS IN, read from the OS, not from its own text.
+
+        Needed by the 08:47Z fix above: once attribution was narrowed to path components, the
+        integrator's tier -- launched as the relative `bash scripts/gate.sh` -- carried no path
+        at all, and the watch printed `BUSY by ?`. Prohibition 16 calls that an unhandled case,
+        not a verdict, so the fix had a second side and it had to be checked too.
+
+        Read it with msys `readlink`, NOT `os.readlink`: this runs under the Windows python,
+        for which /proc does not exist at all (`WinError 3`) -- measured 08:52Z. A tool asking
+        the wrong filesystem would answer "?" forever and look like an honest unknown.
+        LIMIT, named because a probe found it (2/2 both ways, 08:56Z): /proc knows only msys
+        pids, so a native `nova.exe` gets no cwd here -- it keeps its full path in argv, which
+        owner_of() already reads, and its msys parent covers the rest.
+        """
+        try:
+            out = subprocess.run(["readlink", "/proc/%d/cwd" % pid],
+                                 capture_output=True, timeout=10)
+            target = out.stdout.decode("utf-8", errors="replace").strip()
+        except Exception:  # noqa: BLE001
+            return "?"
+        if not target:
+            return "?"
+        return owner_of(target.rstrip("/\\") + "/")
+
     def inherited_owner(pid, depth=0):
         """A child of a known tree belongs to that tree: walk up the parents."""
         if depth > 6 or pid not in rows:
             return "?"
         ppid, ln = rows[pid]
+        o = cwd_owner(pid)
+        if o != "?":
+            return o
         o = owner_of(ln)
         if o != "?":
             return o
