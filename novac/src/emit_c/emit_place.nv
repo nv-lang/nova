@@ -29,7 +29,14 @@ import ../builtins.{VEC_GET_METHOD}
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
 /// by one until M2b prints sealed blocks.
 fn Emitter mut @lower_place(e Node, dest Local) -> () {
-    @ir.place(e, dest)
+    // THE SOURCE IS RESOLVED FIRST (prerequisite 5): a value form that lays down blocks
+    // is lowered NOW and the assignment reads the local it produced, through the operand
+    // rvalue door `@ir.copy`. Otherwise the tree node stays the source -- the M1 bridge,
+    // printed inline by `@emit_expr`.
+    match @lower_value_source(e, @ir.decl_of(dest).ty) {
+        Some(l) => @ir.copy(dest, l)
+        None => @ir.place(e, dest)
+    }
     @emit_last_stmt()
 }
 
@@ -221,23 +228,33 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
 /// name is the value. Any other expression is hoisted (its constructions laid
 /// down first) and printed inline by `emit_expr`. Until M1 this dispatch
 /// stood in eight positions with four to six arms each (274.8 section 0).
-fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
+/// The value forms that LOWER: a `match` and an `if` in value position lay down blocks of
+/// the body, so they are resolved WHILE LOWERING and hand back the local that holds the
+/// result. Prerequisite 5 of M2b-2 step 3b: after the walk prints from sealed blocks, a
+/// printer that lowered would push into a FINISHED builder -- the blocks would be recorded
+/// and never printed. The forms that only PRINT (a record constructor, an array literal)
+/// stay in `build_value` below.
+fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
     ro k = e.kind_of()
     if k == NodeKind.MatchExpr {
-        // The match is a Switch of the lowered body (274.8 M2b-1d); its
-        // result local is declared here by the printer, assigned in each
-        // arm through the one door.
+        // The match is a Switch of the lowered body (274.8 M2b-1d); its result local is
+        // recorded here, assigned in each arm through the one door.
         ro u = @fresh_uniq()
         ro t = @ir.temp(ty, "_novac_match_t${u}")
         @lower_match(e, u, t)
-        return Some("_novac_match_t${u}")
+        return Some(t)
     }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
-        // A tail `if` and an if-expression lay down the same pair (wave B14).
+        // A tail `if` and an if-expression lay down the same pair (wave B14); the door
+        // hands back the local it declared.
         ro u = @fresh_uniq()
-        @emit_if_value(e, u, ty)
-        return Some("_novac_if_t${u}")
+        return Some(@emit_if_value(e, u, ty))
     }
+    None
+}
+
+fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
+    ro k = e.kind_of()
     if k == NodeKind.RecordCtor {
         return Some(@emit_record_ctor(e, ty, false))
     }
