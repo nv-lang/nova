@@ -149,6 +149,53 @@ def newest_dirty_file(tree, limit=40):
 RECENT_CMD_LINES = 300
 
 
+# The map of session -> tree(s), as DECLARED BY THE WINDOWS THEMSELVES. Added 15:37Z 2026-09-09
+# after the sixth run of the same defect: inference from a transcript has now been fixed four
+# times (threshold 20, threshold 60, command filter, recent window) and each fix moved the error
+# rather than removing it -- this cycle it swept the sdl window into the main copy, so THREE of
+# four sessions lost their file signals to the "shared tree" refusal. The refusal is honest, but
+# a tool whose honest answer is "I cannot tell" about three quarters of its subject is not doing
+# its job.
+#
+# The right source was named by a window, not by me (nova-9c, 18:27 local): "чините приписку под
+# этот случай, а не под догадку" -- fix the attribution for THIS case, not for your guess. What a
+# session knows about itself beats anything I can count in its text, and it costs them one line.
+# So the map is data, gathered by asking, keyed by SESSION ID (stable across renames), and the
+# textual inference stays only as the fallback for a session nobody has asked yet.
+#
+# The file lives in the scratchpad, not in the repo: it is role state, like the reminder stamp,
+# and the repo holds only code (the lesson of 15:05Z, when moving state into the tree silently
+# reset the owner's hourly clock).
+def _state_dir():
+    for var in ("CLAUDE_SCRATCHPAD", "CLAUDE_SCRATCHPAD_DIR", "TMPDIR", "TEMP", "TMP"):
+        v = os.environ.get(var)
+        if v and os.path.isdir(v):
+            d = v if "SCRATCHPAD" in var else os.path.join(v, "controller-reminder")
+            try:
+                os.makedirs(d, exist_ok=True)
+                return d
+            except OSError:
+                continue
+    return HERE
+
+
+TREE_MAP_PATH = os.path.join(_state_dir(), "tree-map.json")
+
+
+def declared_trees(sid):
+    """Trees this session told me it works in, newest declaration first. [] if never asked."""
+    try:
+        with io.open(TREE_MAP_PATH, encoding="utf-8") as fh:
+            m = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return []
+    for key, rec in m.items():
+        if sid.startswith(key) or key.startswith(sid[:8]):
+            t = rec.get("trees") or []
+            return [x for x in t if isinstance(x, str)]
+    return []
+
+
 def tree_of(path, cwd_hint):
     """Which working copy is this session's? Frequency of tree paths in its own transcript.
 
@@ -367,7 +414,16 @@ def main():
         if not tail0:
             continue
         cwd0 = next((e["cwd"] for e in tail0 if e.get("cwd")), None)
-        t0, _ = tree_of(f, cwd0)
+        sid0 = os.path.basename(f)[:-6]
+        decl = declared_trees(sid0)
+        if decl:
+            # A window that declared TWO homes gets the first one for file signals, and the
+            # second is printed beside it -- because "which of my two trees moved" is a question
+            # only they can answer, and pretending otherwise is how the last four fixes failed.
+            t0 = os.path.join(os.path.dirname(os.path.abspath(ROOT)), decl[0]) \
+                if decl[0] != os.path.basename(ROOT) else ROOT
+        else:
+            t0, _ = tree_of(f, cwd0)
         resolved.append((f, tail0, t0))
     counts = {}
     for _, _, t0 in resolved:
