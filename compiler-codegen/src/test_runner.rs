@@ -1240,6 +1240,45 @@ mod cxx_driver_name_tests {
     }
 }
 
+/// Имя файла `.c` для исходника: два последних сегмента каталога плюс имя.
+///
+/// ЗАЧЕМ ОНО НЕ ПРОСТО `<имя>.c` (починка 2026-09-09; дефект внесён в тот же
+/// день переносом `.c` из соседства с исходником в каталог сборки).
+/// Рядом с исходником `collections/range/core.nv` и `collections/set/core.nv`
+/// давали РАЗНЫЕ пути. В одном каталоге сборки оба стали `core.c`, и три теста
+/// `std` начали падать `CODEGEN-FAIL ... failed to write ...\core.c` — падал
+/// тот, кто проиграл гонку за файл. Имён-двойников в `std/src` и `spec_tests`
+/// ДВАДЦАТЬ ПЯТЬ, то есть это закономерность, а не редкость.
+///
+/// ЦЕНА ОШИБКИ БЫЛА НЕ В ПАДЕНИИ, А В ЕГО ВИДЕ: имя жертвы менялось от прогона
+/// к прогону, отказ читался как МЕРЦАЮЩИЙ ТЕСТ, и первый разбор увёл меня в
+/// сторону теста, судящего время. Уникальность имени здесь — условие того,
+/// чтобы вердикт называл предмет, а не победителя гонки.
+///
+/// Хвост пути, а не хэш: человек в отладке ищет свой файл глазами, и
+/// `collections_range_core.c` он найдёт, а `a3f9e1.c` — нет.
+///
+/// ОДИН ДОМ на оба места (писатель и проверка существования): копия разошлась
+/// бы на первой правке, а расхождение здесь означает поиск файла там, где его
+/// не пишут.
+fn unique_c_base(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu");
+    let uniq: String = path
+        .parent()
+        .map(|p| {
+            let mut v: Vec<&str> = p
+                .components()
+                .rev()
+                .take(2)
+                .filter_map(|c| c.as_os_str().to_str())
+                .collect();
+            v.reverse();
+            v.join("_")
+        })
+        .unwrap_or_default();
+    if uniq.is_empty() { stem.to_string() } else { format!("{}_{}", uniq, stem) }
+}
+
 fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // Plan 27 Ф.1: alloc source chosen by GC backend.
     let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
@@ -3461,10 +3500,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // ТОТ ЖЕ путь, что у писателя выше (`codegen_to_c`): каталог сборки, а не
     // соседство с исходником. Две конструкции обязаны ехать ВМЕСТЕ — разъедутся,
     // и проверка существования начнёт искать файл там, где его больше не пишут.
-    let c_file = opts.tmp_dir.join(format!(
-        "{}.c",
-        opts.nv_file.file_stem().and_then(|s| s.to_str()).unwrap_or("cu")
-    ));
+    let c_file = opts.tmp_dir.join(format!("{}.c", unique_c_base(opts.nv_file)));
     // Plan 209 Ф.2: multi-TU (`CodegenArtifact::Split`) never writes a
     // single `.c` into the build dir (codegen_to_c doc) — `common_h`/
     // `parts` are compiled from the per-test `obj_dir` further below
@@ -4921,8 +4957,7 @@ fn codegen_to_c(
             // Имя прежнее, каталог другой: `<out_dir>/<stem>.c` вместо
             // соседства с исходником. Имя не трогаем намеренно — по нему
             // ориентируются снимки корпуса и человек в отладке.
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu");
-            let out_path = out_dir.join(format!("{}.c", stem));
+            let out_path = out_dir.join(format!("{}.c", unique_c_base(path)));
             std::fs::write(&out_path, &c_code).map_err(|e| {
                 format!(
                     "failed to write {}: {}",
