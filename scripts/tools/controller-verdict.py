@@ -245,6 +245,17 @@ def verdict_for(entry, last_text_epoch, tree, held, now, threshold_min):
     if last_text_epoch is None:
         return "UNKNOWN", "no assistant text in tail", False
     age = (now - last_text_epoch) / 60
+    # A NEGATIVE age is impossible as an age, and printing it as one ("text -0.1 min old") hands
+    # the reader a number that cannot be true and says nothing about why. Caught 13:43Z 2026-09-09
+    # on a live cycle. The cause is in this tool's own order: `now` is sampled ONCE in main, before
+    # the histories are read, so an entry written DURING the scan is newer than the measurement's
+    # own clock. That is not noise -- it is the strongest possible signal of work, because the
+    # window acted while I was measuring it. Same class as "the measurement before the edit answers
+    # a different question": the number is right about the moment it was taken and wrong about the
+    # moment it is used. So name it instead of smoothing it.
+    if age < 0:
+        return "works", "text at %s is NEWER than the scan start -- entry appeared mid-scan" % (
+            hhmmss(last_text_epoch)), False
     if age < threshold_min:
         return "too early", "text %.1f min old, threshold %.0f" % (age, threshold_min), False
     return "STOOD", "no signal; silent %.1f min since %s" % (age, hhmmss(last_text_epoch)), True
@@ -332,8 +343,24 @@ def prove():
     ok = status == "too early" and not push
     fail += 0 if ok else 1
     print("%-38s | %-24s | %-24s | %s" % ("E fresh text under threshold", "too early", status, "OK" if ok else "FAIL"))
+    # F: an entry born DURING the scan -- timestamp after `now`. Must be named, not printed as a
+    # negative age. And it must say `works`: the window acted while being measured.
+    status, sig, push = verdict_for(txt, now + 6, tree, {}, now, THRESHOLD_MIN)
+    ok = status == "works" and not push and "NEWER than the scan start" in sig
+    fail += 0 if ok else 1
+    print("%-38s | %-24s | %-24s | %s" % ("F entry newer than scan start", "works (named)", status,
+                                          "OK" if ok else "FAIL"))
+    # G is the side the fix must NOT touch (rule bought 08:52Z: a probe on a narrowing fix must
+    # carry the case the narrowing was not meant to reach). A text exactly at the threshold edge
+    # but POSITIVE stays "too early", not "works" -- otherwise the new branch would have swallowed
+    # every fresh text and turned the tool into a machine that never pushes anybody.
+    status, _, push = verdict_for(txt, now - 1, tree, {}, now, THRESHOLD_MIN)
+    ok = status == "too early" and not push
+    fail += 0 if ok else 1
+    print("%-38s | %-24s | %-24s | %s" % ("G one-second-old text stays early", "too early", status,
+                                          "OK" if ok else "FAIL"))
     print("")
-    print("PROVE %s (%d cases)" % ("OK" if not fail else "FAIL", len(cases) + 1))
+    print("PROVE %s (%d cases)" % ("OK" if not fail else "FAIL", len(cases) + 3))
     return 1 if fail else 0
 
 
