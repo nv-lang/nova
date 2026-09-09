@@ -207,7 +207,14 @@ for fpath in "${resolved_fixtures[@]}"; do
         -o "$bdir/$name.exe" ) >"$build_log" 2>&1
     build_rc=$?
 
-    ( cd "$REPO_ROOT" && \
+    # TEST-STORONA ISHCHETSYA TEM ZHE SPOSOBOM, CHTO I BUILD (pravka 2026-09-08).
+    # Bylo: `.c` bralsya po zahardkozhennomu `$tdir/$name.c`, potomu chto
+    # test_runner pisal ego vplotnuyu k istochniku. Asimmetriya derzhala perenos
+    # artefakta: sdvin' `.c` -- i proverka lomaetsya MOLCHA, ne nayd'ya fayl.
+    # Stalo: TEMP/TMP na svoy pustoy katalog + `find`, kak u build-storony.
+    ttmproot="$tmproot-test"
+    rm -rf "$ttmproot"; mkdir -p "$ttmproot"
+    ( cd "$REPO_ROOT" && TEMP="$ttmproot" TMP="$ttmproot" \
         "$NOVA_BIN_RESOLVED" test-build "$tdir/$name.nv" --keep-artifacts \
     ) >"$test_log" 2>&1
     test_rc=$?
@@ -239,7 +246,16 @@ for fpath in "${resolved_fixtures[@]}"; do
         continue
     fi
     build_c="${build_c_candidates[0]}"
-    test_c="$tdir/$name.c"
+    mapfile -t test_c_candidates < <(find "$ttmproot" -iname "*.c" 2>/dev/null)
+    if [ "${#test_c_candidates[@]}" -ne 1 ]; then
+        echo "  ERROR: ozhidalsya rovno odin .c ot test-storony pod $ttmproot"
+        printf '    %s\n' "${test_c_candidates[@]}"
+        summary_lines+=("$name: ERROR (ne nayden test .c odnoznachno)")
+        overall=1
+        echo
+        continue
+    fi
+    test_c="${test_c_candidates[0]}"
     if [ ! -f "$test_c" ]; then
         echo "  ERROR: не найден test-build .c: $test_c"
         summary_lines+=("$name: ERROR (не найден test .c)")

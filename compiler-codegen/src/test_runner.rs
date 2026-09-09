@@ -3142,6 +3142,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let codegen_result = catch_unit_panic(std::panic::AssertUnwindSafe(|| {
         codegen_to_c(
             opts.nv_file, &src, opts.mono_depth, contracts_mode, opts.repo, opts.stdlib_dir,
+            opts.tmp_dir,
         )
     }));
     let codegen_warnings: Vec<String> = match &codegen_result {
@@ -3368,9 +3369,15 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         }
     }
 
-    let c_file = opts.nv_file.with_extension("c");
+    // ТОТ ЖЕ путь, что у писателя выше (`codegen_to_c`): каталог сборки, а не
+    // соседство с исходником. Две конструкции обязаны ехать ВМЕСТЕ — разъедутся,
+    // и проверка существования начнёт искать файл там, где его больше не пишут.
+    let c_file = opts.tmp_dir.join(format!(
+        "{}.c",
+        opts.nv_file.file_stem().and_then(|s| s.to_str()).unwrap_or("cu")
+    ));
     // Plan 209 Ф.2: multi-TU (`CodegenArtifact::Split`) never writes a
-    // single `.c` next to `opts.nv_file` (codegen_to_c doc) — `common_h`/
+    // single `.c` into the build dir (codegen_to_c doc) — `common_h`/
     // `parts` are compiled from the per-test `obj_dir` further below
     // instead. The `NoCFile` sanity-check only applies to the Single shape.
     if matches!(codegen_artifact, CodegenArtifact::Single) && !c_file.is_file() {
@@ -4424,7 +4431,7 @@ fn attribute_merged_cu_crash(stderr: &str, peer_paths: &[PathBuf]) -> Option<Pat
 /// Plan 209 Ф.2: which shape `codegen_to_c` produced.
 ///
 /// `Single` — the existing/default behavior, UNCHANGED: a single `.c`
-/// already written to `path.with_extension("c")`, byte-identical to
+/// already written to `<out_dir>/<stem>.c`, byte-identical to
 /// pre-209 (`NOVA_MULTI_TU` unset, or the CU is under the split threshold).
 ///
 /// `Split` — multi-TU (env `NOVA_MULTI_TU=1` AND the CU exceeds the Ф.1
@@ -4458,6 +4465,12 @@ fn codegen_to_c(
     contracts_mode: ast::ContractsMode,
     repo: &Path,
     stdlib_dir: &Path,
+    // WHERE THE `.c` GOES. Until 2026-09-08 it went NEXT TO THE SOURCE
+    // (`path.with_extension("c")`), so a `nova test-build` left an artefact
+    // inside someone's source tree -- the owner reported exactly that, a
+    // `.c` sitting beside its `.nv`. `nova build` had long written its `.c`
+    // into a temp dir with automatic cleanup; only this path had not caught up.
+    out_dir: &Path,
 ) -> Result<(Vec<String>, Vec<String>, bool, CodegenArtifact), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
@@ -4816,7 +4829,11 @@ fn codegen_to_c(
     };
     let artifact = match emit_output {
         crate::codegen::EmitOutput::Single(c_code) => {
-            let out_path = path.with_extension("c");
+            // Имя прежнее, каталог другой: `<out_dir>/<stem>.c` вместо
+            // соседства с исходником. Имя не трогаем намеренно — по нему
+            // ориентируются снимки корпуса и человек в отладке.
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu");
+            let out_path = out_dir.join(format!("{}.c", stem));
             std::fs::write(&out_path, &c_code).map_err(|e| {
                 format!(
                     "failed to write {}: {}",
@@ -8865,6 +8882,7 @@ mod tests {
         let stdlib_dir = crate::manifest::resolve_std_path(&repo);
         let result = codegen_to_c(
             &nv_path, &src, None, ast::ContractsMode::Checked, &repo, &stdlib_dir,
+            &std::env::temp_dir(),
         );
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }
