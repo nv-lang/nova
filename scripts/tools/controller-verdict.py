@@ -165,7 +165,18 @@ def tree_of(path, cwd_hint):
     # while the integrator, who lives in the main copy, mentions nova-p274 exactly 4 times,
     # because I keep writing to him ABOUT their tier. Frequency without a floor made the tool
     # hand him a stranger's tree, and with it a stranger's slot as his "signal of work".
-    MIN_TREE_HITS = 20
+    # RAISED 20 -> 60 at 14:38Z 2026-09-09, because 20 was pierced by a stranger's tree and the
+    # tool handed the integrator the wrong home for the second time. Measured on the same tails
+    # this function reads (400 KB), so these numbers ARE facts about this code, not about the dock:
+    #   integrator  gate/push=6   max foreign tree = 27 (claude-limits), own tree: none
+    #   window 283  gate/push=1   nova-p283 = 141
+    #   window 274  gate/push=2   nova-p274 = 141
+    #   claude-limits/sdl         nova-sdl  = 113, claude-limits 26, nova-duckdb 53
+    # 60 sits with a two-fold margin on BOTH sides: twice the loudest stranger, half the quietest
+    # home. The dock disagreed with this function at 14:36Z (it said "nova (main)", correctly, by
+    # its gate/push signal) -- and by my own rule a disagreement between two of my measurers is a
+    # defect, not noise. The floor is the fix; the dock's signal stays its own.
+    MIN_TREE_HITS = 60
     for d in names:
         if not os.path.isdir(os.path.join(parent, d, ".git")) and not os.path.isfile(os.path.join(parent, d, ".git")):
             continue
@@ -359,8 +370,27 @@ def prove():
     fail += 0 if ok else 1
     print("%-38s | %-24s | %-24s | %s" % ("G one-second-old text stays early", "too early", status,
                                           "OK" if ok else "FAIL"))
+    # H and I: the tree floor, both ways, on a synthetic tail. Written as a probe because the
+    # floor was pierced TWICE by live data (20 -> a stranger's tree at 14:36Z), and a number
+    # nobody exercises drifts back into a suggestion.
+    import tempfile as _tf
+    home = os.path.basename(os.path.dirname(os.path.abspath(ROOT))) and "nova-p274"
+    for label, n, want_main in (("H own tree above the floor", 100, False),
+                                ("I stranger below the floor", 27, True)):
+        d = _tf.mkdtemp(prefix="tree-probe-")
+        p = os.path.join(d, "t.jsonl")
+        with open(p, "w", encoding="utf-8") as fh:
+            for _ in range(n):
+                fh.write('{"cwd":"x","text":"/d/Sources/nv-lang/%s/x"}\n' % home)
+        got, hits = tree_of(p, None)
+        is_main = os.path.abspath(got) == os.path.abspath(ROOT)
+        ok = (is_main == want_main)
+        fail += 0 if ok else 1
+        print("%-38s | %-24s | %-24s | %s" % (
+            label, "main copy" if want_main else "own tree",
+            "main copy" if is_main else os.path.basename(got), "OK" if ok else "FAIL"))
     print("")
-    print("PROVE %s (%d cases)" % ("OK" if not fail else "FAIL", len(cases) + 3))
+    print("PROVE %s (%d cases)" % ("OK" if not fail else "FAIL", len(cases) + 5))
     return 1 if fail else 0
 
 

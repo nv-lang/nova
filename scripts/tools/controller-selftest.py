@@ -38,8 +38,15 @@ REPO = os.environ.get(
 )
 CMD_DEFAULT = os.path.join(REPO, ".claude", "commands", "controller.md")
 TOOLS = os.path.join(REPO, "scripts", "tools")
+# Derived, never a literal: the count stood at "4" while six tools existed -- a
+# ratchet comparing a live set against a number frozen in its own source. 15:09Z.
 TOOL_NAMES = ["controller-dock.py", "controller-peers-scan.py",
-              "controller-peers-deep.py", "controller-machine-watch.py"]
+              "controller-peers-deep.py", "controller-machine-watch.py",
+              # Added 15:09Z 2026-09-09: these two existed for an hour and were judged by
+              # nothing. The check asks "is every tool named in the command", and a tool
+              # missing from THIS list passes it by being invisible -- the guard was honest
+              # about the four it knew and silent about the two it did not.
+              "controller-verdict.py", "controller-limits-reminder.py"]
 
 
 def read(path):
@@ -283,7 +290,7 @@ def run(cmd_path, show_table=True):
 
     missing, broken = tools_present()
     tools_ok = not missing and not broken
-    tools_note = "vse 4 na meste i parsyatsya"
+    tools_note = "vse %d na meste i parsyatsya" % len(TOOL_NAMES)
     if missing:
         tools_note = "NET: " + ",".join(missing)
     elif broken:
