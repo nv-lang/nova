@@ -54,6 +54,27 @@ D=$(mk comment)
 printf 'module novac.emit_c\n\n// prose: never write @ir.named(t, "_novac_tmp_t7") -- that is what this guard forbids\nfn Emitter mut @lower_x(t int) -> int {\n    @ir.named(t, leaf_text(kids[1]))\n}\n' > "$D/emit_c/emit_c.nv"
 run "$D" && ok "пример нарушения В КОММЕНТАРИИ зелёный" || bad "проза с примером покраснела: $(cat "$T/err")"
 
+# --- ПУТЬ ЧЕРЕЗ ПОЛУЧАТЕЛЯ: дверь та же, написание другое -------------------
+# Добавлено 2026-09-10 после того, как страж ослеп на этом ровно: билдер уехал внутрь
+# получателя, обращения стали `@lo.ir.named(`, и образец с написанием `@ir.named(` перестал
+# видеть ВСЕ вызовы разом — вердикт был ЗЕЛЁНЫМ на пустой выборке.
+D=$(mk receiver)
+printf 'module novac.emit_c\n\nfn Emitter mut @lower_x(t int) -> int {\n    @lo.ir.named(t, "_novac_tmp_t7")\n}\n' > "$D/emit_c/emit_c.nv"
+run "$D" && bad "выдуманное имя через ПОЛУЧАТЕЛЯ не покраснело" || ok "выдуманное имя через получателя краснеет"
+
+D=$(mk receiver_ok)
+printf 'module novac.emit_c\n\nfn Emitter mut @lower_x(t int) -> int {\n    @lo.ir.named(t, leaf_text(kids[1]))\n}\n' > "$D/emit_c/emit_c.nv"
+run "$D" && ok "авторское имя через получателя зелено" || bad "авторское имя через получателя покраснело: $(cat "$T/err")"
+
+# --- НОЛЬ ВЫЗОВОВ при живой двери: ОТКАЗ, а не «чисто» ---------------------
+D=$(mk nocalls)
+printf 'module novac.emit_c\n\nfn Emitter mut @lower_x(t int) -> int {\n    0\n}\n' > "$D/emit_c/emit_c.nv"
+if run "$D"; then
+    bad "ноль вызовов при живой двери принят за чистое дерево"
+else
+    ok "ноль вызовов при живой двери — ОТКАЗ (слепота, а не чистота)"
+fi
+
 # --- мишень отсутствует: ОТКАЗ, а не «ноль нарушений» ----------------------
 D=$(mk nodoor)
 printf 'module novac.lower\n\nexport fn FnBuilder mut @temp(ty int) -> int {\n    0\n}\n' > "$D/lower/ir.nv"
@@ -71,4 +92,4 @@ if [ "$fails" -ne 0 ]; then
     echo "test-check-novac-invented-name-not-named: FAIL $fails" >&2
     exit 1
 fi
-echo "test-check-novac-invented-name-not-named ok: 7 случаев (зелёный, знаменатель, литерал, интерполяция, комментарий, нет двери, нет каталога)"
+echo "test-check-novac-invented-name-not-named ok: 10 случаев (зелёный, знаменатель, литерал, интерполяция, комментарий, получатель красный, получатель зелёный, ноль вызовов, нет двери, нет каталога)"

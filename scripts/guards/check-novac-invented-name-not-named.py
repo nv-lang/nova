@@ -47,7 +47,13 @@ NAME = "check-novac-invented-name-not-named"
 
 # Вызов двери и его аргументы до закрывающей скобки на той же строке. Комментарии отсекаются
 # ДО поиска: проза с примером `@ir.named(ty, "_novac_x")` нарушением не является.
-RE_NAMED = re.compile(r"@ir\.named\s*\(([^)]*)\)")
+# ДВЕРЬ, А НЕ НАПИСАНИЕ (правка 2026-09-10). Первая редакция искала `@ir.named(` и ослепла,
+# как только билдер уехал внутрь получателя и обращения стали `@lo.ir.named(`: вердикт
+# «вызовов named 0, из них с выдуманным именем 0» — зелёный на пустой выборке. Ловим вызов
+# двери у выражения, которое ЕСТЬ билдер: цепочка получателя кончается на `ir` при любом
+# написании (`@ir`, `@lo.ir`, будущее). Ведущая собака снимается: получатель приходит как
+# `@ir`, и сравнение с `ir` без неё промахивалось бы ровно на старом написании.
+RE_NAMED = re.compile(r"([@A-Za-z_][A-Za-z_0-9.@]*)\.named\s*\(([^)]*)\)")
 RE_INVENTED = re.compile(r"_novac_")
 RE_DOOR = re.compile(r"^export fn FnBuilder mut @named\s*\(", re.M)
 
@@ -86,8 +92,10 @@ def main() -> int:
         for n, raw in enumerate(f.read_bytes().decode("utf-8", "replace").split("\n"), 1):
             code = raw.split("//", 1)[0]
             for m in RE_NAMED.finditer(code):
+                if m.group(1).split(".")[-1].lstrip("@") != "ir":
+                    continue   # `named` у чего-то другого дверью билдера не является
                 calls += 1
-                if RE_INVENTED.search(m.group(1)):
+                if RE_INVENTED.search(m.group(2)):
                     bad.append((f.relative_to(root) if root in f.parents else f, n, raw.strip()))
 
     if bad:
@@ -102,6 +110,18 @@ def main() -> int:
         print("  тела. Если временной нужно объявление первым присваиванием — это `DeclAt`,",
               file=sys.stderr)
         print("  а не возврат к `named` (274.8 M3).", file=sys.stderr)
+        return 1
+
+    # ВТОРАЯ МИШЕНЬ: дверь есть, а вызовов НОЛЬ — это не чистота, это слепота. Первая
+    # редакция в таком случае печатала `ok`, и ровно так она соврала, когда обращения
+    # переехали на путь через получателя (2026-09-10).
+    if calls == 0:
+        print(f"{NAME}: ОТКАЗ — дверь `named` объявлена, а вызовов НЕТ ни одного.",
+              file=sys.stderr)
+        print("  Ноль вызовов при живой двери — пустая выборка, а не чистое дерево:",
+              file=sys.stderr)
+        print("  скорее всего изменилось написание обращения, и образец его не видит.",
+              file=sys.stderr)
         return 1
 
     print(f"{NAME} ok: файлов .nv {len(files)}, вызовов `named` {calls}, "
