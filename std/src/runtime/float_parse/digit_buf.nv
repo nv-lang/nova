@@ -1,4 +1,4 @@
-// Co-equal file of module `runtime.string` (folder = one module).
+// Co-equal file of module `runtime.float_parse` (folder = one module).
 // Role: `DigitBuf` -- the big decimal of the slow path of `str @to_f64()`: up to 768
 // decimal digits with a decimal-point offset and a truncation flag, and ONLY the
 // operations the "Simple Decimal Conversion" of Nigel Tao and Ken Thompson needs --

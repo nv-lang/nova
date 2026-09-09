@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 # The repository root is DERIVED from this file's own location, not written down.
 # A hardcoded absolute path is a measurement taken on one machine and recorded as a
@@ -116,6 +117,17 @@ def c_no_cyrillic_in_shell(t, _):
     return "ASCII" in t or "русского слова" in t
 
 
+def c_cronlist_each_cycle(t, _):
+    """CronList is part of the cycle: a stale job carrying the rules ran for a whole shift.
+
+    Measured 01:04Z 2026-09-09: two jobs on the same schedule, the older one holding the FULL
+    rule text inside itself -- the very second copy this command calls the role's costliest
+    mistake. It was found by accident (a cycle arrived one minute after the previous one), not
+    by any check. So the command must demand the check every cycle, not once at setup.
+    """
+    return "CronList" in t and ("CronDelete" in t or "РОВНО ОДНУ" in t)
+
+
 def c_tools_in_repo(t, _):
     """Tools live in the repository, each named in the command."""
     return all(("scripts/tools/" + n) in t.replace("\\", "/") for n in TOOL_NAMES)
@@ -140,9 +152,98 @@ CHECKS = [
     ("origin-not-local", "otstavanie merit ot origin/main", c_origin_not_local, True),
     ("no-second-copy", "odin dom pravil + kak proverit", c_no_second_copy, True),
     ("no-cyrillic-shell", "zapret russkih slov v komandnoy stroke", c_no_cyrillic_in_shell, True),
+    ("cronlist-cycle", "CronList kazhdyy cikl, rovno odna stroka", c_cronlist_each_cycle, True),
     ("tools-in-repo", "instrumenty v scripts/tools, vse nazvany", c_tools_in_repo, True),
     ("agent-models", "stroka Modeli agentov v doklade", c_agent_models_line, True),
 ]
+
+
+def subject_of(path):
+    """Does any guard actually JUDGE this file? Printed next to every late edit.
+
+    Ordered by the integrator (04:39 local 2026-09-09) after both of us spent two cycles on the
+    wrong question. We were comparing "did the guard read the file before or after the edit",
+    when the first question is "is this guard about this file at all". His third fact settled it:
+    `controller.md` is NOT in `.claude/after-compact.list`, the context-layer guard counts three
+    files after compaction and five at start, and my command is in neither list -- so the budget
+    guard never judged it, whichever side of the clock the edit fell on. His own verdict of the
+    previous cycle, he says, was right by numbers and by accident.
+
+    Cheap and honest: name the lists this file provably belongs to, and say "no known subject"
+    rather than guessing. An unknown answer is reported as unknown, never as "safe".
+    """
+    rel = os.path.relpath(path, REPO).replace("\\", "/")
+    subjects = []
+    lst = os.path.join(REPO, ".claude", "after-compact.list")
+    try:
+        entries = [l.strip() for l in io.open(lst, encoding="utf-8").read().splitlines()]
+        if any(e and not e.startswith("#") and e.strip("/") in rel for e in entries):
+            subjects.append("context-layer")
+    except Exception:  # noqa: BLE001
+        subjects.append("after-compact.list UNREADABLE")
+    # scripts/ is the subject of the EOL and shebang guards -- they walk the directory, so
+    # membership is by location, not by a list.
+    if rel.startswith("scripts/"):
+        subjects.append("script-eol/mixed-eol")
+    return ",".join(subjects) if subjects else "no known subject"
+
+
+def freeze_state():
+    """LIVE check, not a text check: is a tier running, and did my files change after it started?
+
+    Ordered by the integrator (04:09 local 2026-09-09) after I broke prohibition #15 twice in one
+    shift: "a rule broken twice by the one who wrote it does not need a stricter wording, it needs
+    a mechanism." His measurement is also the reason this reports times rather than a verdict --
+    at 01:02Z my edit landed on the 60th second of his tier, but the two guards that judge that
+    file ran at 255s and 269s, so they read the NEW file and a rollback would have restored a
+    state the gate never saw. Whether a late edit spoils the verdict is decided by two numbers --
+    when the guard read the file and when the file changed -- and the second belongs to him.
+
+    Returns (note, ok): ok=False only when a tier is running AND a controller file is newer than
+    its start, which is the case the prohibition forbids.
+    """
+    try:
+        out = subprocess.run(["ps", "-ef"], capture_output=True, timeout=30)
+        rows = out.stdout.decode("utf-8", errors="replace").splitlines()
+    except Exception:  # noqa: BLE001
+        return "ps unavailable -- freeze state UNKNOWN, do not treat as free", True
+
+    tiers = [r for r in rows if re.search(r"(gate\.sh|gate-novac)", r) and "grep" not in r]
+    if not tiers:
+        return "no tier running -- tree may be edited", True
+
+    # `ps -ef` STIME is a clock (HH:MM:SS) for a process started today. Take the earliest.
+    starts = []
+    for r in tiers:
+        m = re.search(r"\s(\d{2}:\d{2}:\d{2})\s", r)
+        if m:
+            starts.append(m.group(1))
+    if not starts:
+        return "tier running, start time unreadable -- ask the integrator", True
+    start = min(starts)
+
+    # Compare MOMENTS, not the text of clocks. Caught by the both-ways probe at 01:13Z 2026-09-09,
+    # the first time it ran: a file last touched YESTERDAY at 20:xx compared as ">" against a tier
+    # started TODAY at 04:xx, because "20" sorts after "04" -- so an untouched file was reported as
+    # edited under the tier. The very class this role watches for: the check answered a question
+    # about strings while claiming to answer one about time.
+    now = time.localtime()
+    h, mi, s = (int(x) for x in start.split(":"))
+    start_ts = time.mktime((now.tm_year, now.tm_mon, now.tm_mday, h, mi, s, 0, 0, -1))
+
+    watched = [CMD_DEFAULT] + [os.path.join(TOOLS, n) for n in TOOL_NAMES + ["controller-selftest.py"]]
+    newer = []
+    for p in watched:
+        if not os.path.isfile(p):
+            continue
+        mts = os.path.getmtime(p)
+        if mts > start_ts:
+            newer.append("%s@%s[%s]" % (os.path.basename(p),
+                                        time.strftime("%H:%M:%S", time.localtime(mts)),
+                                        subject_of(p)))
+    if newer:
+        return "TIER since %s, CHANGED AFTER IT: %s -- tell the integrator" % (start, ",".join(newer)), False
+    return "tier since %s, no controller file newer" % start, True
 
 
 def tools_present():
@@ -180,6 +281,10 @@ def run(cmd_path, show_table=True):
         tools_note = "SYNTAX: " + ",".join(broken)
     rows.append(("tools-exist", tools_note, tools_ok, False))
 
+    # Live state, not text: the mechanism the integrator asked for in place of a stricter wording.
+    freeze_note, freeze_ok = freeze_state()
+    rows.append(("freeze-now", freeze_note, freeze_ok, False))
+
     if show_table:
         print("| proverka | trebovanie komandy | itog |")
         print("|---|---|---|")
@@ -213,6 +318,7 @@ def prove():
         "origin-not-local": lambda s: s.replace("HEAD..origin/main", "XX"),
         "no-second-copy": lambda s: s.replace("after-compact.list", "XX"),
         "no-cyrillic-shell": lambda s: s.replace("ASCII", "XX").replace("русского слова", "XX"),
+        "cronlist-cycle": lambda s: s.replace("CronList", "XX"),
         "tools-in-repo": lambda s: s.replace("scripts/tools/controller-dock.py", "XX"),
         "agent-models": lambda s: s.replace("Модели агентов", "XX"),
     }

@@ -2,7 +2,7 @@
 // Regenerate: python scripts/tools/gen-pow5-table.py --write
 // Verify:     python scripts/tools/gen-pow5-table.py --check   (gate: check-pow5-table)
 //
-// Co-equal file of module `runtime.string` (folder = one module).
+// Co-equal file of module `runtime.float_parse` (folder = one module).
 // Role: data for the Eisel-Lemire step of `str @to_f64()`: 5^q for every q in
 // [-342, 308] as a 128-bit significand -- truncated for q >= 0, rounded up
 // for q < 0 -- split into two u64 halves. Row i holds q = i + POW5_SMALLEST_Q.

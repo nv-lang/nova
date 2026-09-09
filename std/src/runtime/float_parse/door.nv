@@ -1,4 +1,4 @@
-// Co-equal file of module `runtime.string` (folder = one module).
+// Co-equal file of module `runtime.float_parse` (folder = one module).
 // Role: `str @to_f64()` — the float parse surface, grammar owned by Nova.
 //
 // Why a separate file (owner decision 2026-09-05, plan 282 Ф.4, D178 amendment): the
