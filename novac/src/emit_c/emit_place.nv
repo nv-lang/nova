@@ -37,16 +37,19 @@ fn Emitter mut @lower_place(e Node, dest Local) -> () {
         Some(l) => @ir.copy(dest, l)
         None => @ir.place(e, dest)
     }
+    @emit_last_stmt()
 }
 
 /// Records an expression evaluated for its effects and prints it at once.
 fn Emitter mut @lower_eval(e Node) -> () {
     @ir.eval(e)
+    @emit_last_stmt()
 }
 
 /// Records a store into a place the tree names and prints it at once.
 fn Emitter mut @lower_store(target Node, op AssignOp, src Node) -> () {
     @ir.store(target, op, src)
+    @emit_last_stmt()
 }
 
 /// Prints the statement recorded last, by its IR kind -- the one dispatch on
@@ -240,19 +243,6 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         ro t = @ir.temp(ty, "_novac_match_t${u}")
         @lower_match(e, u, t)
         return Some(t)
-    }
-    if k == NodeKind.Coalesce {
-        // `??` ПОНИЖАЕТ ТОЖЕ, и добирается до понижения ДРУГОЙ дверью: не через этот
-        // диспетчер, а через `hoist_array_lits`, который зовёт `@emit_coalesce` на узле
-        // `Coalesce`. Замер шага 3б (2026-09-09): обход шёл `@emit_assign` ->
-        // `@build_value` -> `@hoist_array_lits` -> `@emit_coalesce`, тот толкал
-        // `begin_if`/`end_if` в УЖЕ ЗАКРЫТЫЙ билдер, и три носителя падали с
-        // `lower: a block sealed twice (it already returns)`.
-        //
-        // Урок формы, а не случая: предусловие 5 перечисляло формы ПО ДИСПЕТЧЕРУ
-        // `build_value`, а `??` в него не входит. Закрывать класс списком МЕСТ вместо
-        // свойства «форма понижает» — значит закрыть его наполовину.
-        return Some(@emit_coalesce(e))
     }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
