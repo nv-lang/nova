@@ -140,7 +140,7 @@ test "each local carries its role: the return place, a binding, a temporary" {
 
 test "an if without else: the else branch IS the join, and end_if seals the branch onto it" {
     mut b = FnBuilder.new(TyId(3))
-    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false)
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false, false)
     assert(c.els == c.join)
     assert(b.current() == c.then)
     b.eval(stand_in_expr())
@@ -168,7 +168,10 @@ test "an if without else: the else branch IS the join, and end_if seals the bran
 
 test "an if with else: three blocks of its own, both branches jump to the one join" {
     mut b = FnBuilder.new(TyId(3))
-    ro c = b.begin_if(Cond.Expr(stand_in_expr()), true)
+    // `els_braced: true` -- the else branch of this if is a BLOCK of statements, which is
+    // what the printer wraps in its own braces. The chain test below passes false, and the
+    // pair is what proves the field MEANS something rather than merely exists.
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), true, true)
     assert(c.els != c.join)
     b.eval(stand_in_expr())
     b.begin_else(c)
@@ -179,6 +182,18 @@ test "an if with else: three blocks of its own, both branches jump to the one jo
     b.end_body()
     ro f = b.finish()
     assert(f.blocks.len() == 4)
+    // THE HOLDER of `els_braced` on the TRUE side: the else branch here is a BLOCK of
+    // statements, and the printer gives such a branch its own pair of braces. The false side
+    // is held by the else-if chain test below. One side alone would prove only that the field
+    // EXISTS -- a field hardwired to false would pass it.
+    match f.blocks[0].term {
+        If(t) => assert(t.els_braced)
+        Return => assert(false)
+        Goto(_) => assert(false)
+        Loop(_) => assert(false)
+        Switch(_) => assert(false)
+        Unreached => assert(false)
+    }
     assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
     assert(f.blocks[raw_block(c.els)].stmts.len() == 2)
     assert(goes_to(f.blocks[raw_block(c.then)].term, c.join))
@@ -186,11 +201,56 @@ test "an if with else: three blocks of its own, both branches jump to the one jo
     assert(returns(f.blocks[raw_block(c.join)].term))
 }
 
+// ── ДЫРА, НАЙДЕННАЯ КОРПУСОМ 2026-09-08, И ЗАКРЫТАЯ ЗДЕСЬ ─────────────────────
+// Держатель проверял дверь `begin_else_if` В ОДИНОЧКУ (случай ниже), и был зелён на дереве,
+// где корпус ICE'ил: `lower_if_let` звал `begin_else` ПЕРЕД дверью — половину пары, которую
+// дверь делает целиком, — и второй `@close` бил в блок, уже запечатанный `Goto`. Между
+// исправной дверью и неисправным вызывающим у держателя не было ни одного случая.
+//
+// Форма цепочечного `if let` отличается от формы цепочечного `if` РОВНО ОДНИМ: в ветви else
+// сначала стоит ОПЕРАТОР — объявление временной Option'а, — и только потом открывается
+// внутреннее ветвление. Поэтому здесь два случая на одну дверь: else пустой (ниже) и else с
+// оператором (этот).
+test "an if-let chain: the else block carries the Option temporary before its If, and the join is still shared" {
+    mut b = FnBuilder.new(TyId(3))
+    ro outer = b.begin_if(Cond.Expr(stand_in_expr()), true, true)
+    b.eval(stand_in_expr()) // the then-branch of the outer if
+    // THE CALLER'S ORDER, verbatim as `lower_if_let` does it after the fix: the temporary is
+    // recorded FIRST, the else branch is opened BY THE DOOR, never by hand before it.
+    ro lo = b.named(TyId(3), "_novac_tmp_t1")
+    b.place(stand_in_expr(), lo)
+    ro inner = b.begin_else_if(outer, Cond.IsSome(lo), true, true)
+    assert(inner.join == outer.join)
+    b.eval(stand_in_expr()) // the then-branch of the chained if-let
+    b.begin_else(inner)
+    b.eval(stand_in_expr()) // the final else
+    b.end_if(inner)
+    b.end_if(outer)
+    b.end_body()
+    ro f = b.finish()
+    // The statement recorded before the door belongs to the block that PRECEDES the branch,
+    // not to the else block: that is what the fix changed, and what the corpus judges.
+    match f.blocks[raw_block(outer.els)].term {
+        If(t) => {
+            assert(t.then == inner.then)
+            assert(t.join == outer.join)
+            assert(t.els_braced)
+        }
+        Return => assert(false)
+        Goto(_) => assert(false)
+        Loop(_) => assert(false)
+        Switch(_) => assert(false)
+        Unreached => assert(false)
+    }
+}
+
 test "an else-if chain: the else block carries no statement, its If shares the outer join" {
     mut b = FnBuilder.new(TyId(3))
-    ro outer = b.begin_if(Cond.Expr(stand_in_expr()), true)
+    // `els_braced: false` -- the else branch of the OUTER if is a chained `if`, whose head
+    // continues the `} else ` line and therefore needs no braces of its own.
+    ro outer = b.begin_if(Cond.Expr(stand_in_expr()), true, false)
     b.eval(stand_in_expr())
-    ro inner = b.begin_else_if(outer, Cond.Expr(stand_in_expr()), false)
+    ro inner = b.begin_else_if(outer, Cond.Expr(stand_in_expr()), false, false)
     assert(inner.join == outer.join)
     assert(inner.els == outer.join)
     b.eval(stand_in_expr())
@@ -207,6 +267,10 @@ test "an else-if chain: the else block carries no statement, its If shares the o
         If(t) => {
             assert(t.then == inner.then)
             assert(t.join == outer.join)
+            // THE HOLDER of `els_braced` on the false side: a chained `if` in the else
+            // branch is NOT braced. The true side is held by the test above. A field with
+            // no reader is a field the next cleanup removes.
+            assert(!t.els_braced)
         }
         Return => assert(false)
         Goto(_) => assert(false)
@@ -329,7 +393,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
     mut b = FnBuilder.new(TyId(3))
     ro o = b.named(TyId(9), "_novac_tmp_t1")
     b.place(stand_in_expr(), o)
-    ro c = b.begin_if(Cond.IsSome(o), false)
+    ro c = b.begin_if(Cond.IsSome(o), false, false)
     ro v = b.named(TyId(3), "v")
     b.take_payload(v, o)
     match b.last_stmt() {
@@ -367,7 +431,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
 
 test "a return inside a branch ends the block; what follows lands in a fresh block the end_if seals" {
     mut b = FnBuilder.new(TyId(3))
-    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false)
+    ro c = b.begin_if(Cond.Expr(stand_in_expr()), false, false)
     b.place(stand_in_expr(), b.ret_place())
     b.ret()
     ro dead = b.current()
