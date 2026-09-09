@@ -195,7 +195,13 @@ def slot_holders_by_tree():
     for pid, (ppid, ln) in rows.items():
         if not WATCH.BUSY.search(ln) or WATCH.SELF_RE.search(ln):
             continue
-        owner = WATCH.owner_of(ln)
+        # ONE answer for "whose tree is this", shared with the watch: cwd first (a tier launched
+        # as a relative `bash scripts/gate.sh` carries no path at all), then the command line,
+        # then the parents. Before 11:53Z this tool used owner_of() alone and printed `unknown`
+        # where the watch printed `nova` -- two of my instruments disagreeing about one subject.
+        owner = WATCH.cwd_owner(pid)
+        if owner == "?":
+            owner = WATCH.owner_of(ln)
         if owner == "?":
             # walk up to the parent, exactly as the watch does
             depth, cur = 0, ppid
