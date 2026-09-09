@@ -213,7 +213,15 @@ def split_measure(root):
             end = idx[j + 1] if j + 1 < len(idx) else len(lines)
             code = "\n".join(l.split("//")[0] for l in lines[i:end])
             name = RE_METHOD.match(lines[i]).group(1)
-            used = set(re.findall(r"@ir\.([a-z_0-9]+)\(", code))
+            # ДВЕРЬ БИЛДЕРА, А НЕ НАПИСАНИЕ `@ir.` (правка 2026-09-10). Срез переезда
+            # перевёл обращения на путь через получателя (`@lo.ir.begin_if(...)`), и
+            # прежний образец `@ir\.` перестал видеть их ВСЕ — мера напечатала
+            # «writers: 0 ... criterion MET», когда переехал один метод из двадцати одного.
+            # Ошибка была ЗЕЛЁНОЙ, то есть закрывала волну, а не звала разбираться.
+            # Ловится теперь свойство: позвана дверь у выражения, которое ЕСТЬ билдер —
+            # цепочка получателя кончается на `ir` (`@ir`, `@lo.ir`, любое будущее).
+            used = {d for recv, d in re.findall(r"([@A-Za-z_][A-Za-z_0-9.@]*)\.([a-z_0-9]+)\(", code)
+                    if recv.split(".")[-1].lstrip("@") == "ir"}
             wrote = used & mut
             if wrote and wrote <= LIFECYCLE:
                 lifecycle.append((base, name, " ".join(sorted(wrote))))
