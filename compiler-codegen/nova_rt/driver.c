@@ -486,8 +486,6 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
              * файбером, эта запись «-2» портит ЧУЖОЙ живой SpawnCtx. Диаг-режим
              * логирует displaced-событие и валидирует ctx перед записью. */
             {
-                extern int  nova_spawn_pool_diag(void);
-                extern void nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
                 if (nova_spawn_pool_diag()) {
                     fprintf(stderr,
                             "nova: [R1-DIAG] driver WRONG-FIBER sub-case A: slot=%d "

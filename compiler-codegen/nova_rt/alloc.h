@@ -4,6 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* GC interface — единственная точка контакта кодогенератора с памятью.
  * Реализация в alloc.c. Для смены GC — меняется только alloc.c.
  *
@@ -84,5 +88,9 @@ size_t nova_fibers_slot_count(void);        /* total slots */
 size_t nova_fibers_slots_active(void);      /* currently allocated */
 size_t nova_fibers_high_water(void);        /* peak concurrent slots */
 void   nova_fibers_compact(void);           /* P41-3: batch decay flush */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_ALLOC_H */

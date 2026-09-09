@@ -38,6 +38,10 @@
 #include <stdlib.h>   /* malloc/calloc/free — see below */
 #include "sync.h"     /* nova_atomic_intptr, atomic helpers */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ── NovaDequeArray — array snapshot for resize ─────────────────── */
 
 typedef struct NovaDequeArray {
@@ -199,5 +203,9 @@ static inline int64_t nova_deque_size_approx(NovaDeque* d) {
     intptr_t t = __atomic_load_n(&d->top,    __ATOMIC_RELAXED);
     return b - t;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_DEQUE_H */

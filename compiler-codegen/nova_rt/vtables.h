@@ -33,6 +33,10 @@
 #include <stdbool.h>  /* bool — used by the standalone nova_bool fallback typedef below */
 #include <string.h>   /* memcpy — _vt_nova_f64_hash bit-pattern hash */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Forward declarations of primitive types (defined in nova_rt.h). */
 struct Nova_StringBuilder;  /* forward decl for NovaVtable_Display */
 #ifndef NOVA_RT_H
@@ -299,5 +303,9 @@ typedef NovaVtable_Comparable NovaVtable_Compare;
 #define NOVA_VT_GT(vt, self, other)    ((vt)->gt((const void*)(self), (const void*)(other)))
 #define NOVA_VT_GE(vt, self, other)    ((vt)->ge((const void*)(self), (const void*)(other)))
 #define NOVA_VT_NE(vt, self, other)    ((vt)->ne((const void*)(self), (const void*)(other)))
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NOVA_RT_VTABLES_H */

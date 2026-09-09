@@ -195,8 +195,6 @@ static inline void nova_goready(mco_coro* co) {
      * ЗДЕСЬ (точка детонации по gdb-раскопке), до разыменования полей.
      * Прототипы — extern, т.к. runtime.h включается ПОСЛЕ этого заголовка. */
     {
-        extern int  nova_spawn_pool_diag(void);
-        extern void nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
         if (nova_spawn_pool_diag()) nova_spawn_ctx_diag_check_live(base, "goready");
     }
 

@@ -55,6 +55,33 @@ typedef struct { nova_fn_vii fn; void* env; } NovaClos_vii;
 #define NOVA_CLOS_CALL_vii(f,a,b)   (((NovaClos_vii*)(f))->fn(((NovaClos_vii*)(f))->env, (a), (b)))
 typedef uint8_t  nova_byte;
 
+/* Функции рантайма, которые заголовки файберов и планировщика раньше объявляли
+ * ВНУТРИ тел своих функций — по одной на место использования, потому что
+ * `runtime.h` включается позже. В C это работало; в C++ такое объявление берёт
+ * C++-связывание, а `runtime.h` объявляет тот же символ как C — и побеждает
+ * первое. Здесь они стоят один раз, до включения обоих заголовков, и их
+ * связывание названо явно. (Реестр 221.1 №1061.) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct NovaFiberQueue;
+void  nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* scope);
+void  nova_diag656_count_first_run(void);
+int   nova_spawn_pool_diag(void);
+void  nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
+struct NovaFiberQueue* nova_runtime_orphan_scope(void);
+void  nova_runtime_dump_state(const char* reason);
+void  nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
+void  nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns);
+bool  nova_runtime_has_stuck_fibers(void);
+bool  nova_driver_is_started(void);
+int   nova_runtime_current_worker_id(void);
+void  nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope);
+void  nova_spawn_pool_release(void* ctx, size_t size);
+#ifdef __cplusplus
+}
+#endif
+
 /* ---- String ----
  * Plan 139 Ф.0: `str` is now a Nova value-record `{ ptr *ro u8, len int }`.
  * This C typedef is the ABI image of that value-record. It is layout/ABI-
@@ -66,6 +93,25 @@ typedef struct {
     const uint8_t* ptr;   /* *ro u8 — immutable UTF-8 byte buffer */
     int64_t        len;   /* length in BYTES (D26: str.len = bytes) */
 } nova_str;
+
+/* Registry 221.1 #1061: an INTRODUCING function instead of aggregate initialisation.
+ * The comment above promises compatibility with the old `{const char*; size_t}` BY
+ * LAYOUT, and C accepts that promise because it converts `char*` to `const uint8_t*`
+ * and `size_t` to `int64_t` on its own. C++ judges the TYPE and has neither conversion,
+ * so every aggregate literal of it in the runtime was an error there -- which is what made
+ * the `cxx` flag of D471 a promise without execution on every platform.
+ *
+ * Casts at each site would fix today's ninety-three places and leave the mechanism that
+ * produces the ninety-fourth. Here the conversion is written ONCE, in the parameter
+ * types: the call `nova_str_of(buf, n)` narrows nothing by construction, and a new site
+ * cannot forget what it never had to write. The compound literal is also C99-only and
+ * not C++ at all, so this removes the second root as well. */
+static inline nova_str nova_str_of(const void* p, int64_t n) {
+    nova_str s;
+    s.ptr = (const uint8_t*)p;
+    s.len = n;
+    return s;
+}
 
 /* Plan 90: forward-декларация nv_panic (определён `static inline` в
  * effects.h, который включается в nova_rt.h ПОСЛЕ array.h). Нужна для
@@ -86,7 +132,7 @@ static void nv_panic_negative_reserve(nova_int extra);
 
 static inline nova_str nova_str_from_cstr(const char* s) {
     /* Plan 139 Ф.0: ptr field is now `const uint8_t*` (str value-record ABI). */
-    return (nova_str){ (const uint8_t*)s, (int64_t)strlen(s) };
+    return nova_str_of( (const uint8_t*)s, (int64_t)strlen(s) );
 }
 
 /* Plan 199 Ф.3 (D418, retracts D26 §Nul-termination): `nova_fn_nova_str_terminated_ptr`
@@ -100,8 +146,8 @@ static inline nova_str nova_str_from_cstr(const char* s) {
  * Неустранимый примитив для str-алгоритмов на Nova (lexer/find/trim). */
 static inline nova_byte nova_str_byte_at(nova_str s, int64_t i) {
     if (i < 0 || (size_t)i >= s.len) {
-        nv_panic((nova_str){ .ptr = "str.byte_at: index out of bounds",
-                             .len = sizeof("str.byte_at: index out of bounds") - 1 });
+        nv_panic(nova_str_of(  "str.byte_at: index out of bounds",
+                              sizeof("str.byte_at: index out of bounds") - 1 ));
     }
     return (nova_byte)(unsigned char)s.ptr[i];
 }
@@ -139,7 +185,7 @@ static inline nova_str nova_str_trim(nova_str s) {
     size_t start = 0, end = s.len;
     while (start < end && (unsigned char)s.ptr[start] <= ' ') start++;
     while (end > start && (unsigned char)s.ptr[end-1] <= ' ') end--;
-    return (nova_str){ s.ptr + start, end - start };
+    return nova_str_of( s.ptr + start, end - start );
 }
 
 /* Plan 96 Ф.4 — codepoint-indexed slice с panic-семантикой для
@@ -179,7 +225,7 @@ static inline nova_str nova_str_slice_panic(nova_str s, nova_int from, nova_int 
     }
     if (cp < to) byte_to = s.len;
     if (byte_from > byte_to) byte_from = byte_to;
-    return (nova_str){ s.ptr + byte_from, byte_to - byte_from };
+    return nova_str_of( s.ptr + byte_from, byte_to - byte_from );
 }
 
 /* Plan 96.1: `nova_str_slice` (clamp-семантика, D26) удалён.
@@ -192,11 +238,11 @@ static inline nova_str nova_str_slice_panic(nova_str s, nova_int from, nova_int 
  * Plan 199 Ф.3 (D418): buffer is EXACTLY a.len+b.len bytes — no trailing NUL. */
 static inline nova_str nova_str_concat(nova_str a, nova_str b) {
     size_t total = a.len + b.len;
-    if (total == 0) return (nova_str){ (const uint8_t*)"", 0 };
+    if (total == 0) return nova_str_of( (const uint8_t*)"", 0 );
     char* buf = (char*)nova_alloc(total);
     memcpy(buf, a.ptr, a.len);
     memcpy(buf + a.len, b.ptr, b.len);
-    return (nova_str){ (const uint8_t*)buf, total };
+    return nova_str_of( (const uint8_t*)buf, total );
 }
 
 /* Plan 91 Ф.2: repeat / replace / pad_left / pad_right реализованы
@@ -356,7 +402,7 @@ static inline nova_int nova_str_char_len(nova_str s) {
 static inline nova_str nova_int_to_str(nova_int v) {
     char* buf = (char*)nova_alloc(24);
     int n = snprintf(buf, 24, "%lld", (long long)v);
-    return (nova_str){ buf, (size_t)(n < 0 ? 0 : n) };
+    return nova_str_of( buf, (size_t)(n < 0 ? 0 : n) );
 }
 
 /* [M-u64-uint-to-str-prints-signed] (ICE-пачка п.9): `uint`/`u64` are
@@ -368,7 +414,7 @@ static inline nova_str nova_int_to_str(nova_int v) {
 static inline nova_str nova_uint_to_str(nova_uint v) {
     char* buf = (char*)nova_alloc(24);
     int n = snprintf(buf, 24, "%llu", (unsigned long long)v);
-    return (nova_str){ buf, (size_t)(n < 0 ? 0 : n) };
+    return nova_str_of( buf, (size_t)(n < 0 ? 0 : n) );
 }
 
 /* ---- shortest round-trip float → decimal (Plan 180 [M-180-f64-shortest-roundtrip]) ----
