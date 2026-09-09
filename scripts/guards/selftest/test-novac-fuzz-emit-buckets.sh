@@ -54,8 +54,10 @@ extract_classify() {
     awk '/^classify_emit_red\(\)/,/^}/' "$TOOL"
 }
 
+cases=0
 run_case() {   # $1 имя, $2 check-rc, $3 emit-rc, $4 oracle-rc, $5 ожидаемая корзина
     name="$1"; crc="$2"; erc="$3"; orc="$4"; want="$5"
+    cases=$((cases+1))
     mk_novac "$crc" "$erc"
     if [ "$orc" = "none" ]; then rm -f "$T/oracle"; else mk_oracle "$orc"; fi
     mkdir -p "$T/cases"; : > "$T/cases/x.nv"
@@ -99,6 +101,7 @@ extract_judge() {
 
 run_judge() {   # $1 имя, $2 emit-rc заглушки, $3 ожидаемый код (0 зелено / 1 красно)
     name="$1"; erc="$2"; want="$3"
+    cases=$((cases+1))
     mk_novac 0 "$erc"
     mkdir -p "$T/cases"; : > "$T/cases/a.nv"; : > "$T/cases/b.nv"
     printf "a.nv\nb.nv\n" > "$T/list.one"
@@ -124,7 +127,10 @@ run_judge "эмиссия чистая" 0 0
 run_judge "эмиссия паникует" 101 1
 
 if [ "$fails" -eq 0 ]; then
-    echo "test-novac-fuzz-emit-buckets ok: 7 случаев — 5 корзин и 2 стороны обхода"
+    # ЧИСЛО СЧИТАЕТСЯ, А НЕ ПИШЕТСЯ. Литерал расходится с делом на первой же
+    # правке — я это и сделал: в тексте стояло 5, случаев было 7. Страж
+    # `check-selftest-honest-count` ловит именно литерал, и он прав.
+    echo "test-novac-fuzz-emit-buckets ok: случаев $cases (корзины и обе стороны обхода)"
     exit 0
 fi
 echo "test-novac-fuzz-emit-buckets: провалов $fails" >&2

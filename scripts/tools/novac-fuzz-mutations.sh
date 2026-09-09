@@ -167,7 +167,14 @@ judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
         ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
             "$NOVAC" emit "$case_nv" ) > /dev/null 2> "$T/eerr"
         erc=$?
-        if novac_is_panic_rc "$erc" || grep -qi "panic" "$T/eerr"; then
+        # ТРЕТЬЕ СЛОВО У ПРЕДЕЛА (Г16): 124 — это СНЯТИЕ ПО ВРЕМЕНИ, а не отказ
+        # и не паника. Для фаззера зависание — тоже находка (приёмка Э1 говорит
+        # «не падает и не виснет»), но НАЗЫВАТЬСЯ оно обязано своим именем:
+        # иначе чинящий пойдёт искать панику там, где процесс просто не успел.
+        if [ "$erc" -eq 124 ]; then
+            echo "novac-fuzz: EMIT СНЯТ ПРЕДЕЛОМ 60с на $case_nv: вердикта нет, это зависание" >&2
+            emit_red="$emit_red $case_nv"
+        elif novac_is_panic_rc "$erc" || grep -qi "panic" "$T/eerr"; then
             emit_red="$emit_red $case_nv"
         fi
     done < "$1"
@@ -179,6 +186,11 @@ classify_emit_red() {   # $1 = imya sluchaya; pechataet imya korziny
     ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
         "$NOVAC" check "$1" ) > /dev/null 2> "$T/cerr"
     crc=$?
+    # То же третье слово: снятый по времени `check` не говорит о случае НИЧЕГО,
+    # и отнести его в корзину значило бы выдать незнание за ответ.
+    if [ "$crc" -eq 124 ]; then
+        echo "CHECK-TIMED-OUT"; return
+    fi
     if novac_is_panic_rc "$crc" || grep -qi "panic" "$T/cerr"; then
         echo "CHECK-TOO"; return          # padaet i check -- sud'ya vyshe ego lovit
     fi
@@ -190,7 +202,12 @@ classify_emit_red() {   # $1 = imya sluchaya; pechataet imya korziny
     fi
     ( cd "$T/cases" && timeout 300 "$ORACLE" build "$1" -o "$T/oracle.out" ) \
         > /dev/null 2>&1
-    if [ $? -eq 0 ]; then echo "LEGAL/NOVAC"; else echo "CHECKER"; fi
+    orc=$?
+    # ТРЕТЬЕ СЛОВО (Г16): снятый по времени оракул НЕ СКАЗАЛ, законна ли форма.
+    # Отнести такой случай в `CHECKER` значило бы обвинить чекер на основании
+    # молчания судьи — то есть выдать незнание за ответ. Отдельная корзина.
+    if [ "$orc" -eq 124 ]; then echo "ORACLE-TIMED-OUT"; return; fi
+    if [ "$orc" -eq 0 ]; then echo "LEGAL/NOVAC"; else echo "CHECKER"; fi
 }
 
 split -l "$CHUNK" "$T/list" "$T/chunk." 2>/dev/null || {
