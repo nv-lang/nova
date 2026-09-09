@@ -153,8 +153,20 @@ def peers(V):
         if not tail:
             continue
         cwd = next((e["cwd"] for e in tail if e.get("cwd")), None)
-        tree, _ = V.tree_of(f, cwd)
-        out.append((os.path.basename(f)[:-6][:8], os.path.basename(tree or "?")))
+        sid = os.path.basename(f)[:-6]
+        # THE DECLARED MAP FIRST, inference only as the fallback -- fixed 16:15Z 2026-09-09.
+        # The map landed in the verdict at 15:37Z and this tool kept calling the OLD text-based
+        # attribution, so the hourly letters named the main copy as the sdl window's tree while
+        # the map (committed an hour earlier) knew `nova-sdl`. Third carrier today of one class:
+        # a fix reaches the file being discussed and not the neighbour that shares the question.
+        # The cure is not attention -- it is asking the ONE source both tools now agree on.
+        decl = V.declared_trees(sid) if hasattr(V, "declared_trees") else []
+        if decl:
+            tree = decl[0]
+        else:
+            t, _ = V.tree_of(f, cwd)
+            tree = os.path.basename(t or "?")
+        out.append((sid[:8], os.path.basename(tree or "?")))
     return out
 
 
