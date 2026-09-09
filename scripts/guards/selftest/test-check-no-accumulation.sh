@@ -104,6 +104,35 @@ else
     bad "влитая ветка сочтена накоплением (код $rc): $out"
 fi
 
+# 6. СРЕДА БЕЗ ЛОКАЛЬНЫХ ВЕТОК — «судить нечего», и ГЛАВНОЕ: совета опустить
+#    базу быть НЕ ДОЛЖНО (реестр 221.1 №1029). Именно этот совет, напечатанный
+#    на CI, где веток нет по построению, приглашал обнулить храповик — после
+#    чего десять локальных веток копились бы под вечно зелёным вердиктом.
+#    Случай строится ОТДЕЛЬНЫМ репозиторием: в основном временном их уже много.
+BARE="$TMP/../acc-selftest-nobranch.$$"
+mkdir -p "$BARE"
+git init -q -b main "$BARE" >/dev/null 2>&1
+echo one > "$BARE/f.txt"
+git -C "$BARE" -c user.name=selftest -c user.email=selftest@example.com \
+    -c commit.gpgsign=false add f.txt >/dev/null 2>&1
+git -C "$BARE" -c user.name=selftest -c user.email=selftest@example.com \
+    -c commit.gpgsign=false commit -q -m base >/dev/null 2>&1
+# База НАРОЧНО высокая: будь совет «опусти базу» жив, он бы здесь и сработал.
+echo 'stale_branches=9' > "$BASE_FILE"
+out6=$(NOVA_ACC_BASELINE="$BASE_FILE" bash "$G" "$BARE" 2>&1); rc6=$?
+rm -rf "$BARE"
+if [ "$rc6" -ne 0 ]; then
+    bad "среда без веток сделана красной (код $rc6): $out6"
+elif printf %s "$out6" | grep -q "опусти базу"; then
+    bad "совет опустить базу НАПЕЧАТАН там, где счёт пуст по построению: $out6"
+elif printf %s "$out6" | grep -q "роста накопления нет"; then
+    bad "заявлено «роста нет» там, где рост не мерили: $out6"
+elif printf %s "$out6" | grep -q "СУДИТЬ НЕЧЕГО"; then
+    ok "среда без веток: сказано «судить нечего», без совета опустить базу"
+else
+    bad "среда без веток: вердикт не назван словом: $out6"
+fi
+
 if [ "$FAILED" -eq 0 ]; then
     echo "селфтест check-no-accumulation: $CASES/$CASES ok"
     exit 0

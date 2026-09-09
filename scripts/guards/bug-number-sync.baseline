@@ -650,6 +650,7 @@ M-next-collect-value-record
 M-no-silent-nova-int-fallback
 M-nonescaping-view-header-stack-alloc
 M-nova-linux-build
+M-novac-checker-files-at-the-size-cap
 M-numeric-try-narrowing
 M-open-range-len-source-hardcoded
 M-operator-dispatch-checker-channel-196
