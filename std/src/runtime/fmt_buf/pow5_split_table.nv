@@ -1382,123 +1382,23 @@ const DOUBLE_POW5_SPLIT_HI [326]u64 = [
     0x18B40A4EEC437C52, // 5^325, high
 ]
 
-// ---- The same tables for `f32` (plan 285 F.2) ----
+// ---- `f32` (plan 285 F.2): THE SAME TABLES, DIFFERENT BIT COUNTS ----
 //
-// Second CONSTANT SET over the same shape, not a second algorithm. The donor
-// keeps them in `ryu/f2s_full_table.h` at the same commit, and there they are
-// FLAT `uint64_t[N]` rather than pairs: 32-bit inputs need no 128-bit product,
-// so one word per entry is enough. The bit counts differ from the `f64` ones
-// (59 and 61 against 125 and 125) and are taken from the donor, never
-// assumed equal.
-const FLOAT_POW5_INV_BITCOUNT = 59
-const FLOAT_POW5_BITCOUNT = 61
-const FLOAT_POW5_INV_TABLE_SIZE = 55
-const FLOAT_POW5_TABLE_SIZE = 47
-
-const FLOAT_POW5_INV_SPLIT [55]u64 = [
-    0x0800000000000001, // 5^-0
-    0x0666666666666667, // 5^-1
-    0x051EB851EB851EB9, // 5^-2
-    0x04189374BC6A7EFA, // 5^-3
-    0x068DB8BAC710CB2A, // 5^-4
-    0x053E2D6238DA3C22, // 5^-5
-    0x0431BDE82D7B634E, // 5^-6
-    0x06B5FCA6AF2BD216, // 5^-7
-    0x055E63B88C230E78, // 5^-8
-    0x044B82FA09B5A52D, // 5^-9
-    0x06DF37F675EF6EAE, // 5^-10
-    0x057F5FF85E592558, // 5^-11
-    0x0465E6604B7A8447, // 5^-12
-    0x0709709A125DA071, // 5^-13
-    0x05A126E1A84AE6C1, // 5^-14
-    0x0480EBE7B9D58567, // 5^-15
-    0x0734ACA5F6226F0B, // 5^-16
-    0x05C3BD5191B525A3, // 5^-17
-    0x049C97747490EAE9, // 5^-18
-    0x0760F253EDB4AB0E, // 5^-19
-    0x05E72843249088D8, // 5^-20
-    0x04B8ED0283A6D3E0, // 5^-21
-    0x078E480405D7B966, // 5^-22
-    0x060B6CD004AC9452, // 5^-23
-    0x04D5F0A66A23A9DB, // 5^-24
-    0x07BCB43D769F762B, // 5^-25
-    0x063090312BB2C4EF, // 5^-26
-    0x04F3A68DBC8F03F3, // 5^-27
-    0x07EC3DAF94180651, // 5^-28
-    0x065697BFA9ACD1DA, // 5^-29
-    0x051212FFBAF0A7E2, // 5^-30
-    0x040E7599625A1FE8, // 5^-31
-    0x067D88F56A29CCA6, // 5^-32
-    0x05313A5DEE87D6EC, // 5^-33
-    0x042761E4BED31256, // 5^-34
-    0x06A5696DFE1E83BD, // 5^-35
-    0x05512124CB4B9C97, // 5^-36
-    0x0440E750A2A2E3AC, // 5^-37
-    0x06CE3EE76A9E3913, // 5^-38
-    0x0571CBEC554B60DC, // 5^-39
-    0x045B0989DDD5E717, // 5^-40
-    0x06F80F42FC8971BE, // 5^-41
-    0x05933F68CA078E31, // 5^-42
-    0x0475CC53D4D2D828, // 5^-43
-    0x0722E086215159D9, // 5^-44
-    0x05B5806B4DDAAE47, // 5^-45
-    0x049133890B155839, // 5^-46
-    0x074EB8DB44EEF38E, // 5^-47
-    0x05D893E29D8BF60B, // 5^-48
-    0x04AD431BB13CC4D6, // 5^-49
-    0x077B9E92B52E07BC, // 5^-50
-    0x05FC7EDBC424D2FD, // 5^-51
-    0x04C9FF163683DBFE, // 5^-52
-    0x07A998238A6C932F, // 5^-53
-    0x06214682D523A8F3, // 5^-54
-]
-
-const FLOAT_POW5_SPLIT [47]u64 = [
-    0x1000000000000000, // 5^0
-    0x1400000000000000, // 5^1
-    0x1900000000000000, // 5^2
-    0x1F40000000000000, // 5^3
-    0x1388000000000000, // 5^4
-    0x186A000000000000, // 5^5
-    0x1E84800000000000, // 5^6
-    0x1312D00000000000, // 5^7
-    0x17D7840000000000, // 5^8
-    0x1DCD650000000000, // 5^9
-    0x12A05F2000000000, // 5^10
-    0x174876E800000000, // 5^11
-    0x1D1A94A200000000, // 5^12
-    0x12309CE540000000, // 5^13
-    0x16BCC41E90000000, // 5^14
-    0x1C6BF52634000000, // 5^15
-    0x11C37937E0800000, // 5^16
-    0x16345785D8A00000, // 5^17
-    0x1BC16D674EC80000, // 5^18
-    0x1158E460913D0000, // 5^19
-    0x15AF1D78B58C4000, // 5^20
-    0x1B1AE4D6E2EF5000, // 5^21
-    0x10F0CF064DD59200, // 5^22
-    0x152D02C7E14AF680, // 5^23
-    0x1A784379D99DB420, // 5^24
-    0x108B2A2C28029094, // 5^25
-    0x14ADF4B7320334B9, // 5^26
-    0x19D971E4FE8401E7, // 5^27
-    0x1027E72F1F128130, // 5^28
-    0x1431E0FAE6D7217C, // 5^29
-    0x193E5939A08CE9DB, // 5^30
-    0x1F8DEF8808B02452, // 5^31
-    0x13B8B5B5056E16B3, // 5^32
-    0x18A6E32246C99C60, // 5^33
-    0x1ED09BEAD87C0378, // 5^34
-    0x13426172C74D822B, // 5^35
-    0x1812F9CF7920E2B6, // 5^36
-    0x1E17B84357691B64, // 5^37
-    0x12CED32A16A1B11E, // 5^38
-    0x178287F49C4A1D66, // 5^39
-    0x1D6329F1C35CA4BF, // 5^40
-    0x125DFA371A19E6F7, // 5^41
-    0x16F578C4E0A060B5, // 5^42
-    0x1CB2D6F618C878E3, // 5^43
-    0x11EFC659CF7D4B8D, // 5^44
-    0x166BB7F0435C9E71, // 5^45
-    0x1C06A5EC5433C60D, // 5^46
-]
+// The donor ships a separate pair of `FLOAT_POW5_*` tables, and they are NOT what
+// it uses by default: `f2s.c` includes `f2s_intrinsics.h`, where the 32-bit path
+// reads `DOUBLE_POW5_INV_SPLIT[q][1] + 1` and `DOUBLE_POW5_SPLIT[i][1]` -- the HIGH
+// words of the tables above -- and redefines the bit counts as `DOUBLE_* - 64`.
+// The separate tables belong to an optional build flag (`RYU_FLOAT_FULL_TABLE`).
+//
+// This was checked by numbers, not by reading intent: the donor's `FLOAT_POW5_SPLIT`
+// equals the high word of `DOUBLE_POW5_SPLIT` in all 47 entries, while its
+// `FLOAT_POW5_INV_SPLIT` differs in all 55 -- because that one is scaled to a
+// different bit count (59 against 61). Tables and bit count travel as a PAIR, and
+// the pair taken here is the one the donor takes by default.
+//
+// So `f32` adds no constants at all. An earlier commit of this wave emitted those
+// 102 values before the default path was read; they are gone for the same reason
+// the donor's `div1e8` is absent from `shortest.nv` -- a carried constant with no
+// consumer is a claim that something uses it.
+const FLOAT_POW5_INV_BITCOUNT = DOUBLE_POW5_INV_BITCOUNT - 64
+const FLOAT_POW5_BITCOUNT = DOUBLE_POW5_BITCOUNT - 64
