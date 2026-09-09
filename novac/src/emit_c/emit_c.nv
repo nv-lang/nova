@@ -371,6 +371,13 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     if lowered.blocks.len() == 0 {
         ice("emit: a finished body without its entry block")
     }
+    // THE BODY IS PRINTED HERE, IN ONE WALK (M2b-2 step 3b): the graph is sealed, so
+    // printing no longer depends on the order in which it was built. Everything above
+    // this line only LOWERS; everything the walk prints comes from the record.
+    // The four prints of this function stay where they are -- the signature's brace, the
+    // trailing returns and the closing brace sit OUTSIDE the body, and the contract
+    // prologue prints from the tree before any of this.
+    @print_body(lowered)
     if @ctx.fns.is_entry_row(row) {
         @body.append("    return NOVA_UNIT;\n}\n")
     } else {
@@ -465,7 +472,6 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
     // lives on `LocalDecl.zero_init`, with both of its clients named.
     ro t = @ir.temp(res_t)
     @ir.declare_zeroed(t)
-    @emit_last_stmt()
     // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
     // if-value always has an else, so `has_else` is a fact, not a guess. The head goes
     // through the ONE door (M2b-2 step 3a) -- the same one the statement `if`, the
@@ -474,12 +480,9 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
     // The else branch of an if-value is always a BLOCK printed as `} else {`, so it is
     // braced by construction -- not a guess, the next line prints the brace.
     ro c = @ir.begin_if(cond, true, true)
-    @print_if_head(cond, false)
     @emit_block_value(kids[2], t)
     @ir.begin_else(c)
-    @body.append("    } else {\n")
     @emit_block_value(kids[4], t)
-    @body.append("    }\n")
     @ir.end_if(c)
     // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
     // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
@@ -495,7 +498,7 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
 /// the same reason: a temporary only conditionally written would otherwise
 /// answer whatever the stack held. Both branches always write here; the
 /// initialiser costs one C token and removes the question.
-fn Emitter mut @emit_coalesce(e Node) -> str {
+fn Emitter mut @emit_coalesce(e Node) -> Local {
     ro qk = branch_children(e)
     ro ot = @out.type_of(qk[0].id_of())
     ro res_t = @out.type_of(e.id_of())
@@ -509,7 +512,6 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     // the zero initialiser is a field the lowering sets, not a shape this printer knows.
     ro lr = @ir.temp(res_t)
     @ir.declare_zeroed(lr)
-    @emit_last_stmt()
     // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
     // from the local's type and name -- the two values this function used to pass by
     // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
@@ -519,23 +521,19 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     ro cond = Cond.IsSome(lo)
     // Same as the if-value: the None branch is a block printed as `} else {`.
     ro c = @ir.begin_if(cond, true, true)
-    @print_if_head(cond, false)
     @ir.take_payload(lr, lo)
-    @emit_last_stmt()
     @ir.begin_else(c)
-    @body.append("    } else {\n")
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.
     @lower_place(qk[2], lr)
-    @body.append("    }\n")
     @ir.end_if(c)
-    // THE NAME IS ASKED OF THE RECORD, NOT BUILT A SECOND TIME (M2c). This function hands
-    // its caller the TEXT of an expression, and the text has to be the name the
-    // declaration actually carries. While the caller invented that name it also passed it
-    // to the door, and the two agreed by luck; the moment the door started naming by
-    // index the two parted, and the C declared `_novac_l3` while printing `_novac_qq_t2`
-    // (measured 2026-09-09 in `examples_basics_coalesce.nv.c`).
-    @ir.decl_of(lr).name
+    // THE LOCAL ITSELF, not its name (M3a). M2c had this function ask the record for the
+    // name because it handed its caller the TEXT of an expression; now `??` is a value
+    // form that LOWERS, so what the caller needs is the local -- a caller that wants text
+    // asks `decl_of(l).name` at its own end. Handing the local is what lets a value
+    // position take `??` through the one door (`lower_value_source`) instead of the
+    // print-time hoist table, and the hoist is exactly what iced under the walk of step 3b.
+    lr
 }
 
 /// Emit a block whose LAST statement is its value: everything before it runs
@@ -710,7 +708,7 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 return
             }
             if kind == NodeKind.Coalesce {
-                @lit_tmp[raw_node(e.id_of())] = @emit_coalesce(e)
+                @lit_tmp[raw_node(e.id_of())] = @ir.decl_of(@emit_coalesce(e)).name
                 return
             }
             if kind == NodeKind.Lit {

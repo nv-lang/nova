@@ -233,7 +233,7 @@ lex 11
 # машинно окном 274 пробой со снятым инициализатором. Причины у них разные, и докстрока
 # двери называет каждую: у `match`/`if` путь может не присвоить локаль (обязательно),
 # у `??` присваивают обе ветви (защитное, унаследовано от прежней печати).
-lower 62
+lower 69
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -662,7 +662,7 @@ resolve 15
 # (2026-09-03): a caller compares with the variant's own name, which the word
 # rule allows, so a wrapper would be a second door needing a periphrasis for a
 # name it may not spell. Net +1.
-sem 228
+sem 229
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
