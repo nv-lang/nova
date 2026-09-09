@@ -27,8 +27,17 @@ import time
 BUSY = re.compile(r"(gate\.sh|gate-novac|nova test|(?:release|target)[/\\\\]novac?(?:\.exe)?(?![\w.])|cargo|clang|cl\.exe|link\.exe)")
 # Noise = present in ps, but not a slot holder.
 NOISE = re.compile(r"(tail -|tail\.exe|vcvars|cmd\.exe)")
-# Attribute a process to a tree by the path inside its command line.
-TREE = re.compile(r"(nova-p\d+\w*|nova-[a-z]+\d*|nova(?![-\w]))")
+# Attribute a process to a tree by the path inside its command line -- and ONLY by a path.
+# The name must sit between path separators: `d:/Sources/nv-lang/nova-p274/...`. Caught 08:23Z
+# 2026-09-09, and it accused ME: the integrator's `bash scripts/gate.sh` carried the text of his
+# commit message ("Donor: window nova-b8. Committed by name to still the tree for the tier"), the
+# bare name matched inside that prose, and the watch printed `machine BUSY by nova-b8 x2` while I
+# had launched nothing. The tool answered "which line contains this name" and called it an answer
+# to "who holds the slot" -- the class this role exists to catch, in the role's own instrument.
+TREE = re.compile(r"[/\\](nova-p\d+\w*|nova-[a-z]+\d*|nova)(?=[/\\])")
+# Everything after `-c` / `-m` / `-F` is DATA the process was handed, not an address: a commit
+# message, a python snippet, a grep pattern. Cut it before attributing.
+DATA_ARG = re.compile(r"\s-(?:c|m|F)\s")
 
 
 def ps():
@@ -57,8 +66,11 @@ def owner_of(line):
     is the integrator running from `nova`, not a separate worktree (caught 16:31Z, when the
     watch reported the owner as "nova-cli" and that name exists nowhere as a working copy).
     """
+    cut = DATA_ARG.search(line)
+    if cut:
+        line = line[:cut.start()]
     for sub in ("nova-cli", "compiler-codegen", "nova-lsp", "nova_rt"):
-        line = line.replace("nova/" + sub, "nova/").replace("nova\\" + sub, "nova\\")
+        line = line.replace("nova/" + sub + "/", "nova/").replace("nova\\" + sub + "\\", "nova\\")
     hits = TREE.findall(line)
     if not hits:
         return "?"
