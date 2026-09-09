@@ -102,6 +102,36 @@ export type Rvalue enum
     | SomePayload(Local) // the payload of the Some the local holds (if-let binder)
     | IndexPayload(ElemRead) // the element of a collection local at an index local (for-each binder)
     | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
+    | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
+
+/// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
+///
+/// The step carries the NAME the author wrote, not the field's registry row, and that is
+/// forced rather than chosen: the emitter may not compute a field row from a name (the
+/// channel guard refuses it by name, and `emit_destructure.nv` remembers being wrong about
+/// that on 2026-09-04), while the channel records the binder's TYPE and not its row. The
+/// name is legal here because it is a C SPELLING and not an identity key -- the same role
+/// `LocalDecl.name` already has. `check-novac-no-string-keys.py` judges `Map[str` outside
+/// `names/` and keys SYNTHESISED by interpolation; a name stored in a field is neither.
+///
+/// How it is spelled stays with the printer: `.` for a value record, `->` for a GC
+/// pointer, `.fN` for a positional shape -- each taken from the channel by the base's
+/// type, which is a name lookup and not a decision about form.
+export type Projection enum
+    | Field(str) // a named field, as the source spelled it
+    | Elem(int) // a positional component, by index
+
+/// A READ OF ONE PROJECTION OF A LOCAL (wave M3c): `base.field` / `base.fN` as a value.
+///
+/// Why this is an rvalue of the body and not a tree expression printed inline: the reads a
+/// destructuring lays down have to stand in the ORDER of the statements around them. While
+/// they were printed straight into the output during lowering, they landed ABOVE the
+/// assignment they read -- use before declaration, C that does not compile (measured
+/// 2026-09-09 on `examples/basics/destructure_record.nv`).
+export type PlaceRead value {
+    base Local /// the local the projection reads
+    proj Projection /// which field or component
+}
 
 /// A payload field of a matched variant (wave M2b-1d): the arm's test proved
 /// the sum in `scr` carries `vrow`, so field `index` of its payload is
@@ -140,13 +170,30 @@ export type StoreStmt value {
     src Node /// the value stored (the M1 bridge: printed from the tree until M3)
 }
 
+/// ONE VALUE HANDED TO OUTPUT, at this point of the sequence (wave M3a). `println` is the
+/// one place in the language where output INTERLEAVES with the effects of building the
+/// arguments, so the ORDER of the two is observable (hunt emit_c x K1, finding H1: hoisting
+/// a whole call up front ran a constructor argument's effects ahead of its neighbours'
+/// prints). An observable order has to live in the channel: the lowering of an argument
+/// lands immediately before ITS OWN output statement, and the interleaving then holds by
+/// construction rather than by the printer's care.
+///
+/// The C printer's NAME is not here on purpose -- `printer_of` is a pure function of the
+/// carrier type, so looking it up is a name lookup and not a decision about form.
+export type OutputStmt value {
+    value Operand /// what is printed -- a local, or a tree expression while the bridge stands
+    ty TyId /// its DECLARED type; the printer takes the carrier from it (a newtype prints as what it holds)
+}
+
 /// A statement: an assignment into a local, an expression evaluated for its
-/// effects, or a store into a place the tree names.
+/// effects, a store into a place the tree names, or one step of output.
 export type Stmt enum
     | Assign(AssignStmt) // `local = value` -- through the placement door
     | Eval(Rvalue) // an expression in statement position, value dropped
     | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
     | Decl(Local) // the local's declaration point (donor: rustc MIR `StorageLive`)
+    | Output(OutputStmt) // one value handed to output, in this position of the sequence
+    | OutputEnd // the newline that closes a `println` -- once, at the end
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
@@ -439,6 +486,22 @@ export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
 /// just opened, where the index is in range by the header's test.
 export fn FnBuilder mut @take_elem(dest Local, vec Local, idx Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.IndexPayload(ElemRead { vec, idx }) }))
+}
+
+/// Records one step of output: this operand goes to the printer here, in this position of
+/// the sequence (wave M3a -- the reason the position is a statement is on `OutputStmt`).
+export fn FnBuilder mut @output(value Operand, ty TyId) -> () {
+    @cur.push(Stmt.Output(OutputStmt { value, ty }))
+}
+
+/// Records the newline that closes a `println`: once, after the last value.
+export fn FnBuilder mut @output_end() -> () {
+    @cur.push(Stmt.OutputEnd)
+}
+
+/// Records the read of one projection of a local into `dest` (wave M3c).
+export fn FnBuilder mut @read(dest Local, base Local, proj Projection) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Read(PlaceRead { base, proj }) }))
 }
 
 /// A statement expression: evaluated, its value dropped.

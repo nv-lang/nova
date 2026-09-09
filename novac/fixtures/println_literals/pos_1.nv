@@ -1,0 +1,32 @@
+// Every LITERAL FORM that can stand as a `println` argument, in one carrier.
+//
+// Why this fixture exists (wave M3a, 2026-09-09): lowering `println` asks each
+// argument for its type, and the channel records NONE for a literal -- nobody
+// ever asked, because the only consumer was a printer that knew the form in
+// advance. The first edition of the lowering answered `str` for every literal
+// and judged the FIRST leaf; the corpus never caught it, because every println
+// in the corpus spells a string label and passes the rest as expressions. So
+// the bare literal forms had no carrier at all -- this is it.
+//
+// The negated case is the one a hand-written list would miss: a negative
+// literal arrives as `[Minus, lit]`, so the token that decides the type is the
+// LAST leaf, not the first.
+//
+// A CHAR IS ABSENT ON PURPOSE, and it is not a gap in this fixture: `println('z')`
+// passes novac's checker and then ICEs in emission -- `printer_of` has no printer for
+// the char family. The oracle prints `z` (measured 2026-09-09 by building and running
+// it), so the program is legal Nova and novac's refusal is a DEFECT, not a subset
+// boundary: a boundary is held by the checker, never by an emitter's ice. It is
+// recorded in plan 274.8 and gets its own carrier when it is fixed; putting it here
+// would make this fixture a known divergence needing an excuse.
+module println_literals.pos_1
+
+fn main() {
+    println("a string")
+    println(7)
+    println(-7)
+    println(2.5)
+    println(-2.5)
+    println(true)
+    println("label", 7, -2.5, true)
+}

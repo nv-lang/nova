@@ -58,6 +58,8 @@ test "the placement door records dest = Expr(e) in the current block" {
         Eval(_) => assert(false)
         Store(_) => assert(false)
         Decl(_) => assert(false)
+        Output(_) => assert(false)
+        OutputEnd => assert(false)
     }
     b.end_body()
     ro f = b.finish()
@@ -69,6 +71,8 @@ test "the placement door records dest = Expr(e) in the current block" {
         Eval(_) => assert(false)
         Store(_) => assert(false)
         Decl(_) => assert(false)
+        Output(_) => assert(false)
+        OutputEnd => assert(false)
     }
 }
 
@@ -83,6 +87,8 @@ test "a store keeps the tree's target and operator; an evaluation keeps only the
         Assign(_) => assert(false)
         Eval(_) => assert(false)
         Decl(_) => assert(false)
+        Output(_) => assert(false)
+        OutputEnd => assert(false)
     }
     b.eval(stand_in_expr())
     b.end_body()
@@ -205,16 +211,17 @@ test "an if with else: three blocks of its own, both branches jump to the one jo
     assert(returns(f.blocks[raw_block(c.join)].term))
 }
 
-// ── ДЫРА, НАЙДЕННАЯ КОРПУСОМ 2026-09-08, И ЗАКРЫТАЯ ЗДЕСЬ ─────────────────────
-// Держатель проверял дверь `begin_else_if` В ОДИНОЧКУ (случай ниже), и был зелён на дереве,
-// где корпус ICE'ил: `lower_if_let` звал `begin_else` ПЕРЕД дверью — половину пары, которую
-// дверь делает целиком, — и второй `@close` бил в блок, уже запечатанный `Goto`. Между
-// исправной дверью и неисправным вызывающим у держателя не было ни одного случая.
+// ---- THE HOLE THE CORPUS FOUND ON 2026-09-08, CLOSED HERE ------------------
+// The holder tested the `begin_else_if` door ALONE (the case below) and stayed
+// green on a tree where the corpus iced: `lower_if_let` called `begin_else`
+// BEFORE the door -- half of a pair the door does whole -- so the second
+// `@close` hit a block already sealed by a `Goto`. Between a sound door and an
+// unsound caller the holder had no case at all.
 //
-// Форма цепочечного `if let` отличается от формы цепочечного `if` РОВНО ОДНИМ: в ветви else
-// сначала стоит ОПЕРАТОР — объявление временной Option'а, — и только потом открывается
-// внутреннее ветвление. Поэтому здесь два случая на одну дверь: else пустой (ниже) и else с
-// оператором (этот).
+// A chained `if let` differs from a chained `if` by EXACTLY ONE thing: its else
+// branch opens with a STATEMENT -- the declaration of the Option temporary --
+// and only then opens the inner branch. So one door gets two cases here: an
+// empty else (below) and an else carrying a statement (this one).
 test "an if-let chain: the else block carries the Option temporary before its If, and the join is still shared" {
     mut b = FnBuilder.new(TyId(3))
     ro outer = b.begin_if(Cond.Expr(stand_in_expr()), true, true)
@@ -363,11 +370,14 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 Expr(_) => assert(false)
                 Use(_) => assert(false)
                 VariantField(_) => assert(false)
+                Read(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
         Store(_) => assert(false)
         Decl(_) => assert(false)
+        Output(_) => assert(false)
+        OutputEnd => assert(false)
     }
     b.end_loop(c)
     b.end_body()
@@ -409,11 +419,14 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 Use(_) => assert(false)
                 IndexPayload(_) => assert(false)
                 VariantField(_) => assert(false)
+                Read(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
         Store(_) => assert(false)
         Decl(_) => assert(false)
+        Output(_) => assert(false)
+        OutputEnd => assert(false)
     }
     b.end_if(c)
     b.end_body()

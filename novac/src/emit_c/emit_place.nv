@@ -19,11 +19,17 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind, AssignOp}
+// M3a: telling a string literal from any other argument needs the leaf's token kind.
+import ../lex.{TokenKind}
+import ../sem.{leaf_kind, literal_prim_of}
 import ../diag.{ice}
-import ../sem.{is_value_tail_kind, c_type, c_instance_method, raw_vrow}
+import ../sem.{is_value_tail_kind, c_type, c_instance_method, raw_vrow, is_value_record}
+// M3a: lowering `println` asks the tree three questions (is this an argument, what does the
+// callee spell, what are the children) and the output printer asks the carrier of a type.
+import ../sem.{branch_children, call_callee_text, is_expr_kind, carrier_of}
 import ../types.{TyId, is_ty}
-import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand}
-import ../builtins.{VEC_GET_METHOD}
+import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt}
+import ../builtins.{VEC_GET_METHOD, PRINT_FN}
 
 /// Records `dest = e` in the lowered body and prints it at once -- the
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
@@ -37,19 +43,125 @@ fn Emitter mut @lower_place(e Node, dest Local) -> () {
         Some(l) => @ir.copy(dest, l)
         None => @ir.place(e, dest)
     }
-    @emit_last_stmt()
 }
 
-/// Records an expression evaluated for its effects and prints it at once.
+/// Records an expression evaluated for its effects.
+///
+/// `println` IS NOT AN ORDINARY CALL and does not go through `eval` (M3a): its output
+/// interleaves with the effects of building its arguments, and that interleaving is
+/// observable, so it becomes a SEQUENCE of statements rather than one expression the
+/// printer takes apart.
 fn Emitter mut @lower_eval(e Node) -> () {
+    if e.kind_of() == NodeKind.Call && call_callee_text(branch_children(e)) == PRINT_FN {
+        @lower_println(e)
+        return
+    }
     @ir.eval(e)
-    @emit_last_stmt()
+}
+
+/// Lowers one `println` into the sequence it IS: per argument, whatever the argument needs
+/// laid down first, then that argument's own output statement; one newline at the end.
+///
+/// WHY A SEQUENCE AND NOT ONE CALL. Hoisting the whole call up front ran a constructor
+/// argument's effects AHEAD of its neighbours' prints -- the oracle printed `head` then
+/// ticked, novac ticked first (hunt emit_c x K1, finding H1). The order of output against
+/// argument effects is therefore observable, and an observable order belongs in the
+/// channel: here each argument's lowering lands immediately before ITS OWN output
+/// statement, so the interleaving holds by construction instead of by the printer's care.
+///
+/// A construction (an array literal, a record or positional record, an interpolation) is
+/// still printed from the tree and hoisted by the printer right before its own output line
+/// -- that is legal, because a hoist only PRINTS TEXT and print order is the walk's order.
+/// `??` is the one form that could not stay: it LOWERS. It leaves through the one door
+/// above, and this is why the two refusals of step 3b close.
+fn Emitter mut @lower_println(call Node) -> () {
+    for c in branch_children(call) {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit {
+            // THE CHANNEL FIRST, AND THE FORM ONLY WHERE IT IS SILENT -- and it is silent
+            // about exactly ONE literal. Measured 2026-09-09 in `check/typing.nv:836-850`:
+            // the argument loop of `println` RECORDS a numeric or char literal through the
+            // full `type_of` (all four kinds, plus the half where the POSITION dictates a
+            // width), and skips only a STRING one -- deliberately, and its comment says why:
+            // "the emitter never asks its type", because the only consumer took the pool
+            // slot by shape.
+            //
+            // So asking the door for EVERY literal, as the first edition of this line did,
+            // computed a second answer to a question the channel had already decided -- the
+            // very `decide it twice` this channel's doctrine exists to prevent. Asking the
+            // channel first also makes the workaround DIE ON ITS OWN: when the type of a
+            // string literal is published (marker `[M-strlit-node-has-no-type]`), this
+            // `else` stops executing and no consumer needs editing.
+            //
+            // The fallback judges the LAST leaf, as the checker does: a negated literal
+            // arrives as `[Minus, lit]`.
+            ro known = @out.type_if_known(c.id_of())
+            ro lty = if is_ty(known) {
+                known
+            } else {
+                ro lk_kids = branch_children(c)
+                literal_prim_of(leaf_kind(lk_kids[lk_kids.len() - 1]), @ctx)
+            }
+            @ir.output(Operand.Tree(c), lty)
+        } else if is_expr_kind(ck) {
+            ro ty = @out.type_of(c.id_of())
+            match @lower_value_source(c, ty) {
+                Some(l) => @ir.output(Operand.Place(l), ty)
+                None => @ir.output(Operand.Tree(c), ty)
+            }
+        } else {
+            match c {
+                Leaf(_) => {
+                    // The callee leaf and the parenthesis leaves are not arguments.
+                }
+                Branch { .. } => {
+                    // The checker refuses every branch it cannot type in an argument
+                    // position (#870), so a branch here is a broken invariant rather than
+                    // a shape to skip -- the silent fallout this arm replaces printed `ab`
+                    // for `a20b`.
+                    ice("emit_c: an argument form the checker let through (#870)")
+                }
+            }
+        }
+    }
+    @ir.output_end()
+}
+
+/// Prints ONE step of output: the printer of the value's CARRIER around the value.
+///
+/// The carrier, not the declared type -- a newtype prints as what it holds, while the
+/// channel keeps the declared type because that is what resolution needs. Two questions,
+/// two doors.
+///
+/// A tree operand is hoisted HERE, immediately before its own line: a construction is a
+/// multi-statement build that cannot print inline, and this is the position that makes the
+/// interleaving right. A local needs nothing -- it was lowered before this statement.
+fn Emitter mut @emit_output(o OutputStmt) -> () {
+    match o.value {
+        Tree(e) => @hoist_array_lits(e)
+        Place(_) => {
+            // Already a local: whatever it took to build was lowered ahead of this
+            // statement, and printing it is reading its name.
+        }
+    }
+    @body.append("    ")
+    @body.append(@printer_of(carrier_of(@ctx, o.ty)))
+    @body.append("(")
+    match o.value {
+        Place(l) => @body.append(@ir.decl_of(l).name)
+        Tree(e) => @emit_expr(e)
+    }
+    @body.append(");\n")
+}
+
+/// The newline that closes a `println`.
+fn Emitter mut @emit_output_end() -> () {
+    @body.append("    nova_print_newline();\n")
 }
 
 /// Records a store into a place the tree names and prints it at once.
 fn Emitter mut @lower_store(target Node, op AssignOp, src Node) -> () {
     @ir.store(target, op, src)
-    @emit_last_stmt()
 }
 
 /// Prints the statement recorded last, by its IR kind -- the one dispatch on
@@ -60,6 +172,8 @@ fn Emitter mut @emit_last_stmt() -> () {
         Eval(rv) => @emit_eval(rv)
         Store(st) => @emit_store(st)
         Decl(l) => @emit_decl(l)
+        Output(o) => @emit_output(o)
+        OutputEnd => @emit_output_end()
     }
 }
 
@@ -88,6 +202,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         SomePayload(_) => ice("emit_c: a payload read reached expr_of -- only an assignment prints it")
         IndexPayload(_) => ice("emit_c: an element read reached expr_of -- only an assignment prints it")
         VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
+        Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -114,6 +229,21 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
         SomePayload(opt) => {
             @emit_assign_head(d)
             @body.append("${@ir.decl_of(opt).name}.value;\n")
+        }
+        Read(r) => {
+            // THE SPELLING COMES FROM THE CHANNEL, the STEP from the record (M3c). A value
+            // record is reached with `.`, a GC pointer with `->`, and a positional shape
+            // with `.fN` -- three name lookups by the base's type, none of them a decision
+            // about form.
+            ro bd = @ir.decl_of(r.base)
+            @emit_assign_head(d)
+            match r.proj {
+                Field(nm) => {
+                    ro reach = if is_value_record(@ctx, bd.ty) { "." } else { "->" }
+                    @body.append("${bd.name}${reach}${nm};\n")
+                }
+                Elem(i) => @body.append("${bd.name}.f${i};\n")
+            }
         }
         IndexPayload(r) => {
             // The shell's `get` of the collection's instance hands back the
@@ -237,6 +367,15 @@ fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         ro t = @ir.temp(ty)
         @lower_match(e, u, t)
         return Some(t)
+    }
+    if k == NodeKind.Coalesce {
+        // `??` LOWERS -- it lays down a Some-test with two branches -- so it cannot be
+        // printed inline, and under the walk of step 3b a printer that lowered would push
+        // into a FINISHED builder. That is not a guess: the door refused with
+        // `lower: a block sealed twice (it already returns)` on both corpus carriers of the
+        // form `println(x ?? y)` (measured 2026-09-09). Answering here puts `??` on the ONE
+        // door for every value position at once -- the class, not the two carriers.
+        return Some(@emit_coalesce(e))
     }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
