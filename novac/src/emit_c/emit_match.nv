@@ -57,13 +57,11 @@ fn Emitter mut @lower_match(m Node, uniq int, dest Local) -> () {
         // created the local, this door records WHERE it is declared and that it starts
         // at zero -- the reason is on `LocalDecl.zero_init`.
         @ir.declare_zeroed(dest)
-        @emit_last_stmt()
     } else {
         // Statement position: no result, nothing to declare.
     }
     // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
     // arm that held; the `Switch` means first-match by construction.
-    @body.append("    int _novac_matched_t${uniq} = 0;\n")
     ro c = @ir.begin_switch(ls, uniq)
     for a in kids {
         if a.kind_of() != NodeKind.MatchArm { continue }
@@ -174,7 +172,6 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
     // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
     // PLACE of the printing, which is what lets one walk print every arm later.
     @ir.begin_arm(c, pattern, guard)
-    @print_arm_head(uniq, pattern, scr_t)
     match pattern {
         Variant(vm) => {
             if !pattern_has_disj(pat) {
@@ -198,7 +195,6 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
                     ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
                     ro lb = @ir.named(bt, bname)
                     @ir.take_field(lb, ls, vm.head, pi)
-                    @emit_last_stmt()
                     pi += 1
                 }
             } else {
@@ -211,7 +207,6 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
             // use of the operand rvalue.
             ro lb = @ir.named(scr_t, leaf_text(pat[0]))
             @ir.copy(lb, ls)
-            @emit_last_stmt()
         }
         Lit(_) => {
             // An int literal introduces no name: the test IS the whole arm.
@@ -229,17 +224,13 @@ fn Emitter mut @lower_arm(arm Node, uniq int, scr_t TyId, ls Local, c SwitchCtx,
             // A guard has no else branch, so the bit is not read; passed explicitly so
             // no default is left for someone to interpret later.
             ro gi = @ir.begin_if(gcond, false, false)
-            @print_if_head(gcond, false)
             @lower_arm_body(arm_e, dest)
-            @body.append("    _novac_matched_t${uniq} = 1;\n    }\n")
             @ir.end_if(gi)
         }
         None => {
             @lower_arm_body(arm_e, dest)
-            @body.append("    _novac_matched_t${uniq} = 1;\n")
         }
     }
-    @body.append("    }\n")
     @ir.end_arm(c)
 }
 

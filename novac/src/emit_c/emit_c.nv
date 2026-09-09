@@ -371,6 +371,13 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     if lowered.blocks.len() == 0 {
         ice("emit: a finished body without its entry block")
     }
+    // THE BODY IS PRINTED HERE, IN ONE WALK (M2b-2 step 3b): the graph is sealed, so
+    // printing no longer depends on the order in which it was built. Everything above
+    // this line only LOWERS; everything the walk prints comes from the record.
+    // The four prints of this function stay where they are -- the signature's brace, the
+    // trailing returns and the closing brace sit OUTSIDE the body, and the contract
+    // prologue prints from the tree before any of this.
+    @print_body(lowered)
     if @ctx.fns.is_entry_row(row) {
         @body.append("    return NOVA_UNIT;\n}\n")
     } else {
@@ -465,7 +472,6 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
     // lives on `LocalDecl.zero_init`, with both of its clients named.
     ro t = @ir.temp(res_t, "_novac_if_t${uniq}")
     @ir.declare_zeroed(t)
-    @emit_last_stmt()
     // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
     // if-value always has an else, so `has_else` is a fact, not a guess. The head goes
     // through the ONE door (M2b-2 step 3a) -- the same one the statement `if`, the
@@ -474,12 +480,9 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
     // The else branch of an if-value is always a BLOCK printed as `} else {`, so it is
     // braced by construction -- not a guess, the next line prints the brace.
     ro c = @ir.begin_if(cond, true, true)
-    @print_if_head(cond, false)
     @emit_block_value(kids[2], t)
     @ir.begin_else(c)
-    @body.append("    } else {\n")
     @emit_block_value(kids[4], t)
-    @body.append("    }\n")
     @ir.end_if(c)
     // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
     // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
@@ -495,7 +498,7 @@ fn Emitter mut @emit_if_value(n Node, uniq int, res_t TyId) -> Local {
 /// the same reason: a temporary only conditionally written would otherwise
 /// answer whatever the stack held. Both branches always write here; the
 /// initialiser costs one C token and removes the question.
-fn Emitter mut @emit_coalesce(e Node) -> str {
+fn Emitter mut @emit_coalesce(e Node) -> Local {
     ro qk = branch_children(e)
     ro ot = @out.type_of(qk[0].id_of())
     ro res_t = @out.type_of(e.id_of())
@@ -510,7 +513,6 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     // the zero initialiser is a field the lowering sets, not a shape this printer knows.
     ro lr = @ir.temp(res_t, res)
     @ir.declare_zeroed(lr)
-    @emit_last_stmt()
     // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
     // from the local's type and name -- the two values this function used to pass by
     // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
@@ -520,17 +522,15 @@ fn Emitter mut @emit_coalesce(e Node) -> str {
     ro cond = Cond.IsSome(lo)
     // Same as the if-value: the None branch is a block printed as `} else {`.
     ro c = @ir.begin_if(cond, true, true)
-    @print_if_head(cond, false)
     @ir.take_payload(lr, lo)
-    @emit_last_stmt()
     @ir.begin_else(c)
-    @body.append("    } else {\n")
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.
     @lower_place(qk[2], lr)
-    @body.append("    }\n")
     @ir.end_if(c)
-    res
+    // РЕЗУЛЬТАТ ОТДАЁТСЯ ЛОКАЛЬЮ (предусловие 5): вызывающий записывает присваивание
+    // из неё в момент ПОНИЖЕНИЯ, и обход не понижает во время печати.
+    lr
 }
 
 /// Emit a block whose LAST statement is its value: everything before it runs
@@ -705,7 +705,7 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 return
             }
             if kind == NodeKind.Coalesce {
-                @lit_tmp[raw_node(e.id_of())] = @emit_coalesce(e)
+                @lit_tmp[raw_node(e.id_of())] = @ir.decl_of(@emit_coalesce(e)).name
                 return
             }
             if kind == NodeKind.Lit {
