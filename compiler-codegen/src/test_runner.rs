@@ -1192,6 +1192,31 @@ fn effect_count_define_arg_from_line(first_line: &str, prefix: &str) -> Option<S
 /// so calling twice is the same as calling once. Anything unrecognised is
 /// returned as-is: guessing at a name we do not know would turn a clear
 /// "driver not found" into a confusing "no such file".
+/// Registry 221.1 #1061: положить ИСХОДНИК в команду C++-драйвера так, чтобы он
+/// остался кодом на C.
+///
+/// `clang++ foo.c` компилирует `.c` КАК C++ — язык выбирается по имени драйвера, а
+/// не по расширению. Подмена драйвера при `[ffi] cxx = true` заведена ради ЛИНКОВКИ
+/// (статический C++-архив не несёт своей стандартной библиотеки), и смена языка
+/// компиляции была её побочным следствием: C++ отвергает составной литерал C99 и
+/// неявные преобразования, которые C делает с предупреждением.
+///
+/// Почему пара флагов у КАЖДОГО файла, а не один `-x c` в начале: `-x` — это режим
+/// до конца командной строки. Поставленный один раз, он захватил `libuv.lib`, и
+/// clang начал читать архив как текст (замер окна nova-9c на nova-duckdb). Исходники
+/// и библиотеки здесь чередуются, поэтому режим возвращается сразу за файлом.
+/// `-x none` возвращает выбор по расширению — для архива это и нужно, а следующий
+/// исходник получает свою пару.
+fn arg_c_source(c: &mut std::process::Command, cxx: bool, path: impl AsRef<std::ffi::OsStr>) {
+    if cxx {
+        c.arg("-x").arg("c");
+    }
+    c.arg(path);
+    if cxx {
+        c.arg("-x").arg("none");
+    }
+}
+
 fn cxx_driver_name(stem: &str) -> String {
     if stem.starts_with("clang++") || stem.starts_with("g++") {
         stem.to_string()
@@ -1505,6 +1530,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
                 _ => clang.to_string_lossy().into_owned(),
             };
+            let cxx_mode = opts.ffi.map(|f| f.cxx).unwrap_or(false);
             let mut c = Command::new(&driver);
             if !env.is_empty() {
                 // Replace process env with the vcvars snapshot so clang sees
@@ -1548,15 +1574,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     // Plan 218: already inside libnova_rt.lib when the archive is
                     // active — skip re-adding as a loose source (double-define).
                     if !use_rt_archive {
-                        c.arg(&rt_net);
+                        arg_c_source(&mut c, cxx_mode, &rt_net);
                         // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                        c.arg(&rt_fs);
+                        arg_c_source(&mut c, cxx_mode, &rt_fs);
                         // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
-                        c.arg(&rt_process);
+                        arg_c_source(&mut c, cxx_mode, &rt_process);
                     }
                     c.arg(_lib_path);
                     if !use_rt_archive {
-                        c.arg(_evloop);
+                        arg_c_source(&mut c, cxx_mode, _evloop);
                     }
                     for syslib in LIBUV_WIN_SYSLIBS {
                         c.arg(format!("-l{}", syslib.replace(".lib", "")));
@@ -1619,29 +1645,29 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 for shim in &ffi.c_shims {
                     let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
                     if ext.eq_ignore_ascii_case("c") {
-                        c.arg(shim);
+                        arg_c_source(&mut c, cxx_mode, shim);
                     } else if ext.eq_ignore_ascii_case("h") {
                         c.arg("-include").arg(shim);
                     }
                 }
             }
             c.arg("-o").arg(opts.exe_file);
-            c.arg(opts.c_file);
+            arg_c_source(&mut c, cxx_mode, opts.c_file);
             // Plan 218: prebuilt archive replaces the individual rt_* source
             // args below when available (see `use_rt_archive` computed above).
             if let Some(cfg) = &rt_archive {
                 c.arg(&cfg.lib_file);
             } else {
-                c.arg(&rt_alloc);
-                c.arg(&rt_effects);
-                c.arg(&rt_fibers);
-                c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
-                c.arg(&rt_fiber_arena_win);  /* Plan 82 Ф.1 */
-                c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
-                c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
-                c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
-                c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
-                c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
+                arg_c_source(&mut c, cxx_mode, &rt_alloc);
+                arg_c_source(&mut c, cxx_mode, &rt_effects);
+                arg_c_source(&mut c, cxx_mode, &rt_fibers);
+                arg_c_source(&mut c, cxx_mode, &rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+                arg_c_source(&mut c, cxx_mode, &rt_fiber_arena_win);  /* Plan 82 Ф.1 */
+                arg_c_source(&mut c, cxx_mode, &rt_fiber_stats);  /* Plan 44.2 Etap 3 */
+                arg_c_source(&mut c, cxx_mode, &rt_runtime);      /* Plan 44 Этап 0 */
+                arg_c_source(&mut c, cxx_mode, &rt_driver);       /* Plan 83.11 Ф.2 */
+                arg_c_source(&mut c, cxx_mode, &rt_typeid);       /* Plan 61 Ф.1 */
+                arg_c_source(&mut c, cxx_mode, &rt_segv_diag);    /* Plan 83.11 §12.31 */
             }
             // [M-linux-mn-conformance-red] fix: libuv object/library
             // placement, non-Windows only — see the comment at the early
@@ -1657,12 +1683,12 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 // Plan 218: already inside libnova_rt.a when the archive is active
                 // — skip re-adding as a loose source (would double-define symbols).
                 if !use_rt_archive {
-                    c.arg(&rt_net);
+                    arg_c_source(&mut c, cxx_mode, &rt_net);
                     // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
-                    c.arg(&rt_fs);
+                    arg_c_source(&mut c, cxx_mode, &rt_fs);
                     // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
-                    c.arg(&rt_process);
-                    c.arg(evloop);
+                    arg_c_source(&mut c, cxx_mode, &rt_process);
+                    arg_c_source(&mut c, cxx_mode, evloop);
                 }
                 /* Linux ld обрабатывает .a archives только для symbols
                  * undefined в момент когда archive seen. Используем
