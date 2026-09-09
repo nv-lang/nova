@@ -32,12 +32,22 @@ TREE = re.compile(r"(nova-p\d+\w*|nova-[a-z]+\d*|nova(?![-\w]))")
 
 
 def ps():
+    """One `ps -ef` snapshot, decoded defensively.
+
+    `text=True` decodes with the console codepage (cp1251 here), and a single byte outside it
+    -- a user name, a path -- raises UnicodeDecodeError INSIDE subprocess. Measured 01:00:13Z
+    2026-09-09: the second of the two samples died that way, `ps failed` was printed, and the
+    verdict was still printed as if built from two samples. That is exactly the class I watch
+    for in others: the tool answered a question it was not asked and stayed quiet about it.
+    Decode bytes ourselves with errors="replace" -- a mangled character in a name never changes
+    whether a process is a slot holder.
+    """
     try:
-        out = subprocess.run(["ps", "-ef"], capture_output=True, text=True, timeout=30)
-        return out.stdout.splitlines()
+        out = subprocess.run(["ps", "-ef"], capture_output=True, timeout=30)
+        return out.stdout.decode("utf-8", errors="replace").splitlines()
     except Exception as e:  # noqa: BLE001
         print("ps failed: %s" % e)
-        return []
+        return None
 
 
 def owner_of(line):
@@ -73,11 +83,22 @@ def main():
     # at 17:23:10 found three holders -- the mega-CU child had started at 20:19:57 local and the
     # first sample simply missed the moment. So: sample twice, ~2s apart, and take the UNION.
     # A free verdict must be free in BOTH samples.
-    lines = ps()
+    first = ps()
     time.sleep(2)
     second = ps()
-    seen = set(lines)
-    lines = lines + [ln for ln in second if ln not in seen]
+    samples = [s for s in (first, second) if s is not None]
+    if not samples:
+        print("VERDICT: UNKNOWN -- both ps samples failed, no measurement taken")
+        return 1
+    lines = list(samples[0])
+    if len(samples) > 1:
+        seen = set(lines)
+        lines += [ln for ln in samples[1] if ln not in seen]
+    # The signature must name how many samples actually survived: a FREE verdict from ONE
+    # sample is weaker than from two (a single snapshot can land in the gap between a gate's
+    # children), and a reader who is not told cannot know which one he got.
+    sample_note = "union of two ps samples ~2s apart" if len(samples) == 2 \
+        else "ONE ps sample only -- the other failed, a FREE verdict here is UNPROVEN"
     rows = {}
     for ln in lines[1:]:
         f = fields(ln)
@@ -132,7 +153,7 @@ def main():
     # start it can list transient children that no single snapshot would show. The COUNT is not
     # inflated by that (a busy machine is busy), but the composition must not be passed off as one
     # instant slice -- integrator's note, 22:27 local 2026-09-08, after my "BUSY 9 then BUSY 3".
-    print("BUSY (slot holders, union of two ps samples ~2s apart): %d" % len(busy))
+    print("BUSY (slot holders, %s): %d" % (sample_note, len(busy)))
     owners = {}
     for ln in busy:
         o = owner_of(ln)
