@@ -38,6 +38,10 @@ TREE = re.compile(r"[/\\](nova-p\d+\w*|nova-[a-z]+\d*|nova)(?=[/\\])")
 # Everything after `-c` / `-m` / `-F` is DATA the process was handed, not an address: a commit
 # message, a python snippet, a grep pattern. Cut it before attributing.
 DATA_ARG = re.compile(r"\s-(?:c|m|F)\s")
+# The observer must not appear in its own measurement (caught 16:16Z and again 00:51Z: this
+# script's own `ps`/`grep` carried a tree name in its command line and was reported as that tree
+# taking the machine). Kept at module level so sibling tools reuse it rather than copy it.
+SELF_RE = re.compile(r"(controller-\w+|\bps -ef\b|\bgrep\b|\bawk\b|\bwc\b|shell-snapshots)")
 
 
 def ps():
@@ -161,7 +165,10 @@ def main():
     # `grep -E` alone missed `grep -ciE` and other flag orders -- caught 00:51Z 2026-09-09, when
     # my own counting command showed up as an unidentified slot holder for the second time.
     # Match the tool, not one spelling of its flags.
-    SELF = re.compile(r"(controller-\w+|\bps -ef\b|\bgrep\b|\bawk\b|\bwc\b|shell-snapshots)")
+    # Lives at module level (see SELF above main) so a sibling tool reuses THIS pattern instead of
+    # copying it -- a second copy of the observer filter would drift, and the drift is invisible
+    # until the watch accuses somebody. Named 14:07Z, when controller-verdict.py needed it.
+    SELF = SELF_RE
     # THIRD occurrence of the same class (00:51Z 2026-09-09): a heredoc python probe of mine put
     # the BUSY pattern itself into its argv, so the watch listed its own source lines as slot
     # holders. Word filters cannot fix this -- the words are legitimately there. A real slot
