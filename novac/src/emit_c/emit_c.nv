@@ -504,11 +504,11 @@ fn Emitter mut @emit_coalesce(e Node) -> Local {
     ro qk = branch_children(e)
     ro ot = @out.type_of(qk[0].id_of())
     ro res_t = @out.type_of(e.id_of())
-    ro u = @fresh_uniq()
-    ro opt = "_novac_tmp_t${u}"
-    // The Option lands in its own binding through the one door (274.8 M1):
-    // the hoist of a construction inside it is the printer's.
-    ro lo = @ir.named(ot, opt)
+    // The Option lands in a TEMPORARY of the body through the one door (274.8 M1):
+    // the hoist of a construction inside it is the printer's. The name is the body's
+    // own -- `temp` numbers it by index -- because the compiler invented it and the
+    // printer has no business spelling `_novac_tmp_t<uniq>` by hand (274.8 M3).
+    ro lo = @ir.temp(ot)
     @lower_place(qk[0], lo)
     // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
     // the zero initialiser is a field the lowering sets, not a shape this printer knows.

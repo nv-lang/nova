@@ -174,8 +174,9 @@ fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // second `@close` hit a block already sealed with `Goto`. The door stays whole; the
     // leftover half goes. For a non-chained if-let (`outer == None`) nothing changes at all.
     //
-    ro tmp = "_novac_tmp_t${@fresh_uniq()}"
-    ro lo = @ir.named(ot, tmp)
+    // A temporary of the body, named by its index (274.8 M3): the Option of an
+    // `if let` is the compiler's, not the author's.
+    ro lo = @ir.temp(ot)
     // Recorded first, printed from the record -- the same door the plain `if` uses
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
@@ -284,25 +285,27 @@ fn Emitter mut @lower_for_range(kids []Node) -> () {
 }
 
 /// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
-/// ONCE into a binding local through the placement door, the index is a
-/// binding local of int, the header carries all three locals, and the body
-/// starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
+/// ONCE into a TEMPORARY through the placement door, the index is a temporary of
+/// int, the element is the author's binding, the header carries all three, and the
+/// body starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
 /// shell's `get(...).value` by the one assignment printer. The C is the same
-/// walk `emit_for_call` spelled by hand: `T vtmp = <head>;`, `for (nova_int
-/// itmp = 0; itmp < len(vtmp); itmp++) {`, `E var = get(vtmp, itmp).value;`.
+/// walk `emit_for_call` spelled by hand: `T <vec> = <head>;`, `for (nova_int <idx>
+/// = 0; <idx> < len(<vec>); <idx>++) {`, `E v = get(<vec>, <idx>).value;` -- the
+/// two temporaries are numbered by the body, so no name is spelled here (274.8 M3).
 /// The element type is the CHECKER's decision (`for_head_elem`), not a second
 /// derivation here (hunt emit_c x K4, 2026-09-04).
 fn Emitter mut @lower_for_each(kids []Node) -> () {
     ro head = kids[3]
     ro ht = @out.type_of(head.id_of())
     ro elem_t = for_head_elem(@ctx, ht)
-    ro vtmp = "_novac_tmp_t${@fresh_uniq()}"
-    ro itmp = "_novac_i_t${@fresh_uniq()}"
-    ro lv = @ir.named(ht, vtmp)
+    // Both the collection and the index are TEMPORARIES of the body, named by their
+    // indices (274.8 M3). Only the element keeps `named`: `for v in xs` -- `v` is the
+    // author's word, and that is the one question `LocalKind` still answers.
+    ro lv = @ir.temp(ht)
     @lower_place(head, lv)
     // All three locals of the walk exist before the head is printed, because the head is
     // printed FROM the record that names them (M2b-2 step 3a).
-    ro li = @ir.named(@ctx.prims.int_id, itmp)
+    ro li = @ir.temp(@ctx.prims.int_id)
     ro le = @ir.named(elem_t, leaf_text(kids[1]))
     ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
     ro c = @ir.begin_loop(lh)
