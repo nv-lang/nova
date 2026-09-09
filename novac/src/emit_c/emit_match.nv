@@ -70,7 +70,7 @@ fn Emitter mut @lower_match(m Node, dest Local) -> () {
     // Slice M2c tried exactly this move and the C stopped compiling: `nova_int T1 = n;`
     // became `T1 = n;`, the declaration gone. That failure is the both-ways proof of the
     // separation -- the same edit is correct only after it.
-    ro ls = @ir.temp(scr_t)
+    ro ls = @lo.ir.temp(scr_t)
     @lower_place(scr, ls)
     if dest != no_local() {
         // The result temporary is declared with its type AND zero-initialised
@@ -81,18 +81,18 @@ fn Emitter mut @lower_match(m Node, dest Local) -> () {
         // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
         // created the local, this door records WHERE it is declared and that it starts
         // at zero -- the reason is on `DeclAt.Zeroed`.
-        @ir.declare_zeroed(dest)
+        @lo.ir.declare_zeroed(dest)
     } else {
         // Statement position: no result, nothing to declare.
     }
     // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
     // arm that held; the `Switch` means first-match by construction.
-    ro c = @ir.begin_switch(ls)
+    ro c = @lo.ir.begin_switch(ls)
     for a in kids {
         if a.kind_of() != NodeKind.MatchArm { continue }
         @lower_arm(a, scr_t, ls, c, dest)
     }
-    @ir.end_switch(c)
+    @lo.ir.end_switch(c)
 }
 
 /// The guard of an arm, if the source wrote one -- found by walking the arm's
@@ -143,8 +143,8 @@ fn Emitter @pattern_of(pat []Node, scr_t TyId) -> Pattern {
 /// unconditional, which is exactly the shape that breaks silently the day the
 /// oracle moves a type off the heap.
 fn Emitter mut @emit_tag_test(scr Local, vrow VariantRow) -> () {
-    ro arrow = if is_value_sum(@ctx, @ir.decl_of(scr).ty) { "." } else { "->" }
-    @body.append("(${@ir.decl_of(scr).name}${arrow}tag == ${c_tag(@ctx, vrow)})")
+    ro arrow = if is_value_sum(@ctx, @lo.ir.decl_of(scr).ty) { "." } else { "->" }
+    @body.append("(${@lo.ir.decl_of(scr).name}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
 /// The C of the arm's test, spelled FROM the pattern: an int compare, the tag
@@ -152,7 +152,7 @@ fn Emitter mut @emit_tag_test(scr Local, vrow VariantRow) -> () {
 fn Emitter mut @emit_pattern_test(pattern Pattern, scr Local) -> () {
     match pattern {
         Lit(n) => {
-            @body.append("(${@ir.decl_of(scr).name} == ")
+            @body.append("(${@lo.ir.decl_of(scr).name} == ")
             @body.append(int_literal_c_text(leaf_text(n)))
             @body.append("LL)")
         }
@@ -196,7 +196,7 @@ fn Emitter mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
     // Recorded first, printed from the record (M2b-2 step 3a). The test itself already
     // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
     // PLACE of the printing, which is what lets one walk print every arm later.
-    @ir.begin_arm(c, pattern, guard)
+    @lo.ir.begin_arm(c, pattern, guard)
     match pattern {
         Variant(vm) => {
             if !pattern_has_disj(pat) {
@@ -218,8 +218,8 @@ fn Emitter mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
                 mut pi = 0
                 for bname in binders {
                     ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
-                    ro lb = @ir.named(bt, bname)
-                    @ir.take_field(lb, ls, vm.head, pi)
+                    ro lb = @lo.ir.named(bt, bname)
+                    @lo.ir.take_field(lb, ls, vm.head, pi)
                     pi += 1
                 }
             } else {
@@ -230,8 +230,8 @@ fn Emitter mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
         Bind => {
             // Plain binder: the scrutinee under a new name -- the first real
             // use of the operand rvalue.
-            ro lb = @ir.named(scr_t, leaf_text(pat[0]))
-            @ir.copy(lb, ls)
+            ro lb = @lo.ir.named(scr_t, leaf_text(pat[0]))
+            @lo.ir.copy(lb, ls)
         }
         Lit(_) => {
             // An int literal introduces no name: the test IS the whole arm.
@@ -248,15 +248,15 @@ fn Emitter mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
             ro gcond = Cond.Expr(g)
             // A guard has no else branch, so the bit is not read; passed explicitly so
             // no default is left for someone to interpret later.
-            ro gi = @ir.begin_if(gcond, false, false)
+            ro gi = @lo.ir.begin_if(gcond, false, false)
             @lower_arm_body(arm_e, dest)
-            @ir.end_if(gi)
+            @lo.ir.end_if(gi)
         }
         None => {
             @lower_arm_body(arm_e, dest)
         }
     }
-    @ir.end_arm(c)
+    @lo.ir.end_arm(c)
 }
 
 /// The BODY of one arm: assigned to the result local in value position,

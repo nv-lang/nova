@@ -37,8 +37,8 @@ import ../lex.{TokenKind}
 fn Emitter mut @bind_pair_temp(init Node, pt TyId) -> Local {
     // A temporary of the body, named by its index: the scrutinee of a destructuring
     // is the compiler's own, and `named` would claim the author wrote it (274.8 M3).
-    ro l = @ir.temp(pt)
-    @ir.place(init, l)
+    ro l = @lo.ir.temp(pt)
+    @lo.ir.place(init, l)
     l
 }
 
@@ -66,7 +66,7 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
     // down blocks, and its local is the source. Only then the printing forms, and only
     // then the fresh binding -- `??` short-circuits in that order (D86).
     // ALWAYS THROUGH A LOCAL (M3c). The construction case no longer needs its own line
-    // here: `@ir.place` records the initializer, and the assignment printer builds a
+    // here: `@lo.ir.place` records the initializer, and the assignment printer builds a
     // construction in its own `Expr` arm. One door instead of two, and the base of every
     // projection below is a LOCAL -- which is what lets the reads become statements.
     ro base = match @lower_value_source(init, pt) {
@@ -87,11 +87,11 @@ fn Emitter mut @emit_destructure_bind(st Node) -> () {
         // line printed while lowering. Printed straight, these reads landed above the
         // assignment they read once the walk of step 3b took over the printing: use before
         // declaration, C that does not compile.
-        ro l = @ir.named(@out.type_of(b.id_of()), nm)
+        ro l = @lo.ir.named(@out.type_of(b.id_of()), nm)
         if by_name {
-            @ir.read(l, base, Projection.Field(nm))
+            @lo.ir.read(l, base, Projection.Field(nm))
         } else {
-            @ir.read(l, base, Projection.Elem(i))
+            @lo.ir.read(l, base, Projection.Elem(i))
         }
         i += 1
     }

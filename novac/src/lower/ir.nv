@@ -767,3 +767,25 @@ export fn FnBuilder @finish() -> Fn {
     }
     Fn { @locals, @blocks }
 }
+
+/// THE LOWERING'S RECEIVER (274.8 M3). The lowering used to live as methods on `Emitter`,
+/// the printer's own state, and a method of the printer cannot live in a module BELOW the
+/// printer -- that is the edge inversion the architecture table forbids. So the work is a
+/// change of receiver, not a move of files, and this type is where the lowering lands.
+///
+/// IT CARRIES THE BUILDER AND, FOR NOW, NOTHING ELSE. The measured end shape (plan 274.8,
+/// section 2s) also carries `ctx` and `out`: the lowering asks them 7 and 11 times, and
+/// handing them as parameters instead would make FIVE methods accept arguments they never
+/// read, purely to pass on. They arrive with the first method that needs them -- adding
+/// them now would put two dead fields in the tree, and a dead field is debt exactly as a
+/// dead function is.
+export type Lowerer {
+    mut ir FnBuilder /// the body under construction -- the lowering's own mutable state
+}
+
+/// A compound or plain assignment, recorded as a statement of the body. First method to
+/// live here rather than on the printer (274.8 M3, slice 1): it touches the builder and
+/// nothing else, so it proves the receiver without dragging the channel along.
+export fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
+    @ir.store(target, op, src)
+}
