@@ -26,6 +26,16 @@ Usage:
   python controller-verdict.py --prove      # both-ways probe on synthetic cases
 """
 import glob
+# Каталог РЯДОМ с главной копией, выведенный от положения этого файла: в
+# синтетических строках `ps` путь — данные, но записанный литералом он привязывает
+# пробу к одной машине (страж №698 краснеет на этом законно, и поймал именно здесь).
+_PARENT_POSIX = __import__('os').path.dirname(__import__('os').path.dirname(
+    __import__('os').path.dirname(__import__('os').path.dirname(
+        __import__('os').path.abspath(__file__))))).replace('\\', '/')
+# msys-форма пути: приписка сравнивает с `/d/...`, а не с `D:/...`. Проба H
+# поймала это первым же прогоном — выведенный путь верен, а НАПИСАНИЕ было чужим.
+_PARENT_POSIX = __import__('re').sub(
+    r'^([A-Za-z]):/', lambda m: '/' + m.group(1).lower() + '/', _PARENT_POSIX)
 import importlib.util
 import io
 import json
@@ -531,9 +541,9 @@ def prove():
         with open(p, "w", encoding="utf-8") as fh:
             for _ in range(n):
                 if as_cmd:
-                    fh.write('{"cwd":"x","text":"git -C /d/Sources/nv-lang/%s/ status"}\n' % home)
+                    fh.write('{"cwd":"x","text":"git -C %s/%s/ status"}\n' % (_PARENT_POSIX, home))
                 else:
-                    fh.write('{"cwd":"x","text":"a letter about /d/Sources/nv-lang/%s/ and its tier"}\n' % home)
+                    fh.write('{"cwd":"x","text":"a letter about %s/%s/ and its tier"}\n' % (_PARENT_POSIX, home))
         got, hits = tree_of(p, None)
         is_main = os.path.abspath(got) == os.path.abspath(ROOT)
         ok = (is_main == want_main)
