@@ -1,0 +1,6 @@
+module f_any_as
+fn main() Io -> () {
+    ro x any = 7 as any
+    ro n int = x.as[int]!!
+    println("${n}")
+}

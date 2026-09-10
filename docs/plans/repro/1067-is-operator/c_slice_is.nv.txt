@@ -1,0 +1,5 @@
+module c_slice_is
+fn main() Io -> () {
+    ro arr []int = [1, 2]
+    if arr is int { println("yes") } else { println("no") }
+}

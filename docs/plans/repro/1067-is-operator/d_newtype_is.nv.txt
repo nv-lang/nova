@@ -1,0 +1,7 @@
+module d_newtype_is
+type Shape enum Circle | Square
+type Wrapped Shape
+fn main() Io -> () {
+    ro w Wrapped = Circle as Wrapped
+    if w is Circle { println("circle") } else { println("other") }
+}
