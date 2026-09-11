@@ -13,7 +13,7 @@
 её нет.
 
 Примеры лежат вне репозитория, в scratchpad-каталоге сессии:
-`C:\Users\<user>\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\...\scratchpad\p253abi\*.nv`
+`<скретчпад-сессии>\...\scratchpad\p253abi\*.nv`
 (пути ниже даны относительно этого каталога). Сгенерированные `.c` —
 во временных `%TEMP%\nova_tests-<pid>\build-<hash>\*.c` (создаются
 `--keep-artifacts`, каталоги названы по PID процесса сборки, приведены
