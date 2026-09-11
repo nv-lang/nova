@@ -607,6 +607,11 @@
 #   issledovatel'skogo okna (vopros vladel'tsa pro `is`): 1067 -- operand `is` ne
 #   proveryaetsya v chekere, 1068 -- D54 opisyvaet dve formy `is`, kotorykh v
 #   kompilyatore net. Rost chestnyy: proby lezhat v docs/plans/repro/TBD-is-operator/.
-rows=1023
-max=1068
+# 2026-09-11 (integrator): rows -> 1024, max -> 1069. Odna stroka zavedena oknom
+#   integratora pri proverke primera koda dlya vladel'tsa (plan 286): statik po
+#   tip-parametru v tele for-tsikla, kladushchiysya v Vec[T], ronyaet kodogen.
+#   Rost chestnyy: proby lezhat v docs/plans/repro/1069-generic-static-into-vec/,
+#   tablitsa 2x2, krasnaya rovno odna kletka.
+rows=1024
+max=1069
 gaps=174-208,210-215,653-654,743,1062

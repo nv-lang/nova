@@ -1,0 +1,28 @@
+// МИНИМУМ: результат статика по тип-параметру кладётся в Vec[T]. Цикла нет.
+// nova build -> codegen error: cannot infer type argument `T` for
+//               generic function `copy_n_nonoverlapping`
+
+type Row { ro vals []str }
+
+type FromRow protocol {
+    .from_row(r Row) -> Self
+}
+
+type Account value { ro email str }
+
+fn Account.from_row(r Row) -> Account => { email: r.vals[0] }
+
+fn[T FromRow] boxed(rs []Row) -> Vec[T] {
+    mut out = Vec[T].new()
+    for r in rs {
+        out.push(T.from_row(r))
+    }
+    return out
+}
+
+fn mk() -> []Row => [{ vals: ["a@b.c"] }]
+
+fn main() Io -> () {
+    ro v = boxed[Account](mk())
+    print("${v[0].email}")
+}
