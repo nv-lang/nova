@@ -1,7 +1,11 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # План 286 — драйвер БД: граница, значения, ресурсы, первый носитель
 
-**Статус:** ⬛ ЧЕРНОВИК (номер назначен интегратором 2026-09-11; к исполнению не принят).
+**Статус:** ⬛ ЧЕРНОВИК, **ФИНАЛИЗИРОВАН 2026-09-12** (номер назначен интегратором
+2026-09-11; к исполнению не принят). Финализирован значит: граница описана целиком
+и в действующей форме, этапы имеют машинные критерии и пробы в обе стороны, все
+неразрешённые места названы развилками с адресатом и умолчанием. Не значит:
+принят к работе — старта нет, пока месяц отдан 274.
 **В тег v0.1 не входит.** Заведён по исследованию
 [docs/dev/research/2026-09-11-db-driver-architecture.md](../dev/research/2026-09-11-db-driver-architecture.md)
 (далее — **research**; ссылки вида «research §5» — на его разделы).
@@ -271,37 +275,133 @@ type Db effect {
 }
 ```
 
-### Значения, которые ходят через границу
+### Все типы границы — детально
+
+**Ресурсы — по образцу `std.net`.** Там та же задача решена и решена давно:
+`export type TcpStream consume value priv { handle *(), rc *mut AtomicInt }`
+(`std/src/net/tcp.nv:49`), `TcpListener` — там же `:28`. Общий тип живёт в модуле
+границы, внутри непрозрачная ручка, и заполняет её ОБРАБОТЧИК. Драйверу не нужен
+свой тип соединения, а эффекту не нужно обобщение — снимается разом.
 
 ```nova
-type ColumnDef value {
-    ro name     str
-    ro ty       SqlType      // ТИП колонки — без него NULL-целого не отличить
-    ro nullable bool         //   от NULL-строки, и нечем кормить Deserialize
-}
+export type Conn consume value priv { handle *() }
+export type Rows consume value priv { handle *() }
+export type Stmt consume value priv { handle *() }
+export type Tx   consume value priv { handle *(), depth int }  // 0 = транзакция, >0 = savepoint
+```
 
-type Row {
-    ro schema []ColumnDef
-    ro vals   []SqlValue
-}
+**Запрос: шаблон отдельно от аргументов** — это ответ на развилку про `prepare`.
 
-type ExecOut value {
+```nova
+export type Template value { ro text str, ro n_params int }   // БЕЗ аргументов
+export type Sql      value { ro template Template, ro args []SqlValue }
+```
+
+Тег `` sql`… ${x}` `` строит `Sql`; `@prepare` берёт `Template` (у `Sql` он есть
+полем), `@bind` подаёт аргументы отдельно. Одна форма для обоих путей, и
+противоречие «тег уже привязал» исчезает.
+
+**Значение.** Точное число — `BigDecimal` из `nova-bignum`, ради него граница и
+уезжает из std.
+
+```nova
+export type SqlValue enum
+    | Null
+    | Bool(bool)
+    | Int(i64)                 // все знаковые целые
+    | UInt(u64)                // MySQL UNSIGNED BIGINT
+    | Huge(i64, u64)           // 128 бит двумя половинами: ABI __int128 не переносим
+    | Real(f64)                // приблизительное
+    | Dec(BigDecimal)          // ТОЧНОЕ, никогда не сворачивается в Real
+    | Text(str)
+    | Bytes([]u8)
+    | Day(Date)                // DATE
+    | Clock(TimeOfDay)         // TIME
+    | Naive(DateTime)          // TIMESTAMP — стенные часы, зоны НЕТ
+    | Instant(Timestamp)       // TIMESTAMPTZ — момент на оси
+    | Zoned(ZonedDateTime)     // момент + зона, когда БД её отдаёт
+    | Span(Period)             // INTERVAL, включая месяцы
+    | Ident(Uuid)
+    | Json(JsonValue)
+    | List([]SqlValue)         // массивы PG, LIST DuckDB
+    | Struct([]Field)          // composite PG, STRUCT DuckDB
+    | Map([]Pair)
+    | Other(Opaque)            // escape hatch: драйвер не врёт
+
+export type Field  value { ro name str, ro val SqlValue }
+export type Pair   value { ro key SqlValue, ro val SqlValue }
+export type Opaque value { ro type_name str, ro bytes []u8 }
+```
+
+**Тип колонки** — нужен отдельно от значения: по значению `Null` не узнать, ЧЕГО
+именно там нет.
+
+```nova
+export type SqlType enum
+    | TBool | TInt | TUInt | THuge | TReal
+    | TDec(int, int)           // точность, порядок
+    | TText | TBytes
+    | TDay | TClock | TNaive | TInstant | TZoned | TSpan
+    | TIdent | TJson
+    | TList([]SqlType)         // ровно один элемент; Vec ради кучи, не ради длины
+    | TStruct([]ColumnDef) | TMap([]SqlType)
+    | TOther(str)              // имя типа СУБД как есть
+
+export type ColumnDef value { ro name str, ro ty SqlType, ro nullable bool }
+export type Row { ro schema []ColumnDef, ro vals []SqlValue }
+```
+
+*Открытое место:* рекурсия `TList([]SqlType)`/`TStruct([]ColumnDef)` — сумма,
+содержащая себя через `Vec`. Форма правдоподобна (у `SqlValue.List` та же), но в
+дереве не проверена; проба идёт вместе с Д0.
+
+**Результат выполнения.**
+
+```nova
+export type ExecOut value {
     ro affected i64
-    ro last_id  Option[i64]  // MySQL/SQLite дают, PostgreSQL — нет (у него RETURNING)
-}
-
-type TxOpts value {
-    ro level     IsoLevel    // ReadUncommitted | ReadCommitted | RepeatableRead | Serializable
-    ro read_only bool
-    ro deferrable bool       // PostgreSQL; прочие игнорируют ОСОЗНАННО, не молча
+    ro last_id  Option[i64]    // MySQL/SQLite дают, PG — нет (у него RETURNING)
 }
 ```
 
-`Rows`, `Stmt`, `Tx`, `Conn` — `consume`-типы с `@cleanup`: недочитанный курсор
-закрывается, незакрытая транзакция откатывается, обращение после закрытия —
-ошибка компиляции.
+**Транзакция.**
 
-### Где подключение — и почему его нет в эффекте
+```nova
+export type IsoLevel enum ReadUncommitted | ReadCommitted | RepeatableRead | Serializable
+
+export type TxOpts value {
+    ro level      IsoLevel
+    ro read_only  bool
+    ro deferrable bool         // PG; прочие ОТВЕРГАЮТ, а не игнорируют молча
+}
+```
+
+**Ошибка — структурная, по образцу `IoError`** (`module-conventions.md:91-95`):
+один тип на домен, вид — ОТКРЫТАЯ сумма с обязательным `Other`.
+
+```nova
+export type DbErrorKind enum
+    | Connection | Auth | Timeout | Syntax
+    | UniqueViolation | ForeignKey | NotNull | CheckViolation
+    | Deadlock | SerializationFailure
+    | TypeMismatch | ColumnMissing
+    | Unsupported
+    | Other(int)
+
+export type DbError value {
+    ro kind    DbErrorKind
+    ro code    str             // код СУБД как есть: SQLSTATE у PG, errno у SQLite
+    ro op      str             // query / exec / prepare / commit — что делали
+    ro column  Option[str]     // для TypeMismatch и ColumnMissing
+    ro message str
+    ro source  Option[*DbError]
+}
+```
+
+Ветвление идёт по `kind`, а не разбором `message` регуляркой — ровно то, чего
+не даёт нынешняя плоская `DbError` из `sql.nv`.
+
+### Подключение: где живёт и кто им владеет
 
 **Соединение не операция эффекта, и это решение, а не пропуск.** Оно приходит с
 фасада пакета-драйвера, как уже сделано в `nova-duckdb`:
@@ -318,6 +418,52 @@ consume db  = Database.open(path, opts) {
 `open` операцией эффекта — эффект вернёт ручку, способную пережить свой
 обработчик, и линейность тут уже не спасёт. Плюс строка подключения у каждой БД
 своя (файл, DSN, набор расширений), и общей операции из неё не выходит.
+
+**Вопрос владельца 2026-09-12: «функция открытия должна вернуть обработчик
+эффекта?» — НЕТ, и в std на это три прецедента.** Фабрика обработчика берёт
+состояние по `mut` и им НЕ владеет: `mock_fs(mut fs MemFs) -> Effect[Fs]`
+(`std/src/fs/mock.nv:469`), `mock_io(mut cap IoCapture)` (`io/console.nv:112`),
+`mock_os(mut state MockOs)` (`os/mock.nv:217`). Владеет вызывающий, обработчик
+заимствует.
+
+Если бы `open` возвращал `Effect[Db]`, соединение осталось бы БЕЗ владельца с
+временем жизни: обработчик — значение, его можно скопировать, передать, вернуть
+наружу, и ни одна из этих операций не знает, что внутри живёт сокет. Закрывать его
+стало бы некому — то самое, ради чего линейность и заведена. Поэтому форма
+остаётся двухшаговой: блок `consume` владеет и закрывает, `with` подставляет.
+
+**Что в этом месте ещё НЕ проверено и идёт пробой (Д0б):** все три прецедента
+заимствуют ОБЫЧНУЮ запись (`MemFs`, `IoCapture`, `MockOs`), а соединение —
+`consume`-тип. Можно ли `consume`-значение отдать в литерал обработчика по `mut`,
+в дереве не показано ни разу. Это вопрос к компилятору, а не к вкусу.
+
+#### И где тогда живёт сама функция подключения
+
+**В пакете ДРАЙВЕРА, своим типизированным конструктором.** Общий пакет
+(`nova-sql`) описывает границу и типы; общей `connect(dsn)` в нём НЕТ. Форма
+драйвера — та, что уже работает в `nova-duckdb`:
+
+```nova
+// в пакете nova-duckdb
+export fn Database.open(path str, o DuckOpts) -> Result[Database, DuckError]
+export fn Database mut @connect() -> Result[Conn, DuckError]   // Conn — ОБЩИЙ тип
+export fn duckdb_handler(mut c Conn) -> Effect[Db]
+```
+
+**Почему общей `connect(dsn)` не будет.** Параметры подключения у каждой БД свои и
+типизированы: у DuckDB это предел памяти, число потоков, набор расширений и
+read-only; у PostgreSQL — режим TLS, `application_name`, `search_path`. Общая
+функция вынудила бы к строке-DSN, и всё специфичное поехало бы в неё параметрами
+запроса — та самая «строчная конфигурация», от которой мы уходим везде. Замена
+драйвера делается заменой ОДНОЙ строки `with`, а не разбором строки подключения.
+
+Конвенция, которая при этом остаётся общей: каждый драйвер экспортирует фабрику
+вида `fn <имя>_handler(mut c Conn) -> Effect[Db]`. Это соглашение об именовании, а
+не протокол: протокол потребовал бы общего типа БД, которого нет и не должно быть.
+
+`Rows`, `Stmt`, `Tx`, `Conn` — `consume`-типы с `@cleanup`: недочитанный курсор
+закрывается, незакрытая транзакция откатывается, обращение после закрытия —
+ошибка компиляции.
 
 ### Честная таблица покрытия — что выражается, а что НЕТ
 
@@ -342,6 +488,24 @@ consume db  = Database.open(path, opts) {
 пределами, живёт на фасаде КОНКРЕТНОГО пакета и через `Db` не ходит — и это
 нормально: `nova-duckdb` уже сегодня имеет `Appender`, которого нет и не будет ни
 у кого другого.
+
+### Расхождение с планом 273 — названо, не поглощено
+
+Целевая форма в [273](273-one-form-for-methods-and-functions.md)`:291-301` —
+`query(q Sql) -> Result[[]DbRow, DbError]`: голые операции без получателя и
+СПИСОК в ответе. Форма выше расходится с ней по двум пунктам: получатель
+(метод-форма 272/D459) и курсор вместо списка.
+
+**Это не отмена 273 и не молчаливое поглощение.** 273 писалась 2026-08-12, когда
+272 была предложением того же дня, а вопрос материализации не стоял вовсе — её
+`Db` приведён как иллюстрация принципа «ранг-2 снимается, а не прячется», и в этом
+принципе ничего не меняется: тело вызывающего по-прежнему идёт вне границы.
+Меняется форма записи, и меняется она в сторону, которую 272 уже узаконила.
+
+**Кому решать:** владельцу — одной строкой, какая из двух форм становится
+канонической. *Умолчание:* каноном считается форма ЭТОГО плана, а иллюстрация в
+273 получает пометку «форма уточнена планом 286» — 273 отложен в v0.2 и в его
+работу это не вмешивается. *Срок:* до старта Д3.
 
 ### Три развилки, которые план НЕ решает сам
 
@@ -464,6 +628,25 @@ consume db  = Database.open(path, opts) {
 
 **Оговорка.** Это НЕ переезд и не начало плана: переезд идёт в v0.2 этапом Д1.
 Смысл шага — снять срок, а не сделать работу раньше времени.
+
+### Д0б. Проба: можно ли отдать `consume`-ресурс в обработчик по `mut`
+
+Вопрос из §«Где подключение». Вся форма плана стоит на том, что обработчик
+заимствует соединение, а владеет им блок `consume`. В std так заимствуют только
+обычные записи; `consume`-значение — ни разу.
+
+**Машинные критерии.** (1) `nova build` на пробе: `consume`-тип с `@cleanup`,
+фабрика `fn h(mut c Conn) -> Effect[Db]`, вызов внутри `consume c = … { with Db =
+h(c) { … } }` — собирается и исполняется. (2) Вердикт записывается в блок этапа
+ДОСЛОВНО. (3) Если не собирается — это не обход, а доклад владельцу: вся форма
+§«Где подключение» требует пересмотра, и тогда развилка «обработчик владеет
+соединением» возвращается на стол вместе с вопросом, чем его закрывать.
+
+**Проба в обе стороны:** заменить `consume Conn` на обычную запись — обязана
+собраться (это повторение прецедента `mock_fs`); вернуть — вердикт тот, что
+записан. Одинаковый исход у обоих означает, что мерили не линейность.
+
+**Цена:** часы. Идёт вместе с Д0.
 
 ### Д1. Значение на границе — расширяем до того, что доказано носителем
 
