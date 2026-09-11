@@ -1,0 +1,28 @@
+// e: ОДИНОЧНАЯ запись через границу (и она же в Option) — форма курсора.
+
+type Flat {
+    ro id    int
+    ro email str
+}
+
+fn mk1() -> Flat => { id: 7, email: "a@b.c" }
+fn mk2() -> Flat => { id: 8, email: "c@d.e" }
+
+type Db effect {
+    one(q str)  -> Flat
+    next(q str) -> Option[Flat]
+}
+
+fn main() Io -> () {
+    with Db = effect Db {
+        one(q)  -> Flat         => mk1()
+        next(q) -> Option[Flat] => Some(mk2())
+    } {
+        ro a = Db.one("x")
+        print("one=${a.email}")
+        match Db.next("x") {
+            Some(r) => print("next=${r.email}")
+            None    => print("none")
+        }
+    }
+}

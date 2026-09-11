@@ -612,6 +612,10 @@
 #   tip-parametru v tele for-tsikla, kladushchiysya v Vec[T], ronyaet kodogen.
 #   Rost chestnyy: proby lezhat v docs/plans/repro/1069-generic-static-into-vec/,
 #   tablitsa 2x2, krasnaya rovno odna kletka.
-rows=1024
-max=1069
+# 2026-09-12 (integrator): rows -> 1025, max -> 1070. Kollektsiya ZAPISEY ne
+#   prokhodit cherez granitsu effekta -- naydeno proboy pri zakrytii otkrytogo
+#   voprosa plana 286. Tretya kletka kornya #47. Proby:
+#   docs/plans/repro/1070-record-collection-across-effect/ (tablitsa 4 kletok).
+rows=1025
+max=1070
 gaps=174-208,210-215,653-654,743,1062

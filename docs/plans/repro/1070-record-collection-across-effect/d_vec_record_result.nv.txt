@@ -1,0 +1,26 @@
+// Проба A (открытый вопрос 1 плана 286): переживает ли КОЛЛЕКЦИЯ в Ok
+// границу эффекта, или её стирает vtable — как записано в
+// std/src/io/console.nv:20-22 и std/src/net/effect.nv:9-13.
+
+type Row {
+    ro cols []str
+    ro vals []str
+}
+
+type DbErr enum Conn | Syntax
+
+type Db effect {
+    rows(q str) -> Result[[]Row, DbErr]
+}
+
+fn main() Io -> () {
+    with Db = effect Db {
+        rows(q) -> Result[[]Row, DbErr] =>
+            Ok([{ cols: ["id", "email"], vals: ["7", "a@b.c"] }])
+    } {
+        match Db.rows("SELECT id, email FROM t") {
+            Ok(rs)  => print("rows=${rs.len()} first=${rs[0].vals[1]}")
+            Err(_e) => print("err")
+        }
+    }
+}
