@@ -909,6 +909,14 @@ guard "$ROOT/scripts/guards/check-repo-root-clean.sh" "$ROOT" \
 step loop "no-machine-paths (путь к машине владельца не пишется, а выводится — №698)"
 guard "$ROOT/scripts/guards/check-no-machine-paths.sh" "$ROOT" || fail "абсолютный путь к машине в отслеживаемом скрипте (№698)"
 
+# Правило владельца 2026-09-12: ссылок за пределы репозитория быть не должно.
+# Отдельный страж, потому что механизм другой: путь РАЗРЕШАЕТСЯ относительно
+# файла, а не ищется образцом — `../../../x` из docs/dev/ уходит за корень, из
+# docs/plans/wip/x/ нет, и текстовый образец этой разницы не видит.
+step loop "ссылки не уходят за корень репозитория (правило владельца 2026-09-12)"
+guard "$ROOT/scripts/guards/check-no-escaping-links.py" "$ROOT" \
+    || fail "ссылка из .md уходит за пределы репозитория"
+
 # №597: код возврата обёртки — не код возврата сборки.
 step loop "фоновая сборка проверяет результат, а не код обёртки (№597)"
 guard "$ROOT/scripts/guards/check-background-build-verified.sh" "$ROOT" \

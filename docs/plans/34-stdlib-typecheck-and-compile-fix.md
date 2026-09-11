@@ -205,7 +205,7 @@ return). Это позволяет тестировать timeout/retry/rate_lim
 
 - [spec/decisions/04-effects.md](../../spec/decisions/04-effects.md) — `Random`, `Time` эффекты.
 - [spec/decisions/04-effects.md → D80](../../spec/decisions/04-effects.md#d80) — per-fiber handler isolation.
-- [feedback_concurrency_tests.md](../../../.claude/projects/d--Sources-nova-lang/memory/feedback_concurrency_tests.md) — observable interleave.
+- `feedback_concurrency_tests.md` (память проекта, вне репозитория) — observable interleave.
 
 
 ---

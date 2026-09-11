@@ -11,7 +11,7 @@
 >
 > Source material:
 > - [`docs/plans/83.11-centralized-io-driver.md`](../plans/83.11-centralized-io-driver.md) §§10.4, 12.16, 12.24, 12.27-29, 12.31
-> - [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md) — full case study (both parts)
+> - `docs/articles/mn-race-stale-slot.md` в приватных заметках — full case study (both parts)
 > - Memory `reference-mn-race-case-study.md` — distilled template
 >
 > **Plan 173.0 update (2026-07-08):** the `[M-83.11-grow-vs-wake-race]` closure
@@ -919,7 +919,7 @@ dispatch via `expected_co`) + Fix C (DISPLACED sentinel).
 revealed `fibers[5] = NULL AND parked[5] = true` — impossible state
 pointing at alloc_slot bug.
 
-**Full article:** [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md)
+**Full article:** `docs/articles/mn-race-stale-slot.md` в приватных заметках
 Часть I (~666 lines).
 
 **Plan doc:** [`docs/plans/83.11-centralized-io-driver.md`](../plans/83.11-centralized-io-driver.md) §10 (post-mortem).
@@ -933,7 +933,7 @@ before returning from `supervised_run_impl`.
 **Diagnostic that broke the case:** in-process VEH + dbghelp (~165 LOC
 `segv_diag.c`). Frame[1] localized on FIRST run.
 
-**Full article:** [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md)
+**Full article:** `docs/articles/mn-race-stale-slot.md` в приватных заметках
 Часть II (~605 lines).
 
 **Plan doc:** [`docs/plans/83.11-centralized-io-driver.md`](../plans/83.11-centralized-io-driver.md) §12.31.
@@ -1012,7 +1012,7 @@ doc closure → playbook update → logs entries.
 ## §9. Related documents
 
 - **Plan 83.11 plan-doc:** [docs/plans/83.11-centralized-io-driver.md](../plans/83.11-centralized-io-driver.md)
-- **Cancellation case-study article:** [nova-private/docs/articles/mn-race-stale-slot.md](../../../nova-private/docs/articles/mn-race-stale-slot.md)
+- **Cancellation case-study article:** `docs/articles/mn-race-stale-slot.md` (приватные заметки)
 - **Spec D228 (canonical patterns):** [spec/decisions/06-concurrency.md](../../spec/decisions/06-concurrency.md) §D228
 - **Tools:**
   - [scripts/tools/stress_bisect.sh](../../scripts/tools/stress_bisect.sh) — stress + bisect harness
