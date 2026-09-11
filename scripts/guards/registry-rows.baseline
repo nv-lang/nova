@@ -616,6 +616,10 @@
 #   prokhodit cherez granitsu effekta -- naydeno proboy pri zakrytii otkrytogo
 #   voprosa plana 286. Tretya kletka kornya #47. Proby:
 #   docs/plans/repro/1070-record-collection-across-effect/ (tablitsa 4 kletok).
-rows=1025
-max=1070
+# 2026-09-12 (integrator, pozdnee): rows -> 1026, max -> 1071. `undefined
+#   identifier` vsegda ukazyvaet na 1:1 -- naydeno poboku proboy D0b plana 286.
+#   Sosednyaya kletka k #687 (tam LSP i rezolv importov), zdes' nova build i fayl
+#   bez importov. Proby: docs/plans/repro/1071-undefined-identifier-position/.
+rows=1026
+max=1071
 gaps=174-208,210-215,653-654,743,1062
