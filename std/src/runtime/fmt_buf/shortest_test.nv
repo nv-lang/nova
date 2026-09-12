@@ -25,10 +25,8 @@ fn ours(v f64) -> []u8 {
     mut buf = []u8.new(cap: 64)
     ro n = f64_shortest_fmt(v, buf.ptr(), 64)
     mut out = []u8.new(cap: 64)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         out.push(unsafe { buf.ptr().read_at(i) })
-        i += 1
     }
     out
 }
@@ -38,10 +36,8 @@ fn theirs(v f64) -> []u8 {
     mut buf = []u8.new(cap: 64)
     ro n = unsafe { f64_fmt(v, buf.ptr(), 64, kind: FloatKind.Shortest, prec: 0) }
     mut out = []u8.new(cap: 64)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         out.push(unsafe { buf.ptr().read_at(i) })
-        i += 1
     }
     out
 }

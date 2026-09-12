@@ -418,8 +418,7 @@ fn f64_shortest_digits(v f64) -> Option[FloatingDecimal64] {
         Some(small) => {
             // A small integer may carry trailing DECIMAL zeros; scientific
             // notation wants them in the exponent instead.
-            mut mantissa = small.mantissa
-            mut exponent = small.exponent
+            mut { mantissa, exponent } = small
             while true {
                 ro q = div10(mantissa)
                 ro r = mantissa - 10 * q
@@ -544,7 +543,7 @@ export fn f64_shortest_fmt(v f64, buf *mut u8, cap int) -> int
             ro digits = decimal_length17(fd.mantissa)
             // X: the exponent of the leading digit, i.e. `v = d.ddd * 10^X`.
             ro x = fd.exponent + digits - 1
-            ro precision = if digits > 6 { digits } else { 6 }
+            ro precision = digits.max(6)
 
             if x < -4 || x >= precision {
                 // Scientific. One digit, then the rest behind a point.
@@ -616,10 +615,8 @@ fn leading_digit(value u64, digits int) -> u8 => (48 + value / pow10(digits - 1)
 /// powers of ten correct.
 fn pow10(n int) -> u64 {
     mut r = 1 as u64
-    mut i = 0
-    while i < n {
+    for _ in 0..n {
         r = r * 10
-        i += 1
     }
     r
 }

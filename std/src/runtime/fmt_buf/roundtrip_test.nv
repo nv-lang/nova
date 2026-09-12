@@ -44,10 +44,8 @@ fn print_then_parse(v f64, kind FloatKind, prec int) -> Option[u64] {
     // Байты читаются через сырой указатель: примитив пишет мимо `Vec`, и
     // `buf.len()` остаётся нулём (тот же приём, что в `core_test.nv`).
     mut out = []u8.new(cap: 64)
-    mut i = 0
-    while i < n {
+    for i in 0..n {
         out.push(unsafe { buf.ptr().read_at(i) })
-        i += 1
     }
     match out.to_str() {
         Ok(s) => match s.to_f64() {
