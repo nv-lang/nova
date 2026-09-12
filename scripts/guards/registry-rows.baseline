@@ -620,6 +620,17 @@
 #   identifier` vsegda ukazyvaet na 1:1 -- naydeno poboku proboy D0b plana 286.
 #   Sosednyaya kletka k #687 (tam LSP i rezolv importov), zdes' nova build i fayl
 #   bez importov. Proby: docs/plans/repro/1071-undefined-identifier-position/.
-rows=1026
-max=1071
+# 2026-09-13 (integrator): rows -> 1028, max -> 1073. Dve stroki po nakhodkam
+#   okna 283, obe SVERENY v dereve pered zaveedeniem, ne prinyaty na slovo.
+#   1072: u pechati float DVE dveri -- kodogen vypuskaet nova_print_f64, kotoryy
+#   zovet C-khelper napryamuyu (nova_rt.h:557, emit_c.rs:48240), i `print(x)`
+#   idet mimo f64_fmt. V main oni poka SOGLASNY: kommit okna c8679e6ea ne vlit
+#   (proveryeno merge-base --is-ancestor), tak chto eto nezakrytaya polovina
+#   volny F.3, a ne polomka main.
+#   1073: imya testa i pattern `panics` podstavlyayutsya V STROKU FORMATA
+#   generiruemogo printf -- 6 mest v emit_c.rs, escape_c_str protsenty ne
+#   ekraniruet, i u tryokh mest posle formata idut NASTOYASHCHIE argumenty,
+#   tak chto `%` sdvigaet spisok. Okno 283 videlo simptom, klass izmeril ya.
+rows=1028
+max=1073
 gaps=174-208,210-215,653-654,743,1062
