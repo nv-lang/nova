@@ -1,5 +1,6 @@
 #no_prelude
 module runtime.float_parse
+import std.runtime.decimal
 
 // Co-equal test of the float conversion (plan 283 Ф.2 / Ф.3): calls the private pieces
 // directly -- `parse_number`, `try_fast_path`, `compute_float`, `fast_or_lemire`,
@@ -219,73 +220,6 @@ test "compute_float: zero, infinity and the exponent guards" {
     assert(max.p == 2046 && max.m == 0xFFFFFFFFFFFFF as u64, "f64::MAX")
     ro over = compute_float(f64_spec(), 292, 17976931348623159 as u64)
     assert(over.p == F64_INFINITE_POWER, "just past MAX rounds to infinity")
-}
-
-test "DigitBuf: parse, right_shift and left_shift step by step on \"1\" (and the tables they read)" {
-    mut d = parse_digit_buf("1")
-    assert(d.digits.len() == 768, "buffer length")
-    assert(d.num_digits == 1, "parse: num_digits == 1")
-    assert(d.decimal_point == 1, "parse: decimal_point == 1")
-    assert(d.digits[0] == 1, "parse: digits[0] == 1")
-    assert(!d.truncated, "parse: not truncated")
-    d.right_shift(3)
-    assert(d.decimal_point == 0, "right_shift: decimal_point == 0")
-    assert(d.num_digits == 3, "right_shift: num_digits == 3")
-    assert(d.digits[0] == 1, "right_shift: digits[0] == 1")
-    assert(d.digits[1] == 2, "right_shift: digits[1] == 2")
-    assert(d.digits[2] == 5, "right_shift: digits[2] == 5")
-    assert(LEFT_SHIFT_TABLE.len() == 65, "LEFT_SHIFT_TABLE length")
-    assert(LEFT_SHIFT_TABLE[2] == 0x0801, "LEFT_SHIFT_TABLE[2] == 0x0801")
-    assert(LEFT_SHIFT_TABLE[3] == 0x0803, "LEFT_SHIFT_TABLE[3] == 0x0803")
-    assert(TABLE_POW5.len() == 1308, "TABLE_POW5 length")
-    assert(TABLE_POW5[0] == 5, "TABLE_POW5[0] == 5")
-    // Characterising the corruption: if the literal list is built as a Vec of `int`
-    // (8 bytes each) and read back through a `[]u8` slot (1 byte), then element 1 is the
-    // second BYTE of the first int -- zero -- and the real second value shows up at 8.
-    // That was registry 221.1 #1003, found here and fixed 2026-09-07; the table is now
-    // `[1308]u8`, so these two lines stay as the REGRESSION guard for the narrow-element
-    // path rather than as a description of a live defect.
-    assert(TABLE_POW5[1] != 0, "TABLE_POW5[1] is 0 -- int-stride read through a u8 slot")
-    assert(TABLE_POW5[8] != 2, "TABLE_POW5[8] is 2 -- the second value sits 8 bytes on")
-    assert(TABLE_POW5[1] == 2, "TABLE_POW5[1] == 2")
-    assert(TABLE_POW5[2] == 5, "TABLE_POW5[2] == 5")
-    assert(d.number_of_digits_decimal_left_shift(2) == 0, "digits [1,2,5] shifted by 2 gain NO new digit")
-    d.left_shift(2)
-    assert(d.num_digits == 1, "left_shift: num_digits == 1")
-    assert(d.decimal_point == 0, "left_shift: decimal_point == 0")
-    assert(d.digits[0] == 5, "left_shift: digits[0] == 5")
-    ro fp = parse_long_mantissa(f64_spec(), "1")
-    assert(fp.p == 1023, "parse_long_mantissa(1): p == 1023")
-    assert(fp.m == 0, "parse_long_mantissa(1): m == 0")
-}
-
-test "DigitBuf: the truncation flag is set by a string longer than the buffer, and only then" {
-    // Both ways on the flag itself, not through a bit result: `round` reads `truncated` to
-    // decide a tie ("dropped digits mean strictly above the half"), so a flag that never
-    // rises would round those ties the wrong way while every shorter string stayed right.
-    ro short_one = parse_digit_buf("1.5")
-    assert(!short_one.truncated, "a short string must NOT be truncated")
-    assert(short_one.num_digits == 2, "1.5 keeps both digits")
-    // 800 significant digits: past the 768 the buffer holds.
-    mut long_digits = "0."
-    mut k = 0
-    while k < 80 {
-        long_digits = "${long_digits}1234567890"
-        k += 1
-    }
-    ro long_one = parse_digit_buf(long_digits)
-    assert(long_one.truncated, "800 digits must set the flag")
-    assert(long_one.num_digits == 768, "and the buffer keeps exactly its capacity")
-    // Exactly at the edge: 768 digits fit, so nothing is dropped.
-    mut edge = "0."
-    mut j = 0
-    while j < 768 {
-        edge = "${edge}7"
-        j += 1
-    }
-    ro edge_buf = parse_digit_buf(edge)
-    assert(!edge_buf.truncated, "768 digits fit exactly and are NOT truncated")
-    assert(edge_buf.num_digits == 768, "all 768 kept")
 }
 
 // ── the slow path alone ───────────────────────────────────────────────────────
@@ -621,4 +555,48 @@ test "u64 >>= : logical shift, and this module is the first user of the form in 
     mut wide = 0xDEADBEEF as u64
     wide >>= 63
     assert(wide == (0 as u64), ">>= 63 clears a value below 2^63")
+}
+
+// Этот тест назван про `DigitBuf`, но судит он РАЗБОР: флаг усечения ставится
+// `parse_long_mantissa`, и проверяется здесь именно эта дорога, а не сам буфер.
+// При переносе типа в `runtime.decimal` (план 285 Ф.4) тест уехал следом за
+// заголовком и вернулся обратно, когда компилятор показал, чего он на самом деле
+// касается. Принадлежность теста определяет СПИСОК ТРОГАЕМЫХ ИМЁН, а не имя теста.
+test "DigitBuf: the truncation flag is set by a string longer than the buffer, and only then" {
+    // Both ways on the flag itself, not through a bit result: `round` reads `truncated` to
+    // decide a tie ("dropped digits mean strictly above the half"), so a flag that never
+    // rises would round those ties the wrong way while every shorter string stayed right.
+    ro short_one = parse_digit_buf("1.5")
+    assert(!short_one.truncated, "a short string must NOT be truncated")
+    assert(short_one.num_digits == 2, "1.5 keeps both digits")
+    // 800 significant digits: past the 768 the buffer holds.
+    mut long_digits = "0."
+    mut k = 0
+    while k < 80 {
+        long_digits = "${long_digits}1234567890"
+        k += 1
+    }
+    ro long_one = parse_digit_buf(long_digits)
+    assert(long_one.truncated, "800 digits must set the flag")
+    assert(long_one.num_digits == 768, "and the buffer keeps exactly its capacity")
+    // Exactly at the edge: 768 digits fit, so nothing is dropped.
+    mut edge = "0."
+    mut j = 0
+    while j < 768 {
+        edge = "${edge}7"
+        j += 1
+    }
+    ro edge_buf = parse_digit_buf(edge)
+    assert(!edge_buf.truncated, "768 digits fit exactly and are NOT truncated")
+    assert(edge_buf.num_digits == 768, "all 768 kept")
+}
+
+// Разборная половина теста, который до плана 285 Ф.4 делал ДВЕ работы разом:
+// шаг за шагом проверял сам `DigitBuf` и тут же — что получает на нём разбор.
+// Буферная половина осталась в `runtime.decimal` вместе со своим предметом;
+// здесь — только то, что принадлежит разбору. Вход тот же, покрытие то же.
+test "parse_long_mantissa: the slow path on \"1\" lands on the exact power of two" {
+    ro fp = parse_long_mantissa(f64_spec(), "1")
+    assert(fp.p == 1023, "parse_long_mantissa(1): p == 1023")
+    assert(fp.m == 0, "parse_long_mantissa(1): m == 0")
 }

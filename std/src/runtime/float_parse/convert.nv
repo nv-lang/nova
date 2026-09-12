@@ -30,6 +30,7 @@
 
 #no_prelude
 module runtime.float_parse
+import std.runtime.decimal
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.numeric
