@@ -31,101 +31,6 @@ import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt}
 import ../builtins.{VEC_GET_METHOD}
 
-/// Records `dest = e` in the lowered body and prints it at once -- the
-/// streaming bridge of waves M1/M2a: statements are lowered and printed one
-/// by one until M2b prints sealed blocks.
-fn Emitter mut @lower_place(e Node, dest Local) -> () {
-    // THE SOURCE IS RESOLVED FIRST (prerequisite 5): a value form that lays down blocks
-    // is lowered NOW and the assignment reads the local it produced, through the operand
-    // rvalue door `@lo.ir.copy`. Otherwise the tree node stays the source -- the M1 bridge,
-    // printed inline by `@emit_expr`.
-    match @lower_value_source(e, @lo.ir.decl_of(dest).ty) {
-        Some(l) => @lo.ir.copy(dest, l)
-        None => @lo.ir.place(e, dest)
-    }
-}
-
-/// Records an expression evaluated for its effects.
-///
-/// `println` IS NOT AN ORDINARY CALL and does not go through `eval` (M3a): its output
-/// interleaves with the effects of building its arguments, and that interleaving is
-/// observable, so it becomes a SEQUENCE of statements rather than one expression the
-/// printer takes apart.
-fn Emitter mut @lower_eval(e Node) -> () {
-    if is_println_call(e) {
-        @lower_println(e)
-        return
-    }
-    @lo.ir.eval(e)
-}
-
-/// Lowers one `println` into the sequence it IS: per argument, whatever the argument needs
-/// laid down first, then that argument's own output statement; one newline at the end.
-///
-/// WHY A SEQUENCE AND NOT ONE CALL. Hoisting the whole call up front ran a constructor
-/// argument's effects AHEAD of its neighbours' prints -- the oracle printed `head` then
-/// ticked, novac ticked first (hunt emit_c x K1, finding H1). The order of output against
-/// argument effects is therefore observable, and an observable order belongs in the
-/// channel: here each argument's lowering lands immediately before ITS OWN output
-/// statement, so the interleaving holds by construction instead of by the printer's care.
-///
-/// A construction (an array literal, a record or positional record, an interpolation) is
-/// still printed from the tree and hoisted by the printer right before its own output line
-/// -- that is legal, because a hoist only PRINTS TEXT and print order is the walk's order.
-/// `??` is the one form that could not stay: it LOWERS. It leaves through the one door
-/// above, and this is why the two refusals of step 3b close.
-fn Emitter mut @lower_println(call Node) -> () {
-    for c in branch_children(call) {
-        ro ck = c.kind_of()
-        if ck == NodeKind.Lit {
-            // THE CHANNEL FIRST, AND THE FORM ONLY WHERE IT IS SILENT -- and it is silent
-            // about exactly ONE literal. Measured 2026-09-09 in `check/typing.nv:836-850`:
-            // the argument loop of `println` RECORDS a numeric or char literal through the
-            // full `type_of` (all four kinds, plus the half where the POSITION dictates a
-            // width), and skips only a STRING one -- deliberately, and its comment says why:
-            // "the emitter never asks its type", because the only consumer took the pool
-            // slot by shape.
-            //
-            // So asking the door for EVERY literal, as the first edition of this line did,
-            // computed a second answer to a question the channel had already decided -- the
-            // very `decide it twice` this channel's doctrine exists to prevent. Asking the
-            // channel first also makes the workaround DIE ON ITS OWN: when the type of a
-            // string literal is published (marker `[M-strlit-node-has-no-type]`), this
-            // `else` stops executing and no consumer needs editing.
-            //
-            // The fallback judges the LAST leaf, as the checker does: a negated literal
-            // arrives as `[Minus, lit]`.
-            ro known = @out.type_if_known(c.id_of())
-            ro lty = if is_ty(known) {
-                known
-            } else {
-                ro lk_kids = branch_children(c)
-                literal_prim_of(leaf_kind(lk_kids[lk_kids.len() - 1]), @ctx)
-            }
-            @lo.ir.output(Operand.Tree(c), lty)
-        } else if is_expr_kind(ck) {
-            ro ty = @out.type_of(c.id_of())
-            match @lower_value_source(c, ty) {
-                Some(l) => @lo.ir.output(Operand.Place(l), ty)
-                None => @lo.ir.output(Operand.Tree(c), ty)
-            }
-        } else {
-            match c {
-                Leaf(_) => {
-                    // The callee leaf and the parenthesis leaves are not arguments.
-                }
-                Branch { .. } => {
-                    // The checker refuses every branch it cannot type in an argument
-                    // position (#870), so a branch here is a broken invariant rather than
-                    // a shape to skip -- the silent fallout this arm replaces printed `ab`
-                    // for `a20b`.
-                    ice("emit_c: an argument form the checker let through (#870)")
-                }
-            }
-        }
-    }
-    @lo.ir.output_end()
-}
 
 /// Prints ONE step of output: the printer of the value's CARRIER around the value.
 ///
@@ -358,37 +263,6 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
     @body.append(";\n")
 }
 
-/// THE LOWERING HALF of the dispatch on the form of a value: a `match` and an `if` in value
-/// position lay down blocks of the body, so they are resolved WHILE LOWERING and hand back
-/// the local that holds the result. Prerequisite 5 of M2b-2 step 3b: after the walk prints
-/// from sealed blocks, a printer that lowered would push into a FINISHED builder -- the
-/// blocks would be recorded and never printed. The forms that only PRINT stay in
-/// `build_value` below, which is the other half.
-fn Emitter mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
-    ro k = e.kind_of()
-    if k == NodeKind.MatchExpr {
-        // The match is a Switch of the lowered body (274.8 M2b-1d); its result local is
-        // recorded here, assigned in each arm through the one door.
-        ro t = @lo.ir.temp(ty)
-        @lower_match(e, t)
-        return Some(t)
-    }
-    if k == NodeKind.Coalesce {
-        // `??` LOWERS -- it lays down a Some-test with two branches -- so it cannot be
-        // printed inline, and under the walk of step 3b a printer that lowered would push
-        // into a FINISHED builder. That is not a guess: the door refused with
-        // `lower: a block sealed twice (it already returns)` on both corpus carriers of the
-        // form `println(x ?? y)` (measured 2026-09-09). Answering here puts `??` on the ONE
-        // door for every value position at once -- the class, not the two carriers.
-        return Some(@emit_coalesce(e))
-    }
-    if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
-        // A tail `if` and an if-expression lay down the same pair (wave B14); the door
-        // hands back the local it declared.
-        return Some(@emit_if_value(e, ty))
-    }
-    None
-}
 
 /// THE PRINTING HALF of the same dispatch: forms that need statements of their own but do
 /// NOT lower -- a record or positional-record constructor, an array literal -- are built
@@ -417,11 +291,3 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     None
 }
 
-/// Whether a block's last statement is its VALUE: an expression, a positional
-/// record, a tail `if`, or a match the checker typed (an untyped tail match is
-/// a statement whose arms leave through `return`, 274.5 wave B9).
-fn Emitter @tail_places_value(c Node) -> bool {
-    ro k = c.kind_of()
-    is_value_tail_kind(k) || k == NodeKind.IfStmt ||
-        (k == NodeKind.MatchExpr && is_ty(@out.type_if_known(c.id_of())))
-}

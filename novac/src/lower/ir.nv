@@ -20,7 +20,7 @@ module novac.lower
 import ../tree.{Node, AssignOp}
 import ../types.{TyId}
 import ../diag.{ice}
-import ../sem.{VariantRow}
+import ../sem.{VariantRow, Ctx, CheckOut}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -780,6 +780,8 @@ export fn FnBuilder @finish() -> Fn {
 /// them now would put two dead fields in the tree, and a dead field is debt exactly as a
 /// dead function is.
 export type Lowerer {
+    ctx Ctx /// the type registry and def table, read only -- same home as Emitter's (`sem`)
+    out CheckOut /// the checker's channel: every type question is a READ here
     mut ir FnBuilder /// the body under construction -- the lowering's own mutable state
 }
 

@@ -1,0 +1,896 @@
+module novac.lower
+import ../tree.{Node, NodeKind, assign_op_of}
+import ../types.{TyId, is_ty}
+import ../diag.{ice}
+import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_head_slots, for_head_elem, is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind, leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
+
+
+/// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
+/// state, in `emit_c/`. A method of the printer cannot live in a module BELOW the printer, so
+/// the move was a change of RECEIVER, not of files -- and this file is where the lowering
+/// landed once the receiver existed.
+///
+/// WHY IT ARRIVED AS ONE PIECE. The call structure was measured first: after two leaves there
+/// were no more methods that could travel alone, the core is closed under calls, and its border
+/// with printing is ZERO -- nothing here calls anything that prints. Cutting a closed, mutually
+/// recursive set one method at a time would leave a tree that does not build at every step.
+///
+/// WHAT THIS FILE MAY NOT DO. It is `lower`, so the architecture table allows it `tree`, `sem`,
+/// `types` and `diag` and nothing else. Two questions that used to reach past that -- a leaf's
+/// token kind and the name of `println` -- are now asked of the channel (`sem.is_int_lit`,
+/// `sem.is_ident_leaf`, `sem.is_println_call`), which is where questions about what a node MEANS
+/// belong anyway.
+
+/// tail=true: the LAST expression statement of an int fn body is its return
+/// value (Nova tail-expression semantics; arithmetic.nv relies on it).
+fn Lowerer mut @emit_block_stmts_fn(b Node, tail bool) -> () {
+    ro kids = branch_children(b)
+    mut last_branch = -1
+    if tail {
+        mut j = 0
+        for c in kids {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => { last_branch = j }
+            }
+            j += 1
+        }
+    } else {
+        // No tail duty: no statement of this block is a return value, and -1
+        // is an index no child can equal, so the test below never fires.
+    }
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's own braces -- trivia carriers, not statements
+            Branch { .. } => {
+                if tail && j == last_branch && c.kind_of() == NodeKind.MatchExpr
+                        && !is_ty(@out.type_if_known(c.id_of())) {
+                    // A tail match whose arms are BLOCKS yields no value --
+                    // they leave through `return` (274.5 wave B9), and the
+                    // checker recorded no type on purpose. The statement form
+                    // is the honest emission: no result temporary, no `return`
+                    // of a value nobody produced.
+                    @lower_match(c, no_local())
+                } else if tail && j == last_branch && @tail_places_value(c) {
+                    // THE TAIL IS THE RETURNED VALUE -- one door (274.8 M1).
+                    // Until M1 four arms stood here (match, if, positional
+                    // record, general expression), each spelling `return`
+                    // itself; the form of the value is now the printer's one
+                    // dispatch (`build_value` in emit_place.nv).
+                    @lower_place(c, @ir.ret_place())
+                } else {
+                    @emit_stmt(c)
+                }
+            }
+        }
+        j += 1
+    }
+}
+
+/// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
+/// branches writing into it, the caller returning it.
+///
+/// The shape is `@emit_match`'s and the comment there explains the `(T){0}`:
+/// a temporary that is only conditionally written answers whatever the stack
+/// held otherwise -- valid C, a different number per run, no diagnostic
+/// anywhere. Here BOTH branches always write, but the initialiser stays: it
+/// costs one C token and removes a whole class of question.
+fn Lowerer mut @emit_if_value(n Node, res_t TyId) -> Local {
+    ro kids = branch_children(n)
+    // The temporary is a LOCAL of the lowered body, and its DECLARATION is a statement of
+    // that body (274.8 M2b-2 step 2): recorded here, printed by the one statement door. It
+    // starts at zero because a branch may fall through without assigning it -- the reason
+    // lives on `DeclAt.Zeroed`, with every one of its clients named there.
+    ro t = @ir.temp(res_t)
+    @ir.declare_zeroed(t)
+    // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
+    // if-value always has an else, so `has_else` is a fact, not a guess. The head goes
+    // through the ONE door (M2b-2 step 3a) -- the same one the statement `if`, the
+    // `if let` and a match guard use.
+    ro cond = Cond.Expr(kids[1])
+    // The else branch of an if-value is always a BLOCK printed as `} else {`, so it is
+    // braced by construction -- not a guess, the next line prints the brace.
+    ro c = @ir.begin_if(cond, true, true)
+    @emit_block_value(kids[2], t)
+    @ir.begin_else(c)
+    @emit_block_value(kids[4], t)
+    @ir.end_if(c)
+    // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
+    // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
+    t
+}
+
+/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
+/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
+/// is emitted INSIDE the else branch, so its effects run only when the left
+/// side is None, which is what the oracle does and what a reader expects.
+///
+/// The shape is `@emit_if_value`'s and the `(T){0}` initialiser is there for
+/// the same reason: a temporary only conditionally written would otherwise
+/// answer whatever the stack held. Both branches always write here; the
+/// initialiser costs one C token and removes the question.
+fn Lowerer mut @emit_coalesce(e Node) -> Local {
+    ro qk = branch_children(e)
+    ro ot = @out.type_of(qk[0].id_of())
+    ro res_t = @out.type_of(e.id_of())
+    // The Option lands in a TEMPORARY of the body through the one door (274.8 M1):
+    // the hoist of a construction inside it is the printer's. The name is the body's
+    // own -- `temp` numbers it by index -- because the compiler invented it and the
+    // printer has no business spelling `_novac_tmp_t<uniq>` by hand (274.8 M3).
+    ro lo = @ir.temp(ot)
+    @lower_place(qk[0], lo)
+    // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
+    // the zero initialiser is a field the lowering sets, not a shape this printer knows.
+    ro lr = @ir.temp(res_t)
+    @ir.declare_zeroed(lr)
+    // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
+    // from the local's type and name -- the two values this function used to pass by
+    // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
+    // one statement is the payload read through the one door -- printed by the one
+    // assignment printer, which spells a Temp with the indent the hand-written line
+    // had (measured before the edit, plan 274.8 decision (1)).
+    ro cond = Cond.IsSome(lo)
+    // Same as the if-value: the None branch is a block printed as `} else {`.
+    ro c = @ir.begin_if(cond, true, true)
+    @ir.take_payload(lr, lo)
+    @ir.begin_else(c)
+    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
+    // to the None branch alone -- that is the short circuit, in one place.
+    @lower_place(qk[2], lr)
+    @ir.end_if(c)
+    // THE LOCAL ITSELF, not its name (M3a). M2c had this function ask the record for the
+    // name because it handed its caller the TEXT of an expression; now `??` is a value
+    // form that LOWERS, so what the caller needs is the local -- a caller that wants text
+    // asks `decl_of(l).name` at its own end. Handing the local is what lets a value
+    // position take `??` through the one door (`lower_value_source`) instead of the
+    // print-time hoist table, and the hoist is exactly what iced under the walk of step 3b.
+    lr
+}
+
+/// Emit a block whose LAST statement is its value: everything before it runs
+/// as a statement, and the last one is assigned to the `if` temporary.
+///
+/// THE DOOR THIS WAVE HAD TO ADD, and the reason is a real difference rather
+/// than an oversight in the match code: a match ARM is an expression, so
+/// `@emit_arm_value` writes `t = <expr>;` in one line. An `if` BRANCH is a
+/// block, and its value is whatever its last statement produces -- so the
+/// block has to be walked, and only its tail turned into an assignment.
+fn Lowerer mut @emit_block_value(b Node, t Local) -> () {
+    ro kids = branch_children(b)
+    mut last_branch = -1
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last_branch = j }
+        }
+        j += 1
+    }
+    j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's braces are trivia, not statements
+            Branch { .. } => {
+                if j == last_branch && is_expr_kind(c.kind_of()) {
+                    @lower_place(c, t)
+                } else {
+                    // Everything before the tail runs for effect, and a tail
+                    // that is not an expression is refused in `check` -- it
+                    // never reaches here.
+                    @emit_stmt(c)
+                }
+            }
+        }
+        j += 1
+    }
+}
+
+/// Emit one statement by node kind (call/if/while/return/bind/assign/for/expr).
+fn Lowerer mut @emit_stmt(st Node) -> () {
+    ro k = st.kind_of()
+    if k == NodeKind.MatchExpr {
+        // A match in STATEMENT position (274.5 wave B5): the arms run for
+        // effect. No result temporary is declared -- nobody asked this match
+        // for a value, and emitting a variable to hold an answer no one wants
+        // is the shape this compiler keeps refusing elsewhere.
+        @lower_match(st, no_local())
+    } else if k == NodeKind.Call {
+        // A call in statement position is an EVALUATION of the lowered body
+        // (274.8 M2a); its printer keeps the arguments and their hoists.
+        @lower_eval(st)
+    } else if k == NodeKind.IfStmt {
+        // A branch of the lowered body (274.8 M2b-1): opened, filled and
+        // joined through the builder's events, printed at the same events
+        // (emit_flow.nv). `None`: this `if` is a statement of its block, not
+        // the else branch of another.
+        @lower_if(st, None)
+    } else if k == NodeKind.WhileStmt {
+        @lower_while(st)
+    } else if k == NodeKind.RetStmt {
+        @lower_return(st)
+    } else if k == NodeKind.BindStmt {
+        @emit_bind(st)
+    } else if k == NodeKind.AssignStmt {
+        // A store into a place the tree names (274.8 M2a): the target, the
+        // operator and the value are recorded, the one printer spells them --
+        // a compound store from the one form table, the target as an
+        // expression (a name and `@field` on one path).
+        ro kids = branch_children(st)
+        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), kids[2])
+    } else if k == NodeKind.ForStmt {
+        ro kids = branch_children(st)
+        if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
+           kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
+            // A COLLECTION head (wave B16) walks a vector by index: a loop
+            // of the lowered body whose header carries the collection, the
+            // index and the element locals (274.8 M2b-1c, emit_flow.nv). A
+            // name or field head costs one pointer copy into the temporary --
+            // the same one-evaluation contract a call head needs for its
+            // effects.
+            @lower_for_each(kids)
+            return
+        }
+        // A RANGE head: a loop of the lowered body with the range as its
+        // header form (274.8 M2b-1, emit_flow.nv).
+        @lower_for_range(kids)
+    } else if is_value_tail_kind(k) {
+        // An expression in statement position -- a positional record
+        // included -- is an EVALUATION of the lowered body (274.8 M2a): built
+        // where it needs building, dropped, the effects in written order.
+        @lower_eval(st)
+    } else if k == NodeKind.DestructureBind {
+        @emit_destructure_bind(st)
+    } else if k == NodeKind.IfLet {
+        // An if-let is a branch of the lowered body testing `IsSome` of the
+        // local its Option landed in (274.8 M2b-1b, emit_flow.nv).
+        @lower_if_let(st, None)
+    } else {
+        ice("emit: statement kind outside the subset")
+    }
+}
+
+/// Binding. A record-constructor initializer follows the oracle's tmp scheme
+/// (fixed point on records.nv); a match initializer follows the match
+/// scheme; everything else is a plain typed local.
+fn Lowerer mut @emit_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    ro vname = leaf_text(kids[1])
+    ro init = kids[kids.len() - 1]
+    ro vtype = @out.type_of(init.id_of())
+    // ONE DOOR (274.8 M1): the binding is a local of the lowered body, and its
+    // initializer lands in it through `place`. Until M1 six arms stood here --
+    // match, if-expression, array literal, positional record, constructor,
+    // general expression -- each spelling the declaration line itself.
+    ro l = @ir.named(vtype, vname)
+    @lower_place(init, l)
+}
+
+/// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
+/// name becomes a plain C local read out of it.
+///
+/// ONCE is the whole contract, and it is the same one V3-1 proved for the
+/// constructor: `ro (a, b) = mk()` calls `mk` a single time, so a side effect
+/// in it prints once. A shape that re-read the scrutinee per name would be
+/// correct on pure values and silently wrong on effectful ones.
+///
+/// The two shapes differ in ONE question -- how a name finds its value. By
+/// POSITION it is the mono struct's `.fN`; by NAME it is the field itself,
+/// reached with `.` on an inline value and `->` on a GC pointer, exactly as
+/// every other field access is spelled.
+fn Lowerer mut @emit_destructure_bind(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[kids.len() - 1]
+    ro pt = @out.type_of(init.id_of())
+    // The value's form is the printer's ONE dispatch (274.8 M1, emit_place.nv):
+    // a construction builds into a temporary of its own and that temporary IS
+    // the source; any other initializer lands in a fresh binding of the pair's
+    // type through the one door -- and only then, `??` short-circuits (D86).
+    // The lowering door comes FIRST (prerequisite 5): a `match`/`if` initializer lays
+    // down blocks, and its local is the source. Only then the printing forms, and only
+    // then the fresh binding -- `??` short-circuits in that order (D86).
+    // ALWAYS THROUGH A LOCAL (M3c). The construction case no longer needs its own line
+    // here: `@ir.place` records the initializer, and the assignment printer builds a
+    // construction in its own `Expr` arm. One door instead of two, and the base of every
+    // projection below is a LOCAL -- which is what lets the reads become statements.
+    ro base = match @lower_value_source(init, pt) {
+        Some(l) => l
+        None => @bind_pair_temp(init, pt)
+    }
+    ro by_name = brace_pattern(kids)
+    mut i = 0
+    for b in pattern_binders(kids) {
+        // THE CHANNEL, and nothing else. The checker decided this binder's
+        // type -- which field it names, or which component -- and recorded it
+        // on the binder node; this door only spells the decision. Until
+        // 2026-09-04 it asked the field index itself, which the channel guard
+        // refuses by name and was right to: a second asker becomes a second
+        // answer the day the two spellings drift.
+        ro nm = binder_text(b)
+        // THE BINDER IS A LOCAL OF THE BODY, and its read is a STATEMENT (M3c) -- not a
+        // line printed while lowering. Printed straight, these reads landed above the
+        // assignment they read once the walk of step 3b took over the printing: use before
+        // declaration, C that does not compile.
+        ro l = @ir.named(@out.type_of(b.id_of()), nm)
+        if by_name {
+            @ir.read(l, base, Projection.Field(nm))
+        } else {
+            @ir.read(l, base, Projection.Elem(i))
+        }
+        i += 1
+    }
+}
+
+/// One `if` statement with its `else` / `else if` chain. `outer` is the
+/// enclosing `if` when this one IS its else branch: then the else branch is
+/// opened first and the chained `if` shares the outer join.
+fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
+    ro kids = branch_children(st)
+    ro has_else = kids.len() > 4
+    // The condition is RECORDED first and PRINTED from the record (M2b-2 step 3a): the
+    // printing no longer reads the tree, which is what lets one walk print every branch
+    // later. Recording before printing is safe because printing a condition lowers
+    // nothing -- `emit_expr` touches neither the builder nor the name counter (measured
+    // 2026-09-08); only `build_value` lowers, and a condition never goes through it.
+    ro cond = Cond.Expr(kids[1])
+    ro braced = if has_else { else_is_braced(kids[4]) } else { false }
+    ro c = match outer {
+        None => @ir.begin_if(cond, has_else, braced)
+        // THE door for "else, then a chain" -- until 2026-09-08 this pair was opened by
+        // hand here and in `lower_if_let`, while the door itself had only a test as its
+        // caller (class #991: one concept, two implementations).
+        Some(o) => @ir.begin_else_if(o, cond, has_else, braced)
+    }
+    // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
+    // caller printed, so it starts without the indent the top-level `if` carries.
+    @emit_block_stmts_fn(kids[2], false)
+    if has_else {
+        // The closing brace and the `else` share one line -- the one shape of else
+        // (M2b-2-0). Until then the statement `if` printed `}` and `else` on two lines
+        // while the if-value printed `} else {`; the oracle's recorded C has 41 753
+        // `} else {` and no bare `else {`, so the second shape was novac's own, and a
+        // single printing walk would have needed a flag to reproduce it.
+        // The ELSE branch, since 2026-08-18. Before that the parser did not
+        // read `else` at all; reading it without writing it here would have
+        // been worse than not reading it -- the branch would vanish from the
+        // C in silence, which is the class this compiler keeps finding in
+        // others.
+        @lower_else_tail(c, kids[4])
+    } else {
+        // No else branch was written: the else block IS the join.
+    }
+    @ir.end_if(c)
+}
+
+/// What follows `else` -- ONE door for the `if` and the `if let` (until
+/// M2b-1b each printed its own copy of this and the two had drifted: the `if`
+/// iced on an `else if let` tail the `if let` accepted). Three shapes are
+/// legal and ALL are named: a block, a chained `if`, a chained `if let`.
+/// Anything else is an invariant break, and it says so -- an `else` standing
+/// for "every other node kind" is what P21 refuses, because the next kind
+/// added to the tree would quietly land in it.
+fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
+    // The caller printed `    } else ` already: this door prints only what follows.
+    ro tk = tail.kind_of()
+    if tk == NodeKind.Block {
+        @ir.begin_else(c)
+        @emit_block_stmts_fn(tail, false)
+    } else if tk == NodeKind.IfStmt {
+        @lower_if(tail, Some(c))
+    } else if tk == NodeKind.IfLet {
+        // C has no `else <declaration>`: the chained if-let's FIRST line is
+        // the declaration of its Option temporary, and printed bare after
+        // `else` it is not a statement -- clang refuses the unit. Found by
+        // the M2b-1b probe (2026-09-06): the two copies of this tail had
+        // accepted the form and printed it unbraced since the else branch
+        // was added, and no corpus file carried it (registry #991: one
+        // concept, two implementations, the copy not knowing a fact the
+        // original knew). The braces give the temporary a block of its own;
+        // the IR already had that block -- the outer else.
+        @lower_if_let(tail, Some(c))
+    } else {
+        ice("emit: the else branch is neither a block nor a chained if / if-let")
+    }
+}
+
+/// One `if Some(v) = expr { ... }` (wave M2b-1b, from emit_iflet.nv): the
+/// Option lands in its own binding through the placement door, the branch
+/// tests `IsSome` of that local, and the binder is a binding local assigned
+/// the payload -- three IR statements where the printer used to spell three
+/// lines by hand. The C is the same: `T tmp = <init>;`, the Some-test
+/// through the ONE Option door (emit_option.nv, wave W4), `P v = tmp.value;`.
+/// INTEROP, named as such: `.tag`/`.value` are the shell's Option ABI
+/// (`NovaOpt_X{.tag,.value}`, read off shell.tpl.c); goes the day novac emits
+/// the whole prelude.
+fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[6]
+    ro ot = @out.type_of(init.id_of())
+    ro payload = @ctx.tys.arg(ot, 0)
+    ro has_else = kids.len() > 9
+    // THE ELSE BRANCH IS OPENED BY THE DOOR, NOT HERE (fix 2026-09-08, ICE «a block sealed
+    // twice (it already jumps)» on `novac/fixtures/iflet_else/pos_2.nv`). Until the door
+    // `@begin_else_if` existed, this function opened the pair «else, then a chain» by hand:
+    // `begin_else` here, the chained `if` below. The door now does BOTH, so the call here was
+    // the second half of a pair whose first half had moved -- `begin_else` ran twice and the
+    // second `@close` hit a block already sealed with `Goto`. The door stays whole; the
+    // leftover half goes. For a non-chained if-let (`outer == None`) nothing changes at all.
+    //
+    // A temporary of the body, named by its index (274.8 M3): the Option of an
+    // `if let` is the compiler's, not the author's.
+    ro lo = @ir.temp(ot)
+    // Recorded first, printed from the record -- the same door the plain `if` uses
+    // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
+    // `option_some_test` reads the local's type and name, which is what it was passed.
+    ro cond = Cond.IsSome(lo)
+    ro braced = if has_else { else_is_braced(kids[9]) } else { false }
+    // THE TEMPORARY BELONGS TO THE ELSE BLOCK, and under the walk that is decided by
+    // MEMBERSHIP rather than by the moment of printing (found 2026-09-09, the last divergence
+    // of step 3b: `NovaOpt T2 = b;` printed one line ABOVE its `} else {` in
+    // `novac/fixtures/iflet_else/pos_2.nv`). The note this replaced said the declaration
+    // `belongs to the block that precedes the branch` -- true while printing was immediate,
+    // false once the walk prints from sealed blocks: for a CHAIN that preceding block is the
+    // outer then-branch.
+    //
+    // So the composition `begin_else_if` is UNROLLED across these three steps, and the
+    // statement lands between its halves. This is not a return to the shape that iced on
+    // 2026-09-08 (`a block sealed twice (it already jumps)`): that defect was `begin_else`
+    // running TWICE -- by hand here and again inside the door. Each half runs exactly once.
+    match outer {
+        None => {
+            // Not chained: nothing to open, the temporary belongs where the source wrote it.
+        }
+        Some(o) => @ir.begin_else(o)
+    }
+    @lower_place(init, lo)
+    ro c = match outer {
+        None => @ir.begin_if(cond, has_else, braced)
+        Some(o) => @ir.begin_chained_if(cond, has_else, o.join, braced)
+    }
+    // NOT chained for the purpose of PRINTING, even when `outer` is Some -- braced, not continued.
+    // A chained plain `if` continues the `} else ` line its caller printed, so it carries no
+    // indent; a chained `if let` is wrapped in braces by `lower_else_tail` (`{` before it,
+    // `    }` after), because C has no `else <declaration>` and an if-let's first line IS the
+    // declaration of its Option temporary -- unbraced, clang refuses the unit (registry
+    // #991, found by the M2b-1b probe). Inside those braces the head starts a NEW line and
+    // keeps its indent. Measured, not reasoned: passing `chained_of(outer)` here made the
+    // corpus C differ in exactly one file (fixtures/iflet_else/pos_2), the hunk being this
+    // lost indent.
+    // The binder: the checker bound it to the payload type, this door spells
+    // what was decided.
+    ro bv = @ir.named(payload, leaf_text(kids[3]))
+    @ir.take_payload(bv, lo)
+    @emit_block_stmts_fn(kids[7], false)
+    if has_else {
+        @lower_else_tail(c, kids[9])
+    } else {
+        // No else branch was written: the else block IS the join.
+    }
+    @ir.end_if(c)
+}
+
+/// One `while`: the header block carries the loop, the body jumps back.
+fn Lowerer mut @lower_while(st Node) -> () {
+    ro kids = branch_children(st)
+    // Recorded first, printed from the record (M2b-2 step 3a).
+    ro head = LoopHead.While(kids[1])
+    ro c = @ir.begin_loop(head)
+    @emit_block_stmts_fn(kids[2], false)
+    @ir.end_loop(c)
+}
+
+/// One `for v in lo..hi`: the loop variable is a binding local of the body,
+/// the bounds stay tree expressions (the M1 bridge), the header carries the
+/// range form so the printer spells C's `for` and not a `while`.
+fn Lowerer mut @lower_for_range(kids []Node) -> () {
+    ro v = leaf_text(kids[1])
+    ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
+    // The loop variable is a binding local of the body, and the head is printed from the
+    // record that carries it (M2b-2 step 3a).
+    ro lv = @ir.named(@ctx.prims.int_id, v)
+    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] })
+    ro c = @ir.begin_loop(head)
+    @emit_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}
+
+/// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
+/// ONCE into a TEMPORARY through the placement door, the index is a temporary of
+/// int, the element is the author's binding, the header carries all three, and the
+/// body starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
+/// shell's `get(...).value` by the one assignment printer. The C is the same
+/// walk `emit_for_call` spelled by hand: `T <vec> = <head>;`, `for (nova_int <idx>
+/// = 0; <idx> < len(<vec>); <idx>++) {`, `E v = get(<vec>, <idx>).value;` -- the
+/// two temporaries are numbered by the body, so no name is spelled here (274.8 M3).
+/// The element type is the CHECKER's decision (`for_head_elem`), not a second
+/// derivation here (hunt emit_c x K4, 2026-09-04).
+fn Lowerer mut @lower_for_each(kids []Node) -> () {
+    ro head = kids[3]
+    ro ht = @out.type_of(head.id_of())
+    ro elem_t = for_head_elem(@ctx, ht)
+    // Both the collection and the index are TEMPORARIES of the body, named by their
+    // indices (274.8 M3). Only the element keeps `named`: `for v in xs` -- `v` is the
+    // author's word, and that is the one question `LocalKind` still answers.
+    ro lv = @ir.temp(ht)
+    @lower_place(head, lv)
+    // All three locals of the walk exist before the head is printed, because the head is
+    // printed FROM the record that names them (M2b-2 step 3a).
+    ro li = @ir.temp(@ctx.prims.int_id)
+    ro le = @ir.named(elem_t, leaf_text(kids[1]))
+    ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
+    ro c = @ir.begin_loop(lh)
+    @ir.take_elem(le, lv, li)
+    @emit_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}
+
+/// One `return`: the value lands in the return place through the one door
+/// (274.8 M1) -- a bare `return` spells the unit itself -- and the block ends
+/// with `Return`; what the source wrote after it lands in a fresh block.
+fn Lowerer mut @lower_return(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() > 1 {
+        @lower_place(kids[1], @ir.ret_place())
+    } else {
+        // A BARE `return` RECORDS AND PRINTS NOTHING HERE (2026-09-09). It used to print
+        // `return NOVA_UNIT;` on the spot, and under the walk that landed the line right
+        // after the opening brace -- before every statement -- so the function returned
+        // immediately and skipped its body. Legal Nova, wrong C, and no corpus file had
+        // the form: a grep for a bare `return` found zero carriers, which is why every
+        // green measurement of this wave was silent about it. The `Return` terminator is
+        // what the walk prints from, and it prints the same for a body that just ends.
+    }
+    @ir.ret()
+}
+
+/// One `match`, in either position. `dest` is the local the arms' values land in -- a
+/// TEMPORARY of the body, numbered by the builder -- or `no_local()` in statement
+/// position, where the arms run for effect and nothing holds an answer; declaring a
+/// variable for an answer nobody asked for is the shape this compiler keeps refusing
+/// elsewhere (wave B5).
+///
+/// This doc used to say the caller declared `_novac_match_t<uniq>` and that `uniq` named
+/// the scrutinee, the result AND the flag. Two of those three moved on 2026-09-09: the
+/// scrutinee and the result are temporaries numbered by their own index, and only the
+/// printer's `matched` flag is still spelled from `uniq` -- which the BUILDER now mints,
+/// so this function no longer takes it. What has not changed is why the number exists at
+/// all: it must be unique per body, because Nova lets a name be bound twice in one
+/// scope (F30) and a C variable declared twice in one block is invalid C from legal
+/// Nova.
+///
+/// WHAT HOLDS IT MECHANICALLY, and what does not. A number invented here can never
+/// enter the author's door: `named` refuses invented names by guard
+/// [INV-GUARD: check-novac-invented-name-not-named], which reddens on a literal, on an
+/// interpolated name and on a missing door. The MIRROR half -- that a generated name
+/// never coincides with a name the author wrote -- holds by construction today (every
+/// generated name carries the `_novac_` prefix, which the checker forbids in source
+/// identifiers) and is NOT machine-checked here; that is said out loud rather than
+/// implied by the mark.
+fn Lowerer mut @lower_match(m Node, dest Local) -> () {
+    ro kids = branch_children(m)
+    ro scr = kids[1]
+    ro scr_t = @out.type_of(scr.id_of())
+    // The scrutinee lands in a binding ONCE through the one door: every arm
+    // tests the same value, and a call in the scrutinee runs one time.
+    // THE SCRUTINEE IS A TEMPORARY OF THE COMPILER, and it can finally say so (2026-09-09).
+    // `_novac_scr_t7` was never a name the author wrote, yet `named` was the only door that
+    // kept a declaration -- because `kind` decided both the name and the declaration point.
+    // `DeclAt` now carries the point, so a `Temp` declared at its first assignment is
+    // expressible, and this line stops lying about who invented the name.
+    //
+    // Slice M2c tried exactly this move and the C stopped compiling: `nova_int T1 = n;`
+    // became `T1 = n;`, the declaration gone. That failure is the both-ways proof of the
+    // separation -- the same edit is correct only after it.
+    ro ls = @ir.temp(scr_t)
+    @lower_place(scr, ls)
+    if dest != no_local() {
+        // The result temporary is declared with its type AND zero-initialised
+        // (274.3/F29): a match on `int` may legally leave values uncovered --
+        // both compilers accept `match n { 1 => 10  2 => 20 }` -- and the
+        // oracle answers 0 there; an uninitialised temporary answered whatever
+        // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
+        // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
+        // created the local, this door records WHERE it is declared and that it starts
+        // at zero -- the reason is on `DeclAt.Zeroed`.
+        @ir.declare_zeroed(dest)
+    } else {
+        // Statement position: no result, nothing to declare.
+    }
+    // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
+    // arm that held; the `Switch` means first-match by construction.
+    ro c = @ir.begin_switch(ls)
+    for a in kids {
+        if a.kind_of() != NodeKind.MatchArm { continue }
+        @lower_arm(a, scr_t, ls, c, dest)
+    }
+    @ir.end_switch(c)
+}
+
+/// The guard of an arm, if the source wrote one -- found by walking the arm's
+/// children once; a function with returns, so no Option local is ever
+/// reassigned (the oracle miscompiles that shape today, check.nv notes it).
+fn Lowerer @guard_of(ak []Node) -> Option[Node] {
+    for g in ak {
+        if g.kind_of() == NodeKind.Guard {
+            return Some(branch_children(g)[1])
+        }
+    }
+    None
+}
+
+/// What the arm's pattern IS -- decided once, before anything is printed. The
+/// head is asked of the MATCHED SUM through the checker's own door (wave B6,
+/// #964): the emitter does not consult the name table, so the two passes
+/// cannot disagree on which row a head names. A disjunction's other heads
+/// travel with the variant; the checker held every binder of one to `_`.
+fn Lowerer @pattern_of(pat []Node, scr_t TyId) -> Pattern {
+    ro p0 = pat[0]
+    if is_int_lit(p0) {
+        return Pattern.Lit(p0)
+    }
+    if !is_ident_leaf(p0) {
+        ice("emit_c: match pattern is neither an int literal nor an identifier")
+    }
+    match variant_in_sum(@ctx, scr_t, leaf_text(p0)) {
+        Some(vrow) => {
+            mut also = []VariantRow.new()
+            for hi in disj_head_slots(pat) {
+                match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
+                    None => {}
+                    Some(hrow) => also.push(hrow)
+                }
+            }
+            Pattern.Variant(VariantMatch { head: vrow, also })
+        }
+        None => {
+            // Not a variant head: a name binds the scrutinee, `_` binds nothing.
+            if leaf_text(p0) != "_" { Pattern.Bind } else { Pattern.Wild }
+        }
+    }
+}
+
+/// Lowers ONE arm of a `match`: records it into the IR, prints its head, then binds
+/// whatever the pattern introduces -- a variant's payload fields, or the scrutinee
+/// under a new name for a plain binder, or nothing at all for a literal or `_` --
+/// emits the body into `dest`, and sets the printer's first-match flag. A guard, if
+/// written, wraps the body in a branch of its own.
+/// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
+/// so that a single later walk can print every arm without reading the tree again.
+fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
+    ro ak = branch_children(arm)
+    ro pat = branch_children(ak[0])
+    ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
+    ro guard = @guard_of(ak)
+    ro pattern = @pattern_of(pat, scr_t)
+    // Recorded first, printed from the record (M2b-2 step 3a). The test itself already
+    // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
+    // PLACE of the printing, which is what lets one walk print every arm later.
+    @ir.begin_arm(c, pattern, guard)
+    match pattern {
+        Variant(vm) => {
+            if !pattern_has_disj(pat) {
+                // Unpack payload fields onto the arm's binders, in order:
+                // binder names sit after '(' in the pattern; field types are
+                // the variant's rows of the flat context. Each binder is a
+                // Binding local assigned the field through the one assignment
+                // printer (M2b-1d).
+                mut binders = []str.new()
+                for j in 2..pat.len() {
+                    // [LEGACY-#676] var-index-method: same workaround as in
+                    // collect_types: variable-index receiver miscompiles.
+                    ro pj = pat[j]
+                    match pj.ident_str() {
+                        Some(binder) => binders.push(binder)
+                        None => {}
+                    }
+                }
+                mut pi = 0
+                for bname in binders {
+                    ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
+                    ro lb = @ir.named(bt, bname)
+                    @ir.take_field(lb, ls, vm.head, pi)
+                    pi += 1
+                }
+            } else {
+                // A disjunction unpacks nothing: the checker held every
+                // binder to `_`.
+            }
+        }
+        Bind => {
+            // Plain binder: the scrutinee under a new name -- the first real
+            // use of the operand rvalue.
+            ro lb = @ir.named(scr_t, leaf_text(pat[0]))
+            @ir.copy(lb, ls)
+        }
+        Lit(_) => {
+            // An int literal introduces no name: the test IS the whole arm.
+        }
+        Wild => {
+            // The wildcard introduces no name either.
+        }
+    }
+    match guard {
+        Some(g) => {
+            // The guard's head is an `if` like any other: it goes through the ONE head
+            // door (`@print_if_head`, emit_flow.nv), which until this step was the third
+            // place spelling `    if (` + condition + `) {` by hand.
+            ro gcond = Cond.Expr(g)
+            // A guard has no else branch, so the bit is not read; passed explicitly so
+            // no default is left for someone to interpret later.
+            ro gi = @ir.begin_if(gcond, false, false)
+            @lower_arm_body(arm_e, dest)
+            @ir.end_if(gi)
+        }
+        None => {
+            @lower_arm_body(arm_e, dest)
+        }
+    }
+    @ir.end_arm(c)
+}
+
+/// The BODY of one arm: assigned to the result local in value position,
+/// run for effect in statement position (wave B5). A statement arm's body
+/// may be a block (`{}` included) or a single statement, and both go through
+/// the doors that already print those shapes.
+fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
+    if dest != no_local() {
+        // The arm's value lands in the match local through the one door.
+        @lower_place(arm_e, dest)
+        return
+    } else {
+        // Statement position: the body runs, and nothing holds its answer.
+    }
+    // TERMINATOR, not an else: the two shape guards meet on a node-kind test
+    // (274.5 section 2g), and a `return` satisfies both.
+    if arm_e.kind_of() == NodeKind.Block {
+        @emit_block_stmts_fn(arm_e, false)
+        return
+    }
+    @emit_stmt(arm_e)
+}
+
+/// Records `dest = e` in the lowered body and prints it at once -- the
+/// streaming bridge of waves M1/M2a: statements are lowered and printed one
+/// by one until M2b prints sealed blocks.
+fn Lowerer mut @lower_place(e Node, dest Local) -> () {
+    // THE SOURCE IS RESOLVED FIRST (prerequisite 5): a value form that lays down blocks
+    // is lowered NOW and the assignment reads the local it produced, through the operand
+    // rvalue door `@ir.copy`. Otherwise the tree node stays the source -- the M1 bridge,
+    // printed inline by `@emit_expr`.
+    match @lower_value_source(e, @ir.decl_of(dest).ty) {
+        Some(l) => @ir.copy(dest, l)
+        None => @ir.place(e, dest)
+    }
+}
+
+/// Records an expression evaluated for its effects.
+///
+/// `println` IS NOT AN ORDINARY CALL and does not go through `eval` (M3a): its output
+/// interleaves with the effects of building its arguments, and that interleaving is
+/// observable, so it becomes a SEQUENCE of statements rather than one expression the
+/// printer takes apart.
+fn Lowerer mut @lower_eval(e Node) -> () {
+    if is_println_call(e) {
+        @lower_println(e)
+        return
+    }
+    @ir.eval(e)
+}
+
+/// Lowers one `println` into the sequence it IS: per argument, whatever the argument needs
+/// laid down first, then that argument's own output statement; one newline at the end.
+///
+/// WHY A SEQUENCE AND NOT ONE CALL. Hoisting the whole call up front ran a constructor
+/// argument's effects AHEAD of its neighbours' prints -- the oracle printed `head` then
+/// ticked, novac ticked first (hunt emit_c x K1, finding H1). The order of output against
+/// argument effects is therefore observable, and an observable order belongs in the
+/// channel: here each argument's lowering lands immediately before ITS OWN output
+/// statement, so the interleaving holds by construction instead of by the printer's care.
+///
+/// A construction (an array literal, a record or positional record, an interpolation) is
+/// still printed from the tree and hoisted by the printer right before its own output line
+/// -- that is legal, because a hoist only PRINTS TEXT and print order is the walk's order.
+/// `??` is the one form that could not stay: it LOWERS. It leaves through the one door
+/// above, and this is why the two refusals of step 3b close.
+fn Lowerer mut @lower_println(call Node) -> () {
+    for c in branch_children(call) {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit {
+            // THE CHANNEL FIRST, AND THE FORM ONLY WHERE IT IS SILENT -- and it is silent
+            // about exactly ONE literal. Measured 2026-09-09 in `check/typing.nv:836-850`:
+            // the argument loop of `println` RECORDS a numeric or char literal through the
+            // full `type_of` (all four kinds, plus the half where the POSITION dictates a
+            // width), and skips only a STRING one -- deliberately, and its comment says why:
+            // "the emitter never asks its type", because the only consumer took the pool
+            // slot by shape.
+            //
+            // So asking the door for EVERY literal, as the first edition of this line did,
+            // computed a second answer to a question the channel had already decided -- the
+            // very `decide it twice` this channel's doctrine exists to prevent. Asking the
+            // channel first also makes the workaround DIE ON ITS OWN: when the type of a
+            // string literal is published (marker `[M-strlit-node-has-no-type]`), this
+            // `else` stops executing and no consumer needs editing.
+            //
+            // The fallback judges the LAST leaf, as the checker does: a negated literal
+            // arrives as `[Minus, lit]`.
+            ro known = @out.type_if_known(c.id_of())
+            ro lty = if is_ty(known) {
+                known
+            } else {
+                ro lk_kids = branch_children(c)
+                literal_prim_of(leaf_kind(lk_kids[lk_kids.len() - 1]), @ctx)
+            }
+            @ir.output(Operand.Tree(c), lty)
+        } else if is_expr_kind(ck) {
+            ro ty = @out.type_of(c.id_of())
+            match @lower_value_source(c, ty) {
+                Some(l) => @ir.output(Operand.Place(l), ty)
+                None => @ir.output(Operand.Tree(c), ty)
+            }
+        } else {
+            match c {
+                Leaf(_) => {
+                    // The callee leaf and the parenthesis leaves are not arguments.
+                }
+                Branch { .. } => {
+                    // The checker refuses every branch it cannot type in an argument
+                    // position (#870), so a branch here is a broken invariant rather than
+                    // a shape to skip -- the silent fallout this arm replaces printed `ab`
+                    // for `a20b`.
+                    ice("emit_c: an argument form the checker let through (#870)")
+                }
+            }
+        }
+    }
+    @ir.output_end()
+}
+
+/// THE LOWERING HALF of the dispatch on the form of a value: a `match` and an `if` in value
+/// position lay down blocks of the body, so they are resolved WHILE LOWERING and hand back
+/// the local that holds the result. Prerequisite 5 of M2b-2 step 3b: after the walk prints
+/// from sealed blocks, a printer that lowered would push into a FINISHED builder -- the
+/// blocks would be recorded and never printed. The forms that only PRINT stay in
+/// `build_value` below, which is the other half.
+fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
+    ro k = e.kind_of()
+    if k == NodeKind.MatchExpr {
+        // The match is a Switch of the lowered body (274.8 M2b-1d); its result local is
+        // recorded here, assigned in each arm through the one door.
+        ro t = @ir.temp(ty)
+        @lower_match(e, t)
+        return Some(t)
+    }
+    if k == NodeKind.Coalesce {
+        // `??` LOWERS -- it lays down a Some-test with two branches -- so it cannot be
+        // printed inline, and under the walk of step 3b a printer that lowered would push
+        // into a FINISHED builder. That is not a guess: the door refused with
+        // `lower: a block sealed twice (it already returns)` on both corpus carriers of the
+        // form `println(x ?? y)` (measured 2026-09-09). Answering here puts `??` on the ONE
+        // door for every value position at once -- the class, not the two carriers.
+        return Some(@emit_coalesce(e))
+    }
+    if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
+        // A tail `if` and an if-expression lay down the same pair (wave B14); the door
+        // hands back the local it declared.
+        return Some(@emit_if_value(e, ty))
+    }
+    None
+}
+
+/// Whether a block's last statement is its VALUE: an expression, a positional
+/// record, a tail `if`, or a match the checker typed (an untyped tail match is
+/// a statement whose arms leave through `return`, 274.5 wave B9).
+fn Lowerer @tail_places_value(c Node) -> bool {
+    ro k = c.kind_of()
+    is_value_tail_kind(k) || k == NodeKind.IfStmt ||
+        (k == NodeKind.MatchExpr && is_ty(@out.type_if_known(c.id_of())))
+}
+
+/// Is the tail of an `else` a braced shape -- a block or a chained `if let`? A question
+/// about the SHAPE of a node, so it travels with the lowering. It lived in `emit_c/` as a
+/// private helper and was almost left behind: the closure measure counted `@method(` calls
+/// and a free function is invisible to it.
+fn else_is_braced(tail Node) -> bool {
+    ro k = tail.kind_of()
+    k == NodeKind.Block || k == NodeKind.IfLet
+}
