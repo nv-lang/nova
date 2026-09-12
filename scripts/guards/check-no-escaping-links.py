@@ -31,8 +31,11 @@ import re
 import subprocess
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+# `newline="\n"` обязателен: без него вердикт уезжает CRLF на Windows, и его
+# читатели (гейт, CI) видят не ту строку, что страж печатал. Поймано
+# check-guard-honesty при первом же прогоне гейта.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-no-escaping-links"
 LINK = re.compile(r"\]\(([^)\s]+)\)")
