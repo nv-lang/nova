@@ -643,6 +643,15 @@
 #   v reestre. Stroka NE utverzhdaet, chto moy push eto vylechit -- check-commit-refs
 #   sam preduprezhdaet, chto lokal'no schitaet po VSEM vetkam, vklyuchaya vetki
 #   sosedey, kotorykh na CI net (ego zamer: lokal'no 803, na CI 828).
-rows=1029
-max=1075
+# 2026-09-13 (integrator, pozdnee): rows -> 1031, max -> 1077. Dve stroki po
+#   voprosu vladel'tsa pro `import mod`, obe podtverzhdeny PROBOY:
+#   1076 -- goloe imya rezolvitsya, khotya D289 trebuet dostupa tol'ko cherez
+#   mod.Foo (realizatsiya SLABEE normy, prinimaet nadmnozhestvo);
+#   1077 -- kvalifitsirovannyy TIP mod.Type dayot zelyonyy check i ronyaet
+#   C-kompilyator (use of undeclared identifier 'Nova_thing_Widget'), pri tom
+#   chto kvalifitsirovannyy VYZOV v tom zhe fayle rabotaet -- eto razryv kanala,
+#   a ne probel grammatiki. BLOKIRUET TEG: DA. Proby:
+#   docs/plans/repro/1076-import-qualification/.
+rows=1031
+max=1077
 gaps=174-208,210-215,653-654,743,1062,1074
