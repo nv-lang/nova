@@ -620,3 +620,328 @@ fn pow10(n int) -> u64 {
     }
     r
 }
+
+// ═══ `f32` (plan 285 Ф.2): the same shape, a second constant set ═══
+//
+// Donor: `ryu/f2s.c` at the same pinned commit. It is the same five steps as `d2d`
+// with three differences, and each one is the donor's, not a liberty taken here:
+// the arithmetic is 32-bit, there is no small-integer fast path, and the digit that
+// was removed LAST is computed up front in a branch `d2d` does not have.
+//
+// NO TABLES ARE ADDED. The donor's default 32-bit path multiplies by the HIGH words
+// of the `f64` tables in the peer `pow5_split_table.nv` -- `+ 1` on the inverse side
+// -- with the bit counts derived as `DOUBLE_* - 64`. The separate `FLOAT_POW5_*`
+// tables it ships belong to an optional build flag and are NOT what it uses; that
+// was checked by numbers, and the peer file records the check.
+
+const FLOAT_MANTISSA_BITS = 23
+const FLOAT_EXPONENT_BITS = 8
+const FLOAT_BIAS = 127
+
+/// A decimal `mantissa * 10^exponent` for `f32` -- the donor's `floating_decimal_32`.
+type FloatingDecimal32(mantissa u32 = 0, exponent int = 0)
+
+/// Number of decimal digits in `v`, at most nine; donor `decimalLength9`.
+///
+/// Nine digits round-trip every `f32`, so the chain is shorter than its `f64` peer
+/// by eight comparisons -- the same shape, a different bound.
+fn decimal_length9(v u32) -> int {
+    if v >= 100000000 { return 9 }
+    if v >= 10000000 { return 8 }
+    if v >= 1000000 { return 7 }
+    if v >= 100000 { return 6 }
+    if v >= 10000 { return 5 }
+    if v >= 1000 { return 4 }
+    if v >= 100 { return 3 }
+    if v >= 10 { return 2 }
+    1
+}
+
+/// Donor `mulShift32`: the high part of `m * factor`, shifted right by `shift`.
+///
+/// The factor is split into 32-bit halves BY DESIGN, not for tidiness: `m` is at
+/// most 25 bits here and the factor is a full 64, so the direct product would need
+/// 89 bits and overflow. Splitting keeps every intermediate inside 64. The donor
+/// asserts `shift > 32`, and every caller below satisfies it by construction.
+fn mul_shift_32(m u32, factor u64, shift int) -> u32 {
+    ro mask = 0xFFFFFFFF as u64
+    ro factor_lo = factor & mask
+    ro factor_hi = factor >> 32
+    ro bits0 = (m as u64) * factor_lo
+    ro bits1 = (m as u64) * factor_hi
+    ro sum = (bits0 >> 32) + bits1
+    (sum >> (shift - 32)) as u32
+}
+
+/// Donor `mulPow5InvDivPow2` in its DEFAULT spelling: the high word of the `f64`
+/// inverse table plus one. The `+ 1` is the donor's and load-bearing -- the inverse
+/// multipliers are `[2^x / 5^y] + 1`, and the high word alone is the floor.
+fn mul_pow5_inv_div_pow2(m u32, q int, j int) -> u32 =>
+    mul_shift_32(m, DOUBLE_POW5_INV_SPLIT_HI[q] + 1, j)
+
+/// Donor `mulPow5divPow2`, default spelling: the high word of the forward table.
+fn mul_pow5_div_pow2(m u32, i int, j int) -> u32 =>
+    mul_shift_32(m, DOUBLE_POW5_SPLIT_HI[i], j)
+
+/// Donor `pow5factor_32`: how many times 5 divides `value`, by plain division.
+///
+/// The `f64` peer rotates factors out with the inverse of five modulo 2^64; here
+/// the donor divides instead, and that difference is kept rather than unified --
+/// whether either is faster is a question for the measurement in Ф.5.
+fn pow5_factor_32(value_in u32) -> int {
+    mut value = value_in
+    mut count = 0
+    while true {
+        ro q = value / 5
+        ro r = value - 5 * q
+        if r != 0 { break }
+        value = q
+        count += 1
+    }
+    count
+}
+
+fn multiple_of_power_of_5_32(value u32, p int) -> bool => pow5_factor_32(value) >= p
+
+fn multiple_of_power_of_2_32(value u32, p int) -> bool =>
+    (value & ((1 as u32 << p) - 1)) == 0
+
+/// Shortest decimal `(mantissa, exponent)` for an `f32`; donor `f2d`.
+fn f2d(ieee_mantissa u32, ieee_exponent int) -> FloatingDecimal32 {
+    mut e2 = 0
+    mut m2 = 0 as u32
+    if ieee_exponent == 0 {
+        e2 = 1 - FLOAT_BIAS - FLOAT_MANTISSA_BITS - 2
+        m2 = ieee_mantissa
+    } else {
+        e2 = ieee_exponent - FLOAT_BIAS - FLOAT_MANTISSA_BITS - 2
+        m2 = (1 as u32 << FLOAT_MANTISSA_BITS) | ieee_mantissa
+    }
+    ro even = (m2 & 1) == 0
+    ro accept_bounds = even
+
+    // Step 2: the interval. Unlike `d2d`, the donor materialises all three bounds
+    // here rather than deriving them inside the multiply.
+    ro mv = 4 * m2
+    ro mp = 4 * m2 + 2
+    ro mm_shift = if ieee_mantissa != 0 || ieee_exponent <= 1 { 1 } else { 0 }
+    ro mm = 4 * m2 - 1 - (mm_shift as u32)
+
+    // Step 3: to a decimal power base, in 64-bit intermediates.
+    mut vr = 0 as u32
+    mut vp = 0 as u32
+    mut vm = 0 as u32
+    mut e10 = 0
+    mut vm_is_trailing_zeros = false
+    mut vr_is_trailing_zeros = false
+    mut last_removed_digit = 0 as u32
+
+    if e2 >= 0 {
+        ro q = log10_pow2(e2)
+        e10 = q
+        ro k = FLOAT_POW5_INV_BITCOUNT + pow5_bits(q) - 1
+        ro i = -e2 + q + k
+        vr = mul_pow5_inv_div_pow2(mv, q, i)
+        vp = mul_pow5_inv_div_pow2(mp, q, i)
+        vm = mul_pow5_inv_div_pow2(mm, q, i)
+        if q != 0 && (vp - 1) / 10 <= vm / 10 {
+            // One removed digit is needed even when the loop below does not run.
+            // The donor explains why it is recomputed rather than carried: doing it
+            // with `q - 1` above would need 33 bits, and 32-bit arithmetic measured
+            // faster even on 64-bit machines.
+            ro l = FLOAT_POW5_INV_BITCOUNT + pow5_bits(q - 1) - 1
+            ro d = mul_pow5_inv_div_pow2(mv, q - 1, -e2 + q - 1 + l)
+            last_removed_digit = d - 10 * (d / 10)
+        }
+        if q <= 9 {
+            // The largest power of five fitting in 24 bits is 5^10; the donor is sure
+            // of 9, and a bound one is sure of is the one to port.
+            if mv - 5 * (mv / 5) == 0 {
+                vr_is_trailing_zeros = multiple_of_power_of_5_32(mv, q)
+            } else if accept_bounds {
+                vm_is_trailing_zeros = multiple_of_power_of_5_32(mm, q)
+            } else {
+                if multiple_of_power_of_5_32(mp, q) { vp -= 1 }
+            }
+        }
+    } else {
+        ro q = log10_pow5(-e2)
+        e10 = q + e2
+        ro i = -e2 - q
+        ro k = pow5_bits(i) - FLOAT_POW5_BITCOUNT
+        mut j = q - k
+        vr = mul_pow5_div_pow2(mv, i, j)
+        vp = mul_pow5_div_pow2(mp, i, j)
+        vm = mul_pow5_div_pow2(mm, i, j)
+        if q != 0 && (vp - 1) / 10 <= vm / 10 {
+            j = q - 1 - (pow5_bits(i + 1) - FLOAT_POW5_BITCOUNT)
+            ro d = mul_pow5_div_pow2(mv, i + 1, j)
+            last_removed_digit = d - 10 * (d / 10)
+        }
+        if q <= 1 {
+            // mv = 4 * m2 always has two trailing zero bits.
+            vr_is_trailing_zeros = true
+            if accept_bounds {
+                vm_is_trailing_zeros = mm_shift == 1
+            } else {
+                vp -= 1
+            }
+        } else if q < 31 {
+            vr_is_trailing_zeros = multiple_of_power_of_2_32(mv, q - 1)
+        }
+    }
+
+    // Step 4: shorten inside the interval.
+    mut removed = 0
+    mut output = 0 as u32
+    if vm_is_trailing_zeros || vr_is_trailing_zeros {
+        // The general case; the donor measures it at ~4.0% of inputs, which is far
+        // more often than the ~0.7% of the `f64` path.
+        while vp / 10 > vm / 10 {
+            vm_is_trailing_zeros = vm_is_trailing_zeros && vm - 10 * (vm / 10) == 0
+            vr_is_trailing_zeros = vr_is_trailing_zeros && last_removed_digit == 0
+            last_removed_digit = vr - 10 * (vr / 10)
+            vr = vr / 10
+            vp = vp / 10
+            vm = vm / 10
+            removed += 1
+        }
+        if vm_is_trailing_zeros {
+            while vm - 10 * (vm / 10) == 0 {
+                vr_is_trailing_zeros = vr_is_trailing_zeros && last_removed_digit == 0
+                last_removed_digit = vr - 10 * (vr / 10)
+                vr = vr / 10
+                vp = vp / 10
+                vm = vm / 10
+                removed += 1
+            }
+        }
+        if vr_is_trailing_zeros && last_removed_digit == 5 && vr - 2 * (vr / 2) == 0 {
+            // Round to even when the exact value is .....50..0.
+            last_removed_digit = 4
+        }
+        ro outside = vr == vm && (!accept_bounds || !vm_is_trailing_zeros)
+        output = vr + (if outside || last_removed_digit >= 5 { 1 as u32 } else { 0 as u32 })
+    } else {
+        while vp / 10 > vm / 10 {
+            last_removed_digit = vr - 10 * (vr / 10)
+            vr = vr / 10
+            vp = vp / 10
+            vm = vm / 10
+            removed += 1
+        }
+        output = vr + (if vr == vm || last_removed_digit >= 5 { 1 as u32 } else { 0 as u32 })
+    }
+
+    FloatingDecimal32(output, e10 + removed)
+}
+
+/// Donor `f2s_buffered_n` minus the printing: decode, then `f2d`.
+///
+/// `None` for zero, infinity and NaN, exactly as on the `f64` side and for the same
+/// reason -- how those LOOK is a surface decision, and ours differs from the donor's.
+/// There is no small-integer fast path here because the donor has none for `f32`.
+fn f32_shortest_digits(v f32) -> Option[FloatingDecimal32] {
+    ro bits = v.to_bits()
+    ro ieee_mantissa = bits & ((1 as u32 << FLOAT_MANTISSA_BITS) - 1)
+    ro exp_mask = (1 as u32 << FLOAT_EXPONENT_BITS) - 1
+    ro ieee_exponent = ((bits >> FLOAT_MANTISSA_BITS) & exp_mask) as int
+
+    if ieee_exponent == (1 << FLOAT_EXPONENT_BITS) - 1 { return None }
+    if ieee_exponent == 0 && ieee_mantissa == 0 { return None }
+    Some(f2d(ieee_mantissa, ieee_exponent))
+}
+
+/// Shortest round-trip rendering of `v` into `buf[0..cap)`, by the `%g` rules the
+/// current C helper `nova_f32_shortest` follows. Returns the bytes the full
+/// rendering needs; truncates rather than trapping, like its `f64` peer.
+///
+/// THE LAYOUT RULE WAS MEASURED SEPARATELY, not carried over. The helper for `f32`
+/// differs from the `f64` one in three ways at once -- it prints the DOUBLE value of
+/// the float, reads back through `strtof`, and escalates 7..9 instead of 7..17 --
+/// and any of the three could have moved the boundary. Measurement (plan 285 Ф.2):
+/// 59 786 values, four mismatches, all four subnormal. So `P = max(6, D)` holds for
+/// every normal value, and the subnormal band is the same already-settled class:
+/// the helper prints six digits of the exact value where the shortest form has
+/// fewer, and by `FloatKind.Shortest` the shortest form is what we owe.
+export fn f32_shortest_fmt(v f32, buf *mut u8, cap int) -> int
+    requires cap >= 0
+{
+    ro bits = v.to_bits()
+    ro negative = (bits >> 31) != 0
+    mut index = 0
+
+    match f32_shortest_digits(v) {
+        None => {
+            ro exp_mask = (1 as u32 << FLOAT_EXPONENT_BITS) - 1
+            ro ieee_exponent = ((bits >> FLOAT_MANTISSA_BITS) & exp_mask) as int
+            ro ieee_mantissa = bits & ((1 as u32 << FLOAT_MANTISSA_BITS) - 1)
+            if ieee_exponent == (1 << FLOAT_EXPONENT_BITS) - 1 {
+                if ieee_mantissa != 0 {
+                    put_at(buf, cap, 0, 'n' as u8)
+                    put_at(buf, cap, 1, 'a' as u8)
+                    put_at(buf, cap, 2, 'n' as u8)
+                    return 3
+                }
+                if negative { put_at(buf, cap, index, '-' as u8); index += 1 }
+                put_at(buf, cap, index, 'i' as u8)
+                put_at(buf, cap, index + 1, 'n' as u8)
+                put_at(buf, cap, index + 2, 'f' as u8)
+                return index + 3
+            }
+            if negative { put_at(buf, cap, index, '-' as u8); index += 1 }
+            put_at(buf, cap, index, '0' as u8)
+            index + 1
+        }
+        Some(fd) => {
+            if negative { put_at(buf, cap, index, '-' as u8); index += 1 }
+            ro mantissa = fd.mantissa as u64
+            ro digits = decimal_length9(fd.mantissa)
+            ro x = fd.exponent + digits - 1
+            ro precision = digits.max(6)
+
+            if x < -4 || x >= precision {
+                if digits == 1 {
+                    put_digits_back(buf, cap, index + 1, 1, mantissa)
+                    index += 1
+                } else {
+                    put_digits_back(buf, cap, index + digits + 1, digits - 1, mantissa)
+                    put_at(buf, cap, index, leading_digit(mantissa, digits))
+                    put_at(buf, cap, index + 1, '.' as u8)
+                    index += digits + 1
+                }
+                index + put_exponent(buf, cap, index, x)
+            } else if x >= 0 {
+                ro int_digits = x + 1
+                if digits <= int_digits {
+                    put_digits_back(buf, cap, index + digits, digits, mantissa)
+                    mut z = index + digits
+                    while z < index + int_digits {
+                        put_at(buf, cap, z, '0' as u8)
+                        z += 1
+                    }
+                    index + int_digits
+                } else {
+                    ro frac_digits = digits - int_digits
+                    put_digits_back(buf, cap, index + int_digits + 1 + frac_digits,
+                        frac_digits, mantissa)
+                    ro whole = mantissa / pow10(frac_digits)
+                    put_digits_back(buf, cap, index + int_digits, int_digits, whole)
+                    put_at(buf, cap, index + int_digits, '.' as u8)
+                    index + digits + 1
+                }
+            } else {
+                ro zeros = -x - 1
+                put_at(buf, cap, index, '0' as u8)
+                put_at(buf, cap, index + 1, '.' as u8)
+                mut z = index + 2
+                while z < index + 2 + zeros {
+                    put_at(buf, cap, z, '0' as u8)
+                    z += 1
+                }
+                put_digits_back(buf, cap, index + 2 + zeros + digits, digits, mantissa)
+                index + 2 + zeros + digits
+            }
+        }
+    }
+}
