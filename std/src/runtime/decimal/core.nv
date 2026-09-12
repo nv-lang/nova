@@ -276,6 +276,136 @@ export fn parse_digit_buf(s str) -> DigitBuf {
     d
 }
 
+/// The largest shift a single `left_shift`/`right_shift` is defined for.
+///
+/// Not a tuning knob: `TABLE_POW5` holds the digits of 5^1 through 5^60 and nothing
+/// beyond, so a larger shift reads past what the table knows and the answer is WRONG
+/// RATHER THAN REFUSED. The parser never noticed, because its own algorithm shifts in
+/// steps of at most 60 anyway; printing asks for shifts up to 1074, and the first
+/// attempt to do it in one call rendered `1e-5` as `184467440737096`.
+export const DECIMAL_MAX_SHIFT = 60
+
+/// Multiply by `2^e` for ANY `e`, positive or negative, in steps the tables support.
+///
+/// This is where the bound above belongs: in the buffer that owns the tables, not in
+/// each caller who has to remember it. A caller that forgets gets a silently wrong
+/// number, which is the worst kind of answer.
+export fn DigitBuf mut @shift_pow2(e int) -> () {
+    mut left = if e < 0 { -e } else { e }
+    while left > 0 {
+        ro step = left.min(DECIMAL_MAX_SHIFT)
+        if e > 0 { @left_shift(step) } else { @right_shift(step) }
+        left -= step
+    }
+}
+
+/// Round the buffer to `keep` significant digits, half to even.
+///
+/// This is what printing at a GIVEN precision needs and parsing never did: the parser
+/// rounds once, at the very end, into a 64-bit integer (`@round`), while a printer has
+/// to round the decimal itself and keep it a decimal.
+///
+/// `keep <= 0` means every significant digit is dropped. The result is zero unless the
+/// discarded head rounds up, and then it is a single `1` one place further left -- which
+/// is why `decimal_point` moves in that branch: `0.6` asked for zero digits is `1`, not
+/// `0`, and the point has to say so.
+///
+/// The carry can also lengthen the number from the other end (`9.99` kept to two digits
+/// is `10`), and that case shifts the digits right and moves the point as well. Both
+/// directions are the same fact: rounding changes the MAGNITUDE, not only the digits.
+export fn DigitBuf mut @round_to_digits(keep int) -> () {
+    if @num_digits == 0 { return }
+    if keep >= @num_digits { return }
+
+    mut round_up = false
+    if keep < 0 {
+        round_up = false
+    } else if keep == 0 {
+        round_up = @digits[0] > 5
+        if @digits[0] == 5 { round_up = @truncated || @num_digits > 1 }
+    } else {
+        ro first_dropped = @digits[keep]
+        round_up = first_dropped > 5
+        if first_dropped == 5 {
+            // Exactly half only when nothing follows and nothing was thrown away
+            // earlier; otherwise the true value is strictly above the half.
+            ro anything_after = keep + 1 < @num_digits || @truncated
+            round_up = anything_after || ((@digits[keep - 1] as int) & 1) != 0
+        }
+    }
+
+    if keep <= 0 {
+        @num_digits = 0
+        if round_up {
+            @digits[0] = 1
+            @num_digits = 1
+            @decimal_point += 1
+        }
+        @truncated = false
+        return
+    }
+
+    @num_digits = keep
+    @truncated = false
+    if !round_up {
+        @trim()
+        return
+    }
+
+    // Propagate the carry leftwards. A digit below nine absorbs it; a nine becomes
+    // ZERO and passes it on. Forgetting to zero the nines is not a small slip: the
+    // first draft of this loop only looked for a digit to increment, so `29` rounded
+    // up to `39` instead of `30`, and printing 0.3 at two places said 0.39. Caught by
+    // the differential against snprintf on the very first value it disagreed on.
+    mut i = keep - 1
+    while i >= 0 {
+        if @digits[i] < 9 {
+            @digits[i] += 1
+            @trim()
+            return
+        }
+        @digits[i] = 0
+        i -= 1
+    }
+    // Every kept digit was nine: the number becomes 1 followed by zeros, one decimal
+    // place longer than before.
+    @digits[0] = 1
+    @num_digits = 1
+    @decimal_point += 1
+}
+
+/// A buffer holding the exact integer `m` -- the seed the PRINTING side needs.
+///
+/// The parsing side enters through `parse_from`, because it starts from text. Printing
+/// starts from a mantissa that is already a number, and going through its decimal text
+/// would mean formatting an integer in order to format a float. This is the same buffer
+/// filled directly.
+///
+/// Digits come out least-significant first, so the length is counted before they are
+/// written and each one goes straight to its final place; no reversal, no scratch.
+export fn DigitBuf.from_u64(m u64) -> DigitBuf {
+    mut d = DigitBuf.new()
+    if m == 0 { return d }
+    mut n = 0
+    mut t = m
+    while t > 0 {
+        n += 1
+        t = t / 10
+    }
+    d.num_digits = n
+    // The value is `0.digits * 10^decimal_point`, so for an integer the point sits
+    // right after the last digit.
+    d.decimal_point = n
+    mut v = m
+    mut i = n - 1
+    while i >= 0 {
+        d.digits[i] = (v - 10 * (v / 10)) as u8
+        v = v / 10
+        i -= 1
+    }
+    d
+}
+
 // decimal_seq.rs `number_of_digits_decimal_left_shift`: how many new leading digits
 // `decimal * 2^shift` gains -- the table gives the count assuming the digits are below
 // 5^shift, and the comparison against the written-out 5^shift (TABLE_POW5) corrects it.

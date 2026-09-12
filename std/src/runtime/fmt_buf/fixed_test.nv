@@ -1,0 +1,104 @@
+#no_prelude
+module runtime.fmt_buf
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+import std.runtime.numeric
+import std.runtime.string
+
+// Дифференциал плана 285 Ф.4: НАШИ `%.*f` и `%.*e` против `snprintf`.
+//
+// ЭТАЛОН ВЗЯТ ПРЯМЫМ `extern`, А НЕ ЧЕРЕЗ `f64_fmt`. Обёртка сегодня отдаёт `Fixed` и
+// `Sci` в C, так что звать её было бы тем же самым — ровно до того дня, когда Ф.4
+// переключит и её. В Ф.3 этот случай уже случился: эталон дифференциала кратчайшей
+// записи звался через обёртку, и переключение сделало бы тест сравнением нашего кода с
+// самим собой — вечно зелёным и неотличимым от работающего. Прямая дверь к C-хелперу
+// не зависит от того, что делает обёртка.
+extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
+
+fn theirs_fixed(v f64, prec int) -> []u8 {
+    mut buf = []u8.new(cap: 512)
+    ro n = unsafe { nova_f64_fmt(v, buf.ptr(), 512, 1, prec) }
+    mut out = []u8.new(cap: 512)
+    for i in 0..n.min(512) {
+        out.push(unsafe { buf.ptr().read_at(i) })
+    }
+    out
+}
+
+fn theirs_sci(v f64, prec int) -> []u8 {
+    mut buf = []u8.new(cap: 512)
+    ro n = unsafe { nova_f64_fmt(v, buf.ptr(), 512, 2, prec) }
+    mut out = []u8.new(cap: 512)
+    for i in 0..n.min(512) {
+        out.push(unsafe { buf.ptr().read_at(i) })
+    }
+    out
+}
+
+fn ours_fixed(v f64, prec int) -> []u8 {
+    mut buf = []u8.new(cap: 512)
+    ro n = f64_fixed_fmt(v, buf.ptr(), 512, prec)
+    mut out = []u8.new(cap: 512)
+    for i in 0..n.min(512) {
+        out.push(unsafe { buf.ptr().read_at(i) })
+    }
+    out
+}
+
+fn ours_sci(v f64, prec int) -> []u8 {
+    mut buf = []u8.new(cap: 512)
+    ro n = f64_sci_fmt(v, buf.ptr(), 512, prec)
+    mut out = []u8.new(cap: 512)
+    for i in 0..n.min(512) {
+        out.push(unsafe { buf.ptr().read_at(i) })
+    }
+    out
+}
+
+test "285 F.4: fixed-форма совпадает с snprintf на сетке prec = 0..17" {
+    // Краевые случаи названы ПЛАНОМ заранее, а не подобраны после прогона: нуль и
+    // минус-нуль, значения, где округление уносит запятую (`9.99` при prec = 1),
+    // субнормали, `prec = 0`.
+    ro cases = []f64.of(
+        0.0, -0.0, 0.1, 0.2, 0.3, 0.5, 2.5, 1.005, 9.99, 9.995,
+        1.0 / 3.0, 1234567.89, 1.0e-5, 123456789012345.6,
+        3.141592653589793, 5.0e-324, 2.2250738585072014e-308,
+        9.007199254740993e15, -1.5, -0.25,
+    )
+    mut i = 0
+    while i < cases.len() {
+        ro v = cases[i]
+        mut p = 0
+        while p <= 17 {
+            assert(same(ours_fixed(v, p), theirs_fixed(v, p)),
+                "fixed-форма обязана совпасть с snprintf")
+            p += 1
+        }
+        i += 1
+    }
+}
+
+test "285 F.4: sci-форма совпадает с snprintf на той же сетке" {
+    ro cases = []f64.of(
+        0.0, -0.0, 0.1, 0.3, 2.5, 9.99, 9.995, 1.0 / 3.0,
+        1234567.89, 1.0e-5, 1.0e20, 3.141592653589793,
+        5.0e-324, 1.7976931348623157e308, -1.5,
+    )
+    mut i = 0
+    while i < cases.len() {
+        ro v = cases[i]
+        mut p = 0
+        while p <= 17 {
+            assert(same(ours_sci(v, p), theirs_sci(v, p)),
+                "sci-форма обязана совпасть с snprintf")
+            p += 1
+        }
+        i += 1
+    }
+}
+
+test "285 F.4: КОНТРОЛЬ — сверка умеет краснеть и на этой паре" {
+    // Без этого случая два зелёных выше не доказывают, что сравниваются РАЗНЫЕ
+    // производители: они прошли бы и на паре, где обе стороны — одна функция.
+    assert(!same(ours_fixed(0.1, 2), theirs_fixed(0.2, 2)), "сверка обязана видеть разницу")
+    assert(same(ours_fixed(0.1, 2), theirs_fixed(0.1, 2)), "и обязана видеть совпадение")
+}

@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Co-equal file of module `runtime.fmt_buf` (folder = one module).
+// Role: `%.*f` and `%.*e` -- printing a float at a GIVEN precision, without libc.
+//
+// WHY THIS IS NOT THE SHORTEST PRODUCER WITH A DIFFERENT TAIL. The plan for this phase
+// assumed fixed and scientific forms could be assembled from the shortest digits the Ryu
+// port already yields. Measurement on the acceptance grid (`prec = 0..17`) refuted it:
+// 34 mismatches of 216 for `%.*f`, 60 of 216 for `%.*e`. The shortest form carries as
+// many digits as READING IT BACK requires; a higher precision prints the digits of the
+// EXACT binary value. libc renders `0.1` at precision 17 as `0.10000000000000001`, while
+// the shortest form padded with zeros gives `0.10000000000000000`. Six digits cannot be
+// derived from one -- they have to be generated.
+//
+// SO THE DIGITS COME FROM EXACT DECIMAL ARITHMETIC, and that already existed: wave 283
+// built it for the slow path of PARSING, and plan 285 Ф.4 moved it to its own home,
+// `runtime.decimal`. The bound is the same in both directions -- a binary64 value needs
+// at most 767 decimal digits to be written exactly, which is why that buffer holds 768.
+// Nothing here was ported a second time.
+//
+// WHAT IS NOT HERE: the surface. Width, fill, sign and the `${x:.2}` mini-language stay
+// in `core.nv` and in the unified formatter (D422); this file answers only "which bytes
+// are the digits of `v` at precision `prec`".
+
+#no_prelude
+module runtime.fmt_buf
+
+import std.runtime.numeric
+import std.runtime.decimal
+
+/// The exact decimal value of `v`, as `m * 2^e` expanded in full.
+///
+/// Both halves are exact: the mantissa seeds the buffer as an integer, and the binary
+/// exponent is applied by the same shift the parser uses in the other direction. No
+/// rounding happens here -- that is the caller's decision, at its own position.
+fn exact_decimal_of(v f64) -> DigitBuf {
+    ro bits = v.to_bits()
+    ro ieee_mantissa = bits & ((1 as u64 << DOUBLE_MANTISSA_BITS) - 1)
+    ro exp_mask = (1 as u64 << DOUBLE_EXPONENT_BITS) - 1
+    ro ieee_exponent = ((bits >> DOUBLE_MANTISSA_BITS) & exp_mask) as int
+
+    mut m = 0 as u64
+    mut e2 = 0
+    if ieee_exponent == 0 {
+        // Subnormal: no implicit leading one, and the exponent is the fixed floor.
+        m = ieee_mantissa
+        e2 = 1 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS
+    } else {
+        m = (1 as u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa
+        e2 = ieee_exponent - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS
+    }
+
+    mut d = DigitBuf.from_u64(m)
+    // `shift_pow2` and NOT `left_shift`/`right_shift` directly: a single shift is
+    // defined only up to `DECIMAL_MAX_SHIFT`, because the tables stop at 5^60, and a
+    // larger one is silently wrong rather than refused. Printing needs up to 1074.
+    // The first version of this function called `right_shift(-e2)` in one go and
+    // rendered `1e-5` as `184467440737096`.
+    d.shift_pow2(e2)
+    d
+}
+
+/// Writes the non-finite spellings this module already uses, or `-1` when `v` is finite.
+///
+/// Shared by both forms below rather than written twice: `nan` and `inf` do not depend
+/// on precision, and two copies of that would be two places to disagree.
+fn put_non_finite(v f64, buf *mut u8, cap int) -> int {
+    ro bits = v.to_bits()
+    ro exp_mask = (1 as u64 << DOUBLE_EXPONENT_BITS) - 1
+    ro ieee_exponent = ((bits >> DOUBLE_MANTISSA_BITS) & exp_mask) as int
+    if ieee_exponent != (1 << DOUBLE_EXPONENT_BITS) - 1 { return -1 }
+
+    ro ieee_mantissa = bits & ((1 as u64 << DOUBLE_MANTISSA_BITS) - 1)
+    if ieee_mantissa != 0 {
+        put_at(buf, cap, 0, 'n' as u8)
+        put_at(buf, cap, 1, 'a' as u8)
+        put_at(buf, cap, 2, 'n' as u8)
+        return 3
+    }
+    mut index = 0
+    if (bits >> 63) != 0 {
+        put_at(buf, cap, 0, '-' as u8)
+        index = 1
+    }
+    put_at(buf, cap, index, 'i' as u8)
+    put_at(buf, cap, index + 1, 'n' as u8)
+    put_at(buf, cap, index + 2, 'f' as u8)
+    index + 3
+}
+
+/// `%.*f` -- positional form with exactly `prec` digits after the point.
+///
+/// Returns the bytes the full rendering needs; like the rest of this module it truncates
+/// rather than trapping, so a return above `cap` means the caller's buffer was short.
+export fn f64_fixed_fmt(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+{
+    ro special = put_non_finite(v, buf, cap)
+    if special >= 0 { return special }
+
+    mut index = 0
+    if (v.to_bits() >> 63) != 0 {
+        put_at(buf, cap, index, '-' as u8)
+        index += 1
+    }
+
+    mut d = exact_decimal_of(v)
+    // Round where the requested precision ends. `decimal_point + prec` is the count of
+    // significant digits that survive; rounding may move the point (9.99 at one digit
+    // after the point is 10.0), so the point is read back AFTERWARDS.
+    d.round_to_digits(d.decimal_point + prec)
+    ro dp = d.decimal_point
+
+    if dp <= 0 {
+        put_at(buf, cap, index, '0' as u8)
+        index += 1
+    } else {
+        for i in 0..dp {
+            ro digit = if i < d.num_digits { d.digits[i] } else { 0 as u8 }
+            put_at(buf, cap, index, 48 + digit)
+            index += 1
+        }
+    }
+
+    if prec > 0 {
+        put_at(buf, cap, index, '.' as u8)
+        index += 1
+        for k in 0..prec {
+            // Position `dp + k` is negative for the leading zeros of a value below one,
+            // and beyond `num_digits` once the exact expansion has ended; both read as
+            // zero, which is what those places are.
+            ro pos = dp + k
+            ro digit = if pos >= 0 && pos < d.num_digits { d.digits[pos] } else { 0 as u8 }
+            put_at(buf, cap, index, 48 + digit)
+            index += 1
+        }
+    }
+    index
+}
+
+/// `%.*e` -- scientific form with exactly `prec` digits after the point.
+export fn f64_sci_fmt(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+{
+    ro special = put_non_finite(v, buf, cap)
+    if special >= 0 { return special }
+
+    mut index = 0
+    if (v.to_bits() >> 63) != 0 {
+        put_at(buf, cap, index, '-' as u8)
+        index += 1
+    }
+
+    mut d = exact_decimal_of(v)
+    // Zero has no significant digit to lead with, and its exponent is zero by
+    // convention rather than by computation.
+    ro is_zero = d.num_digits == 0
+    if !is_zero { d.round_to_digits(prec + 1) }
+    ro x = if is_zero { 0 } else { d.decimal_point - 1 }
+
+    ro lead = if is_zero || d.num_digits == 0 { 0 as u8 } else { d.digits[0] }
+    put_at(buf, cap, index, 48 + lead)
+    index += 1
+
+    if prec > 0 {
+        put_at(buf, cap, index, '.' as u8)
+        index += 1
+        for k in 1..=prec {
+            ro digit = if !is_zero && k < d.num_digits { d.digits[k] } else { 0 as u8 }
+            put_at(buf, cap, index, 48 + digit)
+            index += 1
+        }
+    }
+    index + put_exponent(buf, cap, index, x)
+}
