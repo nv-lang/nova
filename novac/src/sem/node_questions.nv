@@ -1,0 +1,110 @@
+module novac.sem
+
+import ../builtins.{PRINT_FN}
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+
+/// ВОПРОСЫ О ТОМ, ЧТО УЗЕЛ ЕСТЬ -- семья предикатов с ответом да/нет.
+///
+/// Отделены от `slots.nv` 2026-09-13, когда тот перешёл предел в 1000 строк: предмет там другой
+/// -- извлечение и разбор (слоты, дети, тексты), а здесь СУЖДЕНИЕ о виде узла. Резать по смыслу
+/// велит страж размера файла, и он же запрещает базлайн и исключение.
+///
+/// СЕМЬЯ РАСТЁТ, и растёт по правилу: три предиката из шести заведены за сутки, потому что
+/// понижение спрашивает у КАНАЛА, что узел значит, вместо того чтобы выводить это самому
+/// (правило плана 196, этап Э2-б1). Новый вопрос такого рода приходит сюда, а не к потребителю.
+
+/// Is this child of a call an ARGUMENT? Two shapes are: a bare expression, and
+/// a NAMED argument (`by: 2`), which is a node WRAPPING one.
+///
+/// A door because the answer used to be `is_expr_kind(c.kind_of())` at four
+/// call sites, and a named argument is not an expression kind -- so every one of
+/// them counted the arguments of `f(1, by: 2)` as one.
+export fn is_arg_node(c Node) -> bool =>
+    is_expr_kind(c.kind_of()) || c.kind_of() == NodeKind.NamedArg
+
+/// The kinds a VALUE TAIL may have -- `is_expr_kind` plus the one positional
+/// record literal the tail chain returns since B15 step 4b. ONE door for the
+/// three askers that used to spell the disjunction each on their own (the tail
+/// rule, the `=>` body's typing, the emitter's body arm), and two of them had
+/// not: the body was never typed and never built, and iced after a green check
+/// (#974). NOT folded into `is_expr_kind` -- that list is read by many walks,
+/// and a kind put into it moves silently into every general arm (B13).
+export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
+
+/// Node kinds that stand as expressions (argument/operand positions).
+/// THE TYPE A LITERAL TOKEN STANDS FOR -- the ONE home of the four-way table (D44:
+/// an undecided literal is its own kind, `int` and `f64`).
+///
+/// Two consumers ask it, and that is why it is here rather than in either of them: the
+/// checker's `type_of` (after the channel had no type for the position) and the lowering
+/// of a `println` argument (where there IS no position type -- `println` is a builtin name
+/// with no registry row, so nothing can dictate a width). A copy in the second consumer
+/// would be a second home for one rule, and the first edit to part them would be the day
+/// a new literal kind arrives in one place and not the other.
+///
+/// A table maps, so it is a match -- and its leftover branch is a REFUSAL, not a guess
+/// (P21: a wildcard may only carry `None` where the type declares partiality).
+/// ЛИСТ ЕСТЬ ЦЕЛОЧИСЛЕННЫЙ ЛИТЕРАЛ? Вопрос о СМЫСЛЕ узла, и отвечает на него канал, а не
+/// потребитель. Заведено 2026-09-10 ради переезда понижения: `lower` не имеет ребра к `lex`
+/// по таблице архитектуры, а `pattern_of` сравнивал вид листа с `TokenKind.IntLit` напрямую.
+/// Просить НОВОЕ ребро значило бы менять архитектуру ради одного сравнения — это слово
+/// владельца; спросить канал предикатом можно и нужно, он уже отвечает на соседние вопросы
+/// о листе (`leaf_kind`, `literal_prim_of`).
+export fn is_int_lit(n Node) -> bool => leaf_kind(n) == TokenKind.IntLit
+
+/// ЛИСТ ЕСТЬ ИМЯ? Пара к `is_int_lit`, заведена тем же переездом и по той же причине: образец
+/// арма — либо литерал, либо имя варианта, и оба вопроса принадлежат каналу.
+export fn is_ident_leaf(n Node) -> bool => leaf_kind(n) == TokenKind.Ident
+
+export fn is_expr_kind(k NodeKind) -> bool {
+    // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
+    // `||` on the next line is parsed as something else entirely (the oracle
+    // answered E_CLOSURE_SCALAR_RETURN), and parentheses around a multi-line
+    // chain are refused outright.
+    k == NodeKind.Paren ||
+    k == NodeKind.Unary ||
+    k == NodeKind.Bin ||
+    k == NodeKind.Lit ||
+    k == NodeKind.Name ||
+    k == NodeKind.Call ||
+    k == NodeKind.MethodCall ||
+    k == NodeKind.FieldAccess ||
+    // `@field` is an EXPRESSION, and saying so here is what lets an
+    // expression-bodied method (`fn Box @size() -> int => @n`) reach the
+    // emitter at all: without it the body was "neither a match nor an
+    // expression" and iced (wave 3g, measured 2026-08-23).
+    k == NodeKind.SelfField ||
+    k == NodeKind.SelfExpr ||
+    k == NodeKind.InterpStr ||
+    // `a ?? b` is an expression, and its VALUE is what the argument or the
+    // binding reads -- the emitter hoists it into a temporary the way it
+    // hoists an interpolation chain (the coalesce wave).
+    k == NodeKind.Coalesce ||
+    k == NodeKind.MatchExpr ||
+    // An array literal is an expression since wave B8 let it stand in
+    // argument and constructor-field position; the walks that skip
+    // non-expressions must not skip it, or its type is never recorded.
+    k == NodeKind.ArrayLit ||
+    // A RECORD CONSTRUCTOR joins it for the same reason in wave B13, and the
+    // measurement that found this is worth keeping: `grab(P { n: 7 })` was
+    // refused with "this call omits `p`" -- not because the constructor was
+    // rejected, but because the argument COUNT never saw it. Counting goes
+    // through `is_arg_node`, `is_arg_node` asks here, and a form missing from
+    // this list is not refused anywhere. It is simply not there.
+    k == NodeKind.RecordCtor ||
+    k == NodeKind.Cast
+}
+
+/// Callee text of a Call node's children (leaf or Name-branch callee).
+/// ЭТО ВЫЗОВ `println` В ИСХОДНИКЕ? Вопрос о смысле узла, и канал на него отвечает — ровно как
+/// на `is_int_lit`. Заведено 2026-09-10 ради переезда понижения: `lower` не имеет ребра к
+/// `builtins`, а `lower_eval` сравнивал имя вызываемого с `PRINT_FN` напрямую.
+///
+/// И существенное про сам `PRINT_FN`: это НЕ C-имя, а имя функции ЯЗЫКА (`PRINT_FN = "println"`).
+/// Полдня он числился у меня знанием бэкенда только потому, что живёт в модуле `builtins`,
+/// — догадка по имени модуля, снятая чтением константы.
+export fn is_println_call(e Node) -> bool {
+    if e.kind_of() != NodeKind.Call { return false }
+    call_callee_text(branch_children(e)) == PRINT_FN
+}
