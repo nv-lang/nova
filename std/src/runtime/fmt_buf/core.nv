@@ -327,6 +327,11 @@ extern "C" fn nova_f32_fmt(v f32, buf *mut u8, cap int) -> int
 export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind.Shortest, prec int = -1) -> int
     requires cap >= 0
 {
+    // Plan 285 Ф.3: the shortest round-trip digits are OURS now -- the port of Ryu
+    // in the peer `shortest.nv`, judged against this very C helper by the
+    // differential in `shortest_test.nv` before the switch was made. `Fixed` and
+    // `Sci` still cross into C; they lose `snprintf` in Ф.4.
+    if kind == FloatKind.Shortest { return f64_shortest_fmt(v, buf, cap) }
     ro k = match kind {
         FloatKind.Shortest => 0
         FloatKind.Fixed => 1
@@ -338,9 +343,11 @@ export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind
 /// `.nv`-side wrapper over `nova_f32_fmt` — shortest-only (f32 has no
 /// Fixed/Sci axis; the user-facing rich-spec path widens through f64
 /// instead). `unsafe fn` (raw `buf` write) — call-sites wrap in `unsafe { }`.
+/// Plan 285 Ф.3: `f32` has only the shortest kind, so this door is now entirely
+/// ours -- `nova_f32_fmt` keeps its C body only as the differential's reference.
 export unsafe fn f32_fmt(v f32, buf *mut u8, cap int) -> int
     requires cap >= 0
-    => unsafe { nova_f32_fmt(v, buf, cap) }
+    => f32_shortest_fmt(v, buf, cap)
 
 // ─── Debug-escape engine ──────────────────────────────────────────────
 //
