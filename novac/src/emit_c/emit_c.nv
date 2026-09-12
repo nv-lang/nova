@@ -346,7 +346,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
             // iced ("callee_of on a node with nothing recorded"). Nine probes
             // bisected it: the mode of the method and of the binding are not
             // the trigger, the trailing expression in a `-> ()` body is.
-            @lo.emit_block_stmts_fn(c, !@ctx.fns.is_entry_row(row) && !is_unit_ty(@ctx, ret))
+            @lo.lower_block_stmts_fn(c, !@ctx.fns.is_entry_row(row) && !is_unit_ty(@ctx, ret))
         } else if ck == NodeKind.FnExprBody {
             has_expr_body = true
             ro ek = branch_children(c)
@@ -482,7 +482,7 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 return
             }
             if kind == NodeKind.Coalesce {
-                @lit_tmp[raw_node(e.id_of())] = @lo.ir.decl_of(@lo.emit_coalesce(e)).name
+                @lit_tmp[raw_node(e.id_of())] = @lo.ir.decl_of(@lo.lower_coalesce(e)).name
                 return
             }
             if kind == NodeKind.Lit {

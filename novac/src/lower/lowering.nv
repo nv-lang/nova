@@ -23,7 +23,7 @@ import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_he
 
 /// tail=true: the LAST expression statement of an int fn body is its return
 /// value (Nova tail-expression semantics; arithmetic.nv relies on it).
-fn Lowerer mut @emit_block_stmts_fn(b Node, tail bool) -> () {
+fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
     ro kids = branch_children(b)
     mut last_branch = -1
     if tail {
@@ -60,7 +60,7 @@ fn Lowerer mut @emit_block_stmts_fn(b Node, tail bool) -> () {
                     // dispatch (`build_value` in emit_place.nv).
                     @lower_place(c, @ir.ret_place())
                 } else {
-                    @emit_stmt(c)
+                    @lower_stmt(c)
                 }
             }
         }
@@ -76,7 +76,7 @@ fn Lowerer mut @emit_block_stmts_fn(b Node, tail bool) -> () {
 /// held otherwise -- valid C, a different number per run, no diagnostic
 /// anywhere. Here BOTH branches always write, but the initialiser stays: it
 /// costs one C token and removes a whole class of question.
-fn Lowerer mut @emit_if_value(n Node, res_t TyId) -> Local {
+fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
     ro kids = branch_children(n)
     // The temporary is a LOCAL of the lowered body, and its DECLARATION is a statement of
     // that body (274.8 M2b-2 step 2): recorded here, printed by the one statement door. It
@@ -92,9 +92,9 @@ fn Lowerer mut @emit_if_value(n Node, res_t TyId) -> Local {
     // The else branch of an if-value is always a BLOCK printed as `} else {`, so it is
     // braced by construction -- not a guess, the next line prints the brace.
     ro c = @ir.begin_if(cond, true, true)
-    @emit_block_value(kids[2], t)
+    @lower_block_value(kids[2], t)
     @ir.begin_else(c)
-    @emit_block_value(kids[4], t)
+    @lower_block_value(kids[4], t)
     @ir.end_if(c)
     // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
     // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
@@ -106,11 +106,11 @@ fn Lowerer mut @emit_if_value(n Node, res_t TyId) -> Local {
 /// is emitted INSIDE the else branch, so its effects run only when the left
 /// side is None, which is what the oracle does and what a reader expects.
 ///
-/// The shape is `@emit_if_value`'s and the `(T){0}` initialiser is there for
+/// The shape is `@lower_if_value`'s and the `(T){0}` initialiser is there for
 /// the same reason: a temporary only conditionally written would otherwise
 /// answer whatever the stack held. Both branches always write here; the
 /// initialiser costs one C token and removes the question.
-fn Lowerer mut @emit_coalesce(e Node) -> Local {
+fn Lowerer mut @lower_coalesce(e Node) -> Local {
     ro qk = branch_children(e)
     ro ot = @out.type_of(qk[0].id_of())
     ro res_t = @out.type_of(e.id_of())
@@ -156,7 +156,7 @@ fn Lowerer mut @emit_coalesce(e Node) -> Local {
 /// `@emit_arm_value` writes `t = <expr>;` in one line. An `if` BRANCH is a
 /// block, and its value is whatever its last statement produces -- so the
 /// block has to be walked, and only its tail turned into an assignment.
-fn Lowerer mut @emit_block_value(b Node, t Local) -> () {
+fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
     ro kids = branch_children(b)
     mut last_branch = -1
     mut j = 0
@@ -178,7 +178,7 @@ fn Lowerer mut @emit_block_value(b Node, t Local) -> () {
                     // Everything before the tail runs for effect, and a tail
                     // that is not an expression is refused in `check` -- it
                     // never reaches here.
-                    @emit_stmt(c)
+                    @lower_stmt(c)
                 }
             }
         }
@@ -187,7 +187,7 @@ fn Lowerer mut @emit_block_value(b Node, t Local) -> () {
 }
 
 /// Emit one statement by node kind (call/if/while/return/bind/assign/for/expr).
-fn Lowerer mut @emit_stmt(st Node) -> () {
+fn Lowerer mut @lower_stmt(st Node) -> () {
     ro k = st.kind_of()
     if k == NodeKind.MatchExpr {
         // A match in STATEMENT position (274.5 wave B5): the arms run for
@@ -210,7 +210,7 @@ fn Lowerer mut @emit_stmt(st Node) -> () {
     } else if k == NodeKind.RetStmt {
         @lower_return(st)
     } else if k == NodeKind.BindStmt {
-        @emit_bind(st)
+        @lower_bind(st)
     } else if k == NodeKind.AssignStmt {
         // A store into a place the tree names (274.8 M2a): the target, the
         // operator and the value are recorded, the one printer spells them --
@@ -240,7 +240,7 @@ fn Lowerer mut @emit_stmt(st Node) -> () {
         // where it needs building, dropped, the effects in written order.
         @lower_eval(st)
     } else if k == NodeKind.DestructureBind {
-        @emit_destructure_bind(st)
+        @lower_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         // An if-let is a branch of the lowered body testing `IsSome` of the
         // local its Option landed in (274.8 M2b-1b, emit_flow.nv).
@@ -253,7 +253,7 @@ fn Lowerer mut @emit_stmt(st Node) -> () {
 /// Binding. A record-constructor initializer follows the oracle's tmp scheme
 /// (fixed point on records.nv); a match initializer follows the match
 /// scheme; everything else is a plain typed local.
-fn Lowerer mut @emit_bind(st Node) -> () {
+fn Lowerer mut @lower_bind(st Node) -> () {
     ro kids = branch_children(st)
     ro vname = leaf_text(kids[1])
     ro init = kids[kids.len() - 1]
@@ -278,7 +278,7 @@ fn Lowerer mut @emit_bind(st Node) -> () {
 /// POSITION it is the mono struct's `.fN`; by NAME it is the field itself,
 /// reached with `.` on an inline value and `->` on a GC pointer, exactly as
 /// every other field access is spelled.
-fn Lowerer mut @emit_destructure_bind(st Node) -> () {
+fn Lowerer mut @lower_destructure_bind(st Node) -> () {
     ro kids = branch_children(st)
     ro init = kids[kids.len() - 1]
     ro pt = @out.type_of(init.id_of())
@@ -343,7 +343,7 @@ fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     }
     // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
     // caller printed, so it starts without the indent the top-level `if` carries.
-    @emit_block_stmts_fn(kids[2], false)
+    @lower_block_stmts_fn(kids[2], false)
     if has_else {
         // The closing brace and the `else` share one line -- the one shape of else
         // (M2b-2-0). Until then the statement `if` printed `}` and `else` on two lines
@@ -374,7 +374,7 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
     ro tk = tail.kind_of()
     if tk == NodeKind.Block {
         @ir.begin_else(c)
-        @emit_block_stmts_fn(tail, false)
+        @lower_block_stmts_fn(tail, false)
     } else if tk == NodeKind.IfStmt {
         @lower_if(tail, Some(c))
     } else if tk == NodeKind.IfLet {
@@ -460,7 +460,7 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // what was decided.
     ro bv = @ir.named(payload, leaf_text(kids[3]))
     @ir.take_payload(bv, lo)
-    @emit_block_stmts_fn(kids[7], false)
+    @lower_block_stmts_fn(kids[7], false)
     if has_else {
         @lower_else_tail(c, kids[9])
     } else {
@@ -475,7 +475,7 @@ fn Lowerer mut @lower_while(st Node) -> () {
     // Recorded first, printed from the record (M2b-2 step 3a).
     ro head = LoopHead.While(kids[1])
     ro c = @ir.begin_loop(head)
-    @emit_block_stmts_fn(kids[2], false)
+    @lower_block_stmts_fn(kids[2], false)
     @ir.end_loop(c)
 }
 
@@ -490,7 +490,7 @@ fn Lowerer mut @lower_for_range(kids []Node) -> () {
     ro lv = @ir.named(@ctx.prims.int_id, v)
     ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] })
     ro c = @ir.begin_loop(head)
-    @emit_block_stmts_fn(kids[4], false)
+    @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)
 }
 
@@ -520,7 +520,7 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
     ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
     ro c = @ir.begin_loop(lh)
     @ir.take_elem(le, lv, li)
-    @emit_block_stmts_fn(kids[4], false)
+    @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)
 }
 
@@ -743,10 +743,10 @@ fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
     // TERMINATOR, not an else: the two shape guards meet on a node-kind test
     // (274.5 section 2g), and a `return` satisfies both.
     if arm_e.kind_of() == NodeKind.Block {
-        @emit_block_stmts_fn(arm_e, false)
+        @lower_block_stmts_fn(arm_e, false)
         return
     }
-    @emit_stmt(arm_e)
+    @lower_stmt(arm_e)
 }
 
 /// Records `dest = e` in the lowered body and prints it at once -- the
@@ -867,12 +867,12 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         // `lower: a block sealed twice (it already returns)` on both corpus carriers of the
         // form `println(x ?? y)` (measured 2026-09-09). Answering here puts `??` on the ONE
         // door for every value position at once -- the class, not the two carriers.
-        return Some(@emit_coalesce(e))
+        return Some(@lower_coalesce(e))
     }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
         // hands back the local it declared.
-        return Some(@emit_if_value(e, ty))
+        return Some(@lower_if_value(e, ty))
     }
     None
 }

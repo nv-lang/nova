@@ -11,10 +11,16 @@
 // structured control flow (`if`/`loop`/`block` with named exits), because
 // the printer targets structural C and must not rediscover the structure
 // from a flat graph (plan 274.8 section 2a).
-// Role: layer emit_c -- the lowering AND the printing of control flow. The
-//   dispatcher `emit_stmt` routes here; nothing here dispatches on node kind
-//   beyond the shape of the statement it was handed.
-// Used by: emit_c.nv (`emit_stmt`), nothing else.
+// Role: layer emit_c -- the PRINTING of control flow, and nothing else. All eight
+//   functions here are `print_*` on Emitter; the lowering that used to share this
+//   file left for lower/lowering.nv with the M3 move, and the file became a pure
+//   printer by SUBTRACTION rather than by rewriting -- which is the clearest
+//   evidence the move cut where the seam actually was.
+// Used by: emit_c.nv (`@print_body`, from `emit_callable`), nothing else. The
+//   lowering does NOT call in here: it raises builder events (`@ir.begin_if`),
+//   and the printer walks the finished body afterwards. lowering.nv names
+//   `@print_if_head` in a comment only -- an edge would break the M3 criterion
+//   and redden check-novac-deps.
 // Guarded by: check-novac-differential.sh, the corpus C diff of the wave,
 //   lower_test.nv (the graph shapes), check-novac-lowering-one-door.py.
 //
