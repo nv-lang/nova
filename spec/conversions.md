@@ -32,6 +32,8 @@ details in the "`from`/`try_from` naming" section below.
 | `consume @into_TARGET()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | declarative **implicit** zero-cost conversion in a position with a known expected type (view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
 
+> **Implicit coercion is a property of the POSITION, not of the value** (D429 R9/R10, owner 2026-09-10). In a position with a known expected type — a typed binding, an argument, a return — the bare value is the canonical form and the pair is inserted for you. Inside an expression there is no expected type, and the same operation is always written by its own name: `s.bytes().len()`, `sb.into_str().trim()`. `as` never invokes a `#coerce` pair (R10): `as` is the closed, spec-listed table of casts; a `#coerce` pair is user code. There is no third spelling by design.
+
 **Important (2026-07-06 retraction, see below):** `.from(v)` / `.try_from(v)` —
 this is a PAIR of concrete static methods on a concrete type, not a generic
 `From[T]`/`TryFrom[T,E]` protocol. The compiler does **not** synthesize the
