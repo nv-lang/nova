@@ -22,7 +22,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE, PRINT_FN}
 import ../names.{DeclId, raw_decl, no_decl, is_decl}
 import ../types.{TyId, no_ty, is_ty, same_ty, Interner}
 
@@ -640,6 +640,18 @@ export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == Node
 ///
 /// A table maps, so it is a match -- and its leftover branch is a REFUSAL, not a guess
 /// (P21: a wildcard may only carry `None` where the type declares partiality).
+/// ЛИСТ ЕСТЬ ЦЕЛОЧИСЛЕННЫЙ ЛИТЕРАЛ? Вопрос о СМЫСЛЕ узла, и отвечает на него канал, а не
+/// потребитель. Заведено 2026-09-10 ради переезда понижения: `lower` не имеет ребра к `lex`
+/// по таблице архитектуры, а `pattern_of` сравнивал вид листа с `TokenKind.IntLit` напрямую.
+/// Просить НОВОЕ ребро значило бы менять архитектуру ради одного сравнения — это слово
+/// владельца; спросить канал предикатом можно и нужно, он уже отвечает на соседние вопросы
+/// о листе (`leaf_kind`, `literal_prim_of`).
+export fn is_int_lit(n Node) -> bool => leaf_kind(n) == TokenKind.IntLit
+
+/// ЛИСТ ЕСТЬ ИМЯ? Пара к `is_int_lit`, заведена тем же переездом и по той же причине: образец
+/// арма — либо литерал, либо имя варианта, и оба вопроса принадлежат каналу.
+export fn is_ident_leaf(n Node) -> bool => leaf_kind(n) == TokenKind.Ident
+
 export fn literal_prim_of(lk TokenKind, ctx Ctx) -> TyId {
     match lk {
         StrLit => ctx.prims.str_id
@@ -696,6 +708,18 @@ export fn expr_leaf_name(e Node) -> str {
 }
 
 /// Callee text of a Call node's children (leaf or Name-branch callee).
+/// ЭТО ВЫЗОВ `println` В ИСХОДНИКЕ? Вопрос о смысле узла, и канал на него отвечает — ровно как
+/// на `is_int_lit`. Заведено 2026-09-10 ради переезда понижения: `lower` не имеет ребра к
+/// `builtins`, а `lower_eval` сравнивал имя вызываемого с `PRINT_FN` напрямую.
+///
+/// И существенное про сам `PRINT_FN`: это НЕ C-имя, а имя функции ЯЗЫКА (`PRINT_FN = "println"`).
+/// Полдня он числился у меня знанием бэкенда только потому, что живёт в модуле `builtins`,
+/// — догадка по имени модуля, снятая чтением константы.
+export fn is_println_call(e Node) -> bool {
+    if e.kind_of() != NodeKind.Call { return false }
+    call_callee_text(branch_children(e)) == PRINT_FN
+}
+
 export fn call_callee_text(kids []Node) -> str {
     match kids[0] {
         Leaf(t) => t.text

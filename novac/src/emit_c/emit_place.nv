@@ -26,10 +26,10 @@ import ../diag.{ice}
 import ../sem.{is_value_tail_kind, c_type, c_instance_method, raw_vrow, is_value_record}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
-import ../sem.{branch_children, call_callee_text, is_expr_kind, carrier_of}
+import ../sem.{branch_children, is_expr_kind, carrier_of, is_println_call}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt}
-import ../builtins.{VEC_GET_METHOD, PRINT_FN}
+import ../builtins.{VEC_GET_METHOD}
 
 /// Records `dest = e` in the lowered body and prints it at once -- the
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
@@ -52,7 +52,7 @@ fn Emitter mut @lower_place(e Node, dest Local) -> () {
 /// observable, so it becomes a SEQUENCE of statements rather than one expression the
 /// printer takes apart.
 fn Emitter mut @lower_eval(e Node) -> () {
-    if e.kind_of() == NodeKind.Call && call_callee_text(branch_children(e)) == PRINT_FN {
+    if is_println_call(e) {
         @lower_println(e)
         return
     }
