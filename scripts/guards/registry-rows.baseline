@@ -652,6 +652,13 @@
 #   chto kvalifitsirovannyy VYZOV v tom zhe fayle rabotaet -- eto razryv kanala,
 #   a ne probel grammatiki. BLOKIRUET TEG: DA. Proby:
 #   docs/plans/repro/1076-import-qualification/.
-rows=1031
-max=1077
+# 2026-09-13 (integrator): rows -> 1032, max -> 1078. Zavedena 1078: status
+#   plana v nekanonicheskoy razmetke (**Status: X** vmesto **Status:** X)
+#   nevidim generatoru svodki -- gen-plan-status.sh:100 beryot grep -m1 po
+#   kanonicheskomu shablonu. Zamer: 198 planov so statusom, u PYATI on tol'ko
+#   v nekanonicheskoy forme, a u 273 obe formy srazu i generator chitaet NE tu.
+#   Nayedeno pobochno pri pravke 272. Koren' tot zhe, chto u #730 (dva verdikta
+#   v stroke reestra), dom drugoy.
+rows=1032
+max=1078
 gaps=174-208,210-215,653-654,743,1062,1074
