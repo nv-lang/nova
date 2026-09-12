@@ -92,7 +92,17 @@ fn put_non_finite(v f64, buf *mut u8, cap int) -> int {
 ///
 /// Returns the bytes the full rendering needs; like the rest of this module it truncates
 /// rather than trapping, so a return above `cap` means the caller's buffer was short.
+/// Returns the number of bytes ACTUALLY WRITTEN, i.e. the full rendering clamped to
+/// `cap` -- the contract `f64_fmt` has always had and that `StringBuilder.advance`
+/// depends on: it moves the builder's length by this number, so a count above the
+/// buffer would claim bytes nobody wrote. The wave's first version returned the
+/// NEEDED length instead, which is a different and quieter promise; the clamp lives
+/// in one place per producer so the two cannot drift apart again.
 export fn f64_fixed_fmt(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+    => f64_fixed_needed(v, buf, cap, prec).min(cap)
+
+fn f64_fixed_needed(v f64, buf *mut u8, cap int, prec int) -> int
     requires cap >= 0
 {
     ro special = put_non_finite(v, buf, cap)
@@ -139,7 +149,17 @@ export fn f64_fixed_fmt(v f64, buf *mut u8, cap int, prec int) -> int
 }
 
 /// `%.*e` -- scientific form with exactly `prec` digits after the point.
+/// Returns the number of bytes ACTUALLY WRITTEN, i.e. the full rendering clamped to
+/// `cap` -- the contract `f64_fmt` has always had and that `StringBuilder.advance`
+/// depends on: it moves the builder's length by this number, so a count above the
+/// buffer would claim bytes nobody wrote. The wave's first version returned the
+/// NEEDED length instead, which is a different and quieter promise; the clamp lives
+/// in one place per producer so the two cannot drift apart again.
 export fn f64_sci_fmt(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+    => f64_sci_needed(v, buf, cap, prec).min(cap)
+
+fn f64_sci_needed(v f64, buf *mut u8, cap int, prec int) -> int
     requires cap >= 0
 {
     ro special = put_non_finite(v, buf, cap)

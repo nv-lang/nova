@@ -327,17 +327,23 @@ extern "C" fn nova_f32_fmt(v f32, buf *mut u8, cap int) -> int
 export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind.Shortest, prec int = -1) -> int
     requires cap >= 0
 {
-    // Plan 285 Ф.3: the shortest round-trip digits are OURS now -- the port of Ryu
-    // in the peer `shortest.nv`, judged against this very C helper by the
-    // differential in `shortest_test.nv` before the switch was made. `Fixed` and
-    // `Sci` still cross into C; they lose `snprintf` in Ф.4.
-    if kind == FloatKind.Shortest { return f64_shortest_fmt(v, buf, cap) }
-    ro k = match kind {
-        FloatKind.Shortest => 0
-        FloatKind.Fixed => 1
-        FloatKind.Sci => 2
+    // Plan 285 Ф.3 and Ф.4: every kind is OURS now -- the Ryu port in the peer
+    // `shortest.nv` for the shortest form, and the exact decimal of `runtime.decimal`
+    // for the two precision forms in `fixed.nv`. Each was judged against the C helper
+    // it replaces by a differential BEFORE the switch, and `nova_f64_fmt` stays in the
+    // runtime only as that differential's reference.
+    //
+    // THE PRECISION DEFAULTS AND CLAMPS ARE THE C ONES, deliberately: `prec < 0` means
+    // six places for both forms, `Fixed` clamps at 340 and `Sci` at 40. They are not
+    // ours to change here -- a formatter that quietly widened its own limits while
+    // "only" swapping the digit producer would be changing the surface after all.
+    ro p_fixed = if prec < 0 { 6 } else { prec.min(340) }
+    ro p_sci = if prec < 0 { 6 } else { prec.min(40) }
+    match kind {
+        FloatKind.Shortest => f64_shortest_fmt(v, buf, cap)
+        FloatKind.Fixed => f64_fixed_fmt(v, buf, cap, p_fixed)
+        FloatKind.Sci => f64_sci_fmt(v, buf, cap, p_sci)
     }
-    unsafe { nova_f64_fmt(v, buf, cap, k, prec) }
 }
 
 /// `.nv`-side wrapper over `nova_f32_fmt` — shortest-only (f32 has no

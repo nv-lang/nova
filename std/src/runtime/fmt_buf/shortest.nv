@@ -499,7 +499,17 @@ fn put_exponent(buf *mut u8, cap int, start int, x int) -> int {
 /// current C helper follows. Returns the number of bytes the full rendering needs;
 /// like the rest of this module it truncates rather than trapping, so a return
 /// value greater than `cap` means the caller's buffer was too small.
+/// Returns the number of bytes ACTUALLY WRITTEN, i.e. the full rendering clamped to
+/// `cap` -- the contract `f64_fmt` has always had and that `StringBuilder.advance`
+/// depends on: it moves the builder's length by this number, so a count above the
+/// buffer would claim bytes nobody wrote. The wave's first version returned the
+/// NEEDED length instead, which is a different and quieter promise; the clamp lives
+/// in one place per producer so the two cannot drift apart again.
 export fn f64_shortest_fmt(v f64, buf *mut u8, cap int) -> int
+    requires cap >= 0
+    => f64_shortest_needed(v, buf, cap).min(cap)
+
+fn f64_shortest_needed(v f64, buf *mut u8, cap int) -> int
     requires cap >= 0
 {
     ro bits = v.to_bits()
@@ -864,7 +874,17 @@ fn f32_shortest_digits(v f32) -> Option[FloatingDecimal32] {
 /// every normal value, and the subnormal band is the same already-settled class:
 /// the helper prints six digits of the exact value where the shortest form has
 /// fewer, and by `FloatKind.Shortest` the shortest form is what we owe.
+/// Returns the number of bytes ACTUALLY WRITTEN, i.e. the full rendering clamped to
+/// `cap` -- the contract `f64_fmt` has always had and that `StringBuilder.advance`
+/// depends on: it moves the builder's length by this number, so a count above the
+/// buffer would claim bytes nobody wrote. The wave's first version returned the
+/// NEEDED length instead, which is a different and quieter promise; the clamp lives
+/// in one place per producer so the two cannot drift apart again.
 export fn f32_shortest_fmt(v f32, buf *mut u8, cap int) -> int
+    requires cap >= 0
+    => f32_shortest_needed(v, buf, cap).min(cap)
+
+fn f32_shortest_needed(v f32, buf *mut u8, cap int) -> int
     requires cap >= 0
 {
     ro bits = v.to_bits()
