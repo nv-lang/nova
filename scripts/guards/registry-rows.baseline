@@ -631,6 +631,18 @@
 #   generiruemogo printf -- 6 mest v emit_c.rs, escape_c_str protsenty ne
 #   ekraniruet, i u tryokh mest posle formata idut NASTOYASHCHIE argumenty,
 #   tak chto `%` sdvigaet spisok. Okno 283 videlo simptom, klass izmeril ya.
-rows=1028
-max=1073
-gaps=174-208,210-215,653-654,743,1062
+# 2026-09-13 (integrator): rows -> 1029, max -> 1075, gaps += 1074.
+#   Nomer 1074 vydan oknu 274 pod defekt 'yarus geyta vybiraetsya po diapazonu
+#   ot protukhshego upstream vetki, a ne ot tochki integratsii' -- ikh stroka
+#   pridyot sliyaniem, poetomu 1074 obyavlen ZAKONNOY DYROY v gaps= i snimetsya
+#   tem sliyaniem, chto eyo prinesyot. Tot zhe poryadok, chto u 1060 i 1062.
+#   Zavedena 1075: nochnoy nova-gate na origin krasen TRI nochi podryad (10, 11,
+#   12 sentyabrya), oba otkaza -- pro nakoplenie nesvedyonnykh vetok, a ne pro
+#   kod; sudil golovu 6cf2ff0c1, starshe moikh kommitov. Zapis' obyazatel'na po
+#   pravilu samogo pre-push khuka: propusk CI-proverki zakonen TOL'KO s prichinoy
+#   v reestre. Stroka NE utverzhdaet, chto moy push eto vylechit -- check-commit-refs
+#   sam preduprezhdaet, chto lokal'no schitaet po VSEM vetkam, vklyuchaya vetki
+#   sosedey, kotorykh na CI net (ego zamer: lokal'no 803, na CI 828).
+rows=1029
+max=1075
+gaps=174-208,210-215,653-654,743,1062,1074
