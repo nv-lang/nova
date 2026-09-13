@@ -32,7 +32,7 @@
 module novac.sem
 
 import ../types.{TyId, no_ty, is_ty, Interner}
-import ../builtins.{TypeKind, OPTION_SUM, BuiltinType, prim_row}
+import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_VARIANT, RESULT_SUM, RESULT_OK_VARIANT, BuiltinType, prim_row}
 
 /// The ONE type argument of an arity-one instance, or no type: the question
 /// both the for-head judge and the Option judge ask (the second-door guard
@@ -57,6 +57,57 @@ export fn option_payload(ctx Ctx, t TyId) -> TyId {
     if !is_ty(arg) { return no_ty() }
     if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
     arg
+}
+
+/// THE VARIANT THAT CARRIES A VALUE in a container `??` unwraps -- `Some` for `Option`,
+/// `Ok` for `Result` -- or no variant when this type is not such a container.
+///
+/// THE ONE HOME OF D86's LIST. The decision reads: «`expr ?? fallback`: if `expr` is
+/// `Some(v)` OR `Ok(v)`, returns `v`» (04-effects.md:5222). Before this door that list
+/// existed as a single comparison against `OPTION_SUM` inside `option_payload`, which is
+/// how half the decision came to be implemented without anyone declaring the other half
+/// missing (registry 1084).
+///
+/// The ARITY is checked with the name because it is part of what the name means here: an
+/// `Option` of two arguments is not the language's Option, and answering for it would
+/// hand the caller a payload from a type nobody declared.
+export fn coalesce_ok_variant(ctx Ctx, t TyId) -> VariantRow {
+    if !is_ty(t) { return no_vrow() }
+    ro k = ctx.tys.kind_of(t)
+    ro is_app = match k {
+        TkApp => true
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple => false
+    }
+    if !is_app { return no_vrow() }
+    ro decl = decl_of_ty(ctx, t)
+    ro name = decl.name
+    ro arity = ctx.tys.arg_count(t)
+    // THE VARIANT REGISTRY IS KEYED BY THE DECLARATION, not by the instance: a row
+    // carries the sum term a declaration interned (`TypeDef.ty_id`), while `t` here is
+    // an application of it (`Option[int]`). Passing the instance answers None for every
+    // container -- which is exactly what the control half of the probe caught, by
+    // reddening the Option case this wave must not touch.
+    ro sum_t = decl.ty_id
+    if name == OPTION_SUM && arity == 1 {
+        return variant_in_sum(ctx, sum_t, OPTION_SOME_VARIANT) ?? no_vrow()
+    }
+    if name == RESULT_SUM && arity == 2 {
+        return variant_in_sum(ctx, sum_t, RESULT_OK_VARIANT) ?? no_vrow()
+    }
+    no_vrow()
+}
+
+/// THE PAYLOAD such a container carries -- the type `??` yields, and the type the
+/// fallback is checked against.
+///
+/// It asks `coalesce_ok_variant` rather than repeating the list: two doors that each
+/// know which types are containers part on the first edit, and this whole wave exists
+/// because one such list was written in one place and read as if it were the decision.
+/// Argument ZERO for both containers: `Option[T]` carries T, and `Result[T, E]` carries
+/// T in its `Ok` -- the failing side is absorbed (D86), so nothing here reads E.
+export fn coalesce_payload(ctx Ctx, t TyId) -> TyId {
+    if !is_vrow(coalesce_ok_variant(ctx, t)) { return no_ty() }
+    ctx.tys.arg(t, 0)
 }
 
 /// The ELEMENT a for-head vector carries: the single-argument door under its

@@ -43,7 +43,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty, same_ty}
-import ../sem.{option_payload}
+import ../sem.{coalesce_payload, option_payload}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
 import ../builtins.{BuiltinType, PrimFamily, FMT_PROTO, DISPLAY_METHOD}
@@ -414,12 +414,29 @@ fn Checker mut @type_expr(e Node) -> () {
             // A recovery shape with no fallback at all: the parser spoke.
         }
         ro lt = type_of(qk[0], @ctx, @scope, @chan)
-        ro payload = option_payload(@ctx, lt)
+        // THE CONTAINER DOOR, not the Option door (registry 1084, 2026-09-13). D86 gives
+        // `??` two containers -- `Some(v)` and `Ok(v)` both yield `v` -- and novac read
+        // only the first for eleven days, refusing the other with no stage and no reason
+        // recorded anywhere. The list of containers lives in `coalesce_ok_variant`; this
+        // rule asks it and does not repeat it.
+        ro payload = coalesce_payload(@ctx, lt)
         if !is_ty(payload) {
             @report_first_leaf_of(qk, COALESCE_NONOPT_MSG)
             return
         } else {
-            // An Option: its payload is this expression's type.
+            // A container: the payload of its value-carrying variant is this
+            // expression's type -- the LEFT side decides, never the fallback.
+        }
+        // AND THE EMITTER'S HALF, refused with its stage rather than accepted silently.
+        // The door above answers for both containers because that is what D86 says; the
+        // emitter can only spell one of them, and a `Result` reaching the Option door
+        // would compare `NOVA_TAG_Option_Some` against a `NovaRes_` struct. Refusing
+        // here keeps check and emit agreeing -- the class the registry calls O-1.
+        if !is_ty(option_payload(@ctx, lt)) {
+            @report_first_leaf_of(qk, COALESCE_RESULT_MSG)
+            return
+        } else {
+            // An Option: the one container the emitter spells today.
         }
         // THE LEFT OPERAND'S TYPE IS RECORDED, not left to the lattice: the
         // emitter declares the Option temporary from the channel, and a FREE

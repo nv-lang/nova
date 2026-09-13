@@ -77,6 +77,17 @@ export const OPTION_SOME_TAG_C = "NOVA_TAG_Option_Some"
 export const OPTION_NONE_TAG_C = "NOVA_TAG_Option_None"
 export const OPTION_SOME_VARIANT = "Some"
 
+/// THE OTHER CONTAINER `??` UNWRAPS (D86: the operator is a fallback for `Result` AND
+/// `Option`). Written 2026-09-13 for registry 1084: `Result` had no name here at all,
+/// while `Option` had five -- the same halfness that row records. Only the two names
+/// the wave reads are added: a C tag and a family prefix would be fields nobody reads,
+/// because the tag of a variant is printed through `c_tag(ctx, vrow)` from the registry.
+export const RESULT_SUM = "Result"
+/// The variant that CARRIES A VALUE, as `Some` does for `Option` -- what `??` unwraps
+/// and what `match` tests. Its twin `Err` is not named: the operator ABSORBS the error
+/// (D86), so nothing reads the failing variant by name.
+export const RESULT_OK_VARIANT = "Ok"
+
 /// The vector methods the for-over-a-call emission walks with (B16 wave,
 /// P5: std names live here, the emitter must not spell them itself).
 export const VEC_LEN_METHOD = "len"
