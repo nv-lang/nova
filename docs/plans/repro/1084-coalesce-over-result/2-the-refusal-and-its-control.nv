@@ -1,0 +1,10 @@
+module probe
+
+// ONE question only: is `Result` accepted as a TYPE, and what does `??` say over it.
+// No construction at all -- the previous probe built `Ok(7)` and was refused for
+// INFERENCE (E2-b3), which is a neighbouring question, not this one.
+fn f(r Result[int, str]) -> int => r ?? 0
+
+// The control half: the same shape over `Option`, which is known to work.
+// Without it a refusal of the first line could not be told from a broken probe.
+fn g(o Option[int]) -> int => o ?? 0
