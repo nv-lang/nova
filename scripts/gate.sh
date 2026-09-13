@@ -405,6 +405,14 @@ step loop "ABI-спеллинги прелюдии заморожены (Кар�
 guard "$ROOT/scripts/guards/check-oracle-abi-spellings.sh" "$ROOT" || fail "ABI-якорь прелюдии дрейфнул: интероп Карины сидит на этом спеллинге (см. шапку стража)"
 step loop "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
 guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
+# Замер на себе 2026-09-13: шаг для №1073 был написан через `run_guard` —
+# имя, которого в гейте нет. Оболочка вернула `command not found`, плечо
+# `|| fail` напечатало сообщение О ПРЕДМЕТЕ, и сломанная проводка стала
+# неотличима от найденного дефекта. Защита №645 внутри `guard` тут не
+# срабатывает: до неё управление не доходит. `bash -n` тоже молчит.
+step loop "имя, которым гейт зовёт стража, разрешимо (проводка != находка)"
+guard "$ROOT/scripts/guards/check-gate-guard-dispatcher.py" "$ROOT" \
+    || fail "шаг гейта зовёт стража именем, которого нет: отказ проводки печатается словами предмета"
 step loop "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
 guard "$ROOT/scripts/guards/check-guard-external-caller.py" "$ROOT" \
     || fail "стражей без внешнего вызывающего стало больше (docs/dev/gate-guard-conventions.md, Г8)"

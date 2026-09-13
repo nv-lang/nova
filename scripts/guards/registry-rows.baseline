@@ -700,6 +700,13 @@
 #   SVERENO moey proboy i proyavlenie vyshlo DRUGIM (u nikh stolknovenie, u menya
 #   nedostizhimost'). Nomer 1084 vydan oknu 274 pod suzhenie `??` do Option --
 #   ikh stroka pridyot sliyaniem, poetomu 1084 obyavlen ZAKONNOY DYROY, kak 1074.
-rows=1039
-max=1086
+# 2026-09-13 (integrator): rows -> 1040, max -> 1087, gaps bez izmeneniy.
+#   Odna stroka, zamer NA SEBE: 1087 -- shag geyta, zovushchiy strazha
+#   imenem kotorogo net, pechataet otkaz slovami SVOEGO PREDMETA, i
+#   slomannaya provodka stanovitsya neotlichima ot naydennogo defekta.
+#   Nositel' -- moy zhe shag dlya 1073, napisannyy cherez `run_guard`.
+#   Zakryta tem zhe sliyaniem: strazh check-gate-guard-dispatcher.py,
+#   199 strok-predmetov v dvukh geytakh, nerazreshimykh imyon 0.
+rows=1040
+max=1087
 gaps=174-208,210-215,653-654,743,1062,1074,1084
