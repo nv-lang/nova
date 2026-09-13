@@ -2967,7 +2967,7 @@ static nova_bool Nova_str_method_is_empty(nova_str nova_self) {
 
 static nova_str Nova_str_static_new(void) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    return (nova_str){.ptr=(const uint8_t*)"", .len=0};
+    return nova_str_of((const uint8_t*)"", 0);
 }
 
 static nova_char nova_fn_7runtime6string10cp_to_char(nova_int cp) {
@@ -3099,7 +3099,7 @@ static nova_str Nova_str_static_alloc_copy(const nova_byte* src, nova_int n) {
     if (!((n >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "alloc_copy", "n >= 0", "core.nv", 142, NULL);
     nova_unit _nv_if_113;
     if ((n == ((nova_int)0LL))) {
-        return (nova_str){.ptr=(const uint8_t*)"", .len=0};
+        return nova_str_of((const uint8_t*)"", 0);
     }
     (void)(_nv_if_113);
     nova_byte* _nv_tmp_114;
@@ -3112,14 +3112,14 @@ static nova_str Nova_str_static_alloc_copy(const nova_byte* src, nova_int n) {
         _nv_tmp_115 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_nonoverlapping(src, buf, n));
     }
     (void)(_nv_tmp_115);
-    nova_str _nv_tmp_116 = (nova_str){.ptr=(const uint8_t*)(buf), .len=(int64_t)(n)};
+    nova_str _nv_tmp_116 = nova_str_of((const uint8_t*)(buf), (int64_t)(n));
     nova_str _nv_tmp_117 = _nv_tmp_116;
     return _nv_tmp_117;
 }
 
 static nova_str Nova_str_static_new__const_nova_byte_p_nova_int(const nova_byte* buf, nova_int len) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    nova_str _nv_tmp_118 = (nova_str){.ptr=(const uint8_t*)(buf), .len=(int64_t)(len)};
+    nova_str _nv_tmp_118 = nova_str_of((const uint8_t*)(buf), (int64_t)(len));
     nova_str _nv_tmp_119 = _nv_tmp_118;
     return _nv_tmp_119;
 }
