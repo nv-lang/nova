@@ -719,6 +719,14 @@
 #   'syntax error: this is not a form of the language'. Ikh stroka pridyot
 #   sliyaniem, poetomu 1089 obyavlen ZAKONNOY DYROY -- tot zhe poryadok,
 #   chto u 1062, 1074 i 1084.
-rows=1041
-max=1088
+# 2026-09-13 (integrator): rows -> 1043, max -> 1091, gaps bez izmeneniy.
+#   Dve stroki po nakhodkam YARUSA PUSH, kotoryy yarus loop ne gonyaet:
+#   1090 -- svobodnaya funktsiya s imenem, stalkivayushchimsya so std,
+#   poluchaet mangl v OPREDELENII i goloe imya v MESTE VYZOVA (C ne
+#   linkuetsya, `nova check` zelyonyy); BLOKIRUET TEG: DA.
+#   1091 -- otladochnyy odnofaylovyy drayver padaet na LYUBOM fayle,
+#   vklyuchaya tryokhstrochnyy hello; kontrol' -- tot zhe fayl cherez
+#   release-drayver dayot PASS.
+rows=1043
+max=1091
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089
