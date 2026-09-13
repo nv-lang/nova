@@ -685,6 +685,14 @@
 #   instans; znachit `@self` -- pole s imenem self, kotorogo u summy net.
 #   Os' veroyatno SHIRE ikh pyati prob: nepokrytaya kletka -- '@nosuchfield'
 #   bez `match` i na value-zapisi. Progon otlozhen: slot derzhal chuzhoy yarus.
-rows=1036
-max=1082
+# 2026-09-13 (integrator): rows -> 1037, max -> 1083. Zavedena 1083:
+#   Result[<psevdonim ukazatelya>, <summa s nagruzkoy>] instantsiruetsya kak
+#   Result[int, str] -- oba argumenta svyornuty k PREDSTAVLENIYAM. Naydeno
+#   oknom 283, setka PERESOBRANA integratorom nezavisimo i soshlas' kletka v
+#   kletku (a/d/c zelyonye, b krasnaya). Ulika v C: nova_make_NovaRes_nova_int_
+#   nova_str_Err pri obyavlennom Result[CResultHandle, DuckError]. Klass --
+#   kanal 196, podklass: kodogen vyvodit DVAZHDY i dva vyvoda rashodyatsya.
+#   BLOKIRUET TEG: DA.
+rows=1037
+max=1083
 gaps=174-208,210-215,653-654,743,1062,1074
