@@ -733,6 +733,19 @@
 #   otvergaetsya kak 'ne potrebivshaya' ikh. Vopros VLADEL'TSA, zamer moy.
 #   BLOKIRUET TEG: DA. Nositel' starshe nakhodki na dva mesyatsa i byl
 #   opisan prozoy bez nomera -- poetomu ne iskalsya.
+# 2026-09-14 (integrator): gaps += 1093,1094,1095,1096,1097; rows/max bez
+#   izmeneniy. Pyat' nomerov vydano oknam v techenie nochi, ikh stroki
+#   pridut sliyaniem:
+#     1093/1094 -- okno 274: dyra zvuchnosti (ro-launder ne primenyaetsya k
+#       kodu, prishedshemu IMPORTOM) i lozhnyy otkaz na novotipe nad skalyarom;
+#     1095 -- okno 274: `if Some(x) = <ne-Option>` prokhodit check i padaet clang;
+#     1096 -- okno 5c: literal zapisi s PROPUSHCHENNYM polem kompiliruetsya
+#       molcha, spetsifikatsiya ob'yavlyaet eto oshibkoy (02-types.md:1955);
+#     1097 -- okno 283: mangl imeni funktsii nasleduet registratsiyu
+#       VOZVRASHCHAEMOGO tipa, i pri kollizii imyon tipov berot pervuyu.
+#   Tot zhe poryadok, chto u 1062, 1074, 1084, 1089: dyra ob'yavlyaetsya TEM,
+#   KTO VYDAL nomer -- neob'yavlennaya dyra dlya strazha neotlichima ot
+#   poteryannoy stroki.
 rows=1044
 max=1092
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097

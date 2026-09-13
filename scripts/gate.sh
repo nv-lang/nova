@@ -1330,8 +1330,52 @@ if body_runs; then
     fi
     _MEGA_FAIL_N=$(echo "$MEGA_LINE" | grep -oE "FAIL: [0-9]+" | grep -oE "[0-9]+" | head -1)
     [ -n "$_MEGA_FAIL_N" ] || _MEGA_FAIL_N=0
+
+    # ─── ИЗВЕСТНЫЕ КРАСНЫЕ (решение владельца 2026-09-14) ────────────────
+    # Мега-CU читает ТОТ ЖЕ список, что `conformance-full`, и по той же
+    # дисциплине. До этого он его не читал вовсе (арифметика FAIL-TMO+HUNG),
+    # и потому ОДИН зарегистрированный, диагностированный дефект держал пуш
+    # ВСЕХ окон, пока не починен: занести носителя было некуда. Замер, на
+    # котором это вскрылось, — №1090, 2026-09-13.
+    #
+    # ЦЕНА НАЗВАНА ВСЛУХ: это ослабление корпусного гейта. Защищает его
+    # ровно одно — запись обязана нести НОМЕР СТРОКИ РЕЕСТРА, и здесь это
+    # проверяется МАШИНОЙ (у соседа — соглашением в шапке файла; соглашение,
+    # которое никто не проверяет, и есть способ, каким список превращается в
+    # свалку).
+    _MEGA_KNOWN_FILE="$ROOT/scripts/guards/conformance-known-red.list"
+    # Имена упавших — тот же набор маркеров, что у `conformance-full`.
+    _MEGA_BAD=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$MEGA_LOG" \
+        | grep -E "^(NEG-[A-Z-]+|CC-FAIL|RUN-FAIL|CODEGEN-FAIL|MISMATCH|TIMEOUT|FAIL) +spec_tests/" \
+        | awk '{print $2}' | sort -u)
+    _MEGA_BAD_N=$(printf '%s' "$_MEGA_BAD" | grep -c . || true)
+    # САМОПРОВЕРКА, как у соседа: сколько сказал итог — столько имён и обязано
+    # извлечься. Иначе шаг сверяет НЕ ТО, и «зелено» значит «не смог назвать».
+    if [ "$_MEGA_FAIL_N" -gt 0 ] && [ "$_MEGA_BAD_N" -ne "$_MEGA_FAIL_N" ]; then
+        fail "mega-CU: итог сообщает FAIL: $_MEGA_FAIL_N, а по именам извлеклось $_MEGA_BAD_N — вид отказа не разобран, шаг сверял бы не то (см. $MEGA_LOG)"
+    fi
+    _MEGA_KNOWN_HIT=0
+    _MEGA_KNOWN_NAMES=""
+    if [ -n "$_MEGA_BAD" ] && [ -f "$_MEGA_KNOWN_FILE" ]; then
+        for _mb in $_MEGA_BAD; do
+            _mrow=$(grep -E "^${_mb}([[:space:]]|$)" "$_MEGA_KNOWN_FILE" | head -1)
+            [ -n "$_mrow" ] || continue
+            # НОМЕР ОБЯЗАТЕЛЕН. Запись без номера не прощает ничего: без него
+            # нельзя ни найти диагноз, ни узнать, кто и когда снимет строку.
+            if printf '%s' "$_mrow" | grep -qE '№[0-9]+'; then
+                _MEGA_KNOWN_HIT=$(( _MEGA_KNOWN_HIT + 1 ))
+                _MEGA_KNOWN_NAMES="$_MEGA_KNOWN_NAMES $_mb"
+            else
+                fail "mega-CU: $_mb значится в $_MEGA_KNOWN_FILE БЕЗ номера строки реестра — такая запись не прощает ничего (решение владельца 2026-09-14: номер + причина)"
+            fi
+        done
+    fi
+    # ПЕЧАТАЕТСЯ ВСЕГДА, даже когда прощать нечего: прощённый отказ, о котором
+    # шаг молчит, — это отказ, который перестал существовать для читателя.
+    echo "mega-CU :: известных красных прощено: $_MEGA_KNOWN_HIT${_MEGA_KNOWN_NAMES:+ —$_MEGA_KNOWN_NAMES}"
+
     # Снятые пределом раннер кладёт в FAIL — вычитаем ровно те, что перемер оправдал.
-    _MEGA_REAL_FAIL=$(( _MEGA_FAIL_N - _MEGA_TMO_N + _MEGA_TMO_HUNG ))
+    _MEGA_REAL_FAIL=$(( _MEGA_FAIL_N - _MEGA_TMO_N + _MEGA_TMO_HUNG - _MEGA_KNOWN_HIT ))
     [ "$_MEGA_REAL_FAIL" -ge 0 ] 2>/dev/null || _MEGA_REAL_FAIL=0
     if [ "$_MEGA_REAL_FAIL" -gt 0 ]; then
         grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2
