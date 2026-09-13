@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Последняя ось: исключение строки 72 реестра (`is_fully_stack_value`, закрыта 2026-07-24)
+// освобождает полностью-стековые value-типы от правила ro-launder. Голый `int` под него
+// попадает заведомо. Вопрос пробы: РАЗВОРАЧИВАЕТ ли предикат НОВОТИП над `int`.
+// Если `bare` зелено, а `wrapped` красно, дефект называется одной фразой.
+module scalar
+
+type BlockId int
+
+fn bare(at int, stop int) -> int {
+    mut cur = at
+    mut n = 0
+    while cur != stop {
+        cur = cur + 1
+        n += 1
+    }
+    n
+}
+
+fn wrapped(at BlockId, stop BlockId) -> int {
+    mut cur = at
+    mut n = 0
+    while cur != stop {
+        cur = BlockId((cur as int) + 1)
+        n += 1
+    }
+    n
+}
+
+fn main() Io -> () {
+    print("${bare(0, 3)} ${wrapped(BlockId(0), BlockId(3))}")
+}
