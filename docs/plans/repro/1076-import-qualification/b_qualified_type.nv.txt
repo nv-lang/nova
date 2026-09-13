@@ -1,0 +1,8 @@
+// D289 example uses a TYPE through the namespace: vec_iter.EnumerateIter.
+module probe_qual
+import lib.thing
+
+fn main() Io -> () {
+    ro w thing.Widget = thing.make(7)     // qualified fn AND qualified TYPE
+    print("id=${w.id}")
+}

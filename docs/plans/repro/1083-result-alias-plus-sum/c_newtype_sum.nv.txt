@@ -1,0 +1,26 @@
+// Сверка заявки окна 283 (реестр 221.1 №1083).
+// Ожидание, записанное ДО прогона: красна РОВНО клетка `b`.
+module c_newtype_sum
+
+export type CResultHandle *()
+
+type DuckError enum
+    | Failed(str)
+    | Closed(str)
+
+type ResultRef value { ro h CResultHandle }
+
+// c: newtype-ЗАПИСЬ вокруг той же ручки + сумма. Ожидание: ЗЕЛЕНО (их обход).
+fn get() -> Result[ResultRef, DuckError] => Err(DuckError.Failed("no"))
+
+fn main() Io -> () {
+    match get() {
+        Ok(_) => print("ok")
+        Err(e) => {
+            match e {
+                DuckError.Failed(s) => print("err=${s}")
+                DuckError.Closed(s) => print("closed=${s}")
+            }
+        }
+    }
+}

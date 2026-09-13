@@ -643,6 +643,56 @@
 #   v reestre. Stroka NE utverzhdaet, chto moy push eto vylechit -- check-commit-refs
 #   sam preduprezhdaet, chto lokal'no schitaet po VSEM vetkam, vklyuchaya vetki
 #   sosedey, kotorykh na CI net (ego zamer: lokal'no 803, na CI 828).
-rows=1029
-max=1075
+# 2026-09-13 (integrator, pozdnee): rows -> 1031, max -> 1077. Dve stroki po
+#   voprosu vladel'tsa pro `import mod`, obe podtverzhdeny PROBOY:
+#   1076 -- goloe imya rezolvitsya, khotya D289 trebuet dostupa tol'ko cherez
+#   mod.Foo (realizatsiya SLABEE normy, prinimaet nadmnozhestvo);
+#   1077 -- kvalifitsirovannyy TIP mod.Type dayot zelyonyy check i ronyaet
+#   C-kompilyator (use of undeclared identifier 'Nova_thing_Widget'), pri tom
+#   chto kvalifitsirovannyy VYZOV v tom zhe fayle rabotaet -- eto razryv kanala,
+#   a ne probel grammatiki. BLOKIRUET TEG: DA. Proby:
+#   docs/plans/repro/1076-import-qualification/.
+# 2026-09-13 (integrator): rows -> 1032, max -> 1078. Zavedena 1078: status
+#   plana v nekanonicheskoy razmetke (**Status: X** vmesto **Status:** X)
+#   nevidim generatoru svodki -- gen-plan-status.sh:100 beryot grep -m1 po
+#   kanonicheskomu shablonu. Zamer: 198 planov so statusom, u PYATI on tol'ko
+#   v nekanonicheskoy forme, a u 273 obe formy srazu i generator chitaet NE tu.
+#   Nayedeno pobochno pri pravke 272. Koren' tot zhe, chto u #730 (dva verdikta
+#   v stroke reestra), dom drugoy.
+# 2026-09-13 (integrator): rows -> 1033, max -> 1079. Zavedena 1079: paket
+#   nova-duckdb zhivyot na ODNOM zerkale iz tryokh -- gitverse otvechaet 403,
+#   sourcecraft 'repository not found', to est' repozitoriev tam NET. Ostal'nye
+#   sem' paketov soshlis' pobaytovo na vsekh tryokh (proverено ls-remote).
+#   Srok v samoy stroke: napomnit' vladel'tsu 2026-09-16 po ego slovu.
+# 2026-09-13 (integrator): rows -> 1034, max -> 1080. Zavedena 1080 po voprosu
+#   vladel'tsa: `extern "nova" fn str.from_codepoint` NE eksportirovana i ne
+#   vyzyvaetsya nichem, krome svoikh dvukh fikstur, a eyo dokstroka nazyvaet
+#   potrebitelem json, kotoryy s 2026-09-05 khodit cherez `int @to_char()` --
+#   pro eto skazano v tom zhe fayle desyat'yu strokami nizhe. Kontekst zamera:
+#   463 obyavleniya extern "nova", 58 bez vyzovov, no bol'shinstvo -- atomiki,
+#   i u nikh eto zakonno (eksportirovany). Etot sluchay otlichaetsya otsutstviem
+#   eksporta.
+# 2026-09-13 (integrator): rows -> 1035, max -> 1081. Zavedena 1081: golaya
+#   `bench.opaque(...)` NE v khvoste bloka measure ronyaet kompilyator
+#   (emit_c.rs:3439, E_CODEGEN_TYPE_UNKNOWN), v khvoste -- rabotaet. Naydeno
+#   oknom 283, SVERENO svoey proboy: dva fayla, otlichayushchiesya poryadkom
+#   DVUKH strok. Tem zhe sliyaniem popravlena #292: eyo 'padaet na LYUBOM fayle'
+#   oprovergnuto zamerom -- bench/micro/arith.nv otrabatyvaet tselikom, RC=0.
+# 2026-09-13 (integrator): rows -> 1036, max -> 1082. Zavedena 1082 po nakhodke
+#   okna claude-limits: `@self` v metode prinimaetsya chekerom, kodogen umiraet
+#   'no member named self'. Prichina suzhena CHTENIEM spetsifikatsii
+#   (syntax.ru.md:1273): `@field` est' dostup k POLYU, `@` bez polya -- sam
+#   instans; znachit `@self` -- pole s imenem self, kotorogo u summy net.
+#   Os' veroyatno SHIRE ikh pyati prob: nepokrytaya kletka -- '@nosuchfield'
+#   bez `match` i na value-zapisi. Progon otlozhen: slot derzhal chuzhoy yarus.
+# 2026-09-13 (integrator): rows -> 1037, max -> 1083. Zavedena 1083:
+#   Result[<psevdonim ukazatelya>, <summa s nagruzkoy>] instantsiruetsya kak
+#   Result[int, str] -- oba argumenta svyornuty k PREDSTAVLENIYAM. Naydeno
+#   oknom 283, setka PERESOBRANA integratorom nezavisimo i soshlas' kletka v
+#   kletku (a/d/c zelyonye, b krasnaya). Ulika v C: nova_make_NovaRes_nova_int_
+#   nova_str_Err pri obyavlennom Result[CResultHandle, DuckError]. Klass --
+#   kanal 196, podklass: kodogen vyvodit DVAZHDY i dva vyvoda rashodyatsya.
+#   BLOKIRUET TEG: DA.
+rows=1037
+max=1083
 gaps=174-208,210-215,653-654,743,1062,1074

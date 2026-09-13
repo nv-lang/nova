@@ -1,0 +1,5 @@
+module lib.thing
+
+export type Widget value { ro id int }
+
+export fn make(id int) -> Widget => { id }
