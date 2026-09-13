@@ -55,23 +55,65 @@ export type DigitBuf {
     mut decimal_point int     // The offset of the decimal point in the significant digits.
     mut truncated bool        // If the number of significant digits stored in the decimal is truncated.
     mut digits []u8           // Buffer of the raw digits, in the range [0, 9]; len == DIGIT_BUF_MAX_DIGITS.
+    // How many significant digits the OWNER of this buffer actually needs; 0 means
+    // "as many as the buffer holds". Printing at a given precision needs far fewer
+    // than the 768 an exact expansion can reach, and every digit past the requested
+    // position is computed only to be discarded (plan 285 Ф.6, measured: fixed
+    // printing was an order of magnitude slower than snprintf because of it).
+    // Parsing leaves it at 0 and behaves exactly as before.
+    mut keep_digits int
 }
 
-fn zeroed_digits() -> []u8 {
-    mut digits []u8 = []u8.new(cap: DIGIT_BUF_MAX_DIGITS)
-    for _i in 0..DIGIT_BUF_MAX_DIGITS {
+fn zeroed_digits(n int) -> []u8 {
+    mut digits []u8 = []u8.new(cap: n)
+    for _i in 0..n {
         digits.push(0)
     }
     digits
 }
 
-export fn DigitBuf.new() -> DigitBuf =>
-    { num_digits: 0, decimal_point: 0, truncated: false, digits: zeroed_digits() }
+/// A buffer for at most `keep` significant digits; `keep: 0` means the maximum, which
+/// is what parsing asks for.
+///
+/// ONE constructor with a default rather than two names for the same question -- and
+/// `with_capacity` is a retracted spelling besides (D372 + plan 200).
+///
+/// THE BUDGET REACHES THE ALLOCATION, and that is the whole point. Capping the digit
+/// COUNT alone bought nothing: a probe showed the cap working -- 715 digits became 30 --
+/// while the benchmark did not move, because the cost was here, in allocating and
+/// zeroing all 768 elements for EVERY formatted value. A limit that stops short of the
+/// allocation is a limit on the wrong thing.
+///
+/// THE FLOOR IS NOT CAUTION. The buffer is SEEDED with the mantissa -- up to 17 decimal
+/// digits whatever precision was asked for -- and `round` may read a tail of zeroes past
+/// that; a budget below it writes outside the array. Measured the hard way: `keep = 11`
+/// derived from `prec = 2` gave "index 15 out of bounds for length 11".
+export fn DigitBuf.new(keep int = 0) -> DigitBuf {
+    // `keep: 0` means the MAXIMUM, and the branch says so explicitly. Folding it into
+    // `keep.max(floor).min(max)` read as the same thing and was not: zero came out as
+    // the floor, so the parser silently got a buffer forty times too small and every
+    // module that formats or parses a float went red at once.
+    ro n = if keep > 0 {
+        keep.max(DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW).min(DIGIT_BUF_MAX_DIGITS)
+    } else {
+        DIGIT_BUF_MAX_DIGITS
+    }
+    { num_digits: 0, decimal_point: 0, truncated: false,
+      keep_digits: if keep > 0 { n } else { 0 },
+      digits: zeroed_digits(n) }
+}
+
+/// The working limit of this buffer: the owner's request when it made one, and the
+/// buffer's own maximum otherwise. Never above the maximum -- the array is that long
+/// and no longer.
+fn DigitBuf @digit_cap() -> int =>
+    if @keep_digits > 0 && @keep_digits < DIGIT_BUF_MAX_DIGITS { @keep_digits }
+    else { DIGIT_BUF_MAX_DIGITS }
 
 // Append a digit to the buffer if it fits. The count grows regardless (the donor keeps
 // this shape: `parse_from` caps `num_digits` and sets `truncated` afterwards).
 fn DigitBuf mut @try_add_digit(digit u8) -> () {
-    if @num_digits < DIGIT_BUF_MAX_DIGITS { @digits[@num_digits] = digit }
+    if @num_digits < @digit_cap() { @digits[@num_digits] = digit }
     @num_digits += 1
 }
 
@@ -117,7 +159,7 @@ export fn DigitBuf mut @left_shift(shift int) -> () {
         n += (@digits[read_index] as u64) << shift
         ro quotient = n / 10
         ro remainder = n - (10 * quotient)
-        if write_index < DIGIT_BUF_MAX_DIGITS {
+        if write_index < @digit_cap() {
             @digits[write_index] = remainder as u8
         } else if remainder > 0 {
             @truncated = true
@@ -128,7 +170,7 @@ export fn DigitBuf mut @left_shift(shift int) -> () {
         write_index -= 1
         ro quotient = n / 10
         ro remainder = n - (10 * quotient)
-        if write_index < DIGIT_BUF_MAX_DIGITS {
+        if write_index < @digit_cap() {
             @digits[write_index] = remainder as u8
         } else if remainder > 0 {
             @truncated = true
@@ -136,7 +178,7 @@ export fn DigitBuf mut @left_shift(shift int) -> () {
         n = quotient
     }
     @num_digits += num_new_digits
-    @num_digits = @num_digits.min(DIGIT_BUF_MAX_DIGITS)
+    @num_digits = @num_digits.min(@digit_cap())
     @decimal_point += num_new_digits
     @trim()
 }
@@ -179,7 +221,7 @@ export fn DigitBuf mut @right_shift(shift int) -> () {
     while n > 0 {
         ro new_digit = (n >> shift) as u8
         n = 10 * (n & mask)
-        if write_index < DIGIT_BUF_MAX_DIGITS {
+        if write_index < @digit_cap() {
             @digits[write_index] = new_digit
             write_index += 1
         } else if new_digit > 0 {
@@ -383,8 +425,12 @@ export fn DigitBuf mut @round_to_digits(keep int) -> () {
 ///
 /// Digits come out least-significant first, so the length is counted before they are
 /// written and each one goes straight to its final place; no reversal, no scratch.
-export fn DigitBuf.from_u64(m u64) -> DigitBuf {
-    mut d = DigitBuf.new()
+export fn DigitBuf.from_u64(m u64) -> DigitBuf => DigitBuf.from_u64_keeping(m, 0)
+
+/// The same seed, with the owner's digit budget declared up front so that the buffer is
+/// allocated to it rather than to the worst case.
+export fn DigitBuf.from_u64_keeping(m u64, keep int) -> DigitBuf {
+    mut d = DigitBuf.new(keep: keep)
     if m == 0 { return d }
     mut n = 0
     mut t = m

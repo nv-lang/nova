@@ -28,29 +28,58 @@ module runtime.fmt_buf
 import std.runtime.numeric
 import std.runtime.decimal
 
-/// The exact decimal value of `v`, as `m * 2^e` expanded in full.
+/// `v` as `(mantissa, binary exponent)`, with the subnormal case already folded in.
 ///
-/// Both halves are exact: the mantissa seeds the buffer as an integer, and the binary
-/// exponent is applied by the same shift the parser uses in the other direction. No
-/// rounding happens here -- that is the caller's decision, at its own position.
-fn exact_decimal_of(v f64) -> DigitBuf {
+/// ONE decode for two users -- the expansion below and the bound above it. Written out
+/// twice, the two would drift, and they would drift in the direction nobody notices: a
+/// bound computed from a slightly different exponent still looks plausible.
+fn decode_binary(v f64) -> (u64, int) {
     ro bits = v.to_bits()
     ro ieee_mantissa = bits & ((1 as u64 << DOUBLE_MANTISSA_BITS) - 1)
     ro exp_mask = (1 as u64 << DOUBLE_EXPONENT_BITS) - 1
     ro ieee_exponent = ((bits >> DOUBLE_MANTISSA_BITS) & exp_mask) as int
-
-    mut m = 0 as u64
-    mut e2 = 0
     if ieee_exponent == 0 {
         // Subnormal: no implicit leading one, and the exponent is the fixed floor.
-        m = ieee_mantissa
-        e2 = 1 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS
+        (ieee_mantissa, 1 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS)
     } else {
-        m = (1 as u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa
-        e2 = ieee_exponent - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS
+        ((1 as u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa,
+         ieee_exponent - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS)
     }
+}
 
-    mut d = DigitBuf.from_u64(m)
+/// Сколько значащих цифр хватает, чтобы напечатать `v` с `prec` знаками.
+///
+/// СТОРОЖЕВЫЕ ЦИФРЫ, и почему их именно столько. Порядок значения оценивается целочисленным
+/// логарифмом донора (`log10_pow2`), который даёт ПРИБЛИЖЕНИЕ с ошибкой в единицу, а
+/// округление в последней позиции смотрит на соседнюю цифру. Десять сторожевых покрывают и
+/// то и другое с запасом и всё равно оставляют предел в разы меньше 768 — на типичном
+/// `prec = 2` это около пятнадцати цифр вместо семисот шестидесяти восьми.
+///
+/// Отбрасываются при этом только цифры ПРАВЕЕ нужной позиции, а они на неё не влияют:
+/// деление на два переносит информацию справа налево лишь через остаток. Единственное, на
+/// что они влияют, — округление, и для него у буфера есть флаг `truncated`, который сдвиги
+/// выставляют сами, когда отброшенная цифра не ноль.
+fn digits_needed_for(e2 int, mantissa_len int, prec int) -> int {
+    ro guard = 10
+    ro scale = if e2 >= 0 { log10_pow2(e2) } else { -log10_pow2(-e2) }
+    ro dp = mantissa_len + scale
+    (dp + prec + guard).max(guard)
+}
+
+/// The exact decimal value of `v`, as `m * 2^e` expanded by shifting.
+///
+/// `keep == 0` expands as far as the buffer allows -- what the parser does. A positive
+/// `keep` stops at that many significant digits, which is what printing at a given
+/// precision wants: the rest is computed only to be discarded.
+fn exact_decimal_of(v f64, keep int) -> DigitBuf {
+    ro (m, e2) = decode_binary(v)
+    // The budget is declared to the CONSTRUCTOR, not set afterwards: the buffer is
+    // allocated and zeroed to it, and that allocation is where the time actually went.
+    mut d = DigitBuf.from_u64_keeping(m, keep)
+    // THE CAP IS SET BEFORE THE SHIFTS, not after: the shifts are where the digits are
+    // produced, so a limit applied afterwards would cost exactly what it was meant to
+    // save.
+    d.keep_digits = keep
     // `shift_pow2` and NOT `left_shift`/`right_shift` directly: a single shift is
     // defined only up to `DECIMAL_MAX_SHIFT`, because the tables stop at 5^60, and a
     // larger one is silently wrong rather than refused. Printing needs up to 1074.
@@ -114,7 +143,8 @@ fn f64_fixed_needed(v f64, buf *mut u8, cap int, prec int) -> int
         index += 1
     }
 
-    mut d = exact_decimal_of(v)
+    ro (_m, e2) = decode_binary(v)
+    mut d = exact_decimal_of(v, digits_needed_for(e2, 17, prec))
     // Round where the requested precision ends. `decimal_point + prec` is the count of
     // significant digits that survive; rounding may move the point (9.99 at one digit
     // after the point is 10.0), so the point is read back AFTERWARDS.
@@ -171,7 +201,10 @@ fn f64_sci_needed(v f64, buf *mut u8, cap int, prec int) -> int
         index += 1
     }
 
-    mut d = exact_decimal_of(v)
+    // Scientific form asks for prec + 1 SIGNIFICANT digits, so the bound does not
+    // depend on the value's magnitude at all -- unlike the fixed form, where the
+    // whole part has to be produced before the fraction can start.
+    mut d = exact_decimal_of(v, prec + 1 + 10)
     // Zero has no significant digit to lead with, and its exponent is zero by
     // convention rather than by computation.
     ro is_zero = d.num_digits == 0
