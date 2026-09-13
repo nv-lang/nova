@@ -1,8 +1,20 @@
+// Donor: rustc `rustc_ast_lowering` -- lowering is its own module BELOW codegen, and the
+//   thing that builds the IR owns it rather than the thing that prints it.
+// Role: layer lower -- THE LOWERING. Tree in, IR out; it prints nothing and calls nothing
+//   that prints. The architecture table allows this layer `tree`, `sem`, `types` and
+//   `diag`, and no other edge.
+// Used by: emit_c/ through the receiver `Lowerer` held in `Emitter.lo` -- `emit_callable`
+//   drives the lowering, then walks the finished body to print it.
+// Guarded by: check-novac-deps.py (the edges), check-novac-lowering-one-door.py (a value
+//   shape lowered in the emitter instead of here), novac-tree-edges.py --split (the move's
+//   own criterion), lower_test.nv (the graph shapes), the corpus C diff.
 module novac.lower
 import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
-import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_head_slots, for_head_elem, is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind, leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
+import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_head_slots, for_head_elem}
+import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind}
+import ../sem.{leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
 
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
@@ -293,10 +305,7 @@ fn Lowerer mut @lower_destructure_bind(st Node) -> () {
     // here: `@ir.place` records the initializer, and the assignment printer builds a
     // construction in its own `Expr` arm. One door instead of two, and the base of every
     // projection below is a LOCAL -- which is what lets the reads become statements.
-    ro base = match @lower_value_source(init, pt) {
-        Some(l) => l
-        None => @bind_pair_temp(init, pt)
-    }
+    ro base = @lower_value_source(init, pt) ?? @bind_pair_temp(init, pt)
     ro by_name = brace_pattern(kids)
     mut i = 0
     for b in pattern_binders(kids) {
@@ -807,7 +816,8 @@ fn Lowerer mut @lower_println(call Node) -> () {
             // So asking the door for EVERY literal, as the first edition of this line did,
             // computed a second answer to a question the channel had already decided -- the
             // very `decide it twice` this channel's doctrine exists to prevent. Asking the
-            // channel first also makes the workaround DIE ON ITS OWN: when the type of a
+            // channel first also makes this FALLBACK DIE ON ITS OWN, and its removal
+            // condition is named: when the type of a
             // string literal is published (marker `[M-strlit-node-has-no-type]`), this
             // `else` stops executing and no consumer needs editing.
             //

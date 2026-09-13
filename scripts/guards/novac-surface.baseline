@@ -187,6 +187,21 @@
 # its own emission. An ABI name lives in this registry by P5 (written once, as
 # data) and the mangling door is its one reader; the alternative was the same
 # string spelled at two sites in the mangler.
+# lower 69 -> 71 и sem 229 -> 232 (2026-09-13, подплан 274.8 M3 — переезд понижения):
+# lower +2. `DeclAt` (точка объявления локали: Zeroed | AtDecl) — зовёт emit_c, `emit_place.nv:91`
+# сравнивает `d.decl_at != DeclAt.Zeroed`, решая, печатать ли нулевую инициализацию. `Lowerer`
+# (получатель понижения) — его ИМЕНУЕТ emit_c: `Emitter` держит его полем `lo` (`shell.nv:31`,
+# `emit_c.nv:82` импортируют тип, `emit_c.nv:139` строит его в конструкторе).
+# ДВА ИМЕНИ, КОТОРЫЕ В БАЗУ НЕ ВОШЛИ, и это часть той же правки: `lower_store` и
+# `bind_pair_temp` были экспортированы, пока понижение жило в `emit_c/` и печать их звала; после
+# переезда оба вызова оказались внутри `lower/` (`lowering.nv:232` и `:308`), вызывающего
+# снаружи не осталось — `export` снят. Рост был 73, стал 71: сперва сужение по факту, потом
+# поднятие на то, чему оно причитается.
+# sem +3 — `is_int_lit`, `is_ident_leaf`, `is_println_call`. Наружу они нужны потому, что их
+# зовёт `lower/lowering.nv`, а у слоя `lower` по таблице архитектуры НЕТ рёбер ни к `lex`, ни к
+# `builtins`. До них понижение сравнивало вид листа с `TokenKind.IntLit` и имя вызываемого с
+# `PRINT_FN` напрямую, то есть держало запрещённые рёбра. Просить новое ребро значило бы менять
+# архитектуру ради трёх сравнений; спросить канал предикатом — то, для чего канал и есть.
 builtins 40
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
@@ -233,7 +248,7 @@ lex 11
 # машинно окном 274 пробой со снятым инициализатором. Причины у них разные, и докстрока
 # двери называет каждую: у `match`/`if` путь может не присвоить локаль (обязательно),
 # у `??` присваивают обе ветви (защитное, унаследовано от прежней печати).
-lower 69
+lower 71
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -662,7 +677,7 @@ resolve 15
 # (2026-09-03): a caller compares with the variant's own name, which the word
 # rule allows, so a wrapper would be a second door needing a periphrasis for a
 # name it may not spell. Net +1.
-sem 229
+sem 232
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

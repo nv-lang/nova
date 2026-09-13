@@ -130,8 +130,9 @@ export type Rvalue enum
 ///
 /// The step carries the NAME the author wrote, not the field's registry row, and that is
 /// forced rather than chosen: the emitter may not compute a field row from a name (the
-/// channel guard refuses it by name, and `emit_destructure.nv` remembers being wrong about
-/// that on 2026-09-04), while the channel records the binder's TYPE and not its row. The
+/// guard `check-novac-channel-one-writer.py` refuses that as a second writer of the
+/// channel, and `emit_destructure.nv` remembers being wrong about it on 2026-09-04),
+/// while the channel records the binder's TYPE and not its row. The
 /// name is legal here because it is a C SPELLING and not an identity key -- the same role
 /// `LocalDecl.name` already has. `check-novac-no-string-keys.py` judges `Map[str` outside
 /// `names/` and keys SYNTHESISED by interpolation; a name stored in a field is neither.
@@ -679,7 +680,7 @@ export fn FnBuilder mut @copy(dest Local, src Local) -> () {
 /// a name the lowering composed.
 export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
     ro uniq = @switches
-    @switches = @switches + 1
+    @switches += 1
     ro h = @reserve()
     ro join = @reserve()
     @close(Terminator.Goto(h), h)
@@ -773,12 +774,16 @@ export fn FnBuilder @finish() -> Fn {
 /// printer -- that is the edge inversion the architecture table forbids. So the work is a
 /// change of receiver, not a move of files, and this type is where the lowering lands.
 ///
-/// IT CARRIES THE BUILDER AND, FOR NOW, NOTHING ELSE. The measured end shape (plan 274.8,
-/// section 2s) also carries `ctx` and `out`: the lowering asks them 7 and 11 times, and
-/// handing them as parameters instead would make FIVE methods accept arguments they never
-/// read, purely to pass on. They arrive with the first method that needs them -- adding
-/// them now would put two dead fields in the tree, and a dead field is debt exactly as a
-/// dead function is.
+/// IT CARRIES THREE THINGS: the builder under construction, plus `ctx` and `out`, which
+/// the lowering asks 7 and 11 times. That is shape C of plan 274.8 section 2s, chosen by
+/// measurement over two alternatives: handing `ctx`/`out` as parameters would make FIVE
+/// methods accept arguments they never read purely to pass on, and taking all three fields
+/// away from `Emitter` would cost 181 printer rewires against 23.
+///
+/// TWO READERS ARE NOT TWO SOURCES. `Emitter` keeps its own `ctx`/`out` and this type has
+/// its own; that is not a second home for either, because their home is `sem` and both
+/// readers are read-only. What `Emitter` LOST is the builder -- the mutable state, which
+/// belongs with the methods that write it.
 export type Lowerer {
     ctx Ctx /// the type registry and def table, read only -- same home as Emitter's (`sem`)
     out CheckOut /// the checker's channel: every type question is a READ here
@@ -788,7 +793,7 @@ export type Lowerer {
 /// A compound or plain assignment, recorded as a statement of the body. First method to
 /// live here rather than on the printer (274.8 M3, slice 1): it touches the builder and
 /// nothing else, so it proves the receiver without dragging the channel along.
-export fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
+fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
     @ir.store(target, op, src)
 }
 
@@ -801,7 +806,7 @@ export fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
 /// The name is the body's own index, never the author's: a destructuring scrutinee is the
 /// compiler's invention, and `named` would claim otherwise (held by
 /// check-novac-invented-name-not-named).
-export fn Lowerer mut @bind_pair_temp(init Node, pt TyId) -> Local {
+fn Lowerer mut @bind_pair_temp(init Node, pt TyId) -> Local {
     ro l = @ir.temp(pt)
     @ir.place(init, l)
     l

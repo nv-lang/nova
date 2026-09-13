@@ -18,15 +18,15 @@
 
 module novac.emit_c
 
-import ../tree.{Node, NodeKind, AssignOp}
+import ../tree.{Node, NodeKind}
 // M3a: telling a string literal from any other argument needs the leaf's token kind.
 import ../lex.{TokenKind}
-import ../sem.{leaf_kind, literal_prim_of}
+import ../sem.{leaf_kind}
 import ../diag.{ice}
-import ../sem.{is_value_tail_kind, c_type, c_instance_method, raw_vrow, is_value_record}
+import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
-import ../sem.{branch_children, is_expr_kind, carrier_of, is_println_call}
+import ../sem.{branch_children, is_expr_kind, carrier_of}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt}
 import ../builtins.{VEC_GET_METHOD}

@@ -23,7 +23,7 @@
 module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_kind, leaf_text}
-import ../sem.{c_type, is_value_record, brace_pattern, pattern_binders, binder_text}
+import ../sem.{c_type, is_value_record}
 import ../types.{TyId}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}

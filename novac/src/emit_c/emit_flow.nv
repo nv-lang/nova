@@ -35,11 +35,11 @@ module novac.emit_c
 
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../sem.{branch_children, leaf_text, c_instance_method, for_head_elem}
+import ../sem.{branch_children, leaf_text, c_instance_method}
 // The walk prints a unit return from the type of the return place (2026-09-09).
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
-import ../lower.{IfCtx, LoopHead, RangeHead, EachHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
+import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
 import ../builtins.{VEC_LEN_METHOD}
 
 /// Whether this branch continues a `} else ` line its caller printed.
@@ -144,6 +144,7 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
 // Before step 3b, `emit_callable` printed the body AS IT WENT and called `@lo.ir.finish()` at
 // the end only to check the graph's integrity. The order is now the reverse: `finish` first,
 // then ONE walk over what it returned.
+/// Prints a finished body: one walk over the graph `finish` returned.
 fn Emitter mut @print_body(f Fn) -> () {
     // MARKING BLOCKS AS PRINTED removes TWO invariants of this section at once -- `every
     // block exactly once` and `the walk terminates` -- which is why it stands here rather
@@ -163,6 +164,7 @@ fn Emitter mut @print_body(f Fn) -> () {
 // `head_continues` is true for EXACTLY the first block of an unbraced `else` branch: its head
 // continues the `} else ` line the caller printed, so it carries no indent. Further along the
 // chain it goes out -- a second head already starts its own line.
+/// Prints the chain of blocks from `at` up to (not including) `stop`.
 fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                             mut printed []bool) -> () {
     mut continues = head_continues
@@ -296,6 +298,7 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
 //
 // The block IS MARKED printed right here: otherwise the walk, reaching it by another path,
 // would print its statements a second time -- which is what the marking exists to stop.
+/// Prints the statements of one block, marking it printed.
 fn Emitter mut @print_block_stmts(f Fn, b BlockId, mut printed []bool) -> () {
     ro bi = raw_block(b)
     if bi < 0 || bi >= printed.len() {
@@ -309,6 +312,7 @@ fn Emitter mut @print_block_stmts(f Fn, b BlockId, mut printed []bool) -> () {
         @print_stmt(s)
     }
 }
+/// Prints a switch terminator as the C `switch` with its arms.
 fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
     ro sd = @lo.ir.decl_of(t.scrutinee)
     @body.append("    int _novac_matched_t${t.uniq} = 0;\n")
@@ -342,10 +346,10 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
                         @print_chain(f, gt.then, gt.join, false, printed)
                         @body.append("    _novac_matched_t${t.uniq} = 1;\n    }\n")
                     }
-                    Return => ice("emit: a guarded arm whose block does not branch")
-                    Goto(_) => ice("emit: a guarded arm whose block does not branch")
-                    Loop(_) => ice("emit: a guarded arm whose block does not branch")
-                    Switch(_) => ice("emit: a guarded arm whose block does not branch")
+                    Return => ice("emit: a guarded arm whose block returns instead of branching")
+                    Goto(_) => ice("emit: a guarded arm whose block gotos instead of branching")
+                    Loop(_) => ice("emit: a guarded arm whose block heads a loop instead of branching")
+                    Switch(_) => ice("emit: a guarded arm whose block switches instead of branching")
                     Unreached => ice("emit: a guarded arm whose block was never sealed")
                 }
             }
@@ -373,6 +377,7 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
 // The cure was the prerequisite rather than a part of the walk: the lowering of a match- or
 // if-value moved into the lowering phase (`@lower_value_source`), `Assign` is recorded with
 // a FINISHED source, and only then did `@emit_assign` become a printer.
+/// Prints one IR statement as a line of C.
 fn Emitter mut @print_stmt(s Stmt) -> () {
     match s {
         Assign(a) => @emit_assign(a)

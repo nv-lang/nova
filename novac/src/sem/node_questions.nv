@@ -1,18 +1,26 @@
+// Donor: rustc `rustc_hir::Expr::is_*` and `ExprKind` predicates -- the question
+//   "what IS this node" is answered next to the tree's own vocabulary, once, and
+//   every consumer reads that answer instead of re-deriving it from the kind.
+// Role: layer sem -- the CHANNEL's yes/no questions about a node. Judgement about
+//   the SHAPE of a node lives here; extraction and parsing (slots, children, texts)
+//   stay in slots.nv, which is why this file was split off it on 2026-09-13 when
+//   that file crossed the 1000-line limit. The file-size guard demands cutting by
+//   meaning and forbids both a baseline and an exception.
+// Used by: check/ and lower/ while lowering and type-checking; a folder is one
+//   module, so moving these out of slots.nv changed no import anywhere outside.
+// Guarded by: check-novac-deps.py (the edges these predicates exist to remove),
+//   check-novac-file-size.py (the limit that forced the split), check-novac-lint.sh.
+//
+// THE FAMILY GROWS, and it grows by a rule: three of the six predicates here were
+// written within one day, all for the same reason -- the lowering asks the CHANNEL
+// what a node MEANS instead of deriving it at the consumer (plan 196, stage E2-b1).
+// A new question of that shape belongs here, not in the consumer that needs it.
+
 module novac.sem
 
 import ../builtins.{PRINT_FN}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
-
-/// ВОПРОСЫ О ТОМ, ЧТО УЗЕЛ ЕСТЬ -- семья предикатов с ответом да/нет.
-///
-/// Отделены от `slots.nv` 2026-09-13, когда тот перешёл предел в 1000 строк: предмет там другой
-/// -- извлечение и разбор (слоты, дети, тексты), а здесь СУЖДЕНИЕ о виде узла. Резать по смыслу
-/// велит страж размера файла, и он же запрещает базлайн и исключение.
-///
-/// СЕМЬЯ РАСТЁТ, и растёт по правилу: три предиката из шести заведены за сутки, потому что
-/// понижение спрашивает у КАНАЛА, что узел значит, вместо того чтобы выводить это самому
-/// (правило плана 196, этап Э2-б1). Новый вопрос такого рода приходит сюда, а не к потребителю.
 
 /// Is this child of a call an ARGUMENT? Two shapes are: a bare expression, and
 /// a NAMED argument (`by: 2`), which is a node WRAPPING one.
@@ -32,31 +40,23 @@ export fn is_arg_node(c Node) -> bool =>
 /// and a kind put into it moves silently into every general arm (B13).
 export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
 
-/// Node kinds that stand as expressions (argument/operand positions).
-/// THE TYPE A LITERAL TOKEN STANDS FOR -- the ONE home of the four-way table (D44:
-/// an undecided literal is its own kind, `int` and `f64`).
+/// Is this leaf an INTEGER LITERAL? A question about what the node MEANS, so the
+/// channel answers it and not the consumer.
 ///
-/// Two consumers ask it, and that is why it is here rather than in either of them: the
-/// checker's `type_of` (after the channel had no type for the position) and the lowering
-/// of a `println` argument (where there IS no position type -- `println` is a builtin name
-/// with no registry row, so nothing can dictate a width). A copy in the second consumer
-/// would be a second home for one rule, and the first edit to part them would be the day
-/// a new literal kind arrives in one place and not the other.
-///
-/// A table maps, so it is a match -- and its leftover branch is a REFUSAL, not a guess
-/// (P21: a wildcard may only carry `None` where the type declares partiality).
-/// ЛИСТ ЕСТЬ ЦЕЛОЧИСЛЕННЫЙ ЛИТЕРАЛ? Вопрос о СМЫСЛЕ узла, и отвечает на него канал, а не
-/// потребитель. Заведено 2026-09-10 ради переезда понижения: `lower` не имеет ребра к `lex`
-/// по таблице архитектуры, а `pattern_of` сравнивал вид листа с `TokenKind.IntLit` напрямую.
-/// Просить НОВОЕ ребро значило бы менять архитектуру ради одного сравнения — это слово
-/// владельца; спросить канал предикатом можно и нужно, он уже отвечает на соседние вопросы
-/// о листе (`leaf_kind`, `literal_prim_of`).
+/// Written 2026-09-10 for the lowering's move: `lower` has no edge to `lex` in the
+/// architecture table, and `pattern_of` compared the leaf's kind against
+/// `TokenKind.IntLit` directly. Asking for a NEW edge would mean changing the
+/// architecture for the sake of one comparison -- the owner's words; asking the
+/// channel through a predicate is both allowed and right, since it already answers
+/// the neighbouring questions about a leaf (`leaf_kind`, `literal_prim_of`).
 export fn is_int_lit(n Node) -> bool => leaf_kind(n) == TokenKind.IntLit
 
-/// ЛИСТ ЕСТЬ ИМЯ? Пара к `is_int_lit`, заведена тем же переездом и по той же причине: образец
-/// арма — либо литерал, либо имя варианта, и оба вопроса принадлежат каналу.
+/// Is this leaf an IDENTIFIER? The pair to `is_int_lit`, written by the same move
+/// and for the same reason: an arm's pattern is either a literal or a variant name,
+/// and both questions belong to the channel.
 export fn is_ident_leaf(n Node) -> bool => leaf_kind(n) == TokenKind.Ident
 
+/// Node kinds that stand as expressions (argument/operand positions).
 export fn is_expr_kind(k NodeKind) -> bool {
     // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
     // `||` on the next line is parsed as something else entirely (the oracle
@@ -96,14 +96,16 @@ export fn is_expr_kind(k NodeKind) -> bool {
     k == NodeKind.Cast
 }
 
-/// Callee text of a Call node's children (leaf or Name-branch callee).
-/// ЭТО ВЫЗОВ `println` В ИСХОДНИКЕ? Вопрос о смысле узла, и канал на него отвечает — ровно как
-/// на `is_int_lit`. Заведено 2026-09-10 ради переезда понижения: `lower` не имеет ребра к
-/// `builtins`, а `lower_eval` сравнивал имя вызываемого с `PRINT_FN` напрямую.
+/// Is this a call to `println` in the source? A question about meaning, so the
+/// channel answers it -- exactly as for `is_int_lit`.
 ///
-/// И существенное про сам `PRINT_FN`: это НЕ C-имя, а имя функции ЯЗЫКА (`PRINT_FN = "println"`).
-/// Полдня он числился у меня знанием бэкенда только потому, что живёт в модуле `builtins`,
-/// — догадка по имени модуля, снятая чтением константы.
+/// Written 2026-09-10 for the lowering's move: `lower` has no edge to `builtins`,
+/// and `lower_eval` compared the callee's name against `PRINT_FN` directly.
+///
+/// Worth saying about `PRINT_FN` itself: it is NOT a C name but the name of a
+/// function in the LANGUAGE (`PRINT_FN = "println"`). It sat in my notes as backend
+/// knowledge for half a day purely because it lives in a module called `builtins`
+/// -- a guess from the module's name, undone by reading the constant.
 export fn is_println_call(e Node) -> bool {
     if e.kind_of() != NodeKind.Call { return false }
     call_callee_text(branch_children(e)) == PRINT_FN
