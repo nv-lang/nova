@@ -310,7 +310,14 @@ const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Optio
 
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
-const FOR_CALL_HEAD_MSG = "the head of this `for` is a call that does not return a vector -- a collection head needs `[]T`"
+///
+/// NAMED AS DEBT AND DATED 2026-09-13, because it was neither. The refusal always spoke
+/// about ITSELF, which is why it never looked wrong -- but D58 (amended by plan 138)
+/// leaves no choice: `for x in c` desugars through `c.iter()` and `next()`, ALWAYS. So
+/// requiring `[]T` is a LAG, not a rule, and a reader is entitled to know when it ends.
+/// Carrying neither spelling, it was also invisible to the debt ratchet -- the hole in
+/// that counter's scope is wave B11's subject.
+const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is a call that does not return a vector, and novac walks a collection by index, so it needs `[]T` -- the iterator protocol D58 asks for is not compiled yet (274.7 B12)"
 
 /// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
 const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
