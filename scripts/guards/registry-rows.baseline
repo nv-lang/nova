@@ -693,6 +693,13 @@
 #   nova_str_Err pri obyavlennom Result[CResultHandle, DuckError]. Klass --
 #   kanal 196, podklass: kodogen vyvodit DVAZHDY i dva vyvoda rashodyatsya.
 #   BLOKIRUET TEG: DA.
-rows=1037
-max=1083
-gaps=174-208,210-215,653-654,743,1062,1074
+# 2026-09-13 (integrator): rows -> 1039, max -> 1086, gaps += 1084. Dve stroki
+#   po nakhodkam okna 283: 1085 -- Chan[T] ne vypuskaet ChanTx/ChanRx, kogda T
+#   predstavlen UKAZATELEM (os' utochnena samim nakhodchikom: ne 'summa', a
+#   suffiks _p); 1086 -- export const vypuskaetsya bez prefiksa modulya,
+#   SVERENO moey proboy i proyavlenie vyshlo DRUGIM (u nikh stolknovenie, u menya
+#   nedostizhimost'). Nomer 1084 vydan oknu 274 pod suzhenie `??` do Option --
+#   ikh stroka pridyot sliyaniem, poetomu 1084 obyavlen ZAKONNOY DYROY, kak 1074.
+rows=1039
+max=1086
+gaps=174-208,210-215,653-654,743,1062,1074,1084
