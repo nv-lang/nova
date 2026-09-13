@@ -305,6 +305,7 @@ step "novac-text (карта, маркеры, леджер, рёбра — до 
 par_reset
 par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.py" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
 par_add "$ROOT/scripts/guards/check-novac-arch-invariants.py" "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
+par_add "$ROOT/scripts/guards/check-novac-keyword-parity.py" "разница между списком зарезервированных слов спеки и таблицей лексера novac не объявлена: слово, которого лексер не знает, не молчит — оно ЛЖЁТ (реестр #1089, план 274.7 В10)"
 par_add "$ROOT/scripts/guards/check-novac-no-naked-panic.py" "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
 par_add "$ROOT/scripts/guards/check-novac-no-crutch.py" "механизм novac назван костылём вместо того, чтобы быть названным правилом (П34)"
 par_add "$ROOT/scripts/guards/check-novac-no-unwrap-compare.py" "завёрнутый индекс распакован ради сравнения — обёртка перестала защищать (П19)"

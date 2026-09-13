@@ -355,6 +355,39 @@ export fn brace_delta(k TokenKind) -> int {
     }
 }
 
+// WHERE THE TABLE DIFFERS FROM THE SPEC'S RESERVED-WORD LIST, AND WHY -- one line per
+// difference, held by check-novac-keyword-parity.py (plan 274.7 wave B10).
+//
+// A keyword the lexer does not know does NOT stay silent: it lies. `loop` lexes as a
+// name, the `{` after it reads as a record literal, and the author is told "record
+// constructor only as a binding initializer" about a loop (registry #1089). Measured
+// 2026-09-13, a SECOND mask of the same class: `and` and `not` lex as names too, and
+// the refusal reads "unknown name: nothing with this name is bound at this point" --
+// a claim about the PROGRAM. That one is worse: it sends the author hunting for a typo
+// in a word they spelled correctly.
+//
+// The guard does NOT demand that every listed word be lexed. Three of them must not be:
+// `true`/`false` are literals and `Self` is a type, and writing them into this table
+// would damage the design to satisfy a number. The list is also partly stale. So each
+// difference is DECLARED instead, with one of four kinds: `debt` (with a stage in
+// brackets), `by design`, `retracted`, `spec-gap`.
+//
+// Twenty-three differences are NOT declared yet, and the guard's ratchet holds that
+// number. Each declaration is a JUDGEMENT -- debt or design, and if debt, which wave --
+// and stamping twenty-three plausible ones in a single pass would put believable words
+// where considered ones belong.
+//
+// KEYWORD-PARITY: true -- by design (a boolean literal, not an entry of this table)
+// KEYWORD-PARITY: false -- by design (a boolean literal, not an entry of this table)
+// KEYWORD-PARITY: Self -- by design (a type, D66, not a lexer keyword)
+// KEYWORD-PARITY: let -- retracted (D184: `let` -> `ro`/`mut`; the spec list still has it)
+// KEYWORD-PARITY: external -- retracted (replaced by `extern "nova"`; `extern` is below)
+// KEYWORD-PARITY: loop -- debt (274.7 B10), registry #1089: the form is legal Nova
+// KEYWORD-PARITY: consume -- spec-gap (a token since 2026-08-23, measured against the
+//     oracle, which refuses `fn consume()`; the spec's list has not caught up)
+// KEYWORD-PARITY: extern -- spec-gap (the list still spells the retracted `external`)
+// KEYWORD-PARITY: unsafe -- spec-gap (a real keyword of the language, absent from the list)
+
 /// Keyword kind for an identifier text, or Ident when it is not a keyword.
 fn keyword_kind(t str) -> TokenKind => match t {
     "module" => TokenKind.KwModule
