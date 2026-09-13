@@ -904,6 +904,57 @@ ro y = None                  // unit — без скобок
 
 Details — [D17](decisions/02-types.md#d17).
 
+### A temporary `consume` value in a view position (D476)
+
+A temporary of a consume type landing in a view position — as an unqualified
+argument, or as the receiver of a harmless method — used to be refused. It now
+**expands into a consume scope**:
+
+```nova
+get_luck().print()
+// desugars to:
+consume t = get_luck() { t.print() }
+```
+
+The scope is **narrow**: it wraps the expression the temporary takes part in, not
+the whole enclosing call, or the resource would be held for as long as a
+neighbouring argument runs.
+
+```nova
+f(get_luck().id(), g())
+// desugars to:
+{
+    ro arg1 = consume t = get_luck() { t.id() }
+    ro arg2 = g()
+    f(arg1, arg2)
+}
+```
+
+The block is an EXPRESSION (D188), so no statement slot is needed — it works where
+there is none:
+
+```nova
+while consume t = get_luck() { t.more() } { … }
+```
+
+A loop condition is re-evaluated on each iteration, so the scope is created and
+cleaned on each iteration; the right operand of `&&` is evaluated conditionally,
+so the scope is entered conditionally.
+
+**What the rule does NOT do.** It leaves a consume PARAMETER alone (`f(make_tx())`
+against `f(consume x Tx)` is already legal — ownership passes without a binding),
+and it does not rescue a named binding of the wrong form: `ro opt = get_job()`
+stays an error, the legal form being `consume opt = get_job()`. For a type with no
+`@cleanup` (strictly linear) the expansion yields an unconsumed binding and
+`D133-not-consumed` fires as it should.
+
+**The price, stated out loud:** a cleanup may carry an effect, and then `Fail[E]`
+must appear in the enclosing function's signature — a line that reads like a print
+can demand one. In exchange, no diagnostic may ever name the synthetic binding: it
+points at the expression the author wrote.
+
+The norm is [D476](decisions/03-syntax.md); no compiler implements it yet.
+
 ### Recursive types — the `indirect` marker (D477)
 
 A sum is placed **by value**, so a variant whose payload contains the type itself
