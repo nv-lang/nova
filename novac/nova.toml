@@ -156,13 +156,14 @@
 # files were renamed by the module split. NOT three new decisions: two are other
 # windows' already-recorded ones, mine is a rename. The number is the counter's, not
 # arithmetic of mine.
-# 68 -> 69 (2026-09-13): D475, амендмент к D422 §5 (план 285) — цифры float
-# производит Nova, утверждение «dtoa непортируем» снято. Для Карины это снимает
-# требование иметь dtoa в рантайме: кратчайшая запись и точное десятичное
-# теперь на Nova (`runtime.decimal`). Число сверено счётом, а не арифметикой:
-# `git log --since=2026-08-14 --no-merges --oneline -- spec/decisions` даёт 68 до этого
-# коммита, то есть маркер совпадал до него и совпадёт после.
-#   spec-queue: 69
+# 71 -> 72 (2026-09-13, слияние): две половины истории вели счёт независимо:
+# у ветки 285 было 69 (общие 68 плюс D475), у main — 71 (те же 68 плюс три его).
+# Оба числа верны для своей половины и оба неверны для слитого дерева.
+# Число взято ЗАМЕРОМ по объединённой истории, а не сложением чужих счётов:
+# `git log --since=2026-08-14 --no-merges --oneline HEAD origin/main -- spec/decisions`
+# даёт 72. Выбрать сторону значило бы записать в базу число, переставшее описывать
+# свой предмет в момент записи.
+#   spec-queue: 72
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

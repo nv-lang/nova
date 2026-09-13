@@ -115,7 +115,7 @@
 >     - Branch `plan-115` pushed в github для user-review (НЕ merge сам в main —
 >       user approves merge per memory feedback)
 >     - Memory `project-plan115-status.md` создан (через Write tool в
->       `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`)
+>       `%USERPROFILE%/.claude/projects/d--Sources-nv-lang-nova/memory/`)
 >
 > **Production-grade требование:** реализация без упрощений. `ptr` type должен
 >   быть first-class (поддерживается в parser/checker/codegen/runtime);
@@ -660,7 +660,7 @@ Per safety hatch (Risk Register R-1) — items extracted from V1 scope:
 
 - Branch `plan-115` pushed для user-review (НЕ self-merged).
 - Memory: `project-plan115-status.md` (in
-  `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`).
+  `%USERPROFILE%/.claude/projects/d--Sources-nv-lang-nova/memory/`).
 - Sprint logs: `docs/project-creation.txt` Plan 115 section +
   `docs/dev/simplifications.md` markers updated +
   `d:/Sources/nv-lang/nova-private/discussion-log.md` Session 9 entry.

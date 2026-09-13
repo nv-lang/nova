@@ -7,7 +7,7 @@
 Эталон-фикстуры сняты прогоном probe.nv (build+run, не `nova test` —
 println недоступен в test-блоках) через main-репы нетронутый бинарь.
 Probe-скрипты (временные, не в репо):
-`C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\a48a9f3a-0403-4a44-a6e3-8894781d4b88\scratchpad\probe.nv`
+`<скретчпад-сессии>\scratchpad\probe.nv`
 + `f4r_probe2.nv` (precision-клэмп доп.).
 
 Файлы (spec_tests/conformance/):

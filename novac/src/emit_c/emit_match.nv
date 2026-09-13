@@ -43,9 +43,9 @@ import ../lower.{Local, no_local, Pattern, VariantMatch, SwitchCtx, Cond}
 /// scrutinee and the result are temporaries numbered by their own index, and only the
 /// printer's `matched` flag is still spelled from `uniq` -- which the BUILDER now mints,
 /// so this function no longer takes it. What has not changed is why the number exists at
-/// all: it must be unique per body and must never be the binding name, because Nova lets [INV-TODO: №TBD]
-/// a name be bound twice in one scope (F30) and the C would then declare one variable
-/// twice in one block.
+/// all: Nova lets a name be bound twice in one scope (F30), and the C would then
+/// declare one variable twice in one block. So the number is unique per body and
+/// must never be the binding name. [INV-TODO: 274.3 F30 -- nothing checks it]
 fn Emitter mut @lower_match(m Node, dest Local) -> () {
     ro kids = branch_children(m)
     ro scr = kids[1]

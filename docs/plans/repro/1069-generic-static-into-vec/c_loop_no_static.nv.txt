@@ -1,0 +1,16 @@
+// Цикл ЕСТЬ, статика по тип-параметру НЕТ: в push идёт сам элемент.
+// Если соберётся — ось = «цикл + push результата T.static(...)».
+// Если упадёт  — ось = «цикл + push в Vec[T]», статик ни при чём.
+
+fn[T] copy_all(xs []T) -> Vec[T] {
+    mut out = Vec[T].new()
+    for x in xs {
+        out.push(x)
+    }
+    return out
+}
+
+fn main() Io -> () {
+    ro v = copy_all[int]([1, 2, 3])
+    print("${v[1]}")
+}

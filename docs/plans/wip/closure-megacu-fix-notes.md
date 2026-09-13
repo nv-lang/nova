@@ -20,7 +20,7 @@
 - Изолированный репро: НЕ одиночный файл (даёт E_D78_MODULE_PATH_MISMATCH) —
   мини-пакет с `nova.toml` (копия `spec_tests/nova.toml`, package name `spec_tests`)
   + `conformance/` подпапка с нужными файлами. Путь:
-  `C:/Users/B7E3~1/AppData/Local/Temp/claude/d--Sources-nv-lang-nova/a48a9f3a-0403-4a44-a6e3-8894781d4b88/scratchpad/repro/`
+  `<скретчпад-сессии>/scratchpad/repro/`
   (и под-пакеты `pkg_d22/`, `pkg_d402/` для изоляции). ЭТО scratchpad — эфемерно,
   переживает только текущую сессию; при обрыве пересоздать по этой инструкции.
 - Команда прогона: `"$NOVA_BIN" test "$REPRO/conformance"` (env GC-переменные

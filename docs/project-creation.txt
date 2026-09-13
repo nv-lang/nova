@@ -26973,7 +26973,7 @@ Session 3 grand-total Plan 118 acceptance closed: 14 of 35 (40%):
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25,
 A26, A29, A30, A33, A34, A35.
 
-Memory file C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/
+Memory file %USERPROFILE%/.claude/projects/d--Sources-nv-lang-nova/
 memory/project-plan118-status.md updated с current substantial scaffold
 status + 14 acceptance criteria list + 50 commit count.
 

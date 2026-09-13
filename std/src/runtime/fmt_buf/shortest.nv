@@ -418,7 +418,7 @@ fn f64_shortest_digits(v f64) -> Option[FloatingDecimal64] {
         Some(small) => {
             // A small integer may carry trailing DECIMAL zeros; scientific
             // notation wants them in the exponent instead.
-            mut {mantissa, exponent} = small
+            mut { mantissa, exponent } = small
             while true {
                 ro q = div10(mantissa)
                 ro r = mantissa - 10 * q

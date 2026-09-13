@@ -1,0 +1,9 @@
+module a_match_is
+fn main() Io -> () {
+    ro x any = 42 as any
+    match x {
+        n is int => println("int ${n}")
+        is str => println("str")
+        _ => println("other")
+    }
+}

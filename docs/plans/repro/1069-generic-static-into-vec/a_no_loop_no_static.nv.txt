@@ -1,0 +1,13 @@
+// Минимальное репро: обобщённая функция строит Vec[T] и толкает в него T.
+// Ожидание: собирается. Факт: codegen error про copy_n_nonoverlapping.
+
+fn[T] make_one(x T) -> Vec[T] {
+    mut out = Vec[T].new()
+    out.push(x)
+    return out
+}
+
+fn main() Io -> () {
+    ro v = make_one[int](5)
+    print("${v[0]}")
+}

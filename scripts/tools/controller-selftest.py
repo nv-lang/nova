@@ -238,7 +238,7 @@ def freeze_state():
     # but they judge nothing, so they cannot spoil a verdict by definition. The freeze that does
     # matter is also announced by the integrator in words: it "starts with the word tier and ends
     # with the word end", so a run that merely looks heavy is never his freeze.
-    SLOT = re.compile(r"(gate\.sh|gate-novac|nova test)")
+    SLOT = re.compile(r"(gate\.sh|gate-novac|nova(?:\.exe)?\s+test)")  # nova.exe on Windows: the phrase "nova test" never occurs
     tiers = [r for r in rows if SLOT.search(r) and "grep" not in r and "controller-" not in r]
 
     # WHOSE tree holds the slot -- asked 15:16Z 2026-09-09, after this check called window 274's

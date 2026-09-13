@@ -46,6 +46,7 @@ verification) — в [wip/](wip/); при закрытии волны — уда
 | encoding/compress | [179](179-std-encoding-compress.md) |
 | serde / typed-json | [180](180-serde-derive.md) + [222.2](222-http-framework.md) (field-атрибуты до Rust-паритета) |
 | формат/Display | [208](208-unified-formatter.md) + [285](285-float-format-own.md) (число в строку без libc: свой кратчайший round-trip, трек Carina) |
+| data/sql, драйвер БД | [286](286-db-driver.md) (черновик: граница `Db`, значение на границе, типизированный разбор строки через `Deserializer` плана 180, `Tx consume`; первый носитель — `nova-duckdb`) |
 | коэрсии `#coerce` | [214](214-coerce-attribute.md) + [214.1](214.1-generic-coerce.md) (generic-образцы, снятие R14) |
 
 ## Связанные директории
