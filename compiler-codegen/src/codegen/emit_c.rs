@@ -9831,7 +9831,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_bench(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
+        // Реестр 221.1 №1090, тот же класс, что у `emit_nova_main`: тело
+        // эмитится БЕЗ `current_emit_file_id`, поэтому `free_fn_c_name` не
+        // находит мангл в `file_priv_fn_c_names` и уходит в голое
+        // `nova_fn_<имя>` — символ, которого никто не определяет. Входов в
+        // пользовательский код ТРИ (main, test, bench), и промах был во всех
+        // трёх; второй носитель (`derive_span_collision_test`) остался красным
+        // после починки одного `main` и этим класс и показал.
+        let saved_emit_file_id_bench = self.current_emit_file_id;
+        self.current_emit_file_id = Some(b.span.file_id);
         let r = self.emit_bench_scoped_inner(b, idx);
+        self.current_emit_file_id = saved_emit_file_id_bench;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
@@ -10060,7 +10070,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_test(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
+        // Реестр 221.1 №1090, тот же класс, что у `emit_nova_main`: тело
+        // эмитится БЕЗ `current_emit_file_id`, поэтому `free_fn_c_name` не
+        // находит мангл в `file_priv_fn_c_names` и уходит в голое
+        // `nova_fn_<имя>` — символ, которого никто не определяет. Входов в
+        // пользовательский код ТРИ (main, test, bench), и промах был во всех
+        // трёх; второй носитель (`derive_span_collision_test`) остался красным
+        // после починки одного `main` и этим класс и показал.
+        let saved_emit_file_id_test = self.current_emit_file_id;
+        self.current_emit_file_id = Some(t.span.file_id);
         let r = self.emit_test_scoped_inner(t, idx);
+        self.current_emit_file_id = saved_emit_file_id_test;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
@@ -29745,7 +29765,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_nova_main(&mut self, f: &FnDecl) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
+        // Реестр 221.1 №1090: тело main эмитится ЗДЕСЬ, и до этой правки —
+        // без `current_emit_file_id`. Из-за этого `free_fn_c_name` не находил
+        // мангл в `file_priv_fn_c_names` (ключ `(file_id, имя)`) и уходил в
+        // последнюю ветвь — голое `nova_fn_<имя>`, символ, которого никто не
+        // определяет: `lld-link: undefined symbol: nova_fn_same`. Определение
+        // при этом мангл получало, то есть имя производили ДВА места и они
+        // расходились.
+        //
+        // ОСЬ ИЗМЕРЕНА, А НЕ УГАДАНА (пробы в docs/plans/repro/1090-*): тот же
+        // сталкивающийся вызов из ОБЫЧНОЙ функции линкуется, из `main` — нет;
+        // контроль с уникальным именем зелён в обоих случаях. Обычный путь
+        // функции ставит контекст (:17273), путь main не ставил его нигде.
+        //
+        // Ставится БЕЗУСЛОВНО, в отличие от :17273, и это осознанно: там гейт
+        // защищает от смены байтов, когда коллизий типов нет, а здесь ставится
+        // ровно тот file_id, которому main принадлежит, — та же величина, что
+        // у любой другой функции этого файла. Пара save/restore стоит рядом с
+        // уже существующей парой enter/exit, поэтому ранний возврат по ошибке
+        // её не рвёт.
+        let saved_emit_file_id_main = self.current_emit_file_id;
+        self.current_emit_file_id = Some(f.span.file_id);
         let r = self.emit_nova_main_scoped_inner(f);
+        self.current_emit_file_id = saved_emit_file_id_main;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
