@@ -923,7 +923,7 @@ ro y = None                  // unit — без скобок
 ```nova
 type SqlType enum
     | TInt
-    | indirect TList(SqlType)      // нагрузка варианта — за указателем
+    | indirect TList(SqlType)      // the variant's payload lives behind a pointer
 ```
 
 В использовании коробки не видно: рукав `match` связывает внутреннее значение

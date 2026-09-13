@@ -904,6 +904,53 @@ ro y = None                  // unit — без скобок
 
 Details — [D17](decisions/02-types.md#d17).
 
+### Recursive types — the `indirect` marker (D477)
+
+A sum is placed **by value**, so a variant whose payload contains the type itself
+would have an infinite size. Indirection is declared **explicitly**, by a marker on
+the declaration:
+
+```nova
+type SqlType enum
+    | TInt
+    | indirect TList(SqlType)      // the variant's payload lives behind a pointer
+```
+
+The box is invisible at the use site: a `match` arm binds the inner value directly,
+and no `unsafe` is required.
+
+```nova
+match t {
+    SqlType.TList(inner) => …      // inner : SqlType
+    _                    => …
+}
+```
+
+**Where the marker sits is one rule applied to two shapes:** it goes on the unit
+whose size is computed separately. A sum's size is the maximum over its variants,
+so the marker goes on the **variant**; a `value`-record's size is the sum of its
+fields, so it goes on the **field**:
+
+```nova
+type Job value {
+    name str
+    job indirect Option[Job]
+}
+```
+
+**The marker answers "how much space", not "where does it stop".** A bare
+`job indirect Job` with no `Option` has a finite size and is still unbuildable:
+constructing a `Job` would require a finished `Job`. The base case comes from an
+`Option` or from a leaf variant, and the compiler distinguishes the two refusals
+(`E_RECURSIVE_NEEDS_INDIRECT` and `E_RECURSIVE_NO_BASE_CASE`) because they call for
+different fixes.
+
+**A plain record needs no marker:** a by-value reference to a heap type is
+pointer-sized rather than object-sized, so `type Job { job Option[Job] }` is finite
+without it. The obligation lands on exactly those who asked for by-value placement.
+
+The norm is [D477](decisions/02-types.md); no compiler implements it yet.
+
 ## Creating values and pattern matching
 
 ```nova
