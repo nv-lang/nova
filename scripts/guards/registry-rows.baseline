@@ -659,6 +659,11 @@
 #   v nekanonicheskoy forme, a u 273 obe formy srazu i generator chitaet NE tu.
 #   Nayedeno pobochno pri pravke 272. Koren' tot zhe, chto u #730 (dva verdikta
 #   v stroke reestra), dom drugoy.
-rows=1032
-max=1078
+# 2026-09-13 (integrator): rows -> 1033, max -> 1079. Zavedena 1079: paket
+#   nova-duckdb zhivyot na ODNOM zerkale iz tryokh -- gitverse otvechaet 403,
+#   sourcecraft 'repository not found', to est' repozitoriev tam NET. Ostal'nye
+#   sem' paketov soshlis' pobaytovo na vsekh tryokh (proverено ls-remote).
+#   Srok v samoy stroke: napomnit' vladel'tsu 2026-09-16 po ego slovu.
+rows=1033
+max=1079
 gaps=174-208,210-215,653-654,743,1062,1074
