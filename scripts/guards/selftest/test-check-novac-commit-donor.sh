@@ -30,6 +30,19 @@ if run "$T/m3" "$SRC"; then bad "'Donor: rustc' без сущности прош
 printf 'novac(274): Verdict\n\nDonor: none — the exit code is a closed set of three, a sum states that where an int cannot.\n' > "$T/m4"
 run "$T/m4" "$SRC" && ok "'none — причина' принимается" || bad "честное none покраснело: $(cat "$T/err")"
 
+# --- 4б. форма (а): «none», называющее РАССМОТРЕННОГО донора ------------
+# Сильнейшая из трёх: автор смотрел и говорит, ЧЕМ не подошло. Вердикт у неё свой,
+# иначе она неотличима от формы (б), а разница между «смотрел» и «вывел из задачи»
+# и есть предмет правки 2026-09-13.
+printf 'novac(274): shape\n\nDonor: none — rustc MIR has no if at all, it lowers to SwitchInt and never prints source.\n' > "$T/m4b"
+if run "$T/m4b" "$SRC"; then
+    grep -q "назван рассмотренный" "$T/out" \
+        && ok "'none' с названным рассмотренным донором распознано отдельно" \
+        || bad "прошло, но вердикт не отличил форму (а): $(cat "$T/out")"
+else
+    bad "'none' с названным донором покраснело: $(cat "$T/err")"
+fi
+
 # --- 5. «none» без причины — красный ------------------------------------
 printf 'novac(274): x\n\nDonor: none — nope\n' > "$T/m5"
 if run "$T/m5" "$SRC"; then bad "'none' с двумя словами прошло"; else grep -q "без причины" "$T/err" && ok "none без причины поймано" || bad "красный, но не про причину"; fi
