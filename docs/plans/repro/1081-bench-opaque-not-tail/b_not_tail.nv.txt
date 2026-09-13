@@ -1,0 +1,12 @@
+// B: те же две строки, порядок обратный — голая `bench.opaque(...)` НЕ последняя.
+// Ожидание (заявка окна 283): ICE E_CODEGEN_TYPE_UNKNOWN.
+module bench_not_tail
+
+bench "opaque is not tail" {
+    measure {
+        bench.opaque(twice(21))
+        bench.elements(1)
+    }
+}
+
+fn twice(n int) -> int => n * 2

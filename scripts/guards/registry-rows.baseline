@@ -672,6 +672,12 @@
 #   463 obyavleniya extern "nova", 58 bez vyzovov, no bol'shinstvo -- atomiki,
 #   i u nikh eto zakonno (eksportirovany). Etot sluchay otlichaetsya otsutstviem
 #   eksporta.
-rows=1034
-max=1080
+# 2026-09-13 (integrator): rows -> 1035, max -> 1081. Zavedena 1081: golaya
+#   `bench.opaque(...)` NE v khvoste bloka measure ronyaet kompilyator
+#   (emit_c.rs:3439, E_CODEGEN_TYPE_UNKNOWN), v khvoste -- rabotaet. Naydeno
+#   oknom 283, SVERENO svoey proboy: dva fayla, otlichayushchiesya poryadkom
+#   DVUKH strok. Tem zhe sliyaniem popravlena #292: eyo 'padaet na LYUBOM fayle'
+#   oprovergnuto zamerom -- bench/micro/arith.nv otrabatyvaet tselikom, RC=0.
+rows=1035
+max=1081
 gaps=174-208,210-215,653-654,743,1062,1074
