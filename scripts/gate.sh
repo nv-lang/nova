@@ -1782,6 +1782,12 @@ if body_runs; then
     fi
 fi
 
+step loop "данные не едут в строку C-формата (№1073)"
+if body_runs; then
+    run_guard "$ROOT/scripts/guards/check-no-data-in-c-format.py" "$ROOT" \
+        || fail "данные в позиции C-формата: текст из исходника пользователя попал туда, где C ищет спецификаторы (№1073)"
+fi
+
 step loop "D-number uniqueness"
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
 # FixedArray-блока в D440 (реестр 221.1 №123).

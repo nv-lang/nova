@@ -29954,7 +29954,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("nova_test_{}();", safe));
                     // Тело завершилось нормально — ожидали панику → FAIL.
                     self.line(&format!(
-                        "printf(\"  FAIL: {} — expected panic containing \\\"{}\\\" but test completed normally\\n\"); fflush(stdout);",
+                        "printf(\"  FAIL: %s — expected panic containing \\\"%s\\\" but test completed normally\\n\", \"{}\", \"{}\"); fflush(stdout);",
                         escaped, pat_escaped));
                     self.line("_nova_tests_failed++;");
                     self.indent -= 1;
@@ -29982,19 +29982,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         "if (_p_is_panic && nova_test_msg_contains(_p_msg, _p_len, \"{}\")) {{",
                         pat_escaped));
                     self.indent += 1;
-                    self.line(&format!("printf(\"  PASS: {}\\n\"); fflush(stdout);", escaped));
+                    self.line(&format!("printf(\"  PASS: %s\\n\", \"{}\"); fflush(stdout);", escaped));
                     self.indent -= 1;
                     self.line("} else if (_p_is_panic) {");
                     self.indent += 1;
                     self.line(&format!(
-                        "printf(\"  FAIL: {} — panic message did not contain \\\"{}\\\": %.*s\\n\", (int)_p_len, _p_msg); fflush(stdout);",
+                        "printf(\"  FAIL: %s — panic message did not contain \\\"%s\\\": %.*s\\n\", \"{}\", \"{}\", (int)_p_len, _p_msg); fflush(stdout);",
                         escaped, pat_escaped));
                     self.line("_nova_tests_failed++;");
                     self.indent -= 1;
                     self.line("} else {");
                     self.indent += 1;
                     self.line(&format!(
-                        "printf(\"  FAIL: {} — failed without panic (throw/cancel/exit is not a panic): %.*s\\n\", (int)_p_len, _p_msg); fflush(stdout);",
+                        "printf(\"  FAIL: %s — failed without panic (throw/cancel/exit is not a panic): %.*s\\n\", \"{}\", (int)_p_len, _p_msg); fflush(stdout);",
                         escaped));
                     self.line("_nova_tests_failed++;");
                     self.indent -= 1;
@@ -30016,12 +30016,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.indent += 1;
                     self.line(&format!("fflush(stdout);"));
                     self.line(&format!("nova_test_{}();", safe));
-                    self.line(&format!("printf(\"  PASS: {}\\n\"); fflush(stdout);", escaped));
+                    self.line(&format!("printf(\"  PASS: %s\\n\", \"{}\"); fflush(stdout);", escaped));
                     self.indent -= 1;
                     self.line("} else {");
                     self.indent += 1;
                     self.line("const char* _tf_msg = _tf.fail_msg ? _tf.fail_msg : (_tf_fail.error_msg.ptr ? _tf_fail.error_msg.ptr : \"assertion failed\");");
-                    self.line(&format!("printf(\"  FAIL: {} — %s\\n\", _tf_msg);", escaped));
+                    self.line(&format!("printf(\"  FAIL: %s — %s\\n\", \"{}\", _tf_msg);", escaped));
                     self.line("_nova_tests_failed++;");
                     self.indent -= 1;
                     self.line("}");
