@@ -919,7 +919,29 @@ fn Checker mut @report_if_error_token(t Token) -> () {
 /// a way of saying "the subset does not go that far" -- it says the text is
 /// not Nova. Whatever the subset declines, it declines BY NAME somewhere
 /// else, and `check-novac-no-grammar-excuse.py` keeps that true.
-const SYNTAX_MSG = "syntax error: this is not a form of the language"
+/// THE PARSER'S FALLBACK, and the one refusal that must NOT pick a side. It is reached
+/// from both directions: the text really is malformed (a missing `)`), or the form is
+/// perfectly legal Nova that novac does not read yet. The door cannot tell those apart --
+/// that is WHY it is a fallback -- so the message says so instead of guessing.
+///
+/// It used to guess, and it guessed the worse way: "this is not a form of the language"
+/// is a claim about the NORM, and a subset compiler is entitled to claims about itself
+/// only. On a legal form it sent the author to fix correct code. Seven places in this
+/// source already said in prose that the sentence lies (`lex/lex.nv`, `parse/decls.nv`,
+/// `parse/expr.nv`, `parse/type_decl.nv` twice, `sem/slots.nv`, `check/check.nv`) plus
+/// the fixture `fixtures/extern_decl/neg_1.nv` -- knowledge scattered across seven
+/// readers and owned by none, which is what an absent home looks like.
+///
+/// The OPPOSITE lie was the trap in fixing it: "novac does not parse this form yet" reads
+/// as a promise, and on a genuine typo it sends the author to wait for a wave instead of
+/// closing a bracket.
+///
+/// NO STAGE, deliberately. A stage answers "when does this stop being debt", and this
+/// refusal has no single answer: the bin is emptied span by span, a wave per form (plan
+/// 274), and each form has its own date. One stage here would be a plausible number in
+/// place of a considered one. It carries neither canonical debt spelling for the same
+/// reason -- both of them promise "yet", and this refusal declines to promise.
+const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
 
 /// An Err branch is ONE recovered mistake: one diagnostic at its first leaf.
 fn Checker mut @report_err_branch(children []Node) -> () {
