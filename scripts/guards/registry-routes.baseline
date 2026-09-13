@@ -1268,4 +1268,8 @@ no_caveat=0
 #   pri zelyonom `nova check`. Nayden progonom YARUSA PUSH, kotoryy
 #   yarus loop ne gonyaet; ulika -- docs/plans/repro/1090-*.
 #   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
-blockers=65
+# 2026-09-13 (integrator): blockers 65 -> 66. Rost ZAKONNYY -- stroka
+#   1092, naydena po voprosu vladel'tsa: peremeshchenie v vozvrashchaemyy
+#   kortezh ne schitaetsya mestom potrebleniya, i obkhod cherez `ro`
+#   stoyal v std dva mesyatsa opisannyy prozoy bez nomera.
+blockers=66

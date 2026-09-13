@@ -727,6 +727,12 @@
 #   1091 -- otladochnyy odnofaylovyy drayver padaet na LYUBOM fayle,
 #   vklyuchaya tryokhstrochnyy hello; kontrol' -- tot zhe fayl cherez
 #   release-drayver dayot PASS.
-rows=1043
-max=1091
+# 2026-09-13 (integrator): rows -> 1044, max -> 1092, gaps bez izmeneniy.
+#   1092 -- peremeshchenie v VOZVRASHCHAEMYY KORTEZH ne schitaetsya mestom
+#   potrebleniya: funktsiya, otdayushchaya dva consume-znacheniya kortezhem,
+#   otvergaetsya kak 'ne potrebivshaya' ikh. Vopros VLADEL'TSA, zamer moy.
+#   BLOKIRUET TEG: DA. Nositel' starshe nakhodki na dva mesyatsa i byl
+#   opisan prozoy bez nomera -- poetomu ne iskalsya.
+rows=1044
+max=1092
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089
