@@ -707,6 +707,12 @@
 #   Nositel' -- moy zhe shag dlya 1073, napisannyy cherez `run_guard`.
 #   Zakryta tem zhe sliyaniem: strazh check-gate-guard-dispatcher.py,
 #   199 strok-predmetov v dvukh geytakh, nerazreshimykh imyon 0.
-rows=1040
-max=1087
+# 2026-09-13 (integrator): rows -> 1041, max -> 1088, gaps bez izmeneniy.
+#   1088 -- strazh 698 meril rabochuyu kopiyu, a predmet u nego
+#   PUBLIKUEMOE; bit skip-worktree na .vscode/settings.json delal
+#   raskhozhdenie nevidimym: na odnom kommite lokal'no 1028, na CI 1030,
+#   baza 1028. Zakryta tem zhe sliyaniem: yarus 3 schitaet MAKSIMUM iz
+#   rabochey kopii i INDEKSA, samotest 16 -> 18 sluchaev.
+rows=1041
+max=1088
 gaps=174-208,210-215,653-654,743,1062,1074,1084
