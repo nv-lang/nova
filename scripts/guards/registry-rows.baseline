@@ -664,6 +664,14 @@
 #   sourcecraft 'repository not found', to est' repozitoriev tam NET. Ostal'nye
 #   sem' paketov soshlis' pobaytovo na vsekh tryokh (proverено ls-remote).
 #   Srok v samoy stroke: napomnit' vladel'tsu 2026-09-16 po ego slovu.
-rows=1033
-max=1079
+# 2026-09-13 (integrator): rows -> 1034, max -> 1080. Zavedena 1080 po voprosu
+#   vladel'tsa: `extern "nova" fn str.from_codepoint` NE eksportirovana i ne
+#   vyzyvaetsya nichem, krome svoikh dvukh fikstur, a eyo dokstroka nazyvaet
+#   potrebitelem json, kotoryy s 2026-09-05 khodit cherez `int @to_char()` --
+#   pro eto skazano v tom zhe fayle desyat'yu strokami nizhe. Kontekst zamera:
+#   463 obyavleniya extern "nova", 58 bez vyzovov, no bol'shinstvo -- atomiki,
+#   i u nikh eto zakonno (eksportirovany). Etot sluchay otlichaetsya otsutstviem
+#   eksporta.
+rows=1034
+max=1080
 gaps=174-208,210-215,653-654,743,1062,1074
