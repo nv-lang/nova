@@ -67,6 +67,33 @@ RE_JUDGED = re.compile(r"^novac/src/.*\.nv$")
 RE_DNUM = re.compile(r"\bD([0-9]{1,4})\b")
 
 
+RE_TRAILER = re.compile(r"^[A-Z][A-Za-z-]*:")
+
+
+def trailer(msg, key):
+    """ЗНАЧЕНИЕ трейлера целиком: строка `Key:` плюс её продолжения.
+
+    Сообщение коммита переносится по 72 знака (правило гейта), поэтому срок вида
+    `(E2-b, with the numeric family)` легко разрезается переносом пополам. Читать только
+    первую строку значит требовать от автора неестественной формы ради удобства
+    механизма — и первый же автор «починит» это, выбросив пояснение. Ровно этим доводом
+    2026-09-13 расширялась форма срока в самих отказах; здесь он тот же.
+
+    Продолжением считается всё до пустой строки или до следующего трейлера.
+    """
+    lines = msg.split("\n")
+    for i, l in enumerate(lines):
+        if not l.startswith(key + ":"):
+            continue
+        out = [l[len(key) + 1:].strip()]
+        for nxt in lines[i + 1:]:
+            if not nxt.strip() or RE_TRAILER.match(nxt):
+                break
+            out.append(nxt.strip())
+        return " ".join(out).strip()
+    return None
+
+
 def fail(*lines):
     for l in lines:
         print(l, file=sys.stderr)
@@ -175,7 +202,8 @@ def main():
             "  Либо реализуй форму целиком по спеке, либо назови срок прямо в тексте отказа.")
 
     # --- 2. НОРМА НАЗВАНА И РЕЗОЛВИТСЯ -----------------------------------------------
-    spec_line = next((l for l in msg.split("\n") if l.startswith("Spec:")), None)
+    body = trailer(msg, "Spec")
+    spec_line = None if body is None else "Spec: " + body
     if spec_line is None:
         return fail(
             f"{NAME}: FAIL — коммит меняет novac/src, а строки 'Spec:' в сообщении нет.",
@@ -183,7 +211,7 @@ def main():
             "  fallback for Result/Option, both arms implemented'.",
             "  Или честно: 'Spec: none — <почему работа не реализует формы языка, 5+ слов>'",
             "  (перенос, инструмент, страж — законные случаи).")
-    body = spec_line[len("Spec:"):].strip()
+    # `body` уже собран помощником: строка плюс её продолжения.
     if re.match(r"(?i)^none\s*(—|--|-)", body):
         reason = re.sub(r"(?i)^none\s*(—|--|-)\s*", "", body)
         if len(reason.split()) < 5:
@@ -207,14 +235,15 @@ def main():
                     "  спроси номер у интегратора, если блок ещё не заведён.")
 
     # --- 3. ЗАЯВЛЕНИЕ СВЕРЯЕТСЯ С ДИФФОМ ---------------------------------------------
-    simp_line = next((l for l in msg.split("\n") if l.startswith("Simplifications:")), None)
+    sbody = trailer(msg, "Simplifications")
+    simp_line = None if sbody is None else "Simplifications: " + sbody
     if simp_line is None:
         return fail(
             f"{NAME}: FAIL — коммит меняет novac/src, а строки 'Simplifications:' нет.",
             "  'Simplifications: none' — если работа сделана по норме целиком;",
             "  иначе назови каждое упрощение и его этап: 'Simplifications: Result left side",
             "  refused (E2-b3)'.")
-    sbody = simp_line[len("Simplifications:"):].strip()
+    # `sbody` уже собран помощником.
     says_none = bool(re.match(r"(?i)^none\b", sbody))
     if says_none and added:
         return fail(

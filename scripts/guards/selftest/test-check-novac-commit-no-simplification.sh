@@ -83,6 +83,26 @@ else
     ok "упрощение без этапа отвергнуто"
 fi
 
+# --- ПЕРЕНОС ТРЕЙЛЕРА (2026-09-13): сообщение коммита переносится по 72 знака, и срок
+# вида `(E2-b, with the numeric family)` режется переносом пополам. Поймано этим стражем
+# на МОЁМ ЖЕ коммите: срок стоял, а страж видел `(E2-b, with the` без закрывающей скобки.
+M=$(msg "novac: a slice" "" "$GOOD_SPEC" \
+    'Simplifications: an index of a non-int integer type refused (E2-b, with the' \
+    'numeric family) -- the stage the adjacent cast refusal already carries.')
+run "$M" "$(cat "$T/diff-dated")" && ok   "срок, разрезанный переносом, принимается" \
+    || bad "перенесённый срок не увиден - страж требует неестественной формы"
+
+# ...и обратная сторона: чтение продолжений НЕ должно стать «поищи этап где-нибудь
+# в хвосте». Упрощение названо, срока нет, текст перенесён — обязан краснеть.
+M=$(msg "novac: a slice" "" "$GOOD_SPEC" \
+    'Simplifications: an index of a non-int integer type is refused for now,' \
+    'and the reason is written in the guard rather than here.')
+if run "$M" "$(cat "$T/diff-dated")"; then
+    bad "перенесённое упрощение без срока прошло - продолжения читаются слишком жадно"
+else
+    ok   "перенесённое упрощение без срока отвергнуто"
+fi
+
 # --- 2. НОРМА: строки Spec нет ----------------------------------------------------
 M=$(msg "novac: a slice" "" "$GOOD_SIMP")
 if run "$M" "$(cat "$T/diff-clean")"; then
@@ -137,7 +157,7 @@ run "$M" "$(cat "$T/diff-undated")" && ok "правка только теста 
 STAGED="$STAGED_SAVE"
 
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-commit-no-simplification ok: 13 случаев, обе стороны по трём свойствам"
+    echo "test-check-novac-commit-no-simplification ok: 15 случаев, обе стороны по трём свойствам"
     exit 0
 fi
 echo "test-check-novac-commit-no-simplification: FAIL -- $fails" >&2
