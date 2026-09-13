@@ -619,6 +619,7 @@ M-maplit-folder-cu-insert-new-ice
 M-match-guard-trailing-paren-legacy-lambda
 M-match-tuple-option-value-deref
 M-md5-array-repeat-literal-parser
+M-mega-known-red-inline
 M-method-resolution-registry-inconsistency
 M-method-value-arg-in-generic-combinator-infer
 M-missing-effect-handler-segfaults

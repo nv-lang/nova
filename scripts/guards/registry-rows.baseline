@@ -746,6 +746,12 @@
 #   Tot zhe poryadok, chto u 1062, 1074, 1084, 1089: dyra ob'yavlyaetsya TEM,
 #   KTO VYDAL nomer -- neob'yavlennaya dyra dlya strazha neotlichima ot
 #   poteryannoy stroki.
-rows=1044
-max=1092
+# 2026-09-14 (integrator): rows -> 1045, max -> 1098, gaps bez izmeneniy.
+#   1098 -- shagi geyta sudyat ZHIVOE RAZDELYAEMOE sostoyanie mashiny,
+#   kotoroe sosednie okna menyayut POD progonom. Dva nositelya za noch':
+#   zamok fayla na nova.exe (chuzhoy progon) i schyot rabochikh derev'ev
+#   (21 vo vremya progona, 20 cherez minutu posle). Oba raza otkaz prishyol
+#   za chuzhoe deystvie i nazval ne to.
+rows=1045
+max=1098
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097
