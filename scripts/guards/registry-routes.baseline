@@ -1274,4 +1274,12 @@ no_caveat=0
 #   2026-08-16 ('vypustit' yazyk, chey glavnyy tezis ne vypolnyaetsya, dorozhe
 #   zaderzhki') uzhe derzhit 685 i 686. Pauza reliza orakula k etomu polyu ne
 #   otnositsya: ona pro ocherednost' rabot, a pole -- pro vozmozhnost' vypuska.
-blockers=65
+# 2026-09-14 (okno 274): blockers 65 -> 66. DOLG PREDYDUSHCHEGO KOMMITA, ne novyy rost:
+#   integrator postavil 'BLOKIRUET TEG: DA' stroke 1095 (`if Some(x) = <ne-Option>`
+#   prokhodit `nova check` i padaet clang'om), ya zapisal ego reshenie v stroku i NE
+#   podnyal bazu tem zhe kommitom. Mezhdu tem kommitom i etoy pravkoy derevo bylo krasno
+#   bez prichiny, vidimoy iz diffa; nashel eto ya sam chas spustya, zapuskaya strazha po
+#   drugomu povodu.
+#   PRAVILO, kotoroe iz etogo sleduet: pravka, menyayushchaya CHISLO pod khrapovikom,
+#   dvigaet bazu V TOM ZHE kommite -- inache ona ostavlyaet krasnoe okno sleduyushchemu.
+blockers=66
