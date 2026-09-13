@@ -236,13 +236,13 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 /// this rule exists to catch (#810).
 const INT_MAX_TEXT = "9223372036854775807"
 
-const INT_TOO_LARGE_MSG = "outside the subset: this integer literal does not fit in `int` -- the emitted C would wrap it silently (#810)"
+const INT_TOO_LARGE_MSG = "this integer literal does not fit in `int` -- the language makes that a hard compile error (E_LIT_OUT_OF_RANGE, 03-syntax.md), not a silent truncation; the oracle wraps it in the emitted C (#810)"
 
 /// The nesting refusal (#807/#808). The number is the oracle's 512, which is
 /// normative there; the whole corpus never writes past 40 levels.
 const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 levels -- the parser stops before the stack does (#807)"
 
-const DUP_DECL_MSG = "outside the subset: this top-level name is declared twice in one file -- the second body is dropped in silence (#811)"
+const DUP_DECL_MSG = "this top-level name is declared twice in one file -- one namespace, so the second declaration collides (E_DUP_DEFINITION, D29); the oracle drops the second body in silence (#811)"
 
 /// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
 /// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
