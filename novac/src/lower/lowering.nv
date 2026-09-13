@@ -103,7 +103,7 @@ fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
     ro cond = Cond.Expr(kids[1])
     // The else branch of an if-value is always a BLOCK printed as `} else {`, so it is
     // braced by construction -- not a guess, the next line prints the brace.
-    ro c = @ir.begin_if(cond, true, true)
+    ro c = @ir.begin_if(cond, ElseShape.Braced)
     @lower_block_value(kids[2], t)
     @ir.begin_else(c)
     @lower_block_value(kids[4], t)
@@ -144,7 +144,7 @@ fn Lowerer mut @lower_coalesce(e Node) -> Local {
     // had (measured before the edit, plan 274.8 decision (1)).
     ro cond = Cond.IsSome(lo)
     // Same as the if-value: the None branch is a block printed as `} else {`.
-    ro c = @ir.begin_if(cond, true, true)
+    ro c = @ir.begin_if(cond, ElseShape.Braced)
     @ir.take_payload(lr, lo)
     @ir.begin_else(c)
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
@@ -342,13 +342,13 @@ fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     // nothing -- `emit_expr` touches neither the builder nor the name counter (measured
     // 2026-09-08); only `build_value` lowers, and a condition never goes through it.
     ro cond = Cond.Expr(kids[1])
-    ro braced = if has_else { else_is_braced(kids[4]) } else { false }
+    ro shape = else_shape(kids, 4)
     ro c = match outer {
-        None => @ir.begin_if(cond, has_else, braced)
+        None => @ir.begin_if(cond, shape)
         // THE door for "else, then a chain" -- until 2026-09-08 this pair was opened by
         // hand here and in `lower_if_let`, while the door itself had only a test as its
         // caller (class #991: one concept, two implementations).
-        Some(o) => @ir.begin_else_if(o, cond, has_else, braced)
+        Some(o) => @ir.begin_else_if(o, cond, shape)
     }
     // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
     // caller printed, so it starts without the indent the top-level `if` carries.
@@ -432,7 +432,7 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
     ro cond = Cond.IsSome(lo)
-    ro braced = if has_else { else_is_braced(kids[9]) } else { false }
+    ro shape = else_shape(kids, 9)
     // THE TEMPORARY BELONGS TO THE ELSE BLOCK, and under the walk that is decided by
     // MEMBERSHIP rather than by the moment of printing (found 2026-09-09, the last divergence
     // of step 3b: `NovaOpt T2 = b;` printed one line ABOVE its `} else {` in
@@ -453,8 +453,8 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     }
     @lower_place(init, lo)
     ro c = match outer {
-        None => @ir.begin_if(cond, has_else, braced)
-        Some(o) => @ir.begin_chained_if(cond, has_else, o.join, braced)
+        None => @ir.begin_if(cond, shape)
+        Some(o) => @ir.begin_chained_if(cond, o.join, shape)
     }
     // NOT chained for the purpose of PRINTING, even when `outer` is Some -- braced, not continued.
     // A chained plain `if` continues the `} else ` line its caller printed, so it carries no
@@ -724,9 +724,9 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
             // door (`@print_if_head`, emit_flow.nv), which until this step was the third
             // place spelling `    if (` + condition + `) {` by hand.
             ro gcond = Cond.Expr(g)
-            // A guard has no else branch, so the bit is not read; passed explicitly so
-            // no default is left for someone to interpret later.
-            ro gi = @ir.begin_if(gcond, false, false)
+            // A guard has no else branch at all, and that is now the whole answer: there
+            // is no second bit to pass, and no default for anyone to interpret later.
+            ro gi = @ir.begin_if(gcond, ElseShape.NoElse)
             @lower_arm_body(arm_e, dest)
             @ir.end_if(gi)
         }
@@ -896,11 +896,35 @@ fn Lowerer @tail_places_value(c Node) -> bool {
         (k == NodeKind.MatchExpr && is_ty(@out.type_if_known(c.id_of())))
 }
 
-/// Is the tail of an `else` a braced shape -- a block or a chained `if let`? A question
-/// about the SHAPE of a node, so it travels with the lowering. It lived in `emit_c/` as a
-/// private helper and was almost left behind: the closure measure counted `@method(` calls
-/// and a free function is invisible to it.
-fn else_is_braced(tail Node) -> bool {
+/// WHICH SHAPE OF `else` THIS `if` HAS -- the ONE place that decides it. A question about
+/// the SHAPE of a node, so it travels with the lowering. It lived in `emit_c/` as a private
+/// helper and was almost left behind: the closure measure counted `@method(` calls and a free
+/// function is invisible to it.
+///
+/// IT TAKES THE CHILDREN AND AN INDEX, not the tail node, and that is not a detail of taste.
+/// Until 2026-09-13 both callers wrote the same line by hand --
+/// `if has_else { else_is_braced(kids[N]) } else { false }` -- two verbatim copies of one
+/// rule, in `lower_if` and in `lower_if_let`, which would not have followed a change to
+/// either. The first version of this door took `(has_else, tail)` and BROKE: arguments are
+/// evaluated before the call, so `kids[4]` on an `if` without an else indexed past the end
+/// and four tests said so ("index 4 out of bounds for length 3"). The old hand-written line
+/// was lazy BY SHAPE -- the indexing sat inside the branch -- and a guard moved into the
+/// function cannot protect an argument computed outside it.
+///
+/// With the index, both questions are answered by ONE reading of the length, and they were
+/// one question all along: every caller's `has_else` was literally `kids.len() > N` for the
+/// same N it then indexed with.
+fn else_shape(kids []Node, tail_at int) -> ElseShape {
+    if kids.len() <= tail_at {
+        return ElseShape.NoElse
+    }
+    // Bound first: the index expression is not a receiver the method table accepts
+    // (`E_RECV_METHOD_MISMATCH` on `Vec`), and binding it also names the thing.
+    ro tail = kids[tail_at]
     ro k = tail.kind_of()
-    k == NodeKind.Block || k == NodeKind.IfLet
+    if k == NodeKind.Block || k == NodeKind.IfLet {
+        ElseShape.Braced
+    } else {
+        ElseShape.Chained
+    }
 }

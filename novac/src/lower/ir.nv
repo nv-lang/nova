@@ -246,6 +246,31 @@ export type Cond enum
     | Expr(Node) // a boolean expression, printed from the tree
     | IsSome(Local) // the Option in the local is Some
 
+/// WHAT KIND OF `else` AN `if` HAS -- three states, and the fourth is gone because it never
+/// existed. Until 2026-09-13 the doors took two booleans, `has_else` and `els_braced`, which
+/// spell FOUR combinations over three real ones: `has_else = false` with `els_braced = true`
+/// is meaningless and was perfectly representable. At a call site it read
+/// `@ir.begin_if(cond, true, true)` -- which `true` is which, visible only from the signature.
+///
+/// BOTH QUESTIONS ARE REAL and neither derives from the other, which is why the door takes
+/// one value rather than losing one: a chained `if` and a chained `if let` enter through the
+/// same door, but the first continues the `} else ` line while the second sits in braces --
+/// C has no `else <declaration>`, and an `if let`'s first line IS the declaration of its
+/// temporary (registry #991).
+///
+/// Donor: NOT a compiler, and that is an answer rather than a gap in the search. rustc MIR
+/// has no `if` at all -- it lowers to `SwitchInt` with target blocks and never prints source,
+/// so a syntactic shape is not a question it has; WebAssembly's structured flow
+/// (`if`/`else`/`end`), the donor of our terminator shapes, does not distinguish braced from
+/// chained either, because wasm has no source syntax. Ours is peculiar in exactly one way:
+/// the IR must print structured C byte for byte like the oracle. So the donor here is a
+/// PRINCIPLE -- make illegal states unrepresentable (the ML/F# family) -- and it is what
+/// removes the fourth state.
+export type ElseShape enum
+    | NoElse /// no else branch: `els` is the join itself
+    | Braced /// the branch has its own `{ }` -- a block tail, or an `if let` tail
+    | Chained /// `} else if (` -- continues the caller's line, no braces of its own
+
 /// The blocks of one `if` (wave M2b-1): the branch entered on a true
 /// condition, the branch entered otherwise -- the join itself when the source
 /// wrote no `else` -- and the block both branches reach. An `else if` chain is
@@ -592,12 +617,12 @@ fn FnBuilder mut @close(term Terminator, next BlockId) -> () {
 }
 
 /// Opens an `if`: the statements placed so far end the current block with
-/// `If`, and what is placed next belongs to the `then` branch. `has_else`
-/// decides whether the else branch is a block of its own or the join itself
-/// -- the source knows, the builder does not guess.
-export fn FnBuilder mut @begin_if(cond Cond, has_else bool, els_braced bool) -> IfCtx {
+/// `If`, and what is placed next belongs to the `then` branch. `els` says whether
+/// the else branch is a block of its own or the join itself, and in which shape it
+/// prints -- the source knows, the builder does not guess.
+export fn FnBuilder mut @begin_if(cond Cond, els ElseShape) -> IfCtx {
     ro join = @reserve()
-    @open_if(cond, has_else, join, els_braced)
+    @open_if(cond, join, els)
 }
 
 /// Opens an `if` whose join ALREADY exists: the current block ends with `If`
@@ -605,18 +630,26 @@ export fn FnBuilder mut @begin_if(cond Cond, has_else bool, els_braced bool) -> 
 /// comes here; `begin_else_if` comes here with the outer join, so a chain
 /// shares one. The emitter calls it directly when it has to print the
 /// condition after `begin_else` and before the branch opens.
-export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId,
-                                          els_braced bool) -> IfCtx {
-    @open_if(cond, has_else, join, els_braced)
+export fn FnBuilder mut @begin_chained_if(cond Cond, join BlockId, els ElseShape) -> IfCtx {
+    @open_if(cond, join, els)
 }
 
 /// The ONE place an `If` terminator is built. Both public doors delegate here, which is
-/// exactly why `els_braced` is a PARAMETER: from inside, the entry door is invisible, and
-/// a bit inferred here would come out the same for both forms -- measured in step 3a of
-/// wave M2b-2, where that mistake moved the C of one corpus file by one indent.
-fn FnBuilder mut @open_if(cond Cond, has_else bool, join BlockId, els_braced bool) -> IfCtx {
+/// exactly why the shape is a PARAMETER: from inside, the entry door is invisible, and a bit
+/// inferred here would come out the same for both forms -- measured in step 3a of wave
+/// M2b-2, where that mistake moved the C of one corpus file by one indent. The bit still
+/// reaches `IfTerm`, and the lesson of that measurement stands: it is READ OFF the shape the
+/// caller handed in, never guessed here.
+fn FnBuilder mut @open_if(cond Cond, join BlockId, shape ElseShape) -> IfCtx {
     ro then = @reserve()
-    ro els = if has_else { @reserve() } else { join }
+    ro els = match shape {
+        ElseShape.NoElse => join
+        _ => @reserve()
+    }
+    ro els_braced = match shape {
+        ElseShape.Braced => true
+        _ => false
+    }
     @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
     IfCtx { then, els, join }
 }
@@ -639,10 +672,9 @@ export fn FnBuilder mut @begin_else(c IfCtx) -> () {
 /// pair BY HAND in two places (`lower_if`, `lower_if_let`) and only a builder test called
 /// the door -- one concept, two implementations, and the hand-written pair would not have
 /// followed a change to the door (registry #991 is that class). The emitter now comes here.
-export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool,
-                                       els_braced bool) -> IfCtx {
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, els ElseShape) -> IfCtx {
     @begin_else(outer)
-    @begin_chained_if(cond, has_else, outer.join, els_braced)
+    @begin_chained_if(cond, outer.join, els)
 }
 
 /// Closes an `if`: the open branch jumps to the join, and what is placed next
