@@ -1262,4 +1262,16 @@ no_caveat=0
 #   1083 -- Result[<psevdonim>, <summa>] prinimaetsya chekerom i ne sobiraetsya;
 #   pol'zovatel' vidit oshibku clang vmesto diagnostiki Nova. Naydeno ne
 #   obkhodom, a pri napisanii effekt-semeystva Db v nova-duckdb.
-blockers=64
+# 2026-09-13 (okno 274, resheniem integratora): blockers 64 -> 65. Zavedena
+#   1093 -- pravilo ro-launder ne sprashivaetsya u koda, prishedshego IMPORTOM:
+#   proba G stroki 72 (value-zapis' s kuchevym polem, ostavlennaya neg pri ee
+#   zakrytii 2026-07-24 imenno kak dyra zvuchnosti) za granitsey importa
+#   sobiraetsya, i progon pechataet before=2 inside=3 after=3 -- vyzyvaemyy
+#   izmenil znachenie, svyazannoe u vyzyvayushchego kak `ro`.
+#   POLE `BLOKIRUET TEG` POSTAVIL INTEGRATOR, ne zavodivshee okno: ono napisalo
+#   'reshaet vladelets'. Dovod integratora: eto ne tikhiy defekt, a nevypolnenie
+#   glavnogo tezisa yazyka na obychnoy forme zapisi, i reshenie vladel'tsa
+#   2026-08-16 ('vypustit' yazyk, chey glavnyy tezis ne vypolnyaetsya, dorozhe
+#   zaderzhki') uzhe derzhit 685 i 686. Pauza reliza orakula k etomu polyu ne
+#   otnositsya: ona pro ocherednost' rabot, a pole -- pro vozmozhnost' vypuska.
+blockers=65
