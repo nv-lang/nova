@@ -54,6 +54,53 @@ else
     ok "голая ссылка на план без волны отвергнута"
 fi
 
+# --- ОСЬ ФОРМУЛИРОВКИ (добавлена 2026-09-13): до этого дня КАЖДАЯ фикстура выше
+# несла ОБА написания сразу, поэтому самотест не мог заметить, что страж видит
+# только одно из них. Слепота прожила две недели именно в этой непокрытой клетке.
+D=$(mk onlysubset "module a" \
+    'const M = "outside the subset: `??` unwraps an `Option`, and this left side is not one"')
+if run "$D" "$T/zero.baseline"; then
+    bad "отказ ТОЛЬКО в форме 'outside the subset' прошёл - область уже предмета"
+else
+    ok   "отказ только в форме 'outside the subset' пойман"
+fi
+
+D=$(mk onlysubset_dated "module a" \
+    'const M = "outside the subset: a `Result` left side is refused here (E2-b3)"')
+run "$D" "$T/zero.baseline" && ok   "он же со сроком проходит" \
+    || bad "отказ этой формы со сроком покраснел - правило шире класса"
+
+# Прежняя половина не потеряна: расширение обязано быть ДОБАВЛЕНИЕМ, а не подменой.
+# Сегодня же чинилась мерка, где новый образец ловил новое и ронял старое.
+D=$(mk onlyyet "module a" \
+    'const M = "a declared local type is not compiled yet"')
+if run "$D" "$T/zero.baseline"; then
+    bad "прежняя формулировка перестала ловиться - расширение оказалось подменой"
+else
+    ok   "прежняя формулировка ловится по-прежнему"
+fi
+
+# --- ВТОРОЙ ХРАПОВИК (refusals=, цель ноль; 274.7 §И, построен 2026-09-13) --------
+# Датированный долг тоже долг: без этого числа отказов могло становиться больше, лишь
+# бы каждому проставили этап, — а решение владельца требует их УБИРАТЬ.
+printf '%s\n' 'undated=9' 'refusals=1' > "$T/grow.baseline"
+printf '%s\n' 'undated=9' 'refusals=2' > "$T/fit.baseline"
+D=$(mk two "module a" \
+    'const A = "outside the subset: form one is refused (E2-b3)"' \
+    'const B = "outside the subset: form two is refused (E2-b3)"')
+if run "$D" "$T/grow.baseline"; then
+    bad "рост ОБЩЕГО числа отказов прошёл - храповик с целью ноль не держит"
+else
+    ok   "рост общего числа отказов пойман"
+fi
+run "$D" "$T/fit.baseline" && ok   "общее число ровно по базе проходит" \
+    || bad "общее число ровно по базе покраснело"
+# Старая база без ключа `refusals=` обязана работать: правка — добавление, не замена.
+run "$D" "$T/one.baseline" || true
+printf '%s\n' 'undated=9' > "$T/nokey.baseline"
+run "$D" "$T/nokey.baseline" && ok   "база без ключа refusals= по-прежнему работает" \
+    || bad "старая база сломалась - расширение оказалось несовместимым"
+
 # --- ровно по базе: не хуже, чем было --------------------------------------
 D=$(mk atbase "module a" \
     'const M = "outside the subset: string interpolation is not compiled yet"')
