@@ -678,6 +678,13 @@
 #   oknom 283, SVERENO svoey proboy: dva fayla, otlichayushchiesya poryadkom
 #   DVUKH strok. Tem zhe sliyaniem popravlena #292: eyo 'padaet na LYUBOM fayle'
 #   oprovergnuto zamerom -- bench/micro/arith.nv otrabatyvaet tselikom, RC=0.
-rows=1035
-max=1081
+# 2026-09-13 (integrator): rows -> 1036, max -> 1082. Zavedena 1082 po nakhodke
+#   okna claude-limits: `@self` v metode prinimaetsya chekerom, kodogen umiraet
+#   'no member named self'. Prichina suzhena CHTENIEM spetsifikatsii
+#   (syntax.ru.md:1273): `@field` est' dostup k POLYU, `@` bez polya -- sam
+#   instans; znachit `@self` -- pole s imenem self, kotorogo u summy net.
+#   Os' veroyatno SHIRE ikh pyati prob: nepokrytaya kletka -- '@nosuchfield'
+#   bez `match` i na value-zapisi. Progon otlozhen: slot derzhal chuzhoy yarus.
+rows=1036
+max=1082
 gaps=174-208,210-215,653-654,743,1062,1074
