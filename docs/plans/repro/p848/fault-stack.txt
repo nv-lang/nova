@@ -28,10 +28,10 @@ R14=0000022F3EB8E100 R15=0000000000000006
   #06 00007FF614C2CE37  oversub_stress!GC_generic_malloc_many+0xB7  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\mallocx.c:349)
   #07 00007FF614C2977E  oversub_stress!GC_malloc_kind+0xDE  (D:\Sources\vcpkg\buildtrees\bdwgc\src\v8.2.8-321376c44d.clean\thread_local_alloc.c:187)
   #08 00007FF614BD9F13  oversub_stress!nova_alloc+0x13  (D:\Sources\nv-lang\nova\compiler-codegen\nova_rt\alloc_boehm.c:255)
-  #09 00007FF614BC96A3  oversub_stress!nova_fn_4time8duration9real_time+0x13  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:3215)
-  #10 00007FF614BC9534  oversub_stress!Nova_Time_sleep+0x54  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:1291)
-  #11 00007FF614BC876B  oversub_stress!Nova_Duration_method_sleep+0x1B  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:2315)
-  #12 00007FF614BC6672  oversub_stress!_nova_spawn_0+0x2A2  (C:\Users\B7E3~1\AppData\Local\Temp\claude\d--Sources-nv-lang-nova\3b203470-2a69-4c72-94fe-bcb6c9d0d500\scratchpad\oversub\oversub_stress.c:12241)
+  #09 00007FF614BC96A3  oversub_stress!nova_fn_4time8duration9real_time+0x13  (<скретчпад-сессии>\scratchpad\oversub\oversub_stress.c:3215)
+  #10 00007FF614BC9534  oversub_stress!Nova_Time_sleep+0x54  (<скретчпад-сессии>\scratchpad\oversub\oversub_stress.c:1291)
+  #11 00007FF614BC876B  oversub_stress!Nova_Duration_method_sleep+0x1B  (<скретчпад-сессии>\scratchpad\oversub\oversub_stress.c:2315)
+  #12 00007FF614BC6672  oversub_stress!_nova_spawn_0+0x2A2  (<скретчпад-сессии>\scratchpad\oversub\oversub_stress.c:12241)
   #13 00007FF614BD96B6  oversub_stress!_mco_main+0x16  (D:\Sources\nv-lang\nova\compiler-codegen\nova_rt\minicoro.h:623)
   #14 DEADDEADDEADDEAD  ?!?+0x0
   #15 0000022F3E794000  ?!?+0x0

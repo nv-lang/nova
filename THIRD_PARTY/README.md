@@ -72,6 +72,33 @@ A port, not a vendored copy: the algorithm (Clinger fast path, Eisel-Lemire over
 justify each rounding decision are preserved; types and primitives are Nova's. Rust's
 `dec2flt` is itself a port of Daniel Lemire's fast_float.
 
+### 6. Ryu (ryu-LICENSE, ryu-LICENSE-Boost)
+- **Component**: shortest round-trip binary→decimal float printing behind
+  `f64_fmt`/`f32_fmt` with `FloatKind.Shortest` —
+  `std/src/runtime/fmt_buf/shortest.nv` (the file exists from plan 285 Ф.0 with this
+  provenance recorded; the ported code lands with Ф.1 for `f64` and Ф.2 for `f32`)
+- **License**: Apache-2.0 OR BSL-1.0 upstream (the donor's own choice, stated in each
+  of its source headers); Nova takes it under **Apache-2.0**, the branch that composes
+  with Nova's own `MIT OR Apache-2.0`
+- **Source**: https://github.com/ulfjack/ryu, `ryu/d2s.c` with `ryu/d2s_full_table.h`
+  and `ryu/d2s_intrinsics.h` (`f32`: `ryu/f2s.c`), commit
+  `ulfjack/ryu@4c0618b0e44f7ef027ebae05d2cc7812048f7c8f` (2026-02-09)
+- **Copyright**: 2018 Ulf Adams
+- **Paper**: Ulf Adams, "Ryū: fast float-to-string conversion", PLDI 2018
+
+A port, not a vendored copy — the donor's sources are NOT in this tree; they were read
+through the GitHub API at the commit above on 2026-09-09. Both licence texts are
+vendored anyway, because a port carries the notice even when the copy does not travel.
+
+**Why this donor and not the one already used for the parse side.** Ryu produces the
+shortest round-trip digits in a single pass. Rust's printing side, which would have
+been the cheaper trail (same donor for both directions), is a two-path algorithm whose
+fast path falls back to exact bignum arithmetic — its own module documentation in
+`library/core/src/num/imp/flt2dec/mod.rs` says "They are total for all finite `f32`
+and `f64` inputs (Grisu internally falls back to Dragon if necessary)". Plan 285's
+acceptance for the producer forbids a check loop, so the choice follows the donor's
+structure, not a preference.
+
 ## Summary Table
 
 | Component | License | Location | Type |
@@ -83,9 +110,15 @@ justify each rounding decision are preserved; types and primitives are Nova's. R
 | libatomic_ops | MIT | compiler-codegen/nova_rt/libatomic_ops | Vendored (submodule) |
 | libuv | MIT | compiler-codegen/nova_rt/libuv | Vendored (submodule) |
 | Rust `core::num::dec2flt` | MIT (of MIT OR Apache-2.0) | std/src/runtime/float_parse/convert.nv (+ peers) | Ported |
+| Ryu | Apache-2.0 (of Apache-2.0 OR BSL-1.0) | std/src/runtime/fmt_buf/shortest.nv | Ported |
 
 ## License Files
 
 - `go-LICENSE` — Full BSD-3-Clause license text for Go Runtime
 - `minicoro-LICENSE` — Full license texts for minicoro and LuaCoco components
 - `rust-LICENSE` — Full MIT license text for the Rust `dec2flt` port, with the list of ported files
+- `ryu-LICENSE` — Full Apache-2.0 license text for the Ryu port, downloaded verbatim from
+  the donor at commit `4c0618b` (the branch Nova takes)
+- `ryu-LICENSE-Boost` — Full BSL-1.0 text, the donor's alternative branch: kept because
+  the donor grants the choice per file, and dropping the unused half would misstate the
+  grant we actually received

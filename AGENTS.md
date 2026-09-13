@@ -11,13 +11,17 @@
 > model, the daily loop — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md)
 > (Russian). Project state, architecture, where to go next:
 > [docs/dev/read-project.md](docs/dev/read-project.md). The reasoning
-> behind every rule below, and what the guards stop you doing -- 148 of them are
-> named there file by file, out of 188 in `scripts/guards/` (counted 2026-09-07
-> as `check-*.{sh,py}`; not every guard needs its own page, which is why the two
-> numbers differ). Do not re-count these by hand: both come from the guard that
-> holds the page, `scripts/guards/check-rules-page-complete.sh`, which prints the
-> total and how many are unnamed -- the pair 168/99 stood here three days and was
-> already 20 guards stale when it was read:
+> behind every rule below, and what the guards stop you doing, is named there
+> file by file. **How many guards there are, and how many are still unnamed, is
+> NOT written here** -- run the guard that holds the page and read its line:
+> `bash scripts/guards/check-rules-page-complete.sh .` (not every guard needs its
+> own page, which is why the two numbers differ). The pair used to be copied into
+> this paragraph and went stale TWICE: 168/99 stood here three days and was 20
+> guards out of date when someone read it, and its replacement 148/188 was wrong
+> within four days -- on 2026-09-11 the guard printed 193 with 40 unnamed. A
+> number nothing compares against its source decays silently, and the warning not
+> to re-count by hand did not stop either drift, because the copy itself was the
+> problem. So there is no copy now:
 > [docs/dev/rules-for-agents.md](docs/dev/rules-for-agents.md).
 
 ## Rules — what you may not do here

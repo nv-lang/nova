@@ -1,0 +1,8 @@
+// D289: `import m` -> access ONLY through `m.Foo`. Does a BARE name resolve?
+module probe_bare
+import lib.thing
+
+fn main() Io -> () {
+    ro w = make(7)              // BARE: must be refused per D289
+    print("id=${w.id}")
+}

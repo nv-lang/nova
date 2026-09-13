@@ -1,0 +1,54 @@
+// ПРОБА f — НЕСУЩИЙ ТИП ПЛАНА 286 ЦЕЛИКОМ.
+//
+// Зачем. Проба b показала, что ОДИНОЧНАЯ запись границу проходит. Отсюда
+// напрашивается обход: «не возвращай []Row, возвращай Row по одной штуке за
+// вызов» — и он был бы верен, если бы сама Row была плоской. Она не плоская:
+//
+//     type Row { ro schema []ColumnDef, ro vals []SqlValue }
+//
+// то есть ЗАПИСЬ, СОДЕРЖАЩАЯ коллекцию записей. Проба отвечает на вопрос,
+// наследует ли такая запись отказ своего поля, — а от ответа зависит, есть ли
+// у плана 286 форма границы вообще.
+//
+// Ожидание — КРАСНО: если отказ наследуется полем, обход «по одной строке»
+// мёртв, и остаётся только менять СХЕМУ (см. пробу g).
+//
+// Запуск:
+//   nova-cli/target/release/nova build <этот файл, переименованный в .nv>
+// Судить ТОЛЬКО по `build`: `nova check` здесь зелёный.
+
+type ColumnDef value { ro name str, ro nullable bool }
+
+type Val enum
+    | Null
+    | Text(str)
+
+type Row {
+    ro schema []ColumnDef
+    ro vals   []Val
+}
+
+fn mk_cols() -> []ColumnDef => [{ name: "id", nullable: false }, { name: "email", nullable: true }]
+fn mk_row() -> Row => { schema: mk_cols(), vals: [Val.Text("7"), Val.Text("a@b.c")] }
+
+type Db effect {
+    one()  -> Row
+    next() -> Option[Row]
+}
+
+fn main() Io -> () {
+    with Db = effect Db {
+        one()  -> Row         => mk_row()
+        next() -> Option[Row] => Some(mk_row())
+    } {
+        ro r = Db.one()
+        print("cols=${r.schema.len()} first=${r.schema[0].name}")
+        match Db.next() {
+            Some(x) => match x.vals[1] {
+                Val.Text(s) => print("val=${s}")
+                _           => print("val=other")
+            }
+            None => print("none")
+        }
+    }
+}

@@ -1,0 +1,26 @@
+// Д0б, обратная сторона: НЕ ослабляет ли одалживание обработчику линейность?
+// Ожидание: обращение к `c` ПОСЛЕ блока — ошибка компиляции.
+
+type Conn consume { ro id int }
+
+fn Conn.open(id int) -> Conn => { id }
+
+fn Conn consume @close() -> () => ()
+fn Conn consume @cleanup(outcome ScopeOutcome) -> () => @close()
+
+type Db effect {
+    ping() -> int
+}
+
+fn db_handler(mut c Conn) -> Effect[Db] => effect Db {
+    ping() -> int => c.id
+}
+
+fn main() Io -> () {
+    consume c = Conn.open(7) {
+        with Db = db_handler(c) {
+            print("ping=${Db.ping()}")
+        }
+    }
+    print("after=${c.id}")      // <-- обязано быть ОШИБКОЙ: ресурс разряжен
+}

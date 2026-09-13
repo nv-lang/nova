@@ -1,0 +1,12 @@
+// A: голая `bench.opaque(...)` ПОСЛЕДНЕЙ строкой блока measure.
+// Ожидание: СОБИРАЕТСЯ (так устроен третий бенч в bench/micro/arith.nv).
+module bench_tail
+
+bench "opaque is tail" {
+    measure {
+        bench.elements(1)
+        bench.opaque(twice(21))
+    }
+}
+
+fn twice(n int) -> int => n * 2

@@ -110,7 +110,7 @@
 >     - Branch `plan-120` pushed в github для user-review (НЕ merge сам в
 >       main — user approves merge per memory feedback)
 >     - Memory `project-plan120-status.md` обновить через Write tool в
->       `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`
+>       `%USERPROFILE%/.claude/projects/d--Sources-nv-lang-nova/memory/`
 >       (есть existing PLANNED entry — заменить на ✅ ЗАКРЫТ summary с
 >       commit refs + nova test results)
 >

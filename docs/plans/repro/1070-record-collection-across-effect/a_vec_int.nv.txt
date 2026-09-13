@@ -1,0 +1,14 @@
+// c: коллекция ПРИМИТИВОВ через границу эффекта.
+
+type Db effect {
+    nums(q str) -> []int
+}
+
+fn main() Io -> () {
+    with Db = effect Db {
+        nums(q) -> []int => [1, 2, 3]
+    } {
+        ro xs = Db.nums("SELECT 1")
+        print("n=${xs.len()} second=${xs[1]}")
+    }
+}

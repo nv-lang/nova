@@ -904,6 +904,104 @@ ro y = None                  // unit — без скобок
 
 Details — [D17](decisions/02-types.md#d17).
 
+### A temporary `consume` value in a view position (D476)
+
+A temporary of a consume type landing in a view position — as an unqualified
+argument, or as the receiver of a harmless method — used to be refused. It now
+**expands into a consume scope**:
+
+```nova
+get_luck().print()
+// desugars to:
+consume t = get_luck() { t.print() }
+```
+
+The scope is **narrow**: it wraps the expression the temporary takes part in, not
+the whole enclosing call, or the resource would be held for as long as a
+neighbouring argument runs.
+
+```nova
+f(get_luck().id(), g())
+// desugars to:
+{
+    ro arg1 = consume t = get_luck() { t.id() }
+    ro arg2 = g()
+    f(arg1, arg2)
+}
+```
+
+The block is an EXPRESSION (D188), so no statement slot is needed — it works where
+there is none:
+
+```nova
+while consume t = get_luck() { t.more() } { … }
+```
+
+A loop condition is re-evaluated on each iteration, so the scope is created and
+cleaned on each iteration; the right operand of `&&` is evaluated conditionally,
+so the scope is entered conditionally.
+
+**What the rule does NOT do.** It leaves a consume PARAMETER alone (`f(make_tx())`
+against `f(consume x Tx)` is already legal — ownership passes without a binding),
+and it does not rescue a named binding of the wrong form: `ro opt = get_job()`
+stays an error, the legal form being `consume opt = get_job()`. For a type with no
+`@cleanup` (strictly linear) the expansion yields an unconsumed binding and
+`D133-not-consumed` fires as it should.
+
+**The price, stated out loud:** a cleanup may carry an effect, and then `Fail[E]`
+must appear in the enclosing function's signature — a line that reads like a print
+can demand one. In exchange, no diagnostic may ever name the synthetic binding: it
+points at the expression the author wrote.
+
+The norm is [D476](decisions/03-syntax.md); no compiler implements it yet.
+
+### Recursive types — the `indirect` marker (D477)
+
+A sum is placed **by value**, so a variant whose payload contains the type itself
+would have an infinite size. Indirection is declared **explicitly**, by a marker on
+the declaration:
+
+```nova
+type SqlType enum
+    | TInt
+    | indirect TList(SqlType)      // the variant's payload lives behind a pointer
+```
+
+The box is invisible at the use site: a `match` arm binds the inner value directly,
+and no `unsafe` is required.
+
+```nova
+match t {
+    SqlType.TList(inner) => …      // inner : SqlType
+    _                    => …
+}
+```
+
+**Where the marker sits is one rule applied to two shapes:** it goes on the unit
+whose size is computed separately. A sum's size is the maximum over its variants,
+so the marker goes on the **variant**; a `value`-record's size is the sum of its
+fields, so it goes on the **field**:
+
+```nova
+type Job value {
+    name str
+    job indirect Option[Job]
+}
+```
+
+**The marker answers "how much space", not "where does it stop".** A bare
+`job indirect Job` with no `Option` has a finite size and is still unbuildable:
+constructing a `Job` would require a finished `Job`. The base case comes from an
+`Option` or from a leaf variant, and the compiler distinguishes the two refusals
+(`E_RECURSIVE_NEEDS_INDIRECT` and `E_RECURSIVE_NO_BASE_CASE`) because they call for
+different fixes.
+
+**A plain record needs no marker:** a by-value reference to a heap type is
+pointer-sized rather than object-sized, so `type Job { job Option[Job] }` is finite
+without it. The obligation lands on exactly those who asked for by-value placement.
+
+The norm is [D477](decisions/02-types.md); no compiler implements it yet.
+
 ## Creating values and pattern matching
 
 ```nova

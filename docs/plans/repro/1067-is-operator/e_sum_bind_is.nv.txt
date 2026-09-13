@@ -1,0 +1,5 @@
+module e_sum_bind_is
+fn main() Io -> () {
+    ro r Result[int, str] = Ok(3)
+    if r is Ok(n) { println("${n}") }
+}

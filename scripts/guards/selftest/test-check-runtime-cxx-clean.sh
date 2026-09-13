@@ -45,7 +45,7 @@ static inline nova_str nova_str_of(const void* p, int64_t n) {
 }
 EOF
 sh "$G" "$D" > "$T/out1" 2> "$T/err1"; rc1=$?
-if grep -q "ПРОПУЩЕНО" "$T/out1"; then
+if grep -q "НЕ СУДИЛ" "$T/out1"; then
     skip "случай 1: C++-драйвера на машине нет — судить нечем (это проверяет случай 3)"
 elif [ "$rc1" -eq 0 ]; then
     grep -q " ok" "$T/out1" && ok "чистый заголовок — зелено, вердикт назван" \
@@ -63,7 +63,7 @@ typedef struct { const uint8_t* ptr; int64_t len; } nova_str;
 static nova_str nova_bad(const char* p) { return (nova_str){ p, 3 }; }
 EOF
 sh "$G" "$D" > "$T/out2" 2> "$T/err2"; rc2=$?
-if grep -q "ПРОПУЩЕНО" "$T/out2"; then
+if grep -q "НЕ СУДИЛ" "$T/out2"; then
     skip "случай 2: C++-драйвера на машине нет"
 elif [ "$rc2" -eq 0 ]; then
     bad "составной литерал прошёл зелёным — страж не судит того, ради чего заведён"
@@ -80,7 +80,10 @@ cat > "$D/compiler-codegen/nova_rt/nova_rt.h" <<'EOF'
 typedef struct { const uint8_t* ptr; int64_t len; } nova_str;
 EOF
 if NOVA_CXX="no-such-cxx-driver-4f2a" sh "$G" "$D" > "$T/out3" 2> "$T/err3"; then
-    if grep -q "ПРОПУЩЕНО" "$T/out3"; then
+    # ДВА требования разом: `ok:` — чтобы обёртка гейта сочла шаг доказанным
+    # (без неё авторитетный CI краснеет, замер 2026-09-09), и слова «НЕ СУДИЛ» —
+    # чтобы человек не прочёл зелёную строку как «проверено».
+    if grep -q "ok:" "$T/out3" && grep -q "НЕ СУДИЛ" "$T/out3"; then
         ok "без драйвера — пропуск назван вслух, а не тихое зелёное"
     else
         bad "вышел с нулём, но пропуск не объявлен: строка читается как «проверено»"

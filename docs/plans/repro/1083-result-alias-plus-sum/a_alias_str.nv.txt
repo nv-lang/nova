@@ -1,0 +1,21 @@
+// Сверка заявки окна 283 (реестр 221.1 №1083).
+// Ожидание, записанное ДО прогона: красна РОВНО клетка `b`.
+module a_alias_str
+
+export type CResultHandle *()
+
+type DuckError enum
+    | Failed(str)
+    | Closed(str)
+
+type ResultRef value { ro h CResultHandle }
+
+// a: псевдоним + ОБЫЧНАЯ строка. Ожидание: ЗЕЛЕНО.
+fn get() -> Result[CResultHandle, str] => Err("no")
+
+fn main() Io -> () {
+    match get() {
+        Ok(_) => print("ok")
+        Err(e) => print("err=${e}")
+    }
+}

@@ -1,0 +1,8 @@
+module g_sum_is_ok
+type Shape enum Circle { radius f64 } | Square { side f64 } | Origin
+fn main() Io -> () {
+    ro r Result[int, str] = Ok(42)
+    ro o Option[int] = None
+    ro s Shape = Origin
+    println("${r is Ok} ${r is Err} ${o is None} ${s is Origin} ${s is Circle}")
+}

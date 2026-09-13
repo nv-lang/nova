@@ -574,7 +574,7 @@ fn Lowerer mut @lower_return(st Node) -> () {
 /// never coincides with a name the author wrote -- holds by construction today (every
 /// generated name carries the `_novac_` prefix, which the checker forbids in source
 /// identifiers) and is NOT machine-checked here; that is said out loud rather than
-/// implied by the mark.
+/// implied by the mark. [INV-TODO: 274.3 F30 -- nothing checks it]
 fn Lowerer mut @lower_match(m Node, dest Local) -> () {
     ro kids = branch_children(m)
     ro scr = kids[1]

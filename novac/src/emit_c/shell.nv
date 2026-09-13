@@ -111,7 +111,7 @@ type Emitter consume {
         /// [INV-GUARD: check-novac-invented-name-not-named]: an invented name cannot
         /// enter `named`, the door that means "the author wrote this". The other
         /// direction -- a hoist never taking a source name -- holds by the `_novac_`
-        /// prefix, which no source identifier may carry, and is not checked here.
+        /// prefix, which no source identifier may carry, and is not checked here. [INV-TODO: 274.3 F30 -- nothing checks it]
     mut lo Lowerer /// THE LOWERING'S RECEIVER (274.8 M3): the builder is no longer the printer's own state -- it lives in `lower/` with the methods that write it, and printing READS it through here. Was `mut ir FnBuilder` (274.8 M1)
     lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none
     fres FieldIndex /// the SAME field index the checker asks: a destructuring

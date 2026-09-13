@@ -1250,4 +1250,16 @@ no_caveat=0
 # — отказ переехал с чужого API на собственный шим автора.
 # Расстояние до тега сегодня выросло дважды (№1040 и №1055), и оба раза потому,
 # что нашли настоящее, а не потому, что стали строже считать.
-blockers=62
+# 2026-09-13 (integrator): blockers 62 -> 63. ROST, i on CHESTNYY: zavedena
+#   1077 -- kvalifitsirovannyy tip mod.Type dayot zelyonyy `nova check` i
+#   ronyaet C-kompilyator. BLOKIRUET TEG: DA, potomu chto eto NORMA D289
+#   (primer v samom D-bloke -- vec_iter.EnumerateIter), kotoruyu kompilyator
+#   prinimaet i ne umeet sobrat': pol'zovatel' vidit oshibku C-kompilyatora
+#   vmesto diagnostiki Nova. Naydeno proboy po voprosu vladel'tsa, ne obkhodom.
+#   Rasstoyanie do tega VYROSLO na edinitsu -- eto ne ukhudshenie raboty, a
+#   ranee ne uchtyonnyy dolg, stavshiy vidimym.
+# 2026-09-13 (integrator, pozdnee): blockers 63 -> 64. ROST chestnyy: zavedena
+#   1083 -- Result[<psevdonim>, <summa>] prinimaetsya chekerom i ne sobiraetsya;
+#   pol'zovatel' vidit oshibku clang vmesto diagnostiki Nova. Naydeno ne
+#   obkhodom, a pri napisanii effekt-semeystva Db v nova-duckdb.
+blockers=64

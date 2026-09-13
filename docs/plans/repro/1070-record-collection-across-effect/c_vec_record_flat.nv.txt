@@ -1,0 +1,19 @@
+// d: коллекция ПЛОСКИХ записей (поля — скаляры, без вложенных коллекций).
+
+type Flat {
+    ro id    int
+    ro email str
+}
+
+type Db effect {
+    rows(q str) -> []Flat
+}
+
+fn main() Io -> () {
+    with Db = effect Db {
+        rows(q) -> []Flat => [{ id: 7, email: "a@b.c" }]
+    } {
+        ro rs = Db.rows("SELECT 1")
+        print("n=${rs.len()} email=${rs[0].email}")
+    }
+}

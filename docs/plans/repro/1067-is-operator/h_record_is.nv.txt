@@ -1,0 +1,6 @@
+module h_record_is
+type User { id int }
+fn main() Io -> () {
+    ro u = User { id: 1 }
+    if u is int { println("?") }
+}
