@@ -73,6 +73,10 @@ case_run rust_only green \
 'println!("  {} tests", n);' \
 "рустовый println — не C-формат, не предмет стража"
 
+case_run in_comment green \
+'// было: self.line(&format!("printf(\\"  PASS: {}\\n\\");", escaped));' \
+"образец запрещённой формы В КОММЕНТАРИИ — история класса законна"
+
 # ── край: нет каталога ────────────────────────────────────────────────────
 out=$("$(command -v python)" "$GUARD" "$TMP" "$TMP/nope" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'судить нечего'; then
