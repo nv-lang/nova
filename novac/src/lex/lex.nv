@@ -419,9 +419,12 @@ export fn brace_delta(k TokenKind) -> int {
 // KEYWORD-PARITY: defer -- debt (E2, the effects/consume horizon)
 // KEYWORD-PARITY: errdefer -- debt (E2, the effects/consume horizon)
 //
-// `protocol` has a wave of its own in 274.7 (B3a: "the form `type X protocol { ... }`
-// stops being a syntax error"), so it takes that stage rather than the horizon.
-// KEYWORD-PARITY: protocol -- debt (274.7 B3a)
+// `protocol` has a wave of its own -- B3a, in the PARENT plan 274 and not in 274.7:
+// "the form `type X protocol { ... }` stops being a syntax error". The first version of
+// this line said 274.7, which has no B3a at all; the reference resolved by SHAPE and led
+// nowhere, which is a stage with a home, only not that one -- caught by a check that
+// looks for each declared wave's section rather than by reading.
+// KEYWORD-PARITY: protocol -- debt (274 B3a)
 //
 // STILL UNDECLARED ON PURPOSE: `alias` and `is`. Neither has a home I could quote --
 // `alias` appears in no wave of the 274 family (searched), and `is` is wider than a
