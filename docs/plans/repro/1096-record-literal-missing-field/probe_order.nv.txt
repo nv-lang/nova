@@ -1,0 +1,41 @@
+// Ось: ПОРЯДОК объявления полей у скобочной формы.
+//
+// Замер выше дал `Pointish(x int = 7, y int)` + `Pointish(5)` -> `x=5, y=0`: позиционный
+// аргумент ушёл в поле С УМОЛЧАНИЕМ, а обязательное поле молча стало нулём. Вопрос —
+// в порядке ли дело: если «обязательное раньше умолчания» работает верно, то предмет
+// узкий (умолчание ПЕРЕД обязательным принимается объявлением и ломает связывание),
+// а если неверно и там — предмет шире.
+
+type GoodOrder(a int, b int = 3)
+
+type BadOrder(a int = 7, b int)
+
+fn main() Io -> () {
+    ro g = GoodOrder(1)
+    print("required first: a=")
+    print(g.a)
+    print(" b=")
+    print(g.b)
+    print("\n")
+
+    ro g2 = GoodOrder(1, b: 9)
+    print("required first + named default: a=")
+    print(g2.a)
+    print(" b=")
+    print(g2.b)
+    print("\n")
+
+    ro bad = BadOrder(5)
+    print("default first, ONE positional: a=")
+    print(bad.a)
+    print(" b=")
+    print(bad.b)
+    print("\n")
+
+    ro bad2 = BadOrder(5, 6)
+    print("default first, TWO positional: a=")
+    print(bad2.a)
+    print(" b=")
+    print(bad2.b)
+    print("\n")
+}
