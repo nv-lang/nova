@@ -573,6 +573,14 @@ Do not use them for other purposes.
   curly form `{ x, y }`; the round `(a, b)` on a named tuple is forbidden: its
   field names are part of the contract, and a by-order unpack would silently
   break under a legitimate reordering of the fields.
+  **Field defaults come LAST ONLY**
+  ([D478](decisions/02-types.md#d478-умолчания-только-в-хвосте-решение-владельца-2026-09-14),
+  owner's decision 2026-09-14): `type BadOrder(a int = 7, b int)` is a compile
+  error, exactly as `fn g(x int = 0, y int)` is under D102. Until then the D215
+  amendment EXPLICITLY PERMITTED alternation, so D478 retracts a grant rather
+  than filling a gap. The reason is not tidiness: the arity check judges the
+  COUNT of arguments, and counting tells a bound field from an unbound one only
+  while defaults form a suffix.
 - **Anonymous type with NAMED components**
   ([D469](decisions/02-types.md#d469), owner decision 2026-09-04):
   `fn loc() -> (file str, line int)`. Fills the last empty cell of the grid of
