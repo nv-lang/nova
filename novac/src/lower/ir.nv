@@ -35,11 +35,13 @@ export type BlockId int
 /// The index behind a `BlockId` -- for the printer and for tests.
 export fn raw_block(b BlockId) -> int => b as int
 
-/// What ROLE a local plays -- the printer spells each differently: the return
-/// place is `return <v>;`, a binding is declared where it is first assigned
-/// (`T name = <v>;`), a temporary is declared by whoever created it and only
-/// assigned here (`name = <v>;`).
-/// WHAT A LOCAL IS FOR -- and ONLY that, since 2026-09-09. Until then this field also
+/// WHAT A LOCAL IS FOR -- and ONLY that, since 2026-09-09. The one printing decision
+/// still taken from the ROLE is the return place: `Return` prints `return <v>;`. Where a
+/// local's DECLARATION goes is NOT decided here -- that is `DeclAt`, and a paragraph
+/// claiming otherwise stood at the top of this doc until 2026-09-13, six lines above the
+/// sentence that had retired it, and it read as a finished paragraph -- so a reader could
+/// leave with the retired model and never reach the correction. Until 2026-09-09 this
+/// field also
 /// decided WHERE the local is declared, and the two questions were welded: a compiler
 /// temporary declared BY ITS OWN VALUE was inexpressible, so the `match` scrutinee had to
 /// live in `named` although the compiler, not the author, invented its name. Moving it to
@@ -58,10 +60,28 @@ export type LocalKind enum
 /// This is ORTHOGONAL to `LocalKind`, and separating them is what makes the fourth
 /// combination legal -- a `Temp` declared at its first assignment, which is exactly the
 /// `match` scrutinee. The indent follows THIS field rather than the kind: four spaces for a
-/// declaration, eight for a bare assignment inside a branch. That correlation is total
-/// today -- every existing `Temp` is zero-initialised (all three `temp` sites either call
-/// `declare_zeroed` themselves or hand the local to a door that does) -- which is why this
-/// separation changes no printing at all.
+/// declaration, eight for a bare assignment inside a branch.
+///
+/// THE FIELD IS READ, NEVER GUESSED FROM THE KIND, and the sentence that used to stand
+/// here claimed the opposite by a false number. It said the correlation was TOTAL --
+/// "all three `temp` sites either call `declare_zeroed` or hand the local to a door that
+/// does" -- and concluded that separating the two fields "changes no printing at all".
+/// Measured 2026-09-13 with a counting rule: calls to `temp` number NINE, calls to
+/// `declare_zeroed` number THREE (occurrences of `.temp(`/`@temp(` in `novac/src/**/*.nv`
+/// outside `_test.nv` and outside comments, not counting this door's own declaration).
+/// The nine were then walked ONE BY ONE, because 9-3 would have given the right answer
+/// by accident: the third `declare_zeroed` (`lowering.nv:604`) zeroes not a temporary of
+/// its own but the `dest` parameter handed to it, and for another caller it zeroes
+/// nothing. Three sites reach `Zeroed` -- two call the door themselves, and `:869` hands
+/// its local to `lower_match`, which is the half of the old sentence that was TRUE and is
+/// kept here: the path through a door exists, and a reader who forgets it will print the
+/// declaration of `:869` a second time. The remaining SIX live with `DeclAt.FirstAssign`.
+///
+/// The BEHAVIOUR was right and is untouched: a temporary declared by its first assignment
+/// must take eight spaces. What was false is the REASON the behaviour rested on, and a
+/// reader who believed it would write a new door that ignores `decl_at` and print four
+/// spaces where eight belong. A number in a doc that nobody recounts lives exactly until
+/// the first reader who trusts it.
 export type DeclAt enum
     | FirstAssign // the first assignment declares it
     | Zeroed // a `Stmt.Decl` declares it, zeroed
