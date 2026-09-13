@@ -433,6 +433,7 @@ par_add "$ROOT/scripts/guards/check-novac-precondition.py" "предуслови
 par_add "$ROOT/scripts/guards/check-novac-emitted-names.py" "печатаемое C-имя вне объявленных пространств (П24)"
 par_add "$ROOT/scripts/guards/check-novac-table-is-match.py" "таблица написана цепочкой if вместо match (П21 п.4)"
 par_add "$ROOT/scripts/guards/check-novac-no-grammar-excuse.py" "диагностика ссылается на незнание грамматики (§9.4)"
+par_add "$ROOT/scripts/guards/check-novac-no-undeclared-simplification.py" "незаявленное упрощение: маркер срезанного угла без номера реестра, [M-…]/[INV-…], плана или D-блока (требование владельца 2026-09-13: без упрощений, ровно по спеке, как для прода)"
 par_add "$ROOT/scripts/guards/check-novac-no-copy-loop.py" "коллекция перекладывается поэлементно вместо append (П32)"
 par_add "$ROOT/scripts/guards/check-novac-string-build-door.py" "строка собирается склейкой самой с собой вместо StringBuilder (П36)"
 par_add "$ROOT/scripts/guards/check-novac-required-token-door.py" "требуемый грамматикой токен взят необязательной дверью (#809/#815)"
