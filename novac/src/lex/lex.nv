@@ -387,6 +387,47 @@ export fn brace_delta(k TokenKind) -> int {
 //     oracle, which refuses `fn consume()`; the spec's list has not caught up)
 // KEYWORD-PARITY: extern -- spec-gap (the list still spells the retracted `external`)
 // KEYWORD-PARITY: unsafe -- spec-gap (a real keyword of the language, absent from the list)
+//
+// The five words measured 2026-09-13 and named by wave B10 itself: each lexes as a NAME
+// today, and the refusal then speaks about the program. `break`/`continue` are not an
+// afterthought to `loop` -- an endless loop with no exit is useless, so B10's acceptance
+// already required `break` and merely did not say so.
+// KEYWORD-PARITY: and -- debt (274.7 B10)
+// KEYWORD-PARITY: or -- debt (274.7 B10)
+// KEYWORD-PARITY: not -- debt (274.7 B10)
+// KEYWORD-PARITY: break -- debt (274.7 B10)
+// KEYWORD-PARITY: continue -- debt (274.7 B10)
+//
+// THE EFFECTS AND CONSUME FAMILY, fifteen words with ONE home, quoted rather than
+// guessed. Plan 274, section E2: "Horizons: basics in full -> control/records/sums ->
+// generics and mono -> effects/consume" -- effects are E2's LAST horizon. Section E4
+// confirms it from the other side: MIR arrives when E2's width reaches effects and
+// consume. `defer`/`errdefer` (D90) are the consume half of the same horizon.
+// KEYWORD-PARITY: with -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: throw -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: interrupt -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: forbid -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: realtime -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: spawn -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: supervised -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: parallel -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: detach -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: blocking -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: select -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: effect -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: handler -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: defer -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: errdefer -- debt (E2, the effects/consume horizon)
+//
+// `protocol` has a wave of its own in 274.7 (B3a: "the form `type X protocol { ... }`
+// stops being a syntax error"), so it takes that stage rather than the horizon.
+// KEYWORD-PARITY: protocol -- debt (274.7 B3a)
+//
+// STILL UNDECLARED ON PURPOSE: `alias` and `is`. Neither has a home I could quote --
+// `alias` appears in no wave of the 274 family (searched), and `is` is wider than a
+// lexeme (it needs `any` and a runtime type check, and registry #1067 says that even in
+// the oracle the rule lives in the codegen rather than the checker). A plausible stage
+// for either would be worse than the ratchet holding them.
 
 /// Keyword kind for an identifier text, or Ident when it is not a keyword.
 fn keyword_kind(t str) -> TokenKind => match t {
