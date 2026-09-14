@@ -752,6 +752,16 @@
 #   zamok fayla na nova.exe (chuzhoy progon) i schyot rabochikh derev'ev
 #   (21 vo vremya progona, 20 cherez minutu posle). Oba raza otkaz prishyol
 #   za chuzhoe deystvie i nazval ne to.
+# 2026-09-14 (integrator): gaps += 1099,1100,1101; rows/max bez izmeneniy.
+#   Tri nomera vydano oknu 274, ikh stroki pridut sliyaniem:
+#     1099 -- Karina PRINIMAET nepotreblyonnyy consume-parametr (tretiy vid:
+#       ne otstavanie i ne strogost', a soglasie s nezakonnoy programmoy);
+#     1100 -- dizarm avto-@cleanup po UNION'u IMYON snimaet cleanup, kogda
+#       ryadom ob'yavlen overload s consume-pozitsiey, KOTORYY NIKOGDA NE
+#       VYZYVAETSYA. Tikhaya utechka resursa; kontrol' s odnim overload'om
+#       zelyon (cleanup srabatyvaet), poetomu prichina imenno union po imeni;
+#     1101 -- `5 ?? 7` sobiraetsya i pechataet 7, a ne 5: forma, zapreshchyonnaya
+#       D86 (rovno dva konteynera), dayot tikhiy nevernyy rezul'tat.
 rows=1045
 max=1098
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
