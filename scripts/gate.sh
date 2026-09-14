@@ -1764,10 +1764,30 @@ fi
 step push "nova build smoke (ICE-храповик плана 196, как в CI)"
 if body_runs; then
     SMOKE_NV="${TMPDIR:-/tmp}/nova_build_smoke_$$.nv"
+    SMOKE_LOG="${TMPDIR:-/tmp}/nova_build_smoke_$$.log"
     printf 'fn main() {\n    println("hello, nova build")\n}\n' > "$SMOKE_NV"
-    "$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >/dev/null 2>&1 \
-        || fail "nova build smoke не собрался (ICE-регресс, план 196)"
-    rm -f "$SMOKE_NV" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
+    # ОТКАЗ ОБЯЗАН НАЗЫВАТЬ ТО, ЧТО ИЗМЕРИЛ. До 2026-09-14 шаг слал вывод в
+    # /dev/null и объявлял ЛЮБОЙ ненулевой код «ICE-регрессом»: причина не
+    # измерялась, а предполагалась. Замер на себе — прогон упал здесь ровно в
+    # ту минуту, когда я снял `nova.exe` при остановке сессии, и вердикт всё
+    # равно сказал «ICE-регресс, план 196». Следующая сессия пошла бы чинить
+    # ICE, которого нет, и ни одного байта для различения шаг не сохранил.
+    #
+    # Отсутствие бинаря проверяется ОТДЕЛЬНО и своим именем: это не регресс
+    # компилятора, а несобранное (или занятое чужим прогоном) дерево — разные
+    # причины требуют разных действий.
+    if [ ! -x "$NOVA" ]; then
+        fail "nova build smoke: бинаря нет по пути $NOVA — дерево не собрано либо сборка не дошла. Это НЕ ICE-регресс: компилятор не запускался."
+    else
+        if "$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >"$SMOKE_LOG" 2>&1; then
+            :
+        else
+            echo "  вывод nova build (последние 20 строк) — ПРИЧИНА ЧИТАЕТСЯ ЗДЕСЬ, а не из имени шага:" >&2
+            tail -20 "$SMOKE_LOG" | sed 's/^/    /' >&2
+            fail "nova build smoke не собрался (см. вывод выше; если там ICE — это регресс плана 196, если иное — причина ДРУГАЯ)"
+        fi
+    fi
+    rm -f "$SMOKE_NV" "$SMOKE_LOG" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
 fi
 
 step push "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
