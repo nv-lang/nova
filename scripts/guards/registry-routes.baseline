@@ -1272,4 +1272,9 @@ no_caveat=0
 #   1092, naydena po voprosu vladel'tsa: peremeshchenie v vozvrashchaemyy
 #   kortezh ne schitaetsya mestom potrebleniya, i obkhod cherez `ro`
 #   stoyal v std dva mesyatsa opisannyy prozoy bez nomera.
-blockers=66
+# 2026-09-14 (integrator): blockers 66 -> 67. Rost ZAKONNYY -- prinyata
+#   stroka 1097 ot okna 283, i pole BLOKIRUET TEG: DA postavleno mnoyu pri
+#   priyome, po kriteriyu 'molcha vryot': vyzov ukhodit v CHUZHUYU funktsiyu,
+#   a segodnyashnyaya gromkost' derzhitsya TOL'KO na nesovpadenii C-tipov.
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+blockers=67

@@ -762,6 +762,13 @@
 #       zelyon (cleanup srabatyvaet), poetomu prichina imenno union po imeni;
 #     1101 -- `5 ?? 7` sobiraetsya i pechataet 7, a ne 5: forma, zapreshchyonnaya
 #       D86 (rovno dva konteynera), dayot tikhiy nevernyy rezul'tat.
-rows=1045
+# 2026-09-14 (integrator): rows -> 1046, max bez izmeneniy (1098), gaps -= 1097.
+#   Stroka 1097 PRIEKHALA ot okna 283 -- imya funktsii v C teryaet svoy modul',
+#   kogda vypolnyayutsya TRI usloviya srazu (dva modulya s odinakovoy
+#   signaturoy, tretiy s peregruzkoy, dostizhimost' tol'ko tranzitivnaya).
+#   Os' NAZVANA POSLE BISEKTsII iz shesti progonov, pervaya gipoteza okna
+#   ('imya vozvrashchaemogo tipa delitsya') snyata ego zhe proboy.
+#   Pole BLOKIRUET TEG: DA prostavleno mnoyu pri priyome.
+rows=1046
 max=1098
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1101
