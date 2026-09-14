@@ -96,6 +96,25 @@ fn Cursor mut @type_decl() -> Node {
     } else {
         // No `value` marker: the record is a GC pointer, the language's default.
     }
+    // The MUST-CONSUME marker (D133): `type Transaction consume { ... }`. It stands
+    // where `value` stands and is read the same way -- a leaf between the name and
+    // the body, kept in the tree because the tree is lossless.
+    //
+    // It is a KEYWORD, not an identifier, so `@peek_ident` cannot see it: until
+    // 2026-09-14 the word fell into the newtype tail below as if it were a
+    // representation, the brace body behind it became junk, and the refusal said the
+    // parser's fallback about a form the language HAS. That is the third time this
+    // exact shape was found here -- `protocol` (2026-08-23) and `value` (2026-08-23)
+    // came in the same way, one form apart.
+    //
+    // Reading it does NOT mean accepting it: `check` refuses the declaration by name,
+    // because novac has no linearity at all (registry #1099) and a silent yes would
+    // promise a guarantee the compiler does not give.
+    if @peek() == TokenKind.KwConsume {
+        kids.push(@take())
+    } else {
+        // No `consume` marker: the type carries no consumption obligation.
+    }
     // The PRIVACY marker (D281), read the same way `value` is -- a leaf
     // between the name and the body -- PLUS its optional qualifier group:
     // `priv`, `priv(type)`, `priv(file)` are all one form, and reading only

@@ -699,6 +699,26 @@ fn Checker mut @report_if_misplaced_generics(kids []Node) -> () {
     }
 }
 
+/// The must-consume declaration: read by the parser (the tree is lossless), refused here.
+///
+/// Carina has NO LINEARITY AT ALL -- the consumption obligation is checked nowhere
+/// (registry #1099, measured 2026-09-14: `fn tag(consume c Cel)` with `c` never consumed
+/// gives zero diagnostics). Accepting `type X consume` would therefore promise a guarantee
+/// the compiler does not give, which is worse than refusing: a refusal the author sees, a
+/// missing guarantee nobody does.
+const CONSUME_TYPE_MSG = "outside the subset: `type X consume` declares a must-consume type, and novac checks no consumption obligation anywhere -- accepting the declaration would promise a guarantee it does not give; not compiled yet (274.7 B13)"
+
+/// See CONSUME_TYPE_MSG: the marker is a KEYWORD leaf, so it is found by TOKEN KIND
+/// rather than by text. Its spelling lives in the lexer table and is not copied here.
+fn Checker mut @report_if_consume_type(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.KwConsume {
+            @report_first_leaf_of([]Node.of(c), CONSUME_TYPE_MSG)
+            return
+        }
+    }
+}
+
 /// The BLANKET refusal — for declarations where type parameters are not in the
 /// subset at all: a generic TYPE (`type Box[T]`) and a generic RECEIVER
 /// (`fn[T] []T @map`). A free function's own parameters are admitted with

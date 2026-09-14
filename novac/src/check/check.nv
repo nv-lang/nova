@@ -434,6 +434,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // first, so a misplaced form is named as misplaced.
                     @report_if_misplaced_generics(children)
                     @report_if_generic_form(children)
+                    // A MUST-CONSUME type parses (2026-09-14) and is refused BY NAME:
+                    // novac has no linearity, so accepting it would promise a guarantee
+                    // it does not give (registry #1099). Reading the form is what makes
+                    // D133 fixtures writable at all -- before it, the declaration fell
+                    // into the parser's fallback.
+                    @report_if_consume_type(children)
                     // Fields, a newtype's representation, variant payloads:
                     // every type NAME must be declared (#970, typeref_rules) --
                     // `type Box { v Nmbr }` passed check in silence before.
