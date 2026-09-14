@@ -17,6 +17,8 @@ mk()  { d="$T/$1"; mkdir -p "$d/m"; shift; printf "%s\n" "$@" > "$d/m/m.nv"; ech
 
 printf '%s\n' 'undated=0' > "$T/zero.baseline"
 printf '%s\n' 'undated=1' > "$T/one.baseline"
+printf '%s\n' 'undated=9' 'undated_by_door=0' > "$T/door_zero.baseline"
+printf '%s\n' 'undated=9' 'undated_by_door=9' > "$T/door_nine.baseline"
 
 # --- ГЛАВНЫЙ случай: новый долг БЕЗ этапа при базе ноль -------------------
 D=$(mk undated "module a" \
@@ -150,5 +152,29 @@ mkdir -p "$T/empty"
 run "$T/empty" "$T/zero.baseline" \
     && bad "пустая директория прошла - страж, сканирующий ничто, слеп" \
     || ok "пустая директория красная (мишень потеряна)"
+
+# --- СЧЁТ ПО ДВЕРИ: текст БЕЗ канонического написания виден только ему ------
+# Прежний счёт ищет два написания и такой отказ не видит вовсе. Если новая ветка
+# не краснеет здесь, третье число не мерит ничего и его засев -- украшение.
+mkd() {
+    d="$T/$1"; mkdir -p "$d/m"; shift; printf '%s\n' "$@" > "$d/m/m.nv"; echo "$d"
+}
+D=$(mkd doorseen 'module a' \
+    'const M = "unknown field: this type has no field with this name"' \
+    'fn Checker mut @r(kids []Node) -> () { @report_first_leaf_of(kids, M) }')
+if run "$D" "$T/door_zero.baseline"; then
+    bad "отказ без написания, текущий в дверь долга, прошёл - счёт по двери слеп"
+else
+    grep -q "ПО ДВЕРИ" "$T/err" && ok   "счёт по двери видит отказ без канонического написания" \
+        || bad "покраснел, но не по двери: $(cat "$T/err" | head -1)"
+fi
+
+# --- ВТОРАЯ СТОРОНА: тот же текст в двери ПОСТОЯННОЙ ОШИБКИ долгом не считается
+# Без неё ветка, считающая все отказы подряд, прошла бы случай выше и выглядела рабочей.
+D=$(mkd doorlang 'module a' \
+    'const M = "unknown field: this type has no field with this name"' \
+    'fn Checker mut @r(kids []Node) -> () { @reject_first_leaf_of(kids, M) }')
+run "$D" "$T/door_zero.baseline" && ok   "постоянная ошибка на своей двери долгом не считается" \
+    || bad "текст в двери постоянной ошибки посчитан долгом - ветка мерит не дверь"
 
 [ "$fails" -eq 0 ] && echo "test-check-novac-subset-debt-dated: ok" || exit 1

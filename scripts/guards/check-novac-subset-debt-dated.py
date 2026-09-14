@@ -111,8 +111,21 @@ def main():
             else:
                 undated.append(f"  {rel}:{n} — долг без этапа: {m.group(0)[:78]}")
 
+    # СЧЁТ ПО ДВЕРИ (В11-б): признак машинный -- через какую дверь течёт текст, то есть
+    # какой код получит пользователь. Область проверена перебором 2026-09-14: все вызовы
+    # дверей живут в `check/`, поэтому счёт по папке и по дереву совпадают.
+    door_files = {}
+    for f in files:
+        rel = str(f.relative_to(src)).replace("\\", "/")
+        door_files[rel] = f.read_bytes().decode("utf-8", "replace")
+    door_subset, door_lang = _sd.by_door(door_files)
+    door_undated = [r for r in door_subset if not r[3]]
+    # Сколько из них НЕВИДИМЫ счёту по написанию -- это и есть расхождение двух мерок.
+    door_invisible = [r for r in door_undated if not _sd.RE_DEBT.search(r[2])]
+
     want = None
     want_all = None
+    want_door = None
     if base.is_file():
         for line in base.read_text(encoding="utf-8", errors="replace").split("\n"):
             line = line.strip()
@@ -124,8 +137,24 @@ def main():
             # а решение владельца требует не датировать отклонения, а УБИРАТЬ их.
             elif line.startswith("refusals="):
                 want_all = int(line.split("=", 1)[1])
+            # ТРЕТЬЕ ЧИСЛО (В11-б, 2026-09-14): бессрочные ПО ДВЕРИ. Оно мерит ПРЕДМЕТ --
+            # какой код получит читатель отказа, -- тогда как два числа выше мерят
+            # НАПИСАНИЕ текста. Держать надо это; два первых остаются как мера того,
+            # насколько отказы понятны человеку.
+            elif line.startswith("undated_by_door="):
+                want_door = int(line.split("=", 1)[1])
     if want is None:
         print(f"{NAME}: FAIL — нет базы {base}: храповик без базы ничего не держит", file=sys.stderr)
+        return 1
+
+    if want_door is not None and len(door_undated) > want_door:
+        print(f"{NAME}: FAIL — бессрочных ПО ДВЕРИ стало БОЛЬШЕ: "
+              f"{len(door_undated)} > базы {want_door}", file=sys.stderr)
+        for path, line_no, body, _ in door_undated[:12]:
+            print(f"  {path}:{line_no} — {body[:78]}", file=sys.stderr)
+        print("  Счёт по ДВЕРИ мерит предмет: через какую дверь течёт текст, то есть", file=sys.stderr)
+        print("  какой код получит пользователь. Написание мерит, понятен ли отказ", file=sys.stderr)
+        print("  человеку, и слепо к тексту, который написания не несёт.", file=sys.stderr)
         return 1
 
     total = dated + len(undated)
@@ -159,6 +188,9 @@ def main():
     print(f"{NAME} ok: долгов подмножества {dated + len(undated)}, из них с этапом {dated}, "
           f"бессрочных {len(undated)} (база {want}){extra}; "
           f"всего против базы роста: {total} <= {want_all}; "
+          f"ПО ДВЕРИ: отказов {len(door_subset)}, бессрочных {len(door_undated)} "
+          f"(база {want_door}), постоянных ошибок на своём коде {len(door_lang)}, "
+          f"из бессрочных БЕЗ канонического написания {len(door_invisible)}; "
           f"область: {len(_sd.SPELLINGS)} формулировки отказа, дом образца — novac_subset_debt.py")
     return 0
 
