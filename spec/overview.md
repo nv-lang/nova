@@ -136,6 +136,14 @@ language explicitly optimized for the pair "LLM writes, human reviews".
    (amendment #456, 2026-08-08: the same disarm points and runtime drop flag as
    [D432](decisions/02-types.md#d432) §4/§5; a second cleanup of a consumed value
    would break exactly-once D131/D133). A
+   **Returning a TUPLE consumes too** (amendment to
+   [D133](decisions/02-types.md#d133) of 2026-09-14, registry 221.1 #1092):
+   `fn f(consume a T, consume b T) -> (T, T) => (a, b)` hands the caller both
+   obligations, the way `return a` hands over one. Before the amendment the list
+   of consume sites did not mention tuples, so such a function was rejected as
+   "not consumed before scope-exit" — while its body IS its whole result; std
+   worked around it for two months by marking the result `ro`, which is a lie
+   about ownership in the signature (`split_pair`, `net/tcp.nv`).
    separate axis is **`#thread_affine extern fn`** (A-V10, D441 §5): marks an
    M:N-unsafe C-side list (thread-local state), raised transitively along the
    call graph, gated at the `spawn`/`detach`/`parallel for` boundary.

@@ -5834,6 +5834,7 @@ Compiler проводит **flow-sensitive** анализ (расширение 
 | `return tx` (тип consume) | `tx` → `Returned` (передача caller'у) |
 | `record.field = tx` где field declared consume | `tx` → `Moved` (в record) |
 | `T { field: tx, … }` — init consume-поля record-литерала голым binding'ом | `tx` → `Consumed` (move при конструировании) |
+| `(a, b)` в позиции возврата — кортеж из consume-биндингов | каждый элемент → `Returned` (передача caller'у, как `return tx`) |
 | `consume new_owner = tx` (transfer alias) | `tx` → `Consumed`, `new_owner` → `Live` |
 | `f(tx)` где `f(tx Tx)` — view-param (no qualifier) | `tx` остаётся `Live` (callee — view-borrow) |
 | `f(make_tx())` где `f(t Tx)` — rvalue → view-param | ❌ E (D133-consume-rvalue-in-view) |
@@ -5842,6 +5843,32 @@ Compiler проводит **flow-sensitive** анализ (расширение 
 | `let alias = tx` — view-alias | оба в alias-class (Plan 73); consume любого инвалидирует |
 | `let mut alias = tx` — mut-view-alias | то же + mut-методы через alias |
 | `let _ = tx` (silent drop) | ❌ compile error D133-suppress-not-allowed |
+
+> **Амендмент 2026-09-14 (реестр 221.1 №1092, решение владельца):** строка
+> «`(a, b)` в позиции возврата» — НОРМАТИВНОЕ дополнение перечня. До неё
+> перечень покрывал `return tx` и конструирование record-литерала
+> (`T { field: tx, … }`), но НЕ кортеж, и потому
+> `fn f(consume a T, consume b T) -> (T, T) => (a, b)` отвергалась как
+> «не consumed до scope-exit» — при том что тело функции ЕСТЬ весь её результат.
+>
+> **Почему это дополнение, а не смена решения.** Кортеж — такое же
+> конструирование, как record-литерал, только без имён полей; строка про
+> record-литерал в перечне стоит с 2026-07-13 и называет это «move при
+> конструировании». Перечень был неполон по недосмотру, а не по решению:
+> ни одного места, где кортеж в позиции возврата объявлялся бы НЕ потреблением,
+> в спеке нет.
+>
+> **Цена умолчания измерена.** Обход стоял в `std/src/net/tcp.nv:113`
+> (`split_pair`) с 2026-07: параметры оставлены view-формой, а результат помечен
+> `ro`, и собственный комментарий признавал компромисс словами «`ro` would be the
+> wrong canon here» с меткой `[INV-PROPERTY]`. Второй носитель той же формы —
+> `std/src/net/udp.nv:40` (`recv_bytes_pair`). Обе функции отдают владение и обе
+> были вынуждены лгать о нём в подписи.
+>
+> **Санкция:** владелец 2026-09-14, прочитав подписи `split_pair` и
+> `@into_split()` рядом, утвердил форму
+> `fn split_pair(consume rh TcpReadHalf, consume wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf)`.
+> Это правило — то, без чего утверждённая форма не компилируется.
 
 > **Амендмент 2026-07-13 (fix `[M-178-consume-field-ctor-from-var]`):**
 > строка «init consume-поля record-литерала» — НОРМАТИВНОЕ уточнение,

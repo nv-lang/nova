@@ -135,6 +135,25 @@ def c_cronlist_each_cycle(t, _):
     return "CronList" in t and ("CronDelete" in t or "РОВНО ОДНУ" in t)
 
 
+def c_schedule_restore(t, _):
+    """An absent timer kills the role silently: the check that would catch it lives INSIDE
+    the cycle the timer starts.
+
+    Measured 2026-09-14: the owner said "stop, switch off all timers" at 02:00 local and the
+    job was deleted -- correctly. Work resumed, but the schedule was never re-created, because
+    the next call came from the owner rather than from the scheduler. The window slept for
+    1096 minutes at a declared 7-minute step, and nobody noticed: the role looked alive and
+    watched nothing.
+
+    So the command must demand CronList as the FIRST action of ANY /controller call (scheduler,
+    owner, after /stop, after a restart) and an immediate CronCreate on an empty list. The
+    honest limit of this check is stated in the command itself: a script cannot call CronList
+    (that is a window tool, not a shell one), so it proves the REQUIREMENT is written, never
+    that it was executed -- only the report, naming the job id, proves that.
+    """
+    return ("ЛЮБОГО вызова" in t) and ("CronCreate" in t) and ("schedule-restore" in t)
+
+
 def c_tools_in_repo(t, _):
     """Tools live in the repository, each named in the command."""
     return all(("scripts/tools/" + n) in t.replace("\\", "/") for n in TOOL_NAMES)
@@ -160,6 +179,8 @@ CHECKS = [
     ("no-second-copy", "odin dom pravil + kak proverit", c_no_second_copy, True),
     ("no-cyrillic-shell", "zapret russkih slov v komandnoy stroke", c_no_cyrillic_in_shell, True),
     ("cronlist-cycle", "CronList kazhdyy cikl, rovno odna stroka", c_cronlist_each_cycle, True),
+    ("schedule-restore", "CronList pervym deystviem LYUBOGO vyzova + CronCreate na pustom",
+     c_schedule_restore, True),
     ("tools-in-repo", "instrumenty v scripts/tools, vse nazvany", c_tools_in_repo, True),
     ("agent-models", "stroka Modeli agentov v doklade", c_agent_models_line, True),
 ]
@@ -377,6 +398,7 @@ def prove():
         "no-second-copy": lambda s: s.replace("after-compact.list", "XX"),
         "no-cyrillic-shell": lambda s: s.replace("ASCII", "XX").replace("русского слова", "XX"),
         "cronlist-cycle": lambda s: s.replace("CronList", "XX"),
+        "schedule-restore": lambda s: s.replace("ЛЮБОГО вызова", "XX"),
         "tools-in-repo": lambda s: s.replace("scripts/tools/controller-dock.py", "XX"),
         "agent-models": lambda s: s.replace("Модели агентов", "XX"),
     }

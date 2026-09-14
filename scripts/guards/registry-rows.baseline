@@ -770,6 +770,18 @@
 #   overload'om, kotoryy ne vyzyvaetsya), 1101 (`5 ?? 7` pechataet 7).
 #   Baza podnyata TOY ZHE pravkoy, chto i sliyanie: inache khrapovik otstayot i
 #   molcha razreshaet poteryat' stol'ko zhe strok.
-rows=1054
-max=1101
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
+# 2026-09-14 (integrator): rows -> 1046, max bez izmeneniy (1098), gaps -= 1097.
+#   Stroka 1097 PRIEKHALA ot okna 283 -- imya funktsii v C teryaet svoy modul',
+#   kogda vypolnyayutsya TRI usloviya srazu (dva modulya s odinakovoy
+#   signaturoy, tretiy s peregruzkoy, dostizhimost' tol'ko tranzitivnaya).
+#   Os' NAZVANA POSLE BISEKTsII iz shesti progonov, pervaya gipoteza okna
+#   ('imya vozvrashchaemogo tipa delitsya') snyata ego zhe proboy.
+#   Pole BLOKIRUET TEG: DA prostavleno mnoyu pri priyome.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1101
+# 2026-09-14 VTOROE SLIYANIE origin/main (5 kommitov): chisla PERESCHITANY, a ne vzyaty
+#   storonoy. U okna 274 bylo rows=1054 max=1101, u integratora rows=1046 max=1098 --
+#   sostavy raznye, i vybor storony poteryal by stroki drugoy storony molcha.
+#   Znacheniya nizhe nazval sam strazh na slitom dereve.
+rows=1056
+max=1102

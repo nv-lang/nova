@@ -1316,4 +1316,21 @@ no_caveat=0
 #   by NIZHE fakta -- to est' khrapovik molcha razreshil by poteryat' blokery.
 #   Letopisi OBEIH storon sokhraneny: oni opisyvayut raznye sobytiya, i polovina
 #   letopisi est' polovina ob'yasneniya. Predupredil integrator do sliyaniya.
+# 2026-09-14 (integrator): blockers 66 -> 67. Rost ZAKONNYY -- prinyata
+#   stroka 1097 ot okna 283, i pole BLOKIRUET TEG: DA postavleno mnoyu pri
+#   priyome, po kriteriyu 'molcha vryot': vyzov ukhodit v CHUZHUYU funktsiyu,
+#   a segodnyashnyaya gromkost' derzhitsya TOL'KO na nesovpadenii C-tipov.
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+# 2026-09-14 (integrator): blockers 67 -> 66. Zakryt №1092 -- peremeshchenie
+#   v VOZVRASHCHAEMYY KORTEZH teper' mesto potrebleniya (amendment D133 v tom
+#   zhe sliyanii, reshenie vladel'tsa). Eto NASTOYASHCHEE dvizhenie, a ne
+#   pereklassifikatsiya: forma, kotoruyu kompilyator otvergal, teper'
+#   sobiraetsya, i nositel' v std (`split_pair`) prinyal chestnuyu podpis'.
+#   OPUSKAT' BAZU -- CHAST' RABOTY: strazh krasneet tol'ko na ROST, i
+#   ostavlennaya vysokoy baza molcha razreshila by otkat.
+# 2026-09-14 VTOROE SLIYANIE origin/main (5 kommitov): chislo PERESCHITANO skanerom na
+#   slitom dereve -- 70. U storon bylo 70 (okno 274: +1100, +1101) i 66 (integrator posle
+#   zakrytiya 1092). Sovpadenie s moim chislom SLUCHAYNO: sostavy raznye, i proveryalos'
+#   otdel'no, chto zakrytie 1092 sliyanie ne s'elo (stroka nesyot 'ZAKRYT 2026-09-14').
+#   Letopisi obeikh storon sokhraneny.
 blockers=70
