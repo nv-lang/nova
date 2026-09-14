@@ -54,7 +54,12 @@ export type DigitBuf {
     mut num_digits int        // The number of significant digits in the decimal.
     mut decimal_point int     // The offset of the decimal point in the significant digits.
     mut truncated bool        // If the number of significant digits stored in the decimal is truncated.
-    mut digits []u8           // Buffer of the raw digits, in the range [0, 9]; len == DIGIT_BUF_MAX_DIGITS.
+    // Buffer of the raw digits, in the range [0, 9]. Its length is `@digit_cap()`, NOT
+    // `DIGIT_BUF_MAX_DIGITS`: a buffer made with a `keep` budget is shorter, and only one
+    // made with `keep: 0` reaches the maximum. This line used to claim the maximum
+    // unconditionally, which stopped being true the day sized allocation arrived and would
+    // have invited the next reader to index up to 767 on a buffer holding 19.
+    mut digits []u8
     // How many significant digits the OWNER of this buffer actually needs; 0 means
     // "as many as the buffer holds". Printing at a given precision needs far fewer
     // than the 768 an exact expansion can reach, and every digit past the requested
@@ -282,9 +287,15 @@ export fn DigitBuf mut @parse_from(s str) -> () {
         @decimal_point += n_trailing_zeros
         @num_digits -= n_trailing_zeros
         @decimal_point += @num_digits
-        if @num_digits > DIGIT_BUF_MAX_DIGITS {
+        // Clamp by THIS buffer's capacity, not by the type's maximum. The writes above
+        // are guarded by `@digit_cap()`, which a `keep`-sized buffer makes smaller than
+        // the maximum; naming the maximum here would let the count outrun the array.
+        // The two agree on every path that reaches this function today -- `parse_from`
+        // is entered only from `DigitBuf.new()` with no `keep` -- so this changes no
+        // behaviour, and stops the agreement from being an unspoken one.
+        if @num_digits > @digit_cap() {
             @truncated = true
-            @num_digits = DIGIT_BUF_MAX_DIGITS
+            @num_digits = @digit_cap()
         }
     }
     if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
@@ -305,6 +316,10 @@ export fn DigitBuf mut @parse_from(s str) -> () {
         @decimal_point += if neg_exp { -exp_num } else { exp_num }
     }
     // The donor zeroes the tail up to the 19 digits `round` may read past `num_digits`.
+    // Writing up to index 18 is safe on ANY buffer only because `DigitBuf.new` floors the
+    // budget at that same constant -- the floor is not a rounding-up of taste, it is what
+    // this loop stands on. Naming the constant here without naming the floor would leave
+    // the next reader free to lower the floor and to find out from an out-of-bounds panic.
     if @num_digits < DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
         for k in @num_digits..DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW {
             @digits[k] = 0

@@ -15,8 +15,12 @@
 // SO THE DIGITS COME FROM EXACT DECIMAL ARITHMETIC, and that already existed: wave 283
 // built it for the slow path of PARSING, and plan 285 Ф.4 moved it to its own home,
 // `runtime.decimal`. The bound is the same in both directions -- a binary64 value needs
-// at most 767 decimal digits to be written exactly, which is why that buffer holds 768.
-// Nothing here was ported a second time.
+// at most 767 decimal digits to be written exactly, which is why that buffer's MAXIMUM is
+// 768. Since F.6 a buffer is not always made at that maximum: `DigitBuf.new(keep:)` sizes
+// it to the budget the caller asks for, and the maximum is what `keep: 0` means. Printing
+// at a given precision is exactly the case that wants less, and that sizing is where F.6's
+// speed came from -- the cost was a constructor zeroing 768 elements per value, not the
+// length of the digit loop. Nothing here was ported a second time.
 //
 // WHAT IS NOT HERE: the surface. Width, fill, sign and the `${x:.2}` mini-language stay
 // in `core.nv` and in the unified formatter (D422); this file answers only "which bytes
@@ -47,18 +51,18 @@ fn decode_binary(v f64) -> (u64, int) {
     }
 }
 
-/// Сколько значащих цифр хватает, чтобы напечатать `v` с `prec` знаками.
+/// How many significant digits suffice to print `v` with `prec` places.
 ///
-/// СТОРОЖЕВЫЕ ЦИФРЫ, и почему их именно столько. Порядок значения оценивается целочисленным
-/// логарифмом донора (`log10_pow2`), который даёт ПРИБЛИЖЕНИЕ с ошибкой в единицу, а
-/// округление в последней позиции смотрит на соседнюю цифру. Десять сторожевых покрывают и
-/// то и другое с запасом и всё равно оставляют предел в разы меньше 768 — на типичном
-/// `prec = 2` это около пятнадцати цифр вместо семисот шестидесяти восьми.
+/// THE GUARD DIGITS, and why there are exactly this many. The magnitude is estimated with
+/// the donor's integer logarithm (`log10_pow2`), which is an APPROXIMATION carrying an
+/// error of one, and rounding at the last place looks at the digit next to it. Ten guard
+/// digits cover both with room to spare and still leave a bound many times below 768 --
+/// at a typical `prec = 2` that is about fifteen digits instead of seven hundred sixty-eight.
 ///
-/// Отбрасываются при этом только цифры ПРАВЕЕ нужной позиции, а они на неё не влияют:
-/// деление на два переносит информацию справа налево лишь через остаток. Единственное, на
-/// что они влияют, — округление, и для него у буфера есть флаг `truncated`, который сдвиги
-/// выставляют сами, когда отброшенная цифра не ноль.
+/// Only digits to the RIGHT of the wanted place are dropped, and those do not influence it:
+/// halving carries information right-to-left solely through the remainder. The one thing
+/// they do influence is rounding, and for that the buffer carries the `truncated` flag,
+/// which the shifts raise themselves whenever a dropped digit is non-zero.
 fn digits_needed_for(e2 int, mantissa_len int, prec int) -> int {
     ro guard = 10
     ro scale = if e2 >= 0 { log10_pow2(e2) } else { -log10_pow2(-e2) }
