@@ -848,15 +848,30 @@ const GENERIC_MSG = "outside the E1 subset: generic parameters are not compiled 
 
 /// Report `msg` at the first leaf found under `children` (depth-first).
 fn Checker mut @report_first_leaf_of(children []Node, msg str) -> () {
+    @report_first_leaf_kind(children, msg, DiagKind.SubsetDebt)
+}
+
+/// The same walk for a PERMANENT language error. Not a second implementation: it delegates
+/// to the one walk below, because "one concept, two implementations" is the class registry
+/// #991 names, and a copied walk would not follow a change to the original.
+fn Checker mut @reject_first_leaf_of(children []Node, msg str) -> () {
+    @report_first_leaf_kind(children, msg, DiagKind.LangError)
+}
+
+/// THE walk to the first leaf, taking the KIND of refusal. A boolean here would read as
+/// `@report_first_leaf_of(kids, msg, true)` at the call site -- which `true` is which,
+/// visible only from the signature; the same argument that made `ElseShape` a sum on the
+/// same day.
+fn Checker mut @report_first_leaf_kind(children []Node, msg str, kind DiagKind) -> () {
     for c in children {
         match c {
             Leaf(t) => {
-                @refuse(t, msg)
+                @refuse_kind(t, msg, kind)
                 return
             }
             Branch { children: inner, .. } => {
                 ro before = @out.len()
-                @report_first_leaf_of(inner, msg)
+                @report_first_leaf_kind(inner, msg, kind)
                 if @out.len() > before { return }
             }
         }

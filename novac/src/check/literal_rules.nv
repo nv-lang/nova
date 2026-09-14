@@ -255,7 +255,7 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
         if leaf_kind(c) != TokenKind.Ident { continue }
         ro name = leaf_text(c)
         if @seen_decls.find(name) >= 0 {
-            @report_first_leaf_of(kids, DUP_DECL_MSG)
+            @reject_first_leaf_of(kids, DUP_DECL_MSG)
         } else {
             @seen_decls.put(name, 1)
         }

@@ -792,7 +792,7 @@ fn Checker mut @type_if_let(st Node) -> () {
     ro ot = type_of(init, @ctx, @scope, @chan)
     ro payload = option_payload(@ctx, ot)
     if !is_ty(payload) {
-        @report_first_leaf_of(kids, IFLET_INIT_MSG)
+        @reject_first_leaf_of(kids, IFLET_INIT_MSG)
         return
     }
     @record(init, ot)

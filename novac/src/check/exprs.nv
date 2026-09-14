@@ -421,7 +421,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // rule asks it and does not repeat it.
         ro payload = coalesce_payload(@ctx, lt)
         if !is_ty(payload) {
-            @report_first_leaf_of(qk, COALESCE_NONOPT_MSG)
+            @reject_first_leaf_of(qk, COALESCE_NONOPT_MSG)
             return
         } else {
             // A container: the payload of its value-carrying variant is this

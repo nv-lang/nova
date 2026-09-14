@@ -228,13 +228,35 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
     (c.out, c.chan)
 }
 
-/// Record one subset refusal at the token's exact bytes. THE one place that
-/// knows the code, the severity and how a span is derived from a leaf — it
-/// used to be copied into five reporters, so a change to the span rule had
-/// five chances to be applied four times (owner's review 2026-08-16).
-fn Checker mut @refuse(t Token, msg str) -> () {
+/// WHAT KIND OF REFUSAL THIS IS -- and the two kinds answer different questions, which
+/// is why one code could not carry both (plan 274 section 7, amendment 2026-09-14).
+///
+/// `SubsetDebt` says "this form is legal Nova and novac does not compile it YET". It is a
+/// promise, and a promise owes a date: such a refusal must carry its stage, and
+/// `check-novac-subset-debt-dated` holds that.
+///
+/// `LangError` says "the spec forbids this form" -- there is nothing to wait for, and a
+/// stage on it would be a lie. Until 2026-09-14 both went out under the subset code, so an
+/// author meeting a permanent error had every reason to expect the next wave to fix it.
+/// The census of 2026-09-13 found 43 refusal texts carrying the debt wording and 29 not,
+/// most of the 29 being permanent errors wearing the debt's code.
+export type DiagKind enum
+    | SubsetDebt /// legal form, not compiled yet -- owes a stage
+    | LangError /// the spec forbids it -- nothing to wait for
+
+/// Record one refusal at the token's exact bytes. THE one place that knows the code, the
+/// severity and how a span is derived from a leaf — it used to be copied into five
+/// reporters, so a change to the span rule had five chances to be applied four times
+/// (owner's review 2026-08-16). The KIND is a parameter for the same reason: a second
+/// door would be a second copy of that rule.
+fn Checker mut @refuse_kind(t Token, msg str, kind DiagKind) -> () {
     ro lo = @src.offset_of(t.text)
-    @refuse_span(lo, lo + t.text.byte_len(), msg)
+    @refuse_span_kind(lo, lo + t.text.byte_len(), msg, kind)
+}
+
+/// The subset-debt door: the shape every existing caller already uses.
+fn Checker mut @refuse(t Token, msg str) -> () {
+    @refuse_kind(t, msg, DiagKind.SubsetDebt)
 }
 
 /// The same door with an EXPLICIT span, for a refusal whose subject is a run
@@ -242,11 +264,22 @@ fn Checker mut @refuse(t Token, msg str) -> () {
 /// underlined at its first byte: the editor squiggle covered `%` and left the
 /// other four looking accepted, which is a lie about what was rejected. The
 /// span rule stays in ONE place -- the reason @refuse exists at all.
-fn Checker mut @refuse_span(lo int, hi int, msg str) -> ()
+fn Checker mut @refuse_span(lo int, hi int, msg str) -> () {
+    @refuse_span_kind(lo, hi, msg, DiagKind.SubsetDebt)
+}
+
+/// THE one place a refusal diagnostic is built, for both kinds. The code is chosen HERE
+/// from the kind and nowhere else: a caller that picked the string itself would be the
+/// fifth copy of the rule this door exists to hold.
+fn Checker mut @refuse_span_kind(lo int, hi int, msg str, kind DiagKind) -> ()
     requires lo >= 0, "check: refusal span starts before the file"
     requires hi >= lo, "check: refusal span ends before it starts" {
+    ro code = match kind {
+        DiagKind.SubsetDebt => "E_NOVAC_SUBSET"
+        DiagKind.LangError => "E_NOVAC_LANG"
+    }
     @out.push(Diagnostic {
-        code: "E_NOVAC_SUBSET",
+        code,
         severity: Severity.ErrorSev,
         lo,
         hi,
