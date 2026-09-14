@@ -287,7 +287,7 @@ fn Checker mut @judge_char_lit(e Node) -> () {
                    esc == ('0' as u8) || esc == BACKSLASH ||
                    esc == ('\'' as u8) || esc == QUOTE
         if bb.len() != 2 || !legal {
-            @report_first_leaf_of(kids, if legal { CHAR_WIDTH_MSG } else { CHAR_ESCAPE_MSG })
+            @reject_first_leaf_of(kids, if legal { CHAR_WIDTH_MSG } else { CHAR_ESCAPE_MSG })
         } else {
             // One defined escape: the mangle door spells its codepoint.
         }
@@ -304,7 +304,7 @@ fn Checker mut @judge_char_lit(e Node) -> () {
               else if head >= 192 { 2 }
               else { 0 }
     if body.byte_len() != want {
-        @report_first_leaf_of(kids, CHAR_WIDTH_MSG)
+        @reject_first_leaf_of(kids, CHAR_WIDTH_MSG)
     } else {
         // One codepoint: the literal stands.
     }
@@ -624,7 +624,7 @@ fn Checker mut @type_expr(e Node) -> () {
                     if idx < 0 {
                         @refuse(t, "a tuple has numbered components: write `t.0`, not a field name")
                     } else if idx >= @ctx.tys.arg_count(owner) {
-                        @refuse(t, "tuple projection out of range: the tuple has fewer components")
+                        @reject(t, "tuple projection out of range: the tuple has fewer components")
                     } else {
                         @record(e, @ctx.tys.arg(owner, idx))
                     }

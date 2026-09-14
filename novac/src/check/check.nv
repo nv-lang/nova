@@ -259,6 +259,14 @@ fn Checker mut @refuse(t Token, msg str) -> () {
     @refuse_kind(t, msg, DiagKind.SubsetDebt)
 }
 
+/// The PERMANENT-ERROR door at a token. Its twin exists so a caller moving from debt to
+/// permanent changes ONE thing -- the code -- and not the position of the refusal as well:
+/// without it those callers would have to be rewritten onto the walk-to-first-leaf shape,
+/// and then a shifted diagnostic could not be told from a shifted code.
+fn Checker mut @reject(t Token, msg str) -> () {
+    @refuse_kind(t, msg, DiagKind.LangError)
+}
+
 /// The same door with an EXPLICIT span, for a refusal whose subject is a run
 /// of tokens rather than one (274.3/F24). A junk run of five tokens used to be
 /// underlined at its first byte: the editor squiggle covered `%` and left the
