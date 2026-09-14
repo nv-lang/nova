@@ -773,8 +773,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1046
-max=1098
+rows=1047
+max=1105
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -818,4 +818,14 @@ max=1098
 #       (`gate.sh:1577/1602`) gonyaet `nova lint --deny` po std/src i
 #       spec_tests ZHYOSTKO, kanon 0, to est' v nashem perimetre klass
 #       uderzhan. Ikh derevo vne perimetra, i eto ikh plan, a ne nash defekt.
+# 2026-09-14 (integrator): rows -> 1047, max -> 1105; gaps bez izmeneniy.
+#   Stroka 1105 PRIEKHALA ot okna claude-limits (9c) i vpisana mnoyu --
+#   `main` im ne prinadlezhit. Kodogen ne tipiziruet spred, istochnik
+#   kotorogo VYZOV; `nova check` pri etom zelyon. Os' nazvana DO progona
+#   i suzhena ikh zhe kontrolem: blok tozhe ne privyazka i prokhodit,
+#   znachit klass pro rezolv VYZYVAEMOGO, a ne pro 'ne privyazka'.
+#   Vtoraya ikh stroka (perenos usloviya v `if`) OTMENENA ikh sobstvennym
+#   zamerom: upala tol'ko forma s `{` na svoey stroke, a kontrol' s
+#   KOROTKIM usloviem i takim zhe `{` padaet toy zhe diagnostikoy -- to
+#   est' probe meshal ne perenos, a D43. Nomer pod neyo ne vydavalsya.
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
