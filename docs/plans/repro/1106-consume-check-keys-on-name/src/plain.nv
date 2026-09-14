@@ -1,0 +1,10 @@
+// A type with no consume obligation at all, built the same four ways.
+
+module probe_consume_name.plain
+
+export type Plain value {
+    ro n int
+}
+
+export fn Plain.new(n int) -> Plain => { n }
+export fn Plain.of(n int) -> Plain => { n }

@@ -773,8 +773,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1047
-max=1105
+rows=1048
+max=1106
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -828,4 +828,15 @@ max=1105
 #   zamerom: upala tol'ko forma s `{` na svoey stroke, a kontrol' s
 #   KOROTKIM usloviem i takim zhe `{` padaet toy zhe diagnostikoy -- to
 #   est' probe meshal ne perenos, a D43. Nomer pod neyo ne vydavalsya.
+# 2026-09-15 (integrator): rows -> 1048, max -> 1106; gaps bez izmeneniy.
+#   Stroka 1106 PRIEKHALA ot okna claude-limits (9c), vpisana mnoyu, proba
+#   perenesena v derevo: docs/plans/repro/1106-consume-check-keys-on-name/
+#   (7 form + 3 opornykh modulya + FINDING.md/RUN.md). BLOKIRUET TEG: DA --
+#   staticheskiy vyzov tipiziruetsya po ZHYOSTKOMU SPISKU IZ PYATI IMYON
+#   (new/with_capacity/from/default/filled), i lyuboy drugoy konstruktor
+#   MOLCHA teryaet obyazatel'stvo potrebleniya D180. Nositel' -- tip,
+#   derzhashchiy API-token, bez garantii shest' dney.
+#   Gipoteza okna ('lovitsya rovno new') byla NEVERNA i snyata CHTENIEM
+#   koda, a ne eshchyo odnim progonom: po tryom tochkam spisok iz pyati ne
+#   viden, i chinyashchiy iskal by 'osobennost' new', kotoroy net.
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
