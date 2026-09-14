@@ -773,8 +773,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1049
-max=1107
+rows=1050
+max=1108
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -850,4 +850,14 @@ max=1107
 #   pravila tam, gde ego net (rodnya G19).
 #   Ya dopisal dva polya, kotorykh v prislannom tekste ne bylo i bez
 #   kotorykh strazh formy krasneet: KLASS i ogovorka pro nositelya.
+# 2026-09-15 (integrator): rows -> 1050, max -> 1108; gaps bez izmeneniy.
+#   1108 -- reshenie vladel'tsa: operatsiya effekta, osvobozhdayushchaya
+#   resurs, obyazana zabirat' vladenie (close_stream/close_listener/
+#   close_socket -- tri, `shutdown` NE vkhodit: posle polu-zakrytiya potok
+#   zhiv). Ya dvazhdy vozrazhal i dvazhdy oshibsya; oba khoda zapisany v
+#   stroke, potomu chto kazhdyy vyglyadel obosnovannym.
+#   Vtoroe vozrazhenie (dvoynoe zakrytie cherez avto-cleanup na parametre)
+#   lozhno SEGODNYA -- D432 dayot ochistku tol'ko forme `consume X = e` --
+#   no ozhivaet v den', kogda 274.9 K4 rasprostranit ochistku na parametry.
+#   Ottuda OGRANICHENIE PORYADKA: `@into_raw` lozhitsya DO toy volny.
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
