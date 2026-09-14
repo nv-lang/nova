@@ -103,10 +103,21 @@ fn unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
 
 // Tuple-return helper (codegen tuple inference in handler bodies).
 //
-// THE SIGNATURE BELOW IS A WORKAROUND, AND IT NOW SAYS SO -- registry 221.1
-// #1092. The correct form by the spec is
+// The halves are MOVED through this helper, and since 2026-09-14 the signature
+// says so. Until then it read `(rh TcpReadHalf, wh TcpWriteHalf) -> (ro …, ro …)`
+// and carried an `[INV-PROPERTY]` marker admitting the compromise: a plain
+// parameter is `ro` by default (D176), so returning it in a non-`ro` tuple would
+// hand the caller write access to something received read-only (#717) -- while
+// `ro` on the RESULT was wrong in the other direction, because
+// `TcpReadHalf`/`TcpWriteHalf` are `consume` types and the caller MUST consume
+// what it gets back (D131/D133).
 //
-//     fn split_pair(consume rh TcpReadHalf, consume wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf)
+// Both wrongs came from one missing rule: a move into a RETURNED TUPLE was not
+// a consume site, so the honest form did not compile. Registry 221.1 #1092,
+// D133 amendment of 2026-09-14, owner's decision. `@into_split()` -- the only
+// caller -- declares exactly `(TcpReadHalf, TcpWriteHalf)`, so helper and caller
+// now agree with no coercion between them.
+fn split_pair(consume rh TcpReadHalf, consume wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
 //
 // -- owner's decision 2026-09-13, and it matches `@into_split()`, the only
 // caller, which declares exactly `(TcpReadHalf, TcpWriteHalf)`. The compiler

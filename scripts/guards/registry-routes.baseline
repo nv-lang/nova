@@ -1277,4 +1277,11 @@ no_caveat=0
 #   priyome, po kriteriyu 'molcha vryot': vyzov ukhodit v CHUZHUYU funktsiyu,
 #   a segodnyashnyaya gromkost' derzhitsya TOL'KO na nesovpadenii C-tipov.
 #   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
-blockers=67
+# 2026-09-14 (integrator): blockers 67 -> 66. Zakryt №1092 -- peremeshchenie
+#   v VOZVRASHCHAEMYY KORTEZH teper' mesto potrebleniya (amendment D133 v tom
+#   zhe sliyanii, reshenie vladel'tsa). Eto NASTOYASHCHEE dvizhenie, a ne
+#   pereklassifikatsiya: forma, kotoruyu kompilyator otvergal, teper'
+#   sobiraetsya, i nositel' v std (`split_pair`) prinyal chestnuyu podpis'.
+#   OPUSKAT' BAZU -- CHAST' RABOTY: strazh krasneet tol'ko na ROST, i
+#   ostavlennaya vysokoy baza molcha razreshila by otkat.
+blockers=66

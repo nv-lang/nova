@@ -44978,7 +44978,8 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                         // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]: also
                         // covers fluent-return method-chains (parity with
                         // `consume_walk_block` trailing path).
-                        if let Some(name) = implicit_return_consume_var(&ctx, e) {
+                        // №1092: кортеж отдаёт caller'у НЕСКОЛЬКО обязательств.
+                        for name in implicit_return_consume_vars(&ctx, e) {
                             ctx.mark_consumed(&name, e.span);
                         }
                         ctx.check_obligations_at_exit(e.span, errors);
@@ -45470,6 +45471,42 @@ fn implicit_return_consume_var(ctx: &ConsumeCtx, e: &Expr) -> Option<String> {
     }
 }
 
+/// Реестр 221.1 №1092 (амендмент D133 от 2026-09-14): ВСЕ consume-обязательства,
+/// которые выражение в позиции возврата передаёт caller'у.
+///
+/// Зачем отдельная дверь, а не смена подписи у `implicit_return_consume_var`.
+/// Та отвечает на ДРУГОЙ вопрос — «корень fluent-цепочки», и корень по
+/// определению один; два её места вызова (рекурсия внутри неё самой и цепочка
+/// в `consume_walk_expr`) множества не ждут и не примут. Вопрос «что уходит
+/// caller'у» — второй, и у него своя дверь.
+///
+/// Кортеж отдаёт КАЖДЫЙ элемент; всё прочее — не больше одного, делегируя
+/// старой функции. Поэтому поведение вне кортежа не меняется ни на байт.
+///
+/// Что это чинит: `fn f(consume a T, consume b T) -> (T, T) => (a, b)`
+/// отвергалась как «`a` не consumed до scope-exit», хотя тело функции ЕСТЬ весь
+/// её результат. Обход стоял в std два месяца (`split_pair`, `recv_bytes_pair`):
+/// параметры оставляли view-формой, а результат помечали `ro` — то есть лгали о
+/// владении в подписи, потому что правды выразить было нельзя.
+fn implicit_return_consume_vars(ctx: &ConsumeCtx, e: &Expr) -> Vec<String> {
+    match &e.kind {
+        ExprKind::TupleLit(items) => {
+            let mut out: Vec<String> = Vec::new();
+            for it in items {
+                for n in implicit_return_consume_vars(ctx, it) {
+                    // Один биндинг, названный в кортеже дважды, — не два
+                    // потребления: пометить его повторно нечем и незачем.
+                    if !out.contains(&n) {
+                        out.push(n);
+                    }
+                }
+            }
+            out
+        }
+        _ => implicit_return_consume_var(ctx, e).into_iter().collect(),
+    }
+}
+
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
     consume_walk_block_inner(ctx, b, errors, false);
 }
@@ -45502,7 +45539,8 @@ fn consume_walk_block_inner(
         // trailing only counts when this block is the function body
         // (Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]).
         if is_fn_body_trailing {
-            if let Some(name) = implicit_return_consume_var(ctx, t) {
+            // №1092: то же для трейлинга тела-блока.
+            for name in implicit_return_consume_vars(ctx, t) {
                 ctx.mark_consumed(&name, t.span);
             }
         } else if let ExprKind::Ident(name) = &t.kind {
