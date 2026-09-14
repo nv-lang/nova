@@ -238,6 +238,12 @@ struct NovaValue_FmtSpec {
     nova_bool alt;
 };
 
+typedef struct NovaTuple_FloatingDecimal64 NovaTuple_FloatingDecimal64;
+struct NovaTuple_FloatingDecimal64 {
+    uint64_t mantissa;
+    nova_int exponent;
+};
+
 typedef struct NovaTuple_Number NovaTuple_Number;
 struct NovaTuple_Number {
     uint64_t mantissa;
@@ -447,6 +453,10 @@ typedef struct _NovaTuple_2_8_nova_str_8_nova_str { nova_str f0; nova_str f1; } 
 #ifndef NOVA_TUPLE_TYPEDEF__NovaTuple_2_8_uint64_t_8_uint64_t
 #define NOVA_TUPLE_TYPEDEF__NovaTuple_2_8_uint64_t_8_uint64_t
 typedef struct _NovaTuple_2_8_uint64_t_8_uint64_t { uint64_t f0; uint64_t f1; } _NovaTuple_2_8_uint64_t_8_uint64_t;
+#endif
+#ifndef NOVA_TUPLE_TYPEDEF__NovaTuple_3_8_uint64_t_8_uint64_t_8_uint64_t
+#define NOVA_TUPLE_TYPEDEF__NovaTuple_3_8_uint64_t_8_uint64_t_8_uint64_t
+typedef struct _NovaTuple_3_8_uint64_t_8_uint64_t_8_uint64_t { uint64_t f0; uint64_t f1; uint64_t f2; } _NovaTuple_3_8_uint64_t_8_uint64_t_8_uint64_t;
 #endif
 #ifndef NOVA_FIXARR_TYPEDEF__NovaFixArr_4_9_nova_byte
 #define NOVA_FIXARR_TYPEDEF__NovaFixArr_4_9_nova_byte
@@ -1501,6 +1511,8 @@ static Nova_Slot____nova_int__nova_unit* nova_make_Nova_Slot____nova_int__nova_u
 
 
 /* [M-153.2]: NovaOpt typedefs for value-record payloads — after generic struct bodies */
+typedef struct NovaOpt_NovaTuple_FloatingDecimal64 { int tag; NovaTuple_FloatingDecimal64 value; } NovaOpt_NovaTuple_FloatingDecimal64;
+static inline nova_bool nova_opt_eq_NovaTuple_FloatingDecimal64(NovaOpt_NovaTuple_FloatingDecimal64 a, NovaOpt_NovaTuple_FloatingDecimal64 b);
 typedef struct NovaOpt_NovaTuple_Number { int tag; NovaTuple_Number value; } NovaOpt_NovaTuple_Number;
 static inline nova_bool nova_opt_eq_NovaTuple_Number(NovaOpt_NovaTuple_Number a, NovaOpt_NovaTuple_Number b);
 
@@ -1850,6 +1862,11 @@ static inline nova_bool nova_opt_eq_Nova_ParseCharError_p(NovaOpt_Nova_ParseChar
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
     return ((((Nova_ParseCharError*)(a.value)))->tag == (((Nova_ParseCharError*)(b.value)))->tag);
+}
+static inline nova_bool nova_opt_eq_NovaTuple_FloatingDecimal64(NovaOpt_NovaTuple_FloatingDecimal64 a, NovaOpt_NovaTuple_FloatingDecimal64 b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == 0) return 1;
+    return ((((a.value).exponent) == ((b.value).exponent)) && (((a.value).mantissa) == ((b.value).mantissa)));
 }
 static inline nova_bool nova_opt_eq_NovaTuple_Number(NovaOpt_NovaTuple_Number a, NovaOpt_NovaTuple_Number b) {
     if (a.tag != b.tag) return 0;
