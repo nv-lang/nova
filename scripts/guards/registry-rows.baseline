@@ -775,4 +775,47 @@
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
 rows=1046
 max=1098
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1102
+# 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
+#   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
+#   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
+#   IZMERITEL' OTVECHAET NA SOSEDNIY VOPROS, I OSHIBAETSYA VSEGDA V ODNU,
+#   RAZRESHAYUSHCHUYU STORONU. Chetyre nositelya za vecher u tryokh okon
+#   nezavisimo. Dva iz nikh imeyut mashinnuyu priyomku i poluchayut stroki;
+#   ostal'nye dva -- net, i eto skazano nizhe, a ne obojdeno.
+#     1103 (okno b8, kontrolyor) -- `controller-machine-watch.py:111` zovyot
+#       `ps -ef`, kotoryy v msys pechataet tol'ko protsessy SVOEY sessii:
+#       zamer 23:01:37 -- 4 stroki protiv 516 u `ps -W` v tu zhe sekundu.
+#       Znachit kazhdoe `machine FREE` za smenu oznachalo 'moikh protsessov
+#       net', a razneseno bylo kak fakt tryom oknam. Tsena izmerena: dve
+#       sborki uroneny zamkom fayla, i v obe minuty izmeritel' pechatal FREE;
+#       v 22:59 shyol gate na 1642-y sekunde, a sosednee okno videlo sem'
+#       `nova.exe` -- tri svidetelya protiv odnogo izmeritelya. Pochinka
+#       `ps -W` BEZ samotesta ne schitaetsya: eto pochinka NAPISANIYA, a ne
+#       svoystva; samotest obyazan natravit' schyotchik na ZHIVOY postoronniy
+#       protsess i pokrasnet', esli tot ne viden. I vtoraya proverka, kotoruyu
+#       sam izmeritel' obyazan pechatat': skol'ko strok on VOOBSHCHE vidit --
+#       nol' pri chetyryokh vidimykh neotlichim ot slepoty, pri pyatistakh eto
+#       zamer.
+#     1104 (okno 5c, nositel' est' i u menya) -- kod vozvrata posle konveyera
+#       prinadlezhit POSLEDNEY komande. `cmd | tail -30; echo EXIT=$?` dayot
+#       EXIT=0 pri upavshem progone. Dva nositelya za chas: ikh progon
+#       fikstury i moy `cargo build --release 2>&1 | tail -25`. Oba raza
+#       verdikt spaslo to, chto sudili po STROKE (`PASS:`/`Finished`), a ne
+#       po chislu -- to est' spasla privychka, a ne mekhanizm. Strazh na etot
+#       klass sam obyazan proyti probu v obe storony (`false | true; echo $?`
+#       krasneet, forma s `${PIPESTATUS[0]}` net), inache on stanet pyatym
+#       nositelem: on ved' tozhe izmeritel'.
+#   POCHEMU TOL'KO DVA NOMERA NA CHETYRE NOSITELYA.
+#     Tretiy nositel' -- moi sobstvennye metki vremeni, vydumannye s
+#       operezheniem do 18 minut (poravleno kommitom fba8830d3). Stroki NE
+#       poluchaet: pravilo uzhe est' (`flow.md`: vremya komandoy `date`), ono
+#       bylo NARUSHENO, a ne otsutstvovalo, i artefakta, po kotoromu strazh
+#       mog by sudit' vydumannuyu metku, ne sushchestvuet. Zapisyvat' v reestr
+#       narushennoe pravilo bez mashinnoy priyomki znachit zavodit' stroku,
+#       kotoruyu nechem zakryt'.
+#     Chetvyortyy -- `.of` u nevariadika v chuzhom dereve (okno 9c, 232
+#       vyzova). Stroki v ETOM reestre ne poluchaet: nash geyt
+#       (`gate.sh:1577/1602`) gonyaet `nova lint --deny` po std/src i
+#       spec_tests ZHYOSTKO, kanon 0, to est' v nashem perimetre klass
+#       uderzhan. Ikh derevo vne perimetra, i eto ikh plan, a ne nash defekt.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
