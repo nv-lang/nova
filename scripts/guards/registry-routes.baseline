@@ -1282,4 +1282,21 @@ no_caveat=0
 #   drugomu povodu.
 #   PRAVILO, kotoroe iz etogo sleduet: pravka, menyayushchaya CHISLO pod khrapovikom,
 #   dvigaet bazu V TOM ZHE kommite -- inache ona ostavlyaet krasnoe okno sleduyushchemu.
-blockers=66
+# 2026-09-14 (okno 274): blockers 66 -> 68. Dve novye stroki, obe s polem ot
+#   integratora:
+#   1100 -- avto-`@cleanup` snimaetsya OVERLOAD'om, kotoryy nikogda ne vyzyvaetsya:
+#     D432 §4 p.3 dizarmit flag po KONSERVATIVNOMU UNION PO IMENI, i chuzhoy overload
+#     s `consume` na toy zhe pozitsii snimaet cleanup s bindinga, kotoryy razreshaetsya
+#     v VIDOVOY overload. Probа: exit=101 u kontrolya (odin overload), exit=0 u defekta
+#     (dva). Tikhaya utechka resursa v mekhanizme, sozdannom protiv neyo.
+#   1101 -- `5 ?? 7` prokhodit check, sobiraetsya i pechataet 7. Ne tol'ko forma vne
+#     D86 prinyata, no i znachenie nevernoe: zapasnaya vetv' pri prisutstvuyushchem levom.
+#
+#   BAZA DVINUTA TEM ZHE KOMMITOM, chto i stroki -- pravilo iz zapisi 65 -> 66 vyshe:
+#   inache mezhdu kommitami derevo krasno bez prichiny, vidimoy iz diffa.
+#
+#   PRI SLIYANII: bazu NE vybirat' storonoy, a PERESCHITAT'
+#   (`python scripts/guards/registry-routes-scan.py .` na slitom dereve) -- u menya 68,
+#   u integratora svoyo chislo, i nabrany oni RAZNYMI strokami. Vybor storony razreshit
+#   molcha poteryat' blokery. Predupredil integrator 2026-09-14.
+blockers=68

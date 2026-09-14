@@ -1,0 +1,30 @@
+// THE SUSPICION. Same as the control plus a SECOND overload of the same name that
+// takes position 0 by `consume`. The call resolves to the VIEW one (arity 2), so
+// nobody consumes `g` -- but D432 section 4 item 3 disarms the caller's flag by a
+// CONSERVATIVE UNION BY NAME, which would see `consume` at position 0 from the
+// other overload. If the flag is disarmed, no cleanup is inserted and the program
+// reaches the end: a silent leak. Expected under the suspicion: NO panic.
+module dis_a2
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+fn use(consume x Boom) -> int {
+    x.defuse()
+    9
+}
+
+fn use(x Boom, tag int) -> int => tag
+
+fn main() Io -> () {
+    consume g = mk(7)
+    println("${use(g, 1)}")
+    println("reached the end without cleanup")
+}
