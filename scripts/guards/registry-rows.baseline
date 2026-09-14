@@ -773,8 +773,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1048
-max=1106
+rows=1049
+max=1107
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -839,4 +839,15 @@ max=1106
 #   Gipoteza okna ('lovitsya rovno new') byla NEVERNA i snyata CHTENIEM
 #   koda, a ne eshchyo odnim progonom: po tryom tochkam spisok iz pyati ne
 #   viden, i chinyashchiy iskal by 'osobennost' new', kotoroy net.
+# 2026-09-15 (integrator): rows -> 1049, max -> 1107; gaps bez izmeneniy.
+#   Stroka 1107 ot okna nova-b5, vpisana mnoyu. Rvalue consume-tipa vo
+#   view-parametre prinimaetsya MOLCHA: ni otkaz D133, ni legalizatsiya
+#   D476 ne realizovany, i forma prokhodit po OTSUTSTVIYU obeikh norm.
+#   Tri sborki odnim binaryom, i tretiy zamer vazhnee dvukh pervykh:
+#   mut-forma krasnaya, no CHUZHIM pravilom (E_MUT_ARG_NOT_MUTABLE ob
+#   adresuemosti), znachit consume-pravilo ne srabotalo NI V ODNOY iz
+#   dvukh form -- a merka 'odna iz dvukh krasnaya' namerila by nalichie
+#   pravila tam, gde ego net (rodnya G19).
+#   Ya dopisal dva polya, kotorykh v prislannom tekste ne bylo i bez
+#   kotorykh strazh formy krasneet: KLASS i ogovorka pro nositelya.
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
