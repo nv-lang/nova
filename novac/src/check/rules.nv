@@ -812,7 +812,7 @@ fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
                     Branch { kind, .. } => { if kind == NodeKind.RetType { return } }
                 }
             }
-            @refuse(t, "outside the E1 subset: fn requires a declared return type")
+            @refuse(t, "outside the subset: a function without a declared return type is not compiled yet (E2, the basics horizon) -- write the type the body returns")
         }
         Branch { .. } => {}
     }
