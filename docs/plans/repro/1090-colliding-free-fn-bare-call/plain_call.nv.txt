@@ -1,0 +1,17 @@
+// EXPECT_STDOUT 3
+// Probe B: the SAME call outside a slot. The only variable between A and B is
+// whether the call sits inside `${...}`.
+module standalone.plain_call
+
+type OrPair enum P(int) | Q(int)
+
+fn same(t OrPair) -> int {
+    match t {
+        P(a) | Q(a) => a
+    }
+}
+
+fn main() Io -> () {
+    ro v = same(P(3))
+    print(v.to_str())
+}

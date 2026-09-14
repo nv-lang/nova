@@ -693,6 +693,83 @@
 #   nova_str_Err pri obyavlennom Result[CResultHandle, DuckError]. Klass --
 #   kanal 196, podklass: kodogen vyvodit DVAZHDY i dva vyvoda rashodyatsya.
 #   BLOKIRUET TEG: DA.
-rows=1037
-max=1083
-gaps=174-208,210-215,653-654,743,1062,1074
+# 2026-09-13 (integrator): rows -> 1039, max -> 1086, gaps += 1084. Dve stroki
+#   po nakhodkam okna 283: 1085 -- Chan[T] ne vypuskaet ChanTx/ChanRx, kogda T
+#   predstavlen UKAZATELEM (os' utochnena samim nakhodchikom: ne 'summa', a
+#   suffiks _p); 1086 -- export const vypuskaetsya bez prefiksa modulya,
+#   SVERENO moey proboy i proyavlenie vyshlo DRUGIM (u nikh stolknovenie, u menya
+#   nedostizhimost'). Nomer 1084 vydan oknu 274 pod suzhenie `??` do Option --
+#   ikh stroka pridyot sliyaniem, poetomu 1084 obyavlen ZAKONNOY DYROY, kak 1074.
+# 2026-09-13 (integrator): rows -> 1040, max -> 1087, gaps bez izmeneniy.
+#   Odna stroka, zamer NA SEBE: 1087 -- shag geyta, zovushchiy strazha
+#   imenem kotorogo net, pechataet otkaz slovami SVOEGO PREDMETA, i
+#   slomannaya provodka stanovitsya neotlichima ot naydennogo defekta.
+#   Nositel' -- moy zhe shag dlya 1073, napisannyy cherez `run_guard`.
+#   Zakryta tem zhe sliyaniem: strazh check-gate-guard-dispatcher.py,
+#   199 strok-predmetov v dvukh geytakh, nerazreshimykh imyon 0.
+# 2026-09-13 (integrator): rows -> 1041, max -> 1088, gaps bez izmeneniy.
+#   1088 -- strazh 698 meril rabochuyu kopiyu, a predmet u nego
+#   PUBLIKUEMOE; bit skip-worktree na .vscode/settings.json delal
+#   raskhozhdenie nevidimym: na odnom kommite lokal'no 1028, na CI 1030,
+#   baza 1028. Zakryta tem zhe sliyaniem: yarus 3 schitaet MAKSIMUM iz
+#   rabochey kopii i INDEKSA, samotest 16 -> 18 sluchaev.
+# 2026-09-13 (integrator): gaps += 1089, rows/max bez izmeneniy.
+#   Nomer 1089 vydan oknu 274 pod defekt 'otkaz utverzhdaet ne o sebe, a
+#   o YAZYKE': novac otvechaet na rabochuyu formu `loop { ... }` slovami
+#   'syntax error: this is not a form of the language'. Ikh stroka pridyot
+#   sliyaniem, poetomu 1089 obyavlen ZAKONNOY DYROY -- tot zhe poryadok,
+#   chto u 1062, 1074 i 1084.
+# 2026-09-13 (integrator): rows -> 1043, max -> 1091, gaps bez izmeneniy.
+#   Dve stroki po nakhodkam YARUSA PUSH, kotoryy yarus loop ne gonyaet:
+#   1090 -- svobodnaya funktsiya s imenem, stalkivayushchimsya so std,
+#   poluchaet mangl v OPREDELENII i goloe imya v MESTE VYZOVA (C ne
+#   linkuetsya, `nova check` zelyonyy); BLOKIRUET TEG: DA.
+#   1091 -- otladochnyy odnofaylovyy drayver padaet na LYUBOM fayle,
+#   vklyuchaya tryokhstrochnyy hello; kontrol' -- tot zhe fayl cherez
+#   release-drayver dayot PASS.
+# 2026-09-13 (integrator): rows -> 1044, max -> 1092, gaps bez izmeneniy.
+#   1092 -- peremeshchenie v VOZVRASHCHAEMYY KORTEZH ne schitaetsya mestom
+#   potrebleniya: funktsiya, otdayushchaya dva consume-znacheniya kortezhem,
+#   otvergaetsya kak 'ne potrebivshaya' ikh. Vopros VLADEL'TSA, zamer moy.
+#   BLOKIRUET TEG: DA. Nositel' starshe nakhodki na dva mesyatsa i byl
+#   opisan prozoy bez nomera -- poetomu ne iskalsya.
+# 2026-09-14 (integrator): gaps += 1093,1094,1095,1096,1097; rows/max bez
+#   izmeneniy. Pyat' nomerov vydano oknam v techenie nochi, ikh stroki
+#   pridut sliyaniem:
+#     1093/1094 -- okno 274: dyra zvuchnosti (ro-launder ne primenyaetsya k
+#       kodu, prishedshemu IMPORTOM) i lozhnyy otkaz na novotipe nad skalyarom;
+#     1095 -- okno 274: `if Some(x) = <ne-Option>` prokhodit check i padaet clang;
+#     1096 -- okno 5c: literal zapisi s PROPUSHCHENNYM polem kompiliruetsya
+#       molcha, spetsifikatsiya ob'yavlyaet eto oshibkoy (02-types.md:1955);
+#     1097 -- okno 283: mangl imeni funktsii nasleduet registratsiyu
+#       VOZVRASHCHAEMOGO tipa, i pri kollizii imyon tipov berot pervuyu.
+#   Tot zhe poryadok, chto u 1062, 1074, 1084, 1089: dyra ob'yavlyaetsya TEM,
+#   KTO VYDAL nomer -- neob'yavlennaya dyra dlya strazha neotlichima ot
+#   poteryannoy stroki.
+# 2026-09-14 (integrator): rows -> 1045, max -> 1098, gaps bez izmeneniy.
+#   1098 -- shagi geyta sudyat ZHIVOE RAZDELYAEMOE sostoyanie mashiny,
+#   kotoroe sosednie okna menyayut POD progonom. Dva nositelya za noch':
+#   zamok fayla na nova.exe (chuzhoy progon) i schyot rabochikh derev'ev
+#   (21 vo vremya progona, 20 cherez minutu posle). Oba raza otkaz prishyol
+#   za chuzhoe deystvie i nazval ne to.
+# 2026-09-14 (integrator): gaps += 1099,1100,1101; rows/max bez izmeneniy.
+#   Tri nomera vydano oknu 274, ikh stroki pridut sliyaniem:
+#     1099 -- Karina PRINIMAET nepotreblyonnyy consume-parametr (tretiy vid:
+#       ne otstavanie i ne strogost', a soglasie s nezakonnoy programmoy);
+#     1100 -- dizarm avto-@cleanup po UNION'u IMYON snimaet cleanup, kogda
+#       ryadom ob'yavlen overload s consume-pozitsiey, KOTORYY NIKOGDA NE
+#       VYZYVAETSYA. Tikhaya utechka resursa; kontrol' s odnim overload'om
+#       zelyon (cleanup srabatyvaet), poetomu prichina imenno union po imeni;
+#     1101 -- `5 ?? 7` sobiraetsya i pechataet 7, a ne 5: forma, zapreshchyonnaya
+#       D86 (rovno dva konteynera), dayot tikhiy nevernyy rezul'tat.
+# 2026-09-14 (okno 274, SLIYANIE origin/main 22 kommita): rows 1045 -> 1054,
+#   max 1098 -> 1101. Rost SOSTAVNOY i ves' zakonnyy: iz `main` prishli stroki
+#   integratora i okna 283, iz vetki p274-novac -- 1093, 1094 (ro-launder za
+#   granitsey importa i novotip nad skalyarom), 1095 (`if Some(x) = <ne-Option>`),
+#   1099 (nepotreblyonnyy consume-parametr), 1100 (avto-`@cleanup` snimaetsya
+#   overload'om, kotoryy ne vyzyvaetsya), 1101 (`5 ?? 7` pechataet 7).
+#   Baza podnyata TOY ZHE pravkoy, chto i sliyanie: inache khrapovik otstayot i
+#   molcha razreshaet poteryat' stol'ko zhe strok.
+rows=1054
+max=1101
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101

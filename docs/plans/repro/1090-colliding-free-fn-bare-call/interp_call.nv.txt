@@ -1,0 +1,17 @@
+// EXPECT_STDOUT 3
+// Probe A: a colliding free-fn name called INSIDE an interpolation slot.
+// The name `same` also exists in std (runtime.fmt_buf), so it is a colliding
+// name and its C symbol goes through `file_priv_fn_c_names`, not `fn_module_map`.
+module standalone.interp_call
+
+type OrPair enum P(int) | Q(int)
+
+fn same(t OrPair) -> int {
+    match t {
+        P(a) | Q(a) => a
+    }
+}
+
+fn main() Io -> () {
+    print("${same(P(3))}")
+}

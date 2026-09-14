@@ -405,6 +405,14 @@ step loop "ABI-спеллинги прелюдии заморожены (Кар�
 guard "$ROOT/scripts/guards/check-oracle-abi-spellings.sh" "$ROOT" || fail "ABI-якорь прелюдии дрейфнул: интероп Карины сидит на этом спеллинге (см. шапку стража)"
 step loop "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"
 guard "$ROOT/scripts/guards/check-registry-routes.sh" "$ROOT" || fail "открытая K1 без маршрута/оговорки, либо выросло число блокеров тега без записи в базу"
+# Замер на себе 2026-09-13: шаг для №1073 был написан через `run_guard` —
+# имя, которого в гейте нет. Оболочка вернула `command not found`, плечо
+# `|| fail` напечатало сообщение О ПРЕДМЕТЕ, и сломанная проводка стала
+# неотличима от найденного дефекта. Защита №645 внутри `guard` тут не
+# срабатывает: до неё управление не доходит. `bash -n` тоже молчит.
+step loop "имя, которым гейт зовёт стража, разрешимо (проводка != находка)"
+guard "$ROOT/scripts/guards/check-gate-guard-dispatcher.py" "$ROOT" \
+    || fail "шаг гейта зовёт стража именем, которого нет: отказ проводки печатается словами предмета"
 step loop "guard-external-caller (ГИ.8 конвенции: у стража обязан быть ВНЕШНИЙ вызывающий)"
 guard "$ROOT/scripts/guards/check-guard-external-caller.py" "$ROOT" \
     || fail "стражей без внешнего вызывающего стало больше (docs/dev/gate-guard-conventions.md, Г8)"
@@ -1322,13 +1330,67 @@ if body_runs; then
     fi
     _MEGA_FAIL_N=$(echo "$MEGA_LINE" | grep -oE "FAIL: [0-9]+" | grep -oE "[0-9]+" | head -1)
     [ -n "$_MEGA_FAIL_N" ] || _MEGA_FAIL_N=0
+
+    # ─── ИЗВЕСТНЫЕ КРАСНЫЕ (решение владельца 2026-09-14) ────────────────
+    # Мега-CU читает ТОТ ЖЕ список, что `conformance-full`, и по той же
+    # дисциплине. До этого он его не читал вовсе (арифметика FAIL-TMO+HUNG),
+    # и потому ОДИН зарегистрированный, диагностированный дефект держал пуш
+    # ВСЕХ окон, пока не починен: занести носителя было некуда. Замер, на
+    # котором это вскрылось, — №1090, 2026-09-13.
+    #
+    # ЦЕНА НАЗВАНА ВСЛУХ: это ослабление корпусного гейта. Защищает его
+    # ровно одно — запись обязана нести НОМЕР СТРОКИ РЕЕСТРА, и здесь это
+    # проверяется МАШИНОЙ (у соседа — соглашением в шапке файла; соглашение,
+    # которое никто не проверяет, и есть способ, каким список превращается в
+    # свалку).
+    _MEGA_KNOWN_FILE="$ROOT/scripts/guards/conformance-known-red.list"
+    # Имена упавших — тот же набор маркеров, что у `conformance-full`.
+    _MEGA_BAD=$(sed -e "s/${ESC}\[[0-9;]*m//g" "$MEGA_LOG" \
+        | grep -E "^(NEG-[A-Z-]+|CC-FAIL|RUN-FAIL|CODEGEN-FAIL|MISMATCH|TIMEOUT|FAIL) +spec_tests/" \
+        | awk '{print $2}' | sort -u)
+    _MEGA_BAD_N=$(printf '%s' "$_MEGA_BAD" | grep -c . || true)
+    # САМОПРОВЕРКА, как у соседа: сколько сказал итог — столько имён и обязано
+    # извлечься. Иначе шаг сверяет НЕ ТО, и «зелено» значит «не смог назвать».
+    if [ "$_MEGA_FAIL_N" -gt 0 ] && [ "$_MEGA_BAD_N" -ne "$_MEGA_FAIL_N" ]; then
+        fail "mega-CU: итог сообщает FAIL: $_MEGA_FAIL_N, а по именам извлеклось $_MEGA_BAD_N — вид отказа не разобран, шаг сверял бы не то (см. $MEGA_LOG)"
+    fi
+    _MEGA_KNOWN_HIT=0
+    _MEGA_KNOWN_NAMES=""
+    if [ -n "$_MEGA_BAD" ] && [ -f "$_MEGA_KNOWN_FILE" ]; then
+        for _mb in $_MEGA_BAD; do
+            _mrow=$(grep -E "^${_mb}([[:space:]]|$)" "$_MEGA_KNOWN_FILE" | head -1)
+            [ -n "$_mrow" ] || continue
+            # НОМЕР ОБЯЗАТЕЛЕН. Запись без номера не прощает ничего: без него
+            # нельзя ни найти диагноз, ни узнать, кто и когда снимет строку.
+            if printf '%s' "$_mrow" | grep -qE '№[0-9]+'; then
+                _MEGA_KNOWN_HIT=$(( _MEGA_KNOWN_HIT + 1 ))
+                _MEGA_KNOWN_NAMES="$_MEGA_KNOWN_NAMES $_mb"
+            else
+                fail "mega-CU: $_mb значится в $_MEGA_KNOWN_FILE БЕЗ номера строки реестра — такая запись не прощает ничего (решение владельца 2026-09-14: номер + причина)"
+            fi
+        done
+    fi
+    # ПЕЧАТАЕТСЯ ВСЕГДА, даже когда прощать нечего: прощённый отказ, о котором
+    # шаг молчит, — это отказ, который перестал существовать для читателя.
+    echo "mega-CU :: известных красных прощено: $_MEGA_KNOWN_HIT${_MEGA_KNOWN_NAMES:+ —$_MEGA_KNOWN_NAMES}"
+
     # Снятые пределом раннер кладёт в FAIL — вычитаем ровно те, что перемер оправдал.
-    _MEGA_REAL_FAIL=$(( _MEGA_FAIL_N - _MEGA_TMO_N + _MEGA_TMO_HUNG ))
+    _MEGA_REAL_FAIL=$(( _MEGA_FAIL_N - _MEGA_TMO_N + _MEGA_TMO_HUNG - _MEGA_KNOWN_HIT ))
     [ "$_MEGA_REAL_FAIL" -ge 0 ] 2>/dev/null || _MEGA_REAL_FAIL=0
     if [ "$_MEGA_REAL_FAIL" -gt 0 ]; then
         grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2
         fail "mega-CU: настоящих провалов $_MEGA_REAL_FAIL (exit=$MEGA_EXIT, сводка: $MEGA_LINE; см. $MEGA_LOG)"
-    elif [ "$MEGA_EXIT" -ne 0 ] && [ "$_MEGA_TMO_N" -eq 0 ]; then
+    elif [ "$MEGA_EXIT" -ne 0 ] && [ "$_MEGA_TMO_N" -eq 0 ] && [ "$_MEGA_KNOWN_HIT" -eq 0 ]; then
+        # `_MEGA_KNOWN_HIT -eq 0` ДОБАВЛЕНО 2026-09-14 вместе с механизмом
+        # известных красных, и добавлено ПО ОТКАЗУ САМОГО ГЕЙТА. Прощение
+        # обнуляет `_MEGA_REAL_FAIL`, и управление доходило сюда — а эта ветвь
+        # про КРАХ РАННЕРА: «вышел ненулём, а красных нет». После прощения
+        # красные ЕСТЬ, просто они оправданы, и ненулевой код раннера —
+        # ожидаемое состояние, а не крах. Без этого условия шаг говорил
+        # «отказ БЕЗ красной фикстуры» ровно тогда, когда фикстура была.
+        #
+        # Урок шире строки: я изменил ЗНАЧЕНИЕ, которое читает соседняя ветвь,
+        # и не спросил у неё, что для неё теперь верно.
         grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2
         fail "mega-CU exit=$MEGA_EXIT при FAIL: 0 — отказ БЕЗ красной фикстуры (краш раннера? см. $MEGA_LOG)"
     elif [ "$_MEGA_TMO_N" -gt 0 ]; then
@@ -1702,10 +1764,30 @@ fi
 step push "nova build smoke (ICE-храповик плана 196, как в CI)"
 if body_runs; then
     SMOKE_NV="${TMPDIR:-/tmp}/nova_build_smoke_$$.nv"
+    SMOKE_LOG="${TMPDIR:-/tmp}/nova_build_smoke_$$.log"
     printf 'fn main() {\n    println("hello, nova build")\n}\n' > "$SMOKE_NV"
-    "$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >/dev/null 2>&1 \
-        || fail "nova build smoke не собрался (ICE-регресс, план 196)"
-    rm -f "$SMOKE_NV" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
+    # ОТКАЗ ОБЯЗАН НАЗЫВАТЬ ТО, ЧТО ИЗМЕРИЛ. До 2026-09-14 шаг слал вывод в
+    # /dev/null и объявлял ЛЮБОЙ ненулевой код «ICE-регрессом»: причина не
+    # измерялась, а предполагалась. Замер на себе — прогон упал здесь ровно в
+    # ту минуту, когда я снял `nova.exe` при остановке сессии, и вердикт всё
+    # равно сказал «ICE-регресс, план 196». Следующая сессия пошла бы чинить
+    # ICE, которого нет, и ни одного байта для различения шаг не сохранил.
+    #
+    # Отсутствие бинаря проверяется ОТДЕЛЬНО и своим именем: это не регресс
+    # компилятора, а несобранное (или занятое чужим прогоном) дерево — разные
+    # причины требуют разных действий.
+    if [ ! -x "$NOVA" ]; then
+        fail "nova build smoke: бинаря нет по пути $NOVA — дерево не собрано либо сборка не дошла. Это НЕ ICE-регресс: компилятор не запускался."
+    else
+        if "$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >"$SMOKE_LOG" 2>&1; then
+            :
+        else
+            echo "  вывод nova build (последние 20 строк) — ПРИЧИНА ЧИТАЕТСЯ ЗДЕСЬ, а не из имени шага:" >&2
+            tail -20 "$SMOKE_LOG" | sed 's/^/    /' >&2
+            fail "nova build smoke не собрался (см. вывод выше; если там ICE — это регресс плана 196, если иное — причина ДРУГАЯ)"
+        fi
+    fi
+    rm -f "$SMOKE_NV" "$SMOKE_LOG" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
 fi
 
 step push "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
@@ -1780,6 +1862,12 @@ if body_runs; then
         fi
         [ -z "$PKG_FAILED" ] || fail "пакетные репозитории красные:$PKG_FAILED"
     fi
+fi
+
+step loop "данные не едут в строку C-формата (№1073)"
+if body_runs; then
+    guard "$ROOT/scripts/guards/check-no-data-in-c-format.py" "$ROOT" \
+        || fail "данные в позиции C-формата: текст из исходника пользователя попал туда, где C ищет спецификаторы (№1073)"
 fi
 
 step loop "D-number uniqueness"

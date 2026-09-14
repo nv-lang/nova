@@ -1299,4 +1299,21 @@ no_caveat=0
 #   (`python scripts/guards/registry-routes-scan.py .` na slitom dereve) -- u menya 68,
 #   u integratora svoyo chislo, i nabrany oni RAZNYMI strokami. Vybor storony razreshit
 #   molcha poteryat' blokery. Predupredil integrator 2026-09-14.
-blockers=68
+# 2026-09-13 (integrator): blockers 64 -> 65. Rost ZAKONNYY -- nayden
+#   NOVYY blokery, a ne poteryan staryy: stroka 1090, svobodnaya
+#   funktsiya s imenem, stalkivayushchimsya so std, dayot neslinkuemyy C
+#   pri zelyonom `nova check`. Nayden progonom YARUSA PUSH, kotoryy
+#   yarus loop ne gonyaet; ulika -- docs/plans/repro/1090-*.
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+# 2026-09-13 (integrator): blockers 65 -> 66. Rost ZAKONNYY -- stroka
+#   1092, naydena po voprosu vladel'tsa: peremeshchenie v vozvrashchaemyy
+#   kortezh ne schitaetsya mestom potrebleniya, i obkhod cherez `ro`
+#   stoyal v std dva mesyatsa opisannyy prozoy bez nomera.
+# 2026-09-14 SLIYANIE origin/main (22 kommita) -- CHISLO PERESCHITANO, a ne vybrano
+#   storonoy. Obe storony prishli k 66 RAZNYMI strokami: u integratora 1090 i 1092, u
+#   okna 274 -- 1093 i 1095, plyus 1100/1101 (66 -> 68). Posle sliyaniya reestrov
+#   blokerov bol'she, chem u lyuboy storony, i lyuboe iz dvukh 66 (kak i 68) okazalos'
+#   by NIZHE fakta -- to est' khrapovik molcha razreshil by poteryat' blokery.
+#   Letopisi OBEIH storon sokhraneny: oni opisyvayut raznye sobytiya, i polovina
+#   letopisi est' polovina ob'yasneniya. Predupredil integrator do sliyaniya.
+blockers=70
