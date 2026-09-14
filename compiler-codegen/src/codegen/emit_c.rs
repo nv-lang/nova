@@ -21525,6 +21525,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// синтетика (`nova_fn_main_impl`, closure-адаптеры `nova_fn_vi`
     /// и т.п.) сюда **не** идёт — она exempt.
     fn free_fn_c_name(&self, name: &str) -> String {
+        self.free_fn_c_name_impl(name, None)
+    }
+
+    /// [реестр 221.1 №1090, кросс-модульная половина] C-имя свободной функции
+    /// для КОНКРЕТНОГО места вызова — та же дверь, что и у определения.
+    ///
+    /// Определение (`mangle_fn`, см. там лоокап по `f.span.file_id`) ищет мангл
+    /// в `file_priv_fn_c_names` по файлу ОБЪЯВИВШЕГО. Место вызова искало по
+    /// `current_emit_file_id` — по файлу ВЫЗЫВАЮЩЕГО. Внутри одного модуля
+    /// ключи совпадают (запись кладётся под каждый peer-файл модуля), а при
+    /// ВЫЗОВЕ ИЗ ДРУГОГО МОДУЛЯ записи нет ВООБЩЕ — и имя уходило мимо
+    /// `fn_module_map` (имя исключено оттуда как сталкивающееся) в голое
+    /// `nova_fn_<name>` — символ, которого никто не эмитит. Отказ приходит
+    /// линковщиком (`undefined symbol: nova_fn_same`) либо, если C сочтёт
+    /// необъявленную функцию возвращающей `int`, несходящимися типами.
+    ///
+    /// Недостающий ключ уже лежит в канале 196: `resolved_callees[call_id]` —
+    /// Span ОБЪЯВЛЕНИЯ выбранного callee, который чекер пишет в
+    /// `f1_check_call` для однозначно резолвнутой свободной функции. Его
+    /// `file_id` и есть файл объявившего — буквально доктрина 196: чекер
+    /// резолвит один раз, кодоген ЧИТАЕТ, а не резолвит заново по имени.
+    ///
+    /// ЛООКАП КАНАЛА СТОИТ ПОСЛЕ ФАЙЛОВОГО, А НЕ ВМЕСТО НЕГО, и это
+    /// странглер-фиг, а не осторожничанье: всё, что резолвится сегодня,
+    /// резолвится БАЙТ-В-БАЙТ так же, а канал спрашивается только на
+    /// промахе — то есть ровно там, где сегодня выходит голое имя. Тот же
+    /// порядок уже стоит у констант: `private_const_c_names` по файлу, затем
+    /// `const_qualified_by_name` вторым фолбэком, и лишь потом голое умолчание.
+    /// Отличие от констант в пользу этого места: там вторая карта по ГОЛОМУ
+    /// ИМЕНИ (и честно названный предел в докстроке), здесь — точный callee по
+    /// `ExprId` этого вызова, то есть без такого предела вовсе.
+    ///
+    /// ПРОМАХ КАНАЛА — НЕ ОШИБКА и не замалчивание: чекер пишет туда
+    /// только однозначно резолвнутые вызовы; многооверлоадные имена сюда вообще
+    /// не доходят — их имя строит registry-ветка выше по `emit_call`, и там уже
+    /// стоит мангленный `c_name` из `mangle_fn`.
+    fn free_fn_c_name_at_call(&self, name: &str, call_id: crate::ast::ExprId) -> String {
+        self.free_fn_c_name_impl(name, Some(call_id))
+    }
+
+    fn free_fn_c_name_impl(
+        &self, name: &str, call_id: Option<crate::ast::ExprId>,
+    ) -> String {
         // Plan 91.12 Ф.-1 (D282): `extern "C" fn` — literal C name, no prefix.
         // Check FIRST: c_literal_extern_fns takes priority over registry and module map.
         if self.c_literal_extern_fns.contains(name) {
@@ -21538,6 +21581,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(fid) = self.current_emit_file_id {
             if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
                 return mangled.clone();
+            }
+        }
+        // [реестр 221.1 №1090] ТОТ ЖЕ ЛООКАП, но ключом служит файл
+        // ОБЪЯВИВШЕГО, взятый из канала 196 — тот самый ключ, по
+        // которому ищет ОПРЕДЕЛЕНИЕ (`mangle_fn`: `f.span.file_id`).
+        // Срабатывает только на промахе файлового лоокапа выше, то есть
+        // ровно в случае вызова ИЗ ДРУГОГО МОДУЛЯ, где до этой правки
+        // выходило голое `nova_fn_<name>`. Подробно — в докстроке
+        // `free_fn_c_name_at_call`.
+        if let Some(cid) = call_id {
+            if let Some(decl_span) = self.resolved_callees.get(&cid) {
+                if let Some(mangled) = self
+                    .file_priv_fn_c_names
+                    .get(&(decl_span.file_id, name.to_string()))
+                {
+                    return mangled.clone();
+                }
             }
         }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
@@ -41503,11 +41563,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         } else {
                             // Single overload — короткое имя (backward compat).
-                            self.free_fn_c_name(name)
+                            // №1090: через канал — вызов из другого модуля
+                            // иначе получает голое имя.
+                            self.free_fn_c_name_at_call(name, call_id)
                         }
                     } else {
                         // Не зарегистрирована в registry (тесты, prelude builtins).
-                        self.free_fn_c_name(name)
+                        self.free_fn_c_name_at_call(name, call_id)
                     }
                 }
             }
