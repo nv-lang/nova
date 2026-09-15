@@ -1,5 +1,19 @@
 # How to run
 
+**First, restore the suffixes.** Every source here is stored as `*.nv.txt` and the
+manifest as `nova.toml.txt` -- rule #695 (`docs/plans/repro/README.md`): evidence must
+REPRODUCE a defect and is therefore often red, so it is kept out of the reach of the
+runner, the lint and every guard that walks `**/*.nv`. Nothing below runs until the
+names are restored into a scratch copy:
+
+    cp -r <this dir> /tmp/probe1106 && cd /tmp/probe1106
+    mv nova.toml.txt nova.toml
+    for f in src/*.nv.txt; do mv "$f" "${f%.txt}"; done
+
+Copy rather than rename in place: renaming here puts red evidence back under the
+guards, which is exactly what the suffix prevents.
+
+
     cd probes/consume-check-keys-on-name
     ../../nova.sh check src/control_consume.nv   # must PASS, or nothing else counts
     ../../nova.sh check src/via_new.nv
