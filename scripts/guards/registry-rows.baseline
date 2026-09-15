@@ -791,8 +791,8 @@
 # 2026-09-15 (integrator, sliyanie p1110-commit-refs): rows 1054 -> 1055,
 #   max ostayotsya 1114. Tret'ya storona odnogo dnya: okno nova-23 dobavilo
 #   stroku 1113, kazhdyy schital ot svoey bazy. Skladyvayu, ne vybirayu.
-rows=1055
-max=1114
+rows=1059
+max=1117
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -944,4 +944,14 @@ max=1114
 #   chisla podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse
 #   nakhodki pod markerami'; sosedniy lyuk nova:allow pri etom OBYaZAN nesti
 #   prichinu i grepaem. Klass Г19. Stroka pridyot sliyaniem b6.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1115-1117
+# 2026-09-15 (okno b6): rows 1055 -> 1059, max 1114 -> 1117. Iz gaps snyat
+#   1117 -- stroka zavedena, dyry bolshe net. Predmet 1117: lyuk, glushashchiy
+#   nakhodku linta markerom [M-...], ne ostavlyaet sleda v vyvode -- chisla
+#   podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse nakhodki pod
+#   markerami'. Sosedniy lyuk nova:allow pri etom obyazan nesti prichinu i
+#   grepaem: obstavlen SILNYY lyuk, a nepodotchetnym ostavlen SLABYY.
+#   ZAMECHENO PRI PRAVKE, ne moyo i ne tronuto: v gaps chislyatsya 1111, 1115,
+#   1116, u kotorykh stroki UZHE est v reestre. Ustarevshee ob'yavlenie dyry
+#   opasno tem, chto poterya takoy stroki projdyot molcha -- rovno to, radi chego
+#   khrapovik zavedyon. Skazano integratoru pismom 2026-09-15.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1115-1116
