@@ -773,7 +773,7 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1051
+rows=1052
 max=1110
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
@@ -869,4 +869,12 @@ max=1110
 #   TEKSTAKH DIAGNOSTIK (4 iz 9 putey ne sushchestvuyut), tekst gotov, no
 #   vpisyvat' ego v seredine razbora krasnogo CI ya ne stal -- pridyot
 #   sleduyushchim sliyaniem.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1109
+# 2026-09-15 (integrator): rows -> 1052, max bez izmeneniy (1110);
+#   gaps -= 1109. Stroka 1109 vpisana: kompilyator ssylaet pol'zovatelya
+#   na fayly, kotorykh net -- iz DEVYATI putey v tekstakh diagnostik
+#   mertvy CHETYRE, i umirayut oni tremya raznymi sposobami (fayl
+#   pereekhal, kataloga net vovse, put' bez segmenta src/). Pyatyy
+#   nositel' nayden rukami i v schyot NE voshyol -- regulyarka ne vidit
+#   mnogostrochnyy literal, poetomu 9 eto NIZHNYAYA GRANITSA, a ne
+#   perepis'.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
