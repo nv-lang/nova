@@ -773,8 +773,18 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1052
-max=1110
+# 2026-09-15 (integrator): rows 1052->1053, max 1110->1114.
+#   Stroka 1114 -- MOY zamer pokrytiya linta, i on rodilsya iz 1112:
+#   razbiraya, pochemu W_FFI_BARE_HANDLE molchit tam, gde ego uslovie
+#   vypolneno doslovno, poschital ostal'nye. Iz 42 zaregistrirovannykh
+#   pravil 15 ne upominayutsya v spec_tests ni razu; iz nikh DVA zhivy
+#   (podavleny stroklami nova:allow v std), a TRINADTsAT' ne pokazali
+#   nichego voobshche. Klass: pravilo, ni razu ne dokazavshee, chto umeet
+#   srabatyvat'. Priyomka -- strazh svoystvom, a ne trinadtsat'yu fiksturami.
+#   Verkhnyaya granitsa, a ne perepis': A=0 znachit 'imya ne vstrechaetsya',
+#   fikstura bez imeni pravila v schyot ne popala by -- tak i zapisano v stroke.
+rows=1053
+max=1114
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -899,4 +909,9 @@ max=1110
 #   RABOTAET: na conv_pos.nv srabatyvayut vosem' pravil. A samo
 #   W_FFI_BARE_HANDLE ne pokryto NI ODNOY fiksturoy -- vstrechaetsya tol'ko
 #   v lints.rs. Pravilo, ni razu ne dokazavshee, chto umeet srabatyvat'.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1112
+# 2026-09-15 (integrator): gaps += 1113,1115,1116; 1111,1112 svyorunty v diapazon.
+#   1113 vydan oknu nova-23 (vetka p1110-commit-refs), 1115 i 1116 -- oknu e6:
+#   1115 nedeterminirovannyy segfault na svyazke chasov i allokatsiy (K1: prokhodit
+#   geyt i padaet u pol'zovatelya), 1116 krasnyy bench-fayl, ne vkhodyashchiy ni v
+#   odin geyt. Ikh stroki pridut sliyaniem; dyru ob'yavlyaet VYDAVShIY nomer.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111-1113,1115,1116
