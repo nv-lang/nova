@@ -773,8 +773,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1050
-max=1108
+rows=1051
+max=1110
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -860,4 +860,13 @@ max=1108
 #   lozhno SEGODNYA -- D432 dayot ochistku tol'ko forme `consume X = e` --
 #   no ozhivaet v den', kogda 274.9 K4 rasprostranit ochistku na parametry.
 #   Ottuda OGRANICHENIE PORYADKA: `@into_raw` lozhitsya DO toy volny.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
+# 2026-09-15 (integrator): rows -> 1051, max -> 1110; gaps += 1109.
+#   1110 -- khrapovik myortvykh ssylok schitaet ID SESSIY za heshi
+#   kommitov: iz 12 dobavlennykh proshlym pushem bol'shinstvo -- id
+#   sessiy iz peredach kontrolyora. Vtoraya polovina togo zhe strazha:
+#   №1029 pro sudit-sredu, eta pro schitaet-ne-kommity.
+#   1109 OB'YAVLEN DYROY: nomer vydan pod stroku o myortvykh ssylkakh v
+#   TEKSTAKH DIAGNOSTIK (4 iz 9 putey ne sushchestvuyut), tekst gotov, no
+#   vpisyvat' ego v seredine razbora krasnogo CI ya ne stal -- pridyot
+#   sleduyushchim sliyaniem.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1109
