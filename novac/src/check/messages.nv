@@ -1,0 +1,321 @@
+module novac.check
+
+/// THE TEXTS of the checker's refusals -- what the user actually reads.
+///
+/// They live apart from `rules.nv` because they are a different subject with a
+/// different reason to change. A text changes when a wording is rewritten, a stage is
+/// quoted, or a D-block is cited; a rule in `rules.nv` changes when the language does.
+/// Holding both in one file is what pushed it past the 1000-line limit (274, decision
+/// 12), and the limit was right: the texts grow faster than the rules do.
+///
+/// A folder is ONE module in Nova, so this is the same module as `rules.nv`: nothing
+/// here is exported, nothing there imports it, and every name stays visible exactly as
+/// it was before the split.
+///
+/// TWO MEASURES READ THESE TEXTS, which is itself a reason to keep them together:
+/// `check-novac-subset-debt-dated` counts the refusals that owe a stage, and its
+/// by-door half asks which door each text goes through. A text is invisible to the
+/// first and visible to the second when its wording is not canonical -- and the
+/// disagreement between the two is how three blind spots were found in one evening.
+
+/// One text for the position rule.
+const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the default and redundant on a parameter; type-position `mut` is retracted there and redundant on a result)"
+
+/// A declared type whose SHAPE the subset does not compile yet -- a slice, a
+/// tuple, a function type, a qualified type. The parser reads them all (plan
+/// 9.4: the grammar is the language's, the subset is the checker's), so the
+/// refusal names the shape instead of pretending the type is missing.
+/// The largest `int` literal, as TEXT. `int` is intptr_t (Nova's rule, like
+/// Go's intgo) and 64 bits on every target novac emits for; the bound lives
+/// here as digits because the check compares digits -- parsing the literal
+/// into the type whose range is in question would inherit the very defect
+/// this rule exists to catch (#810).
+const INT_MAX_TEXT = "9223372036854775807"
+
+const INT_TOO_LARGE_MSG = "this integer literal does not fit in `int` -- the language makes that a hard compile error (E_LIT_OUT_OF_RANGE, 03-syntax.md), not a silent truncation; the oracle wraps it in the emitted C (#810)"
+
+/// The nesting refusal (#807/#808). The number is the oracle's 512, which is
+/// normative there; the whole corpus never writes past 40 levels.
+const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 levels -- the parser stops before the stack does (#807)"
+
+const DUP_DECL_MSG = "this top-level name is declared twice in one file -- one namespace, so the second declaration collides (E_DUP_DEFINITION, D29); the oracle drops the second body in silence (#811)"
+
+/// A primitive is a CLOSED type (D35: "no `type str {...}` over the built-in
+/// `str` -- only methods"). This is the NORM's refusal, not a subset stage:
+/// it never lifts.
+/// The nested-interpolation judge's answer (I2): the lexer splits one
+/// level; a literal with a live slot inside another slot stays whole, and
+/// the chain has no arm for it yet.
+const NESTED_INTERP_MSG = "outside the subset: an interpolation nested inside another slot is not compiled yet (E2-b3)"
+
+/// The bare-self judge's answer: `@` is a value only where a method body
+/// bound its receiver.
+const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
+
+/// The slot-type judge's answer for a NON-PRIMITIVE slot: the spec admits any
+/// `Into[str]` (D73 -- `Option[T]`, a record with `From[Self] for str`), and that
+/// is protocol dispatch, wave B1b of 274.7. Every primitive family is compiled
+/// since B1a (2026-09-05): before it the slot was held to `{str, int}` by id.
+const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type without its own `display(mut f Fmt)` (Option, a record with Into[str], a generic instance) is not compiled yet (274.7 B1b) -- every primitive family and every plain type with `display` is"
+
+/// The one primitive the runtime cannot display: `std.runtime.string_builder`
+/// has no unsigned 64-bit `display_spec`, and the oracle prints `u64`/`uint`
+/// through the int one, truncating -- the oracle's deviation from the spec,
+/// not a rule. novac refuses by name until std gains the function (274.7 B1,
+/// open question to the owner), rather than truncate in silence.
+const INTERP_U64_MSG = "outside the subset: an unsigned 64-bit interpolation slot is not compiled yet (274.7 B1c) -- the runtime has no uint_display_spec, and truncating through the int one is what the spec forbids"
+
+/// The constant-initializer boundary of I1: substitution happens at the use
+/// site, and the hoist never ran there.
+const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
+
+
+/// The refutable-binding judge's answer (hunt var_shadow, #875): a binding
+/// whose NAME is a visible payload-less variant is a one-variant pattern
+/// match in the language (D411), and the oracle refuses it -- novac used to
+/// accept and shadow the variant in silence.
+const REFUTABLE_BIND_MSG = "a binding pattern that names a variant is refutable -- rename the binding, or match on the value (D411)"
+
+/// The interpolated-message judge's answer (hunt N5, #873): the message is
+/// spelled into C as ONE literal, so `${...}` inside it would print itself
+/// verbatim on violation -- a silent lie about the values. Refused until the
+/// interpolation wave computes it.
+const INTERP_CONTRACT_MSG_MSG = "outside the subset: an interpolated contract message is not compiled yet (E2) -- spell the message without `\${...}`"
+
+/// The argument-form judge's answer (hunt N2, #870): a form the expression
+/// walk does not know used to FALL OUT of both walks silently -- the
+/// argument was neither refused nor printed. A branch is never punctuation.
+const PRINTLN_ARG_FORM_MSG = "outside the subset: this form is not compiled in an argument position yet (E2-b) -- bind it to a name first"
+
+/// The variant-value judge's answer (the variant-value wave): a variant
+/// that CARRIES a payload is a constructor, not a value -- name it with its
+/// arguments. A payload-less one is a value and compiles to its maker.
+const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a payload -- construct it with arguments, `Name(...)`"
+
+/// The disjunction judge's answer (the pattern-alternatives wave): a `|`
+/// pattern names variants only -- a binder would have to agree across every
+/// alternative in both name and payload type, and no carrier needs that.
+const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders only -- name the value in a separate arm"
+
+/// The if-let judges' two answers (if-let wave). The subset takes exactly
+/// the shape its carriers write: `Some` and an Option-instance initializer.
+const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"
+
+/// See IFLET_VARIANT_MSG above; the initializer half.
+const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
+
+/// The for-CALL head judge's answer (wave B16): the head must hand back a
+/// vector -- an instance of arity one -- or the loop has no element type.
+///
+/// NAMED AS DEBT AND DATED 2026-09-13, because it was neither. The refusal always spoke
+/// about ITSELF, which is why it never looked wrong -- but D58 (amended by plan 138)
+/// leaves no choice: `for x in c` desugars through `c.iter()` and `next()`, ALWAYS. So
+/// requiring `[]T` is a LAG, not a rule, and a reader is entitled to know when it ends.
+/// Carrying neither spelling, it was also invisible to the debt ratchet -- the hole in
+/// that counter's scope is wave B11's subject.
+const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is a call that does not return a vector, and novac walks a collection by index, so it needs `[]T` -- the iterator protocol D58 asks for is not compiled yet (274.7 B12)"
+
+/// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
+const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
+
+/// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
+/// itself carries none -- the boundary is a judge, not unreachability.
+const TUPLE_PARAM_MSG = "outside the subset: a tuple as a PARAMETER is not compiled yet (B15 bounds) -- return one, or pass the components"
+
+const PRIM_REDECL_MSG = "a primitive is a closed type (D35): its name cannot be redeclared -- add methods to it instead"
+
+/// D125/D371 let a user declaration SHADOW a prelude/handed-over name (user
+/// wins, a warning at most) -- but novac's C name for its own types does not
+/// carry the module yet (D381), so a shadowing type would print a second
+/// `struct Nova_<name>` beside the shell's and clang refuses the unit
+/// (measured 2026-09-01: ct.c carried both). Refused BY NAME until the
+/// module-qualified C names arrive; the norm itself stays wider on purpose.
+const SHADOW_FOREIGN_MSG = "outside the subset: the interop shell already declares a struct under this name's C spelling -- a second definition in the unit is refused by clang; pick another name (goes the day novac emits the whole prelude)"
+
+/// The three ways a record construction can disagree with its declaration
+/// (#812). The spec states the first two as numbered rules
+/// (`02-types.md:1677`): every declared field must be present, and a name the
+/// type does not have is an error. The third is the same rule read once more:
+/// naming one field twice fills the count without filling the record.
+const CTOR_MISSING_FIELD_MSG = "this record construction omits a declared field -- construction always requires every field (D17, spec 02-types.md:152 and :1677) (#812)"
+
+const CTOR_UNKNOWN_FIELD_MSG = "this record construction names a field the type does not declare (#812)"
+
+const CTOR_FIELD_TWICE_MSG = "this record construction names a field twice, so another declared field is missing (#812)"
+
+const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
+
+
+/// `if c { a } else { b }` standing where a VALUE is expected. The STATEMENT
+/// form is compiled -- including its `else` since 2026-08-18 -- but as a value
+/// it needs a temporary the emitter does not build yet, exactly like `match`
+/// outside an initializer.
+const IF_EXPR_MSG = "outside the subset: an `if` in value position is not compiled yet"
+
+/// `(a, b)` -- a tuple value. Read under its own kind since wave B15 (the
+/// comma is what tells it from grouping parens); compiling it is steps 3-4
+/// of that wave -- the pair term in the interner, then the D123 mono struct.
+
+/// `@field` -- the receiver's own field. It can only appear inside a method
+/// body, and novac does not declare methods yet, so this refusal and the
+/// method-declaration one are two doors of the same limit.
+const SELF_FIELD_MSG = "outside the subset: `@field` arrives with methods"
+
+/// `ro x int = 1` -- a local with a DECLARED type. The subset infers the type
+/// from the initializer; honouring a written one means checking the two agree,
+/// and that is the inference stage's work (E2-b3).
+const TYPED_LOCAL_MSG = "outside the subset: a declared local type is not compiled yet (E2-b3)"
+
+/// `"n=${n}"` -- string interpolation. The lexer keeps the literal whole, so
+/// nothing is lost; compiling it means emitting a format call.
+const INTERP_MSG = "outside the subset: only a bare name is compiled inside an interpolation yet (E2-b3) -- chains, calls and operators arrive with I2"
+
+/// `| Circle { radius f64 }` -- a record-form variant. D54 (#719) rules on how
+/// it may be destructured; the form itself arrives with records in sums.
+const RECORD_VARIANT_MSG = "outside the subset: a record-form variant is not compiled yet"
+
+/// `import a.b.{X}` and `use a.b.c`. The parser reads both spellings; the
+/// subset compiles ONE module, so there is nothing for an import to name yet.
+const IMPORT_MSG = "outside the subset: `import`/`use` arrive with modules (E3)"
+
+/// `export` in front of a declaration. Nearly every declaration in std wears
+/// it, and until 2026-08-18 novac answered the most common form in the
+/// language with "construct not in the MVP grammar" -- `export` was not even a
+/// keyword, so the token fell into the top-level junk bucket.
+const EXPORT_MSG = "outside the subset: `export` arrives with modules (E3)"
+
+/// An `import` that RENAMES what it brings (`import a.b as c`, `import a.{X as Y}`).
+///
+/// Refused by name and not accepted silently, because section 9.1d point 2 is
+/// IDENTITY: a C name is a function of the DECLARATION, never of the importer, so
+/// an alias must change the spelling in the caller's source and nothing else.
+/// Until cross-file resolution exists there is no declaration to point the alias
+/// at, and accepting the word would leave a promise novac does not keep.
+const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arrives with cross-file resolution -- a C name is a function of the DECLARATION, not of the importer (274 section 9.1d point 2)"
+
+/// `#realtime nogc` and its kin.
+const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
+
+/// `unsafe { ... }` -- D216 s8. Read since 274.5 B10, not compiled yet.
+const UNSAFE_MSG = "outside the subset: an `unsafe` block is read but not compiled yet"
+
+/// `test "name" { ... }`.
+const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"
+
+/// A VALUE record -- `type Point value { x int, y int }`.
+///
+/// THE FORM IS READ (the parser learned it 2026-08-23, and six of novac's own
+/// files stop here rather than on a syntax lie), and it is REFUSED because the
+/// layout is what the word means. Measured the same hour, and this is why the
+/// refusal exists instead of silence:
+///
+///     type Pt value { n int }
+///     mut a = Pt { n: 1 }   ro b = a   a.n = 11
+///     println(a.n)  println(b.n)
+///
+/// The fixed point prints `11` then `1` -- `b` is a COPY. novac, emitting the
+/// record as a GC pointer like any other, printed `11` and `11`: the copy became
+/// an alias. Accepting a form and miscompiling it is worse than naming it, and a
+/// divergence in the PERMISSIVE direction is the worse kind of divergence.
+///
+/// What the layout wave owes: `NovaValue_<name>` by value (not `Nova_<name>*`),
+/// `.` where a pointer takes `->`, construction on the stack instead of
+/// `nova_alloc`, and the same for `@field` on a value receiver.
+const VALUE_METHOD_MSG = "outside the subset: a method on a `value` record needs the receiver taken by POINTER (the fixed point writes `NovaValue_X*`), and novac passes a value receiver by value -- so a `mut` method would write to a copy"
+
+/// The SAME rule as VALUE_METHOD_MSG one line up, met at a parameter instead of
+/// a receiver: the fixed point lowers a `mut x V` parameter to `V*` (plan 184,
+/// P10 ABI), and novac passes a value record BY VALUE -- the callee writes to a
+/// copy the caller never sees. Measured by the hunt (emit_c x K1, H4): the
+/// oracle prints 2, novac printed 1 in silence. `ro` reads the copy legally and
+/// `consume` owns what it got (a write is unobservable), so only `mut` refuses.
+const VALUE_MUT_PARAM_MSG = "outside the subset: a `mut` parameter of a `value` record needs the V* lowering (the fixed point writes `NovaValue_X*`), and novac passes a value record by value -- the callee would write to a copy"
+
+/// A VARIADIC parameter, `fn total(...args []int)`. The parser reads it (S9.4:
+/// the grammar is the language's), and D69 -- it must be last -- is a position
+/// rule the checker owns. Until 2026-08-18 the `...` broke the parameter list
+/// apart and the refusal read "fn requires a declared return type", about a
+/// signature that declares one.
+const VARIADIC_MSG = "outside the subset: a variadic parameter `...args []T` arrives with generics (E2-b)"
+
+/// A DEFAULT parameter value whose expression is not a NUMBER or a boolean.
+///
+/// The form itself is in the subset since wave 4; this is the one narrowing, and
+/// it follows from what D102 says a default IS: an expression evaluated AT THE
+/// CALL SITE, each call anew, allowed to mention preceding parameters and
+/// module-level `const`. Emitting such an expression means writing it inside the
+/// CALLER, where those names mean the caller's own bindings or nothing at all --
+/// so what the subset takes is the values that mean the same in both places: a
+/// numeric literal and a boolean. A STRING is refused with them, because a Nova
+/// string literal may interpolate (`"${x}"`) and the interpolation would read
+/// the caller's scope; nothing about the wave needs it (novac's own defaults are
+/// `skip int = 0`, measured), and a refusal by name can be relaxed later.
+const DEFAULT_EXPR_MSG = "outside the subset: a default parameter value is a number or a boolean here (D102 evaluates it at the call site, and any other form would be read in the caller's scope)"
+
+/// D102 declaration-rule 1: defaulted parameters come AFTER the required ones.
+/// Not a subset limit -- the language forbids it, and so does the oracle.
+const DEFAULT_ORDER_MSG = "a parameter with a default value stands before one without (D102: defaulted parameters come last)"
+
+/// A CAST, `1 as u8`. `as` was not a keyword of this lexer until 2026-08-18, so
+/// the cast lexed as two names and the refusal read "unknown name" -- the
+/// reader was sent looking for a binding that was never meant to exist.
+const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2-b, with the numeric family)"
+
+/// A range that is not the head of a `for`.
+const RANGE_MSG = "outside the subset: a range is a `for` head here, not a value (E2-b)"
+
+/// The ONE text of the rule, so that the two doors cannot drift apart.
+const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
+
+/// The must-consume declaration: read by the parser (the tree is lossless), refused here.
+///
+/// Carina has NO LINEARITY AT ALL -- the consumption obligation is checked nowhere
+/// (registry #1099, measured 2026-09-14: `fn tag(consume c Cel)` with `c` never consumed
+/// gives zero diagnostics). Accepting `type X consume` would therefore promise a guarantee
+/// the compiler does not give, which is worse than refusing: a refusal the author sees, a
+/// missing guarantee nobody does.
+const CONSUME_TYPE_MSG = "outside the subset: `type X consume` declares a must-consume type, and novac checks no consumption obligation anywhere -- accepting the declaration would promise a guarantee it does not give; not compiled yet (274.7 B13)"
+
+/// Type parameters in the wrong PLACE -- a different mistake from type
+/// parameters not being compiled yet, and the message must not confuse them.
+const GENERIC_POSITION_MSG = "type parameters before the name belong to a method receiver; a free function declares them after its name"
+
+/// A BOUND on a type parameter (`[T Compare]`, `[K Equal + Hash]`).
+const GENERIC_BOUND_MSG = "outside the subset: a bound on a type parameter dispatches through a protocol (D122), and that arrives with E2-b3 -- the parameter itself is compiled, the constraint is not"
+
+/// A LINEARITY constraint on a type parameter (`[T consume]`).
+const GENERIC_CONSUME_MSG = "outside the subset: a generic over a must-consume type (`[T consume]`) needs linearity, and novac tracks none yet (D133/D156) -- the parameter itself is compiled, the obligation is not"
+
+/// One text for both doors (fn and type): the reader must not have to
+/// wonder whether two wordings mean two different limits.
+const GENERIC_MSG = "outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)"
+
+/// A run the parser could not read at all.
+///
+/// Every FORM of the language is parsed since S9.4a, so this is no longer
+/// a way of saying "the subset does not go that far" -- it says the text is
+/// not Nova. Whatever the subset declines, it declines BY NAME somewhere
+/// else, and `check-novac-no-grammar-excuse.py` keeps that true.
+/// THE PARSER'S FALLBACK, and the one refusal that must NOT pick a side. It is reached
+/// from both directions: the text really is malformed (a missing `)`), or the form is
+/// perfectly legal Nova that novac does not read yet. The door cannot tell those apart --
+/// that is WHY it is a fallback -- so the message says so instead of guessing.
+///
+/// It used to guess, and it guessed the worse way: "this is not a form of the language"
+/// is a claim about the NORM, and a subset compiler is entitled to claims about itself
+/// only. On a legal form it sent the author to fix correct code. Seven places in this
+/// source already said in prose that the sentence lies (`lex/lex.nv`, `parse/decls.nv`,
+/// `parse/expr.nv`, `parse/type_decl.nv` twice, `sem/slots.nv`, `check/check.nv`) plus
+/// the fixture `fixtures/extern_decl/neg_1.nv` -- knowledge scattered across seven
+/// readers and owned by none, which is what an absent home looks like.
+///
+/// The OPPOSITE lie was the trap in fixing it: "novac does not parse this form yet" reads
+/// as a promise, and on a genuine typo it sends the author to wait for a wave instead of
+/// closing a bracket.
+///
+/// NO STAGE, deliberately. A stage answers "when does this stop being debt", and this
+/// refusal has no single answer: the bin is emptied span by span, a wave per form (plan
+/// 274), and each form has its own date. One stage here would be a plausible number in
+/// place of a considered one. It carries neither canonical debt spelling for the same
+/// reason -- both of them promise "yet", and this refusal declines to promise.
+const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
