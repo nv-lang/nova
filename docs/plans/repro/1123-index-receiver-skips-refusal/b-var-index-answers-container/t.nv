@@ -1,0 +1,9 @@
+module m
+
+// A variable index: the same retired call is accepted AND answers with the CONTAINER length. Prints 1, the vector holds one element; "abc" is 3 bytes.
+
+fn main() {
+    ro xs = []str.of("abc")
+    ro i = 0
+    println(xs[i].len())
+}

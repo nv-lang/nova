@@ -1,0 +1,9 @@
+module m
+
+// And the canonical replacement the diagnostic names cannot be called through a variable index at all: [E_RECV_METHOD_MISMATCH].
+
+fn main() {
+    ro xs = []str.of("abc")
+    ro i = 0
+    println(xs[i].byte_len())
+}

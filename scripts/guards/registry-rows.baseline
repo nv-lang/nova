@@ -847,8 +847,12 @@
 #   iz storon -- ikh zhe dovod, i on opravdalsya u nikh bukval'no: pereschyot
 #   poymal prikleennuyu bez perevoda stroki 1120, iz-za kotoroy soedniaya
 #   №1000 perestala nachinat'sya s '|'. Vybor storony unyos by eyo MOLCHA.
-rows=1074
-max=1122
+# 2026-09-16 (integrator, stroka 1123): rost na ODNU stroku -- otkaz chekera ne
+#   srabatyvaet, kogda resiver metoda indeksnyy (snjatyy D249 `str.len()` prohodit
+#   molcha). Ulika docs/plans/repro/1123-index-receiver-skips-refusal s cmd.sh,
+#   komanda vosproizvedena. Chisla PERESCHITANY pravilom strazha, ne pribavleny.
+rows=1075
+max=1123
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:

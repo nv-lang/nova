@@ -1,0 +1,9 @@
+module m
+
+// A literal index: `str.len()` is RETIRED (D249), and this accepts it. Prints 3.
+
+fn main() {
+    ro xs = []str.of("abc")
+    ro i = 0
+    println(xs[0].len())
+}

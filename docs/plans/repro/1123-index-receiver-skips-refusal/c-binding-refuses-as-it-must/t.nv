@@ -1,0 +1,10 @@
+module m
+
+// The SAME call through an intermediate binding is refused, as the spec says it must: [E_STR_NO_LEN], D249.
+
+fn main() {
+    ro xs = []str.of("abc")
+    ro i = 0
+    ro s = xs[0]
+    println(s.len())
+}
