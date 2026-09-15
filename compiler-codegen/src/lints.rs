@@ -4527,7 +4527,7 @@ fn conv_ffi_bare_handle(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                              travels through Nova code bare — declare a newtype \
                              `type C{}Handle(int)` right in the extern signatures \
                              (module-conventions §4a; reference: \
-                             std/encoding/compress/ffi.nv). A legitimate exception \
+                             docs/guide/ffi-cookbook.md). A legitimate exception \
                              needs a marker comment at the site.",
                             f.name, prefix, conv_camel(prefix)
                         ),

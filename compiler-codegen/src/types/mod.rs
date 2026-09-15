@@ -1155,7 +1155,7 @@ fn check_module_impl(
                         format!(
                             "[E_EXTERNAL_TYPE_RETRACTED] `external type {name}` (D126) retracted. \
                              Use tuple-newtype: `type {name}(ptr)` (Plan 115 D214). \
-                             Migration guide: docs/migration/d126-to-tuple-newtype.md.",
+                             Migration guide: docs/dev/migration/d126-to-tuple-newtype.md.",
                             name = td.name
                         )
                     };
@@ -6172,7 +6172,7 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                     init.span,
                 ).with_note(format!(
-                    "Plan 110.6.1: see docs/idiom/consume-scope-cleanup.md \
+                    "Plan 110.6.1: see docs/dev/idioms/consume-scope-cleanup.md \
                      Q-consumable-protocol for decision tree + implementation template. \
                      For infallible cleanup (Mutex/Sem/Lock) use `Cleanup[never]` — \
                      no Fail[E] effect (D194 hot-path eligible)."

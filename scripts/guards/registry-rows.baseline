@@ -783,7 +783,11 @@
 #   srabatyvat'. Priyomka -- strazh svoystvom, a ne trinadtsat'yu fiksturami.
 #   Verkhnyaya granitsa, a ne perepis': A=0 znachit 'imya ne vstrechaetsya',
 #   fikstura bez imeni pravila v schyot ne popala by -- tak i zapisano v stroke.
-rows=1053
+# 2026-09-15 (integrator, sliyanie p1109-diag-paths): rows 1053 -> 1054,
+#   max ostayotsya 1114. Obe storony pravy i SKLADYVAYUTSYA, a ne
+#   vybirayutsya: okno b6 dobavilo stroku 1112, ya -- 1114, kazhdyy ot
+#   bazy 1052. Letopisi obeikh storon ostavleny na meste.
+rows=1054
 max=1114
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
@@ -914,4 +918,20 @@ max=1114
 #   1115 nedeterminirovannyy segfault na svyazke chasov i allokatsiy (K1: prokhodit
 #   geyt i padaet u pol'zovatelya), 1116 krasnyy bench-fayl, ne vkhodyashchiy ni v
 #   odin geyt. Ikh stroki pridut sliyaniem; dyru ob'yavlyaet VYDAVShIY nomer.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111-1113,1115,1116
+# 2026-09-15 (okno b6): rows 1052 -> 1053, max 1110 -> 1112. Dobavlena
+#   ODNA stroka -- 1112 (1111 uzhe ob'yavlen zakonnoy dyroy vyshe):
+#   pravilo W_FFI_BARE_HANDLE ne srabatyvaet dazhe tam, gde ego
+#   sobstvennoe uslovie vypolneno doslovno (fs_open -> int pri
+#   fs_close(fd int)). Zamer integratora: nova lint std/src -> 292
+#   file(s), 0 finding(s), pri etom --rule W_FFI_BARE_HANDLE prinyat, a
+#   vydumannoe imya dayot unknown lint rule -- pravilo zapuskaetsya i
+#   molchit. Naydeno poputno po #1109 pri poiske ZhIVOGO etalona formy.
+# 2026-09-15 (integrator, sliyanie p1109-diag-paths): gaps -= 1112.
+#   Ego stroka PRIEKhALA etim sliyaniem, znachit dyroy on byt' perestal.
+#   Ostayutsya 1111 (okno e6), 1113 (nova-23), 1115 i 1116 (e6).
+#   OTDEL'NO: zamer, zapisannyy v letopisi b6 vyshe ('pravilo molchit,
+#   gde uslovie vypolneno doslovno'), OTOZVAN samim b6 progonom 2026-09-15:
+#   pravilo ZhIVO, a nol' na std -- podavlenie nakhodki markerom [M-...]
+#   (lints.rs:3393-3395). Letopis' ne stirayu: styortaya gipoteza zastavlyaet
+#   proyti put' zanovo. Ispravlenie stroki -- kommit e8480f7cd.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1113,1115,1116

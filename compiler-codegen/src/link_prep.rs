@@ -453,7 +453,7 @@ pub fn diagnose_missing_vendor_ffi(providers: &[(String, ResolvedFfiConfig)]) ->
                 format!(
                     "package `{name}` declares no [ffi] vendor_src_dirs for auto-build \
                      — a prebuilt `{lib}` must be placed manually under one of the \
-                     lib_dirs above (see docs/ffi-cookbook.md)."
+                     lib_dirs above (see docs/guide/ffi-cookbook.md)."
                 )
             } else {
                 format!(
