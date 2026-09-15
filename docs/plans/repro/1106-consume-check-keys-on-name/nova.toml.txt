@@ -1,0 +1,13 @@
+# Probe: does D180's consume obligation depend on the constructor's NAME?
+#
+# Found 2026-09-14 by the T2.28 rename in claude-limits: `ro t = Secret.of(...)` built
+# for weeks; renamed to `Secret.new(...)`, the same line became
+# `E_CONSUME_KEYWORD_MISSING`. Nothing but the name changed.
+
+[lib]
+src = "src"
+
+[package]
+name = "probe_consume_name"
+version = "0.0.0"
+description = "Probe: consume obligation vs constructor name"

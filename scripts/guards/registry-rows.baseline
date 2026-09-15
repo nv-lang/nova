@@ -770,7 +770,7 @@
 #   overload'om, kotoryy ne vyzyvaetsya), 1101 (`5 ?? 7` pechataet 7).
 #   Baza podnyata TOY ZHE pravkoy, chto i sliyanie: inache khrapovik otstayot i
 #   molcha razreshaet poteryat' stol'ko zhe strok.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
+# [SNYATO 2026-09-15 pri rezolve: vtoraya stroka `gaps=`, strazh chital pervuyu] gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
 # 2026-09-14 (integrator): rows -> 1046, max bez izmeneniy (1098), gaps -= 1097.
 #   Stroka 1097 PRIEKHALA ot okna 283 -- imya funktsii v C teryaet svoy modul',
 #   kogda vypolnyayutsya TRI usloviya srazu (dva modulya s odinakovoy
@@ -778,10 +778,121 @@ gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
 #   Os' NAZVANA POSLE BISEKTsII iz shesti progonov, pervaya gipoteza okna
 #   ('imya vozvrashchaemogo tipa delitsya') snyata ego zhe proboy.
 #   Pole BLOKIRUET TEG: DA prostavleno mnoyu pri priyome.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1101
 # 2026-09-14 VTOROE SLIYANIE origin/main (5 kommitov): chisla PERESCHITANY, a ne vzyaty
 #   storonoy. U okna 274 bylo rows=1054 max=1101, u integratora rows=1046 max=1098 --
 #   sostavy raznye, i vybor storony poteryal by stroki drugoy storony molcha.
 #   Znacheniya nizhe nazval sam strazh na slitom dereve.
-rows=1056
-max=1102
+# 2026-09-14 (integrator): gaps += 1102; rows/max bez izmeneniy.
+#   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
+#   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
+#   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
+# 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
+#   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
+#   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
+#   IZMERITEL' OTVECHAET NA SOSEDNIY VOPROS, I OSHIBAETSYA VSEGDA V ODNU,
+#   RAZRESHAYUSHCHUYU STORONU. Chetyre nositelya za vecher u tryokh okon
+#   nezavisimo. Dva iz nikh imeyut mashinnuyu priyomku i poluchayut stroki;
+#   ostal'nye dva -- net, i eto skazano nizhe, a ne obojdeno.
+#     1103 (okno b8, kontrolyor) -- `controller-machine-watch.py:111` zovyot
+#       `ps -ef`, kotoryy v msys pechataet tol'ko protsessy SVOEY sessii:
+#       zamer 23:01:37 -- 4 stroki protiv 516 u `ps -W` v tu zhe sekundu.
+#       Znachit kazhdoe `machine FREE` za smenu oznachalo 'moikh protsessov
+#       net', a razneseno bylo kak fakt tryom oknam. Tsena izmerena: dve
+#       sborki uroneny zamkom fayla, i v obe minuty izmeritel' pechatal FREE;
+#       v 22:59 shyol gate na 1642-y sekunde, a sosednee okno videlo sem'
+#       `nova.exe` -- tri svidetelya protiv odnogo izmeritelya. Pochinka
+#       `ps -W` BEZ samotesta ne schitaetsya: eto pochinka NAPISANIYA, a ne
+#       svoystva; samotest obyazan natravit' schyotchik na ZHIVOY postoronniy
+#       protsess i pokrasnet', esli tot ne viden. I vtoraya proverka, kotoruyu
+#       sam izmeritel' obyazan pechatat': skol'ko strok on VOOBSHCHE vidit --
+#       nol' pri chetyryokh vidimykh neotlichim ot slepoty, pri pyatistakh eto
+#       zamer.
+#     1104 (okno 5c, nositel' est' i u menya) -- kod vozvrata posle konveyera
+#       prinadlezhit POSLEDNEY komande. `cmd | tail -30; echo EXIT=$?` dayot
+#       EXIT=0 pri upavshem progone. Dva nositelya za chas: ikh progon
+#       fikstury i moy `cargo build --release 2>&1 | tail -25`. Oba raza
+#       verdikt spaslo to, chto sudili po STROKE (`PASS:`/`Finished`), a ne
+#       po chislu -- to est' spasla privychka, a ne mekhanizm. Strazh na etot
+#       klass sam obyazan proyti probu v obe storony (`false | true; echo $?`
+#       krasneet, forma s `${PIPESTATUS[0]}` net), inache on stanet pyatym
+#       nositelem: on ved' tozhe izmeritel'.
+#   POCHEMU TOL'KO DVA NOMERA NA CHETYRE NOSITELYA.
+#     Tretiy nositel' -- moi sobstvennye metki vremeni, vydumannye s
+#       operezheniem do 18 minut (poravleno kommitom fba8830d3). Stroki NE
+#       poluchaet: pravilo uzhe est' (`flow.md`: vremya komandoy `date`), ono
+#       bylo NARUSHENO, a ne otsutstvovalo, i artefakta, po kotoromu strazh
+#       mog by sudit' vydumannuyu metku, ne sushchestvuet. Zapisyvat' v reestr
+#       narushennoe pravilo bez mashinnoy priyomki znachit zavodit' stroku,
+#       kotoruyu nechem zakryt'.
+#     Chetvyortyy -- `.of` u nevariadika v chuzhom dereve (okno 9c, 232
+#       vyzova). Stroki v ETOM reestre ne poluchaet: nash geyt
+#       (`gate.sh:1577/1602`) gonyaet `nova lint --deny` po std/src i
+#       spec_tests ZHYOSTKO, kanon 0, to est' v nashem perimetre klass
+#       uderzhan. Ikh derevo vne perimetra, i eto ikh plan, a ne nash defekt.
+# 2026-09-14 (integrator): rows -> 1047, max -> 1105; gaps bez izmeneniy.
+#   Stroka 1105 PRIEKHALA ot okna claude-limits (9c) i vpisana mnoyu --
+#   `main` im ne prinadlezhit. Kodogen ne tipiziruet spred, istochnik
+#   kotorogo VYZOV; `nova check` pri etom zelyon. Os' nazvana DO progona
+#   i suzhena ikh zhe kontrolem: blok tozhe ne privyazka i prokhodit,
+#   znachit klass pro rezolv VYZYVAEMOGO, a ne pro 'ne privyazka'.
+#   Vtoraya ikh stroka (perenos usloviya v `if`) OTMENENA ikh sobstvennym
+#   zamerom: upala tol'ko forma s `{` na svoey stroke, a kontrol' s
+#   KOROTKIM usloviem i takim zhe `{` padaet toy zhe diagnostikoy -- to
+#   est' probe meshal ne perenos, a D43. Nomer pod neyo ne vydavalsya.
+# 2026-09-15 (integrator): rows -> 1048, max -> 1106; gaps bez izmeneniy.
+#   Stroka 1106 PRIEKHALA ot okna claude-limits (9c), vpisana mnoyu, proba
+#   perenesena v derevo: docs/plans/repro/1106-consume-check-keys-on-name/
+#   (7 form + 3 opornykh modulya + FINDING.md/RUN.md). BLOKIRUET TEG: DA --
+#   staticheskiy vyzov tipiziruetsya po ZHYOSTKOMU SPISKU IZ PYATI IMYON
+#   (new/with_capacity/from/default/filled), i lyuboy drugoy konstruktor
+#   MOLCHA teryaet obyazatel'stvo potrebleniya D180. Nositel' -- tip,
+#   derzhashchiy API-token, bez garantii shest' dney.
+#   Gipoteza okna ('lovitsya rovno new') byla NEVERNA i snyata CHTENIEM
+#   koda, a ne eshchyo odnim progonom: po tryom tochkam spisok iz pyati ne
+#   viden, i chinyashchiy iskal by 'osobennost' new', kotoroy net.
+# 2026-09-15 (integrator): rows -> 1049, max -> 1107; gaps bez izmeneniy.
+#   Stroka 1107 ot okna nova-b5, vpisana mnoyu. Rvalue consume-tipa vo
+#   view-parametre prinimaetsya MOLCHA: ni otkaz D133, ni legalizatsiya
+#   D476 ne realizovany, i forma prokhodit po OTSUTSTVIYU obeikh norm.
+#   Tri sborki odnim binaryom, i tretiy zamer vazhnee dvukh pervykh:
+#   mut-forma krasnaya, no CHUZHIM pravilom (E_MUT_ARG_NOT_MUTABLE ob
+#   adresuemosti), znachit consume-pravilo ne srabotalo NI V ODNOY iz
+#   dvukh form -- a merka 'odna iz dvukh krasnaya' namerila by nalichie
+#   pravila tam, gde ego net (rodnya G19).
+#   Ya dopisal dva polya, kotorykh v prislannom tekste ne bylo i bez
+#   kotorykh strazh formy krasneet: KLASS i ogovorka pro nositelya.
+# 2026-09-15 (integrator): rows -> 1050, max -> 1108; gaps bez izmeneniy.
+#   1108 -- reshenie vladel'tsa: operatsiya effekta, osvobozhdayushchaya
+#   resurs, obyazana zabirat' vladenie (close_stream/close_listener/
+#   close_socket -- tri, `shutdown` NE vkhodit: posle polu-zakrytiya potok
+#   zhiv). Ya dvazhdy vozrazhal i dvazhdy oshibsya; oba khoda zapisany v
+#   stroke, potomu chto kazhdyy vyglyadel obosnovannym.
+#   Vtoroe vozrazhenie (dvoynoe zakrytie cherez avto-cleanup na parametre)
+#   lozhno SEGODNYA -- D432 dayot ochistku tol'ko forme `consume X = e` --
+#   no ozhivaet v den', kogda 274.9 K4 rasprostranit ochistku na parametry.
+#   Ottuda OGRANICHENIE PORYADKA: `@into_raw` lozhitsya DO toy volny.
+# 2026-09-15 (integrator): rows -> 1051, max -> 1110; gaps += 1109.
+#   1110 -- khrapovik myortvykh ssylok schitaet ID SESSIY za heshi
+#   kommitov: iz 12 dobavlennykh proshlym pushem bol'shinstvo -- id
+#   sessiy iz peredach kontrolyora. Vtoraya polovina togo zhe strazha:
+#   №1029 pro sudit-sredu, eta pro schitaet-ne-kommity.
+#   1109 OB'YAVLEN DYROY: nomer vydan pod stroku o myortvykh ssylkakh v
+#   TEKSTAKH DIAGNOSTIK (4 iz 9 putey ne sushchestvuyut), tekst gotov, no
+#   vpisyvat' ego v seredine razbora krasnogo CI ya ne stal -- pridyot
+#   sleduyushchim sliyaniem.
+# 2026-09-15 TRET'E SLIYANIE origin/main (26 kommitov, okno 274). VSE TRI chisla
+#   PERESCHITANY na slitom dereve pravilom samogo strazha (`^\|\s*[0-9]+\s*\|`),
+#   i sverennym vtoroy, strogoy redaktsiey regulyarki -- 1061 po obeim, raskhozhdeniy
+#   nol'. U storon bylo rows=1056/max=1102 (okno 274) i rows=1051/max=1110
+#   (integrator): sostavy raznye, vybor storony poteryal by stroki drugoy MOLCHA.
+#   GAPS SOKRASHCHYON, i eto ne poterya: 1074, 1084, 1089, 1093-1095, 1097,
+#   1099-1102 bol'she ne dyry -- ikh stroki priekhali s obeikh storon sliyaniya.
+#   Ostalis' nastoyashchie: 1096, 1103-1104, 1109 i staryy khvost 174-215/653-654/743/1062.
+# NAYDENO PRI REZOLVE, i eto vtoraya nakhodka: v HEAD bylo DVE stroki `gaps=`, a
+#   strazh chitaet PERVUYU (re.search + re.M). Vtoraya -- ta, chto snimala 1097, --
+#   byla mertva s minuty napisaniya i ne krasnela tol'ko potomu, chto LISHNIY nomer
+#   v gaps= opravdyvaet nesushchestvuyushchuyu dyru: stoit nichego, pryachet vsyo.
+#   Teper' klyuch odin i strochka odna -- pravilo iz shapki etogo zhe fayla.
+rows=1061
+max=1110
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1109

@@ -1333,4 +1333,35 @@ no_caveat=0
 #   zakrytiya 1092). Sovpadenie s moim chislom SLUCHAYNO: sostavy raznye, i proveryalos'
 #   otdel'no, chto zakrytie 1092 sliyanie ne s'elo (stroka nesyot 'ZAKRYT 2026-09-14').
 #   Letopisi obeikh storon sokhraneny.
-blockers=70
+# 2026-09-15 (integrator): blockers 66 -> 69, TRI novykh za odnu noch', i vse
+#   TRI -- odin koren'. Rost ZAKONNYY: ni odna stroka ne otkryta zanovo, vse
+#   tri zavedeny po ZAMERU, i kazhdaya nesyot probu.
+#     1106 -- staticheskiy vyzov tipiziruetsya po ZHYOSTKOMU SPISKU IZ PYATI
+#       imyon (new/with_capacity/from/default/filled), lyuboy drugoy
+#       konstruktor MOLCHA teryaet obyazatel'stvo D180. Nositel' -- tip,
+#       derzhavshiy API-token shest' dney bez garantii. Naydeno ne chteniem, a
+#       mekhanicheskim pereimenovaniem `.of(` -> `.new(`, kotoroe uronilo ODNU
+#       stroku, nikem ne redaktirovavshuyusya.
+#     1107 -- rvalue consume-tipa vo view-parametre prinimaetsya MOLCHA: ni
+#       otkaz D133, ni legalizatsiya D476 ne realizovany, forma prokhodit po
+#       OTSUTSTVIYU obeikh norm. Kontrol' na tom zhe fayle krasnyy, znachit
+#       analiz zhiv.
+#     1108 -- operatsiya effekta, osvobozhdayushchaya resurs, ne zabiraet
+#       vladenie: posle `Net.close_stream(s)` peremennaya ostayotsya zhivoy dlya
+#       chekera. Reshenie vladel'tsa 2026-09-15; ya vozrazhal dvazhdy i dvazhdy
+#       oshibsya, oba khoda zapisany v stroke.
+#   OBSHCHIY KOREN' NAZVAN, i eto vazhnee tryokh nomerov: frontend prinimaet
+#   formu, a VTOROY POTREBITEL' vyyasnyaet eyo zanovo PO FORME VYRAZHENIYA --
+#   imya v 1090, tip istochnika spreda v 1105, tip statika v 1106, mesto
+#   obyazatel'stva v 1107.
+#   I SLED IZMEREN, potomu chto ot nego zavisit forma raboty: 123 mesta v std u
+#   1106 i 53 u 1107. Vklyuchit' proverku nel'zya -- vklyuchenie krasit std v tot
+#   zhe den' v 176 mestakh; volna, realizuyushchaya proverku, obyazana nesti
+#   perepisyvanie mest tem zhe sliyaniem (zapisano v plan 274.9).
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+# 2026-09-15 TRET'E SLIYANIE origin/main (26 kommitov, okno 274): 73 --
+#   PERESCHITANO skanerom registry-routes-scan.py na slitom dereve, a ne vybrano
+#   storonoy. U storon bylo 70 (okno 274) i 69 (integrator): sostavy RAZNYE, i lyuboy
+#   vybor storony molcha poteryal by blokery drugoy. Letopisi OBEIKH storon vyshe
+#   sokhraneny celikom -- oni ob'yasnyayut, otkuda kazhdaya polovina rosta.
+blockers=73

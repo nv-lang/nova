@@ -1,0 +1,13 @@
+// THE THIRD CONTROL, and it makes the cause impossible rather than merely different:
+// the same `.of` static, on a type with NO consume obligation. It must build AND the
+// value must be usable -- if `.of` returned something the checker cannot type, this
+// would fail too, and the finding would be about typing rather than about ownership.
+
+module probe_consume_name.control_plain_of
+
+import probe_consume_name.plain.{Plain}
+
+export fn take() -> int {
+    ro p = Plain.of(7)
+    p.n + 1
+}

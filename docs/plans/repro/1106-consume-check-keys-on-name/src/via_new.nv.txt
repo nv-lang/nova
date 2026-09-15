@@ -1,0 +1,12 @@
+// `ro` binding of a consume-required value built via `new`.
+// D180 says this needs `consume`, so the ERROR is the correct behaviour and a PASS
+// here means the check was skipped.
+
+module probe_consume_name.via_new
+
+import probe_consume_name.secret.{Secret, build_secret}
+
+export fn take() -> str {
+    ro t = Secret.new("x")
+    "${t:?}"
+}

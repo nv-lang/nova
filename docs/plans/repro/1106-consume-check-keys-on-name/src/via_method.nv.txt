@@ -1,0 +1,13 @@
+// FORM 5: the source is an INSTANCE METHOD call. The integrator asked for it by name:
+// a free function IS caught, so if a method is not, the hole is not about statics at
+// all and the fix lands elsewhere.
+
+module probe_consume_name.via_method
+
+import probe_consume_name.factory.{Factory}
+
+export fn take() -> str {
+    ro f = Factory.new("p")
+    ro t = f.build("x")
+    "${t:?}"
+}

@@ -1179,7 +1179,44 @@
 #   `resolved_callees`, то есть каналом. Эта работа НЕ сделана и НЕ оправдывает
 #   рост задним числом.
 #   ДОЛГ ПРЕЖНИЙ И НЕ ОТМЕНЯЕТСЯ: вернуть lines вниз. Отсюда — только вниз.
-lines=67828
+# 2026-09-14/15 (integrator): lines 67828 -> 67931, +103. ROST K KANALU, i
+#   eto skazano pervym slovom namerenno -- khrapovik terpit rost tol'ko takoy,
+#   a protivopolozhnyy i est' dolg, radi kotorogo on zavedyon.
+#   +9 strok koda i ostal'noe -- kommentariy. Kod delaet ROVNO odno:
+#   `free_fn_c_name` bol'she ne UGADYVAET imya svobodnoy funktsii po kontekstu
+#   vyzyvayushchego, a SPRASHIVAET kanal 196 -- `resolved_callees[call_id]`
+#   dayot Span ob'yavleniya, i ego file_id sluzhit klyuchom v tu zhe kartu
+#   `file_priv_fn_c_names`, kotoruyu chitaet OPREDELENIE (`mangle_fn`).
+#   To est' dvukh proizvoditeley imeni stalo odin, a ne dva (reestr 221.1
+#   #1090, kross-modul'naya polovina).
+#   Vtoraya chast' rosta -- strazh svoystvom v posledney vetvi
+#   `free_fn_c_name_impl`: goloe legacy-imya dlya imeni iz `colliding_fn_names`
+#   v MESTE VYZOVA -- eto simvol, kotoryy nikto ne opredelyaet, i teper' eto
+#   otkaz, a ne molchanie.
+#   POChEMU KOMMENTARIY DLINNEE KODA. Oba mesta -- razvilki, gde sleduyushchee
+#   okno stanet vybirat' zanovo: pochemu lookap kanala stoit POSLE faylovogo
+#   (strangler-fig: vsyo, chto rezolvitsya segodnya, rezolvitsya bayt-v-bayt),
+#   i pochemu strazh sudit tol'ko pri call_id (predmet klassa -- MESTO VYZOVA;
+#   storona opredeleniya i sintetika v predmet ne vkhodyat). Bez etikh dvukh
+#   abzatsev pravka vyglyadit proizvol'noy i budet perepisana.
+#   DOLG PREZHNIY I NE OTMENYAETSYA: vernut' lines vniz. Otsyuda -- tol'ko vniz.
+# 2026-09-15 (integrator): lines 67931 -> 67947, +16. NOL' KODA, tol'ko
+#   kommentariy, i storona rosta zdes' TRET'YA -- ne 'k kanalu' i ne 'ot
+#   nego', a UBRANA LOZH' O KANALE. Nazvano otdel'no, chtoby ne vydavat'
+#   sebya za pervyy vid.
+#   Kommentariy u mesta, gde zavoditsya `file_priv_fn_c_names`, utverzhdal:
+#   "free_fn_c_name already checks ... at both the definition-emit and every
+#   call-site (via `current_emit_file_id`), so no change needed there".
+#   Pervaya polovina verna, vtoraya NET: `current_emit_file_id` -- fayl
+#   VYZYVAYUShchEGO, a karta klyuchuetsya faylami OB'YAVIVShEGO. Vnutri
+#   ob'yavivshego modulya oni sovpadayut, poetomu utverzhdenie derzhalos' na
+#   vsekh sluchayakh, kotorye kto-libo probovai -- i razoshlos' rovno tam, gde
+#   ego nikto ne proveryal (#1090, vyzov iz drugogo modulya).
+#   FRAZA PEREPISANA NA MESTE, a ne snabzhena primechaniem ryadom: chitatel',
+#   doshedshiy do etogo bloka, byl pryamo uvedomlen, chto proveryat' zdes'
+#   nechego. Lozhnyy kommentariy, skazannyy UVERENNO, dorozhe otsutstvuyushchego.
+#   DOLG PREZHNIY: vernut' lines vniz. Otsyuda -- tol'ko vniz.
+lines=67947
 infer=243
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):
 # 64416 -> 64444 (+28, ВСЕ строки — doc-comment объясняющий диагноз, код
