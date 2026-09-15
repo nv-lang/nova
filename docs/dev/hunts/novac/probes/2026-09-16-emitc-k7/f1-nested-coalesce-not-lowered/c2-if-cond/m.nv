@@ -1,0 +1,17 @@
+module c2ifcond.m
+
+// `??` inside an `if` condition.
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn main() {
+    if (pick(false) ?? -1) > 0 {
+        println(1)
+    } else {
+        println(0)
+    }
+}

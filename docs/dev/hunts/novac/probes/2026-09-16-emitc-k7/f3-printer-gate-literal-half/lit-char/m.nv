@@ -1,0 +1,9 @@
+module litchar.m
+
+// An unprintable carrier (`char`) reaching `println` through the LITERAL branch
+// of the argument loop (check/typing.nv:838-850). That branch never asks the
+// printer-set gate `@has_printer`, so the checker passes and the emitter ices.
+
+fn main() {
+    println('z')
+}

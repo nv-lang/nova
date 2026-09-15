@@ -1,0 +1,13 @@
+module c4interpslot.m
+
+// `??` inside an interpolation slot.
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn main() {
+    println("v ${pick(false) ?? -1}")
+}

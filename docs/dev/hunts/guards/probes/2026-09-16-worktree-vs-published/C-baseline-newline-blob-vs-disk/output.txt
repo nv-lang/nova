@@ -1,0 +1,25 @@
+warning: in the working copy of 'scripts/guards/demo.baseline', LF will be replaced by CRLF the next time Git touches it
+=== committed blob, last byte: ===
+   r   o   w   s   =   1   0  \n   m   a   x   =   9   9
+
+=== state 1: working copy == commit (both broken) ===
+check-baseline-newline: FAIL — база без завершающего перевода строки (класс №891):
+
+  scripts/guards/demo.baseline — нет завершающего перевода строки
+  Оболочечный 'read' не отдаёт последнюю строку без '\n', и она
+  молча уходит из проверки: храповик считает меньше, чем перечисляет.
+  Чинить: дописать перевод строки в конец файла. Частая причина —
+  правка регуляркой, где '\s*$' съедает последний '\n'.
+exit=1
+
+=== state 2: newline added ONLY in the working copy (not git add-ed) ===
+--- commit still ends without a newline:
+   r   o   w   s   =   1   0  \n   m   a   x   =   9   9
+check-baseline-newline ok: баз 1, все оканчиваются переводом строки
+exit=0
+    ^ green. On a clone, 'while read' still drops the last line of this baseline.
+
+=== state 3: baseline tracked in the commit but absent from the disk ===
+check-baseline-newline ok: судить нечего — баз не найдено
+exit=0
+    ^ the published baseline is simply not judged (silently skipped).

@@ -1,0 +1,48 @@
+Живой носитель, снятый на настоящем дереве d:/Sources/nv-lang/nova 2026-09-16.
+Только чтение: ни одной правки, ни git add, ни коммита с моей стороны.
+Правки в базах были ЧУЖИЕ (соседнее окно), я их не трогал.
+
+$ git status --porcelain -- 'scripts/guards/*.baseline'
+ M scripts/guards/registry-routes.baseline
+ M scripts/guards/registry-rows.baseline
+
+$ git diff --cached --name-only -- 'scripts/guards/*.baseline'
+(пусто -- в индексе ничего, значит страж читает рабочую копию)
+
+$ git diff -- 'scripts/guards/*.baseline' | head -20
+diff --git a/scripts/guards/registry-routes.baseline b/scripts/guards/registry-routes.baseline
+index a21fce6bc..67e19a789 100644
+--- a/scripts/guards/registry-routes.baseline
++++ b/scripts/guards/registry-routes.baseline
+@@ -1393,4 +1393,4 @@ no_caveat=0
+ #   с моим числом НЕ есть основание взять сторону: составы разные, и пришли строки
+ #   1111-1119 четырьмя слияниями соседей. Мои две новые строки (1120, 1121) блокерами
+ #   не считаются: поле «БЛОКИРУЕТ ТЕГ» проставляет интегратор при приёме, не автор.
+-blockers=73
+\ No newline at end of file
++blockers=73
+
+$ bash scripts/guards/check-ratchet-moves.sh .
+  scripts/guards/registry-routes.baseline: сдвинуто чисел 1, добавленных строк-причин 0
+check-ratchet-moves: FAIL — храповик сдвинут без причины В ТОМ ЖЕ диффе (файлов 1):
+  Храповик — единственное место, где «сделать зелёным» проще, чем
+  «сделать правильным»: новое число само себя оправдывает. Поэтому
+  причина обязана приехать тем же слиянием — строкой комментария рядом
+  с числом: что выросло, зачем и почему это решение, а не подгонка.
+exit=1
+
+Значение blockers=73 ДО правки и ПОСЛЕ правки одно и то же. Изменился только
+завершающий перевод строки -- то самое исправление, которого требует
+check-baseline-newline.sh.
+
+ПОЗЖЕ В ТОТ ЖЕ ЧАС (соседнее окно закоммитило свои правки, я — нет):
+
+$ git status --porcelain -- 'scripts/guards/*.baseline'
+(пусто)
+
+$ bash scripts/guards/check-ratchet-moves.sh .
+check-ratchet-moves ok: сдвигов храповиков в диффе нет
+
+Это второй замер, и он подтверждает пробу A вживую: пока «сдвиг» лежал в
+рабочей копии, страж был красным; как только он уехал в коммит -- зелёный.
+Объект суждения сменился молча, а строка вердикта об этом не говорит.

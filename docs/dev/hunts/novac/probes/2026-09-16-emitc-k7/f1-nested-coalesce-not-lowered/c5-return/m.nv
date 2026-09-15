@@ -1,0 +1,17 @@
+module c5return.m
+
+// `??` inside a `return` operand.
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn go() -> int {
+    return (pick(false) ?? -1) + 1
+}
+
+fn main() {
+    println(go())
+}

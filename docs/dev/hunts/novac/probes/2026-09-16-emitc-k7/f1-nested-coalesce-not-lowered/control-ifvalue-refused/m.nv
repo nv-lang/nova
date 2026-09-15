@@ -1,0 +1,11 @@
+module controlifvaluerefused.m
+
+// SECOND CONTROL: the SIBLING form of the same class -- an `if` in value
+// position, nested under `+`. It also LOWERS, and for it the boundary IS held
+// by the checker, with a refusal naming the subset. That is what the eight
+// coalesce carriers should look like if they are not lowered.
+
+fn main() {
+    ro c = true
+    println((if c { 1 } else { 2 }) + 1)
+}

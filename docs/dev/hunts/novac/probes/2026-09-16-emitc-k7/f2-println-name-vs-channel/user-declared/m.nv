@@ -1,0 +1,13 @@
+module userdeclared.m
+
+// A user-declared callable whose NAME is `println`. novac resolves the SAME
+// callee two different ways depending on the position of the call.
+
+fn println(n int) -> int {
+    n + 100
+}
+
+fn main() {
+    ro k = println(7)
+    println(k)
+}

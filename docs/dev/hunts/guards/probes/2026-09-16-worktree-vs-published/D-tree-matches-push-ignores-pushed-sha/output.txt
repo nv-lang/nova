@@ -1,0 +1,42 @@
+warning: in the working copy of 'file.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/guards/check-tree-matches-push.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'file.txt', LF will be replaced by CRLF the next time Git touches it
+checked out: work = 125eec45318f9616ad3d7840b2e35474e55cc222   |   being pushed: main = 77605f5824f3c23ec0138a3a9f956d4ce1f78d81
+tree state: 0 modified paths (clean)
+
+=== 1. the guard alone, clean checkout of 'work' ===
+check-tree-matches-push ok: отслеживаемых изменений вне коммитов нет
+exit=0
+
+=== 2. full pre-push hook, pushing main (a commit this checkout never held) ===
+check-tree-matches-push ok: отслеживаемых изменений вне коммитов нет
+pre-push: проверка внешнего гейта пропущена (NOVA_SKIP_CI_CHECK=1)
+hook exit=0
+    ^ allowed: what lands on main is c2, which no gate ever saw.
+
+=== 3. mirror: scratch edit in the checkout, pushing the SAME unchanged main ===
+check-tree-matches-push: ОТПРАВЛЯЕТСЯ НЕ ТО, ЧТО ПРОВЕРЕНО.
+
+    Незакоммиченные изменения отслеживаемых файлов:
+       M file.txt
+
+    Гейт судит РАБОЧЕЕ ДЕРЕВО, а отправляется КОММИТ. Пока они
+    расходятся, зелёный вердикт относится к тому, чего в
+    отправляемом нет (реестр 221.1 №635: так уехали правка чекера
+    №631, весь страж №629 и фикс линта — при том что gate.sh уже
+    звал этот страж из main).
+
+    Закоммить их либо, если расхождение осознанное:
+      NOVA_ALLOW_DIRTY_PUSH=1 git push …
+check-tree-matches-push: FAIL
+
+pre-push ОСТАНОВИЛ отправку: проверял одно, отправляешь другое.
+hook exit=1
+    ^ refused, although the pushed object main=77605f5824f3c23ec0138a3a9f956d4ce1f78d81 is byte-identical to case 2.
+
+=== 4. the guard file itself missing from THIS checkout (case 635 re-enacted) ===
+tree is dirty:  M file.txt
+pre-push: проверка внешнего гейта пропущена (NOVA_SKIP_CI_CHECK=1)
+hook exit=0
+    ^ hook line 40 is 'if [ -f $TREE_GUARD ]' with no else:
+      guard absent from the pushing worktree == check silently not performed.

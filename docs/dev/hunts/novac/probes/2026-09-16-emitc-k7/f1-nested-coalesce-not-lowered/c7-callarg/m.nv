@@ -1,0 +1,15 @@
+module c7callarg.m
+
+// `??` inside a call argument.
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn twice(n int) -> int => n * 2
+
+fn main() {
+    println(twice(pick(false) ?? -1))
+}

@@ -1,0 +1,27 @@
+warning: in the working copy of 'scripts/guards/registry-rows.baseline', LF will be replaced by CRLF the next time Git touches it
+=== state 1: clean tree, nothing shifted ===
+check-ratchet-moves ok: сдвигов храповиков в диффе нет
+exit=0
+
+=== state 2: shift STAGED without a reason (index = what will be committed) ===
+warning: in the working copy of 'scripts/guards/registry-rows.baseline', LF will be replaced by CRLF the next time Git touches it
+  scripts/guards/registry-rows.baseline: сдвинуто чисел 1, добавленных строк-причин 0
+check-ratchet-moves: FAIL — храповик сдвинут без причины В ТОМ ЖЕ диффе (файлов 1):
+  Храповик — единственное место, где «сделать зелёным» проще, чем
+  «сделать правильным»: новое число само себя оправдывает. Поэтому
+  причина обязана приехать тем же слиянием — строкой комментария рядом
+  с числом: что выросло, зачем и почему это решение, а не подгонка.
+exit=1
+
+=== state 3: THE SAME shift now COMMITTED, no reason anywhere ===
+c0c7d2b shift the ratchet, no reason given
+ scripts/guards/registry-rows.baseline | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+check-ratchet-moves ok: сдвигов храповиков в диффе нет
+exit=0
+
+=== state 4: shift lives ONLY in the working copy, will never be committed ===
+--- git diff --cached (what the commit would carry):
+    (empty above == the commit carries NO ratchet shift)
+check-ratchet-moves ok: файлов с сдвигом храповика: 1, сдвигов без причины: 0
+exit=0

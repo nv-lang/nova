@@ -1,0 +1,13 @@
+module nestedoneline.m
+
+// Both roads in ONE expression: the outer call is the builtin output, the
+// inner call is the user function -- visible as two different C calls on one
+// emitted line.
+
+fn println(n int) -> int {
+    n + 100
+}
+
+fn main() {
+    println(println(7))
+}

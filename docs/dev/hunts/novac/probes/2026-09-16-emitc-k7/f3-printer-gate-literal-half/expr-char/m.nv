@@ -1,0 +1,10 @@
+module exprchar.m
+
+// CONTROL: the SAME carrier (`char`) reaching `println` through the EXPRESSION
+// branch of the same loop (check/typing.nv:851-875), which DOES ask
+// `@has_printer` -- and the refusal is clean, before the emitter.
+
+fn main() {
+    ro c = 'z'
+    println(c)
+}

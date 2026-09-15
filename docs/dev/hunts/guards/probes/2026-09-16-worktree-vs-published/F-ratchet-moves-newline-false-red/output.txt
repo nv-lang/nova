@@ -1,0 +1,35 @@
+warning: in the working copy of 'scripts/guards/demo.baseline', LF will be replaced by CRLF the next time Git touches it
+=== before the fix: baseline-newline says the file is broken ===
+check-baseline-newline: FAIL — база без завершающего перевода строки (класс №891):
+
+  scripts/guards/demo.baseline — нет завершающего перевода строки
+  Оболочечный 'read' не отдаёт последнюю строку без '\n', и она
+  молча уходит из проверки: храповик считает меньше, чем перечисляет.
+  Чинить: дописать перевод строки в конец файла. Частая причина —
+  правка регуляркой, где '\s*$' съедает последний '\n'.
+exit=1
+=== before the fix: ratchet-moves is green ===
+check-ratchet-moves ok: сдвигов храповиков в диффе нет
+exit=0
+
+=== the ONLY edit: append the missing newline. No number changes. ===
+--- the diff git sees:
+warning: in the working copy of 'scripts/guards/demo.baseline', LF will be replaced by CRLF the next time Git touches it
+    @@ -1,2 +1,2 @@
+     # reason: measured 2026-01-01
+    -blockers=73
+    \ No newline at end of file
+    +blockers=73
+--- value before: 73
+--- value now:    73
+
+check-baseline-newline ok: баз 1, все оканчиваются переводом строки
+baseline-newline exit=0
+  scripts/guards/demo.baseline: сдвинуто чисел 1, добавленных строк-причин 0
+check-ratchet-moves: FAIL — храповик сдвинут без причины В ТОМ ЖЕ диффе (файлов 1):
+  Храповик — единственное место, где «сделать зелёным» проще, чем
+  «сделать правильным»: новое число само себя оправдывает. Поэтому
+  причина обязана приехать тем же слиянием — строкой комментария рядом
+  с числом: что выросло, зачем и почему это решение, а не подгонка.
+ratchet-moves exit=1
+    ^ FAIL 'ratchet shifted without a reason' with the value unchanged at 73.

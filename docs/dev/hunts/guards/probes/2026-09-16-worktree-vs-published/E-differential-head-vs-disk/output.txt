@@ -1,0 +1,23 @@
+== 1. the two objects the monotonicity block compares ==
+   HEAD:scripts/guards/novac-corpus.baseline  ==  worktree scripts/guards/novac-corpus.baseline   (identical bytes)
+   -> the 'may only grow' comparison has no input at all right now.
+
+== 2. why that is the steady state, not an accident ==
+   30:# ЧИСТОТА — ПО СОДЕРЖИМОМУ (`git diff --name-only HEAD`), не по stat: фантомная пометка
+   53:# refused two pushes in one day. `git diff --name-only HEAD` hashes the content,
+   55:DIRTY=$(git diff --name-only HEAD | wc -l | tr -d ' ')
+   DIRTY=$(git diff --name-only HEAD | wc -l | tr -d ' ')
+   UNTRACKED=$(git status --short | grep -c '^??' || true)
+   if [ "$DIRTY" -gt 0 ]; then
+       echo "push-after-gate: дерево не чистое ($DIRTY файлов) — сначала коммит по именам или решение, что это не едет" >&2
+       git status --short | head -10 | sed 's/^/    /' >&2
+       exit 1
+   fi
+
+   The gate only ever runs with HEAD == worktree; a lowering that is
+   already in a commit compares equal to itself and passes forever.
+
+== 3. the two addresses that answer the same question differently ==
+   198:BFILE="$ROOT/scripts/guards/novac-corpus.baseline"
+   199:HEAD_B=$(git -C "$ROOT" show "HEAD:scripts/guards/novac-corpus.baseline" 2>/dev/null || true)
+   205:        if [ "$now" -lt "$was" ]; then

@@ -1,0 +1,13 @@
+module c1binary.m
+
+// `??` as an operand of `+`.
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn main() {
+    println((pick(false) ?? -1) + 1)
+}

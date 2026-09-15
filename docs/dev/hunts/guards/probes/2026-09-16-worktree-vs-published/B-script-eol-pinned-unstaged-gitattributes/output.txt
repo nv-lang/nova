@@ -1,0 +1,21 @@
+warning: in the working copy of '.claude/note.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.gitattributes', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/tool.sh', LF will be replaced by CRLF the next time Git touches it
+=== state 1: nothing pinned, neither in tree nor in commit ===
+check-script-eol-pinned: FAIL — исполняемые или построчно разбираемые файлы без закреплённых окончаний строк: 1
+    scripts/tool.sh   [.sh]
+  При `core.autocrlf=true` следующий чекаут отдаст их CRLF, и стражи покраснеют ПО ОКРУЖЕНИЮ, а не по существу — причём не у того, кто это допустил: файлы уже лежат на диске как LF.
+  Чинится ОДНИМ из двух: крепи в `.gitattributes` (`<шаблон> text eol=lf`) либо, если файл машинами не разбирается, заведи КЛАСС исключения в EXEMPT этого стража — с причиной, а не с молчанием.
+exit=1
+
+=== state 2: pin added ONLY in the working copy (NOT git add-ed) ===
+--- what the commit still says (git show HEAD:.gitattributes):
+    *.txt text
+--- what a fresh clone would get for scripts/tool.sh:
+    .claude/note.md
+    .gitattributes
+    scripts/tool.sh
+check-script-eol-pinned ok: файлов под scripts/.claude — 2, исключено классами 1, незакреплённых 0
+exit=0
+    ^ green, while the PUBLISHED .gitattributes pins nothing:
+      a fresh checkout with core.autocrlf=true hands scripts/tool.sh over as CRLF.
