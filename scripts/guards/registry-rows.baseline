@@ -791,6 +791,12 @@
 # 2026-09-15 (integrator, sliyanie p1110-commit-refs): rows 1054 -> 1055,
 #   max ostayotsya 1114. Tret'ya storona odnogo dnya: okno nova-23 dobavilo
 #   stroku 1113, kazhdyy schital ot svoey bazy. Skladyvayu, ne vybirayu.
+# 2026-09-15 (integrator, sliyanie p200-23-ws-iter): rows 1055 -> 1058,
+#   max 1114 -> 1116, gaps -= 1111,1115,1116. Tri stroki okna e6 priekhali
+#   odnim sliyaniem: 1111 (dva otveta na vopros o \x0B -- razvilka vladel'tsa),
+#   1115 (nedeterminirovannyy segfault na svyazke chasov i allokatsiy, K1,
+#   BLOKIRUET TEG: DA), 1116 (benchi ne vkhodyat ni v odin yarus -- krasnyy
+#   fayl lezhal nezamechennym). Dyroy ostayotsya tol'ko 1117 (vydan b6).
 rows=1059
 max=1117
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
@@ -944,25 +950,26 @@ max=1117
 #   chisla podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse
 #   nakhodki pod markerami'; sosedniy lyuk nova:allow pri etom OBYaZAN nesti
 #   prichinu i grepaem. Klass Г19. Stroka pridyot sliyaniem b6.
-# 2026-09-15 (okno b6): rows 1055 -> 1059, max 1114 -> 1117. Iz gaps snyat
-#   1117 -- stroka zavedena, dyry bolshe net. Predmet 1117: lyuk, glushashchiy
-#   nakhodku linta markerom [M-...], ne ostavlyaet sleda v vyvode -- chisla
-#   podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse nakhodki pod
-#   markerami'. Sosedniy lyuk nova:allow pri etom obyazan nesti prichinu i
-#   grepaem: obstavlen SILNYY lyuk, a nepodotchetnym ostavlen SLABYY.
-#   ZAMECHENO PRI PRAVKE, ne moyo i ne tronuto: v gaps chislyatsya 1111, 1115,
-#   1116, u kotorykh stroki UZHE est v reestre. Ustarevshee ob'yavlenie dyry
-#   opasno tem, chto poterya takoy stroki projdyot molcha -- rovno to, radi chego
-#   khrapovik zavedyon. Skazano integratoru pismom 2026-09-15.
+# 2026-09-15 (okno b6): rows 1055 -> 1059, max 1114 -> 1117 (s uchyotom tryokh
+#   strok integratora vyshe). Iz gaps snyat 1117 -- stroka zavedena. Predmet
+#   1117: lyuk, glushashchiy nakhodku linta markerom [M-...], ne ostavlyaet
+#   sleda v vyvode -- chisla podavlennogo net, i priyomka '0 nakhodok'
+#   neotlichima ot 'vse nakhodki pod markerami'. Sosedniy lyuk nova:allow pri
+#   etom obyazan nesti prichinu i grepaem: obstavlen SILNYY lyuk, a
+#   nepodotchetnym ostavlen SLABYY.
+# KONFLIKT ETOY STROKI RAZRESHYON OB'EDINENIEM SNYATIY, a ne vyborom storony:
+#   integrator snyal 1111/1115/1116, okno b6 snyalo 1117. Vybor storony vernul
+#   by chuzhoe snyatie obratno -- to est snova postavil by zhivuyu stroku vne
+#   zashchity.
 # stale_gaps -- nomerov, kotorye ODNOVREMENNO nazvany zakonnoy dyroy v gaps= i
 #   imeyut stroku v reestre. Tolko VNIZ. Zavedeno 2026-09-15 (nakhodka okna b6,
 #   dovedena do svoystva po predlozheniyu integratora): poka nomer chislitsya
 #   dyroy, POTERYA ego stroki prokhodit MOLCHA -- proverka dyr vidit otsutstvie i
 #   sveryaetsya so spiskom, gde otsutstvovat razresheno. Takaya stroka lezhit VNE
 #   zashchity, i zametit eto mozhno tolko chteniem bazy: progon zelyonyy.
-#   Snyatie dyry derzhalos na vnimanii slivshego -- to est na tom, chto my vezde
-#   zamenyaem mekhanizmom. Baza 3: eto 1111, 1115, 1116 v committed main.
-#   Pravka, snimayushchaya ikh, na 2026-09-15 zhivyot v rabochey kopii
-#   integratora nezakommichennoy -- kak tolko ona pridyot, opusti bazu do 0.
-stale_gaps=3
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1115-1116
+#   ISTORIYA CHISLA: zavedeno so znacheniem 3 -- rovno 1111, 1115, 1116 v
+#   committed main, kuda pravka integratora ne doekhala (otredaktirovana v
+#   rabochey kopii, v indeks ne polozhena). Posle ego kommita edce73538 i etogo
+#   sliyaniya protukhshikh net: 0.
+stale_gaps=0
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
