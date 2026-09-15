@@ -18,7 +18,7 @@
         "editor.semanticHighlighting.enabled": false
     },
     "terminal.integrated.env.windows": {
-        "NOVA_GC_LIB_DIR": "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
-        "NOVA_GC_INCLUDE_DIR": "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+        "NOVA_GC_LIB_DIR": "${workspaceFolder}/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
+        "NOVA_GC_INCLUDE_DIR": "${workspaceFolder}/compiler-codegen/vcpkg_installed/x64-windows-static/include"
     }
 }

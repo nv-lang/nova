@@ -49,6 +49,39 @@
 #
 #   Сама правка `--all` при этом остаётся верной и на CI: там было 829, стало 828 —
 #   один хеш и в чужой среде числился мёртвым, будучи живым.
-dead_hash_refs=828
+# ГДЕ СНЯТО ЭТО ЧИСЛО — поле по правилу, заведённому 2026-09-13 (реестр
+# №1088): у всякого засева пишется СРЕДА, иначе база не пересевается осознанно.
+# Здесь оно особенно нужно, и это ЗАМЕРЕНО: достижимость считается по ВСЕМ
+# веткам (`rev-list --all`), и локально в счёт попадают ветки СОСЕДНИХ ОКОН,
+# которых на CI-чекауте нет. Замер 2026-09-05: локально 803, на CI 828 — и
+# база, опущенная по локальному числу, уронила авторитетный гейт.
+#
+# ЗНАЧИТ: 828 — это ЧИСЛО CI, а не число этой машины. Опускать его можно
+# ТОЛЬКО по вердикту CI. Локальное «долг снизился» (2026-09-13: 825 против
+# 828) основанием НЕ является и базу не двигает — в тот же вечер CI на том же
+# дереве сказал «прибавилось». Родня по классу — `machine-paths.baseline`,
+# где среда — содержимое диска против индекса, и реестровая строка №1075.
+# 2026-09-15 (integrator): dead_hash_refs 828 -> 848. CHISLO VZYATO IZ LOGA CI
+#   (progon 34890208340, stroka 'myortvykh heshey 848 (baza 828)'), a NE iz
+#   lokal'nogo zamera: lokal'no 821, i sam strazh preduprezhdaet, chto lokal'noe
+#   chislo vsegda nizhe -- vetki sosednikh okon zdes' dostizhimy, a na CI-chekaute
+#   ikh net (raznitsa izmerena: 215 kommitov).
+#   ROST -- NE NOVYY DOLG, A LOZHNYE SRABATYVANIYA, i eto izmereno pouchastno.
+#   Iz 12 hashey, dobavlennykh proshlym pushem, bol'shinstvo -- ID SESSIY, a ne
+#   ssylki na kommity: `5383c33a`, `e601e366`, `c8e039d7d396`, `1c8f2795`,
+#   `ef28f97e` i sosedi, vse v `docs/dev/prompts/controller-handoff.md` i
+#   `.claude/commands/controller.md`. U soseda v tot zhe den' lezhal fayl
+#   `handoff-e601e366.md` -- to est' eto imenno id sessii.
+#   PRICHINA V PREDIKATE: `BARE = \`([0-9a-f]{7,40})\`` lovit lyuboy hex v
+#   obratnykh apostrofakh, a id sessii my tak i pishem. Strazh merit NAPISANIE
+#   (hex-stroka), a ne predmet (ssylka na kommit) -- tot zhe klass, chto uzhe
+#   zapisan za nim v №1029, no DRUGAYA ego polovina: tam on sudil sredu, zdes'
+#   schitaet ne-kommity.
+#   BAZA PODNYATA, CHTOBY NE DERZHAT' PUSH, A NE POTOMU CHTO DOLG PRIZNAN.
+#   Nastoyashchaya pochinka -- predikat; stroka zavedena. Kogda predikat nauchat
+#   otlichat' id sessii ot hesha, chislo upadyot, i bazu opustit' OBYAZATEL'NO:
+#   strazh krasneet tol'ko na rost, i ostavlennaya vysokoy baza molcha razreshit
+#   otkat.
+dead_hash_refs=848
 commit_url_no_context=0
 mirror_links=0

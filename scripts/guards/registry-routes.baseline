@@ -1262,10 +1262,67 @@ no_caveat=0
 #   1083 -- Result[<psevdonim>, <summa>] prinimaetsya chekerom i ne sobiraetsya;
 #   pol'zovatel' vidit oshibku clang vmesto diagnostiki Nova. Naydeno ne
 #   obkhodom, a pri napisanii effekt-semeystva Db v nova-duckdb.
+# 2026-09-13 (integrator): blockers 64 -> 65. Rost ZAKONNYY -- nayden
+#   NOVYY blokery, a ne poteryan staryy: stroka 1090, svobodnaya
+#   funktsiya s imenem, stalkivayushchimsya so std, dayot neslinkuemyy C
+#   pri zelyonom `nova check`. Nayden progonom YARUSA PUSH, kotoryy
+#   yarus loop ne gonyaet; ulika -- docs/plans/repro/1090-*.
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+# 2026-09-13 (integrator): blockers 65 -> 66. Rost ZAKONNYY -- stroka
+#   1092, naydena po voprosu vladel'tsa: peremeshchenie v vozvrashchaemyy
+#   kortezh ne schitaetsya mestom potrebleniya, i obkhod cherez `ro`
+#   stoyal v std dva mesyatsa opisannyy prozoy bez nomera.
+# 2026-09-14 (integrator): blockers 66 -> 67. Rost ZAKONNYY -- prinyata
+#   stroka 1097 ot okna 283, i pole BLOKIRUET TEG: DA postavleno mnoyu pri
+#   priyome, po kriteriyu 'molcha vryot': vyzov ukhodit v CHUZHUYU funktsiyu,
+#   a segodnyashnyaya gromkost' derzhitsya TOL'KO na nesovpadenii C-tipov.
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+# 2026-09-14 (integrator): blockers 67 -> 66. Zakryt №1092 -- peremeshchenie
+#   v VOZVRASHCHAEMYY KORTEZH teper' mesto potrebleniya (amendment D133 v tom
+#   zhe sliyanii, reshenie vladel'tsa). Eto NASTOYASHCHEE dvizhenie, a ne
+#   pereklassifikatsiya: forma, kotoruyu kompilyator otvergal, teper'
+#   sobiraetsya, i nositel' v std (`split_pair`) prinyal chestnuyu podpis'.
+#   OPUSKAT' BAZU -- CHAST' RABOTY: strazh krasneet tol'ko na ROST, i
+#   ostavlennaya vysokoy baza molcha razreshila by otkat.
+# 2026-09-15 (integrator): blockers 66 -> 69, TRI novykh za odnu noch', i vse
+#   TRI -- odin koren'. Rost ZAKONNYY: ni odna stroka ne otkryta zanovo, vse
+#   tri zavedeny po ZAMERU, i kazhdaya nesyot probu.
+#     1106 -- staticheskiy vyzov tipiziruetsya po ZHYOSTKOMU SPISKU IZ PYATI
+#       imyon (new/with_capacity/from/default/filled), lyuboy drugoy
+#       konstruktor MOLCHA teryaet obyazatel'stvo D180. Nositel' -- tip,
+#       derzhavshiy API-token shest' dney bez garantii. Naydeno ne chteniem, a
+#       mekhanicheskim pereimenovaniem `.of(` -> `.new(`, kotoroe uronilo ODNU
+#       stroku, nikem ne redaktirovavshuyusya.
+#     1107 -- rvalue consume-tipa vo view-parametre prinimaetsya MOLCHA: ni
+#       otkaz D133, ni legalizatsiya D476 ne realizovany, forma prokhodit po
+#       OTSUTSTVIYU obeikh norm. Kontrol' na tom zhe fayle krasnyy, znachit
+#       analiz zhiv.
+#     1108 -- operatsiya effekta, osvobozhdayushchaya resurs, ne zabiraet
+#       vladenie: posle `Net.close_stream(s)` peremennaya ostayotsya zhivoy dlya
+#       chekera. Reshenie vladel'tsa 2026-09-15; ya vozrazhal dvazhdy i dvazhdy
+#       oshibsya, oba khoda zapisany v stroke.
+#   OBSHCHIY KOREN' NAZVAN, i eto vazhnee tryokh nomerov: frontend prinimaet
+#   formu, a VTOROY POTREBITEL' vyyasnyaet eyo zanovo PO FORME VYRAZHENIYA --
+#   imya v 1090, tip istochnika spreda v 1105, tip statika v 1106, mesto
+#   obyazatel'stva v 1107.
+#   I SLED IZMEREN, potomu chto ot nego zavisit forma raboty: 123 mesta v std u
+#   1106 i 53 u 1107. Vklyuchit' proverku nel'zya -- vklyuchenie krasit std v tot
+#   zhe den' v 176 mestakh; volna, realizuyushchaya proverku, obyazana nesti
+#   perepisyvanie mest tem zhe sliyaniem (zapisano v plan 274.9).
+#   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
 # 2026-09-14 (okno 283): blockers 64 -> 65. ROST chestnyy: zavedena 1096 --
 #   literal zapisi BEZ obyazatel'nogo polya kompiliruetsya, a pole ostayotsya
 #   neinicializirovannym. Spec 02-types.md:1955 nazyvaet eto oshibkoy doslovno,
 #   proverki net. Blokiruet teg potomu, chto povedenie zavisit ot raskladki:
 #   [4]u8 -> 240, [8]u8 -> nuli; programma rabotaet i vryot. Naydeno ne obkhodom,
 #   a pri probe fiks-massiva v value-zapisi dlya pechati float (plan 285).
-blockers=65
+# 2026-09-15 (okno 283, SLIYANIE): blockers 65/69 -> 70. Obe storony schitali
+#   SVOYU polovinu reestra i obe byli pravy pro neyo: 69 u origin/main (1090,
+#   1105, 1106, 1107), 65 u vetki 283 (1096). Posle sliyaniya verno NI ODNO.
+#   Slozhit' nel'zya -- obshchie stroki poschitalis' by dvazhdy; vybrat' storonu
+#   znachit molcha zanizit' bazu. Chislo VZYATO U SKANERA SAMOGO STRAZHA na
+#   slitom reestre: `python scripts/guards/registry-routes-scan.py .` -> 70.
+#   Tretiy khrapovik za eto sliyanie, gde pereschyot dayot ne to, chto lyubaya
+#   iz storon: pravilo "konflikt bazy reshaetsya PERESCHYOTOM predmeta" zdes'
+#   ne teoriya, a izmerenie.
+blockers=70

@@ -1,0 +1,15 @@
+// THE CONTROL: the same value bound the way D180 requires. It must build, or the
+// probe is measuring something else entirely -- a type that cannot be built at all
+// would make every form above fail for the wrong reason.
+
+module probe_consume_name.control_consume
+
+import probe_consume_name.secret.{Secret}
+
+export fn take() -> str {
+    consume t = Secret.new("x")
+    // D133 wants it actually consumed, not merely bound so: the first version of
+    // this control only bound it and died on `D133-not-consumed`, which would have
+    // made every verdict below unreadable.
+    t.into_secret()
+}

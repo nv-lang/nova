@@ -102,14 +102,39 @@ fn unit_ok() -> Result[(), NetError] => Ok(())
 fn unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
 
 // Tuple-return helper (codegen tuple inference in handler bodies).
-// #717: the halves are MOVED through this helper, not frozen -- a plain
-// parameter is `ro` by default (D176), so returning it inside a tuple typed
-// non-ro hands the caller write access to a value this function received
-// read-only. Ownership transfer is what `consume` is for (D131/D133); `ro`
-// would be the wrong canon here [INV-PROPERTY], since the caller must consume
-// the halves it gets back. [INV-PROPERTY] -- held by the corpus: `nova test
-// std/src` covers this helper's callers, and the #717 rule itself reddens
-// the plain-parameter form, so neither direction can drift silently.
+//
+// The halves are MOVED through this helper, and since 2026-09-14 the signature
+// says so. Until then it read `(rh TcpReadHalf, wh TcpWriteHalf) -> (ro …, ro …)`
+// and carried an `[INV-PROPERTY]` marker admitting the compromise: a plain
+// parameter is `ro` by default (D176), so returning it in a non-`ro` tuple would
+// hand the caller write access to something received read-only (#717) -- while
+// `ro` on the RESULT was wrong in the other direction, because
+// `TcpReadHalf`/`TcpWriteHalf` are `consume` types and the caller MUST consume
+// what it gets back (D131/D133).
+//
+// Both wrongs came from one missing rule: a move into a RETURNED TUPLE was not
+// a consume site, so the honest form did not compile. Registry 221.1 #1092,
+// D133 amendment of 2026-09-14, owner's decision. `@into_split()` -- the only
+// caller -- declares exactly `(TcpReadHalf, TcpWriteHalf)`, so helper and caller
+// now agree with no coercion between them.
+fn split_pair(consume rh TcpReadHalf, consume wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
+//
+// -- owner's decision 2026-09-13, and it matches `@into_split()`, the only
+// caller, which declares exactly `(TcpReadHalf, TcpWriteHalf)`. The compiler
+// REFUSES that form: a move into a RETURNED TUPLE is not recognised as a
+// consume site, so both params report `[D133-not-consumed]` even though the
+// body is `(rh, wh)` -- the whole result of the function. Measured on a
+// minimal form with no std.net and no sockets; evidence in
+// `docs/plans/repro/1092-tuple-return-not-a-consume-site/`.
+//
+// So this line keeps the old shape on purpose: a plain parameter is `ro` by
+// default (D176), and returning it in a non-`ro` tuple would hand the caller
+// write access to a value received read-only (#717); `ro` on the result is
+// wrong in the other direction, since `TcpReadHalf`/`TcpWriteHalf` are
+// `consume` types and the caller MUST consume what it gets back (D131/D133).
+// Both wrongs come from the same missing rule, and neither can be fixed here.
+// The [INV-PROPERTY] marker stays until #1092 closes, and then this helper
+// takes the form above.
 fn split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (ro TcpReadHalf, ro TcpWriteHalf) => (rh, wh)
 
 // ─── TcpListener public API ───────────────────────────────────────────────────

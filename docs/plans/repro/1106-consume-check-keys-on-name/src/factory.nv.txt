@@ -1,0 +1,13 @@
+// A factory VALUE with an instance method returning the consume-required type.
+
+module probe_consume_name.factory
+
+import probe_consume_name.secret.{Secret}
+
+export type Factory value {
+    ro salt str
+}
+
+export fn Factory.new(salt str) -> Factory => { salt }
+
+export fn Factory @build(s str) -> Secret => Secret.new("${@salt}${s}")

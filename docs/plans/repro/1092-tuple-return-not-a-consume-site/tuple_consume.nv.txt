@@ -1,0 +1,21 @@
+// EXPECT_STDOUT ok
+// Probe: is a move into a RETURNED TUPLE a consume site?
+// D133 lists `return x` as one. The diagnostic on std/src/net/tcp.nv:119 says
+// `rh`/`wh` are "not consumed before scope-exit" even though the body IS
+// `(rh, wh)` -- the function's whole result. Minimal form, no std.net, no
+// sockets: two consume values in, the same two out as a tuple.
+module standalone.tuple_consume
+
+type W consume value { h int }
+
+fn W consume @close() -> () => ()
+
+fn pair(consume a W, consume b W) -> (W, W) => (a, b)
+
+fn main() Io -> () {
+    consume p = pair(W { h: 1 }, W { h: 2 })
+    ro (x, y) = p
+    x.close()
+    y.close()
+    print("ok")
+}

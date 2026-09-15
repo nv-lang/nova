@@ -156,10 +156,31 @@
 # files were renamed by the module split. NOT three new decisions: two are other
 # windows' already-recorded ones, mine is a rename. The number is the counter's, not
 # arithmetic of mine.
+# 71 -> 72 (2026-09-13): D477 arrived -- sum placement and the `indirect`
+# marker. A sum is placed BY VALUE and recursion is broken explicitly by a
+# marker on the declaration; the marker sits on the unit whose size is computed
+# separately (the VARIANT of a sum, the FIELD of a value-record). For novac this
+# is a REQUIREMENT, not a debt (plan 274, T2): the oracle is not scheduled to
+# implement it, so the divergence is deliberate and one-sided. Nothing in novac's
+# own source uses a recursive sum today, so the queue entry costs it no work yet.
+# 72 -> 73 (2026-09-13): D476 arrived -- a temporary consume value in a VIEW
+# position expands into a consume scope instead of being refused, replacing
+# exactly two D133 refusals. It adds NOTHING to the set of exempt binding forms:
+# it reduces the new shape to the one form D432's #672 amendment already exempts.
+# For novac the form is REQUIRED (plan 274.9 sec.2.7); the oracle is not
+# scheduled. No debt for novac today: its own source has zero @cleanup methods
+# and zero consume scopes, so the rule changes nothing in its build.
 # (2026-09-13, слияние): снова две половины истории считали независимо.
 # Число взято ЗАМЕРОМ по объединённой истории, не сложением чужих счётов:
 # `git log --since=2026-08-14 --no-merges --oneline HEAD origin/main -- spec/decisions`.
-#   spec-queue: 75
+# 74/75 -> 76 (2026-09-15, СЛИЯНИЕ). Обе стороны считали СВОЮ половину истории и
+# обе были правы про неё: 74 у origin/main, 75 у ветки 283. После слияния верно
+# НИ ОДНО, и выбор стороны дал бы молча неверную базу. Число ПЕРЕСЧИТАНО формулой
+# самого хука по объединённой истории, с `sort -u` против двойного счёта общих
+# коммитов: `git log --since="2026-08-14 23:59:59" --no-merges --format=%h
+# HEAD origin/main -- spec/decisions`. В прибавку вошёл и D478 (умолчания только
+# в хвосте), пришедший этой веткой.
+#   spec-queue: 76
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

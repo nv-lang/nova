@@ -1,0 +1,19 @@
+// EXPECT_STDOUT 3
+// Control: byte-for-byte probe B, with ONE change -- the function is named
+// `zq_unique_name_not_in_std` instead of `same`. `same` also exists in std
+// (runtime.fmt_buf), which makes it a COLLIDING free-fn name; this one does not.
+// If this passes and probe B fails, the cause is the collision, not the call form.
+module standalone.unique_name
+
+type OrPair enum P(int) | Q(int)
+
+fn zq_unique_name_not_in_std(t OrPair) -> int {
+    match t {
+        P(a) | Q(a) => a
+    }
+}
+
+fn main() Io -> () {
+    ro v = zq_unique_name_not_in_std(P(3))
+    print(v.to_str())
+}
