@@ -15,15 +15,15 @@
 
 | проба | что внутри | 6 прогонов подряд |
 |---|---|---|
-| `mine_asciiws.nv` | `Monotonic` + 3 блока по 50 итераций, `split_ascii_whitespace` | **1 падение из 6** |
-| `control_splititer.nv` | то же, но `split(" ")` — `SplitIter`, код НЕ трогался планом 200 §23 | **2 падения из 6** |
-| `noclock_take2.nv` | 2000 итераций `.take(2).collect()`, **без часов** | 0 из 6 |
-| `noclock_collect_all.nv` | 2000 итераций `.collect()` (≈4 млн строк), **без часов** | 0 из 6 |
+| `mine_asciiws.nv.txt` | `Monotonic` + 3 блока по 50 итераций, `split_ascii_whitespace` | **1 падение из 6** |
+| `control_splititer.nv.txt` | то же, но `split(" ")` — `SplitIter`, код НЕ трогался планом 200 §23 | **2 падения из 6** |
+| `noclock_take2.nv.txt` | 2000 итераций `.take(2).collect()`, **без часов** | 0 из 6 |
+| `noclock_collect_all.nv.txt` | 2000 итераций `.collect()` (≈4 млн строк), **без часов** | 0 из 6 |
 
 Команды (из корня дерева, бинарь свой):
 
 ```sh
-./nova-cli/target/release/nova build docs/plans/repro/1115-monotonic-alloc-segfault/mine_asciiws.nv --mode release
+./nova-cli/target/release/nova build docs/plans/repro/1115-monotonic-alloc-segfault/mine_asciiws.nv.txt --mode release
 for r in 1 2 3 4 5 6; do ./mine_asciiws.exe >/dev/null 2>&1; echo -n "run$r=$? "; done; echo
 ```
 
