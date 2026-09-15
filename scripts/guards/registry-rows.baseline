@@ -822,8 +822,15 @@
 #   pridut POSLE moego pusha -- ikh derevo stoit na origin/main s max=1110,
 #   i stavit' nomera do sliyaniya znachilo by razorvat' tselostnost'.
 #   Poetomu v gaps ikh SEYChAS NET: nomer vydan, no derevo ego eshchyo ne znaet.
-rows=1061
-max=1119
+# 2026-09-15 (integrator): rows 1061 -> 1062, max 1119 -> 1122,
+#   gaps += 1120,1121 (vydany oknu d6, ikh stroki priedut sliyaniem).
+#   Stroka 1122 -- mera samosborki Kariny zavyshaet rasstoyanie v ~15 raz:
+#   pri lyubom ICE ranner otkatyvaetsya na POFAYLOVYY prokhod, a pofaylovaya
+#   proverka mnogofaylovoy programmy padaet PO POSTROENIYu. Otsyuda '92 iz 93'
+#   pri fakticheskikh 6 iz 93 v edinitse sborki. Razlichayushchiy opyt:
+#   mangle.nv, diag.nv, lex.nv chisty v pachke i padayut poodinochke.
+rows=1062
+max=1122
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -997,4 +1004,4 @@ max=1119
 #   rabochey kopii, v indeks ne polozhena). Posle ego kommita edce73538 i etogo
 #   sliyaniya protukhshikh net: 0.
 stale_gaps=0
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1120,1121
