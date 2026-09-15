@@ -50,6 +50,13 @@
 # ЧИСЛО НЕ СУДИТСЯ: ноль охот — законно (0/0 зелёный). Судится ЦЕЛОСТНОСТЬ.
 #
 # Самотест: scripts/guards/selftest/test-check-hunter-mark.sh.
+# ТРЕК `oracle` СНЯТ 2026-09-16 (решение владельца). Охота ищет НОВЫЕ дефекты, а
+# оракул в релиз не выйдет: план 221 закрыт незавершённым, релиз делает Карина.
+# Оракул при этом ЖИВ и правится там, где мешает её сборке (274.10) — но это
+# починка названного, а не поиск нового. Метки `(oracle)` в реестре остаются
+# узнаваемыми (их 27, охоты были); каталог docs/dev/hunts/oracle/ заморожен его
+# леджером. Снято ИЗ СПИСКА ТРЕКОВ, а не поднятием бюджета: поднятие было бы
+# раскруткой числа владельца молча.
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 REG="$ROOT/docs/plans/221.1-bug-sweep.md"
@@ -91,18 +98,18 @@ hashes_of_dir() {
 # реестра, метка НЕ в бэктиках (обёрнутая — цитата чужой записи).
 awk '
     /^\| *[0-9]+ \|/ {
-        split("novac oracle guards", tr, " ")
+        split("novac guards", tr, " ")
         for (i = 1; i <= 3; i++) {
             line = $0
             gsub("`НАЙДЕНО ОХОТНИКОМ [0-9-]+ \\(" tr[i] "\\)`", "", line)
             if (line ~ ("НАЙДЕНО ОХОТНИКОМ [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] \\(" tr[i] "\\)")) n[tr[i]]++
         }
     }
-    END { split("novac oracle guards", tr, " "); for (i = 1; i <= 3; i++) print tr[i], n[tr[i]]+0 }
+    END { split("novac guards", tr, " "); for (i = 1; i <= 2; i++) print tr[i], n[tr[i]]+0 }
 ' "$REG" > "$T/marks" 2>/dev/null
 
 SUMMARY=""
-for TRACK in novac oracle guards; do
+for TRACK in novac guards; do
     DIR="$HUNTS_BASE/$TRACK"
     if [ ! -d "$DIR" ]; then
         echo "check-hunter-mark: FAIL — нет каталога трека $DIR (треки — решение владельца 2026-08-30; guards — его слово 2026-09-04)" >&2

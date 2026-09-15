@@ -11,7 +11,13 @@
 # заморожен до тега (только блокеры), долг копится медленно, и это правильно:
 # нет нового кода — нет принуждения. Якорь = HEAD дня заведения механизма.
 budget_novac=1500
-budget_oracle=3000
+# 2026-09-16 (integrator, slovo vladel'tsa): budget_oracle SNYAT vmeste s trekom.
+#   Okhota ishchet NOVYE defekty, a orakul v reliz ne vyydet -- plan 221 zakryt
+#   nezavershyonnym 2026-09-16, reliz delaet Karina. Orakul pri etom ZHIV i pravitsya
+#   tam, gde meshaet eyo sborke (274.10), no eto pochinka NAZVANNOGO, a ne poisk novogo.
+#   Kljuch UDALYON, a ne podnyat: podnyatie bylo by raskrutkoy chisla vladel'tsa molcha,
+#   i sam strazh otdel'noy proverkoy eto zapreshchaet. Upominanie budget_oracle v
+#   kommentarii zaseva vyshe ostavleno kak letopis'.
 # ЗАСЕВ 2026-09-04 (окно 274, ОЖИДАЕТ слова владельца — вопрос 3 плана 278, Ф.8):
 # budget_guards=3000 — стражи растут ~1180 added-строк/день (git log --numstat
 # по scripts/guards за 14 дней: 16 504), порог даёт охоту раз в два-три дня.

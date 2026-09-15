@@ -32,16 +32,33 @@
 #           владельца «добавь в охотника искать ошибки в твоих стражах».
 # Именно added, не net: рефакторный чурн рождает дефекты не хуже роста.
 #
+# КТО ПЛАТИТ ДОЛГ — ОКНО, КОТОРОЕ ВЫРАСТИЛО ПОВЕРХНОСТЬ (владелец, 2026-09-16).
+# Раньше это не было сказано нигде, и на практике долг всегда прилетал ИНТЕГРАТОРУ:
+# страж стоит на гейте, гейт — на пуше, пушит интегратор. Замер того же дня: слияние
+# ветки 274 добавило 2572 строки novac и 4640 строк стражей, оба трека ушли за бюджет,
+# и обе охоты пришлось ставить в момент пуша — то есть ровно тогда, когда всё уже
+# сделано и проверять поздно. Теперь так: novac охотится окно 274 ПЕРЕД сдачей ветки,
+# guards — интегратор, который их и растит. Механизм не меняется: он по-прежнему
+# судит ДЕРЕВО, а не автора, — но красное теперь адресовано, и адресат назван здесь,
+# а не угадывается по тому, кто первым наткнулся.
+#
 # БЮДЖЕТ — число ВЛАДЕЛЬЦА в scripts/guards/hunter-debt.baseline (не
 # самоназначается; засев отмечен там как ожидающий слова владельца).
 #
 # Самотест: scripts/guards/selftest/test-check-hunter-debt.sh.
+# ТРЕК `oracle` СНЯТ 2026-09-16 (решение владельца). Охота ищет НОВЫЕ дефекты, а
+# оракул в релиз не выйдет: план 221 закрыт незавершённым, релиз делает Карина.
+# Оракул при этом ЖИВ и правится там, где мешает её сборке (274.10) — но это
+# починка названного, а не поиск нового. Метки `(oracle)` в реестре остаются
+# узнаваемыми (их 27, охоты были); каталог docs/dev/hunts/oracle/ заморожен его
+# леджером. Снято ИЗ СПИСКА ТРЕКОВ, а не поднятием бюджета: поднятие было бы
+# раскруткой числа владельца молча.
 export LC_ALL=C
 ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BASE="${NOVA_HUNTER_DEBT_BASELINE:-$(cd "$(dirname "$0")" && pwd)/hunter-debt.baseline}"
 
 if [ ! -f "$BASE" ]; then
-    echo "check-hunter-debt: FAIL — нет базы $BASE (budget_novac=, budget_oracle=, budget_guards=, anchor=)" >&2
+    echo "check-hunter-debt: FAIL — нет базы $BASE (budget_novac=, budget_guards=, anchor=)" >&2
     exit 1
 fi
 # Ключ читается СТРОГО один раз. Дыра, найденная панелью запуском: при `tail -1`
@@ -108,11 +125,10 @@ SUMMARY=""
 TMPDUP="${TMPDIR:-/tmp}/hunter-debt-dup.$$"
 TMPP="${TMPDIR:-/tmp}/hunter-debt-pairs.$$"
 trap 'rm -f "$TMPDUP" "$TMPP"' 0 2 15
-for TRACK in novac oracle guards; do
+for TRACK in novac guards; do
     BUDGET=$(key1 "budget_$TRACK") || { rc=1; continue; }
     case "$TRACK" in
         novac)  SURFACE="novac/src/*.nv";           EXCL='_test[.]nv$' ;;
-        oracle) SURFACE="compiler-codegen/src/*.rs"; EXCL='/tests?/' ;;
         guards) SURFACE="scripts/guards/*";          EXCL='[.](baseline|list)$' ;;
     esac
     CLOCK=$(find_clock "$TRACK" | head -1 | cut -d' ' -f1)
