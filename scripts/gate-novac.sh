@@ -320,6 +320,7 @@ par_add "$ROOT/scripts/guards/check-novac-local-only-work.sh" "работа жи
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-diag-paths.py" "текст компилятора ссылает пользователя на несуществующий файл (№1109)"
+par_add "$ROOT/scripts/guards/check-lint-rule-covered.py" "правило линта не названо ни одной фикстурой (№1114)"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
 par_add "$ROOT/scripts/guards/check-novac-time-ledger.py" "коммит в novac/** без строки в леджере времени (274 §1.4)"
 par_add "$ROOT/scripts/guards/check-novac-deps.py" "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
