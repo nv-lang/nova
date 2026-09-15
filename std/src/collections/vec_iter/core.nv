@@ -90,6 +90,14 @@ import std.collections.vec.{Vec, VecIter}
 import std.collections.set.{Set}
 import std.prelude.collections.{Next, Iter}
 import std.runtime.raw_mem.{RawMem}
+// `is_ascii_ws` — the ONE definition of the byte class `AsciiWhitespaceIter`
+// splits on, imported rather than copied: `runtime.string` already scans with
+// it (`@trim*`, the retired eager `@split_ascii_whitespace` body), and a second
+// copy here would be a second answer to "what is whitespace". NOT the
+// `char @is_ascii_whitespace()` of `runtime/defaults.nv` — that one EXCLUDES
+// `\x0B` (Rust parity), this byte class includes it, and silently swapping
+// them would change which strings split where.
+import std.runtime.string.{is_ascii_ws}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Adapter types (generic-over-source `value` records — held inline, by value)
@@ -522,6 +530,84 @@ export fn RSplitIter @skip(n int) -> SkipIter[RSplitIter, str]
 export fn RSplitIter @enumerate() -> EnumerateIter[RSplitIter, str] => { src: @, i: 0 }
 
 export fn RSplitIter @step_by(n int) -> StepByIter[RSplitIter, str]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// `AsciiWhitespaceIter` — lazy `str.split_ascii_whitespace()` (Plan 200 §23).
+//
+// A SEPARATE type, not a `SplitIter` configured differently, and that is the
+// whole point of this one: `SplitIter` splits on a SUBSTRING (`sep str`),
+// while this splits on a BYTE CLASS ("skip whitespace, yield a word"). The
+// two are different notions — a type parameterized over both would be poorer
+// than either (it would have to carry a dead `sep` for one case and a dead
+// predicate for the other), so the shapes stay separate and only the
+// STRUCTURE (`value` record + `#impl(Next[str])` + inline byte-scan over
+// zero-copy `@src[a..b]` views) is shared with `SplitIter`.
+//
+// State is a SINGLE cursor: there is no `done` flag, because unlike
+// `SplitIter` (whose final segment is the possibly-empty remainder, so
+// "already yielded the tail" is not visible from the cursor alone) this
+// splitter SKIPS empty runs — `start >= byte_len` is itself the exhausted
+// state, and `@next()` past exhaustion keeps returning `None`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Lazy splitter on runs of ASCII whitespace, skipping empty segments
+/// (leading/trailing whitespace ignored) — the iterator behind
+/// `str @split_ascii_whitespace()` (Rust/Go `SplitAsciiWhitespace`/`Fields`).
+/// `src`/`start` are plain (not `priv`) so the constructor in `runtime.string`
+/// — a different module — can build the record literal directly, exactly as
+/// for `SplitIter`.
+export type AsciiWhitespaceIter value {
+    src str
+    mut start int
+}
+
+/// Advance to the next word: skip the whitespace run under the cursor, then
+/// take bytes up to the next whitespace byte (or the end). `@src[a..b]` views
+/// are zero-copy (no heap), and only WHOLE-word boundaries are ever turned
+/// into a view — every boundary here sits on an ASCII byte (`< 0x80`), which
+/// can never be a UTF-8 continuation byte, so no boundary can split a
+/// codepoint. Yields the SAME words, in the same order, as the retired eager
+/// `-> ro []str` body (see search.nv history), one at a time.
+#impl(Next[str])
+export fn AsciiWhitespaceIter mut @next() -> Option[str] {
+    ro sn = @src.byte_len()
+    ro bytes = @src.bytes()
+    mut i = @start
+    while i < sn && is_ascii_ws(bytes[i] as int) { i += 1 }
+    if i >= sn {
+        @start = sn
+        return None
+    }
+    ro word_start = i
+    while i < sn && !is_ascii_ws(bytes[i] as int) { i += 1 }
+    @start = i
+    Some(@src[word_start..i])
+}
+
+// ── adapters ON an `AsciiWhitespaceIter` source (chain entry) ────────────
+//
+// Same set, same shapes as `SplitIter`'s — including the same
+// [M-splititer-filter-closure-ctx-gap] caveat on `.filter`/`.map`/
+// `.filter_map` (a concrete, non-generic `Next[T]` receiver loses closure
+// param-type context: spell the closure with an explicit signature).
+
+export fn AsciiWhitespaceIter @map[U](f fn(str) -> U) -> MapIter[AsciiWhitespaceIter, str, U] => { src: @, f }
+
+export fn AsciiWhitespaceIter @filter(pred fn(str) -> bool) -> FilterIter[AsciiWhitespaceIter, str] => { src: @, pred }
+
+export fn AsciiWhitespaceIter @filter_map[U](f fn(str) -> Option[U]) -> FilterMapIter[AsciiWhitespaceIter, str, U] => { src: @, f }
+
+export fn AsciiWhitespaceIter @take(n int) -> TakeIter[AsciiWhitespaceIter, str]
+    requires n >= 0
+    => { src: @, left: n }
+export fn AsciiWhitespaceIter @skip(n int) -> SkipIter[AsciiWhitespaceIter, str]
+    requires n >= 0
+    => { src: @, to_skip: n }
+export fn AsciiWhitespaceIter @enumerate() -> EnumerateIter[AsciiWhitespaceIter, str] => { src: @, i: 0 }
+
+export fn AsciiWhitespaceIter @step_by(n int) -> StepByIter[AsciiWhitespaceIter, str]
     requires n > 0
     => { src: @, step: n, first: true, rem: n - 1 }
 
