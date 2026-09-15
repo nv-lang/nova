@@ -25,6 +25,15 @@ fi
 D=$(mk refused 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    ro kids = branch_children(e)' '    if kids.len() < 2 {' '        @report_first_leaf_of(kids, "outside the subset: incomplete")' '        return' '    }' '    @record(e, 1)' '}')
 run "$D" && ok "выход после отказа — зелёный" || bad "отказ не зачтён: $(cat "$T/err")"
 
+# --- двери `@reject*` — тоже решение (красный гейт 2026-09-15) ----------
+# Страж знал `@report_*` и НЕ знал `@reject_*`, хотя вторая делегирует в первую:
+# признак мерил ИМЯ двери, а не свойство «выносит решение». Случай «отказ рядом»
+# выше этого не ловил, потому что написан ИМЕННО известной стражу дверью.
+D=$(mk rejected 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    ro kids = branch_children(e)' '    if kids.len() < 2 {' '        @reject_first_leaf_of(kids, "a form the language forbids")' '        return' '    }' '    @record(e, 1)' '}')
+run "$D" && ok "выход после @reject_first_leaf_of — зелёный" || bad "дверь @reject_* не зачтена: $(cat "$T/err")"
+
+D=$(mk rejected_tok 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    if !is_ty(t) {' '        @reject(tok_of(e), "a form the language forbids")' '        return' '    }' '    @record(e, 1)' '}')
+run "$D" && ok "выход после @reject — зелёный" || bad "дверь @reject не зачтена: $(cat "$T/err")"
 # --- ice рядом — законно ---------------------------------------------------
 D=$(mk iced 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    ro kids = branch_children(e)' '    if kids.len() < 2 { ice("check: broken shape") }' '    @record(e, 1)' '}')
 run "$D" && ok "ice вместо выхода — зелёный" || bad "ice не зачтён: $(cat "$T/err")"
