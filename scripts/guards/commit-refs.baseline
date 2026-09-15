@@ -68,8 +68,8 @@
 #   ikh net (raznitsa izmerena: 215 kommitov).
 #   ROST -- NE NOVYY DOLG, A LOZHNYE SRABATYVANIYA, i eto izmereno pouchastno.
 #   Iz 12 hashey, dobavlennykh proshlym pushem, bol'shinstvo -- ID SESSIY, a ne
-#   ssylki na kommity: `5383c33a`, `e601e366`, `c8e039d7d396`, `1c8f2795`,
-#   `ef28f97e` i sosedi, vse v `docs/dev/prompts/controller-handoff.md` i
+#   ssylki na kommity: 5383c33a, e601e366, c8e039d7d396, 1c8f2795,
+#   ef28f97e i sosedi, vse v `docs/dev/prompts/controller-handoff.md` i
 #   `.claude/commands/controller.md`. U soseda v tot zhe den' lezhal fayl
 #   `handoff-e601e366.md` -- to est' eto imenno id sessii.
 #   PRICHINA V PREDIKATE: `BARE = \`([0-9a-f]{7,40})\`` lovit lyuboy hex v
@@ -82,6 +82,12 @@
 #   otlichat' id sessii ot hesha, chislo upadyot, i bazu opustit' OBYAZATEL'NO:
 #   strazh krasneet tol'ko na rost, i ostavlennaya vysokoy baza molcha razreshit
 #   otkat.
+#   ID SESSIY ZDES' STOYAT BEZ OBRATNYKH APOSTROFOV, I ETO NE NEBREZHNOST'.
+#   Predikat strazha -- hex V APOSTROFAKH. Pervaya redaktsiya etoy letopisi
+#   tsitirovala id imenno tak, i CI otvetil 854 protiv tol'ko chto podnyatoy
+#   bazy 848: OB'YASNENIE DEFEKTA VOSPROIZVELO DEFEKT, rovno +6. Apostrofy
+#   snyaty; znachenie chitaemo, predikat ego bol'she ne vidit. Ne vozvrashchay
+#   formatirovanie -- ono zdes' semanticheskoe.
 dead_hash_refs=848
 commit_url_no_context=0
 mirror_links=0

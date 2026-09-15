@@ -1155,7 +1155,7 @@ fn check_module_impl(
                         format!(
                             "[E_EXTERNAL_TYPE_RETRACTED] `external type {name}` (D126) retracted. \
                              Use tuple-newtype: `type {name}(ptr)` (Plan 115 D214). \
-                             Migration guide: docs/migration/d126-to-tuple-newtype.md.",
+                             Migration guide: docs/dev/migration/d126-to-tuple-newtype.md.",
                             name = td.name
                         )
                     };
@@ -6172,7 +6172,7 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                     init.span,
                 ).with_note(format!(
-                    "Plan 110.6.1: see docs/idiom/consume-scope-cleanup.md \
+                    "Plan 110.6.1: see docs/dev/idioms/consume-scope-cleanup.md \
                      Q-consumable-protocol for decision tree + implementation template. \
                      For infallible cleanup (Mutex/Sem/Lock) use `Cleanup[never]` — \
                      no Fail[E] effect (D194 hot-path eligible)."
@@ -42671,6 +42671,40 @@ impl<'a> ConsumeCtx<'a> {
                         "new" | "with_capacity" | "from" | "default" | "filled")
                     {
                         return Some(parts[0].clone());
+                    }
+                    // [реестр 221.1 №1106] СТАТИК ВНЕ ПЯТИ ИМЁН — тип берётся
+                    // из ОБЪЯВЛЕНИЯ, а не из списка написаний.
+                    //
+                    // Пять имён выше — не правило, а СОКРАЩЕНИЕ: `Type.new()`
+                    // почти всегда возвращает `Type`, и список угадывал это по
+                    // имени. Любой конструктор, названный иначе (`Secret.of`,
+                    // `TcpListener.bind`, `File.open`), не типизировался ВОВСЕ —
+                    // а раз тип неизвестен, `is_must_consume_name` его не
+                    // узнаёт, и обязательство потребления D180 не заводится.
+                    // Проверка не слабая: ЕЙ НЕ СКАЗАЛИ ТИП. Носитель,
+                    // найденный окном claude-limits, держал API-токен шесть
+                    // дней без гарантии, и нашёлся не чтением, а механическим
+                    // переименованием `.of(` → `.new(`, уронившим ОДНУ строку,
+                    // которую никто не редактировал.
+                    //
+                    // Реестр берётся ТОТ ЖЕ, которым ниже пользуется ветвь
+                    // метода (`method_return_types`), и статики в нём есть:
+                    // запись идёт для обоих `ReceiverKind`, не только
+                    // `Instance`. Хранится ОБЁРНУТОЕ имя (для
+                    // `-> Result[T,E]` это `Result`), и это верно здесь:
+                    // развёрнутый спутник спрашивается только при `?`/`!!`/`??`
+                    // — см. докстроку `unwrapped_method_return_types`.
+                    //
+                    // ДОБАВЛЯЮЩЕЕ, А НЕ ЗАМЕНЯЮЩЕЕ: пять имён отвечают ровно
+                    // то же, что раньше, и спрашивается реестр только на их
+                    // промахе — то есть ровно там, где ответа не было вовсе.
+                    // Тот же странглер-фиг, что в №1090.
+                    if parts.len() == 2 {
+                        if let Some(ret) = self.reg.method_return_types
+                            .get(&(parts[0].clone(), parts[1].clone()))
+                        {
+                            return Some(ret.clone());
+                        }
                     }
                 }
                 // Plan 73 followup: свободная функция с известным

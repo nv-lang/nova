@@ -19,7 +19,7 @@ import std.runtime.raw_mem.{RawMem}
 // compilation unit. Cross-module cycles are resolver-legal; this is a plain
 // forward reference to a type name. See vec_iter.nv's header for the full
 // rationale.
-import std.collections.vec_iter.{SplitIter, RSplitIter}
+import std.collections.vec_iter.{SplitIter, RSplitIter, AsciiWhitespaceIter}
 
 // True если строка начинается с prefix. Byte-compare через RawMem.compare
 // (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
@@ -96,9 +96,14 @@ export fn str @rfind(needle str) -> Option[int] {
 export fn str @split(sep str) -> SplitIter =>
     { src: @, sep, start: 0, done: false, limit: -1, splits: 0, terminator: false }
 
-// Module-private: ASCII whitespace (space + \t\n\v\f\r). These bytes are < 0x80,
-// so they never appear as UTF-8 continuation bytes — a byte-scan is codepoint-safe.
-fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
+// ASCII whitespace (space + \t\n\v\f\r). These bytes are < 0x80, so they never
+// appear as UTF-8 continuation bytes — a byte-scan is codepoint-safe.
+// Exported (was module-private) so `AsciiWhitespaceIter`, which lives in
+// `collections.vec_iter` for the same reason `SplitIter` does, can split on the
+// SAME byte class instead of carrying a second copy of it. Deliberately NOT the
+// same class as `char @is_ascii_whitespace()` (runtime/defaults.nv), which
+// excludes `\x0B` for Rust parity; `@trim*` and the split have always included it.
+export fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
 
 // Split into AT MOST `n` parts; the last part is the unsplit remainder (Rust
 // `splitn`). `n == 0` → empty iterator; `n == 1` / empty sep → whole string
@@ -164,21 +169,14 @@ export fn str @split_terminator(sep str) -> SplitIter =>
     { src: @, sep, start: 0, done: false, limit: -1, splits: 0, terminator: true }
 
 // Split on runs of ASCII whitespace, skipping empty segments (leading/trailing WS
-// ignored). Rust/Go `Fields`/`split_ascii_whitespace`. Non-ASCII Unicode
+// ignored) — LAZY. Returns an `AsciiWhitespaceIter` (zero-copy, zero-heap value
+// iterator; see vec_iter.nv) instead of a materialized `Vec[str]` — drive it with
+// `for`/`.next()`, or `.collect()` for the old eager `Vec[str]`. Semantics
+// unchanged from the retired eager body: same words, same order, empty runs
+// skipped. Rust/Go `Fields`/`split_ascii_whitespace`. Non-ASCII Unicode
 // whitespace — Phase B (delegates to std/unicode).
-export fn str @split_ascii_whitespace() -> ro []str {
-    mut out = []str.new()
-    ro (bytes, sn) = (@bytes(), @byte_len())
-    mut i = 0
-    while i < sn {
-        while i < sn && is_ascii_ws(bytes[i] as int) { i += 1 }
-        if i >= sn { break }
-        ro start = i
-        while i < sn && !is_ascii_ws(bytes[i] as int) { i += 1 }
-        out.push(@[start..i])
-    }
-    out
-}
+export fn str @split_ascii_whitespace() -> AsciiWhitespaceIter =>
+    { src: @, start: 0 }
 
 // Split into lines, each WITHOUT its terminator. Handles `\n` and `\r\n` (the
 // trailing `\r` is stripped). A final line without a trailing newline is included;

@@ -1,0 +1,81 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_KEYWORD_MISSING
+//
+// #1106 (registry 221.1): a STATIC call was typed from a hard list of five
+// names -- new, with_capacity, from, default, filled -- instead of from the
+// callee's declaration. A constructor named anything else was not typed at
+// all, and an untyped RHS carries no D180 obligation: the check was not weak,
+// it was never told the type.
+//
+// HOW IT WAS FOUND, because the route matters more than the symptom: a
+// mechanical rename of `.of(` to `.new(` across a neighbouring tree broke ONE
+// line that nobody had edited. `ro t = Secret.of(...)` had compiled for weeks;
+// `ro t = Secret.new(...)` immediately demanded `consume`. Nothing but the
+// constructor's NAME had changed.
+//
+// MEASURED BEFORE THE FIX, seven forms on one binary, bodies byte-identical so
+// that any difference in verdict IS the name:
+//
+//     consume t = Secret.new(...) + real consumption   ok      (control)
+//     ro t = Secret.new(...)                           ERROR   (correct)
+//     ro t = build_secret(...)      free function      ERROR   (correct)
+//     ro t = f.build(...)           instance method    ERROR   (correct)
+//     ro t = Secret.of(...)                            PASSED  <- the defect
+//     ro t = Secret.make(...)                          PASSED  <- the defect
+//     ro p = Plain.of(7), p.n + 1   non-consume type   ok      (control)
+//
+// The three controls make the neighbouring explanations impossible rather than
+// merely different: a free function IS caught, so it is not "statics are not
+// checked"; `new` IS caught, so the checker does see the obligation through a
+// static; and `Plain.of` passes WITH its value used, so `.of` does not break
+// typing -- what is lost is specifically the ownership obligation.
+//
+// The fix reads the declared return type from the same registry the method
+// branch beside it already uses, and is purely additive: the five names answer
+// exactly as before, and the registry is consulted only where there was no
+// answer at all.
+//
+// WHAT THIS FIXTURE DOES NOT COVER, said here rather than left to be
+// rediscovered: a static whose declared return is WRAPPED (`-> Result[T, E]`)
+// still loses the obligation, because the registry stores the outer name and
+// `Result` is not itself a consume type. Measured on std: `ro r =
+// TcpListener.bind(...)` stays silent after this fix. That remainder is named
+// in the registry row.
+
+module neg.m1106_static_typed_by_name_neg
+
+#impl(Debug)
+export type Secret consume {
+    secret str
+}
+
+// D133 refuses a consume type with no consume-method at all; without this the
+// forms below would fail on THAT instead, and the control would be measuring a
+// different question.
+export fn Secret consume @into_secret() -> str => @secret
+
+export fn Secret.of(secret str) -> Secret => { secret }
+
+// A non-consume twin. Its `.of` must stay legal, or the fix would be reaching
+// past its subject -- and a fixture without this control cannot tell a working
+// check from an over-eager one.
+export type Plain {
+    n int
+}
+
+export fn Plain.of(n int) -> Plain => { n }
+
+fn take() -> str {
+    // nova:expect E_CONSUME_KEYWORD_MISSING -- `of` is outside the five-name list, and the binding must still carry the D180 obligation (#1106)
+    ro t = Secret.of("x")
+    "${t:?}"
+}
+
+fn control() -> int {
+    // No marker: a non-consume type keeps its ordinary `.of` constructor.
+    ro p = Plain.of(7)
+    p.n + 1
+}
+
+fn main() Io -> () {
+    print("${take()} ${control()}")
+}

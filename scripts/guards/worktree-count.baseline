@@ -26,7 +26,22 @@
 # и сказал вслух («деревьев стало меньше (19 < 60) — опусти базу»),
 # и это его заслуга: храповик, не требующий опускания, со временем
 # перестаёт что-либо значить.
-worktrees=20
+# 2026-09-15 (integrator): 20 -> 19. OPUSKAYu, a ne ostavlyayu vysokoy:
+#   strazh krasneet tol'ko na ROST, padenie propuskaet MOLChA, i baza,
+#   ostavlennaya vysokoy, RAZREShAET otkatit'sya rovno na to, na skol'ko
+#   prodvinulis'.
+#   Progon push 2026-09-15 upal na 23 pri baze 20. Koren' u vsekh 23 byl
+#   dozvolennyy -- otkaz geyta nazyval PRIChINU, kotoruyu ne meril; eto
+#   pochineno tem zhe dnyom otdel'nym kommitom.
+#   Snyato CHETYRE dereva, kazhdoe svoey rukoy i posle DVUKh proverok
+#   (nekommichennoe; 'ne v main' = 0): nova-p200 (okno e6), nova-p1109
+#   (okno b6), nova-p712 i nova-p502 -- moi, obe vetki vlity, poslednie
+#   kommity 22 i 9 avgusta, v p502 lezhal katalog-vremyanka ot 9 avgusta.
+#   VAZhNO DLYa SLEDUYuShchEGO: otkaz `worktree remove` bez --force ne est'
+#   priznak ostavsheysya raboty -- libuv doklonirovyvaetsya sam pri pervom
+#   `nova test`, i lyuboe otrabotavshee derevo potrebuet --force (zamer e6).
+#   Proveryat' 'est' li chto teryat' nado DO nego i otdel'no.
+worktrees=19
 
 # БАМП 2026-08-29: 19 -> 20. Причина: открыто компилятор-окно p790
 # (`nova-p790`, ветка p790-fiber-cancel) под два К1-блокера тега №790/№791 —

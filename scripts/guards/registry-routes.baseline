@@ -1364,4 +1364,33 @@ no_caveat=0
 #   storonoy. U storon bylo 70 (okno 274) i 69 (integrator): sostavy RAZNYE, i lyuboy
 #   vybor storony molcha poteryal by blokery drugoy. Letopisi OBEIKH storon vyshe
 #   sokhraneny celikom -- oni ob'yasnyayut, otkuda kazhdaya polovina rosta.
+# 2026-09-15 (integrator): blockers 69 -> 68. Zakryt №1090 -- NASTOYASHchEE
+#   dvizhenie, ne pereklassifikatsiya: forma, davavshaya neslinkuemyy C pri
+#   zelyonom `nova check`, teper' sobiraetsya, oba nositelya snyaty so spiska
+#   izvestnoy krasnoty, i spisok po etoy stroke pust tselikom.
+#   TRI PUNKTA PRIYOMKI, a ne dva: proba zeleneet, kontrol' zelyon, i STRAZH
+#   SVOYSTVOM sobran i izmeren -- na korpuse ne srabotal ni razu (326 testov),
+#   to est' 'ni odin zakonnyy put' syuda ne prikhodit' PROVERENO progonom, a ne
+#   ostavleno gipotezoy. Imenno tretiy punkt derzhal stroku otkrytoy sutki.
+#   ZAKRYTO PO VNESHNEMU VERDIKTU: volna v main (ee5952299, tri zerkala svereny
+#   po ob'ektu), CI job `nova-gate (conformance + flagship examples)` -- success.
+#   Progon TSELIKOM pri etom krasen po chuzhim prichinam (№1110, №1061), i eto
+#   zakrytiyu ne meshaet: 'progon zelyon' i 'moya rabota proverena' -- raznye
+#   utverzhdeniya, zdes' vtoroe verno pri pervom lozhnom (pretsedent -- plan 281).
+#   OPUSKAT' BAZU -- CHAST' RABOTY, a ne uborka potom.
+# 2026-09-15 (integrator, sliyanie p200-23-ws-iter): blockers 68 -> 69.
+#   ROST, i on zakonen: stroka 1115 -- nedeterminirovannyy segfault na
+#   svyazke Monotonic.now() + tyazholye allokatsii, padaet primerno v
+#   kazhdom tret'em progone na ODNOM binare i ODNOM vvode. Vozhu ego v
+#   blokery tega SVOIM resheniem: takoy defekt prokhodit geyt i padaet u
+#   pol'zovatelya, a tegom my obeshchaem obratnoe. Os' nazvana zamerom okna
+#   e6 (kontrol' bez chasov -- 0 iz 12 pri vchetvero bol'shey nagruzke),
+#   no CHEM imenno lomaetsya svyazka -- chasy, effekt Time ili GC pod nimi --
+#   NE razdeleno, i tak zapisano v stroke. Karinu ne blokiruet: ona
+#   sobiraetsya bez Monotonic.
+# 2026-09-15, ЧЕТВЁРТОЕ СЛИЯНИЕ origin/main (окно 274): 73 — ПЕРЕСЧИТАНО
+#   сканером на слитом дереве. У сторон было 73 (моя) и 69 (интегратор); совпадение
+#   с моим числом НЕ есть основание взять сторону: составы разные, и пришли строки
+#   1111-1119 четырьмя слияниями соседей. Мои две новые строки (1120, 1121) блокерами
+#   не считаются: поле «БЛОКИРУЕТ ТЕГ» проставляет интегратор при приёме, не автор.
 blockers=73

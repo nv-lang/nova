@@ -1,3 +1,4 @@
+# 2026-09-15 (okno nova-23): rows 1052 -> 1053, max 1110 -> 1113. Dobavlena odna stroka No1113 -- shag novac-behaviour bez predela, obryv nadevaet verdikt (G16/G9). Dyr ne pribavilos': 1111 i 1112 uzhe ob'yavleny vyshe.
 # 2026-09-05 (окно 274): rows 887 -> 896, max 931 -> 940. Девять строк охоты
 #   emit_c x K3 (932-940), блок номеров выдан интегратором разом; дыр нет.
 # 2026-09-04 (окно 274): rows 879 -> 880, max 923 -> 925, дыра 924 объявлена.
@@ -786,6 +787,54 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
+# 2026-09-15 (integrator): rows 1052->1053, max 1110->1114.
+#   Stroka 1114 -- MOY zamer pokrytiya linta, i on rodilsya iz 1112:
+#   razbiraya, pochemu W_FFI_BARE_HANDLE molchit tam, gde ego uslovie
+#   vypolneno doslovno, poschital ostal'nye. Iz 42 zaregistrirovannykh
+#   pravil 15 ne upominayutsya v spec_tests ni razu; iz nikh DVA zhivy
+#   (podavleny stroklami nova:allow v std), a TRINADTsAT' ne pokazali
+#   nichego voobshche. Klass: pravilo, ni razu ne dokazavshee, chto umeet
+#   srabatyvat'. Priyomka -- strazh svoystvom, a ne trinadtsat'yu fiksturami.
+#   Verkhnyaya granitsa, a ne perepis': A=0 znachit 'imya ne vstrechaetsya',
+#   fikstura bez imeni pravila v schyot ne popala by -- tak i zapisano v stroke.
+# 2026-09-15 (integrator, sliyanie p1109-diag-paths): rows 1053 -> 1054,
+#   max ostayotsya 1114. Obe storony pravy i SKLADYVAYUTSYA, a ne
+#   vybirayutsya: okno b6 dobavilo stroku 1112, ya -- 1114, kazhdyy ot
+#   bazy 1052. Letopisi obeikh storon ostavleny na meste.
+# 2026-09-15 (integrator, sliyanie p1110-commit-refs): rows 1054 -> 1055,
+#   max ostayotsya 1114. Tret'ya storona odnogo dnya: okno nova-23 dobavilo
+#   stroku 1113, kazhdyy schital ot svoey bazy. Skladyvayu, ne vybirayu.
+# 2026-09-15 (integrator, sliyanie p200-23-ws-iter): rows 1055 -> 1058,
+#   max 1114 -> 1116, gaps -= 1111,1115,1116. Tri stroki okna e6 priekhali
+#   odnim sliyaniem: 1111 (dva otveta na vopros o \x0B -- razvilka vladel'tsa),
+#   1115 (nedeterminirovannyy segfault na svyazke chasov i allokatsiy, K1,
+#   BLOKIRUET TEG: DA), 1116 (benchi ne vkhodyat ni v odin yarus -- krasnyy
+#   fayl lezhal nezamechennym). Dyroy ostayotsya tol'ko 1117 (vydan b6).
+# 2026-09-15 (integrator): rows 1058 -> 1059, max 1116 -> 1118.
+#   Stroka 1118 -- MOY sobstvennyy defekt, i nashla ego ne moya proverka, a
+#   chuzhoe okno, chitavshee DRUGOE derevo: pravka etoy samoy bazy ne doekhala
+#   do kommita (v indeks legli reestr i routes, a ona net). Vse strazhi posle
+#   sliyaniya byli zelyony, potomu chto chitayut RABOChEE derevo, -- a na chistom
+#   klone rows-intact upal by na 1055 protiv 1058. Klass: proverka chitaet
+#   rabochee derevo, verdikt vydayotsya o PUBLIKUEMOM ob'ekte.
+#   1117 OSTAYoTSYa dyroy: ego stroka zhivyot na vetke b6 i priedet sliyaniem.
+# 2026-09-15 (integrator, sliyanie p1109-diag-paths): rows 1059 -> 1060,
+#   max ostayotsya 1118. Obe storony schitali ot 1058 i obe pravy: b6
+#   dobavilo stroku 1117, ya -- 1118. Skladyvayu, ne vybirayu -- vybor
+#   storony poteryal by chuzhuyu stroku i, po pravilu snyatiya dyry vyshe,
+#   ostavil by eyo vne zashchity khrapovika.
+# 2026-09-15 (integrator): rows 1060 -> 1061, max 1118 -> 1119.
+#   Stroka 1119 zavedena NE po nakhodke, a po OTKAZU GEYTA: pravilo
+#   vladel'tsa №217 trebuet nomer na kazhdyy novyy marker [M-...], i yarus
+#   push pokrasnel na moyom zhe markere [M-selftest-count-spelled-out],
+#   zavedyonnom chasom ran'she. Marker bez stroki -- nevidimyy dolg, i eto
+#   pravilo pereklikaetsya s klassom samoy stroki: mera, derzhashchaya
+#   polovinu predmeta, vyglyadit tseloy.
+#   1120 i 1121 VYDANY oknu d6 (samotest, zavodyashchiy vetku v obshchem .git;
+#   proektsiya kortezha za granitsu, padayushchaya clang'om), no ikh stroki
+#   pridut POSLE moego pusha -- ikh derevo stoit na origin/main s max=1110,
+#   i stavit' nomera do sliyaniya znachilo by razorvat' tselostnost'.
+#   Poetomu v gaps ikh SEYChAS NET: nomer vydan, no derevo ego eshchyo ne znaet.
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -893,6 +942,96 @@
 #   byla mertva s minuty napisaniya i ne krasnela tol'ko potomu, chto LISHNIY nomer
 #   v gaps= opravdyvaet nesushchestvuyushchuyu dyru: stoit nichego, pryachet vsyo.
 #   Teper' klyuch odin i strochka odna -- pravilo iz shapki etogo zhe fayla.
-rows=1061
-max=1110
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1109
+# 2026-09-15 (integrator): rows -> 1052, max bez izmeneniy (1110);
+#   gaps -= 1109. Stroka 1109 vpisana: kompilyator ssylaet pol'zovatelya
+#   na fayly, kotorykh net -- iz DEVYATI putey v tekstakh diagnostik
+#   mertvy CHETYRE, i umirayut oni tremya raznymi sposobami (fayl
+#   pereekhal, kataloga net vovse, put' bez segmenta src/). Pyatyy
+#   nositel' nayden rukami i v schyot NE voshyol -- regulyarka ne vidit
+#   mnogostrochnyy literal, poetomu 9 eto NIZHNYAYA GRANITSA, a ne
+#   perepis'.
+# 2026-09-15 (integrator): gaps += 1111; rows/max bez izmeneniy.
+#   1111 vydan oknu e6 v 16:15 pod raskhozhdenie DVUKH predikatov
+#   ascii-whitespace: `is_ascii_ws` (search.nv) VKLYUCHAET \x0B (9..13) i
+#   obsluzhivaet @trim* i split, a `char @is_ascii_whitespace()`
+#   (defaults.nv) ego ISKLYUCHAET radi pariteta s Rust. To est'
+#   "a\x0Bb".trim() i char-proverka otvechayut po-raznomu pro odnu stroku.
+#   Ikh stroka pridyot sliyaniem.
+#   OB'YAVLENA S OPOZDANIEM, i eto stoit zapisi: nomer vydan v 16:15,
+#   ob'yavit' dyru ya obeshchal 'so svoey storony' i ne ob'yavil. Poymal
+#   strazh v ChUZhOY vetke (okno b6, vstavlyaya 1112): dyra mezhdu 1110 i
+#   1112 neotlichima ot POTERYANNOY stroki, i imenno radi etogo razlicheniya
+#   khrapovik zavedyon. Vydavshiy nomer ob'yavlyaet dyru TEM ZHE khodom --
+#   inache sosed poluchaet krasnotu za moy dolg.
+# 2026-09-15 (integrator): gaps += 1112; rows/max bez izmeneniy.
+#   1112 vydan oknu b6: lint W_FFI_BARE_HANDLE uchit kanonu, kotorogo ne
+#   derzhit ni odin std/*/ffi.nv (7+24+9 = sorok golykh vozvratov int/ptr,
+#   novotipov-hendlov nol'). ZAMER INTEGRATORA UTOChNIL FORMULIROVKU: delo
+#   NE v uzkom okhvate -- pravilo MOLChIT tam, gde ego uslovie vypolneno
+#   doslovno (fs_open -> int pri fs_close(fd int)). Semeystvo conv pri etom
+#   RABOTAET: na conv_pos.nv srabatyvayut vosem' pravil. A samo
+#   W_FFI_BARE_HANDLE ne pokryto NI ODNOY fiksturoy -- vstrechaetsya tol'ko
+#   v lints.rs. Pravilo, ni razu ne dokazavshee, chto umeet srabatyvat'.
+# 2026-09-15 (integrator): gaps += 1113,1115,1116; 1111,1112 svyorunty v diapazon.
+#   1113 vydan oknu nova-23 (vetka p1110-commit-refs), 1115 i 1116 -- oknu e6:
+#   1115 nedeterminirovannyy segfault na svyazke chasov i allokatsiy (K1: prokhodit
+#   geyt i padaet u pol'zovatelya), 1116 krasnyy bench-fayl, ne vkhodyashchiy ni v
+#   odin geyt. Ikh stroki pridut sliyaniem; dyru ob'yavlyaet VYDAVShIY nomer.
+# 2026-09-15 (okno b6): rows 1052 -> 1053, max 1110 -> 1112. Dobavlena
+#   ODNA stroka -- 1112 (1111 uzhe ob'yavlen zakonnoy dyroy vyshe):
+#   pravilo W_FFI_BARE_HANDLE ne srabatyvaet dazhe tam, gde ego
+#   sobstvennoe uslovie vypolneno doslovno (fs_open -> int pri
+#   fs_close(fd int)). Zamer integratora: nova lint std/src -> 292
+#   file(s), 0 finding(s), pri etom --rule W_FFI_BARE_HANDLE prinyat, a
+#   vydumannoe imya dayot unknown lint rule -- pravilo zapuskaetsya i
+#   molchit. Naydeno poputno po #1109 pri poiske ZhIVOGO etalona formy.
+# 2026-09-15 (integrator, sliyanie p1109-diag-paths): gaps -= 1112.
+#   Ego stroka PRIEKhALA etim sliyaniem, znachit dyroy on byt' perestal.
+#   Ostayutsya 1111 (okno e6), 1113 (nova-23), 1115 i 1116 (e6).
+#   OTDEL'NO: zamer, zapisannyy v letopisi b6 vyshe ('pravilo molchit,
+#   gde uslovie vypolneno doslovno'), OTOZVAN samim b6 progonom 2026-09-15:
+#   pravilo ZhIVO, a nol' na std -- podavlenie nakhodki markerom [M-...]
+#   (lints.rs:3393-3395). Letopis' ne stirayu: styortaya gipoteza zastavlyaet
+#   proyti put' zanovo. Ispravlenie stroki -- kommit e8480f7cd.
+# 2026-09-15 (integrator, sliyanie p1110-commit-refs): gaps -= 1113, += 1117.
+#   1113 priekhal etim sliyaniem -- dyroy byt' perestal. 1117 vydan oknu b6:
+#   glushenie nakhodki markerom [M-...] ne ostavlyaet sleda v vyvode linta --
+#   chisla podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse
+#   nakhodki pod markerami'; sosedniy lyuk nova:allow pri etom OBYaZAN nesti
+#   prichinu i grepaem. Klass Г19. Stroka pridyot sliyaniem b6.
+# 2026-09-15 (okno b6): rows 1055 -> 1059, max 1114 -> 1117 (s uchyotom tryokh
+#   strok integratora vyshe). Iz gaps snyat 1117 -- stroka zavedena. Predmet
+#   1117: lyuk, glushashchiy nakhodku linta markerom [M-...], ne ostavlyaet
+#   sleda v vyvode -- chisla podavlennogo net, i priyomka '0 nakhodok'
+#   neotlichima ot 'vse nakhodki pod markerami'. Sosedniy lyuk nova:allow pri
+#   etom obyazan nesti prichinu i grepaem: obstavlen SILNYY lyuk, a
+#   nepodotchetnym ostavlen SLABYY.
+# KONFLIKT ETOY STROKI RAZRESHYON OB'EDINENIEM SNYATIY, a ne vyborom storony:
+#   integrator snyal 1111/1115/1116, okno b6 snyalo 1117. Vybor storony vernul
+#   by chuzhoe snyatie obratno -- to est snova postavil by zhivuyu stroku vne
+#   zashchity.
+# stale_gaps -- nomerov, kotorye ODNOVREMENNO nazvany zakonnoy dyroy v gaps= i
+#   imeyut stroku v reestre. Tolko VNIZ. Zavedeno 2026-09-15 (nakhodka okna b6,
+#   dovedena do svoystva po predlozheniyu integratora): poka nomer chislitsya
+#   dyroy, POTERYA ego stroki prokhodit MOLCHA -- proverka dyr vidit otsutstvie i
+#   sveryaetsya so spiskom, gde otsutstvovat razresheno. Takaya stroka lezhit VNE
+#   zashchity, i zametit eto mozhno tolko chteniem bazy: progon zelyonyy.
+#   ISTORIYA CHISLA: zavedeno so znacheniem 3 -- rovno 1111, 1115, 1116 v
+#   committed main, kuda pravka integratora ne doekhala (otredaktirovana v
+#   rabochey kopii, v indeks ne polozhena). Posle ego kommita edce73538 i etogo
+#   sliyaniya protukhshikh net: 0.
+stale_gaps=0
+# 2026-09-15, ЧЕТВЁРТОЕ СЛИЯНИЕ origin/main. ВСЕ ТРИ числа ПЕРЕСЧИТАНЫ
+#   правилом самого стража на слитом дереве: rows=1073, max=1121.
+#   Стороны: у меня rows=1061/max=1110 (плюс две строки с TBD, которые счёт не
+#   видит), у интегратора rows=1061/max=1119 — составы разные. Номера 1120 и 1121
+#   выданы интегратором и поставлены ПОСЛЕ слияния — его же порядок, чтобы не
+#   считать дважды и не рвать целостность его реестра.
+# ПЕРЕСЧЁТ ОПРАВДАЛ СЕБЯ БУКВАЛЬНО И ПОЙМАЛ МОЮ ЖЕ ОШИБКУ: в разрешении
+#   конфликта самого реестра строка 1120 была приклеена без перевода строки, и соседняя
+#   №1000 съехала в тот же ряд, перестав начинаться с `|`. Счёт показал дыру 1000,
+#   которой нет ни в одной из сторон, — и только поэтому потеря нашлась. Выбор
+#   стороны вместо пересчёта унёс бы строку молча.
+rows=1073
+max=1121
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

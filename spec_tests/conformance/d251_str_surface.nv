@@ -75,11 +75,14 @@ test "split_terminator: без пустого хвоста (D251)" {
 }
 
 test "split_ascii_whitespace: runs, края отброшены (D251)" {
-    ro d251_w = "  hello   world  ".split_ascii_whitespace()
+    // LAZY since Plan 200 §23 — `.collect()` materializes the Vec[str] this
+    // surface test indexes (the same move `split`/`split_terminator` above
+    // already made).
+    ro d251_w = "  hello   world  ".split_ascii_whitespace().collect()
     assert(d251_w.len() == 2)
     assert(d251_w[0] == "hello" && d251_w[1] == "world")
-    assert("\tone\ntwo\r three ".split_ascii_whitespace().len() == 3)
-    assert("".split_ascii_whitespace().len() == 0)
+    assert("\tone\ntwo\r three ".split_ascii_whitespace().collect().len() == 3)
+    assert("".split_ascii_whitespace().collect().len() == 0)
 }
 
 test "lines: \\n и \\r\\n без терминатора, финальная строка без \\n включена (D251)" {
