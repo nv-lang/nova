@@ -3,7 +3,8 @@
 # check-lint-rule-covered.py (реестр 221.1 №1114: правило линта, ни разу не
 # доказавшее, что умеет сработать).
 #
-# СЕМЬ СЛУЧАЕВ, каждый отвечает на свой вопрос:
+# СЛУЧАИ — каждый отвечает на свой вопрос; счёт печатает сам самотест, а не эта
+# строка: число, написанное рукой, расходится с числом случаев молча.
 #   1. правило названо фикстурой — ЗЕЛЁНЫЙ (ложняка нет);
 #   2. правило без фикстуры сверх базы — КРАСНЫЙ, и в отказе назван АДРЕС (имя);
 #   3. правило без фикстуры РОВНО на базе — ЗЕЛЁНЫЙ: храповик держит, а не
@@ -27,8 +28,11 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-lint-rule-covered.py"
 T="${TMPDIR:-/tmp}/lint-rule-covered-selftest.$$"
 FAILED=0
-ok()  { echo "  ok: $1"; }
-bad() { echo "  FAIL: $1"; FAILED=$((FAILED+1)); }
+# СЧЁТЧИК, А НЕ ЧИСЛО В СТРОКЕ — см. страж check-selftest-honest-count: число
+# случаев, написанное рукой, расходится с числом случаев МОЛЧА.
+CASES=0
+ok()  { CASES=$((CASES+1)); echo "  ok: $1"; }
+bad() { CASES=$((CASES+1)); echo "  FAIL: $1"; FAILED=$((FAILED+1)); }
 trap 'rm -rf "$T"' EXIT
 
 if [ ! -f "$G" ]; then
@@ -124,8 +128,8 @@ else bad "7 база без ключей прошла зелёной: $OUT"; fi
 
 # --- итог -------------------------------------------------------------------------
 if [ "$FAILED" -ne 0 ]; then
-    echo "test-check-lint-rule-covered: FAIL - провалено случаев: $FAILED из 7" >&2
+    echo "test-check-lint-rule-covered: FAIL - провалено случаев: $FAILED из $CASES" >&2
     exit 1
 fi
-echo "test-check-lint-rule-covered ok: 7/7"
+echo "test-check-lint-rule-covered ok: $CASES/$CASES"
 exit 0

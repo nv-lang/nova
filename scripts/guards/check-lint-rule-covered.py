@@ -94,7 +94,7 @@
 `judged=N`; `uncovered` только вниз. `judged` — размер мишени: если правил под
 судом стало вдвое меньше базы, это отказ, а не успех (№911).
 
-Самотест: scripts/guards/selftest/test-check-lint-rule-covered.sh (семь случаев).
+Самотест: scripts/guards/selftest/test-check-lint-rule-covered.sh.
 
 $1 — корень репозитория.
 """
